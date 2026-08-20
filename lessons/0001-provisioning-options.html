@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lesson 1: Cloud Run Provisioning Options</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+    <h1>Cloud Run Provisioning Options</h1>
+    <p>To deploy an application to Google Cloud Run, we first need to <strong>provision</strong> the infrastructure. This means telling Google Cloud to create the resources (Cloud Run service, Artifact Registry for Docker images, and Service Accounts for security). We have three main ways to do this.</p>
+
+    <div class="comparison">
+        <div class="card">
+            <h3>ClickOps (Cloud Console)</h3>
+            <p>Manually clicking through the Google Cloud web interface to create resources.</p>
+            <p><span class="pro">Pros:</span> Great for learning and one-off experiments.</p>
+            <p><span class="con">Cons:</span> Not repeatable. Error-prone. Cannot be version-controlled or reviewed.</p>
+        </div>
+        
+        <div class="card">
+            <h3>Terraform</h3>
+            <p>The industry standard for Infrastructure as Code (IaC). Uses a declarative language called HCL (HashiCorp Configuration Language).</p>
+            <p><span class="pro">Pros:</span> Huge ecosystem, widely understood.</p>
+            <p><span class="con">Cons:</span> Requires learning a new domain-specific language (HCL). Context switching between TypeScript and HCL.</p>
+        </div>
+
+        <div class="card">
+            <h3>Pulumi</h3>
+            <p>An IaC tool that lets you write infrastructure using general-purpose programming languages like TypeScript, Python, or Go.</p>
+            <p><span class="pro">Pros:</span> Use the same language (TypeScript) for both your app and your infrastructure. Share types and logic.</p>
+            <p><span class="con">Cons:</span> Smaller ecosystem than Terraform.</p>
+        </div>
+    </div>
+
+    <h2>Interactive Knowledge Check</h2>
+    <p>Let's test what you've learned. Answer the following questions to check your understanding.</p>
+
+    <div id="quiz" style="background: white; padding: 2rem; border-radius: 6px; border: 1px solid #e1e4e8;">
+        <p><strong>Question 1:</strong> If your team's application is written entirely in TypeScript, and you want to minimize the number of new languages your developers need to learn, which IaC tool is the most natural fit?</p>
+        <button onclick="checkAnswer('terraform')">Terraform</button>
+        <button onclick="checkAnswer('pulumi')">Pulumi</button>
+        <button onclick="checkAnswer('clickops')">ClickOps</button>
+        <p id="feedback1" style="font-weight: bold; margin-top: 1rem;"></p>
+    </div>
+
+    <div class="primary-source">
+        <strong>Primary Source:</strong> To go deeper, read the <a href="https://www.pulumi.com/docs/concepts/vs/terraform/" target="_blank">Pulumi vs. Terraform comparison guide</a>.
+    </div>
+
+    <p><em>Remember: You can ask your teaching agent any follow-up questions if something isn't clear!</em></p>
+
+    <script>
+        function checkAnswer(answer) {
+            const feedback = document.getElementById('feedback1');
+            if (answer === 'pulumi') {
+                feedback.style.color = '#28a745';
+                feedback.textContent = 'Correct! Pulumi allows you to write infrastructure in TypeScript, unifying your tech stack.';
+            } else if (answer === 'terraform') {
+                feedback.style.color = '#d73a49';
+                feedback.textContent = 'Incorrect. Terraform uses HCL, which would require developers to learn a new syntax.';
+            } else {
+                feedback.style.color = '#d73a49';
+                feedback.textContent = 'Incorrect. ClickOps is not Infrastructure as Code and is not suitable for a professional team setup.';
+            }
+        }
+    </script>
+</body>
+</html>
