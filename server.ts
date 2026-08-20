@@ -28,6 +28,7 @@ fastify.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply
     const payload = ticket.getPayload();
     
     // Attach payload to request context for use in routes
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (request as any).user = payload;
   } catch (error) {
     fastify.log.error(error, 'Token verification failed:');
