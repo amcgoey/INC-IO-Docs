@@ -20,6 +20,12 @@ Enforce the following rules when creating or modifying code:
 ### Directory Structure
 The structure balances **Locality** (feature-first) with **Leverage** (shared, domain-agnostic infrastructure deep modules):
 
+- `.agents/`: Agent configuration files, local custom skills, and behavior overrides.
+- `assets/`: Static assets like images and branding materials.
+- `docs/`: Project documentation, architectural decision records (ADRs), and agent-specific guidelines (`docs/agents/`).
+- `infra/`: Infrastructure deployment scripts and configuration (e.g., `bootstrap.ps1`).
+- `lessons/`: Learning materials, tutorials, or guides.
+- `scratch/`: Temporary workspace. Agents should write all temporary files (ticket drafts, subagent exchanges, etc.) here.
 - `src/features/`: Contains self-contained feature slices (e.g. `document/`).
   - `.../domain.ts`: Core business logic models. **No external dependencies** (except `Typebox` which acts as a language extension).
   - `.../ports.ts`: Interfaces defining the feature's explicit seams (driving and driven).
