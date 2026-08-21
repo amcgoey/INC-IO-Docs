@@ -1,0 +1,121 @@
+$PROJECT_ID = if ([bool]$env:PROJECT_ID) { $env:PROJECT_ID } else { "inc-io-docs-dev" }
+$REGION = if ([bool]$env:REGION) { $env:REGION } else { "us-east4" }
+$BUCKET_NAME = "${PROJECT_ID}-pulumi-state"
+$SA_NAME = "ci-deployer"
+$SA_EMAIL = "${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+$WIF_POOL = "github-actions-pool"
+$WIF_PROVIDER = "github-provider"
+$REPO = "amcgoey/INC-IO-Docs"
+
+Write-Host "Checking gcloud authentication..."
+$null = gcloud auth print-access-token 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Error: You are not authenticated with gcloud." -ForegroundColor Red
+    Write-Host "Please run 'gcloud auth login' and try again."
+    exit 1
+}
+
+Write-Host ""
+Write-Host "=========================================================="
+Write-Host " Bootstrap Configuration (DRY RUN)"
+Write-Host "=========================================================="
+Write-Host "Project ID:      $PROJECT_ID"
+Write-Host "Region:          $REGION"
+Write-Host "Bucket Name:     $BUCKET_NAME"
+Write-Host "Service Account: $SA_NAME"
+Write-Host "WIF Pool:        $WIF_POOL"
+Write-Host "WIF Provider:    $WIF_PROVIDER"
+Write-Host "Repository:      $REPO"
+Write-Host "=========================================================="
+Write-Host ""
+
+$response = Read-Host "Proceed with these configurations? [y/N]"
+if ($response -notmatch '^[Yy]$') {
+    Write-Host "Aborted." -ForegroundColor Yellow
+    exit 1
+}
+
+Write-Host "Setting active project..."
+gcloud config set project $PROJECT_ID
+
+Write-Host "Enabling foundational GCP APIs..."
+gcloud services enable 
+    iamcredentials.googleapis.com 
+    cloudresourcemanager.googleapis.com 
+    iam.googleapis.com 
+    --project $PROJECT_ID
+
+Write-Host "Configuring GCS Bucket for Pulumi State..."
+$null = gsutil ls "gs://$BUCKET_NAME" 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "Bucket gs://$BUCKET_NAME already exists." -ForegroundColor Cyan
+} else {
+    Write-Host "Creating bucket gs://$BUCKET_NAME in $REGION..."
+    gsutil mb -p $PROJECT_ID -l $REGION "gs://$BUCKET_NAME"
+}
+Write-Host "Enabling Object Versioning on bucket..."
+gsutil versioning set on "gs://$BUCKET_NAME"
+
+Write-Host "Configuring Service Account: $SA_NAME..."
+$null = gcloud iam service-accounts describe $SA_EMAIL --project $PROJECT_ID 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "Service Account $SA_NAME already exists." -ForegroundColor Cyan
+} else {
+    Write-Host "Creating Service Account $SA_NAME..."
+    gcloud iam service-accounts create $SA_NAME 
+        --display-name="CI Deployer Service Account" 
+        --project="$PROJECT_ID"
+}
+
+Write-Host "Granting roles to Service Account..."
+$ROLES = @(
+    "roles/editor",
+    "roles/run.admin",
+    "roles/iam.serviceAccountUser",
+    "roles/artifactregistry.admin"
+)
+foreach ($role in $ROLES) {
+    gcloud projects add-iam-policy-binding $PROJECT_ID 
+        --member="serviceAccount:$SA_EMAIL" 
+        --role="$role" 
+        --condition=None | Out-Null
+}
+
+Write-Host "Configuring WIF Pool: $WIF_POOL..."
+$null = gcloud iam workload-identity-pools describe $WIF_POOL --location="global" --project="$PROJECT_ID" 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "WIF Pool $WIF_POOL already exists." -ForegroundColor Cyan
+} else {
+    Write-Host "Creating WIF Pool $WIF_POOL..."
+    gcloud iam workload-identity-pools create $WIF_POOL 
+        --location="global" 
+        --display-name="GitHub Actions Pool" 
+        --project="$PROJECT_ID"
+}
+
+Write-Host "Configuring WIF Provider: $WIF_PROVIDER..."
+$null = gcloud iam workload-identity-pools providers describe $WIF_PROVIDER 
+    --workload-identity-pool="$WIF_POOL" 
+    --location="global" --project="$PROJECT_ID" 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "WIF Provider $WIF_PROVIDER already exists." -ForegroundColor Cyan
+} else {
+    Write-Host "Creating WIF Provider $WIF_PROVIDER..."
+    gcloud iam workload-identity-pools providers create-oidc $WIF_PROVIDER 
+        --workload-identity-pool="$WIF_POOL" 
+        --location="global" 
+        --display-name="GitHub Provider" 
+        --issuer-uri="https://token.actions.githubusercontent.com" 
+        --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository" 
+        --attribute-condition="attribute.repository == '$REPO'" 
+        --project="$PROJECT_ID"
+}
+
+Write-Host "Binding Service Account to WIF Pool..."
+$projectNumber = (gcloud projects describe $PROJECT_ID --format="value(projectNumber)")
+gcloud iam service-accounts add-iam-policy-binding $SA_EMAIL 
+    --project="$PROJECT_ID" 
+    --role="roles/iam.workloadIdentityUser" 
+    --member="principalSet://iam.googleapis.com/projects/$projectNumber/locations/global/workloadIdentityPools/$WIF_POOL/attribute.repository/$REPO" | Out-Null
+
+Write-Host "Bootstrap complete!" -ForegroundColor Green
