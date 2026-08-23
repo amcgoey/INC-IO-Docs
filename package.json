@@ -8,6 +8,7 @@
     "test:watch": "vitest",
     "dev": "tsx server.ts",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "build": "tsc",
     "start": "node dist/server.js"
   },

@@ -2,6 +2,9 @@ import Fastify, { FastifyRequest, FastifyReply } from 'fastify';
 import { OAuth2Client } from 'google-auth-library';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import { Type } from '@sinclair/typebox';
+import { TypeSystemPolicy } from '@sinclair/typebox/system';
+
+TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 
 const fastify = Fastify({ logger: true }).withTypeProvider<TypeBoxTypeProvider>();
 
