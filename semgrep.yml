@@ -1,0 +1,185 @@
+rules:
+  # =========================================================================
+  # STRICT RULES (ERROR)
+  # =========================================================================
+
+  # 1. Hexagonal Dependency Inversion - Domain Purity
+  - id: hex-domain-purity
+    message: "Domain models and ports must not import external libraries (except Typebox), adapters, or infrastructure modules."
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      include: 
+        - "src/features/**/domain.ts"
+        - "src/features/**/ports.ts"
+    patterns:
+      - pattern: "import ... from '$MODULE'"
+      - metavariable-regex:
+          metavariable: $MODULE
+          regex: '^(?!(\.|@sinclair/typebox)).*$|.*adapters.*|.*infrastructure.*'
+
+  # 2. Hexagonal Wiring - Infrastructure Injection
+  - id: hex-infrastructure-injection
+    message: "Infrastructure modules must only be injected/imported into the src/app/ wiring layer and never into src/features/."
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      exclude:
+        - "src/app/**"
+        - "src/infrastructure/**"
+        - "test/**"
+    patterns:
+      - pattern: "import ... from '$MODULE'"
+      - metavariable-regex:
+          metavariable: $MODULE
+          regex: '.*infrastructure.*'
+
+  # 3. Hexagonal Isolation - Infrastructure Purity
+  - id: hex-infrastructure-purity
+    message: "Infrastructure modules must be domain-agnostic and must never import from src/features/."
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      include:
+        - "src/infrastructure/**"
+    patterns:
+      - pattern: "import ... from '$MODULE'"
+      - metavariable-regex:
+          metavariable: $MODULE
+          regex: '.*features.*'
+
+  # 4. Fastify/Cloud Run Security - Basic Hardcoded Secrets
+  - id: hardcoded-secrets
+    message: "Potential hardcoded secret or API key detected. Do not check secrets into source control."
+    severity: ERROR
+    languages: [typescript, javascript]
+    patterns:
+      - pattern-either:
+          - pattern: const $KEY = "..."
+          - pattern: $KEY = "..."
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: '(?i).*(api_key|token|secret|password).*'
+
+  # 5. Fastify/Cloud Run Security - Unhandled Promise
+  - id: fastify-unhandled-promise
+    message: "Fastify controllers must handle promises properly to prevent unhandled rejections from crashing the Cloud Run container."
+    severity: ERROR
+    languages: [typescript, javascript]
+    patterns:
+      - pattern-either:
+          - pattern-inside: fastify.$METHOD(..., async (...) => { ... })
+          - pattern-inside: fastify.$METHOD(..., (...) => { ... })
+      - pattern: $X(...)
+      - pattern-not: await $X(...)
+      - pattern-not: return $X(...)
+
+  # 6. Handlebars Logic Bans
+  - id: handlebars-logic-ban
+    message: "Boolean logic, branching, and complex formatting are banned in Handlebars for this architecture."
+    severity: ERROR
+    languages: [json, yaml]
+    patterns:
+      - pattern-regex: '\{\{#(if|each|unless|with)'
+
+  # 7. JSON Schema Hardcoding
+  - id: no-hardcoded-documenttype
+    message: "Do not hardcode DocumentType configurations in TypeScript. They must be runtime-interpreted JSON files."
+    severity: ERROR
+    languages: [typescript]
+    patterns:
+      - pattern: "const $X : DocumentType = { ... }"
+
+  # =========================================================================
+  # MODERATE RULES (WARNING) - Loosened during prototyping
+  # =========================================================================
+
+  # 8. Hexagonal Isolation (Currently WARNING, to be tightened to ERROR later)
+  - id: hexagonal-isolation-warning
+    message: "Domain logic / Actions should not bypass ports to access implementations directly."
+    severity: WARNING
+    languages: [typescript]
+    paths:
+      exclude:
+        - "src/features/**/adapters/**"
+        - "src/app/**"
+    patterns:
+      - pattern: "new $ADAPTER(...)"
+      - metavariable-regex:
+          metavariable: $ADAPTER
+          regex: '.*Adapter$'
+
+  # 9. Adapter Leakage (Currently WARNING, to be tightened to ERROR later)
+  - id: adapter-leakage-warning
+    message: "External SDKs (Google Drive, Gmail, Fastify) should only be imported within designated adapter folders or the app wiring layer."
+    severity: WARNING
+    languages: [typescript]
+    paths:
+      exclude:
+        - "src/features/**/adapters/**"
+        - "src/app/**"
+        - "src/infrastructure/**"
+    patterns:
+      - pattern: "import ... from '$MODULE'"
+      - metavariable-regex:
+          metavariable: $MODULE
+          regex: '(googleapis|fastify|@fastify/.*)'
+
+  # 10. Testing Locality - Prevent Test Imports in Core Source
+  - id: prevent-test-imports-in-src
+    message: "Core source code must not import from the test/ directory. Unit tests should be co-located next to subjects."
+    severity: WARNING
+    languages: [typescript]
+    paths:
+      include:
+        - "src/**"
+      exclude:
+        - "**/*.test.ts"
+        - "**/*.test.js"
+    patterns:
+      - pattern: "import ... from '$PATH'"
+      - metavariable-regex:
+          metavariable: $PATH
+          regex: '.*test/.*'
+
+  # 11. Testing Locality - Unit Test Co-location
+  - id: unit-test-colocation
+    message: "Unit tests (*.test.ts) must be co-located next to their subjects in src/. The test/ directory is reserved for E2E and integration tests."
+    severity: WARNING
+    languages: [typescript, javascript]
+    paths:
+      include:
+        - "**/*.test.ts"
+        - "**/*.test.js"
+      exclude:
+        - "src/**"
+        - "test/**"
+    patterns:
+      - pattern-either:
+          - pattern: describe(...)
+          - pattern: test(...)
+          - pattern: it(...)
+
+  # 12. External Service Errors
+  - id: external-service-errors
+    message: "Ensure proper error handling (try/catch) for cloud service calls in DocumentStorage adapters and infrastructure modules."
+    severity: WARNING
+    languages: [typescript, javascript]
+    paths:
+      include:
+        - "src/features/**/adapters/**"
+        - "src/infrastructure/**"
+    patterns:
+      - pattern: "await $X(...)"
+      - pattern-not-inside: |
+          try { ... } catch ($E) { ... }
+
+  # 13. Typebox Schema Optimization
+  - id: typebox-suboptimal-schema
+    message: "Avoid suboptimal Typebox schema definitions (such as Type.Any() or Type.Unsafe()) that bypass JSON schema validation and degrade type inference performance."
+    severity: WARNING
+    languages: [typescript, javascript]
+    patterns:
+      - pattern-either:
+          - pattern: Type.Any(...)
+          - pattern: Type.Unsafe(...)
