@@ -1,5 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import type { ActivityDispatcherPort, RecordServicePort } from './ports';
 
 export const RecordType = Type.Object({
   id: Type.String(),
@@ -20,24 +21,33 @@ export type ProcessRecordResult =
   | { success: true; data: Record; activity: Activity }
   | { success: false; errors: string[] };
 
-export function processRecord(payload?: unknown): ProcessRecordResult {
-  if (Value.Check(RecordType, payload)) {
-    return {
-      success: true,
-      data: payload,
-      activity: {
+export class RecordService implements RecordServicePort {
+  constructor(private readonly dispatcher: ActivityDispatcherPort) {}
+
+  async processRecord(payload?: unknown): Promise<ProcessRecordResult> {
+    if (Value.Check(RecordType, payload)) {
+      const activity: Activity = {
         type: 'LOG_RECORD',
         payload: { record: payload },
-      },
+      };
+
+      await this.dispatcher.dispatch(activity);
+
+      return {
+        success: true,
+        data: payload,
+        activity,
+      };
+    }
+
+    const errors = [...Value.Errors(RecordType, payload)].map(
+      (err) => `${err.path}: ${err.message}`
+    );
+
+    return {
+      success: false,
+      errors: errors.length > 0 ? errors : ['Invalid record payload'],
     };
   }
-
-  const errors = [...Value.Errors(RecordType, payload)].map(
-    (err) => `${err.path}: ${err.message}`
-  );
-
-  return {
-    success: false,
-    errors: errors.length > 0 ? errors : ['Invalid record payload'],
-  };
 }
+

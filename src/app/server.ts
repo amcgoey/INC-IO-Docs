@@ -4,6 +4,7 @@ import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import { recordRoutes } from '../features/record/adapters/http';
 import { ActivityEngine } from '../features/record/adapters/activity-engine';
+import { RecordService } from '../features/record/domain';
 
 TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 
@@ -70,7 +71,9 @@ fastify.post('/onDocsHomepage', { preHandler: verifyGoogleAuth }, async (_reques
 
 // Register feature routes
 const activityEngine = new ActivityEngine();
-void fastify.register(recordRoutes, { dispatcher: activityEngine });
+const recordService = new RecordService(activityEngine);
+void fastify.register(recordRoutes, { service: recordService });
+
 
 // Start the server
 const start = async () => {

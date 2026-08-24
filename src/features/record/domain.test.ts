@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { processRecord, RecordType, ActivityType, type Record } from './domain';
+import { describe, it, expect, vi } from 'vitest';
+import { RecordService, RecordType, ActivityType, type Record } from './domain';
+import type { ActivityDispatcherPort } from './ports';
 
 describe('Record domain', () => {
   it('should export RecordType schema', () => {
@@ -10,14 +11,19 @@ describe('Record domain', () => {
     expect(ActivityType).toBeDefined();
   });
 
-  it('processRecord returns success and yields Activity for valid Record payload', () => {
+  it('processRecord validates payload, dispatches Activity, and returns success result', async () => {
+    const mockDispatcher: ActivityDispatcherPort = {
+      dispatch: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = new RecordService(mockDispatcher);
+
     const validRecord: Record = {
       id: 'rec-123',
       type: 'submittal',
       title: 'Foundation Plan',
     };
 
-    const result = processRecord(validRecord);
+    const result = await service.processRecord(validRecord);
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data).toEqual(validRecord);
@@ -26,25 +32,44 @@ describe('Record domain', () => {
         payload: { record: validRecord },
       });
     }
+
+    expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
+      type: 'LOG_RECORD',
+      payload: { record: validRecord },
+    });
   });
 
-  it('processRecord returns failure with errors for invalid payload', () => {
+  it('processRecord returns failure and does not dispatch activity for invalid payload', async () => {
+    const mockDispatcher: ActivityDispatcherPort = {
+      dispatch: vi.fn(),
+    };
+    const service = new RecordService(mockDispatcher);
+
     const invalidRecord = {
       title: 123, // wrong type, missing id and type
     };
 
-    const result = processRecord(invalidRecord);
+    const result = await service.processRecord(invalidRecord);
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.errors.length).toBeGreaterThan(0);
     }
+    expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
   });
 
-  it('processRecord returns failure for undefined or null payload', () => {
-    const resultUndefined = processRecord(undefined);
-    expect(resultUndefined.success).toBe(false);
+  it('processRecord returns failure for undefined or null payload', async () => {
+    const mockDispatcher: ActivityDispatcherPort = {
+      dispatch: vi.fn(),
+    };
+    const service = new RecordService(mockDispatcher);
 
-    const resultNull = processRecord(null);
+    const resultUndefined = await service.processRecord(undefined);
+    expect(resultUndefined.success).toBe(false);
+    expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+
+    const resultNull = await service.processRecord(null);
     expect(resultNull.success).toBe(false);
+    expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
   });
 });
+
