@@ -1,7 +1,6 @@
 import Fastify, { FastifyRequest, FastifyReply } from 'fastify';
 import { OAuth2Client } from 'google-auth-library';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
-import { Type } from '@sinclair/typebox';
 import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import { recordRoutes } from '../features/record/adapters/http';
 
@@ -70,24 +69,6 @@ fastify.post('/onDocsHomepage', { preHandler: verifyGoogleAuth }, async (_reques
 
 // Register feature routes
 void fastify.register(recordRoutes);
-
-// Example route using TypeBox schema for body validation
-fastify.post('/api/documents', {
-  schema: {
-    body: Type.Object({
-      title: Type.String(),
-      projectId: Type.Number(),
-    }),
-  },
-}, async (request, reply) => {
-  // The request body is strictly typed here without manual casting!
-  const { title, projectId } = request.body;
-  
-  return reply.send({
-    success: true,
-    message: `Document '${title}' created in project ${projectId}`,
-  });
-});
 
 // Start the server
 const start = async () => {
