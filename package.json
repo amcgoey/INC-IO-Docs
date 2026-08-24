@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run && npm --prefix infra/pulumi test",
     "test:infra": "npm --prefix infra/pulumi test",
     "test:all": "vitest run && npm --prefix infra/pulumi test",
     "test:watch": "vitest",
