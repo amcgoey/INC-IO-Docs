@@ -1,12 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { processRecord, RecordType, type Record } from './domain';
+import { processRecord, RecordType, ActivityType, type Record } from './domain';
 
 describe('Record domain', () => {
   it('should export RecordType schema', () => {
     expect(RecordType).toBeDefined();
   });
 
-  it('processRecord returns success for valid Record payload', () => {
+  it('should export ActivityType schema', () => {
+    expect(ActivityType).toBeDefined();
+  });
+
+  it('processRecord returns success and yields Activity for valid Record payload', () => {
     const validRecord: Record = {
       id: 'rec-123',
       type: 'submittal',
@@ -17,6 +21,10 @@ describe('Record domain', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data).toEqual(validRecord);
+      expect(result.activity).toEqual({
+        type: 'LOG_RECORD',
+        payload: { record: validRecord },
+      });
     }
   });
 

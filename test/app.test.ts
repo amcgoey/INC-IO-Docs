@@ -46,6 +46,10 @@ describe('App routes', () => {
     expect(body).toEqual({
       success: true,
       data: validRecord,
+      activity: {
+        type: 'LOG_RECORD',
+        payload: { record: validRecord },
+      },
     });
   });
 

@@ -9,8 +9,15 @@ export const RecordType = Type.Object({
 
 export type Record = Static<typeof RecordType>;
 
+export const ActivityType = Type.Object({
+  type: Type.String(),
+  payload: Type.Record(Type.String(), Type.Unknown()),
+});
+
+export type Activity = Static<typeof ActivityType>;
+
 export type ProcessRecordResult =
-  | { success: true; data: Record }
+  | { success: true; data: Record; activity: Activity }
   | { success: false; errors: string[] };
 
 export function processRecord(payload?: unknown): ProcessRecordResult {
@@ -18,6 +25,10 @@ export function processRecord(payload?: unknown): ProcessRecordResult {
     return {
       success: true,
       data: payload,
+      activity: {
+        type: 'LOG_RECORD',
+        payload: { record: payload },
+      },
     };
   }
 

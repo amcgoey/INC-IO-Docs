@@ -3,6 +3,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import { recordRoutes } from '../features/record/adapters/http';
+import { ActivityEngine } from '../features/record/adapters/activity-engine';
 
 TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 
@@ -68,7 +69,8 @@ fastify.post('/onDocsHomepage', { preHandler: verifyGoogleAuth }, async (_reques
 });
 
 // Register feature routes
-void fastify.register(recordRoutes);
+const activityEngine = new ActivityEngine();
+void fastify.register(recordRoutes, { dispatcher: activityEngine });
 
 // Start the server
 const start = async () => {
