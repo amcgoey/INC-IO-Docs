@@ -57,6 +57,7 @@ jobs:
           stack-name: dev
           work-dir: ./infra/pulumi
           cloud-url: ${{ env.PULUMI_STATE_BUCKET }}
+          upsert: true
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE || '' }}
 
@@ -84,6 +85,7 @@ jobs:
           stack-name: dev
           work-dir: ./infra/pulumi
           cloud-url: ${{ env.PULUMI_STATE_BUCKET }}
+          upsert: true
           config-map: |
             inc-io-docs-infra:image=${{ env.IMAGE_TAG }}
         env:
