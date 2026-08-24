@@ -10,36 +10,10 @@ TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 
 const fastify = Fastify({ logger: true }).withTypeProvider<TypeBoxTypeProvider>();
 
-// Initialize OAuth2 client
-const oAuth2Client = new OAuth2Client();
-
-const verifyGoogleAuth = async (request: FastifyRequest, reply: FastifyReply) => {
-  try {
-    const authHeader = request.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return reply.code(401).send({ error: 'Missing or invalid Authorization header' });
-    }
-
-    const token = authHeader.split(' ')[1];
-    
-    // Verify the OIDC token
-    const ticket = await oAuth2Client.verifyIdToken({
-      idToken: token,
-    });
-    
-    const payload = ticket.getPayload();
-    
-    // Attach payload to request context for use in routes
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (request as any).user = payload;
-  } catch (error) {
-    fastify.log.error(error, 'Token verification failed:');
-    return reply.code(401).send({ error: 'Unauthorized: Invalid Token' });
-  }
-};
+// Auth is handled by Cloud Run IAM
 
 // Basic POST route for the Add-on homepage
-fastify.post('/onDocsHomepage', { preHandler: verifyGoogleAuth }, async (_request: FastifyRequest, reply: FastifyReply) => {
+fastify.post('/onDocsHomepage', async (_request: FastifyRequest, reply: FastifyReply) => {
   // A typical Google Workspace Add-on response returning a homepage card
   const response = {
     action: {
