@@ -4,4 +4,4 @@ config:
   inc-io-docs-infra:repositoryName: inc-io-docs
   inc-io-docs-infra:serviceName: inc-io-docs-dev
   inc-io-docs-infra:invokerName: addon-invoker
-encryptionsalt: v1:XH8qZERLees=:v1:Qn5OsgZoN1FvCRuW:RxcX2xEwB2u9ucYoxdSF4kcDZDIgRg==
+encryptionsalt: v1:eQy+8v+by8M=:v1:uu65sq0rhdbCSgLj:WleHt7GBpcSSrvc/uk7brgMXjKcpOg==
