@@ -127,4 +127,21 @@ gcloud iam service-accounts add-iam-policy-binding $SA_EMAIL `
     --member="principalSet://iam.googleapis.com/projects/$projectNumber/locations/global/workloadIdentityPools/$WIF_POOL/attribute.repository/$REPO" | Out-Null
 Assert-Success "Failed to bind Service Account to WIF Pool."
 
-Write-Host "Bootstrap complete!" -ForegroundColor Green
+$fullWifProvider = "projects/$projectNumber/locations/global/workloadIdentityPools/$WIF_POOL/providers/$WIF_PROVIDER"
+
+Write-Host ""
+Write-Host "==========================================================" -ForegroundColor Green
+Write-Host " Bootstrap complete! " -ForegroundColor Green
+Write-Host "==========================================================" -ForegroundColor Green
+Write-Host "Please ensure the following secrets are set in your GitHub Repository:"
+Write-Host ""
+Write-Host "1. WIF_PROVIDER" -ForegroundColor Cyan
+Write-Host "   $fullWifProvider"
+Write-Host ""
+Write-Host "2. GCP_SERVICE_ACCOUNT" -ForegroundColor Cyan
+Write-Host "   $SA_EMAIL"
+Write-Host ""
+Write-Host "3. PULUMI_CONFIG_PASSPHRASE" -ForegroundColor Cyan
+Write-Host "   (Enter a strong, custom passphrase. Pulumi will use this to encrypt secrets in your state file.)"
+Write-Host "==========================================================" -ForegroundColor Green
+Write-Host ""
