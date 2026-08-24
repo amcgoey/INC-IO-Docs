@@ -1,0 +1,21 @@
+﻿{
+  "name": "inc-io-docs-infra",
+  "version": "1.0.0",
+  "description": "Pulumi infrastructure for INC-IO-Docs",
+  "main": "index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@pulumi/gcp": "^8.18.0",
+    "@pulumi/pulumi": "^3.153.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

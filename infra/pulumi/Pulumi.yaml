@@ -1,0 +1,3 @@
+﻿name: inc-io-docs-infra
+runtime: nodejs
+description: Pulumi Infrastructure for INC-IO-Docs
