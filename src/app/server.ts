@@ -3,6 +3,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import { Type } from '@sinclair/typebox';
 import { TypeSystemPolicy } from '@sinclair/typebox/system';
+import { recordRoutes } from '../features/record/adapters/http';
 
 TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 
@@ -11,13 +12,11 @@ const fastify = Fastify({ logger: true }).withTypeProvider<TypeBoxTypeProvider>(
 // Initialize OAuth2 client
 const oAuth2Client = new OAuth2Client();
 
-// Add-ons usually send an ID token in the authorization header as "Bearer <token>"
-fastify.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
+const verifyGoogleAuth = async (request: FastifyRequest, reply: FastifyReply) => {
   try {
     const authHeader = request.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      reply.code(401).send({ error: 'Missing or invalid Authorization header' });
-      return;
+      return reply.code(401).send({ error: 'Missing or invalid Authorization header' });
     }
 
     const token = authHeader.split(' ')[1];
@@ -25,7 +24,6 @@ fastify.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply
     // Verify the OIDC token
     const ticket = await oAuth2Client.verifyIdToken({
       idToken: token,
-      // audience: 'YOUR_CLIENT_ID' // Uncomment and set to verify audience for your specific app
     });
     
     const payload = ticket.getPayload();
@@ -35,12 +33,12 @@ fastify.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply
     (request as any).user = payload;
   } catch (error) {
     fastify.log.error(error, 'Token verification failed:');
-    reply.code(401).send({ error: 'Unauthorized: Invalid Token' });
+    return reply.code(401).send({ error: 'Unauthorized: Invalid Token' });
   }
-});
+};
 
 // Basic POST route for the Add-on homepage
-fastify.post('/onDocsHomepage', async (request: FastifyRequest, reply: FastifyReply) => {
+fastify.post('/onDocsHomepage', { preHandler: verifyGoogleAuth }, async (_request: FastifyRequest, reply: FastifyReply) => {
   // A typical Google Workspace Add-on response returning a homepage card
   const response = {
     action: {
@@ -48,43 +46,46 @@ fastify.post('/onDocsHomepage', async (request: FastifyRequest, reply: FastifyRe
         {
           pushCard: {
             header: {
-              title: "Welcome to INC-IO Add-on"
+              title: 'Welcome to INC-IO Add-on',
             },
             sections: [
               {
                 widgets: [
                   {
                     textParagraph: {
-                      text: "This is the homepage of the Add-on."
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      ]
-    }
+                      text: 'This is the homepage of the Add-on.',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    },
   };
   
   return reply.send(response);
 });
+
+// Register feature routes
+void fastify.register(recordRoutes);
 
 // Example route using TypeBox schema for body validation
 fastify.post('/api/documents', {
   schema: {
     body: Type.Object({
       title: Type.String(),
-      projectId: Type.Number()
-    })
-  }
+      projectId: Type.Number(),
+    }),
+  },
 }, async (request, reply) => {
   // The request body is strictly typed here without manual casting!
   const { title, projectId } = request.body;
   
   return reply.send({
     success: true,
-    message: `Document '${title}' created in project ${projectId}`
+    message: `Document '${title}' created in project ${projectId}`,
   });
 });
 
@@ -100,7 +101,7 @@ const start = async () => {
 };
 
 if (require.main === module) {
-  start();
+  void start();
 }
 
 export { fastify };

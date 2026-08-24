@@ -4,8 +4,8 @@ Schema Driven, Hexagonal Architecture Document Management App.
 
 ## Core Domain
 
-- **`DocumentType`**: The JSON schema definition loaded from the app's runtime directory.
-- **`Document`**: The structured metadata instantiating a `DocumentType`. Contains references to file locations but does NOT embed binary files.
+- **`RecordType`**: The JSON schema definition loaded from the app's runtime directory.
+- **`Record`**: The structured metadata instantiating a `RecordType`. Contains references to file locations but does NOT embed binary files.
 
 ## Architecture (Hexagonal)
 

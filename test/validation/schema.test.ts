@@ -1,5 +1,5 @@
 import { describe, it } from 'vitest';
 
-describe('DocumentType JSON files schema validation', () => {
-  it.todo('should validate all DocumentType JSON files against Typebox schemas');
+describe('RecordType JSON files schema validation', () => {
+  it.todo('should validate all RecordType JSON files against Typebox schemas');
 });

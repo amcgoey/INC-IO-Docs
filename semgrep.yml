@@ -83,12 +83,12 @@ rules:
       - pattern-regex: '\{\{#(if|each|unless|with)'
 
   # 7. JSON Schema Hardcoding
-  - id: no-hardcoded-documenttype
-    message: "Do not hardcode DocumentType configurations in TypeScript. They must be runtime-interpreted JSON files."
+  - id: no-hardcoded-recordtype
+    message: "Do not hardcode RecordType configurations in TypeScript. They must be runtime-interpreted JSON files."
     severity: ERROR
     languages: [typescript]
     patterns:
-      - pattern: "const $X : DocumentType = { ... }"
+      - pattern: "const $X : RecordType = { ... }"
 
   # =========================================================================
   # MODERATE RULES (WARNING) - Loosened during prototyping
@@ -162,7 +162,7 @@ rules:
 
   # 12. External Service Errors
   - id: external-service-errors
-    message: "Ensure proper error handling (try/catch) for cloud service calls in DocumentStorage adapters and infrastructure modules."
+    message: "Ensure proper error handling (try/catch) for cloud service calls in StorageContext adapters and infrastructure modules."
     severity: WARNING
     languages: [typescript, javascript]
     paths:

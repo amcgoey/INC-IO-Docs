@@ -6,9 +6,9 @@ vi.mock('google-auth-library', () => {
   return {
     OAuth2Client: class {
       verifyIdToken = vi.fn().mockResolvedValue({
-        getPayload: vi.fn().mockReturnValue({ sub: 'user123', email: 'test@example.com' })
+        getPayload: vi.fn().mockReturnValue({ sub: 'user123', email: 'test@example.com' }),
       });
-    }
+    },
   };
 });
 
@@ -18,13 +18,27 @@ describe('App routes', () => {
       method: 'POST',
       url: '/onDocsHomepage',
       headers: {
-        authorization: 'Bearer mocked-token-for-testing'
-      }
+        authorization: 'Bearer mocked-token-for-testing',
+      },
     });
 
     expect(response.statusCode).toBe(200);
     const body = JSON.parse(response.payload);
     expect(body).toHaveProperty('action');
     expect(body.action).toHaveProperty('navigations');
+  });
+
+  it('POST /records should return 200 without authentication', async () => {
+    const response = await fastify.inject({
+      method: 'POST',
+      url: '/records',
+      payload: {
+        sample: 'record payload',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.payload);
+    expect(body).toEqual({ success: true });
   });
 });
