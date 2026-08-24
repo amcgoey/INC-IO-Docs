@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit && npm --prefix infra/pulumi run typecheck",
     "typecheck:infra": "npm --prefix infra/pulumi run typecheck",
     "build": "tsc",
-    "start": "node dist/app/server.js",
+    "start": "node dist/src/app/server.js",
     "knip": "knip",
     "knip:fix": "knip --fix"
   },
