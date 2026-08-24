@@ -1,0 +1,80 @@
+name: Deploy to Google Cloud Run (Dev)
+
+on:
+  push:
+    branches:
+      - develop
+
+env:
+  PROJECT_ID: inc-io-docs-dev
+  REGION: us-east4
+  REPO_NAME: inc-io-docs
+  SERVICE_NAME: inc-io-docs-dev
+  PULUMI_STATE_BUCKET: gs://inc-io-docs-dev-pulumi-state
+
+jobs:
+  build-and-deploy:
+    name: Build, Push, & Deploy to Dev
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: |
+          npm ci
+          npm --prefix infra/pulumi ci
+
+      - name: Run Tests and Typecheck
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Authenticate to Google Cloud (WIF)
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker Authentication for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and Push Docker Image
+        id: build-image
+        run: |
+          IMAGE_PATH="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.REPO_NAME }}"
+          IMAGE_TAG="${IMAGE_PATH}:${{ github.sha }}"
+          IMAGE_LATEST="${IMAGE_PATH}:latest"
+
+          docker build -t "$IMAGE_TAG" -t "$IMAGE_LATEST" .
+          docker push "$IMAGE_TAG"
+          docker push "$IMAGE_LATEST"
+
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
+      - name: Deploy with Pulumi
+        uses: pulumi/actions@v6
+        with:
+          command: up
+          stack-name: dev
+          work-dir: ./infra/pulumi
+          cloud-url: ${{ env.PULUMI_STATE_BUCKET }}
+          config-map: |
+            inc-io-docs-infra:image=${{ env.IMAGE_TAG }}
+        env:
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE || '' }}
