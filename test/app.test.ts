@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { fastify } from '../server';
+import { fastify } from '../src/app/server';
 
 // Mock the entire google-auth-library so we can bypass the token verification
 vi.mock('google-auth-library', () => {
