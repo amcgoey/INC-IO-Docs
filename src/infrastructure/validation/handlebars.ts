@@ -1,21 +1,7 @@
-export interface HandlebarsValidationResult {
-  isValid: boolean;
-  errors: string[];
-}
-
 /**
- * Validates a Handlebars template string for syntax and variable definitions.
+ * Stub module for Handlebar variable validation at runtime.
  */
-export function validateHandlebarsTemplate(template: string): HandlebarsValidationResult {
-  if (!template || template.trim() === '') {
-    return {
-      isValid: false,
-      errors: ['Template cannot be empty'],
-    };
-  }
-
-  return {
-    isValid: true,
-    errors: [],
-  };
+export function validateHandlebarsTemplate(template: string): boolean {
+  // TODO: Implement actual validation logic
+  return true;
 }
