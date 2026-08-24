@@ -28,17 +28,41 @@ describe('App routes', () => {
     expect(body.action).toHaveProperty('navigations');
   });
 
-  it('POST /records should return 200 without authentication', async () => {
+  it('POST /records should return 200 for valid record payload', async () => {
+    const validRecord = {
+      id: 'doc-001',
+      type: 'submittal',
+      title: 'Foundation Spec',
+    };
+
     const response = await fastify.inject({
       method: 'POST',
       url: '/records',
-      payload: {
-        sample: 'record payload',
-      },
+      payload: validRecord,
     });
 
     expect(response.statusCode).toBe(200);
     const body = JSON.parse(response.payload);
-    expect(body).toEqual({ success: true });
+    expect(body).toEqual({
+      success: true,
+      data: validRecord,
+    });
+  });
+
+  it('POST /records should return 400 for invalid record payload', async () => {
+    const response = await fastify.inject({
+      method: 'POST',
+      url: '/records',
+      payload: {
+        invalid: 'record payload',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = JSON.parse(response.payload);
+    expect(body).toEqual({
+      success: false,
+      errors: expect.any(Array),
+    });
   });
 });

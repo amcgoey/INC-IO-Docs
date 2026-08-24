@@ -11,6 +11,9 @@ export const recordRoutes: FastifyPluginAsync<RecordRoutesOptions> = async (fast
 
   fastify.post('/records', async (request, reply) => {
     const result = service.processRecord(request.body);
+    if (!result.success) {
+      return reply.status(400).send(result);
+    }
     return reply.status(200).send(result);
   });
 };
