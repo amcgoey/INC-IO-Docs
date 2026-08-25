@@ -1,6 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { server } from '../src/app/server';
-import { STUB_FORM_SCHEMA } from '../src/features/record/domain';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { server, recordService } from '../src/app/server';
 
 // Mock the entire google-auth-library so we can bypass the token verification
 vi.mock('google-auth-library', () => {
@@ -14,6 +13,10 @@ vi.mock('google-auth-library', () => {
 });
 
 describe('App routes', () => {
+  beforeAll(async () => {
+    await recordService.initialize();
+  });
+
   it('POST /onDocsHomepage should return 200 with a valid token', async () => {
     const response = await server.inject({
       method: 'POST',
@@ -80,7 +83,17 @@ describe('App routes', () => {
     expect(response.statusCode).toBe(200);
     const body = JSON.parse(response.payload);
     expect(Array.isArray(body)).toBe(true);
-    expect(body).toEqual([STUB_FORM_SCHEMA]);
+    expect(body.length).toBeGreaterThan(0);
+    expect(body[0]).toMatchObject({
+      key: 'communication-project',
+      name: 'Communication Project',
+      recordSchema: expect.objectContaining({
+        fields: expect.arrayContaining([
+          expect.objectContaining({ key: 'Contact', type: 'string', required: true }),
+        ]),
+      }),
+    });
   });
 });
+
 

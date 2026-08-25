@@ -1,0 +1,54 @@
+{
+  "key": "communication-project",
+  "name": "Communication Project",
+  "recordSchema": {
+    "fields": [
+      {
+        "key": "Contact",
+        "name": "Contact",
+        "type": "string",
+        "description": "Contact folder name",
+        "required": true
+      },
+      {
+        "key": "Date",
+        "name": "Date",
+        "type": "string",
+        "description": "Date in yyMMdd format",
+        "required": true
+      },
+      {
+        "key": "Direction",
+        "name": "Direction",
+        "type": "string",
+        "description": "Communication direction",
+        "required": true,
+        "options": {
+          "source": "Direction",
+          "key": "Key",
+          "name": "Name"
+        }
+      },
+      {
+        "key": "Description",
+        "name": "Description",
+        "type": "string",
+        "description": "Description of communication",
+        "required": true
+      }
+    ],
+    "options": {
+      "Direction": [
+        ["IN", "Incoming"],
+        ["OT", "Outgoing"]
+      ]
+    }
+  },
+  "recordUiConfig": {
+    "events": {
+      "onSubmit": {
+        "catchAllWorkflow": "FileCommProject"
+      }
+    }
+  }
+}

@@ -1,7 +1,9 @@
+import * as path from 'node:path';
 import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import { createHttpServer } from '../infrastructure/http';
 import { registerRecordFeatureRoutes } from '../features/record/adapters/api';
 import { ActivityEngine } from '../features/record/adapters/activity-engine';
+import { ManifestRegistryAdapter } from '../features/record/adapters/manifest-registry';
 import { RecordService } from '../features/record/domain';
 
 TypeSystemPolicy.ExactOptionalPropertyTypes = true;
@@ -47,13 +49,16 @@ server.registerRoute({
 });
 
 // Register feature routes
+const defaultManifestPath = process.env.APP_MANIFEST_PATH ?? path.resolve(__dirname, '../../assets/manifest.json');
+const manifestRegistry = new ManifestRegistryAdapter({ manifestPath: defaultManifestPath });
 const activityEngine = new ActivityEngine();
-const recordService = new RecordService(activityEngine);
+const recordService = new RecordService(activityEngine, manifestRegistry);
 registerRecordFeatureRoutes(server, { service: recordService, schemaQuery: recordService });
 
 // Start the server
 const start = async () => {
   try {
+    await recordService.initialize();
     await server.start(8080, '0.0.0.0');
   } catch (err) {
     console.error(err);
@@ -65,4 +70,5 @@ if (require.main === module) {
   void start();
 }
 
-export { server };
+export { server, recordService };
+

@@ -2,19 +2,21 @@ import { describe, it, expect, vi } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import {
   RecordService,
-  RecordType,
+  RecordModel,
+  RecordTypeSchema,
   ActivityType,
-  FormSchemaType,
-  RecordFieldType,
-  STUB_FORM_SCHEMA,
   type Record,
+  type RecordType,
 } from './domain';
-import type { ActivityDispatcherPort } from './ports';
+import type { ActivityDispatcherPort, ManifestRegistryPort } from './ports';
+
+
 
 describe('Record domain', () => {
-  it('should export RecordType schema', () => {
-    expect(RecordType).toBeDefined();
+  it('should export RecordModel schema', () => {
+    expect(RecordModel).toBeDefined();
   });
+
 
   it('should export ActivityType schema', () => {
     expect(ActivityType).toBeDefined();
@@ -81,24 +83,98 @@ describe('Record domain', () => {
     expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
   });
 
-  it('exports RecordFieldType and FormSchemaType schemas and validates STUB_FORM_SCHEMA', () => {
-    expect(RecordFieldType).toBeDefined();
-    expect(FormSchemaType).toBeDefined();
-    expect(STUB_FORM_SCHEMA).toBeDefined();
-    expect(Value.Check(FormSchemaType, STUB_FORM_SCHEMA)).toBe(true);
+  it('exports RecordTypeSchema and validates valid RecordType definitions', () => {
+    expect(RecordTypeSchema).toBeDefined();
+    const validRecordType: RecordType = {
+      key: 'submittal',
+      name: 'Submittal Record',
+      recordSchema: {
+        fields: [
+          {
+            key: 'Title',
+            name: 'Title',
+            type: 'string',
+            required: true,
+          },
+        ],
+      },
+      recordUiConfig: {
+        events: {
+          onSubmit: {
+            catchAllWorkflow: 'SubmitSubmittal',
+          },
+        },
+      },
+    };
+    expect(Value.Check(RecordTypeSchema, validRecordType)).toBe(true);
   });
 
-  it('getForms returns FormSchema list from RecordService', async () => {
+  it('RecordService.initialize caches RecordTypes from ManifestRegistryPort and getForms returns them as FormSchema list', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
-    const service = new RecordService(mockDispatcher);
+    const mockRecordTypes: RecordType[] = [
+      {
+        key: 'comm-proj',
+        name: 'Communication Project',
+        recordSchema: {
+          fields: [
+            {
+              key: 'Subject',
+              name: 'Subject',
+              type: 'string',
+              required: true,
+            },
+          ],
+        },
+        recordUiConfig: {
+          events: {
+            onSubmit: {
+              catchAllWorkflow: 'HandleComm',
+            },
+          },
+        },
+      },
+    ];
+
+    const mockRegistry: ManifestRegistryPort = {
+      loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+    };
+
+    const service = new RecordService(mockDispatcher, mockRegistry);
+
+    // Before initialize, getForms returns empty list
+    const initialForms = await service.getForms();
+    expect(initialForms).toEqual([]);
+
+    await service.initialize();
+
+    expect(mockRegistry.loadAll).toHaveBeenCalledTimes(1);
 
     const forms = await service.getForms();
-    expect(Array.isArray(forms)).toBe(true);
-    expect(forms.length).toBeGreaterThan(0);
-    for (const form of forms) {
-      expect(Value.Check(FormSchemaType, form)).toBe(true);
-    }
+    expect(forms).toEqual([
+      {
+        key: 'comm-proj',
+        name: 'Communication Project',
+        recordSchema: {
+          fields: [
+            {
+              key: 'Subject',
+              name: 'Subject',
+              type: 'string',
+              required: true,
+            },
+          ],
+        },
+        recordUiConfig: {
+          events: {
+            onSubmit: {
+              catchAllWorkflow: 'HandleComm',
+            },
+          },
+        },
+      },
+    ]);
   });
 });
+

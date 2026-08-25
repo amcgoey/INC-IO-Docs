@@ -1,0 +1,5 @@
+{
+  "recordTypes": [
+    "./record-types/communication-project.json"
+  ]
+}

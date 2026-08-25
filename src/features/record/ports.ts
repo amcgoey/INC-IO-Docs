@@ -1,4 +1,4 @@
-import type { Activity, FormSchema, ProcessRecordResult } from './domain';
+import type { Activity, FormSchema, ProcessRecordResult, RecordType } from './domain';
 
 export interface HttpRequest {
   body?: unknown;
@@ -34,3 +34,8 @@ export interface RecordServicePort {
 export interface SchemaQueryPort {
   getForms(): Promise<FormSchema[]> | FormSchema[];
 }
+
+export interface ManifestRegistryPort {
+  loadAll(): Promise<RecordType[]>;
+}
+

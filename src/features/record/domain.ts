@@ -1,14 +1,14 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import type { ActivityDispatcherPort, RecordServicePort, SchemaQueryPort } from './ports';
+import type { ActivityDispatcherPort, ManifestRegistryPort, RecordServicePort, SchemaQueryPort } from './ports';
 
-export const RecordType = Type.Object({
+export const RecordModel = Type.Object({
   id: Type.String(),
   type: Type.String(),
   title: Type.String(),
 });
 
-export type Record = Static<typeof RecordType>;
+export type Record = Static<typeof RecordModel>;
 
 export const ActivityType = Type.Object({
   type: Type.String(),
@@ -66,83 +66,44 @@ export const RecordUiConfigType = Type.Object({
 
 export type RecordUiConfig = Static<typeof RecordUiConfigType>;
 
-export const FormSchemaType = Type.Object({
+export const RecordTypeSchema = Type.Object({
   key: Type.String(),
   name: Type.String(),
   recordSchema: RecordSchemaType,
   recordUiConfig: Type.Optional(RecordUiConfigType),
 });
 
-export type FormSchema = Static<typeof FormSchemaType>;
+export type RecordType = Static<typeof RecordTypeSchema>;
 
-export const STUB_FORM_SCHEMA: FormSchema = {
-  key: 'communication-project',
-  name: 'Communication Project',
-  recordSchema: {
-    fields: [
-      {
-        key: 'Contact',
-        name: 'Contact',
-        type: 'string',
-        description: 'Contact folder name',
-        required: true,
-      },
-      {
-        key: 'Date',
-        name: 'Date',
-        type: 'string',
-        description: 'Date in yyMMdd format',
-        required: true,
-      },
-      {
-        key: 'Direction',
-        name: 'Direction',
-        type: 'string',
-        description: 'Communication direction',
-        required: true,
-        options: {
-          source: 'Direction',
-          key: 'Key',
-          name: 'Name',
-        },
-      },
-      {
-        key: 'Description',
-        name: 'Description',
-        type: 'string',
-        description: 'Description of communication',
-        required: true,
-      },
-    ],
-    options: {
-      Direction: [
-        ['IN', 'Incoming'],
-        ['OT', 'Outgoing'],
-      ],
-    },
-  },
-  recordUiConfig: {
-    events: {
-      onSubmit: {
-        catchAllWorkflow: 'FileCommProject',
-      },
-    },
-  },
-};
+export const FormSchemaType = RecordTypeSchema;
+export type FormSchema = RecordType;
 
 export type ProcessRecordResult =
   | { success: true; data: Record; activity: Activity }
   | { success: false; errors: string[] };
 
 export class RecordService implements RecordServicePort, SchemaQueryPort {
-  constructor(private readonly dispatcher: ActivityDispatcherPort) {}
+  private formSchemas: FormSchema[] = [];
+
+  constructor(
+    private readonly dispatcher: ActivityDispatcherPort,
+    private readonly manifestRegistry?: ManifestRegistryPort,
+  ) {}
+
+  async initialize(): Promise<void> {
+    if (this.manifestRegistry) {
+      const recordTypes = await this.manifestRegistry.loadAll();
+      this.formSchemas = recordTypes;
+    }
+  }
+
 
   async getForms(): Promise<FormSchema[]> {
-    return [STUB_FORM_SCHEMA];
+    return this.formSchemas;
   }
 
   async processRecord(payload?: unknown): Promise<ProcessRecordResult> {
-    if (Value.Check(RecordType, payload)) {
+    if (Value.Check(RecordModel, payload)) {
       const activity: Activity = {
         type: 'LOG_RECORD',
         payload: { record: payload },
@@ -157,7 +118,7 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       };
     }
 
-    const errors = [...Value.Errors(RecordType, payload)].map(
+    const errors = [...Value.Errors(RecordModel, payload)].map(
       (err) => `${err.path}: ${err.message}`
     );
 
@@ -167,4 +128,5 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
     };
   }
 }
+
 
