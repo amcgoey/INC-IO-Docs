@@ -1,4 +1,4 @@
-import type { Activity, ProcessRecordResult } from './domain';
+import type { Activity, FormSchema, ProcessRecordResult } from './domain';
 
 export interface HttpRequest {
   body?: unknown;
@@ -29,4 +29,8 @@ export interface ActivityDispatcherPort {
 
 export interface RecordServicePort {
   processRecord(payload?: unknown): Promise<ProcessRecordResult>;
+}
+
+export interface SchemaQueryPort {
+  getForms(): Promise<FormSchema[]> | FormSchema[];
 }

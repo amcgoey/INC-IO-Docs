@@ -1,6 +1,7 @@
 import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import { createHttpServer } from '../infrastructure/http';
 import { registerRecordRoutes } from '../features/record/adapters/http';
+import { registerFormRoutes } from '../features/record/adapters/http-delivery';
 import { ActivityEngine } from '../features/record/adapters/activity-engine';
 import { RecordService } from '../features/record/domain';
 
@@ -50,6 +51,7 @@ server.registerRoute({
 const activityEngine = new ActivityEngine();
 const recordService = new RecordService(activityEngine);
 registerRecordRoutes(server, { service: recordService });
+registerFormRoutes(server, { schemaQuery: recordService });
 
 // Start the server
 const start = async () => {

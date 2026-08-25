@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { server } from '../src/app/server';
+import { STUB_FORM_SCHEMA } from '../src/features/record/domain';
 
 // Mock the entire google-auth-library so we can bypass the token verification
 vi.mock('google-auth-library', () => {
@@ -69,4 +70,17 @@ describe('App routes', () => {
       errors: expect.any(Array),
     });
   });
+
+  it('GET /forms should return 200 with FormSchema list', async () => {
+    const response = await server.inject({
+      method: 'GET',
+      url: '/forms',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.payload);
+    expect(Array.isArray(body)).toBe(true);
+    expect(body).toEqual([STUB_FORM_SCHEMA]);
+  });
 });
+

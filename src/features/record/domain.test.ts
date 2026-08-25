@@ -1,5 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
-import { RecordService, RecordType, ActivityType, type Record } from './domain';
+import { Value } from '@sinclair/typebox/value';
+import {
+  RecordService,
+  RecordType,
+  ActivityType,
+  FormSchemaType,
+  RecordFieldType,
+  STUB_FORM_SCHEMA,
+  type Record,
+} from './domain';
 import type { ActivityDispatcherPort } from './ports';
 
 describe('Record domain', () => {
@@ -71,5 +80,25 @@ describe('Record domain', () => {
     expect(resultNull.success).toBe(false);
     expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
   });
-});
 
+  it('exports RecordFieldType and FormSchemaType schemas and validates STUB_FORM_SCHEMA', () => {
+    expect(RecordFieldType).toBeDefined();
+    expect(FormSchemaType).toBeDefined();
+    expect(STUB_FORM_SCHEMA).toBeDefined();
+    expect(Value.Check(FormSchemaType, STUB_FORM_SCHEMA)).toBe(true);
+  });
+
+  it('getForms returns FormSchema list from RecordService', async () => {
+    const mockDispatcher: ActivityDispatcherPort = {
+      dispatch: vi.fn(),
+    };
+    const service = new RecordService(mockDispatcher);
+
+    const forms = await service.getForms();
+    expect(Array.isArray(forms)).toBe(true);
+    expect(forms.length).toBeGreaterThan(0);
+    for (const form of forms) {
+      expect(Value.Check(FormSchemaType, form)).toBe(true);
+    }
+  });
+});
