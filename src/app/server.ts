@@ -1,4 +1,3 @@
-import * as path from 'node:path';
 import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import { createHttpServer } from '../infrastructure/http';
 import { registerRecordFeatureRoutes } from '../features/record/adapters/api';
@@ -49,11 +48,11 @@ server.registerRoute({
 });
 
 // Register feature routes
-const defaultManifestPath = process.env.APP_MANIFEST_PATH ?? path.resolve(__dirname, '../../assets/manifest.json');
-const manifestRegistry = new ManifestRegistryAdapter({ manifestPath: defaultManifestPath });
+const manifestRegistry = new ManifestRegistryAdapter();
 const activityEngine = new ActivityEngine();
 const recordService = new RecordService(activityEngine, manifestRegistry);
 registerRecordFeatureRoutes(server, { service: recordService, schemaQuery: recordService });
+
 
 // Start the server
 const start = async () => {

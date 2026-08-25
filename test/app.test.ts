@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { server, recordService } from '../src/app/server';
 
@@ -14,8 +15,10 @@ vi.mock('google-auth-library', () => {
 
 describe('App routes', () => {
   beforeAll(async () => {
+    process.env.APP_MANIFEST_PATH = path.resolve(__dirname, '../assets/manifest.json');
     await recordService.initialize();
   });
+
 
   it('POST /onDocsHomepage should return 200 with a valid token', async () => {
     const response = await server.inject({

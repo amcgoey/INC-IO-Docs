@@ -176,5 +176,14 @@ describe('Record domain', () => {
       },
     ]);
   });
+
+  it('RecordService.initialize throws if manifestRegistry is not provided', async () => {
+    const mockDispatcher: ActivityDispatcherPort = {
+      dispatch: vi.fn(),
+    };
+    const service = new RecordService(mockDispatcher);
+    await expect(service.initialize()).rejects.toThrow(/manifest registry is not configured/i);
+  });
 });
+
 

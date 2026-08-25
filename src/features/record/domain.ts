@@ -91,11 +91,13 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
   ) {}
 
   async initialize(): Promise<void> {
-    if (this.manifestRegistry) {
-      const recordTypes = await this.manifestRegistry.loadAll();
-      this.formSchemas = recordTypes;
+    if (!this.manifestRegistry) {
+      throw new Error('Manifest registry is not configured.');
     }
+    const recordTypes = await this.manifestRegistry.loadAll();
+    this.formSchemas = recordTypes;
   }
+
 
 
   async getForms(): Promise<FormSchema[]> {
