@@ -1,14 +1,18 @@
 import { describe, it, expect, vi } from 'vitest';
 import { registerRecordFeatureRoutes } from './api';
-import type { RouteDefinition, HttpRouterPort, RecordServicePort, SchemaQueryPort } from '../ports';
+import type { RecordServicePort, SchemaQueryPort } from '../ports';
 import type { FormSchema } from '../domain';
+import type { HttpServer, RouteDefinition } from '../../../infrastructure/http';
 
 function createMockRouter() {
   const registeredRoutes: RouteDefinition[] = [];
-  const router: HttpRouterPort = {
+  const router: HttpServer = {
     registerRoute: vi.fn((route: RouteDefinition) => {
       registeredRoutes.push(route);
     }),
+    start: vi.fn(),
+    stop: vi.fn(),
+    inject: vi.fn(),
   };
   return { router, registeredRoutes };
 }
