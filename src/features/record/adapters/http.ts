@@ -1,19 +1,40 @@
-import type { FastifyPluginAsync } from 'fastify';
 import type { RecordServicePort } from '../ports';
+
+export interface HttpRouter {
+  registerRoute(route: {
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
+    url: string;
+    handler: (request: {
+      body?: unknown;
+      headers?: Record<string, string | string[] | undefined>;
+      query?: Record<string, unknown>;
+      params?: Record<string, string | undefined>;
+    }) => Promise<{ status: number; body?: unknown; headers?: Record<string, string> }> | { status: number; body?: unknown; headers?: Record<string, string> };
+  }): void;
+}
 
 export interface RecordRoutesOptions {
   service: RecordServicePort;
 }
 
-export const recordRoutes: FastifyPluginAsync<RecordRoutesOptions> = async (fastify, opts) => {
-  const service: RecordServicePort = opts.service;
+export function registerRecordRoutes(server: HttpRouter, opts: RecordRoutesOptions): void {
+  const service = opts.service;
 
-  fastify.post('/records', async (request, reply) => {
-    const result = await service.processRecord(request.body);
-    if (!result.success) {
-      return reply.status(400).send(result);
-    }
-    return reply.status(200).send(result);
+  server.registerRoute({
+    method: 'POST',
+    url: '/records',
+    handler: async (request) => {
+      const result = await service.processRecord(request.body);
+      if (!result.success) {
+        return {
+          status: 400,
+          body: result,
+        };
+      }
+      return {
+        status: 200,
+        body: result,
+      };
+    },
   });
-};
-
+}

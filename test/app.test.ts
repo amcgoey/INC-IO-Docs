@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { fastify } from '../src/app/server';
+import { server } from '../src/app/server';
 
 // Mock the entire google-auth-library so we can bypass the token verification
 vi.mock('google-auth-library', () => {
@@ -14,7 +14,7 @@ vi.mock('google-auth-library', () => {
 
 describe('App routes', () => {
   it('POST /onDocsHomepage should return 200 with a valid token', async () => {
-    const response = await fastify.inject({
+    const response = await server.inject({
       method: 'POST',
       url: '/onDocsHomepage',
       headers: {
@@ -35,7 +35,7 @@ describe('App routes', () => {
       title: 'Foundation Spec',
     };
 
-    const response = await fastify.inject({
+    const response = await server.inject({
       method: 'POST',
       url: '/records',
       payload: validRecord,
@@ -54,7 +54,7 @@ describe('App routes', () => {
   });
 
   it('POST /records should return 400 for invalid record payload', async () => {
-    const response = await fastify.inject({
+    const response = await server.inject({
       method: 'POST',
       url: '/records',
       payload: {

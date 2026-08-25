@@ -45,6 +45,6 @@ Thumbs.db
 *client_secret*.json
 .gcp/
 
-# Google Workspace Add-on (Clasp)
-# Uncomment the line below if you don't want to share the App Script project ID with collaborators
-# .clasp.json
+# Scratch workspace
+scratch/
+

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import Fastify from 'fastify';
-import { recordRoutes } from './http';
+import { createHttpServer } from '../../../infrastructure/http';
+import { registerRecordRoutes } from './http';
 import type { RecordServicePort } from '../ports';
 
 describe('Record HTTP driving adapter', () => {
@@ -16,8 +16,8 @@ describe('Record HTTP driving adapter', () => {
       }),
     };
 
-    const fastify = Fastify();
-    await fastify.register(recordRoutes, { service: mockService });
+    const server = createHttpServer();
+    registerRecordRoutes(server, { service: mockService });
 
     const validPayload = {
       id: 'rec-1',
@@ -25,7 +25,7 @@ describe('Record HTTP driving adapter', () => {
       title: 'Structural Steel Spec',
     };
 
-    const response = await fastify.inject({
+    const response = await server.inject({
       method: 'POST',
       url: '/records',
       payload: validPayload,
@@ -51,12 +51,12 @@ describe('Record HTTP driving adapter', () => {
       }),
     };
 
-    const fastify = Fastify();
-    await fastify.register(recordRoutes, { service: mockService });
+    const server = createHttpServer();
+    registerRecordRoutes(server, { service: mockService });
 
     const invalidPayload = { title: 123 };
 
-    const response = await fastify.inject({
+    const response = await server.inject({
       method: 'POST',
       url: '/records',
       payload: invalidPayload,
@@ -70,4 +70,3 @@ describe('Record HTTP driving adapter', () => {
     });
   });
 });
-

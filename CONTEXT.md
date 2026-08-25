@@ -8,6 +8,13 @@ The core rules engine and document management system that validates payloads, re
 The structural definition (Typebox schema) for a class of documents, such as project communication, submittals, or other types of records.
 _Avoid_: Business entity, generic schema
 
+**RecordSchema**:
+The subset of a `RecordType` that defines the shape of the data payload, including the form fields and available options.
+
+**FormSchema**:
+The presentation-ready DTO bundled by the driving port, containing the `RecordSchema` and `RecordUiConfig` needed by the frontend to render UI forms and handle events.
+_Avoid_: raw schema, recordUiConfig
+
 **Record**:
 A validated, immutable instance of data that perfectly satisfies a `RecordType`, representing the structured data and the references to a file or files that are being managed.
 _Avoid_: Payload, document
