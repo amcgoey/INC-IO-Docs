@@ -1,7 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { Value } from '@sinclair/typebox/value';
 import { createApp, type AppInstance } from '../src/app/server';
 import type { ManifestRegistryPort, ActivityDispatcherPort } from '../src/features/record/ports';
-import type { RecordType } from '../src/features/record/domain';
+import { FormSchemaType, type RecordType } from '../src/features/record/domain';
 
 describe('App integration tests', () => {
   let app: AppInstance;
@@ -57,7 +61,6 @@ describe('App integration tests', () => {
   });
 
   describe('Route endpoints', () => {
-
     it('POST /records should return 200 and dispatch activity for valid record payload', async () => {
       const validRecord = {
         id: 'doc-001',
@@ -136,13 +139,50 @@ describe('App integration tests', () => {
           },
         },
       });
+
+      // Verify strict contract validation against FormSchemaType
+      expect(Value.Check(FormSchemaType, body[0])).toBe(true);
+
+      // Verify backend-only and undeclared properties are not present
       expect(body[0]).not.toHaveProperty('recordWorkflowConfig');
       expect(body[0]).not.toHaveProperty('storageContextConfig');
+      expect(Object.keys(body[0]).sort()).toEqual(['key', 'name', 'recordSchema', 'recordUiConfig'].sort());
+
       expect(mockManifestRegistry.loadAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('GET /forms should return valid FormSchemas with default production manifest and server wiring', async () => {
+      const defaultApp = createApp();
+      await defaultApp.initialize();
+
+      const response = await defaultApp.server.inject({
+        method: 'GET',
+        url: '/forms',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(Array.isArray(body)).toBe(true);
+      expect(body.length).toBeGreaterThan(0);
+      for (const form of body) {
+        expect(Value.Check(FormSchemaType, form)).toBe(true);
+        expect(form).not.toHaveProperty('recordWorkflowConfig');
+        expect(form).not.toHaveProperty('storageContextConfig');
+      }
     });
   });
 
   describe('Fail-fast startup behavior', () => {
+    let tempDir: string;
+
+    beforeEach(async () => {
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'inc-io-test-'));
+    });
+
+    afterEach(async () => {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    });
+
     function createAppWithFailingRegistry(error: Error) {
       const failingRegistry: ManifestRegistryPort = {
         loadAll: vi.fn().mockRejectedValue(error),
@@ -172,6 +212,63 @@ describe('App integration tests', () => {
       );
 
       await expect(failingApp.start()).rejects.toThrow('Fatal manifest discovery failure');
+    });
+
+    it('fails fast during startup when manifest file is missing', async () => {
+      const nonExistentManifestPath = path.join(tempDir, 'non-existent-manifest.json');
+      const failingApp = createApp({ manifestPath: nonExistentManifestPath });
+
+      await expect(failingApp.initialize()).rejects.toThrow();
+    });
+
+    it('fails fast during startup when manifest file contains corrupted JSON', async () => {
+      const corruptedManifestPath = path.join(tempDir, 'corrupted-manifest.json');
+      await fs.writeFile(corruptedManifestPath, '{ invalid json');
+      const failingApp = createApp({ manifestPath: corruptedManifestPath });
+
+      await expect(failingApp.initialize()).rejects.toThrow(/Invalid JSON in manifest file/);
+    });
+
+    it('fails fast during startup when manifest file schema is invalid', async () => {
+      const invalidManifestPath = path.join(tempDir, 'invalid-manifest.json');
+      await fs.writeFile(invalidManifestPath, JSON.stringify({ recordTypes: 'not-an-array' }));
+      const failingApp = createApp({ manifestPath: invalidManifestPath });
+
+      await expect(failingApp.initialize()).rejects.toThrow(/Invalid manifest file structure/);
+    });
+
+    it('fails fast during startup when a referenced RecordType file is missing', async () => {
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({ recordTypes: ['./missing-record-type.json'] })
+      );
+      const failingApp = createApp({ manifestPath });
+
+      await expect(failingApp.initialize()).rejects.toThrow();
+    });
+
+    it('fails fast during startup when a referenced RecordType file contains corrupted JSON', async () => {
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      const recordTypePath = path.join(tempDir, 'corrupted-record.json');
+      await fs.writeFile(manifestPath, JSON.stringify({ recordTypes: ['./corrupted-record.json'] }));
+      await fs.writeFile(recordTypePath, '{ invalid json');
+      const failingApp = createApp({ manifestPath });
+
+      await expect(failingApp.initialize()).rejects.toThrow(/Invalid JSON in RecordType file/);
+    });
+
+    it('fails fast during startup when a referenced RecordType file fails schema validation', async () => {
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      const recordTypePath = path.join(tempDir, 'invalid-record.json');
+      await fs.writeFile(manifestPath, JSON.stringify({ recordTypes: ['./invalid-record.json'] }));
+      await fs.writeFile(
+        recordTypePath,
+        JSON.stringify({ key: 'invalid', name: 'Invalid', recordSchema: { fields: 'not-an-array' } })
+      );
+      const failingApp = createApp({ manifestPath });
+
+      await expect(failingApp.initialize()).rejects.toThrow(/Invalid RecordType schema/);
     });
   });
 

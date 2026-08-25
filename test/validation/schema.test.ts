@@ -1,7 +1,11 @@
 import * as path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { ManifestRegistryAdapter } from '../../src/features/record/adapters/manifest-registry';
-import { RecordTypeSchema } from '../../src/features/record/domain';
+import {
+  RecordTypeSchema,
+  FormSchemaType,
+  formatValidationErrors,
+} from '../../src/features/record/domain';
 import { Value } from '@sinclair/typebox/value';
 
 describe('RecordType JSON files schema validation', () => {
@@ -12,8 +16,40 @@ describe('RecordType JSON files schema validation', () => {
 
     expect(recordTypes.length).toBeGreaterThan(0);
     for (const recordType of recordTypes) {
+      const errors = formatValidationErrors(RecordTypeSchema, recordType);
+      expect(errors).toEqual([]);
       expect(Value.Check(RecordTypeSchema, recordType)).toBe(true);
+
+      // Verify essential properties
+      expect(typeof recordType.key).toBe('string');
+      expect(recordType.key.length).toBeGreaterThan(0);
+      expect(typeof recordType.name).toBe('string');
+      expect(recordType.name.length).toBeGreaterThan(0);
+
+      // Verify fields
+      expect(Array.isArray(recordType.recordSchema.fields)).toBe(true);
+      expect(recordType.recordSchema.fields.length).toBeGreaterThan(0);
+      for (const field of recordType.recordSchema.fields) {
+        expect(typeof field.key).toBe('string');
+        expect(typeof field.name).toBe('string');
+        expect(typeof field.type).toBe('string');
+        expect(typeof field.required).toBe('boolean');
+      }
+
+      // Verify FormSchema projection matches tightened FormSchemaType
+      const formSchema = {
+        key: recordType.key,
+        name: recordType.name,
+        recordSchema: recordType.recordSchema,
+        ...(recordType.recordUiConfig !== undefined && {
+          recordUiConfig: recordType.recordUiConfig,
+        }),
+      };
+      expect(Value.Check(FormSchemaType, formSchema)).toBe(true);
+      expect(formSchema).not.toHaveProperty('recordWorkflowConfig');
+      expect(formSchema).not.toHaveProperty('storageContextConfig');
     }
   });
 });
+
 
