@@ -1,4 +1,4 @@
-﻿import * as pulumi from "@pulumi/pulumi";
+import * as pulumi from "@pulumi/pulumi";
 import * as gcp from "@pulumi/gcp";
 
 export interface AppInfrastructureArgs {
@@ -64,6 +64,7 @@ export class AppInfrastructure extends pulumi.ComponentResource {
     const requiredApis = [
       "artifactregistry.googleapis.com",
       "run.googleapis.com",
+      "compute.googleapis.com",
     ];
 
     const enabledApis = requiredApis.map(

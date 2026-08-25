@@ -29,6 +29,11 @@ RUN npm ci --omit=dev
 # Copy compiled code from the builder stage
 COPY --chown=node:node --from=builder /app/dist ./dist
 
+# Copy assets
+COPY --chown=node:node assets ./assets
+
+ENV APP_MANIFEST_PATH=/app/assets/manifest.json
+
 # Expose port 8080
 EXPOSE 8080
 
