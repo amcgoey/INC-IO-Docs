@@ -13,15 +13,14 @@ export interface RouteSchema {
   body?: TSchema;
   querystring?: TSchema;
   params?: TSchema;
-  headers?: TSchema;
   response?: Record<number, TSchema>;
 }
 
 export interface HttpRequest<S extends RouteSchema = RouteSchema> {
   body?: (S['body'] extends TSchema ? Static<S['body']> : unknown) | undefined;
-  headers?: (S['headers'] extends TSchema ? Static<S['headers']> : Record<string, string | string[] | undefined>) | undefined;
-  query?: (S['querystring'] extends TSchema ? Static<S['querystring']> : Record<string, unknown>) | undefined;
-  params?: (S['params'] extends TSchema ? Static<S['params']> : Record<string, string | undefined>) | undefined;
+  headers?: Record<string, string | string[] | undefined> | undefined;
+  query?: (S['querystring'] extends TSchema ? Static<S['querystring']> : unknown) | undefined;
+  params?: (S['params'] extends TSchema ? Static<S['params']> : unknown) | undefined;
 }
 
 export interface HttpResponse {
