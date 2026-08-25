@@ -39,8 +39,14 @@
     ],
     "options": {
       "Direction": [
-        ["IN", "Incoming"],
-        ["OT", "Outgoing"]
+        {
+          "Key": "IN",
+          "Name": "Incoming"
+        },
+        {
+          "Key": "OT",
+          "Name": "Outgoing"
+        }
       ]
     }
   },

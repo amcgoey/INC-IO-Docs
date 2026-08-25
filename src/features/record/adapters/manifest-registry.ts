@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import { RecordTypeSchema, type RecordType } from '../domain';
+import { RecordTypeSchema, formatValidationErrors, type RecordType } from '../domain';
 import type { ManifestRegistryPort } from '../ports';
 
 export const ManifestSchema = Type.Object({
@@ -24,19 +24,13 @@ export function parseJson(content: string, contextDescription: string): unknown 
   }
 }
 
-export function formatValidationErrors<T extends TSchema>(schema: T, value: unknown): string {
-  return [...Value.Errors(schema, value)]
-    .map((e) => `${e.path}: ${e.message}`)
-    .join(', ');
-}
-
 export function validateSchema<T extends TSchema>(
   schema: T,
   value: unknown,
   errorMessage: string
 ): asserts value is Static<T> {
   if (!Value.Check(schema, value)) {
-    const errors = formatValidationErrors(schema, value);
+    const errors = formatValidationErrors(schema, value).join(', ');
     throw new Error(`${errorMessage}: ${errors}`);
   }
 }

@@ -1,6 +1,10 @@
-import { Type, type Static } from '@sinclair/typebox';
+import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import type { ActivityDispatcherPort, ManifestRegistryPort, RecordServicePort, SchemaQueryPort } from './ports';
+
+export function formatValidationErrors<T extends TSchema>(schema: T, value: unknown): string[] {
+  return [...Value.Errors(schema, value)].map((e) => `${e.path}: ${e.message}`);
+}
 
 export const RecordModel = Type.Object({
   id: Type.String(),
@@ -31,23 +35,38 @@ export const RecordFieldType = Type.Object({
   type: Type.String(),
   description: Type.Optional(Type.String()),
   required: Type.Boolean(),
-  defaultValue: Type.Optional(Type.Unknown()),
+  defaultValue: Type.Optional(Type.String()),
   format: Type.Optional(Type.String()),
   options: Type.Optional(RecordFieldOptionType),
 });
 
 export type RecordField = Static<typeof RecordFieldType>;
 
+export const RecordSchemaOptionTupleType = Type.Record(Type.String(), Type.Unknown());
+
+export type RecordSchemaOptionTuple = Static<typeof RecordSchemaOptionTupleType>;
+
+export const RecordIdentitySchemaType = Type.Object(
+  {
+    Id: Type.Optional(Type.String()),
+    IdRecord: Type.Optional(Type.String()),
+    IdGroup: Type.Optional(Type.String()),
+  },
+  { additionalProperties: Type.String() }
+);
+
+export type RecordIdentitySchema = Static<typeof RecordIdentitySchemaType>;
+
 export const RecordSchemaType = Type.Object({
   fields: Type.Array(RecordFieldType),
-  identity: Type.Optional(Type.Record(Type.String(), Type.String())),
-  options: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  identity: Type.Optional(RecordIdentitySchemaType),
+  options: Type.Optional(Type.Record(Type.String(), Type.Array(RecordSchemaOptionTupleType))),
 });
 
 export type RecordSchema = Static<typeof RecordSchemaType>;
 
 export const UiEventRuleType = Type.Object({
-  matchFields: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  matchFields: Type.Optional(Type.Record(Type.String(), Type.String())),
   workflow: Type.String(),
 });
 
@@ -135,9 +154,7 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       };
     }
 
-    const errors = [...Value.Errors(RecordModel, payload)].map(
-      (err) => `${err.path}: ${err.message}`
-    );
+    const errors = formatValidationErrors(RecordModel, payload);
 
     return {
       success: false,

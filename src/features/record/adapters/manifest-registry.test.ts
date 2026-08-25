@@ -6,9 +6,9 @@ import { Type } from '@sinclair/typebox';
 import {
   ManifestRegistryAdapter,
   parseJson,
-  formatValidationErrors,
   validateSchema,
 } from './manifest-registry';
+import { formatValidationErrors } from '../domain';
 
 
 describe('ManifestRegistryAdapter', () => {
@@ -241,10 +241,10 @@ describe('Helper functions', () => {
   });
 
   describe('formatValidationErrors', () => {
-    it('returns empty string when there are no errors', () => {
+    it('returns empty array when there are no errors', () => {
       const Schema = Type.Object({ name: Type.String() });
       const errors = formatValidationErrors(Schema, { name: 'test' });
-      expect(errors).toBe('');
+      expect(errors).toEqual([]);
     });
 
     it('formats single and multiple schema errors with paths', () => {
@@ -253,8 +253,8 @@ describe('Helper functions', () => {
         count: Type.Number(),
       });
       const errors = formatValidationErrors(Schema, { name: 123, count: 'abc' });
-      expect(errors).toContain('/name:');
-      expect(errors).toContain('/count:');
+      expect(errors.some((e) => e.includes('/name:'))).toBe(true);
+      expect(errors.some((e) => e.includes('/count:'))).toBe(true);
     });
   });
 

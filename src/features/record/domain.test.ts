@@ -5,8 +5,14 @@ import {
   RecordModel,
   RecordTypeSchema,
   RecordFieldOptionType,
+  RecordFieldType,
+  RecordSchemaType,
+  RecordSchemaOptionTupleType,
+  RecordIdentitySchemaType,
+  UiEventRuleType,
   FormSchemaType,
   ActivityType,
+  formatValidationErrors,
   type Record,
   type RecordType,
   type FormSchema,
@@ -306,6 +312,167 @@ describe('Record domain', () => {
       expect(form).not.toHaveProperty('recordWorkflowConfig');
       expect(form).not.toHaveProperty('storageContextConfig');
     }
+  });
+
+  describe('RecordSchemaOptionTupleType and RecordSchemaType.options', () => {
+    it('validates RecordSchemaOptionTupleType as Record<string, unknown>', () => {
+      expect(RecordSchemaOptionTupleType).toBeDefined();
+      const validTuple = { Key: 'IN', Name: 'Incoming', extra: 123 };
+      expect(Value.Check(RecordSchemaOptionTupleType, validTuple)).toBe(true);
+
+      const invalidTuple = 'not-an-object';
+      expect(Value.Check(RecordSchemaOptionTupleType, invalidTuple)).toBe(false);
+    });
+
+    it('validates RecordSchemaType.options as optional Record<string, RecordSchemaOptionTupleType[]>', () => {
+      const validSchemaWithOptions = {
+        fields: [{ key: 'f1', name: 'Field 1', type: 'string', required: true }],
+        options: {
+          Direction: [
+            { Key: 'IN', Name: 'Incoming' },
+            { Key: 'OT', Name: 'Outgoing' },
+          ],
+        },
+      };
+      expect(Value.Check(RecordSchemaType, validSchemaWithOptions)).toBe(true);
+
+      const invalidSchemaWithOptions = {
+        fields: [{ key: 'f1', name: 'Field 1', type: 'string', required: true }],
+        options: {
+          Direction: 'invalid-not-array',
+        },
+      };
+      expect(Value.Check(RecordSchemaType, invalidSchemaWithOptions)).toBe(false);
+    });
+  });
+
+  describe('RecordIdentitySchemaType', () => {
+    it('validates Id, IdRecord, and IdGroup keys with extensible string properties', () => {
+      expect(RecordIdentitySchemaType).toBeDefined();
+
+      const validIdentity = {
+        Id: '{{Key}}',
+        IdRecord: '{{Key}}-{{Date}}',
+        IdGroup: '{{Contact}}',
+        customProperty: 'custom-value',
+      };
+      expect(Value.Check(RecordIdentitySchemaType, validIdentity)).toBe(true);
+
+      const validPartialIdentity = {
+        Id: '{{Key}}',
+      };
+      expect(Value.Check(RecordIdentitySchemaType, validPartialIdentity)).toBe(true);
+
+      const emptyIdentity = {};
+      expect(Value.Check(RecordIdentitySchemaType, emptyIdentity)).toBe(true);
+
+      const invalidNonStringValue = {
+        Id: 123,
+      };
+      expect(Value.Check(RecordIdentitySchemaType, invalidNonStringValue)).toBe(false);
+
+      const invalidNonStringExtensibleValue = {
+        Id: '{{Key}}',
+        customField: 999,
+      };
+      expect(Value.Check(RecordIdentitySchemaType, invalidNonStringExtensibleValue)).toBe(false);
+    });
+
+    it('validates RecordSchemaType.identity with RecordIdentitySchemaType', () => {
+      const schemaWithIdentity = {
+        fields: [{ key: 'f1', name: 'Field 1', type: 'string', required: true }],
+        identity: {
+          Id: '{{Key}}',
+          IdRecord: '{{Key}}-{{Date}}',
+          IdGroup: '{{Contact}}',
+        },
+      };
+      expect(Value.Check(RecordSchemaType, schemaWithIdentity)).toBe(true);
+
+      const schemaWithInvalidIdentity = {
+        fields: [{ key: 'f1', name: 'Field 1', type: 'string', required: true }],
+        identity: {
+          Id: 123,
+        },
+      };
+      expect(Value.Check(RecordSchemaType, schemaWithInvalidIdentity)).toBe(false);
+    });
+  });
+
+  describe('UiEventRuleType.matchFields', () => {
+    it('accepts optional matchFields as Record<string, string>', () => {
+      const validRule = {
+        matchFields: {
+          Direction: 'IN',
+          Status: 'Active',
+        },
+        workflow: 'HandleIncoming',
+      };
+      expect(Value.Check(UiEventRuleType, validRule)).toBe(true);
+
+      const ruleWithoutMatchFields = {
+        workflow: 'HandleAll',
+      };
+      expect(Value.Check(UiEventRuleType, ruleWithoutMatchFields)).toBe(true);
+    });
+
+    it('rejects matchFields with non-string values', () => {
+      const invalidRule = {
+        matchFields: {
+          Direction: 123,
+        },
+        workflow: 'HandleIncoming',
+      };
+      expect(Value.Check(UiEventRuleType, invalidRule)).toBe(false);
+    });
+  });
+
+  describe('RecordFieldType.defaultValue', () => {
+    it('accepts optional defaultValue as string', () => {
+      const fieldWithDefault = {
+        key: 'Status',
+        name: 'Status',
+        type: 'string',
+        required: false,
+        defaultValue: 'Draft',
+      };
+      expect(Value.Check(RecordFieldType, fieldWithDefault)).toBe(true);
+
+      const fieldWithoutDefault = {
+        key: 'Status',
+        name: 'Status',
+        type: 'string',
+        required: false,
+      };
+      expect(Value.Check(RecordFieldType, fieldWithoutDefault)).toBe(true);
+    });
+
+    it('rejects non-string defaultValue', () => {
+      const invalidField = {
+        key: 'Status',
+        name: 'Status',
+        type: 'string',
+        required: false,
+        defaultValue: 123,
+      };
+      expect(Value.Check(RecordFieldType, invalidField)).toBe(false);
+    });
+  });
+
+  describe('formatValidationErrors', () => {
+    it('returns empty array when there are no errors', () => {
+      const Schema = RecordModel;
+      const validRecord = { id: 'rec-1', type: 'submittal', title: 'Submittal 1' };
+      expect(formatValidationErrors(Schema, validRecord)).toEqual([]);
+    });
+
+    it('returns formatted error string array with path and message for invalid value', () => {
+      const Schema = RecordModel;
+      const invalidRecord = { id: 123, type: 'submittal' };
+      const formatted = formatValidationErrors(Schema, invalidRecord);
+      expect(formatted.some((e) => e.includes('/id:'))).toBe(true);
+      expect(formatted.some((e) => e.includes('/title:'))).toBe(true);
+    });
   });
 });
 
