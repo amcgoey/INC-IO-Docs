@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -329,6 +329,104 @@ describe('ManifestRegistryAdapter', () => {
     expect(result[0].recordSchema.fields[0]).not.toHaveProperty('extraObj');
     expect(result[0].recordUiConfig).not.toHaveProperty('bogusUiProp');
     expect(result[0].recordUiConfig?.events?.onSubmit).not.toHaveProperty('extraUiProp');
+  });
+
+  describe('calculatedFields template validation on loadAll', () => {
+    it('successfully loads record types with valid calculatedFields templates when templateEvaluator is provided', async () => {
+      const recordType = {
+        key: 'calc-valid',
+        name: 'Calc Valid',
+        recordSchema: {
+          fields: [
+            { key: 'Title', name: 'Title', type: 'string', required: true },
+            { key: 'Category', name: 'Category', type: 'string', required: true },
+          ],
+          calculatedFields: [
+            {
+              key: 'FullCode',
+              template: '{{Category}}-{{Title}}',
+            },
+          ],
+        },
+      };
+
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      const typePath = path.join(tempDir, 'calc-valid.json');
+      await fs.writeFile(typePath, JSON.stringify(recordType), 'utf-8');
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({ recordTypes: ['./calc-valid.json'] }),
+        'utf-8'
+      );
+
+      const mockEvaluator = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn(),
+      };
+
+      const adapter = new ManifestRegistryAdapter({
+        manifestPath,
+        templateEvaluator: mockEvaluator,
+      });
+
+      const result = await adapter.loadAll();
+      expect(result).toHaveLength(1);
+      expect(result[0].recordSchema.calculatedFields).toEqual([
+        {
+          key: 'FullCode',
+          template: '{{Category}}-{{Title}}',
+        },
+      ]);
+      expect(mockEvaluator.validate).toHaveBeenCalledWith(
+        '{{Category}}-{{Title}}',
+        expect.arrayContaining(['Title', 'Category'])
+      );
+    });
+
+    it('throws explicit fatal domain error if a calculatedFields template references a missing field (e.g. {{DoesNotExist}})', async () => {
+      const recordType = {
+        key: 'calc-invalid',
+        name: 'Calc Invalid',
+        recordSchema: {
+          fields: [
+            { key: 'Title', name: 'Title', type: 'string', required: true },
+          ],
+          calculatedFields: [
+            {
+              key: 'BadCalc',
+              template: '{{Title}}-{{DoesNotExist}}',
+            },
+          ],
+        },
+      };
+
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      const typePath = path.join(tempDir, 'calc-invalid.json');
+      await fs.writeFile(typePath, JSON.stringify(recordType), 'utf-8');
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({ recordTypes: ['./calc-invalid.json'] }),
+        'utf-8'
+      );
+
+      const mockEvaluator = {
+        validate: vi.fn().mockReturnValue(false),
+        evaluate: vi.fn(),
+      };
+
+      const adapter = new ManifestRegistryAdapter({
+        manifestPath,
+        templateEvaluator: mockEvaluator,
+      });
+
+      await expect(adapter.loadAll()).rejects.toThrow(
+        /Invalid calculated field template in "\.\/calc-invalid\.json" for field "BadCalc"/
+      );
+      expect(mockEvaluator.validate).toHaveBeenCalledWith(
+        '{{Title}}-{{DoesNotExist}}',
+        expect.arrayContaining(['Title'])
+      );
+    });
   });
 });
 

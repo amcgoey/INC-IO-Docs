@@ -3,8 +3,9 @@ import { createHttpServer, type HttpServer } from '../infrastructure/http';
 import { registerRecordFeatureRoutes } from '../features/record/adapters/api';
 import { ActivityEngine } from '../features/record/adapters/activity-engine';
 import { ManifestRegistryAdapter } from '../features/record/adapters/manifest-registry';
+import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import { RecordService } from '../features/record/domain';
-import type { ActivityDispatcherPort, ManifestRegistryPort } from '../features/record/ports';
+import type { ActivityDispatcherPort, ManifestRegistryPort, TemplateEvaluatorPort } from '../features/record/ports';
 
 TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 
@@ -12,6 +13,7 @@ export interface AppOptions {
   manifestRegistry?: ManifestRegistryPort;
   manifestPath?: string;
   activityEngine?: ActivityDispatcherPort;
+  templateEvaluator?: TemplateEvaluatorPort;
   logger?: boolean;
 }
 
@@ -24,6 +26,7 @@ export interface AppInstance {
 
 export function createApp(options?: AppOptions): AppInstance {
   const server = createHttpServer({ logger: options?.logger ?? false });
+  const templateEvaluator = options?.templateEvaluator ?? new HandlebarsAdapter();
 
   let manifestRegistry = options?.manifestRegistry;
   if (!manifestRegistry) {
@@ -33,11 +36,11 @@ export function createApp(options?: AppOptions): AppInstance {
         'Manifest path is not defined. Please provide options.manifestPath or set the APP_MANIFEST_PATH environment variable.'
       );
     }
-    manifestRegistry = new ManifestRegistryAdapter({ manifestPath });
+    manifestRegistry = new ManifestRegistryAdapter({ manifestPath, templateEvaluator });
   }
 
   const activityEngine = options?.activityEngine ?? new ActivityEngine();
-  const recordService = new RecordService(activityEngine, manifestRegistry);
+  const recordService = new RecordService(activityEngine, manifestRegistry, templateEvaluator);
   registerRecordFeatureRoutes(server, { service: recordService, schemaQuery: recordService });
 
   const initialize = async () => {

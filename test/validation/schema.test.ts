@@ -36,6 +36,17 @@ describe('RecordType JSON files schema validation', () => {
         expect(typeof field.required).toBe('boolean');
       }
 
+      // Verify calculatedFields if present
+      if (recordType.recordSchema.calculatedFields) {
+        expect(Array.isArray(recordType.recordSchema.calculatedFields)).toBe(true);
+        for (const calcField of recordType.recordSchema.calculatedFields) {
+          expect(typeof calcField.key).toBe('string');
+          expect(calcField.key.length).toBeGreaterThan(0);
+          expect(typeof calcField.template).toBe('string');
+          expect(calcField.template.length).toBeGreaterThan(0);
+        }
+      }
+
       // Verify FormSchema projection matches tightened FormSchemaType
       const formSchema = {
         key: recordType.key,

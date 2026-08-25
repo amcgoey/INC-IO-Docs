@@ -37,6 +37,12 @@
         "required": true
       }
     ],
+    "calculatedFields": [
+      {
+        "key": "TestCalculatedField",
+        "template": "{{Date}}-{{Direction}}-{{Contact}}-{{Description}}"
+      }
+    ],
     "options": {
       "Direction": [
         {

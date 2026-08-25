@@ -9,6 +9,8 @@ import {
   RecordSchemaType,
   RecordSchemaOptionTupleType,
   RecordIdentitySchemaType,
+  CalculatedFieldType,
+  SystemContextSchema,
   UiEventRuleType,
   FormSchemaType,
   ActivityType,
@@ -17,7 +19,7 @@ import {
   type RecordType,
   type FormSchema,
 } from './domain';
-import type { ActivityDispatcherPort, ManifestRegistryPort } from './ports';
+import type { ActivityDispatcherPort, ManifestRegistryPort, TemplateEvaluatorPort } from './ports';
 
 
 
@@ -630,6 +632,196 @@ describe('Record domain', () => {
       const formatted = formatValidationErrors(Schema, invalidRecord);
       expect(formatted.some((e) => e.includes('/id:'))).toBe(true);
       expect(formatted.some((e) => e.includes('/data:'))).toBe(true);
+    });
+  });
+
+  describe('CalculatedFieldType and SystemContextSchema', () => {
+    it('validates CalculatedFieldType with key, template, and optional description', () => {
+      expect(CalculatedFieldType).toBeDefined();
+      const validCalcField = {
+        key: 'Summary',
+        template: '{{Title}} - {{Notes}}',
+        description: 'Auto-generated summary',
+      };
+      expect(Value.Check(CalculatedFieldType, validCalcField)).toBe(true);
+
+      const validWithoutDesc = {
+        key: 'Summary',
+        template: '{{Title}} - {{Notes}}',
+      };
+      expect(Value.Check(CalculatedFieldType, validWithoutDesc)).toBe(true);
+
+      const missingTemplate = {
+        key: 'Summary',
+      };
+      expect(Value.Check(CalculatedFieldType, missingTemplate)).toBe(false);
+
+      const missingKey = {
+        template: '{{Title}}',
+      };
+      expect(Value.Check(CalculatedFieldType, missingKey)).toBe(false);
+    });
+
+    it('exports SystemContextSchema stub', () => {
+      expect(SystemContextSchema).toBeDefined();
+      expect(Value.Check(SystemContextSchema, {})).toBe(true);
+    });
+
+    it('validates RecordSchemaType with optional calculatedFields', () => {
+      const schemaWithCalcFields = {
+        fields: [{ key: 'Title', name: 'Title', type: 'string', required: true }],
+        calculatedFields: [
+          {
+            key: 'FullTitle',
+            template: 'PREFIX-{{Title}}',
+          },
+        ],
+      };
+      expect(Value.Check(RecordSchemaType, schemaWithCalcFields)).toBe(true);
+
+      const schemaWithInvalidCalcFields = {
+        fields: [{ key: 'Title', name: 'Title', type: 'string', required: true }],
+        calculatedFields: [
+          {
+            key: 'FullTitle',
+            // missing template
+          },
+        ],
+      };
+      expect(Value.Check(RecordSchemaType, schemaWithInvalidCalcFields)).toBe(false);
+    });
+  });
+
+  describe('RecordService calculatedFields evaluation', () => {
+    it('evaluates calculatedFields against base payload and enriches record before dispatching activity', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'comm-project',
+          name: 'Communication Project',
+          recordSchema: {
+            fields: [
+              { key: 'Contact', name: 'Contact', type: 'string', required: true },
+              { key: 'Date', name: 'Date', type: 'string', required: true },
+            ],
+            calculatedFields: [
+              {
+                key: 'IdRecord',
+                template: '{{Date}}-{{Contact}}',
+              },
+            ],
+          },
+        },
+      ];
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template, ctx) => {
+          if (template === '{{Date}}-{{Contact}}') {
+            return `${ctx.Date}-${ctx.Contact}`;
+          }
+          return '';
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'comm-project',
+        data: {
+          Contact: 'Alice',
+          Date: '260825',
+        },
+      };
+
+      const result = await service.processRecord(inputRecord);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.data).toEqual({
+          Contact: 'Alice',
+          Date: '260825',
+          IdRecord: '260825-Alice',
+        });
+        expect(result.activity).toEqual({
+          type: 'LOG_RECORD',
+          payload: {
+            record: {
+              type: 'comm-project',
+              data: {
+                Contact: 'Alice',
+                Date: '260825',
+                IdRecord: '260825-Alice',
+              },
+            },
+          },
+        });
+      }
+
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
+        type: 'LOG_RECORD',
+        payload: {
+          record: {
+            type: 'comm-project',
+            data: {
+              Contact: 'Alice',
+              Date: '260825',
+              IdRecord: '260825-Alice',
+            },
+          },
+        },
+      });
+    });
+
+    it('strictly isolates calculatedFields evaluation context from each other (ADR 0003)', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'multi-calc',
+          name: 'Multi Calc',
+          recordSchema: {
+            fields: [
+              { key: 'Base1', name: 'Base 1', type: 'string', required: true },
+            ],
+            calculatedFields: [
+              { key: 'Calc1', template: '{{Base1}}-CALC1' },
+              { key: 'Calc2', template: '{{Calc1}}-CALC2' },
+            ],
+          },
+        },
+      ];
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+
+      const evaluatedContexts: { [key: string]: unknown }[] = [];
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((_template, ctx) => {
+          evaluatedContexts.push({ ...ctx });
+          return 'result';
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      await service.processRecord({
+        type: 'multi-calc',
+        data: { Base1: 'val1' },
+      });
+
+      expect(evaluatedContexts).toHaveLength(2);
+      // Both evaluations must receive ONLY base payload without Calc1
+      expect(evaluatedContexts[0]).toEqual({ Base1: 'val1' });
+      expect(evaluatedContexts[1]).toEqual({ Base1: 'val1' });
+      expect(evaluatedContexts[1]).not.toHaveProperty('Calc1');
     });
   });
 });

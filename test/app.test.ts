@@ -465,6 +465,68 @@ describe('App integration tests', () => {
       expect(forms[0].key).toBe('option-key');
     });
   });
+
+  describe('End-to-End Calculated Fields Resolution', () => {
+    it('resolves TestCalculatedField from communication-project.json and enriches payload before dispatching activity', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      const prodApp = createApp({
+        manifestPath,
+        activityEngine: mockDispatcher,
+      });
+
+      await prodApp.initialize();
+
+      const basePayload = {
+        type: 'communication-project',
+        data: {
+          Contact: 'Jane Doe',
+          Date: '260825',
+          Direction: 'IN',
+          Description: 'Quarterly review discussion',
+        },
+      };
+
+      const expectedCalculatedValue = '260825-IN-Jane Doe-Quarterly review discussion';
+      const expectedEnrichedData = {
+        ...basePayload.data,
+        TestCalculatedField: expectedCalculatedValue,
+      };
+
+      const response = await prodApp.server.inject({
+        method: 'POST',
+        url: '/records',
+        payload: basePayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.success).toBe(true);
+      expect(body.data.data).toEqual(expectedEnrichedData);
+      expect(body.activity).toEqual({
+        type: 'LOG_RECORD',
+        payload: {
+          record: {
+            type: 'communication-project',
+            data: expectedEnrichedData,
+          },
+        },
+      });
+
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
+        type: 'LOG_RECORD',
+        payload: {
+          record: {
+            type: 'communication-project',
+            data: expectedEnrichedData,
+          },
+        },
+      });
+    });
+  });
 });
 
 

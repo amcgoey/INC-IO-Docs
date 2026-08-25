@@ -1,6 +1,6 @@
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import type { ActivityDispatcherPort, ManifestRegistryPort, RecordServicePort, SchemaQueryPort } from './ports';
+import type { ActivityDispatcherPort, ManifestRegistryPort, RecordServicePort, SchemaQueryPort, TemplateEvaluatorPort } from './ports';
 
 export function formatValidationErrors<T extends TSchema>(schema: T, value: unknown): string[] {
   return [...Value.Errors(schema, value)].map((e) => `${e.path}: ${e.message}`);
@@ -62,8 +62,23 @@ export const RecordIdentitySchemaType = Type.Object(
 
 export type RecordIdentitySchema = Static<typeof RecordIdentitySchemaType>;
 
+export const CalculatedFieldType = Type.Object({
+  key: Type.String(),
+  template: Type.String(),
+  description: Type.Optional(Type.String()),
+});
+
+export type CalculatedField = Static<typeof CalculatedFieldType>;
+
+export const SystemContextSchema = Type.Object({
+  // STUB: Reserved for future system context expansion
+});
+
+export type SystemContext = Static<typeof SystemContextSchema>;
+
 export const RecordSchemaType = Type.Object({
   fields: Type.Array(RecordFieldType),
+  calculatedFields: Type.Optional(Type.Array(CalculatedFieldType)),
   identity: Type.Optional(RecordIdentitySchemaType),
   options: Type.Optional(Type.Record(Type.String(), Type.Array(RecordSchemaOptionTupleType))),
 });
@@ -121,6 +136,7 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
   constructor(
     private readonly dispatcher: ActivityDispatcherPort,
     private readonly manifestRegistry: ManifestRegistryPort,
+    private readonly templateEvaluator?: TemplateEvaluatorPort,
   ) {}
 
   async initialize(): Promise<void> {
@@ -173,8 +189,9 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
     }
 
     const record = payload;
+    const recordType = this.recordTypes.find((rt) => rt.key === record.type);
     const schema = this.compiledSchemas.get(record.type);
-    if (!schema) {
+    if (!schema || !recordType) {
       return {
         success: false,
         errors: [`Unknown record type: ${record.type}`],
@@ -189,17 +206,38 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       };
     }
 
+    let resolvedData: { [key: string]: unknown } = { ...(record.data as { [key: string]: unknown }) };
+    if (recordType.recordSchema.calculatedFields && this.templateEvaluator) {
+      const basePayload: { [key: string]: unknown } = { ...(record.data as { [key: string]: unknown }) };
+      const calculatedValues: { [key: string]: unknown } = {};
+      for (const calculatedField of recordType.recordSchema.calculatedFields) {
+        calculatedValues[calculatedField.key] = this.templateEvaluator.evaluate(
+          calculatedField.template,
+          basePayload
+        );
+      }
+      resolvedData = {
+        ...resolvedData,
+        ...calculatedValues,
+      };
+    }
+
+    const enrichedRecord: Record = {
+      ...record,
+      data: resolvedData,
+    };
+
     // STUB: Raw payload dispatch is an interim solution pending Chunk 3
     const activity: Activity = {
       type: 'LOG_RECORD',
-      payload: { record },
+      payload: { record: enrichedRecord },
     };
 
     await this.dispatcher.dispatch(activity);
 
     return {
       success: true,
-      data: record,
+      data: enrichedRecord,
       activity,
     };
   }
