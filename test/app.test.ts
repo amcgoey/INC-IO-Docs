@@ -168,39 +168,39 @@ describe('App integration tests', () => {
   });
 
   describe('Fail-fast startup behavior', () => {
-    it('fails fast on app initialization when ManifestRegistryPort throws an error', async () => {
+    function createAppWithFailingRegistry(error: Error) {
       const failingRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockRejectedValue(new Error('Manifest file not found or corrupted')),
+        loadAll: vi.fn().mockRejectedValue(error),
       };
+      return createApp({ manifestRegistry: failingRegistry });
+    }
 
-      const failingApp = createApp({ manifestRegistry: failingRegistry });
+    it('fails fast on app initialization when ManifestRegistryPort throws an error', async () => {
+      const failingApp = createAppWithFailingRegistry(
+        new Error('Manifest file not found or corrupted')
+      );
 
       await expect(failingApp.initialize()).rejects.toThrow('Manifest file not found or corrupted');
     });
 
     it('fails fast on app initialization when ManifestRegistryPort rejects with schema validation error', async () => {
-      const schemaErrorRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockRejectedValue(
-          new Error('Invalid RecordType schema in "./schemas/invalid.json": /recordSchema/fields: Expected array')
-        ),
-      };
-
-      const failingApp = createApp({ manifestRegistry: schemaErrorRegistry });
+      const failingApp = createAppWithFailingRegistry(
+        new Error('Invalid RecordType schema in "./schemas/invalid.json": /recordSchema/fields: Expected array')
+      );
 
       await expect(failingApp.initialize()).rejects.toThrow(/Invalid RecordType schema/);
     });
 
     it('fails fast and halts startup before starting HTTP server when start() fails', async () => {
-      const failingRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockRejectedValue(new Error('Fatal manifest discovery failure')),
-      };
-
-      const failingApp = createApp({ manifestRegistry: failingRegistry });
+      const failingApp = createAppWithFailingRegistry(
+        new Error('Fatal manifest discovery failure')
+      );
 
       await expect(failingApp.start()).rejects.toThrow('Fatal manifest discovery failure');
     });
   });
 });
+
 
 
 
