@@ -79,6 +79,30 @@ describe('HTTP Infrastructure Server', () => {
     expect(response.headers['x-custom-header']).toBe('custom-value');
   });
 
+  it('handles uncaught exceptions in route handlers with 500 error response', async () => {
+    const server = createHttpServer();
+
+    server.registerRoute({
+      method: 'GET',
+      url: '/test-error',
+      handler: async () => {
+        throw new Error('Something went wrong internally');
+      },
+    });
+
+    const response = await server.inject({
+      method: 'GET',
+      url: '/test-error',
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong internally',
+    });
+  });
+
   it('can start and stop the server', async () => {
     const server = createHttpServer();
     const address = await server.start(0, '127.0.0.1');

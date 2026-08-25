@@ -45,7 +45,7 @@ export interface InjectResult {
 
 export interface HttpServer {
   registerRoute(route: RouteDefinition): void;
-  start(port?: number, host?: string): Promise<string>;
+  start(port: number, host?: string): Promise<string>;
   stop(): Promise<void>;
   inject(options: InjectOptions): Promise<InjectResult>;
 }
@@ -64,24 +64,32 @@ class FastifyHttpServer implements HttpServer {
       method: route.method,
       url: route.url,
       handler: async (request, reply) => {
-        const httpRequest: HttpRequest = {
-          body: request.body,
-          headers: request.headers as Record<string, string | string[] | undefined>,
-          query: request.query as Record<string, unknown>,
-          params: request.params as Record<string, string | undefined>,
-        };
-        const response = await route.handler(httpRequest);
-        if (response.headers) {
-          for (const [key, value] of Object.entries(response.headers)) {
-            void reply.header(key, value);
+        try {
+          const httpRequest: HttpRequest = {
+            body: request.body,
+            headers: request.headers as Record<string, string | string[] | undefined>,
+            query: request.query as Record<string, unknown>,
+            params: request.params as Record<string, string | undefined>,
+          };
+          const response = await route.handler(httpRequest);
+          if (response.headers) {
+            for (const [key, value] of Object.entries(response.headers)) {
+              void reply.header(key, value);
+            }
           }
+          return reply.status(response.status).send(response.body);
+        } catch (error) {
+          return reply.status(500).send({
+            statusCode: 500,
+            error: 'Internal Server Error',
+            message: error instanceof Error ? error.message : 'An unexpected error occurred',
+          });
         }
-        return reply.status(response.status).send(response.body);
       },
     });
   }
 
-  public async start(port: number = 8080, host: string = '0.0.0.0'): Promise<string> {
+  public async start(port: number, host: string = '0.0.0.0'): Promise<string> {
     const address = await this.app.listen({ port, host });
     return address;
   }
