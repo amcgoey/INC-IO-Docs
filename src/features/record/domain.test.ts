@@ -38,12 +38,40 @@ describe('Record domain', () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn().mockResolvedValue(undefined),
     };
-    const service = new RecordService(mockDispatcher, mockRegistry);
+    const mockRecordTypes: RecordType[] = [
+      {
+        key: 'submittal',
+        name: 'Submittal Record',
+        recordSchema: {
+          fields: [
+            {
+              key: 'Title',
+              name: 'Title',
+              type: 'string',
+              required: true,
+            },
+            {
+              key: 'Notes',
+              name: 'Notes',
+              type: 'string',
+              required: false,
+            },
+          ],
+        },
+      },
+    ];
+    const registryWithSubmittal: ManifestRegistryPort = {
+      loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+    };
+    const service = new RecordService(mockDispatcher, registryWithSubmittal);
+    await service.initialize();
 
     const validRecord: Record = {
       id: 'rec-123',
       type: 'submittal',
-      title: 'Foundation Plan',
+      data: {
+        Title: 'Foundation Plan',
+      },
     };
 
     const result = await service.processRecord(validRecord);
@@ -62,14 +90,104 @@ describe('Record domain', () => {
     });
   });
 
+  it('processRecord returns failure when dynamic field validation fails against compiled schema', async () => {
+    const mockDispatcher: ActivityDispatcherPort = {
+      dispatch: vi.fn(),
+    };
+    const mockRecordTypes: RecordType[] = [
+      {
+        key: 'submittal',
+        name: 'Submittal Record',
+        recordSchema: {
+          fields: [
+            {
+              key: 'Title',
+              name: 'Title',
+              type: 'string',
+              required: true,
+            },
+          ],
+        },
+      },
+    ];
+    const registryWithSubmittal: ManifestRegistryPort = {
+      loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+    };
+    const service = new RecordService(mockDispatcher, registryWithSubmittal);
+    await service.initialize();
+
+    const missingRequiredField = {
+      type: 'submittal',
+      data: {},
+    };
+
+    const result = await service.processRecord(missingRequiredField);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.length).toBeGreaterThan(0);
+    }
+    expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('processRecord returns failure for unknown record type', async () => {
+    const mockDispatcher: ActivityDispatcherPort = {
+      dispatch: vi.fn(),
+    };
+    const service = new RecordService(mockDispatcher, mockRegistry);
+    await service.initialize();
+
+    const unknownTypeRecord = {
+      type: 'unknown-type',
+      data: { Title: 'Test' },
+    };
+
+    const result = await service.processRecord(unknownTypeRecord);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors).toContain("Unknown record type: unknown-type");
+    }
+    expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('initialize throws fast-fail error if a RecordType has an unsupported field type', async () => {
+    const mockDispatcher: ActivityDispatcherPort = {
+      dispatch: vi.fn(),
+    };
+    const invalidRecordTypes: RecordType[] = [
+      {
+        key: 'invalid-type',
+        name: 'Invalid Type',
+        recordSchema: {
+          fields: [
+            {
+              key: 'InvalidField',
+              name: 'Invalid Field',
+              type: 'unknown',
+              required: true,
+            },
+          ],
+        },
+      },
+    ];
+    const registryWithInvalid: ManifestRegistryPort = {
+      loadAll: vi.fn().mockResolvedValue(invalidRecordTypes),
+    };
+    const service = new RecordService(mockDispatcher, registryWithInvalid);
+
+    await expect(service.initialize()).rejects.toThrow(
+      /Unsupported field type 'unknown'/
+    );
+  });
+
   it('processRecord returns failure and does not dispatch activity for invalid payload', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
     const service = new RecordService(mockDispatcher, mockRegistry);
+    await service.initialize();
 
     const invalidRecord = {
-      title: 123, // wrong type, missing id and type
+      title: 123, // missing type and data
     };
 
     const result = await service.processRecord(invalidRecord);
@@ -85,6 +203,7 @@ describe('Record domain', () => {
       dispatch: vi.fn(),
     };
     const service = new RecordService(mockDispatcher, mockRegistry);
+    await service.initialize();
 
     const resultUndefined = await service.processRecord(undefined);
     expect(resultUndefined.success).toBe(false);
@@ -501,16 +620,16 @@ describe('Record domain', () => {
   describe('formatValidationErrors', () => {
     it('returns empty array when there are no errors', () => {
       const Schema = RecordModel;
-      const validRecord = { id: 'rec-1', type: 'submittal', title: 'Submittal 1' };
+      const validRecord = { id: 'rec-1', type: 'submittal', data: { Subject: 'Submittal 1' } };
       expect(formatValidationErrors(Schema, validRecord)).toEqual([]);
     });
 
     it('returns formatted error string array with path and message for invalid value', () => {
       const Schema = RecordModel;
-      const invalidRecord = { id: 123, type: 'submittal' };
+      const invalidRecord = { id: 123, type: 'submittal' }; // id not string, missing data
       const formatted = formatValidationErrors(Schema, invalidRecord);
       expect(formatted.some((e) => e.includes('/id:'))).toBe(true);
-      expect(formatted.some((e) => e.includes('/title:'))).toBe(true);
+      expect(formatted.some((e) => e.includes('/data:'))).toBe(true);
     });
   });
 });

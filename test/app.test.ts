@@ -63,9 +63,10 @@ describe('App integration tests', () => {
   describe('Route endpoints', () => {
     it('POST /records should return 200 and dispatch activity for valid record payload', async () => {
       const validRecord = {
-        id: 'doc-001',
-        type: 'submittal',
-        title: 'Foundation Spec',
+        type: 'communication-project',
+        data: {
+          Contact: 'Jane Doe',
+        },
       };
 
       const response = await app.server.inject({
@@ -104,6 +105,44 @@ describe('App integration tests', () => {
       expect(body).toEqual({
         success: false,
         errors: expect.any(Array),
+      });
+      expect(mockActivityEngine.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('POST /records should return 400 when dynamic data payload fails schema validation', async () => {
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/records',
+        payload: {
+          type: 'communication-project',
+          data: {},
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        success: false,
+        errors: expect.any(Array),
+      });
+      expect(mockActivityEngine.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('POST /records should return 400 for unknown record type', async () => {
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/records',
+        payload: {
+          type: 'unknown-type',
+          data: { Contact: 'Jane Doe' },
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        success: false,
+        errors: expect.arrayContaining(['Unknown record type: unknown-type']),
       });
       expect(mockActivityEngine.dispatch).not.toHaveBeenCalled();
     });
@@ -299,6 +338,31 @@ describe('App integration tests', () => {
       const failingApp = createApp({ manifestPath });
 
       await expect(failingApp.initialize()).rejects.toThrow(/Invalid RecordType schema/);
+    });
+
+    it('fails fast during startup when a RecordType contains an unsupported field type', async () => {
+      const unsupportedRecordTypes: RecordType[] = [
+        {
+          key: 'unsupported-field-record',
+          name: 'Unsupported Field Record',
+          recordSchema: {
+            fields: [
+              {
+                key: 'BadField',
+                name: 'Bad Field',
+                type: 'unknown',
+                required: true,
+              },
+            ],
+          },
+        },
+      ];
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(unsupportedRecordTypes),
+      };
+      const failingApp = createApp({ manifestRegistry: customRegistry });
+
+      await expect(failingApp.initialize()).rejects.toThrow(/Unsupported field type 'unknown'/);
     });
   });
 

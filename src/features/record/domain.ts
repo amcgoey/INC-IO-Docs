@@ -7,9 +7,14 @@ export function formatValidationErrors<T extends TSchema>(schema: T, value: unkn
 }
 
 export const RecordModel = Type.Object({
-  id: Type.String(),
+  // STUB: Pending Chunk 3
+  id: Type.Optional(Type.String()),
+  // STUB: Pending Chunk 3
+  IdRecord: Type.Optional(Type.String()),
+  // STUB: Pending Chunk 3
+  IdGroup: Type.Optional(Type.String()),
   type: Type.String(),
-  title: Type.String(),
+  data: Type.Record(Type.String(), Type.Unknown()),
 });
 
 export type Record = Static<typeof RecordModel>;
@@ -111,6 +116,7 @@ export type ProcessRecordResult =
 
 export class RecordService implements RecordServicePort, SchemaQueryPort {
   private recordTypes: RecordType[] = [];
+  private compiledSchemas = new Map<string, TSchema>();
 
   constructor(
     private readonly dispatcher: ActivityDispatcherPort,
@@ -119,6 +125,26 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
 
   async initialize(): Promise<void> {
     this.recordTypes = await this.manifestRegistry.loadAll();
+    this.compiledSchemas.clear();
+
+    for (const recordType of this.recordTypes) {
+      const properties: { [key: string]: TSchema } = {};
+      for (const field of recordType.recordSchema.fields) {
+        let fieldSchema: TSchema;
+        if (field.type === 'string') {
+          fieldSchema = Type.String();
+        } else {
+          throw new Error(`Unsupported field type '${field.type}' in RecordType '${recordType.key}'`);
+        }
+
+        if (!field.required) {
+          fieldSchema = Type.Optional(fieldSchema);
+        }
+
+        properties[field.key] = fieldSchema;
+      }
+      this.compiledSchemas.set(recordType.key, Type.Object(properties));
+    }
   }
 
   async getForms(): Promise<FormSchema[]> {
@@ -137,28 +163,44 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
     });
   }
 
-
   async processRecord(payload?: unknown): Promise<ProcessRecordResult> {
-    if (Value.Check(RecordModel, payload)) {
-      const activity: Activity = {
-        type: 'LOG_RECORD',
-        payload: { record: payload },
-      };
-
-      await this.dispatcher.dispatch(activity);
-
+    if (!Value.Check(RecordModel, payload)) {
+      const errors = formatValidationErrors(RecordModel, payload);
       return {
-        success: true,
-        data: payload,
-        activity,
+        success: false,
+        errors: errors.length > 0 ? errors : ['Invalid record payload'],
       };
     }
 
-    const errors = formatValidationErrors(RecordModel, payload);
+    const record = payload;
+    const schema = this.compiledSchemas.get(record.type);
+    if (!schema) {
+      return {
+        success: false,
+        errors: [`Unknown record type: ${record.type}`],
+      };
+    }
+
+    if (!Value.Check(schema, record.data)) {
+      const errors = formatValidationErrors(schema, record.data);
+      return {
+        success: false,
+        errors: errors.length > 0 ? errors : ['Invalid record data payload'],
+      };
+    }
+
+    // STUB: Raw payload dispatch is an interim solution pending Chunk 3
+    const activity: Activity = {
+      type: 'LOG_RECORD',
+      payload: { record },
+    };
+
+    await this.dispatcher.dispatch(activity);
 
     return {
-      success: false,
-      errors: errors.length > 0 ? errors : ['Invalid record payload'],
+      success: true,
+      data: record,
+      activity,
     };
   }
 }
