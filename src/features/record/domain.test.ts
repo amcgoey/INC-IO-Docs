@@ -4,9 +4,12 @@ import {
   RecordService,
   RecordModel,
   RecordTypeSchema,
+  RecordFieldOptionType,
+  FormSchemaType,
   ActivityType,
   type Record,
   type RecordType,
+  type FormSchema,
 } from './domain';
 import type { ActivityDispatcherPort, ManifestRegistryPort } from './ports';
 
@@ -112,7 +115,92 @@ describe('Record domain', () => {
     expect(Value.Check(RecordTypeSchema, validRecordType)).toBe(true);
   });
 
-  it('RecordService.initialize caches RecordTypes from ManifestRegistryPort and getForms returns them as FormSchema list', async () => {
+  it('RecordFieldOptionType requires source, key, and name', () => {
+    const validOption = {
+      source: 'Direction',
+      key: 'Key',
+      name: 'Name',
+    };
+    expect(Value.Check(RecordFieldOptionType, validOption)).toBe(true);
+
+    const missingSource = {
+      key: 'Key',
+      name: 'Name',
+    };
+    expect(Value.Check(RecordFieldOptionType, missingSource)).toBe(false);
+
+    const missingKey = {
+      source: 'Direction',
+      name: 'Name',
+    };
+    expect(Value.Check(RecordFieldOptionType, missingKey)).toBe(false);
+
+    const missingName = {
+      source: 'Direction',
+      key: 'Key',
+    };
+    expect(Value.Check(RecordFieldOptionType, missingName)).toBe(false);
+  });
+
+  it('RecordTypeSchema allows optional backend config stubs', () => {
+    const recordTypeWithBackendConfigs: RecordType = {
+      key: 'submittal',
+      name: 'Submittal Record',
+      recordSchema: {
+        fields: [
+          {
+            key: 'Title',
+            name: 'Title',
+            type: 'string',
+            required: true,
+          },
+        ],
+      },
+      recordUiConfig: {
+        events: {
+          onSubmit: {
+            catchAllWorkflow: 'SubmitSubmittal',
+          },
+        },
+      },
+      recordWorkflowConfig: {
+        workflows: [{ name: 'SubmitSubmittal', engine: 'temporal' }],
+      },
+      storageContextConfig: {
+        rootFolder: 'Submittals',
+      },
+    };
+
+    expect(Value.Check(RecordTypeSchema, recordTypeWithBackendConfigs)).toBe(true);
+  });
+
+  it('FormSchemaType validates FormSchema definitions', () => {
+    expect(FormSchemaType).toBeDefined();
+    const validFormSchema: FormSchema = {
+      key: 'submittal',
+      name: 'Submittal Record',
+      recordSchema: {
+        fields: [
+          {
+            key: 'Title',
+            name: 'Title',
+            type: 'string',
+            required: true,
+          },
+        ],
+      },
+      recordUiConfig: {
+        events: {
+          onSubmit: {
+            catchAllWorkflow: 'SubmitSubmittal',
+          },
+        },
+      },
+    };
+    expect(Value.Check(FormSchemaType, validFormSchema)).toBe(true);
+  });
+
+  it('RecordService.initialize caches RecordTypes from ManifestRegistryPort and getForms strips backend configs', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
@@ -136,6 +224,26 @@ describe('Record domain', () => {
               catchAllWorkflow: 'HandleComm',
             },
           },
+        },
+        recordWorkflowConfig: {
+          workflows: [{ name: 'HandleComm' }],
+        },
+        storageContextConfig: {
+          path: '/projects/comm',
+        },
+      },
+      {
+        key: 'simple-proj',
+        name: 'Simple Project',
+        recordSchema: {
+          fields: [
+            {
+              key: 'Name',
+              name: 'Name',
+              type: 'string',
+              required: true,
+            },
+          ],
         },
       },
     ];
@@ -177,9 +285,30 @@ describe('Record domain', () => {
           },
         },
       },
+      {
+        key: 'simple-proj',
+        name: 'Simple Project',
+        recordSchema: {
+          fields: [
+            {
+              key: 'Name',
+              name: 'Name',
+              type: 'string',
+              required: true,
+            },
+          ],
+        },
+      },
     ]);
+
+    for (const form of forms) {
+      expect(Value.Check(FormSchemaType, form)).toBe(true);
+      expect(form).not.toHaveProperty('recordWorkflowConfig');
+      expect(form).not.toHaveProperty('storageContextConfig');
+    }
   });
 });
+
 
 
 

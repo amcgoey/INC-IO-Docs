@@ -18,9 +18,9 @@ export const ActivityType = Type.Object({
 export type Activity = Static<typeof ActivityType>;
 
 export const RecordFieldOptionType = Type.Object({
-  source: Type.Optional(Type.String()),
-  key: Type.Optional(Type.String()),
-  name: Type.Optional(Type.String()),
+  source: Type.String(),
+  key: Type.String(),
+  name: Type.String(),
 });
 
 export type RecordFieldOption = Static<typeof RecordFieldOptionType>;
@@ -71,19 +71,27 @@ export const RecordTypeSchema = Type.Object({
   name: Type.String(),
   recordSchema: RecordSchemaType,
   recordUiConfig: Type.Optional(RecordUiConfigType),
+  recordWorkflowConfig: Type.Optional(Type.Unknown()),
+  storageContextConfig: Type.Optional(Type.Unknown()),
 });
 
 export type RecordType = Static<typeof RecordTypeSchema>;
 
-export const FormSchemaType = RecordTypeSchema;
-export type FormSchema = RecordType;
+export const FormSchemaType = Type.Object({
+  key: Type.String(),
+  name: Type.String(),
+  recordSchema: RecordSchemaType,
+  recordUiConfig: Type.Optional(RecordUiConfigType),
+});
+
+export type FormSchema = Static<typeof FormSchemaType>;
 
 export type ProcessRecordResult =
   | { success: true; data: Record; activity: Activity }
   | { success: false; errors: string[] };
 
 export class RecordService implements RecordServicePort, SchemaQueryPort {
-  private formSchemas: FormSchema[] = [];
+  private recordTypes: RecordType[] = [];
 
   constructor(
     private readonly dispatcher: ActivityDispatcherPort,
@@ -91,12 +99,23 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
   ) {}
 
   async initialize(): Promise<void> {
-    const recordTypes = await this.manifestRegistry.loadAll();
-    this.formSchemas = recordTypes;
+    this.recordTypes = await this.manifestRegistry.loadAll();
   }
 
   async getForms(): Promise<FormSchema[]> {
-    return this.formSchemas;
+    return this.recordTypes.map((recordType) => {
+      const formSchema: FormSchema = {
+        key: recordType.key,
+        name: recordType.name,
+        recordSchema: recordType.recordSchema,
+      };
+
+      if (recordType.recordUiConfig !== undefined) {
+        formSchema.recordUiConfig = recordType.recordUiConfig;
+      }
+
+      return formSchema;
+    });
   }
 
 
