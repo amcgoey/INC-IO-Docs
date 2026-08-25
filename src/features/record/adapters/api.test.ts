@@ -4,6 +4,16 @@ import type { RouteDefinition, HttpServer } from '../../../infrastructure/http';
 import type { RecordServicePort, SchemaQueryPort } from '../ports';
 import type { FormSchema } from '../domain';
 
+function createMockServer() {
+  const registeredRoutes: RouteDefinition[] = [];
+  const server = {
+    registerRoute: vi.fn((route: RouteDefinition) => {
+      registeredRoutes.push(route);
+    }),
+  } as unknown as HttpServer;
+  return { server, registeredRoutes };
+}
+
 describe('Record Feature API driving adapter', () => {
   it('registers feature routes and handles requests', async () => {
     const mockForm: FormSchema = {
@@ -36,12 +46,7 @@ describe('Record Feature API driving adapter', () => {
       }),
     };
 
-    const registeredRoutes: RouteDefinition[] = [];
-    const mockServer = {
-      registerRoute: vi.fn((route: RouteDefinition) => {
-        registeredRoutes.push(route);
-      }),
-    } as unknown as HttpServer;
+    const { server: mockServer, registeredRoutes } = createMockServer();
 
     registerRecordFeatureRoutes(mockServer, { service: mockService, schemaQuery: mockSchemaQuery });
 
@@ -90,12 +95,7 @@ describe('Record Feature API driving adapter', () => {
       }),
     };
 
-    const registeredRoutes: RouteDefinition[] = [];
-    const mockServer = {
-      registerRoute: vi.fn((route: RouteDefinition) => {
-        registeredRoutes.push(route);
-      }),
-    } as unknown as HttpServer;
+    const { server: mockServer, registeredRoutes } = createMockServer();
 
     registerRecordFeatureRoutes(mockServer, { service: mockService, schemaQuery: mockSchemaQuery });
 
