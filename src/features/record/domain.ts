@@ -87,22 +87,18 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
 
   constructor(
     private readonly dispatcher: ActivityDispatcherPort,
-    private readonly manifestRegistry?: ManifestRegistryPort,
+    private readonly manifestRegistry: ManifestRegistryPort,
   ) {}
 
   async initialize(): Promise<void> {
-    if (!this.manifestRegistry) {
-      throw new Error('Manifest registry is not configured.');
-    }
     const recordTypes = await this.manifestRegistry.loadAll();
     this.formSchemas = recordTypes;
   }
 
-
-
   async getForms(): Promise<FormSchema[]> {
     return this.formSchemas;
   }
+
 
   async processRecord(payload?: unknown): Promise<ProcessRecordResult> {
     if (Value.Check(RecordModel, payload)) {

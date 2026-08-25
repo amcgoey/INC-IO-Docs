@@ -13,10 +13,13 @@ import type { ActivityDispatcherPort, ManifestRegistryPort } from './ports';
 
 
 describe('Record domain', () => {
+  const mockRegistry: ManifestRegistryPort = {
+    loadAll: vi.fn().mockResolvedValue([]),
+  };
+
   it('should export RecordModel schema', () => {
     expect(RecordModel).toBeDefined();
   });
-
 
   it('should export ActivityType schema', () => {
     expect(ActivityType).toBeDefined();
@@ -26,7 +29,7 @@ describe('Record domain', () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn().mockResolvedValue(undefined),
     };
-    const service = new RecordService(mockDispatcher);
+    const service = new RecordService(mockDispatcher, mockRegistry);
 
     const validRecord: Record = {
       id: 'rec-123',
@@ -54,7 +57,7 @@ describe('Record domain', () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
-    const service = new RecordService(mockDispatcher);
+    const service = new RecordService(mockDispatcher, mockRegistry);
 
     const invalidRecord = {
       title: 123, // wrong type, missing id and type
@@ -72,7 +75,7 @@ describe('Record domain', () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
-    const service = new RecordService(mockDispatcher);
+    const service = new RecordService(mockDispatcher, mockRegistry);
 
     const resultUndefined = await service.processRecord(undefined);
     expect(resultUndefined.success).toBe(false);
@@ -137,11 +140,11 @@ describe('Record domain', () => {
       },
     ];
 
-    const mockRegistry: ManifestRegistryPort = {
+    const customRegistry: ManifestRegistryPort = {
       loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
     };
 
-    const service = new RecordService(mockDispatcher, mockRegistry);
+    const service = new RecordService(mockDispatcher, customRegistry);
 
     // Before initialize, getForms returns empty list
     const initialForms = await service.getForms();
@@ -149,7 +152,7 @@ describe('Record domain', () => {
 
     await service.initialize();
 
-    expect(mockRegistry.loadAll).toHaveBeenCalledTimes(1);
+    expect(customRegistry.loadAll).toHaveBeenCalledTimes(1);
 
     const forms = await service.getForms();
     expect(forms).toEqual([
@@ -176,14 +179,7 @@ describe('Record domain', () => {
       },
     ]);
   });
-
-  it('RecordService.initialize throws if manifestRegistry is not provided', async () => {
-    const mockDispatcher: ActivityDispatcherPort = {
-      dispatch: vi.fn(),
-    };
-    const service = new RecordService(mockDispatcher);
-    await expect(service.initialize()).rejects.toThrow(/manifest registry is not configured/i);
-  });
 });
+
 
 
