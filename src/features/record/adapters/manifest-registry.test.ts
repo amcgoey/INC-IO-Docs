@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { ManifestRegistryAdapter } from './manifest-registry';
+import { Type } from '@sinclair/typebox';
+import {
+  ManifestRegistryAdapter,
+  parseJson,
+  formatValidationErrors,
+  validateSchema,
+} from './manifest-registry';
+
 
 describe('ManifestRegistryAdapter', () => {
   let tempDir: string;
@@ -218,3 +225,51 @@ describe('ManifestRegistryAdapter', () => {
     expect(result[0]).toEqual(validSchema);
   });
 });
+
+describe('Helper functions', () => {
+  describe('parseJson', () => {
+    it('successfully parses valid JSON', () => {
+      const data = parseJson('{"foo":"bar"}', 'test context');
+      expect(data).toEqual({ foo: 'bar' });
+    });
+
+    it('throws formatted error with context and cause on invalid JSON', () => {
+      expect(() => parseJson('{ invalid }', 'custom config at "/path/to/file"')).toThrowError(
+        /^Invalid JSON in custom config at "\/path\/to\/file":/
+      );
+    });
+  });
+
+  describe('formatValidationErrors', () => {
+    it('returns empty string when there are no errors', () => {
+      const Schema = Type.Object({ name: Type.String() });
+      const errors = formatValidationErrors(Schema, { name: 'test' });
+      expect(errors).toBe('');
+    });
+
+    it('formats single and multiple schema errors with paths', () => {
+      const Schema = Type.Object({
+        name: Type.String(),
+        count: Type.Number(),
+      });
+      const errors = formatValidationErrors(Schema, { name: 123, count: 'abc' });
+      expect(errors).toContain('/name:');
+      expect(errors).toContain('/count:');
+    });
+  });
+
+  describe('validateSchema', () => {
+    it('does not throw when value matches schema', () => {
+      const Schema = Type.Object({ id: Type.String() });
+      expect(() => validateSchema(Schema, { id: '123' }, 'Validation error')).not.toThrow();
+    });
+
+    it('throws with prefix and error details when value is invalid', () => {
+      const Schema = Type.Object({ id: Type.String() });
+      expect(() => validateSchema(Schema, { id: 123 }, 'Invalid item schema')).toThrowError(
+        /^Invalid item schema: \/id: Expected string/
+      );
+    });
+  });
+});
+
