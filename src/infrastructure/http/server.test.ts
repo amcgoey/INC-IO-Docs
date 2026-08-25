@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { Type } from '@sinclair/typebox';
 import { createHttpServer } from './index';
 
 describe('HTTP Infrastructure Server', () => {
@@ -108,5 +109,41 @@ describe('HTTP Infrastructure Server', () => {
     const address = await server.start(0, '127.0.0.1');
     expect(address).toBeDefined();
     await server.stop();
+  });
+
+  it('validates request payload using TypeBox schema', async () => {
+    const server = createHttpServer();
+
+    server.registerRoute({
+      method: 'POST',
+      url: '/test-schema',
+      schema: {
+        body: Type.Object({
+          name: Type.String(),
+          age: Type.Number(),
+        }),
+      },
+      handler: async (req) => {
+        return {
+          status: 200,
+          body: { greeting: `Hello ${req.body?.name}` },
+        };
+      },
+    });
+
+    const validResponse = await server.inject({
+      method: 'POST',
+      url: '/test-schema',
+      payload: { name: 'Alice', age: 30 },
+    });
+    expect(validResponse.statusCode).toBe(200);
+    expect(validResponse.json()).toEqual({ greeting: 'Hello Alice' });
+
+    const invalidResponse = await server.inject({
+      method: 'POST',
+      url: '/test-schema',
+      payload: { name: 'Alice', age: 'invalid' },
+    });
+    expect(invalidResponse.statusCode).toBe(400);
   });
 });

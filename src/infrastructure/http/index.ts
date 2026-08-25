@@ -1,12 +1,27 @@
-import Fastify, { type FastifyInstance, type InjectOptions as FastifyInjectOptions } from 'fastify';
+import Fastify, {
+  type InjectOptions as FastifyInjectOptions,
+  type FastifyRequest,
+  type FastifyReply,
+  type RouteOptions,
+} from 'fastify';
+import { type TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
+import { type TSchema, type Static } from '@sinclair/typebox';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
 
-export interface HttpRequest {
-  body?: unknown;
-  headers?: Record<string, string | string[] | undefined>;
-  query?: Record<string, unknown>;
-  params?: Record<string, string | undefined>;
+export interface RouteSchema {
+  body?: TSchema;
+  querystring?: TSchema;
+  params?: TSchema;
+  headers?: TSchema;
+  response?: Record<number, TSchema>;
+}
+
+export interface HttpRequest<S extends RouteSchema = RouteSchema> {
+  body?: (S['body'] extends TSchema ? Static<S['body']> : unknown) | undefined;
+  headers?: (S['headers'] extends TSchema ? Static<S['headers']> : Record<string, string | string[] | undefined>) | undefined;
+  query?: (S['querystring'] extends TSchema ? Static<S['querystring']> : Record<string, unknown>) | undefined;
+  params?: (S['params'] extends TSchema ? Static<S['params']> : Record<string, string | undefined>) | undefined;
 }
 
 export interface HttpResponse {
@@ -15,12 +30,15 @@ export interface HttpResponse {
   headers?: Record<string, string>;
 }
 
-export type HttpHandler = (request: HttpRequest) => Promise<HttpResponse> | HttpResponse;
+export type HttpHandler<S extends RouteSchema = RouteSchema> = (
+  request: HttpRequest<S>
+) => Promise<HttpResponse> | HttpResponse;
 
-export interface RouteDefinition {
+export interface RouteDefinition<S extends RouteSchema = RouteSchema> {
   method: HttpMethod;
   url: string;
-  handler: HttpHandler;
+  schema?: S;
+  handler: HttpHandler<S>;
 }
 
 export interface HttpServerOptions {
@@ -44,32 +62,33 @@ export interface InjectResult {
 }
 
 export interface HttpServer {
-  registerRoute(route: RouteDefinition): void;
+  registerRoute<S extends RouteSchema = RouteSchema>(route: RouteDefinition<S>): void;
   start(port: number, host?: string): Promise<string>;
   stop(): Promise<void>;
   inject(options: InjectOptions): Promise<InjectResult>;
 }
 
 class FastifyHttpServer implements HttpServer {
-  private readonly app: FastifyInstance;
+  private readonly app;
 
   constructor(options?: HttpServerOptions) {
     this.app = Fastify({
       logger: options?.logger ?? false,
-    });
+    }).withTypeProvider<TypeBoxTypeProvider>();
   }
 
-  public registerRoute(route: RouteDefinition): void {
-    this.app.route({
+  public registerRoute<S extends RouteSchema = RouteSchema>(route: RouteDefinition<S>): void {
+    const routeOptions: RouteOptions = {
       method: route.method,
       url: route.url,
-      handler: async (request, reply) => {
+      ...(route.schema !== undefined ? { schema: route.schema } : {}),
+      handler: async (request: FastifyRequest, reply: FastifyReply) => {
         try {
-          const httpRequest: HttpRequest = {
-            body: request.body,
-            headers: request.headers as Record<string, string | string[] | undefined>,
-            query: request.query as Record<string, unknown>,
-            params: request.params as Record<string, string | undefined>,
+          const httpRequest: HttpRequest<S> = {
+            body: request.body as HttpRequest<S>['body'],
+            headers: request.headers as HttpRequest<S>['headers'],
+            query: request.query as HttpRequest<S>['query'],
+            params: request.params as HttpRequest<S>['params'],
           };
           const response = await route.handler(httpRequest);
           if (response.headers) {
@@ -86,7 +105,8 @@ class FastifyHttpServer implements HttpServer {
           });
         }
       },
-    });
+    };
+    this.app.route(routeOptions);
   }
 
   public async start(port: number, host: string = '0.0.0.0'): Promise<string> {
