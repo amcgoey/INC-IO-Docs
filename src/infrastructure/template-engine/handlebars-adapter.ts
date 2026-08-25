@@ -1,6 +1,44 @@
 import Handlebars from 'handlebars';
 
+interface HandlebarsAstNode {
+  type?: string;
+  path?: { type?: string; original?: string; parts?: string[] };
+  body?: unknown[];
+  program?: unknown;
+  inverse?: unknown;
+  params?: unknown[];
+}
+
 export class HandlebarsAdapter {
+  /**
+   * Traverses the Handlebars AST recursively and executes the visitor on each node.
+   */
+  private walkAst(node: unknown, visitor: (node: HandlebarsAstNode) => boolean | void): void {
+    if (!node || typeof node !== 'object') {
+      return;
+    }
+
+    const astNode = node as HandlebarsAstNode;
+    const shouldStop = visitor(astNode);
+    if (shouldStop === false) {
+      return;
+    }
+
+    if (Array.isArray(astNode.body)) {
+      for (const child of astNode.body) {
+        this.walkAst(child, visitor);
+      }
+    }
+
+    if (astNode.program) {
+      this.walkAst(astNode.program, visitor);
+    }
+
+    if (astNode.inverse) {
+      this.walkAst(astNode.inverse, visitor);
+    }
+  }
+
   /**
    * Extracts all variable names referenced in pure Handlebars mustache statements.
    */
@@ -9,18 +47,7 @@ export class HandlebarsAdapter {
       const ast = Handlebars.parse(template);
       const variables: string[] = [];
 
-      const traverse = (node: unknown): void => {
-        if (!node || typeof node !== 'object') {
-          return;
-        }
-
-        const astNode = node as {
-          type?: string;
-          path?: { type?: string; original?: string; parts?: string[] };
-          body?: unknown[];
-          params?: unknown[];
-        };
-
+      this.walkAst(ast, (astNode) => {
         if (
           astNode.type === 'MustacheStatement' &&
           astNode.path?.type === 'PathExpression' &&
@@ -29,15 +56,8 @@ export class HandlebarsAdapter {
         ) {
           variables.push(astNode.path.original);
         }
+      });
 
-        if (Array.isArray(astNode.body)) {
-          for (const child of astNode.body) {
-            traverse(child);
-          }
-        }
-      };
-
-      traverse(ast);
       return [...new Set(variables)];
     } catch {
       return [];
@@ -53,45 +73,16 @@ export class HandlebarsAdapter {
       const ast = Handlebars.parse(template);
       let containsLogic = false;
 
-      const inspectNode = (node: unknown): void => {
-        if (!node || typeof node !== 'object' || containsLogic) {
-          return;
-        }
-
-        const astNode = node as {
-          type?: string;
-          body?: unknown[];
-          program?: unknown;
-          inverse?: unknown;
-          params?: unknown[];
-        };
-
-        // ADR 0003: Disallow block statements, subexpressions, and helper calls with parameters
+      this.walkAst(ast, (astNode) => {
         if (
           astNode.type === 'BlockStatement' ||
           astNode.type === 'SubExpression' ||
           (astNode.type === 'MustacheStatement' && Array.isArray(astNode.params) && astNode.params.length > 0)
         ) {
           containsLogic = true;
-          return;
+          return false; // stop traversal
         }
-
-        if (Array.isArray(astNode.body)) {
-          for (const child of astNode.body) {
-            inspectNode(child);
-          }
-        }
-
-        if (astNode.program) {
-          inspectNode(astNode.program);
-        }
-
-        if (astNode.inverse) {
-          inspectNode(astNode.inverse);
-        }
-      };
-
-      inspectNode(ast);
+      });
 
       if (containsLogic) {
         return false;

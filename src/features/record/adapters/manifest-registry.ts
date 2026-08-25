@@ -11,7 +11,7 @@ const ManifestSchema = Type.Object({
 
 export interface ManifestRegistryAdapterOptions {
   manifestPath: string;
-  templateEvaluator?: TemplateEvaluatorPort | undefined;
+  templateEvaluator: TemplateEvaluatorPort;
 }
 
 function parseJson(content: string, contextDescription: string): unknown {
@@ -39,12 +39,17 @@ function validateAndCleanSchema<T extends TSchema>(
 
 export class ManifestRegistryAdapter implements ManifestRegistryPort {
   private readonly manifestPath: string;
-  private readonly templateEvaluator?: TemplateEvaluatorPort | undefined;
+  private readonly templateEvaluator: TemplateEvaluatorPort;
 
   constructor(options?: ManifestRegistryAdapterOptions) {
     if (!options?.manifestPath) {
       throw new Error(
         'Manifest path is not defined. Please provide options.manifestPath.'
+      );
+    }
+    if (!options?.templateEvaluator) {
+      throw new Error(
+        'Template evaluator is not defined. Please provide options.templateEvaluator.'
       );
     }
     this.manifestPath = options.manifestPath;
@@ -79,7 +84,7 @@ export class ManifestRegistryAdapter implements ManifestRegistryPort {
         `Invalid RecordType schema in "${recordTypeRelPath}" at "${resolvedPath}"`
       );
 
-      if (validatedRecordType.recordSchema.calculatedFields && this.templateEvaluator) {
+      if (validatedRecordType.recordSchema.calculatedFields) {
         const allowedVariables = [
           ...validatedRecordType.recordSchema.fields.map((f) => f.key),
           ...Object.keys(SystemContextSchema.properties),

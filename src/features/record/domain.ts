@@ -136,7 +136,7 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
   constructor(
     private readonly dispatcher: ActivityDispatcherPort,
     private readonly manifestRegistry: ManifestRegistryPort,
-    private readonly templateEvaluator?: TemplateEvaluatorPort,
+    private readonly templateEvaluator: TemplateEvaluatorPort,
   ) {}
 
   async initialize(): Promise<void> {
@@ -207,7 +207,7 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
     }
 
     let resolvedData: { [key: string]: unknown } = { ...(record.data as { [key: string]: unknown }) };
-    if (recordType.recordSchema.calculatedFields && this.templateEvaluator) {
+    if (recordType.recordSchema.calculatedFields) {
       // STUB: SystemContext incorporates global system runtime variables
       const systemContext: SystemContext = {};
       const basePayload: { [key: string]: unknown } = {

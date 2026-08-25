@@ -28,6 +28,11 @@ describe('Record domain', () => {
     loadAll: vi.fn().mockResolvedValue([]),
   };
 
+  const defaultEvaluator: TemplateEvaluatorPort = {
+    validate: vi.fn().mockReturnValue(true),
+    evaluate: vi.fn().mockReturnValue(''),
+  };
+
   it('should export RecordModel schema', () => {
     expect(RecordModel).toBeDefined();
   });
@@ -65,7 +70,7 @@ describe('Record domain', () => {
     const registryWithSubmittal: ManifestRegistryPort = {
       loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
     };
-    const service = new RecordService(mockDispatcher, registryWithSubmittal);
+    const service = new RecordService(mockDispatcher, registryWithSubmittal, defaultEvaluator);
     await service.initialize();
 
     const validRecord: Record = {
@@ -115,7 +120,7 @@ describe('Record domain', () => {
     const registryWithSubmittal: ManifestRegistryPort = {
       loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
     };
-    const service = new RecordService(mockDispatcher, registryWithSubmittal);
+    const service = new RecordService(mockDispatcher, registryWithSubmittal, defaultEvaluator);
     await service.initialize();
 
     const missingRequiredField = {
@@ -135,7 +140,7 @@ describe('Record domain', () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
-    const service = new RecordService(mockDispatcher, mockRegistry);
+    const service = new RecordService(mockDispatcher, mockRegistry, defaultEvaluator);
     await service.initialize();
 
     const unknownTypeRecord = {
@@ -174,7 +179,7 @@ describe('Record domain', () => {
     const registryWithInvalid: ManifestRegistryPort = {
       loadAll: vi.fn().mockResolvedValue(invalidRecordTypes),
     };
-    const service = new RecordService(mockDispatcher, registryWithInvalid);
+    const service = new RecordService(mockDispatcher, registryWithInvalid, defaultEvaluator);
 
     await expect(service.initialize()).rejects.toThrow(
       /Unsupported field type 'unknown'/
@@ -185,7 +190,7 @@ describe('Record domain', () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
-    const service = new RecordService(mockDispatcher, mockRegistry);
+    const service = new RecordService(mockDispatcher, mockRegistry, defaultEvaluator);
     await service.initialize();
 
     const invalidRecord = {
@@ -204,7 +209,7 @@ describe('Record domain', () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
-    const service = new RecordService(mockDispatcher, mockRegistry);
+    const service = new RecordService(mockDispatcher, mockRegistry, defaultEvaluator);
     await service.initialize();
 
     const resultUndefined = await service.processRecord(undefined);
@@ -379,7 +384,7 @@ describe('Record domain', () => {
       loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
     };
 
-    const service = new RecordService(mockDispatcher, customRegistry);
+    const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
 
     // Before initialize, getForms returns empty list
     const initialForms = await service.getForms();

@@ -40,15 +40,23 @@ describe('ManifestRegistryAdapter', () => {
     return manifestPath;
   }
 
+  const mockEvaluator = {
+    validate: vi.fn().mockReturnValue(true),
+    evaluate: vi.fn(),
+  };
+
   it('throws an error if no manifest path is provided in constructor', () => {
-    expect(() => new ManifestRegistryAdapter()).toThrow(/manifest path is not defined/i);
-    expect(() => new ManifestRegistryAdapter({} as { manifestPath: string })).toThrow(/manifest path is not defined/i);
-    expect(() => new ManifestRegistryAdapter({ manifestPath: '' })).toThrow(/manifest path is not defined/i);
+    expect(() => new ManifestRegistryAdapter({} as unknown as { manifestPath: string; templateEvaluator: typeof mockEvaluator })).toThrow(/manifest path is not defined/i);
+    expect(() => new ManifestRegistryAdapter({ manifestPath: '', templateEvaluator: mockEvaluator })).toThrow(/manifest path is not defined/i);
+  });
+
+  it('throws an error if no template evaluator is provided in constructor', () => {
+    expect(() => new ManifestRegistryAdapter({ manifestPath: 'manifest.json' } as unknown as { manifestPath: string; templateEvaluator: typeof mockEvaluator })).toThrow(/template evaluator is not defined/i);
   });
 
   it('throws an error if manifest file does not exist', async () => {
     const nonExistentPath = path.join(tempDir, 'missing-manifest.json');
-    const adapter = new ManifestRegistryAdapter({ manifestPath: nonExistentPath });
+    const adapter = new ManifestRegistryAdapter({ manifestPath: nonExistentPath, templateEvaluator: mockEvaluator });
     await expect(adapter.loadAll()).rejects.toThrow();
   });
 
@@ -56,7 +64,7 @@ describe('ManifestRegistryAdapter', () => {
     const manifestPath = path.join(tempDir, 'manifest.json');
     await fs.writeFile(manifestPath, '{ malformed json: true }', 'utf-8');
 
-    const adapter = new ManifestRegistryAdapter({ manifestPath });
+    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
     await expect(adapter.loadAll()).rejects.toThrow(/invalid json/i);
   });
 
@@ -64,7 +72,7 @@ describe('ManifestRegistryAdapter', () => {
     const manifestPath = path.join(tempDir, 'manifest.json');
     await fs.writeFile(manifestPath, JSON.stringify({ wrongField: [] }), 'utf-8');
 
-    const adapter = new ManifestRegistryAdapter({ manifestPath });
+    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
     await expect(adapter.loadAll()).rejects.toThrow(/invalid manifest/i);
   });
 
@@ -76,7 +84,7 @@ describe('ManifestRegistryAdapter', () => {
       'utf-8'
     );
 
-    const adapter = new ManifestRegistryAdapter({ manifestPath });
+    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
     await expect(adapter.loadAll()).rejects.toThrow();
   });
 
@@ -86,7 +94,7 @@ describe('ManifestRegistryAdapter', () => {
       { 'invalid-json-type.json': '{ malformed record json }' }
     );
 
-    const adapter = new ManifestRegistryAdapter({ manifestPath });
+    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
     await expect(adapter.loadAll()).rejects.toThrow(/invalid json/i);
   });
 
@@ -102,7 +110,7 @@ describe('ManifestRegistryAdapter', () => {
       }
     );
 
-    const adapter = new ManifestRegistryAdapter({ manifestPath });
+    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
     await expect(adapter.loadAll()).rejects.toThrow(/invalid RecordType schema/i);
   });
 
@@ -126,7 +134,7 @@ describe('ManifestRegistryAdapter', () => {
       }
     );
 
-    const adapter = new ManifestRegistryAdapter({ manifestPath });
+    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
     await expect(adapter.loadAll()).rejects.toThrow(/invalid RecordType schema/i);
   });
 
@@ -173,7 +181,7 @@ describe('ManifestRegistryAdapter', () => {
       'submittal.json': submittalSchema,
     });
 
-    const adapter = new ManifestRegistryAdapter({ manifestPath });
+    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
     const result = await adapter.loadAll();
 
     expect(result).toHaveLength(2);
@@ -200,7 +208,7 @@ describe('ManifestRegistryAdapter', () => {
       'optional-field.json': optionalFieldSchema,
     });
 
-    const adapter = new ManifestRegistryAdapter({ manifestPath });
+    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
     const result = await adapter.loadAll();
 
     expect(result).toHaveLength(1);
@@ -247,7 +255,7 @@ describe('ManifestRegistryAdapter', () => {
       }
     );
 
-    const adapter = new ManifestRegistryAdapter({ manifestPath });
+    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
     const result = await adapter.loadAll();
 
     expect(result).toHaveLength(1);
