@@ -208,7 +208,12 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
 
     let resolvedData: { [key: string]: unknown } = { ...(record.data as { [key: string]: unknown }) };
     if (recordType.recordSchema.calculatedFields && this.templateEvaluator) {
-      const basePayload: { [key: string]: unknown } = { ...(record.data as { [key: string]: unknown }) };
+      // STUB: SystemContext incorporates global system runtime variables
+      const systemContext: SystemContext = {};
+      const basePayload: { [key: string]: unknown } = {
+        ...systemContext,
+        ...(record.data as { [key: string]: unknown }),
+      };
       const calculatedValues: { [key: string]: unknown } = {};
       for (const calculatedField of recordType.recordSchema.calculatedFields) {
         calculatedValues[calculatedField.key] = this.templateEvaluator.evaluate(

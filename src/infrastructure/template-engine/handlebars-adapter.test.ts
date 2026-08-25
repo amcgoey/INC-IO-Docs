@@ -54,6 +54,21 @@ describe('HandlebarsAdapter', () => {
     it('returns false when template syntax is invalid', () => {
       expect(adapter.validate('{{bad syntax', ['bad'])).toBe(false);
     });
+
+    it('returns false for templates containing BlockStatements (e.g. {{#if}}) per ADR 0003', () => {
+      const template = '{{#if Date}}{{Date}}{{/if}}';
+      expect(adapter.validate(template, ['Date'])).toBe(false);
+    });
+
+    it('returns false for templates containing {{#each}} loops per ADR 0003', () => {
+      const template = '{{#each Items}}{{this}}{{/each}}';
+      expect(adapter.validate(template, ['Items'])).toBe(false);
+    });
+
+    it('returns false for templates containing helper calls with parameters per ADR 0003', () => {
+      const template = '{{uppercase Title}}';
+      expect(adapter.validate(template, ['Title', 'uppercase'])).toBe(false);
+    });
   });
 
   describe('evaluate', () => {

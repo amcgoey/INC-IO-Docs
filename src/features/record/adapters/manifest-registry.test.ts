@@ -2,11 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import {
-  ManifestRegistryAdapter,
-  ManifestSchema,
-} from './manifest-registry';
-import { Value } from '@sinclair/typebox/value';
+import { ManifestRegistryAdapter } from './manifest-registry';
 
 describe('ManifestRegistryAdapter', () => {
   let tempDir: string;
@@ -19,10 +15,30 @@ describe('ManifestRegistryAdapter', () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  it('exports ManifestSchema', () => {
-    expect(ManifestSchema).toBeDefined();
-    expect(Value.Check(ManifestSchema, { recordTypes: ['a.json'] })).toBe(true);
-  });
+  async function createManifestFixture(
+    dir: string,
+    schemas: Record<string, unknown>,
+    manifestOverrides?: Record<string, unknown>
+  ): Promise<string> {
+    const schemasDir = path.join(dir, 'schemas');
+    await fs.mkdir(schemasDir, { recursive: true });
+
+    const recordTypePaths: string[] = [];
+    for (const [filename, schema] of Object.entries(schemas)) {
+      const filePath = path.join(schemasDir, filename);
+      await fs.writeFile(filePath, typeof schema === 'string' ? schema : JSON.stringify(schema), 'utf-8');
+      recordTypePaths.push(`./schemas/${filename}`);
+    }
+
+    const manifestPath = path.join(dir, 'manifest.json');
+    const manifestContent = manifestOverrides ?? { recordTypes: recordTypePaths };
+    await fs.writeFile(
+      manifestPath,
+      typeof manifestContent === 'string' ? manifestContent : JSON.stringify(manifestContent),
+      'utf-8'
+    );
+    return manifestPath;
+  }
 
   it('throws an error if no manifest path is provided in constructor', () => {
     expect(() => new ManifestRegistryAdapter()).toThrow(/manifest path is not defined/i);
@@ -65,38 +81,25 @@ describe('ManifestRegistryAdapter', () => {
   });
 
   it('throws an error if a referenced record type file contains malformed JSON', async () => {
-    const manifestPath = path.join(tempDir, 'manifest.json');
-    const recordTypePath = path.join(tempDir, 'invalid-json-type.json');
-
-    await fs.writeFile(
-      manifestPath,
-      JSON.stringify({ recordTypes: ['./invalid-json-type.json'] }),
-      'utf-8'
+    const manifestPath = await createManifestFixture(
+      tempDir,
+      { 'invalid-json-type.json': '{ malformed record json }' }
     );
-    await fs.writeFile(recordTypePath, '{ malformed record json }', 'utf-8');
 
     const adapter = new ManifestRegistryAdapter({ manifestPath });
     await expect(adapter.loadAll()).rejects.toThrow(/invalid json/i);
   });
 
   it('anti-corruption layer: rejects record type JSON missing required fields', async () => {
-    const manifestPath = path.join(tempDir, 'manifest.json');
-    const recordTypePath = path.join(tempDir, 'invalid-type.json');
-
-    await fs.writeFile(
-      manifestPath,
-      JSON.stringify({ recordTypes: ['./invalid-type.json'] }),
-      'utf-8'
-    );
-
     // Missing 'key' and 'fields'
-    await fs.writeFile(
-      recordTypePath,
-      JSON.stringify({
-        name: 'Invalid Record Type',
-        recordSchema: {},
-      }),
-      'utf-8'
+    const manifestPath = await createManifestFixture(
+      tempDir,
+      {
+        'invalid-type.json': {
+          name: 'Invalid Record Type',
+          recordSchema: {},
+        },
+      }
     );
 
     const adapter = new ManifestRegistryAdapter({ manifestPath });
@@ -104,31 +107,23 @@ describe('ManifestRegistryAdapter', () => {
   });
 
   it('anti-corruption layer: rejects record type JSON with invalid field definitions', async () => {
-    const manifestPath = path.join(tempDir, 'manifest.json');
-    const recordTypePath = path.join(tempDir, 'invalid-field.json');
-
-    await fs.writeFile(
-      manifestPath,
-      JSON.stringify({ recordTypes: ['./invalid-field.json'] }),
-      'utf-8'
-    );
-
     // Field is missing 'type' and 'name'
-    await fs.writeFile(
-      recordTypePath,
-      JSON.stringify({
-        key: 'invalid-field-type',
-        name: 'Invalid Field Type',
-        recordSchema: {
-          fields: [
-            {
-              key: 'BadField',
-              // missing 'type' and 'name'
-            },
-          ],
+    const manifestPath = await createManifestFixture(
+      tempDir,
+      {
+        'invalid-field.json': {
+          key: 'invalid-field-type',
+          name: 'Invalid Field Type',
+          recordSchema: {
+            fields: [
+              {
+                key: 'BadField',
+                // missing 'type' and 'name'
+              },
+            ],
+          },
         },
-      }),
-      'utf-8'
+      }
     );
 
     const adapter = new ManifestRegistryAdapter({ manifestPath });
@@ -136,9 +131,6 @@ describe('ManifestRegistryAdapter', () => {
   });
 
   it('loads and returns validated RecordType objects for valid manifest and schema files', async () => {
-    const schemasDir = path.join(tempDir, 'schemas');
-    await fs.mkdir(schemasDir, { recursive: true });
-
     const commSchema = {
       key: 'comm-project',
       name: 'Communication Project',
@@ -176,25 +168,10 @@ describe('ManifestRegistryAdapter', () => {
       },
     };
 
-    await fs.writeFile(
-      path.join(schemasDir, 'comm.json'),
-      JSON.stringify(commSchema),
-      'utf-8'
-    );
-    await fs.writeFile(
-      path.join(schemasDir, 'submittal.json'),
-      JSON.stringify(submittalSchema),
-      'utf-8'
-    );
-
-    const manifestPath = path.join(tempDir, 'manifest.json');
-    await fs.writeFile(
-      manifestPath,
-      JSON.stringify({
-        recordTypes: ['./schemas/comm.json', './schemas/submittal.json'],
-      }),
-      'utf-8'
-    );
+    const manifestPath = await createManifestFixture(tempDir, {
+      'comm.json': commSchema,
+      'submittal.json': submittalSchema,
+    });
 
     const adapter = new ManifestRegistryAdapter({ manifestPath });
     const result = await adapter.loadAll();
@@ -205,12 +182,9 @@ describe('ManifestRegistryAdapter', () => {
   });
 
   it('loads RecordType with RecordField omitting required property', async () => {
-    const schemasDir = path.join(tempDir, 'schemas');
-    await fs.mkdir(schemasDir, { recursive: true });
-
     const optionalFieldSchema = {
-      key: 'optional-req-doc',
-      name: 'Optional Required Doc',
+      key: 'record-with-optional-field',
+      name: 'Record With Optional Field',
       recordSchema: {
         fields: [
           {
@@ -222,20 +196,9 @@ describe('ManifestRegistryAdapter', () => {
       },
     };
 
-    await fs.writeFile(
-      path.join(schemasDir, 'optional-req.json'),
-      JSON.stringify(optionalFieldSchema),
-      'utf-8'
-    );
-
-    const manifestPath = path.join(tempDir, 'manifest.json');
-    await fs.writeFile(
-      manifestPath,
-      JSON.stringify({
-        recordTypes: ['./schemas/optional-req.json'],
-      }),
-      'utf-8'
-    );
+    const manifestPath = await createManifestFixture(tempDir, {
+      'optional-field.json': optionalFieldSchema,
+    });
 
     const adapter = new ManifestRegistryAdapter({ manifestPath });
     const result = await adapter.loadAll();
@@ -246,9 +209,6 @@ describe('ManifestRegistryAdapter', () => {
   });
 
   it('anti-corruption layer: strips unmapped and undeclared raw JSON properties on loadAll', async () => {
-    const schemasDir = path.join(tempDir, 'schemas');
-    await fs.mkdir(schemasDir, { recursive: true });
-
     const rawSchemaWithExtraProps = {
       key: 'extra-props-type',
       name: 'Extra Props Type',
@@ -278,22 +238,13 @@ describe('ManifestRegistryAdapter', () => {
       },
     };
 
-    const manifestWithExtraProps = {
-      recordTypes: ['./schemas/extra.json'],
-      extraManifestProp: 'remove-me',
-    };
-
-    await fs.writeFile(
-      path.join(schemasDir, 'extra.json'),
-      JSON.stringify(rawSchemaWithExtraProps),
-      'utf-8'
-    );
-
-    const manifestPath = path.join(tempDir, 'manifest.json');
-    await fs.writeFile(
-      manifestPath,
-      JSON.stringify(manifestWithExtraProps),
-      'utf-8'
+    const manifestPath = await createManifestFixture(
+      tempDir,
+      { 'extra.json': rawSchemaWithExtraProps },
+      {
+        recordTypes: ['./schemas/extra.json'],
+        extraManifestProp: 'remove-me',
+      }
     );
 
     const adapter = new ManifestRegistryAdapter({ manifestPath });
@@ -350,14 +301,9 @@ describe('ManifestRegistryAdapter', () => {
         },
       };
 
-      const manifestPath = path.join(tempDir, 'manifest.json');
-      const typePath = path.join(tempDir, 'calc-valid.json');
-      await fs.writeFile(typePath, JSON.stringify(recordType), 'utf-8');
-      await fs.writeFile(
-        manifestPath,
-        JSON.stringify({ recordTypes: ['./calc-valid.json'] }),
-        'utf-8'
-      );
+      const manifestPath = await createManifestFixture(tempDir, {
+        'calc-valid.json': recordType,
+      });
 
       const mockEvaluator = {
         validate: vi.fn().mockReturnValue(true),
@@ -400,14 +346,9 @@ describe('ManifestRegistryAdapter', () => {
         },
       };
 
-      const manifestPath = path.join(tempDir, 'manifest.json');
-      const typePath = path.join(tempDir, 'calc-invalid.json');
-      await fs.writeFile(typePath, JSON.stringify(recordType), 'utf-8');
-      await fs.writeFile(
-        manifestPath,
-        JSON.stringify({ recordTypes: ['./calc-invalid.json'] }),
-        'utf-8'
-      );
+      const manifestPath = await createManifestFixture(tempDir, {
+        'calc-invalid.json': recordType,
+      });
 
       const mockEvaluator = {
         validate: vi.fn().mockReturnValue(false),
@@ -420,7 +361,7 @@ describe('ManifestRegistryAdapter', () => {
       });
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid calculated field template in "\.\/calc-invalid\.json" for field "BadCalc"/
+        /Invalid calculated field template in "\.\/schemas\/calc-invalid\.json" for field "BadCalc"/
       );
       expect(mockEvaluator.validate).toHaveBeenCalledWith(
         '{{Title}}-{{DoesNotExist}}',
@@ -429,4 +370,3 @@ describe('ManifestRegistryAdapter', () => {
     });
   });
 });
-

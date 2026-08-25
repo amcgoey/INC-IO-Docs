@@ -5,11 +5,9 @@ import { Value } from '@sinclair/typebox/value';
 import { RecordTypeSchema, SystemContextSchema, formatValidationErrors, type RecordType } from '../domain';
 import type { ManifestRegistryPort, TemplateEvaluatorPort } from '../ports';
 
-export const ManifestSchema = Type.Object({
+const ManifestSchema = Type.Object({
   recordTypes: Type.Array(Type.String()),
 });
-
-export type Manifest = Static<typeof ManifestSchema>;
 
 export interface ManifestRegistryAdapterOptions {
   manifestPath: string;
