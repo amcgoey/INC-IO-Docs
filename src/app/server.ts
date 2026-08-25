@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import { createHttpServer, type HttpServer } from '../infrastructure/http';
 import { registerRecordFeatureRoutes } from '../features/record/adapters/api';
@@ -10,6 +11,7 @@ TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 
 export interface AppOptions {
   manifestRegistry?: ManifestRegistryPort;
+  manifestPath?: string;
   activityEngine?: ActivityDispatcherPort;
   logger?: boolean;
 }
@@ -24,45 +26,14 @@ export interface AppInstance {
 export function createApp(options?: AppOptions): AppInstance {
   const server = createHttpServer({ logger: options?.logger ?? false });
 
-  // Basic POST route for the Add-on homepage
-  server.registerRoute({
-    method: 'POST',
-    url: '/onDocsHomepage',
-    handler: async () => {
-      // A typical Google Workspace Add-on response returning a homepage card
-      const response = {
-        action: {
-          navigations: [
-            {
-              pushCard: {
-                header: {
-                  title: 'Welcome to INC-IO Add-on',
-                },
-                sections: [
-                  {
-                    widgets: [
-                      {
-                        textParagraph: {
-                          text: 'This is the homepage of the Add-on.',
-                        },
-                      },
-                    ],
-                  },
-                ],
-              },
-            },
-          ],
-        },
-      };
-
-      return {
-        status: 200,
-        body: response,
-      };
-    },
-  });
-
-  const manifestRegistry = options?.manifestRegistry ?? new ManifestRegistryAdapter();
+  const manifestRegistry =
+    options?.manifestRegistry ??
+    new ManifestRegistryAdapter({
+      manifestPath:
+        options?.manifestPath ??
+        process.env.APP_MANIFEST_PATH ??
+        path.resolve(__dirname, '../../assets/manifest.json'),
+    });
   const activityEngine = options?.activityEngine ?? new ActivityEngine();
   const recordService = new RecordService(activityEngine, manifestRegistry);
   registerRecordFeatureRoutes(server, { service: recordService, schemaQuery: recordService });

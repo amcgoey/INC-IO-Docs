@@ -6,28 +6,26 @@ import { Type } from '@sinclair/typebox';
 import {
   ManifestRegistryAdapter,
   parseJson,
-  validateSchema,
+  validateAndCleanSchema,
 } from './manifest-registry';
 import { formatValidationErrors } from '../domain';
 
 
 describe('ManifestRegistryAdapter', () => {
   let tempDir: string;
-  const originalEnv = process.env.APP_MANIFEST_PATH;
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'manifest-test-'));
   });
 
   afterEach(async () => {
-    process.env.APP_MANIFEST_PATH = originalEnv;
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  it('throws an error if no manifest path is provided and APP_MANIFEST_PATH is unset', async () => {
-    delete process.env.APP_MANIFEST_PATH;
-    const adapter = new ManifestRegistryAdapter();
-    await expect(adapter.loadAll()).rejects.toThrow(/manifest path is not defined/i);
+  it('throws an error if no manifest path is provided in constructor', () => {
+    expect(() => new ManifestRegistryAdapter()).toThrow(/manifest path is not defined/i);
+    expect(() => new ManifestRegistryAdapter({} as any)).toThrow(/manifest path is not defined/i);
+    expect(() => new ManifestRegistryAdapter({ manifestPath: '' })).toThrow(/manifest path is not defined/i);
   });
 
   it('throws an error if manifest file does not exist', async () => {
@@ -190,39 +188,90 @@ describe('ManifestRegistryAdapter', () => {
     expect(result[1]).toEqual(submittalSchema);
   });
 
-  it('falls back to APP_MANIFEST_PATH environment variable if not passed in constructor', async () => {
-    const manifestPath = path.join(tempDir, 'manifest.json');
-    const typePath = path.join(tempDir, 'type.json');
+  it('anti-corruption layer: strips unmapped and undeclared raw JSON properties on loadAll', async () => {
+    const schemasDir = path.join(tempDir, 'schemas');
+    await fs.mkdir(schemasDir, { recursive: true });
 
-    const validSchema = {
-      key: 'env-test',
-      name: 'Env Test',
+    const rawSchemaWithExtraProps = {
+      key: 'extra-props-type',
+      name: 'Extra Props Type',
+      unknownTopLevelProp: 'to-be-stripped',
+      anotherSecretKey: 9999,
       recordSchema: {
         fields: [
           {
-            key: 'Name',
-            name: 'Name',
+            key: 'FieldOne',
+            name: 'Field One',
+            type: 'string',
+            required: true,
+            undeclaredFieldProp: 'strip-me',
+            extraObj: { foo: 'bar' },
+          },
+        ],
+        undeclaredSchemaProp: 'should-also-be-stripped',
+      },
+      recordUiConfig: {
+        events: {
+          onSubmit: {
+            catchAllWorkflow: 'SubmitExtra',
+            extraUiProp: 123,
+          },
+        },
+        bogusUiProp: true,
+      },
+    };
+
+    const manifestWithExtraProps = {
+      recordTypes: ['./schemas/extra.json'],
+      extraManifestProp: 'remove-me',
+    };
+
+    await fs.writeFile(
+      path.join(schemasDir, 'extra.json'),
+      JSON.stringify(rawSchemaWithExtraProps),
+      'utf-8'
+    );
+
+    const manifestPath = path.join(tempDir, 'manifest.json');
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify(manifestWithExtraProps),
+      'utf-8'
+    );
+
+    const adapter = new ManifestRegistryAdapter({ manifestPath });
+    const result = await adapter.loadAll();
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({
+      key: 'extra-props-type',
+      name: 'Extra Props Type',
+      recordSchema: {
+        fields: [
+          {
+            key: 'FieldOne',
+            name: 'Field One',
             type: 'string',
             required: true,
           },
         ],
       },
-    };
+      recordUiConfig: {
+        events: {
+          onSubmit: {
+            catchAllWorkflow: 'SubmitExtra',
+          },
+        },
+      },
+    });
 
-    await fs.writeFile(typePath, JSON.stringify(validSchema), 'utf-8');
-    await fs.writeFile(
-      manifestPath,
-      JSON.stringify({ recordTypes: ['./type.json'] }),
-      'utf-8'
-    );
-
-    process.env.APP_MANIFEST_PATH = manifestPath;
-
-    const adapter = new ManifestRegistryAdapter();
-    const result = await adapter.loadAll();
-
-    expect(result).toHaveLength(1);
-    expect(result[0]).toEqual(validSchema);
+    expect(result[0]).not.toHaveProperty('unknownTopLevelProp');
+    expect(result[0]).not.toHaveProperty('anotherSecretKey');
+    expect(result[0].recordSchema).not.toHaveProperty('undeclaredSchemaProp');
+    expect(result[0].recordSchema.fields[0]).not.toHaveProperty('undeclaredFieldProp');
+    expect(result[0].recordSchema.fields[0]).not.toHaveProperty('extraObj');
+    expect(result[0].recordUiConfig).not.toHaveProperty('bogusUiProp');
+    expect(result[0].recordUiConfig?.events?.onSubmit).not.toHaveProperty('extraUiProp');
   });
 });
 
@@ -258,17 +307,50 @@ describe('Helper functions', () => {
     });
   });
 
-  describe('validateSchema', () => {
-    it('does not throw when value matches schema', () => {
-      const Schema = Type.Object({ id: Type.String() });
-      expect(() => validateSchema(Schema, { id: '123' }, 'Validation error')).not.toThrow();
+  describe('validateAndCleanSchema', () => {
+    it('returns cleaned object stripping undeclared properties when valid', () => {
+      const Schema = Type.Object({
+        id: Type.String(),
+        nested: Type.Object({
+          name: Type.String(),
+        }),
+      });
+
+      const input = {
+        id: '123',
+        extraTop: 'ignore',
+        nested: {
+          name: 'test',
+          extraNested: 456,
+        },
+      };
+
+      const result = validateAndCleanSchema(Schema, input, 'Invalid object');
+      expect(result).toEqual({
+        id: '123',
+        nested: {
+          name: 'test',
+        },
+      });
+      expect(result).not.toHaveProperty('extraTop');
+      expect(result.nested).not.toHaveProperty('extraNested');
     });
 
-    it('throws with prefix and error details when value is invalid', () => {
-      const Schema = Type.Object({ id: Type.String() });
-      expect(() => validateSchema(Schema, { id: 123 }, 'Invalid item schema')).toThrowError(
-        /^Invalid item schema: \/id: Expected string/
-      );
+    it('throws with prefix and error details when cleaned value fails validation', () => {
+      const Schema = Type.Object({
+        id: Type.String(),
+        count: Type.Number(),
+      });
+
+      const invalidInput = {
+        id: 123,
+        count: 'invalid-number',
+        extra: 'property',
+      };
+
+      expect(() =>
+        validateAndCleanSchema(Schema, invalidInput, 'Invalid schema data')
+      ).toThrowError(/^Invalid schema data: /);
     });
   });
 });

@@ -3,17 +3,6 @@ import { createApp, type AppInstance } from '../src/app/server';
 import type { ManifestRegistryPort, ActivityDispatcherPort } from '../src/features/record/ports';
 import type { RecordType } from '../src/features/record/domain';
 
-// Mock the entire google-auth-library so we can bypass the token verification in route tests
-vi.mock('google-auth-library', () => {
-  return {
-    OAuth2Client: class {
-      verifyIdToken = vi.fn().mockResolvedValue({
-        getPayload: vi.fn().mockReturnValue({ sub: 'user123', email: 'test@example.com' }),
-      });
-    },
-  };
-});
-
 describe('App integration tests', () => {
   let app: AppInstance;
   let mockManifestRegistry: ManifestRegistryPort;
@@ -68,20 +57,6 @@ describe('App integration tests', () => {
   });
 
   describe('Route endpoints', () => {
-    it('POST /onDocsHomepage should return 200 with a valid token', async () => {
-      const response = await app.server.inject({
-        method: 'POST',
-        url: '/onDocsHomepage',
-        headers: {
-          authorization: 'Bearer mocked-token-for-testing',
-        },
-      });
-
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body).toHaveProperty('action');
-      expect(body.action).toHaveProperty('navigations');
-    });
 
     it('POST /records should return 200 and dispatch activity for valid record payload', async () => {
       const validRecord = {
@@ -197,6 +172,16 @@ describe('App integration tests', () => {
       );
 
       await expect(failingApp.start()).rejects.toThrow('Fatal manifest discovery failure');
+    });
+  });
+
+  describe('ManifestRegistry wiring in createApp', () => {
+    it('initializes successfully with default manifest assets when no options are provided', async () => {
+      const defaultAppInstance = createApp();
+      await expect(defaultAppInstance.initialize()).resolves.toBeUndefined();
+      const forms = await defaultAppInstance.recordService.getForms();
+      expect(forms.length).toBeGreaterThan(0);
+      expect(forms[0].key).toBe('communication-project');
     });
   });
 });

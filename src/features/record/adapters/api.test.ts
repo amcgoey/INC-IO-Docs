@@ -1,17 +1,16 @@
 import { describe, it, expect, vi } from 'vitest';
 import { registerRecordFeatureRoutes } from './api';
-import type { RouteDefinition, HttpServer } from '../../../infrastructure/http';
-import type { RecordServicePort, SchemaQueryPort } from '../ports';
+import type { RouteDefinition, HttpRouterPort, RecordServicePort, SchemaQueryPort } from '../ports';
 import type { FormSchema } from '../domain';
 
-function createMockServer() {
+function createMockRouter() {
   const registeredRoutes: RouteDefinition[] = [];
-  const server = {
+  const router: HttpRouterPort = {
     registerRoute: vi.fn((route: RouteDefinition) => {
       registeredRoutes.push(route);
     }),
-  } as unknown as HttpServer;
-  return { server, registeredRoutes };
+  };
+  return { router, registeredRoutes };
 }
 
 describe('Record Feature API driving adapter', () => {
@@ -46,11 +45,11 @@ describe('Record Feature API driving adapter', () => {
       }),
     };
 
-    const { server: mockServer, registeredRoutes } = createMockServer();
+    const { router: mockRouter, registeredRoutes } = createMockRouter();
 
-    registerRecordFeatureRoutes(mockServer, { service: mockService, schemaQuery: mockSchemaQuery });
+    registerRecordFeatureRoutes(mockRouter, { service: mockService, schemaQuery: mockSchemaQuery });
 
-    expect(mockServer.registerRoute).toHaveBeenCalledTimes(2);
+    expect(mockRouter.registerRoute).toHaveBeenCalledTimes(2);
     
     const formsRoute = registeredRoutes.find(r => r.method === 'GET' && r.url === '/forms');
     expect(formsRoute).toBeDefined();
@@ -95,9 +94,9 @@ describe('Record Feature API driving adapter', () => {
       }),
     };
 
-    const { server: mockServer, registeredRoutes } = createMockServer();
+    const { router: mockRouter, registeredRoutes } = createMockRouter();
 
-    registerRecordFeatureRoutes(mockServer, { service: mockService, schemaQuery: mockSchemaQuery });
+    registerRecordFeatureRoutes(mockRouter, { service: mockService, schemaQuery: mockSchemaQuery });
 
     const recordsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/records');
     expect(recordsRoute).toBeDefined();

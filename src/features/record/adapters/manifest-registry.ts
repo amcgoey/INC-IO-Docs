@@ -12,7 +12,7 @@ export const ManifestSchema = Type.Object({
 export type Manifest = Static<typeof ManifestSchema>;
 
 export interface ManifestRegistryAdapterOptions {
-  manifestPath?: string;
+  manifestPath: string;
 }
 
 export function parseJson(content: string, contextDescription: string): unknown {
@@ -24,42 +24,45 @@ export function parseJson(content: string, contextDescription: string): unknown 
   }
 }
 
-export function validateSchema<T extends TSchema>(
+export function validateAndCleanSchema<T extends TSchema>(
   schema: T,
   value: unknown,
   errorMessage: string
-): asserts value is Static<T> {
-  if (!Value.Check(schema, value)) {
-    const errors = formatValidationErrors(schema, value).join(', ');
+): Static<T> {
+  const cleaned = Value.Clean(schema, value);
+  if (!Value.Check(schema, cleaned)) {
+    const errors = formatValidationErrors(schema, cleaned).join(', ');
     throw new Error(`${errorMessage}: ${errors}`);
   }
+  return cleaned as Static<T>;
 }
 
 export class ManifestRegistryAdapter implements ManifestRegistryPort {
-  constructor(private readonly options?: ManifestRegistryAdapterOptions) {}
+  private readonly manifestPath: string;
 
-  async loadAll(): Promise<RecordType[]> {
-    const manifestPath = this.options?.manifestPath ?? process.env.APP_MANIFEST_PATH;
-
-    if (!manifestPath) {
+  constructor(options?: ManifestRegistryAdapterOptions) {
+    if (!options?.manifestPath) {
       throw new Error(
-        'Manifest path is not defined. Please provide a manifestPath or set the APP_MANIFEST_PATH environment variable.'
+        'Manifest path is not defined. Please provide options.manifestPath.'
       );
     }
+    this.manifestPath = options.manifestPath;
+  }
 
-    const manifestContent = await fs.readFile(manifestPath, 'utf-8');
-    const manifestData = parseJson(manifestContent, `manifest file at "${manifestPath}"`);
+  async loadAll(): Promise<RecordType[]> {
+    const manifestContent = await fs.readFile(this.manifestPath, 'utf-8');
+    const manifestData = parseJson(manifestContent, `manifest file at "${this.manifestPath}"`);
 
-    validateSchema(
+    const validatedManifest = validateAndCleanSchema(
       ManifestSchema,
       manifestData,
-      `Invalid manifest file structure at "${manifestPath}"`
+      `Invalid manifest file structure at "${this.manifestPath}"`
     );
 
-    const manifestDir = path.dirname(manifestPath);
+    const manifestDir = path.dirname(this.manifestPath);
     const recordTypes: RecordType[] = [];
 
-    for (const recordTypeRelPath of manifestData.recordTypes) {
+    for (const recordTypeRelPath of validatedManifest.recordTypes) {
       const resolvedPath = path.resolve(manifestDir, recordTypeRelPath);
       const fileContent = await fs.readFile(resolvedPath, 'utf-8');
 
@@ -68,13 +71,13 @@ export class ManifestRegistryAdapter implements ManifestRegistryPort {
         `RecordType file "${recordTypeRelPath}" at "${resolvedPath}"`
       );
 
-      validateSchema(
+      const validatedRecordType = validateAndCleanSchema(
         RecordTypeSchema,
         rawRecordType,
         `Invalid RecordType schema in "${recordTypeRelPath}" at "${resolvedPath}"`
       );
 
-      recordTypes.push(rawRecordType);
+      recordTypes.push(validatedRecordType);
     }
 
     return recordTypes;
