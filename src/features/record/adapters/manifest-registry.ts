@@ -56,6 +56,21 @@ export class ManifestRegistryAdapter implements ManifestRegistryPort {
     this.templateEvaluator = options.templateEvaluator;
   }
 
+  private validateTemplate(
+    template: string,
+    allowedVariables: string[],
+    recordTypeRelPath: string,
+    errorPrefix: string,
+    targetDescription: string
+  ): void {
+    const isValid = this.templateEvaluator.validate(template, allowedVariables);
+    if (!isValid) {
+      throw new Error(
+        `Invalid ${errorPrefix} in "${recordTypeRelPath}" for ${targetDescription}: template "${template}" references unknown fields or is malformed.`
+      );
+    }
+  }
+
   async loadAll(): Promise<RecordType[]> {
     const manifestContent = await fs.readFile(this.manifestPath, 'utf-8');
     const manifestData = parseJson(manifestContent, `manifest file at "${this.manifestPath}"`);
@@ -91,27 +106,26 @@ export class ManifestRegistryAdapter implements ManifestRegistryPort {
 
       if (validatedRecordType.recordSchema.calculatedFields) {
         for (const calculatedField of validatedRecordType.recordSchema.calculatedFields) {
-          const isValid = this.templateEvaluator.validate(
+          this.validateTemplate(
             calculatedField.template,
-            allowedVariables
+            allowedVariables,
+            recordTypeRelPath,
+            'calculated field template',
+            `field "${calculatedField.key}"`
           );
-          if (!isValid) {
-            throw new Error(
-              `Invalid calculated field template in "${recordTypeRelPath}" for field "${calculatedField.key}": template "${calculatedField.template}" references unknown fields or is malformed.`
-            );
-          }
         }
       }
 
       if (validatedRecordType.recordSchema.identity) {
         for (const [propKey, template] of Object.entries(validatedRecordType.recordSchema.identity)) {
           if (typeof template === 'string') {
-            const isValid = this.templateEvaluator.validate(template, allowedVariables);
-            if (!isValid) {
-              throw new Error(
-                `Invalid identity template in "${recordTypeRelPath}" for property "${propKey}": template "${template}" references unknown fields or is malformed.`
-              );
-            }
+            this.validateTemplate(
+              template,
+              allowedVariables,
+              recordTypeRelPath,
+              'identity template',
+              `property "${propKey}"`
+            );
           }
         }
       }

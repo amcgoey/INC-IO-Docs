@@ -129,6 +129,12 @@ export type ProcessRecordResult =
   | { success: true; data: Record; activity: Activity }
   | { success: false; errors: string[] };
 
+const IDENTITY_FIELD_MAPPING = {
+  Id: 'id',
+  IdRecord: 'IdRecord',
+  IdGroup: 'IdGroup',
+} as const;
+
 export class RecordService implements RecordServicePort, SchemaQueryPort {
   private recordTypes: RecordType[] = [];
   private compiledSchemas = new Map<string, TSchema>();
@@ -230,23 +236,14 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
 
     const identityUpdates: Partial<Record> = {};
     if (recordType.recordSchema.identity) {
-      if (recordType.recordSchema.identity.Id) {
-        identityUpdates.id = this.templateEvaluator.evaluate(
-          recordType.recordSchema.identity.Id,
-          basePayload
-        );
-      }
-      if (recordType.recordSchema.identity.IdRecord) {
-        identityUpdates.IdRecord = this.templateEvaluator.evaluate(
-          recordType.recordSchema.identity.IdRecord,
-          basePayload
-        );
-      }
-      if (recordType.recordSchema.identity.IdGroup) {
-        identityUpdates.IdGroup = this.templateEvaluator.evaluate(
-          recordType.recordSchema.identity.IdGroup,
-          basePayload
-        );
+      for (const [schemaKey, targetKey] of Object.entries(IDENTITY_FIELD_MAPPING)) {
+        const template = recordType.recordSchema.identity[schemaKey as keyof typeof IDENTITY_FIELD_MAPPING];
+        if (typeof template === 'string') {
+          identityUpdates[targetKey] = this.templateEvaluator.evaluate(
+            template,
+            basePayload
+          );
+        }
       }
     }
 
