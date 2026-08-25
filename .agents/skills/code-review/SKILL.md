@@ -57,6 +57,8 @@ Each smell reads *what it is* → *how to fix*; match it against the diff:
 
 ### 4. Spawn both sub-agents in parallel using Gemini 3.1 Pro model
 
+**Important:** You must use the `TypeName: "research"` subagent type for both reviewers (avoiding `self` which currently hits a planner config error).
+
 **Standards sub-agent prompt** — include:
 
 - The full diff command and commit list.
