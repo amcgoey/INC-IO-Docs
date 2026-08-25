@@ -34,7 +34,7 @@ export const RecordFieldType = Type.Object({
   name: Type.String(),
   type: Type.String(),
   description: Type.Optional(Type.String()),
-  required: Type.Boolean(),
+  required: Type.Optional(Type.Boolean()),
   defaultValue: Type.Optional(Type.String()),
   format: Type.Optional(Type.String()),
   options: Type.Optional(RecordFieldOptionType),

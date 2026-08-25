@@ -2,14 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { Type } from '@sinclair/typebox';
 import {
   ManifestRegistryAdapter,
-  parseJson,
-  validateAndCleanSchema,
+  ManifestSchema,
 } from './manifest-registry';
-import { formatValidationErrors } from '../domain';
-
+import { Value } from '@sinclair/typebox/value';
 
 describe('ManifestRegistryAdapter', () => {
   let tempDir: string;
@@ -20,6 +17,11 @@ describe('ManifestRegistryAdapter', () => {
 
   afterEach(async () => {
     await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('exports ManifestSchema', () => {
+    expect(ManifestSchema).toBeDefined();
+    expect(Value.Check(ManifestSchema, { recordTypes: ['a.json'] })).toBe(true);
   });
 
   it('throws an error if no manifest path is provided in constructor', () => {
@@ -62,6 +64,21 @@ describe('ManifestRegistryAdapter', () => {
     await expect(adapter.loadAll()).rejects.toThrow();
   });
 
+  it('throws an error if a referenced record type file contains malformed JSON', async () => {
+    const manifestPath = path.join(tempDir, 'manifest.json');
+    const recordTypePath = path.join(tempDir, 'invalid-json-type.json');
+
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify({ recordTypes: ['./invalid-json-type.json'] }),
+      'utf-8'
+    );
+    await fs.writeFile(recordTypePath, '{ malformed record json }', 'utf-8');
+
+    const adapter = new ManifestRegistryAdapter({ manifestPath });
+    await expect(adapter.loadAll()).rejects.toThrow(/invalid json/i);
+  });
+
   it('anti-corruption layer: rejects record type JSON missing required fields', async () => {
     const manifestPath = path.join(tempDir, 'manifest.json');
     const recordTypePath = path.join(tempDir, 'invalid-type.json');
@@ -96,7 +113,7 @@ describe('ManifestRegistryAdapter', () => {
       'utf-8'
     );
 
-    // Field is missing 'required' and has invalid type
+    // Field is missing 'type' and 'name'
     await fs.writeFile(
       recordTypePath,
       JSON.stringify({
@@ -106,8 +123,7 @@ describe('ManifestRegistryAdapter', () => {
           fields: [
             {
               key: 'BadField',
-              name: 'Bad Field',
-              // missing 'type' and 'required'
+              // missing 'type' and 'name'
             },
           ],
         },
@@ -186,6 +202,47 @@ describe('ManifestRegistryAdapter', () => {
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual(commSchema);
     expect(result[1]).toEqual(submittalSchema);
+  });
+
+  it('loads RecordType with RecordField omitting required property', async () => {
+    const schemasDir = path.join(tempDir, 'schemas');
+    await fs.mkdir(schemasDir, { recursive: true });
+
+    const optionalFieldSchema = {
+      key: 'optional-req-doc',
+      name: 'Optional Required Doc',
+      recordSchema: {
+        fields: [
+          {
+            key: 'FieldWithoutReq',
+            name: 'Field Without Req',
+            type: 'string',
+          },
+        ],
+      },
+    };
+
+    await fs.writeFile(
+      path.join(schemasDir, 'optional-req.json'),
+      JSON.stringify(optionalFieldSchema),
+      'utf-8'
+    );
+
+    const manifestPath = path.join(tempDir, 'manifest.json');
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify({
+        recordTypes: ['./schemas/optional-req.json'],
+      }),
+      'utf-8'
+    );
+
+    const adapter = new ManifestRegistryAdapter({ manifestPath });
+    const result = await adapter.loadAll();
+
+    expect(result).toHaveLength(1);
+    expect(result[0].recordSchema.fields[0].required).toBeUndefined();
+    expect(result[0]).toEqual(optionalFieldSchema);
   });
 
   it('anti-corruption layer: strips unmapped and undeclared raw JSON properties on loadAll', async () => {
@@ -272,86 +329,6 @@ describe('ManifestRegistryAdapter', () => {
     expect(result[0].recordSchema.fields[0]).not.toHaveProperty('extraObj');
     expect(result[0].recordUiConfig).not.toHaveProperty('bogusUiProp');
     expect(result[0].recordUiConfig?.events?.onSubmit).not.toHaveProperty('extraUiProp');
-  });
-});
-
-describe('Helper functions', () => {
-  describe('parseJson', () => {
-    it('successfully parses valid JSON', () => {
-      const data = parseJson('{"foo":"bar"}', 'test context');
-      expect(data).toEqual({ foo: 'bar' });
-    });
-
-    it('throws formatted error with context and cause on invalid JSON', () => {
-      expect(() => parseJson('{ invalid }', 'custom config at "/path/to/file"')).toThrowError(
-        /^Invalid JSON in custom config at "\/path\/to\/file":/
-      );
-    });
-  });
-
-  describe('formatValidationErrors', () => {
-    it('returns empty array when there are no errors', () => {
-      const Schema = Type.Object({ name: Type.String() });
-      const errors = formatValidationErrors(Schema, { name: 'test' });
-      expect(errors).toEqual([]);
-    });
-
-    it('formats single and multiple schema errors with paths', () => {
-      const Schema = Type.Object({
-        name: Type.String(),
-        count: Type.Number(),
-      });
-      const errors = formatValidationErrors(Schema, { name: 123, count: 'abc' });
-      expect(errors.some((e) => e.includes('/name:'))).toBe(true);
-      expect(errors.some((e) => e.includes('/count:'))).toBe(true);
-    });
-  });
-
-  describe('validateAndCleanSchema', () => {
-    it('returns cleaned object stripping undeclared properties when valid', () => {
-      const Schema = Type.Object({
-        id: Type.String(),
-        nested: Type.Object({
-          name: Type.String(),
-        }),
-      });
-
-      const input = {
-        id: '123',
-        extraTop: 'ignore',
-        nested: {
-          name: 'test',
-          extraNested: 456,
-        },
-      };
-
-      const result = validateAndCleanSchema(Schema, input, 'Invalid object');
-      expect(result).toEqual({
-        id: '123',
-        nested: {
-          name: 'test',
-        },
-      });
-      expect(result).not.toHaveProperty('extraTop');
-      expect(result.nested).not.toHaveProperty('extraNested');
-    });
-
-    it('throws with prefix and error details when cleaned value fails validation', () => {
-      const Schema = Type.Object({
-        id: Type.String(),
-        count: Type.Number(),
-      });
-
-      const invalidInput = {
-        id: 123,
-        count: 'invalid-number',
-        extra: 'property',
-      };
-
-      expect(() =>
-        validateAndCleanSchema(Schema, invalidInput, 'Invalid schema data')
-      ).toThrowError(/^Invalid schema data: /);
-    });
   });
 });
 

@@ -15,7 +15,7 @@ export interface ManifestRegistryAdapterOptions {
   manifestPath: string;
 }
 
-export function parseJson(content: string, contextDescription: string): unknown {
+function parseJson(content: string, contextDescription: string): unknown {
   try {
     return JSON.parse(content);
   } catch (err) {
@@ -24,12 +24,13 @@ export function parseJson(content: string, contextDescription: string): unknown 
   }
 }
 
-export function validateAndCleanSchema<T extends TSchema>(
+function validateAndCleanSchema<T extends TSchema>(
   schema: T,
   value: unknown,
   errorMessage: string
 ): Static<T> {
-  const cleaned = Value.Clean(schema, value);
+  const cloned = structuredClone(value);
+  const cleaned = Value.Clean(schema, cloned);
   if (!Value.Check(schema, cleaned)) {
     const errors = formatValidationErrors(schema, cleaned).join(', ');
     throw new Error(`${errorMessage}: ${errors}`);

@@ -459,6 +459,45 @@ describe('Record domain', () => {
     });
   });
 
+  describe('RecordFieldType.required', () => {
+    it('allows omitting required property and defaults to valid schema', () => {
+      const fieldWithoutRequired = {
+        key: 'Description',
+        name: 'Description',
+        type: 'string',
+      };
+      expect(Value.Check(RecordFieldType, fieldWithoutRequired)).toBe(true);
+    });
+
+    it('accepts boolean required property when provided', () => {
+      const fieldWithRequiredTrue = {
+        key: 'Title',
+        name: 'Title',
+        type: 'string',
+        required: true,
+      };
+      expect(Value.Check(RecordFieldType, fieldWithRequiredTrue)).toBe(true);
+
+      const fieldWithRequiredFalse = {
+        key: 'Notes',
+        name: 'Notes',
+        type: 'string',
+        required: false,
+      };
+      expect(Value.Check(RecordFieldType, fieldWithRequiredFalse)).toBe(true);
+    });
+
+    it('rejects non-boolean required property', () => {
+      const fieldWithInvalidRequired = {
+        key: 'Title',
+        name: 'Title',
+        type: 'string',
+        required: 'yes',
+      };
+      expect(Value.Check(RecordFieldType, fieldWithInvalidRequired)).toBe(false);
+    });
+  });
+
   describe('formatValidationErrors', () => {
     it('returns empty array when there are no errors', () => {
       const Schema = RecordModel;
