@@ -1,4 +1,3 @@
-import * as path from 'node:path';
 import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import { createHttpServer, type HttpServer } from '../infrastructure/http';
 import { registerRecordFeatureRoutes } from '../features/record/adapters/api';
@@ -26,14 +25,17 @@ export interface AppInstance {
 export function createApp(options?: AppOptions): AppInstance {
   const server = createHttpServer({ logger: options?.logger ?? false });
 
-  const manifestRegistry =
-    options?.manifestRegistry ??
-    new ManifestRegistryAdapter({
-      manifestPath:
-        options?.manifestPath ??
-        process.env.APP_MANIFEST_PATH ??
-        path.resolve(__dirname, '../../assets/manifest.json'),
-    });
+  let manifestRegistry = options?.manifestRegistry;
+  if (!manifestRegistry) {
+    const manifestPath = options?.manifestPath ?? process.env.APP_MANIFEST_PATH;
+    if (!manifestPath) {
+      throw new Error(
+        'Manifest path is not defined. Please provide options.manifestPath or set the APP_MANIFEST_PATH environment variable.'
+      );
+    }
+    manifestRegistry = new ManifestRegistryAdapter({ manifestPath });
+  }
+
   const activityEngine = options?.activityEngine ?? new ActivityEngine();
   const recordService = new RecordService(activityEngine, manifestRegistry);
   registerRecordFeatureRoutes(server, { service: recordService, schemaQuery: recordService });
@@ -55,13 +57,10 @@ export function createApp(options?: AppOptions): AppInstance {
   };
 }
 
-const defaultApp = createApp({ logger: true });
-const { server, recordService } = defaultApp;
-
-// Start the server
-const start = async () => {
+export const start = async (port = 8080, host = '0.0.0.0') => {
   try {
-    await defaultApp.start(8080, '0.0.0.0');
+    const app = createApp({ logger: true });
+    await app.start(port, host);
   } catch (err) {
     console.error(err);
     process.exit(1);
@@ -72,6 +71,5 @@ if (require.main === module) {
   void start();
 }
 
-export { server, recordService };
 
 

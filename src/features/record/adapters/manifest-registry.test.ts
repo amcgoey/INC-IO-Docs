@@ -26,7 +26,7 @@ describe('ManifestRegistryAdapter', () => {
 
   it('throws an error if no manifest path is provided in constructor', () => {
     expect(() => new ManifestRegistryAdapter()).toThrow(/manifest path is not defined/i);
-    expect(() => new ManifestRegistryAdapter({} as any)).toThrow(/manifest path is not defined/i);
+    expect(() => new ManifestRegistryAdapter({} as { manifestPath: string })).toThrow(/manifest path is not defined/i);
     expect(() => new ManifestRegistryAdapter({ manifestPath: '' })).toThrow(/manifest path is not defined/i);
   });
 

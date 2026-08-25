@@ -151,7 +151,8 @@ describe('App integration tests', () => {
       expect(mockManifestRegistry.loadAll).toHaveBeenCalledTimes(1);
     });
 
-    it('GET /forms should return valid FormSchemas with default production manifest and server wiring', async () => {
+    it('GET /forms should return valid FormSchemas when APP_MANIFEST_PATH points to production manifest', async () => {
+      vi.stubEnv('APP_MANIFEST_PATH', path.resolve(__dirname, '../assets/manifest.json'));
       const defaultApp = createApp();
       await defaultApp.initialize();
 
@@ -169,6 +170,7 @@ describe('App integration tests', () => {
         expect(form).not.toHaveProperty('recordWorkflowConfig');
         expect(form).not.toHaveProperty('storageContextConfig');
       }
+      vi.unstubAllEnvs();
     });
   });
 
@@ -177,9 +179,11 @@ describe('App integration tests', () => {
 
     beforeEach(async () => {
       tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'inc-io-test-'));
+      vi.unstubAllEnvs();
     });
 
     afterEach(async () => {
+      vi.unstubAllEnvs();
       await fs.rm(tempDir, { recursive: true, force: true });
     });
 
@@ -189,6 +193,23 @@ describe('App integration tests', () => {
       };
       return createApp({ manifestRegistry: failingRegistry });
     }
+
+    it('fails fast on createApp when neither options.manifestPath nor APP_MANIFEST_PATH is set and no manifestRegistry is provided', () => {
+      delete process.env.APP_MANIFEST_PATH;
+      expect(() => createApp()).toThrow(
+        /Manifest path is not defined. Please provide options.manifestPath or set the APP_MANIFEST_PATH environment variable./
+      );
+    });
+
+    it('fails fast on start() when manifest path is not configured', async () => {
+      delete process.env.APP_MANIFEST_PATH;
+      await expect(async () => {
+        const app = createApp();
+        await app.start();
+      }).rejects.toThrow(
+        /Manifest path is not defined. Please provide options.manifestPath or set the APP_MANIFEST_PATH environment variable./
+      );
+    });
 
     it('fails fast on app initialization when ManifestRegistryPort throws an error', async () => {
       const failingApp = createAppWithFailingRegistry(
@@ -214,11 +235,20 @@ describe('App integration tests', () => {
       await expect(failingApp.start()).rejects.toThrow('Fatal manifest discovery failure');
     });
 
-    it('fails fast during startup when manifest file is missing', async () => {
+    it('fails fast during startup when manifest file is missing via options.manifestPath', async () => {
       const nonExistentManifestPath = path.join(tempDir, 'non-existent-manifest.json');
       const failingApp = createApp({ manifestPath: nonExistentManifestPath });
 
-      await expect(failingApp.initialize()).rejects.toThrow();
+      await expect(failingApp.initialize()).rejects.toThrow(/ENOENT|no such file/i);
+    });
+
+    it('fails fast during startup when manifest file is missing via APP_MANIFEST_PATH env var', async () => {
+      const nonExistentManifestPath = path.join(tempDir, 'non-existent-manifest.json');
+      vi.stubEnv('APP_MANIFEST_PATH', nonExistentManifestPath);
+      const failingApp = createApp();
+
+      await expect(failingApp.initialize()).rejects.toThrow(/ENOENT|no such file/i);
+      await expect(failingApp.start()).rejects.toThrow(/ENOENT|no such file/i);
     });
 
     it('fails fast during startup when manifest file contains corrupted JSON', async () => {
@@ -245,7 +275,7 @@ describe('App integration tests', () => {
       );
       const failingApp = createApp({ manifestPath });
 
-      await expect(failingApp.initialize()).rejects.toThrow();
+      await expect(failingApp.initialize()).rejects.toThrow(/ENOENT|no such file/i);
     });
 
     it('fails fast during startup when a referenced RecordType file contains corrupted JSON', async () => {
@@ -273,12 +303,102 @@ describe('App integration tests', () => {
   });
 
   describe('ManifestRegistry wiring in createApp', () => {
-    it('initializes successfully with default manifest assets when no options are provided', async () => {
-      const defaultAppInstance = createApp();
-      await expect(defaultAppInstance.initialize()).resolves.toBeUndefined();
-      const forms = await defaultAppInstance.recordService.getForms();
-      expect(forms.length).toBeGreaterThan(0);
-      expect(forms[0].key).toBe('communication-project');
+    let tempDir: string;
+
+    beforeEach(async () => {
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'inc-io-manifest-test-'));
+      vi.unstubAllEnvs();
+    });
+
+    afterEach(async () => {
+      vi.unstubAllEnvs();
+      await fs.rm(tempDir, { recursive: true, force: true });
+    });
+
+    it('resolves manifest strictly from options.manifestPath', async () => {
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      const recordTypePath = path.join(tempDir, 'custom-record.json');
+      const customRecord = {
+        key: 'custom-record-key',
+        name: 'Custom Record Name',
+        recordSchema: { fields: [{ key: 'Title', name: 'Title', type: 'string', required: true }] },
+      };
+      await fs.writeFile(recordTypePath, JSON.stringify(customRecord));
+      await fs.writeFile(manifestPath, JSON.stringify({ recordTypes: ['./custom-record.json'] }));
+
+      const appInstance = createApp({ manifestPath });
+      await appInstance.initialize();
+      const forms = await appInstance.recordService.getForms();
+
+      expect(forms).toHaveLength(1);
+      expect(forms[0].key).toBe('custom-record-key');
+      expect(forms[0].name).toBe('Custom Record Name');
+    });
+
+    it('resolves manifest strictly from APP_MANIFEST_PATH environment variable', async () => {
+      const manifestPath = path.join(tempDir, 'env-manifest.json');
+      const recordTypePath = path.join(tempDir, 'env-record.json');
+      const customRecord = {
+        key: 'env-record-key',
+        name: 'Env Record Name',
+        recordSchema: { fields: [{ key: 'Code', name: 'Code', type: 'string', required: true }] },
+      };
+      await fs.writeFile(recordTypePath, JSON.stringify(customRecord));
+      await fs.writeFile(manifestPath, JSON.stringify({ recordTypes: ['./env-record.json'] }));
+
+      vi.stubEnv('APP_MANIFEST_PATH', manifestPath);
+
+      const appInstance = createApp();
+      await appInstance.initialize();
+      const forms = await appInstance.recordService.getForms();
+
+      expect(forms).toHaveLength(1);
+      expect(forms[0].key).toBe('env-record-key');
+      expect(forms[0].name).toBe('Env Record Name');
+
+      const response = await appInstance.server.inject({
+        method: 'GET',
+        url: '/forms',
+      });
+      expect(response.statusCode).toBe(200);
+      const responseBody = JSON.parse(response.payload);
+      expect(responseBody).toHaveLength(1);
+      expect(responseBody[0].key).toBe('env-record-key');
+    });
+
+    it('prefers options.manifestPath over APP_MANIFEST_PATH environment variable', async () => {
+      const optManifestPath = path.join(tempDir, 'opt-manifest.json');
+      const optRecordTypePath = path.join(tempDir, 'opt-record.json');
+      await fs.writeFile(
+        optRecordTypePath,
+        JSON.stringify({
+          key: 'option-key',
+          name: 'Option Name',
+          recordSchema: { fields: [] },
+        })
+      );
+      await fs.writeFile(optManifestPath, JSON.stringify({ recordTypes: ['./opt-record.json'] }));
+
+      const envManifestPath = path.join(tempDir, 'env-manifest.json');
+      const envRecordTypePath = path.join(tempDir, 'env-record.json');
+      await fs.writeFile(
+        envRecordTypePath,
+        JSON.stringify({
+          key: 'env-key',
+          name: 'Env Name',
+          recordSchema: { fields: [] },
+        })
+      );
+      await fs.writeFile(envManifestPath, JSON.stringify({ recordTypes: ['./env-record.json'] }));
+
+      vi.stubEnv('APP_MANIFEST_PATH', envManifestPath);
+
+      const appInstance = createApp({ manifestPath: optManifestPath });
+      await appInstance.initialize();
+      const forms = await appInstance.recordService.getForms();
+
+      expect(forms).toHaveLength(1);
+      expect(forms[0].key).toBe('option-key');
     });
   });
 });
