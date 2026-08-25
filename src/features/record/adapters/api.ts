@@ -1,11 +1,12 @@
-import type { HttpRouterPort, RecordServicePort, SchemaQueryPort } from '../ports';
+import type { HttpServer } from '../../../infrastructure/http';
+import type { RecordServicePort, SchemaQueryPort } from '../ports';
 
 export interface RecordFeatureApiOptions {
   service: RecordServicePort;
   schemaQuery: SchemaQueryPort;
 }
 
-export function registerRecordFeatureRoutes(server: HttpRouterPort, opts: RecordFeatureApiOptions): void {
+export function registerRecordFeatureRoutes(server: HttpServer, opts: RecordFeatureApiOptions): void {
   const { service, schemaQuery } = opts;
 
   server.registerRoute({

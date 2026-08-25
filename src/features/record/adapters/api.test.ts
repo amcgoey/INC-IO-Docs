@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { registerRecordFeatureRoutes } from './api';
-import type { HttpRouteDefinition, HttpRouterPort, RecordServicePort, SchemaQueryPort } from '../ports';
+import type { RouteDefinition, HttpServer } from '../../../infrastructure/http';
+import type { RecordServicePort, SchemaQueryPort } from '../ports';
 import type { FormSchema } from '../domain';
 
 describe('Record Feature API driving adapter', () => {
@@ -35,16 +36,16 @@ describe('Record Feature API driving adapter', () => {
       }),
     };
 
-    const registeredRoutes: HttpRouteDefinition[] = [];
-    const mockRouter: HttpRouterPort = {
-      registerRoute: vi.fn((route: HttpRouteDefinition) => {
+    const registeredRoutes: RouteDefinition[] = [];
+    const mockServer = {
+      registerRoute: vi.fn((route: RouteDefinition) => {
         registeredRoutes.push(route);
       }),
-    };
+    } as unknown as HttpServer;
 
-    registerRecordFeatureRoutes(mockRouter, { service: mockService, schemaQuery: mockSchemaQuery });
+    registerRecordFeatureRoutes(mockServer, { service: mockService, schemaQuery: mockSchemaQuery });
 
-    expect(mockRouter.registerRoute).toHaveBeenCalledTimes(2);
+    expect(mockServer.registerRoute).toHaveBeenCalledTimes(2);
     
     const formsRoute = registeredRoutes.find(r => r.method === 'GET' && r.url === '/forms');
     expect(formsRoute).toBeDefined();
@@ -89,14 +90,14 @@ describe('Record Feature API driving adapter', () => {
       }),
     };
 
-    const registeredRoutes: HttpRouteDefinition[] = [];
-    const mockRouter: HttpRouterPort = {
-      registerRoute: vi.fn((route: HttpRouteDefinition) => {
+    const registeredRoutes: RouteDefinition[] = [];
+    const mockServer = {
+      registerRoute: vi.fn((route: RouteDefinition) => {
         registeredRoutes.push(route);
       }),
-    };
+    } as unknown as HttpServer;
 
-    registerRecordFeatureRoutes(mockRouter, { service: mockService, schemaQuery: mockSchemaQuery });
+    registerRecordFeatureRoutes(mockServer, { service: mockService, schemaQuery: mockSchemaQuery });
 
     const recordsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/records');
     expect(recordsRoute).toBeDefined();
