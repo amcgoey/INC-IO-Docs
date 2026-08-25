@@ -84,12 +84,12 @@ export class ManifestRegistryAdapter implements ManifestRegistryPort {
         `Invalid RecordType schema in "${recordTypeRelPath}" at "${resolvedPath}"`
       );
 
-      if (validatedRecordType.recordSchema.calculatedFields) {
-        const allowedVariables = [
-          ...validatedRecordType.recordSchema.fields.map((f) => f.key),
-          ...Object.keys(SystemContextSchema.properties),
-        ];
+      const allowedVariables = [
+        ...validatedRecordType.recordSchema.fields.map((f) => f.key),
+        ...Object.keys(SystemContextSchema.properties),
+      ];
 
+      if (validatedRecordType.recordSchema.calculatedFields) {
         for (const calculatedField of validatedRecordType.recordSchema.calculatedFields) {
           const isValid = this.templateEvaluator.validate(
             calculatedField.template,
@@ -99,6 +99,19 @@ export class ManifestRegistryAdapter implements ManifestRegistryPort {
             throw new Error(
               `Invalid calculated field template in "${recordTypeRelPath}" for field "${calculatedField.key}": template "${calculatedField.template}" references unknown fields or is malformed.`
             );
+          }
+        }
+      }
+
+      if (validatedRecordType.recordSchema.identity) {
+        for (const [propKey, template] of Object.entries(validatedRecordType.recordSchema.identity)) {
+          if (typeof template === 'string') {
+            const isValid = this.templateEvaluator.validate(template, allowedVariables);
+            if (!isValid) {
+              throw new Error(
+                `Invalid identity template in "${recordTypeRelPath}" for property "${propKey}": template "${template}" references unknown fields or is malformed.`
+              );
+            }
           }
         }
       }

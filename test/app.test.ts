@@ -466,8 +466,8 @@ describe('App integration tests', () => {
     });
   });
 
-  describe('End-to-End Calculated Fields Resolution', () => {
-    it('resolves TestCalculatedField from communication-project.json and enriches payload before dispatching activity', async () => {
+  describe('End-to-End Calculated Fields and Identity Properties Resolution', () => {
+    it('resolves TestCalculatedField and identity properties (id, IdRecord, IdGroup) from communication-project.json and enriches payload before dispatching activity', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -491,9 +491,20 @@ describe('App integration tests', () => {
       };
 
       const expectedCalculatedValue = '260825-IN-Jane Doe-Quarterly review discussion';
+      const expectedIdentityValue = 'Jane Doe-260825-IN-Quarterly review discussion';
+      const expectedGroupId = 'Jane Doe';
+
       const expectedEnrichedData = {
         ...basePayload.data,
         TestCalculatedField: expectedCalculatedValue,
+      };
+
+      const expectedRecord = {
+        type: 'communication-project',
+        id: expectedIdentityValue,
+        IdRecord: expectedIdentityValue,
+        IdGroup: expectedGroupId,
+        data: expectedEnrichedData,
       };
 
       const response = await prodApp.server.inject({
@@ -505,24 +516,18 @@ describe('App integration tests', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
       expect(body.success).toBe(true);
-      expect(body.data.data).toEqual(expectedEnrichedData);
+      expect(body.data).toEqual(expectedRecord);
       expect(body.activity).toEqual({
         type: 'LOG_RECORD',
         payload: {
-          record: {
-            type: 'communication-project',
-            data: expectedEnrichedData,
-          },
+          record: expectedRecord,
         },
       });
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
         type: 'LOG_RECORD',
         payload: {
-          record: {
-            type: 'communication-project',
-            data: expectedEnrichedData,
-          },
+          record: expectedRecord,
         },
       });
     });

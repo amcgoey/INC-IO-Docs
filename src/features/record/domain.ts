@@ -206,14 +206,15 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       };
     }
 
+    // STUB: SystemContext incorporates global system runtime variables
+    const systemContext: SystemContext = {};
+    const basePayload: { [key: string]: unknown } = {
+      ...systemContext,
+      ...(record.data as { [key: string]: unknown }),
+    };
+
     let resolvedData: { [key: string]: unknown } = { ...(record.data as { [key: string]: unknown }) };
     if (recordType.recordSchema.calculatedFields) {
-      // STUB: SystemContext incorporates global system runtime variables
-      const systemContext: SystemContext = {};
-      const basePayload: { [key: string]: unknown } = {
-        ...systemContext,
-        ...(record.data as { [key: string]: unknown }),
-      };
       const calculatedValues: { [key: string]: unknown } = {};
       for (const calculatedField of recordType.recordSchema.calculatedFields) {
         calculatedValues[calculatedField.key] = this.templateEvaluator.evaluate(
@@ -227,8 +228,31 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       };
     }
 
+    const identityUpdates: Partial<Record> = {};
+    if (recordType.recordSchema.identity) {
+      if (recordType.recordSchema.identity.Id) {
+        identityUpdates.id = this.templateEvaluator.evaluate(
+          recordType.recordSchema.identity.Id,
+          basePayload
+        );
+      }
+      if (recordType.recordSchema.identity.IdRecord) {
+        identityUpdates.IdRecord = this.templateEvaluator.evaluate(
+          recordType.recordSchema.identity.IdRecord,
+          basePayload
+        );
+      }
+      if (recordType.recordSchema.identity.IdGroup) {
+        identityUpdates.IdGroup = this.templateEvaluator.evaluate(
+          recordType.recordSchema.identity.IdGroup,
+          basePayload
+        );
+      }
+    }
+
     const enrichedRecord: Record = {
       ...record,
+      ...identityUpdates,
       data: resolvedData,
     };
 

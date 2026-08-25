@@ -377,4 +377,89 @@ describe('ManifestRegistryAdapter', () => {
       );
     });
   });
+
+  describe('identity template validation on loadAll', () => {
+    it('successfully loads record types with valid identity templates when templateEvaluator is provided', async () => {
+      const recordType = {
+        key: 'identity-valid',
+        name: 'Identity Valid',
+        recordSchema: {
+          fields: [
+            { key: 'Contact', name: 'Contact', type: 'string', required: true },
+            { key: 'Date', name: 'Date', type: 'string', required: true },
+            { key: 'Direction', name: 'Direction', type: 'string', required: true },
+            { key: 'Description', name: 'Description', type: 'string', required: true },
+          ],
+          identity: {
+            Id: '{{Contact}}-{{Date}}-{{Direction}}-{{Description}}',
+            IdRecord: '{{Contact}}-{{Date}}-{{Direction}}-{{Description}}',
+            IdGroup: '{{Contact}}',
+          },
+        },
+      };
+
+      const manifestPath = await createManifestFixture(tempDir, {
+        'identity-valid.json': recordType,
+      });
+
+      const mockEvaluator = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn(),
+      };
+
+      const adapter = new ManifestRegistryAdapter({
+        manifestPath,
+        templateEvaluator: mockEvaluator,
+      });
+
+      const result = await adapter.loadAll();
+      expect(result).toHaveLength(1);
+      expect(result[0].recordSchema.identity).toEqual({
+        Id: '{{Contact}}-{{Date}}-{{Direction}}-{{Description}}',
+        IdRecord: '{{Contact}}-{{Date}}-{{Direction}}-{{Description}}',
+        IdGroup: '{{Contact}}',
+      });
+      expect(mockEvaluator.validate).toHaveBeenCalledWith(
+        '{{Contact}}-{{Date}}-{{Direction}}-{{Description}}',
+        expect.arrayContaining(['Contact', 'Date', 'Direction', 'Description'])
+      );
+      expect(mockEvaluator.validate).toHaveBeenCalledWith(
+        '{{Contact}}',
+        expect.arrayContaining(['Contact', 'Date', 'Direction', 'Description'])
+      );
+    });
+
+    it('throws explicit fatal domain error if an identity template references an unknown field or is malformed', async () => {
+      const recordType = {
+        key: 'identity-invalid',
+        name: 'Identity Invalid',
+        recordSchema: {
+          fields: [
+            { key: 'Contact', name: 'Contact', type: 'string', required: true },
+          ],
+          identity: {
+            Id: '{{Contact}}-{{UnknownField}}',
+          },
+        },
+      };
+
+      const manifestPath = await createManifestFixture(tempDir, {
+        'identity-invalid.json': recordType,
+      });
+
+      const mockEvaluator = {
+        validate: vi.fn().mockImplementation((tpl: string) => !tpl.includes('UnknownField')),
+        evaluate: vi.fn(),
+      };
+
+      const adapter = new ManifestRegistryAdapter({
+        manifestPath,
+        templateEvaluator: mockEvaluator,
+      });
+
+      await expect(adapter.loadAll()).rejects.toThrow(
+        /Invalid identity template in "\.\/schemas\/identity-invalid\.json" for property "Id": template "{{Contact}}-{{UnknownField}}" references unknown fields or is malformed\./
+      );
+    });
+  });
 });

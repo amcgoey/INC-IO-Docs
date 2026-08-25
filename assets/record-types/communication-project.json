@@ -43,6 +43,11 @@
         "template": "{{Date}}-{{Direction}}-{{Contact}}-{{Description}}"
       }
     ],
+    "identity": {
+      "Id": "{{Contact}}-{{Date}}-{{Direction}}-{{Description}}",
+      "IdRecord": "{{Contact}}-{{Date}}-{{Direction}}-{{Description}}",
+      "IdGroup": "{{Contact}}"
+    },
     "options": {
       "Direction": [
         {

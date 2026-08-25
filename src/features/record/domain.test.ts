@@ -829,6 +829,168 @@ describe('Record domain', () => {
       expect(evaluatedContexts[1]).not.toHaveProperty('Calc1');
     });
   });
+
+  describe('RecordService identity evaluation', () => {
+    it('evaluates identity templates (Id -> id, IdRecord, IdGroup) and populates record before activity dispatch', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'comm-project',
+          name: 'Communication Project',
+          recordSchema: {
+            fields: [
+              { key: 'Contact', name: 'Contact', type: 'string', required: true },
+              { key: 'Date', name: 'Date', type: 'string', required: true },
+              { key: 'Direction', name: 'Direction', type: 'string', required: true },
+              { key: 'Description', name: 'Description', type: 'string', required: true },
+            ],
+            identity: {
+              Id: '{{Contact}}-{{Date}}-{{Direction}}-{{Description}}',
+              IdRecord: '{{Contact}}-{{Date}}-{{Direction}}-{{Description}}',
+              IdGroup: '{{Contact}}',
+            },
+          },
+        },
+      ];
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template, ctx) => {
+          if (template === '{{Contact}}-{{Date}}-{{Direction}}-{{Description}}') {
+            return `${ctx.Contact}-${ctx.Date}-${ctx.Direction}-${ctx.Description}`;
+          }
+          if (template === '{{Contact}}') {
+            return `${ctx.Contact}`;
+          }
+          return '';
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'comm-project',
+        data: {
+          Contact: 'Alice',
+          Date: '260825',
+          Direction: 'IN',
+          Description: 'Project discussion',
+        },
+      };
+
+      const result = await service.processRecord(inputRecord);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.id).toBe('Alice-260825-IN-Project discussion');
+        expect(result.data.IdRecord).toBe('Alice-260825-IN-Project discussion');
+        expect(result.data.IdGroup).toBe('Alice');
+        expect(result.data.data).toEqual({
+          Contact: 'Alice',
+          Date: '260825',
+          Direction: 'IN',
+          Description: 'Project discussion',
+        });
+        expect(result.activity).toEqual({
+          type: 'LOG_RECORD',
+          payload: {
+            record: {
+              type: 'comm-project',
+              id: 'Alice-260825-IN-Project discussion',
+              IdRecord: 'Alice-260825-IN-Project discussion',
+              IdGroup: 'Alice',
+              data: {
+                Contact: 'Alice',
+                Date: '260825',
+                Direction: 'IN',
+                Description: 'Project discussion',
+              },
+            },
+          },
+        });
+      }
+
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
+        type: 'LOG_RECORD',
+        payload: {
+          record: {
+            type: 'comm-project',
+            id: 'Alice-260825-IN-Project discussion',
+            IdRecord: 'Alice-260825-IN-Project discussion',
+            IdGroup: 'Alice',
+            data: {
+              Contact: 'Alice',
+              Date: '260825',
+              Direction: 'IN',
+              Description: 'Project discussion',
+            },
+          },
+        },
+      });
+    });
+
+    it('strictly isolates identity evaluation context from calculatedFields and each other', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'calc-and-identity',
+          name: 'Calc and Identity',
+          recordSchema: {
+            fields: [
+              { key: 'Contact', name: 'Contact', type: 'string', required: true },
+            ],
+            calculatedFields: [
+              { key: 'DerivedField', template: '{{Contact}}-DERIVED' },
+            ],
+            identity: {
+              Id: '{{Contact}}-ID',
+              IdRecord: '{{DerivedField}}-RECORD',
+              IdGroup: '{{Id}}-GROUP',
+            },
+          },
+        },
+      ];
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+
+      const evaluatedContexts: { template: string; ctx: { [key: string]: unknown } }[] = [];
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template, ctx) => {
+          evaluatedContexts.push({ template, ctx: { ...ctx } });
+          return 'eval-res';
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      await service.processRecord({
+        type: 'calc-and-identity',
+        data: { Contact: 'Bob' },
+      });
+
+      // Total evaluations: 1 calculated field + 3 identity templates = 4
+      expect(evaluatedContexts).toHaveLength(4);
+
+      // All evaluations must only see basePayload { Contact: 'Bob' }
+      for (const item of evaluatedContexts) {
+        expect(item.ctx).toEqual({ Contact: 'Bob' });
+        expect(item.ctx).not.toHaveProperty('DerivedField');
+        expect(item.ctx).not.toHaveProperty('Id');
+        expect(item.ctx).not.toHaveProperty('id');
+        expect(item.ctx).not.toHaveProperty('IdRecord');
+        expect(item.ctx).not.toHaveProperty('IdGroup');
+      }
+    });
+  });
 });
 
 
