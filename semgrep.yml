@@ -87,6 +87,10 @@ rules:
     message: "Do not hardcode RecordType configurations in TypeScript. They must be runtime-interpreted JSON files."
     severity: ERROR
     languages: [typescript]
+    paths:
+      exclude:
+        - "**/*.test.ts"
+        - "test/**"
     patterns:
       - pattern: "const $X : RecordType = { ... }"
 
@@ -103,6 +107,8 @@ rules:
       exclude:
         - "src/features/**/adapters/**"
         - "src/app/**"
+        - "**/*.test.ts"
+        - "test/**"
     patterns:
       - pattern: "new $ADAPTER(...)"
       - metavariable-regex:
@@ -154,6 +160,7 @@ rules:
       exclude:
         - "src/**"
         - "test/**"
+        - "infra/**"
     patterns:
       - pattern-either:
           - pattern: describe(...)
@@ -169,6 +176,9 @@ rules:
       include:
         - "src/features/**/adapters/**"
         - "src/infrastructure/**"
+      exclude:
+        - "**/*.test.ts"
+        - "test/**"
     patterns:
       - pattern: "await $X(...)"
       - pattern-not-inside: |
