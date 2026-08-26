@@ -99,10 +99,23 @@ export class ManifestRegistryAdapter implements ManifestRegistryPort {
         `Invalid RecordType schema in "${recordTypeRelPath}" at "${resolvedPath}"`
       );
 
-      const allowedVariables = [
-        ...validatedRecordType.recordSchema.fields.map((f) => f.key),
+      const allowedVariables: string[] = [
         ...Object.keys(SystemContextSchema.properties),
       ];
+
+      for (const field of validatedRecordType.recordSchema.fields) {
+        allowedVariables.push(field.key);
+        if (field.options) {
+          allowedVariables.push(`${field.key}.${field.options.key}`);
+          allowedVariables.push(`${field.key}.${field.options.name}`);
+          const optionTuples = validatedRecordType.recordSchema.options?.[field.options.source] ?? [];
+          for (const tuple of optionTuples) {
+            for (const tupleKey of Object.keys(tuple)) {
+              allowedVariables.push(`${field.key}.${tupleKey}`);
+            }
+          }
+        }
+      }
 
       if (validatedRecordType.recordSchema.calculatedFields) {
         for (const calculatedField of validatedRecordType.recordSchema.calculatedFields) {

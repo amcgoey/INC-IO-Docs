@@ -40,12 +40,12 @@
     "calculatedFields": [
       {
         "key": "TestCalculatedField",
-        "template": "{{Date}}-{{Direction}}-{{Contact}}-{{Description}}"
+        "template": "{{Date}}-{{Direction.Key}}-{{Contact}}-{{Description}}"
       }
     ],
     "identity": {
-      "Id": "{{Contact}}-{{Date}}-{{Direction}}-{{Description}}",
-      "IdRecord": "{{Contact}}-{{Date}}-{{Direction}}-{{Description}}",
+      "Id": "{{Contact}}-{{Date}}-{{Direction.Key}}-{{Description}}",
+      "IdRecord": "{{Contact}}-{{Date}}-{{Direction.Key}}-{{Description}}",
       "IdGroup": "{{Contact}}"
     },
     "options": {

@@ -496,6 +496,10 @@ describe('App integration tests', () => {
 
       const expectedEnrichedData = {
         ...basePayload.data,
+        Direction: {
+          Key: 'IN',
+          Name: 'Incoming',
+        },
         TestCalculatedField: expectedCalculatedValue,
       };
 
@@ -629,10 +633,22 @@ describe('App integration tests', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
       expect(body.success).toBe(true);
-      expect(body.data.data.Category).toBe('NonStandardCategoryXYZ');
+      expect(body.data.data.Category).toEqual({
+        Key: 'NonStandardCategoryXYZ',
+        Name: 'NonStandardCategoryXYZ',
+      });
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
         type: 'LOG_RECORD',
-        payload: { record: expect.objectContaining({ data: { Category: 'NonStandardCategoryXYZ' } }) },
+        payload: {
+          record: expect.objectContaining({
+            data: {
+              Category: {
+                Key: 'NonStandardCategoryXYZ',
+                Name: 'NonStandardCategoryXYZ',
+              },
+            },
+          }),
+        },
       });
     });
   });

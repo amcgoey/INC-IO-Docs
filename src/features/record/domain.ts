@@ -237,14 +237,36 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       };
     }
 
+    // Anti-Corruption Layer: Context Enrichment & Fallback Tuple Synthesis
+    const rawData = record.data as { [key: string]: unknown };
+    const enrichedData: { [key: string]: unknown } = { ...rawData };
+
+    for (const field of recordType.recordSchema.fields) {
+      if (field.options) {
+        const rawValue = rawData[field.key];
+        if (typeof rawValue === 'string') {
+          const optionTuples = recordType.recordSchema.options?.[field.options.source] ?? [];
+          const matchedTuple = optionTuples.find((tuple) => tuple[field.options!.key] === rawValue);
+          if (matchedTuple) {
+            enrichedData[field.key] = { ...matchedTuple };
+          } else if (field.options.allowUserInput) {
+            enrichedData[field.key] = {
+              [field.options.key]: rawValue,
+              [field.options.name]: rawValue,
+            };
+          }
+        }
+      }
+    }
+
     // STUB: SystemContext incorporates global system runtime variables
     const systemContext: SystemContext = {};
     const basePayload: { [key: string]: unknown } = {
       ...systemContext,
-      ...(record.data as { [key: string]: unknown }),
+      ...enrichedData,
     };
 
-    let resolvedData: { [key: string]: unknown } = { ...(record.data as { [key: string]: unknown }) };
+    let resolvedData: { [key: string]: unknown } = { ...enrichedData };
     if (recordType.recordSchema.calculatedFields) {
       const calculatedValues: { [key: string]: unknown } = {};
       for (const calculatedField of recordType.recordSchema.calculatedFields) {

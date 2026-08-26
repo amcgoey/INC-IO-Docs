@@ -337,6 +337,67 @@ describe('ManifestRegistryAdapter', () => {
       );
     });
 
+    it('includes lookup field tuple properties in allowedVariables for template validation', async () => {
+      const recordType = {
+        key: 'calc-lookup',
+        name: 'Calc Lookup',
+        recordSchema: {
+          fields: [
+            { key: 'Title', name: 'Title', type: 'string', required: true },
+            {
+              key: 'Direction',
+              name: 'Direction',
+              type: 'string',
+              required: true,
+              options: {
+                source: 'Direction',
+                key: 'Key',
+                name: 'Name',
+              },
+            },
+          ],
+          calculatedFields: [
+            {
+              key: 'FullCode',
+              template: '{{Direction.Name}}-{{Direction.Key}}-{{Title}}',
+            },
+          ],
+          options: {
+            Direction: [
+              { Key: 'IN', Name: 'Incoming', Description: 'Inbound item' },
+            ],
+          },
+        },
+      };
+
+      const manifestPath = await createManifestFixture(tempDir, {
+        'calc-lookup.json': recordType,
+      });
+
+      const mockEvaluator = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn(),
+      };
+
+      const adapter = new ManifestRegistryAdapter({
+        manifestPath,
+        templateEvaluator: mockEvaluator,
+      });
+
+      const result = await adapter.loadAll();
+      expect(result).toHaveLength(1);
+      expect(mockEvaluator.validate).toHaveBeenCalledWith(
+        '{{Direction.Name}}-{{Direction.Key}}-{{Title}}',
+        expect.arrayContaining([
+          'Title',
+          'Direction',
+          'Direction.Key',
+          'Direction.Name',
+          'Direction.Description',
+        ])
+      );
+    });
+
     it('throws explicit fatal domain error if a calculatedFields template references a missing field (e.g. {{DoesNotExist}})', async () => {
       const recordType = {
         key: 'calc-invalid',

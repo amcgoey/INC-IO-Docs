@@ -1066,7 +1066,7 @@ describe('Record domain', () => {
       const result = await service.processRecord(validRecord);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.data).toEqual({ Direction: 'IN' });
+        expect(result.data.data).toEqual({ Direction: { Key: 'IN', Name: 'Incoming' } });
       }
       expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
     });
@@ -1168,6 +1168,9 @@ describe('Record domain', () => {
       };
       const emptyResult = await service.processRecord(emptyRecord);
       expect(emptyResult.success).toBe(true);
+      if (emptyResult.success) {
+        expect(emptyResult.data.data).toEqual({});
+      }
 
       // Providing valid option
       const validRecord: Record = {
@@ -1178,6 +1181,9 @@ describe('Record domain', () => {
       };
       const validResult = await service.processRecord(validRecord);
       expect(validResult.success).toBe(true);
+      if (validResult.success) {
+        expect(validResult.data.data).toEqual({ Direction: { Key: 'OT', Name: 'Outgoing' } });
+      }
 
       // Providing invalid option
       const invalidRecord = {
@@ -1275,7 +1281,7 @@ describe('Record domain', () => {
       const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      // Accepts standard option from list
+      // Accepts standard option from list and enriches to matched tuple
       const optionRecord: Record = {
         type: 'comm-project',
         data: {
@@ -1284,8 +1290,11 @@ describe('Record domain', () => {
       };
       const optionResult = await service.processRecord(optionRecord);
       expect(optionResult.success).toBe(true);
+      if (optionResult.success) {
+        expect(optionResult.data.data).toEqual({ Direction: { Key: 'IN', Name: 'Incoming' } });
+      }
 
-      // Accepts arbitrary custom text string outside option list
+      // Accepts arbitrary custom text string outside option list and synthesizes fallback tuple
       const customRecord: Record = {
         type: 'comm-project',
         data: {
@@ -1295,7 +1304,12 @@ describe('Record domain', () => {
       const customResult = await service.processRecord(customRecord);
       expect(customResult.success).toBe(true);
       if (customResult.success) {
-        expect(customResult.data.data).toEqual({ Direction: 'Custom External Message' });
+        expect(customResult.data.data).toEqual({
+          Direction: {
+            Key: 'Custom External Message',
+            Name: 'Custom External Message',
+          },
+        });
       }
       expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
     });
@@ -1403,6 +1417,309 @@ describe('Record domain', () => {
       expect(forms[0].recordSchema.fields[0].options?.allowUserInput).toBe(true);
       expect(forms[0].recordSchema.fields[1].options?.allowUserInput).toBeUndefined();
       expect(Value.Check(FormSchemaType, forms[0])).toBe(true);
+    });
+
+    it('enriches primitive string with entire source tuple including auxiliary properties before activity dispatch', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'submittal',
+          name: 'Submittal Record',
+          recordSchema: {
+            fields: [
+              { key: 'Title', name: 'Title', type: 'string', required: true },
+              {
+                key: 'Status',
+                name: 'Status',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'Statuses',
+                  key: 'Code',
+                  name: 'Label',
+                },
+              },
+            ],
+            options: {
+              Statuses: [
+                {
+                  Code: 'APP',
+                  Label: 'Approved',
+                  Description: 'Fully approved without exceptions',
+                  Color: '#00FF00',
+                  RequiresSignature: true,
+                },
+                {
+                  Code: 'REJ',
+                  Label: 'Rejected',
+                  Description: 'Rejected by structural engineer',
+                  Color: '#FF0000',
+                  RequiresSignature: false,
+                },
+              ],
+            },
+          },
+        },
+      ];
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        id: 'rec-sub-1',
+        type: 'submittal',
+        data: {
+          Title: 'Foundation Plan Review',
+          Status: 'APP',
+        },
+      };
+
+      const result = await service.processRecord(inputRecord);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.data).toEqual({
+          Title: 'Foundation Plan Review',
+          Status: {
+            Code: 'APP',
+            Label: 'Approved',
+            Description: 'Fully approved without exceptions',
+            Color: '#00FF00',
+            RequiresSignature: true,
+          },
+        });
+
+        expect(result.activity).toEqual({
+          type: 'LOG_RECORD',
+          payload: {
+            record: {
+              id: 'rec-sub-1',
+              type: 'submittal',
+              data: {
+                Title: 'Foundation Plan Review',
+                Status: {
+                  Code: 'APP',
+                  Label: 'Approved',
+                  Description: 'Fully approved without exceptions',
+                  Color: '#00FF00',
+                  RequiresSignature: true,
+                },
+              },
+            },
+          },
+        });
+      }
+
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
+        type: 'LOG_RECORD',
+        payload: {
+          record: {
+            id: 'rec-sub-1',
+            type: 'submittal',
+            data: {
+              Title: 'Foundation Plan Review',
+              Status: {
+                Code: 'APP',
+                Label: 'Approved',
+                Description: 'Fully approved without exceptions',
+                Color: '#00FF00',
+                RequiresSignature: true,
+              },
+            },
+          },
+        },
+      });
+    });
+
+    it('synthesizes fallback tuple for combo-boxes mapping custom string to schema key and name', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'vendor-record',
+          name: 'Vendor Record',
+          recordSchema: {
+            fields: [
+              {
+                key: 'SupplierType',
+                name: 'Supplier Type',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'SupplierTypes',
+                  key: 'TypeCode',
+                  name: 'TypeDisplayName',
+                  allowUserInput: true,
+                },
+              },
+            ],
+            options: {
+              SupplierTypes: [
+                { TypeCode: 'CON', TypeDisplayName: 'Concrete Subcontractor' },
+                { TypeCode: 'STL', TypeDisplayName: 'Steel Fabricator' },
+              ],
+            },
+          },
+        },
+      ];
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'vendor-record',
+        data: {
+          SupplierType: 'Custom Acoustic Consultant',
+        },
+      };
+
+      const result = await service.processRecord(inputRecord);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.data).toEqual({
+          SupplierType: {
+            TypeCode: 'Custom Acoustic Consultant',
+            TypeDisplayName: 'Custom Acoustic Consultant',
+          },
+        });
+      }
+    });
+
+    it('passes enriched tuple context seamlessly to Handlebars evaluator for calculatedFields and identity', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'comm-project',
+          name: 'Communication Project',
+          recordSchema: {
+            fields: [
+              { key: 'Contact', name: 'Contact', type: 'string', required: true },
+              { key: 'Date', name: 'Date', type: 'string', required: true },
+              {
+                key: 'Direction',
+                name: 'Direction',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'Direction',
+                  key: 'Key',
+                  name: 'Name',
+                },
+              },
+              {
+                key: 'DeliveryMethod',
+                name: 'Delivery Method',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'DeliveryMethods',
+                  key: 'Code',
+                  name: 'Title',
+                  allowUserInput: true,
+                },
+              },
+            ],
+            calculatedFields: [
+              {
+                key: 'FullSummary',
+                template: '{{Direction.Name}} from {{Contact}} via {{DeliveryMethod.Title}}',
+              },
+            ],
+            identity: {
+              Id: '{{Contact}}-{{Date}}-{{Direction.Key}}-{{DeliveryMethod.Code}}',
+              IdRecord: '{{Contact}}-{{Date}}-{{Direction.Key}}-{{DeliveryMethod.Code}}',
+              IdGroup: '{{Contact}}',
+            },
+            options: {
+              Direction: [
+                { Key: 'IN', Name: 'Incoming' },
+                { Key: 'OT', Name: 'Outgoing' },
+              ],
+              DeliveryMethods: [
+                { Code: 'EML', Title: 'Email Delivery' },
+                { Code: 'FED', Title: 'FedEx Courier' },
+              ],
+            },
+          },
+        },
+      ];
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+
+      const evaluatedContexts: { template: string; ctx: { [key: string]: unknown } }[] = [];
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template, ctx) => {
+          evaluatedContexts.push({ template, ctx: JSON.parse(JSON.stringify(ctx)) });
+          if (template === '{{Direction.Name}} from {{Contact}} via {{DeliveryMethod.Title}}') {
+            const dir = ctx.Direction as { Name: string };
+            const del = ctx.DeliveryMethod as { Title: string };
+            return `${dir.Name} from ${ctx.Contact} via ${del.Title}`;
+          }
+          if (template === '{{Contact}}-{{Date}}-{{Direction.Key}}-{{DeliveryMethod.Code}}') {
+            const dir = ctx.Direction as { Key: string };
+            const del = ctx.DeliveryMethod as { Code: string };
+            return `${ctx.Contact}-${ctx.Date}-${dir.Key}-${del.Code}`;
+          }
+          if (template === '{{Contact}}') {
+            return `${ctx.Contact}`;
+          }
+          return '';
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      // Test with matched Direction tuple and synthesized DeliveryMethod fallback tuple
+      const inputRecord: Record = {
+        type: 'comm-project',
+        data: {
+          Contact: 'Alice',
+          Date: '260825',
+          Direction: 'IN',
+          DeliveryMethod: 'Hand Carried Drone', // arbitrary combo-box input
+        },
+      };
+
+      const result = await service.processRecord(inputRecord);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.id).toBe('Alice-260825-IN-Hand Carried Drone');
+        expect(result.data.IdRecord).toBe('Alice-260825-IN-Hand Carried Drone');
+        expect(result.data.IdGroup).toBe('Alice');
+        expect(result.data.data).toEqual({
+          Contact: 'Alice',
+          Date: '260825',
+          Direction: {
+            Key: 'IN',
+            Name: 'Incoming',
+          },
+          DeliveryMethod: {
+            Code: 'Hand Carried Drone',
+            Title: 'Hand Carried Drone',
+          },
+          FullSummary: 'Incoming from Alice via Hand Carried Drone',
+        });
+      }
+
+      // Verify that all Handlebars evaluation calls received the enriched tuple objects in context
+      for (const call of evaluatedContexts) {
+        expect(call.ctx.Direction).toEqual({ Key: 'IN', Name: 'Incoming' });
+        expect(call.ctx.DeliveryMethod).toEqual({
+          Code: 'Hand Carried Drone',
+          Title: 'Hand Carried Drone',
+        });
+      }
     });
   });
 });
