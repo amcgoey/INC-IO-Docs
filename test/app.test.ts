@@ -531,6 +531,42 @@ describe('App integration tests', () => {
         },
       });
     });
+
+    it('rejects payload with 400 when lookup field has an invalid option value', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      const prodApp = createApp({
+        manifestPath,
+        activityEngine: mockDispatcher,
+      });
+
+      await prodApp.initialize();
+
+      const invalidPayload = {
+        type: 'communication-project',
+        data: {
+          Contact: 'Jane Doe',
+          Date: '260825',
+          Direction: 'INVALID_DIRECTION',
+          Description: 'Quarterly review discussion',
+        },
+      };
+
+      const response = await prodApp.server.inject({
+        method: 'POST',
+        url: '/records',
+        payload: invalidPayload,
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.payload);
+      expect(body.success).toBe(false);
+      expect(body.errors.some((err: string) => err.includes('/Direction:'))).toBe(true);
+      expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+    });
   });
 });
 

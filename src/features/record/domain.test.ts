@@ -991,6 +991,226 @@ describe('Record domain', () => {
       }
     });
   });
+
+  describe('RecordService LookupFields validation', () => {
+    it('accepts valid string inputs matching option tuple key for lookup fields', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'comm-project',
+          name: 'Communication Project',
+          recordSchema: {
+            fields: [
+              {
+                key: 'Direction',
+                name: 'Direction',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'Direction',
+                  key: 'Key',
+                  name: 'Name',
+                },
+              },
+            ],
+            options: {
+              Direction: [
+                { Key: 'IN', Name: 'Incoming' },
+                { Key: 'OT', Name: 'Outgoing' },
+              ],
+            },
+          },
+        },
+      ];
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const validRecord: Record = {
+        type: 'comm-project',
+        data: {
+          Direction: 'IN',
+        },
+      };
+
+      const result = await service.processRecord(validRecord);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.data).toEqual({ Direction: 'IN' });
+      }
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects invalid string inputs not matching any option tuple key for lookup fields', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'comm-project',
+          name: 'Communication Project',
+          recordSchema: {
+            fields: [
+              {
+                key: 'Direction',
+                name: 'Direction',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'Direction',
+                  key: 'Key',
+                  name: 'Name',
+                },
+              },
+            ],
+            options: {
+              Direction: [
+                { Key: 'IN', Name: 'Incoming' },
+                { Key: 'OT', Name: 'Outgoing' },
+              ],
+            },
+          },
+        },
+      ];
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const invalidRecord = {
+        type: 'comm-project',
+        data: {
+          Direction: 'INVALID_DIR',
+        },
+      };
+
+      const result = await service.processRecord(invalidRecord);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors.length).toBeGreaterThan(0);
+        expect(result.errors.some((err) => err.includes('/Direction:'))).toBe(true);
+      }
+      expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('accepts optional lookup fields when omitted, but rejects invalid strings when provided', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'comm-project',
+          name: 'Communication Project',
+          recordSchema: {
+            fields: [
+              {
+                key: 'Direction',
+                name: 'Direction',
+                type: 'string',
+                required: false,
+                options: {
+                  source: 'Direction',
+                  key: 'Key',
+                  name: 'Name',
+                },
+              },
+            ],
+            options: {
+              Direction: [
+                { Key: 'IN', Name: 'Incoming' },
+                { Key: 'OT', Name: 'Outgoing' },
+              ],
+            },
+          },
+        },
+      ];
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      // Omitting optional lookup field
+      const emptyRecord: Record = {
+        type: 'comm-project',
+        data: {},
+      };
+      const emptyResult = await service.processRecord(emptyRecord);
+      expect(emptyResult.success).toBe(true);
+
+      // Providing valid option
+      const validRecord: Record = {
+        type: 'comm-project',
+        data: {
+          Direction: 'OT',
+        },
+      };
+      const validResult = await service.processRecord(validRecord);
+      expect(validResult.success).toBe(true);
+
+      // Providing invalid option
+      const invalidRecord = {
+        type: 'comm-project',
+        data: {
+          Direction: 'UNKNOWN',
+        },
+      };
+      const invalidResult = await service.processRecord(invalidRecord);
+      expect(invalidResult.success).toBe(false);
+      if (!invalidResult.success) {
+        expect(invalidResult.errors.some((err) => err.includes('/Direction:'))).toBe(true);
+      }
+    });
+
+    it('rejects inputs when lookup field options source is missing or empty', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'comm-project',
+          name: 'Communication Project',
+          recordSchema: {
+            fields: [
+              {
+                key: 'Category',
+                name: 'Category',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'MissingSource',
+                  key: 'Key',
+                  name: 'Name',
+                },
+              },
+            ],
+          },
+        },
+      ];
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const recordWithMissingSourceVal = {
+        type: 'comm-project',
+        data: {
+          Category: 'AnyValue',
+        },
+      };
+      const result = await service.processRecord(recordWithMissingSourceVal);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors.some((err) => err.includes('/Category:'))).toBe(true);
+      }
+    });
+  });
 });
 
 

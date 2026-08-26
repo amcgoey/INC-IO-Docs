@@ -135,6 +135,41 @@ const IDENTITY_FIELD_MAPPING = {
   IdGroup: 'IdGroup',
 } as const;
 
+function compileFieldSchema(field: RecordField, recordSchema: RecordSchema, recordTypeKey: string): TSchema {
+  let fieldSchema: TSchema;
+  if (field.type === 'string') {
+    if (field.options) {
+      const { source, key } = field.options;
+      const optionTuples = recordSchema.options?.[source] ?? [];
+      const uniqueKeys = Array.from(
+        new Set(
+          optionTuples
+            .map((tuple) => tuple[key])
+            .filter((val): val is string => typeof val === 'string')
+        )
+      );
+      const literals = uniqueKeys.map((val) => Type.Literal(val));
+      if (literals.length === 0) {
+        fieldSchema = Type.Never();
+      } else if (literals.length === 1) {
+        fieldSchema = literals[0];
+      } else {
+        fieldSchema = Type.Union(literals);
+      }
+    } else {
+      fieldSchema = Type.String();
+    }
+  } else {
+    throw new Error(`Unsupported field type '${field.type}' in RecordType '${recordTypeKey}'`);
+  }
+
+  if (!field.required) {
+    fieldSchema = Type.Optional(fieldSchema);
+  }
+
+  return fieldSchema;
+}
+
 export class RecordService implements RecordServicePort, SchemaQueryPort {
   private recordTypes: RecordType[] = [];
   private compiledSchemas = new Map<string, TSchema>();
@@ -152,18 +187,7 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
     for (const recordType of this.recordTypes) {
       const properties: { [key: string]: TSchema } = {};
       for (const field of recordType.recordSchema.fields) {
-        let fieldSchema: TSchema;
-        if (field.type === 'string') {
-          fieldSchema = Type.String();
-        } else {
-          throw new Error(`Unsupported field type '${field.type}' in RecordType '${recordType.key}'`);
-        }
-
-        if (!field.required) {
-          fieldSchema = Type.Optional(fieldSchema);
-        }
-
-        properties[field.key] = fieldSchema;
+        properties[field.key] = compileFieldSchema(field, recordType.recordSchema, recordType.key);
       }
       this.compiledSchemas.set(recordType.key, Type.Object(properties));
     }
