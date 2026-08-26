@@ -15,14 +15,67 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     name: 'Communication Project',
     recordSchema: {
       fields: [
-        { key: 'contact', name: 'Contact Person', type: 'string', required: true },
-        { key: 'date', name: 'Date', type: 'string', required: true },
-        { key: 'direction', name: 'Direction', type: 'string', required: true },
-        { key: 'description', name: 'Description', type: 'string', required: true },
+        {
+          key: 'contact',
+          name: 'Contact',
+          type: 'string',
+          description: 'Contact folder name',
+          required: true,
+        },
+        {
+          key: 'date',
+          name: 'Date',
+          type: 'string',
+          description: 'Date in yyMMdd format',
+          required: true,
+        },
+        {
+          key: 'direction',
+          name: 'Direction',
+          type: 'string',
+          description: 'Communication direction',
+          required: true,
+          options: {
+            source: 'direction',
+            key: 'key',
+            name: 'name',
+          },
+        },
+        {
+          key: 'description',
+          name: 'Description',
+          type: 'string',
+          description: 'Description of communication',
+          required: true,
+        },
       ],
       calculatedFields: [
-        { key: 'summary', template: '{{date}} {{direction}} - {{description}}' },
+        {
+          key: 'summary',
+          template: '{{date}} {{direction.key}} - {{description}}',
+        },
+        {
+          key: 'testCalculatedField',
+          template: '{{date}}-{{direction.key}}-{{contact}}-{{description}}',
+        },
       ],
+      identity: {
+        id: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
+        idRecord: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
+        idGroup: '{{contact}}',
+      },
+      options: {
+        direction: [
+          {
+            key: 'IN',
+            name: 'Incoming',
+          },
+          {
+            key: 'OT',
+            name: 'Outgoing',
+          },
+        ],
+      },
     },
     recordUiConfig: {
       events: {
@@ -43,7 +96,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     },
     storageContextConfig: {
       folder: '1Admin\\Communication\\\\{{Record.data.contact}}',
-      subfolder: 'Archive\\\\{{Record.data.direction}}',
+      subfolder: 'Archive\\\\{{Record.data.direction.key}}',
     },
     recordWorkflowConfig: {
       workflows: [
@@ -54,7 +107,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
               type: 'CREATE_COMMUNICATION',
               payload: {
                 targetPath: '{{StorageContext.folder}}\\\\{{Record.data.summary}}',
-                archivePath: '{{StorageContext.subfolder}}\\\\{{Record.data.date}}',
+                archivePath: '{{StorageContext.subfolder}}\\\\{{Record.data.testCalculatedField}}',
               },
             },
           ],
@@ -66,7 +119,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
               type: 'CREATE_COMMUNICATION',
               payload: {
                 targetPath: '{{StorageContext.folder}}\\\\{{Record.data.summary}}',
-                archivePath: '{{StorageContext.subfolder}}\\\\{{Record.data.date}}',
+                archivePath: '{{StorageContext.subfolder}}\\\\{{Record.data.testCalculatedField}}',
               },
             },
           ],
@@ -78,6 +131,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
               type: 'CREATE_COMMUNICATION',
               payload: {
                 targetPath: '{{StorageContext.folder}}\\\\{{Record.data.summary}}',
+                archivePath: '{{StorageContext.subfolder}}\\\\{{Record.data.testCalculatedField}}',
               },
             },
           ],
@@ -104,7 +158,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     consoleSpy.mockRestore();
   });
 
-  it('routes and executes Record 1 (Client - AAA) with precise nested string path evaluation and structured stdout output', async () => {
+  it('routes and executes Record 1 (Client - AAA) with option enrichment, identities, calculated fields, and precise path resolution', async () => {
     const record1: Record = {
       type: 'communication-project',
       data: {
@@ -120,20 +174,28 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
 
+    // Asserts identity synthesis and option enrichment from communication-project schema
     expect(result.data).toEqual({
       type: 'communication-project',
+      id: '_Client - AAA-260826-OT-ASR 06 Design Changes',
+      idRecord: '_Client - AAA-260826-OT-ASR 06 Design Changes',
+      idGroup: '_Client - AAA',
       data: {
         contact: '_Client - AAA',
         date: '260826',
-        direction: 'OT',
+        direction: {
+          key: 'OT',
+          name: 'Outgoing',
+        },
         description: 'ASR 06 Design Changes',
         summary: '260826 OT - ASR 06 Design Changes',
+        testCalculatedField: '260826-OT-_Client - AAA-ASR 06 Design Changes',
       },
     });
 
     const expectedPayload = {
       targetPath: '1Admin\\Communication\\_Client - AAA\\260826 OT - ASR 06 Design Changes',
-      archivePath: 'Archive\\OT\\260826',
+      archivePath: 'Archive\\OT\\260826-OT-_Client - AAA-ASR 06 Design Changes',
     };
 
     const expectedActivity: Activity = {
@@ -145,7 +207,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(expectedPayload));
   });
 
-  it('routes and executes Record 2 (Architect - BBB) with precise nested string path evaluation and structured stdout output', async () => {
+  it('routes and executes Record 2 (Architect - BBB) with option enrichment, identities, calculated fields, and precise path resolution', async () => {
     const record2: Record = {
       type: 'communication-project',
       data: {
@@ -161,20 +223,28 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
 
+    // Asserts identity synthesis and option enrichment from communication-project schema
     expect(result.data).toEqual({
       type: 'communication-project',
+      id: 'Architect - BBB-260715-IN-CD Comments',
+      idRecord: 'Architect - BBB-260715-IN-CD Comments',
+      idGroup: 'Architect - BBB',
       data: {
         contact: 'Architect - BBB',
         date: '260715',
-        direction: 'IN',
+        direction: {
+          key: 'IN',
+          name: 'Incoming',
+        },
         description: 'CD Comments',
         summary: '260715 IN - CD Comments',
+        testCalculatedField: '260715-IN-Architect - BBB-CD Comments',
       },
     });
 
     const expectedPayload = {
       targetPath: '1Admin\\Communication\\Architect - BBB\\260715 IN - CD Comments',
-      archivePath: 'Archive\\IN\\260715',
+      archivePath: 'Archive\\IN\\260715-IN-Architect - BBB-CD Comments',
     };
 
     const expectedActivity: Activity = {
