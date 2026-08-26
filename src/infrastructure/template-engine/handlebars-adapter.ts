@@ -100,7 +100,7 @@ export class HandlebarsAdapter {
   /**
    * Evaluates the template against the provided context using noEscape to preserve raw strings.
    */
-  public evaluate(template: string, context: Record<string, unknown>): string {
+  public evaluate(template: string, context: { [key: string]: unknown }): string {
     const compiled = Handlebars.compile(template, { noEscape: true });
     return compiled(context);
   }

@@ -130,7 +130,12 @@ export type ProcessRecordResult =
   | { success: true; data: Record; activity: Activity }
   | { success: false; errors: string[] };
 
-const IDENTITY_FIELD_MAPPING = {
+/**
+ * Maps property names in RecordIdentitySchema to property names in the Record entity model.
+ * RecordIdentitySchema defines 'Id' (schema convention) which maps to 'id' on the Record entity,
+ * while 'IdRecord' and 'IdGroup' map to 'IdRecord' and 'IdGroup'.
+ */
+const IDENTITY_SCHEMA_TO_RECORD_FIELD_MAPPING = {
   Id: 'id',
   IdRecord: 'IdRecord',
   IdGroup: 'IdGroup',
@@ -283,8 +288,8 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
 
     const identityUpdates: Partial<Record> = {};
     if (recordType.recordSchema.identity) {
-      for (const [schemaKey, targetKey] of Object.entries(IDENTITY_FIELD_MAPPING)) {
-        const template = recordType.recordSchema.identity[schemaKey as keyof typeof IDENTITY_FIELD_MAPPING];
+      for (const [schemaKey, targetKey] of Object.entries(IDENTITY_SCHEMA_TO_RECORD_FIELD_MAPPING)) {
+        const template = recordType.recordSchema.identity[schemaKey as keyof typeof IDENTITY_SCHEMA_TO_RECORD_FIELD_MAPPING];
         if (typeof template === 'string') {
           identityUpdates[targetKey] = this.templateEvaluator.evaluate(
             template,

@@ -17,9 +17,11 @@ export interface ManifestRegistryPort {
   loadAll(): Promise<RecordType[]>;
 }
 
+export type TemplateEvaluationContext = { [key: string]: unknown };
+
 export interface TemplateEvaluatorPort {
   validate(template: string, allowedVariables: string[]): boolean;
-  evaluate(template: string, context: Record<string, unknown>): string;
+  evaluate(template: string, context: TemplateEvaluationContext): string;
 }
 
 
