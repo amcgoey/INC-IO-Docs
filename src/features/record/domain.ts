@@ -126,13 +126,17 @@ export const RecordWorkflowConfigType = Type.Object({
 
 export type RecordWorkflowConfig = Static<typeof RecordWorkflowConfigType>;
 
+export const StorageContextConfigType = Type.Record(Type.String(), Type.Unknown());
+
+export type StorageContextConfig = Static<typeof StorageContextConfigType>;
+
 export const RecordTypeSchema = Type.Object({
   key: Type.String(),
   name: Type.String(),
   recordSchema: RecordSchemaType,
   recordUiConfig: Type.Optional(RecordUiConfigType),
   recordWorkflowConfig: Type.Optional(RecordWorkflowConfigType),
-  storageContextConfig: Type.Optional(Type.Unknown()),
+  storageContextConfig: Type.Optional(StorageContextConfigType),
 });
 
 export type RecordType = Static<typeof RecordTypeSchema>;
@@ -415,9 +419,19 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
     }
 
     const activities = workflow.activitySequence ?? [];
+    let storageContext: unknown;
+    if (recordType.storageContextConfig !== undefined) {
+      storageContext = resolvePayloadTemplates(
+        recordType.storageContextConfig,
+        this.templateEvaluator,
+        { Record: enrichedRecord }
+      );
+    }
+
     const evaluationContext: TemplateEvaluationContext = {
       Record: enrichedRecord,
       RecordSchema: recordType.recordSchema,
+      ...(storageContext !== undefined ? { StorageContext: storageContext } : {}),
     };
 
     const resolvedActivities: Activity[] = [];

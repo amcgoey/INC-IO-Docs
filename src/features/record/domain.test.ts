@@ -14,12 +14,15 @@ import {
   UiEventRuleType,
   WorkflowType,
   RecordWorkflowConfigType,
+  StorageContextConfigType,
   FormSchemaType,
   ActivityType,
   formatValidationErrors,
+  type Activity,
   type Record,
   type RecordType,
   type FormSchema,
+  type StorageContextConfig,
 } from './domain';
 import type { ActivityDispatcherPort, ManifestRegistryPort, TemplateEvaluatorPort } from './ports';
 
@@ -2268,7 +2271,332 @@ describe('Record domain', () => {
       );
     });
   });
+
+  describe('Pre-evaluated Storage Context', () => {
+    it('exports StorageContextConfigType and validates config object', () => {
+      expect(StorageContextConfigType).toBeDefined();
+      const validConfig: StorageContextConfig = {
+        folder: '1Admin/Communication/{{Record.data.contact}}',
+        root: 'Projects',
+      };
+      expect(Value.Check(StorageContextConfigType, validConfig)).toBe(true);
+    });
+
+    it('pre-evaluates storageContextConfig using { Record: enrichedRecord } and injects StorageContext into Activity evaluation context', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const recordTypeWithStorageContext: RecordType = {
+        key: 'comm-project',
+        name: 'Communication Project',
+        recordSchema: {
+          fields: [
+            { key: 'contact', name: 'Contact Person', type: 'string', required: true },
+            { key: 'date', name: 'Date', type: 'string', required: true },
+            { key: 'direction', name: 'Direction', type: 'string', required: true },
+            { key: 'description', name: 'Description', type: 'string', required: true },
+          ],
+          calculatedFields: [
+            { key: 'summary', template: '{{date}} {{direction}} - {{description}}' },
+          ],
+        },
+        recordUiConfig: {
+          events: {
+            onSubmit: {
+              catchAllWorkflow: 'StorageWorkflow',
+            },
+          },
+        },
+        storageContextConfig: {
+          folder: '1Admin/Communication/{{Record.data.contact}}',
+          subfolder: 'Archive/{{Record.data.direction}}',
+        },
+        recordWorkflowConfig: {
+          workflows: [
+            {
+              name: 'StorageWorkflow',
+              activitySequence: [
+                {
+                  type: 'CREATE_FILE',
+                  payload: {
+                    targetPath: '{{StorageContext.folder}}/{{Record.data.summary}}',
+                    archivePath: '{{StorageContext.subfolder}}/{{Record.data.date}}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([recordTypeWithStorageContext]),
+      };
+
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template: string, ctx: { [key: string]: unknown }) => {
+          if (template === '{{date}} {{direction}} - {{description}}') {
+            return `${ctx.date} ${ctx.direction} - ${ctx.description}`;
+          }
+          if (template === '1Admin/Communication/{{Record.data.contact}}') {
+            const record = ctx.Record as Record;
+            return `1Admin/Communication/${record.data.contact}`;
+          }
+          if (template === 'Archive/{{Record.data.direction}}') {
+            const record = ctx.Record as Record;
+            return `Archive/${record.data.direction}`;
+          }
+          if (template === '{{StorageContext.folder}}/{{Record.data.summary}}') {
+            const storageContext = ctx.StorageContext as { folder: string; subfolder: string };
+            const record = ctx.Record as Record;
+            return `${storageContext.folder}/${record.data.summary}`;
+          }
+          if (template === '{{StorageContext.subfolder}}/{{Record.data.date}}') {
+            const storageContext = ctx.StorageContext as { folder: string; subfolder: string };
+            const record = ctx.Record as Record;
+            return `${storageContext.subfolder}/${record.data.date}`;
+          }
+          return template;
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'comm-project',
+        data: {
+          contact: '_Client - AAA',
+          date: '260826',
+          direction: 'OT',
+          description: 'ASR 06 Design Changes',
+        },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+
+      expect(result.success).toBe(true);
+
+      const expectedEnrichedRecord: Record = {
+        type: 'comm-project',
+        data: {
+          contact: '_Client - AAA',
+          date: '260826',
+          direction: 'OT',
+          description: 'ASR 06 Design Changes',
+          summary: '260826 OT - ASR 06 Design Changes',
+        },
+      };
+
+      const expectedStorageContext = {
+        folder: '1Admin/Communication/_Client - AAA',
+        subfolder: 'Archive/OT',
+      };
+
+      const expectedActivity: Activity = {
+        type: 'CREATE_FILE',
+        payload: {
+          targetPath: '1Admin/Communication/_Client - AAA/260826 OT - ASR 06 Design Changes',
+          archivePath: 'Archive/OT/260826',
+        },
+      };
+
+      if (result.success) {
+        expect(result.data).toEqual(expectedEnrichedRecord);
+        expect(result.activities).toEqual([expectedActivity]);
+      }
+
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(expectedActivity);
+
+      // Verify that storageContextConfig was pre-evaluated with { Record: enrichedRecord }
+      expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
+        '1Admin/Communication/{{Record.data.contact}}',
+        { Record: expectedEnrichedRecord }
+      );
+      expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
+        'Archive/{{Record.data.direction}}',
+        { Record: expectedEnrichedRecord }
+      );
+
+      // Verify that activity evaluation context received StorageContext
+      expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
+        '{{StorageContext.folder}}/{{Record.data.summary}}',
+        expect.objectContaining({
+          Record: expectedEnrichedRecord,
+          RecordSchema: recordTypeWithStorageContext.recordSchema,
+          StorageContext: expectedStorageContext,
+        })
+      );
+    });
+
+    it('pre-evaluates nested structures in storageContextConfig recursively against { Record: enrichedRecord }', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const recordTypeWithNestedStorage: RecordType = {
+        key: 'project',
+        name: 'Project',
+        recordSchema: {
+          fields: [
+            { key: 'code', name: 'Code', type: 'string', required: true },
+          ],
+        },
+        recordUiConfig: {
+          events: {
+            onSubmit: {
+              catchAllWorkflow: 'NestedStorageWorkflow',
+            },
+          },
+        },
+        storageContextConfig: {
+          paths: {
+            root: 'Projects/{{Record.data.code}}',
+            subfolders: ['Drawings/{{Record.data.code}}', 'Specs'],
+          },
+        },
+        recordWorkflowConfig: {
+          workflows: [
+            {
+              name: 'NestedStorageWorkflow',
+              activitySequence: [
+                {
+                  type: 'CREATE_STRUCTURE',
+                  payload: {
+                    rootPath: '{{StorageContext.paths.root}}',
+                    drawingsPath: '{{StorageContext.paths.subfolders.[0]}}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([recordTypeWithNestedStorage]),
+      };
+
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template: string, ctx: { [key: string]: unknown }) => {
+          if (template === 'Projects/{{Record.data.code}}') {
+            const record = ctx.Record as Record;
+            return `Projects/${record.data.code}`;
+          }
+          if (template === 'Drawings/{{Record.data.code}}') {
+            const record = ctx.Record as Record;
+            return `Drawings/${record.data.code}`;
+          }
+          if (template === '{{StorageContext.paths.root}}') {
+            const storage = ctx.StorageContext as { paths: { root: string; subfolders: string[] } };
+            return storage.paths.root;
+          }
+          if (template === '{{StorageContext.paths.subfolders.[0]}}') {
+            const storage = ctx.StorageContext as { paths: { root: string; subfolders: string[] } };
+            return storage.paths.subfolders[0];
+          }
+          return template;
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'project',
+        data: {
+          code: 'PRJ-100',
+        },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+      expect(result.success).toBe(true);
+
+      const expectedActivity: Activity = {
+        type: 'CREATE_STRUCTURE',
+        payload: {
+          rootPath: 'Projects/PRJ-100',
+          drawingsPath: 'Drawings/PRJ-100',
+        },
+      };
+
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(expectedActivity);
+    });
+
+    it('does not inject StorageContext into evaluation context when storageContextConfig is omitted', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const recordTypeWithoutStorage: RecordType = {
+        key: 'simple',
+        name: 'Simple',
+        recordSchema: {
+          fields: [{ key: 'name', name: 'Name', type: 'string', required: true }],
+        },
+        recordUiConfig: {
+          events: {
+            onSubmit: {
+              catchAllWorkflow: 'SimpleWorkflow',
+            },
+          },
+        },
+        recordWorkflowConfig: {
+          workflows: [
+            {
+              name: 'SimpleWorkflow',
+              activitySequence: [
+                {
+                  type: 'NOTIFY',
+                  payload: {
+                    name: '{{Record.data.name}}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([recordTypeWithoutStorage]),
+      };
+
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template: string, ctx: { [key: string]: unknown }) => {
+          if (template === '{{Record.data.name}}') {
+            const record = ctx.Record as Record;
+            return record.data.name as string;
+          }
+          return template;
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'simple',
+        data: { name: 'Alice' },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+      expect(result.success).toBe(true);
+
+      expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
+        '{{Record.data.name}}',
+        expect.not.objectContaining({
+          StorageContext: expect.anything(),
+        })
+      );
+    });
+  });
 });
+
 
 
 
