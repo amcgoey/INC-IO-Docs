@@ -21,7 +21,7 @@ describe('App integration tests', () => {
         recordSchema: {
           fields: [
             {
-              key: 'Contact',
+              key: 'contact',
               name: 'Contact Person',
               type: 'string',
               required: true,
@@ -65,7 +65,7 @@ describe('App integration tests', () => {
       const validRecord = {
         type: 'communication-project',
         data: {
-          Contact: 'Jane Doe',
+          contact: 'Jane Doe',
         },
       };
 
@@ -134,7 +134,7 @@ describe('App integration tests', () => {
         url: '/records',
         payload: {
           type: 'unknown-type',
-          data: { Contact: 'Jane Doe' },
+          data: { contact: 'Jane Doe' },
         },
       });
 
@@ -163,7 +163,7 @@ describe('App integration tests', () => {
         recordSchema: {
           fields: [
             {
-              key: 'Contact',
+              key: 'contact',
               name: 'Contact Person',
               type: 'string',
               required: true,
@@ -385,7 +385,7 @@ describe('App integration tests', () => {
       const customRecord = {
         key: 'custom-record-key',
         name: 'Custom Record Name',
-        recordSchema: { fields: [{ key: 'Title', name: 'Title', type: 'string', required: true }] },
+        recordSchema: { fields: [{ key: 'title', name: 'Title', type: 'string', required: true }] },
       };
       await fs.writeFile(recordTypePath, JSON.stringify(customRecord));
       await fs.writeFile(manifestPath, JSON.stringify({ recordTypes: ['./custom-record.json'] }));
@@ -405,7 +405,7 @@ describe('App integration tests', () => {
       const customRecord = {
         key: 'env-record-key',
         name: 'Env Record Name',
-        recordSchema: { fields: [{ key: 'Code', name: 'Code', type: 'string', required: true }] },
+        recordSchema: { fields: [{ key: 'code', name: 'Code', type: 'string', required: true }] },
       };
       await fs.writeFile(recordTypePath, JSON.stringify(customRecord));
       await fs.writeFile(manifestPath, JSON.stringify({ recordTypes: ['./env-record.json'] }));
@@ -467,7 +467,7 @@ describe('App integration tests', () => {
   });
 
   describe('End-to-End Calculated Fields and Identity Properties Resolution', () => {
-    it('resolves TestCalculatedField and identity properties (id, IdRecord, IdGroup) from communication-project.json and enriches payload before dispatching activity', async () => {
+    it('resolves testCalculatedField and identity properties (id, idRecord, idGroup) from communication-project.json and enriches payload before dispatching activity', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -483,10 +483,10 @@ describe('App integration tests', () => {
       const basePayload = {
         type: 'communication-project',
         data: {
-          Contact: 'Jane Doe',
-          Date: '260825',
-          Direction: 'IN',
-          Description: 'Quarterly review discussion',
+          contact: 'Jane Doe',
+          date: '260825',
+          direction: 'IN',
+          description: 'Quarterly review discussion',
         },
       };
 
@@ -496,18 +496,18 @@ describe('App integration tests', () => {
 
       const expectedEnrichedData = {
         ...basePayload.data,
-        Direction: {
-          Key: 'IN',
-          Name: 'Incoming',
+        direction: {
+          key: 'IN',
+          name: 'Incoming',
         },
-        TestCalculatedField: expectedCalculatedValue,
+        testCalculatedField: expectedCalculatedValue,
       };
 
       const expectedRecord = {
         type: 'communication-project',
         id: expectedIdentityValue,
-        IdRecord: expectedIdentityValue,
-        IdGroup: expectedGroupId,
+        idRecord: expectedIdentityValue,
+        idGroup: expectedGroupId,
         data: expectedEnrichedData,
       };
 
@@ -552,10 +552,10 @@ describe('App integration tests', () => {
       const invalidPayload = {
         type: 'communication-project',
         data: {
-          Contact: 'Jane Doe',
-          Date: '260825',
-          Direction: 'INVALID_DIRECTION',
-          Description: 'Quarterly review discussion',
+          contact: 'Jane Doe',
+          date: '260825',
+          direction: 'INVALID_DIRECTION',
+          description: 'Quarterly review discussion',
         },
       };
 
@@ -568,7 +568,7 @@ describe('App integration tests', () => {
       expect(response.statusCode).toBe(400);
       const body = JSON.parse(response.payload);
       expect(body.success).toBe(false);
-      expect(body.errors.some((err: string) => err.includes('/Direction:'))).toBe(true);
+      expect(body.errors.some((err: string) => err.includes('/direction:'))).toBe(true);
       expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
     });
 
@@ -584,22 +584,22 @@ describe('App integration tests', () => {
           recordSchema: {
             fields: [
               {
-                key: 'Category',
+                key: 'category',
                 name: 'Category',
                 type: 'string',
                 required: true,
                 options: {
-                  source: 'Categories',
-                  key: 'Key',
-                  name: 'Name',
+                  source: 'categories',
+                  key: 'key',
+                  name: 'name',
                   allowUserInput: true,
                 },
               },
             ],
             options: {
-              Categories: [
-                { Key: 'CAT_A', Name: 'Category A' },
-                { Key: 'CAT_B', Name: 'Category B' },
+              categories: [
+                { key: 'CAT_A', name: 'Category A' },
+                { key: 'CAT_B', name: 'Category B' },
               ],
             },
           },
@@ -620,7 +620,7 @@ describe('App integration tests', () => {
       const customPayload = {
         type: 'combobox-record',
         data: {
-          Category: 'NonStandardCategoryXYZ',
+          category: 'NonStandardCategoryXYZ',
         },
       };
 
@@ -633,18 +633,18 @@ describe('App integration tests', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
       expect(body.success).toBe(true);
-      expect(body.data.data.Category).toEqual({
-        Key: 'NonStandardCategoryXYZ',
-        Name: 'NonStandardCategoryXYZ',
+      expect(body.data.data.category).toEqual({
+        key: 'NonStandardCategoryXYZ',
+        name: 'NonStandardCategoryXYZ',
       });
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
         type: 'LOG_RECORD',
         payload: {
           record: expect.objectContaining({
             data: {
-              Category: {
-                Key: 'NonStandardCategoryXYZ',
-                Name: 'NonStandardCategoryXYZ',
+              category: {
+                key: 'NonStandardCategoryXYZ',
+                name: 'NonStandardCategoryXYZ',
               },
             },
           }),

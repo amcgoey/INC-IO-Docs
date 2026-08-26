@@ -54,17 +54,17 @@ describe('RecordType JSON files schema validation', () => {
       // Verify identity if present
       if (recordType.recordSchema.identity) {
         expect(typeof recordType.recordSchema.identity).toBe('object');
-        if (recordType.recordSchema.identity.Id) {
-          expect(typeof recordType.recordSchema.identity.Id).toBe('string');
-          expect(recordType.recordSchema.identity.Id.length).toBeGreaterThan(0);
+        if (recordType.recordSchema.identity.id) {
+          expect(typeof recordType.recordSchema.identity.id).toBe('string');
+          expect(recordType.recordSchema.identity.id.length).toBeGreaterThan(0);
         }
-        if (recordType.recordSchema.identity.IdRecord) {
-          expect(typeof recordType.recordSchema.identity.IdRecord).toBe('string');
-          expect(recordType.recordSchema.identity.IdRecord.length).toBeGreaterThan(0);
+        if (recordType.recordSchema.identity.idRecord) {
+          expect(typeof recordType.recordSchema.identity.idRecord).toBe('string');
+          expect(recordType.recordSchema.identity.idRecord.length).toBeGreaterThan(0);
         }
-        if (recordType.recordSchema.identity.IdGroup) {
-          expect(typeof recordType.recordSchema.identity.IdGroup).toBe('string');
-          expect(recordType.recordSchema.identity.IdGroup.length).toBeGreaterThan(0);
+        if (recordType.recordSchema.identity.idGroup) {
+          expect(typeof recordType.recordSchema.identity.idGroup).toBe('string');
+          expect(recordType.recordSchema.identity.idGroup.length).toBeGreaterThan(0);
         }
       }
 

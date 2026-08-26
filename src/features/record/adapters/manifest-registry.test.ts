@@ -446,15 +446,15 @@ describe('ManifestRegistryAdapter', () => {
         name: 'Identity Valid',
         recordSchema: {
           fields: [
-            { key: 'Contact', name: 'Contact', type: 'string', required: true },
-            { key: 'Date', name: 'Date', type: 'string', required: true },
-            { key: 'Direction', name: 'Direction', type: 'string', required: true },
-            { key: 'Description', name: 'Description', type: 'string', required: true },
+            { key: 'contact', name: 'Contact', type: 'string', required: true },
+            { key: 'date', name: 'Date', type: 'string', required: true },
+            { key: 'direction', name: 'Direction', type: 'string', required: true },
+            { key: 'description', name: 'Description', type: 'string', required: true },
           ],
           identity: {
-            Id: '{{Contact}}-{{Date}}-{{Direction}}-{{Description}}',
-            IdRecord: '{{Contact}}-{{Date}}-{{Direction}}-{{Description}}',
-            IdGroup: '{{Contact}}',
+            id: '{{contact}}-{{date}}-{{direction}}-{{description}}',
+            idRecord: '{{contact}}-{{date}}-{{direction}}-{{description}}',
+            idGroup: '{{contact}}',
           },
         },
       };
@@ -476,17 +476,17 @@ describe('ManifestRegistryAdapter', () => {
       const result = await adapter.loadAll();
       expect(result).toHaveLength(1);
       expect(result[0].recordSchema.identity).toEqual({
-        Id: '{{Contact}}-{{Date}}-{{Direction}}-{{Description}}',
-        IdRecord: '{{Contact}}-{{Date}}-{{Direction}}-{{Description}}',
-        IdGroup: '{{Contact}}',
+        id: '{{contact}}-{{date}}-{{direction}}-{{description}}',
+        idRecord: '{{contact}}-{{date}}-{{direction}}-{{description}}',
+        idGroup: '{{contact}}',
       });
       expect(mockEvaluator.validate).toHaveBeenCalledWith(
-        '{{Contact}}-{{Date}}-{{Direction}}-{{Description}}',
-        expect.arrayContaining(['Contact', 'Date', 'Direction', 'Description'])
+        '{{contact}}-{{date}}-{{direction}}-{{description}}',
+        expect.arrayContaining(['contact', 'date', 'direction', 'description'])
       );
       expect(mockEvaluator.validate).toHaveBeenCalledWith(
-        '{{Contact}}',
-        expect.arrayContaining(['Contact', 'Date', 'Direction', 'Description'])
+        '{{contact}}',
+        expect.arrayContaining(['contact', 'date', 'direction', 'description'])
       );
     });
 
@@ -496,10 +496,10 @@ describe('ManifestRegistryAdapter', () => {
         name: 'Identity Invalid',
         recordSchema: {
           fields: [
-            { key: 'Contact', name: 'Contact', type: 'string', required: true },
+            { key: 'contact', name: 'Contact', type: 'string', required: true },
           ],
           identity: {
-            Id: '{{Contact}}-{{UnknownField}}',
+            id: '{{contact}}-{{unknownField}}',
           },
         },
       };
@@ -509,7 +509,7 @@ describe('ManifestRegistryAdapter', () => {
       });
 
       const mockEvaluator = {
-        validate: vi.fn().mockImplementation((tpl: string) => !tpl.includes('UnknownField')),
+        validate: vi.fn().mockImplementation((tpl: string) => !tpl.includes('unknownField')),
         evaluate: vi.fn(),
       };
 
@@ -519,7 +519,7 @@ describe('ManifestRegistryAdapter', () => {
       });
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid identity template in "\.\/schemas\/identity-invalid\.json" for property "Id": template "{{Contact}}-{{UnknownField}}" references unknown fields or is malformed\./
+        /Invalid identity template in "\.\/schemas\/identity-invalid\.json" for property "id": template "{{contact}}-{{unknownField}}" references unknown fields or is malformed\./
       );
     });
   });

@@ -32,7 +32,7 @@ A read-only field derived dynamically from the base payload using Handlebars int
 _Avoid_: Derived field, formula field
 
 **Identity**:
-A set of Handlebars templates used to generate unique identifiers (e.g., `Id`, `IdRecord`, `IdGroup`) based on the base payload. The resolved values are critical for use in Activities and Workflows.
+A set of Handlebars templates used to generate unique identifiers (e.g., `id`, `idRecord`, `idGroup`) based on the base payload. The resolved values are critical for use in Activities and Workflows.
 
 **LookupField**:
 A `RecordField` that links to a set of predefined option tuples. It validates against these tuples (unless configured for arbitrary input) and is enriched into a full tuple object prior to Handlebars evaluation so that templates can access both the machine-friendly identifier and the human-friendly display name.

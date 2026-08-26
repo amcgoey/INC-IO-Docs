@@ -52,13 +52,13 @@ describe('Record domain', () => {
         recordSchema: {
           fields: [
             {
-              key: 'Title',
+              key: 'title',
               name: 'Title',
               type: 'string',
               required: true,
             },
             {
-              key: 'Notes',
+              key: 'notes',
               name: 'Notes',
               type: 'string',
               required: false,
@@ -77,7 +77,7 @@ describe('Record domain', () => {
       id: 'rec-123',
       type: 'submittal',
       data: {
-        Title: 'Foundation Plan',
+        title: 'Foundation Plan',
       },
     };
 
@@ -108,7 +108,7 @@ describe('Record domain', () => {
         recordSchema: {
           fields: [
             {
-              key: 'Title',
+              key: 'title',
               name: 'Title',
               type: 'string',
               required: true,
@@ -145,7 +145,7 @@ describe('Record domain', () => {
 
     const unknownTypeRecord = {
       type: 'unknown-type',
-      data: { Title: 'Test' },
+      data: { title: 'Test' },
     };
 
     const result = await service.processRecord(unknownTypeRecord);
@@ -167,7 +167,7 @@ describe('Record domain', () => {
         recordSchema: {
           fields: [
             {
-              key: 'InvalidField',
+              key: 'invalidField',
               name: 'Invalid Field',
               type: 'unknown',
               required: true,
@@ -229,7 +229,7 @@ describe('Record domain', () => {
       recordSchema: {
         fields: [
           {
-            key: 'Title',
+            key: 'title',
             name: 'Title',
             type: 'string',
             required: true,
@@ -249,52 +249,52 @@ describe('Record domain', () => {
 
   it('RecordFieldOptionType requires source, key, and name', () => {
     const validOption = {
-      source: 'Direction',
-      key: 'Key',
-      name: 'Name',
+      source: 'direction',
+      key: 'key',
+      name: 'name',
     };
     expect(Value.Check(RecordFieldOptionType, validOption)).toBe(true);
 
     const missingSource = {
-      key: 'Key',
-      name: 'Name',
+      key: 'key',
+      name: 'name',
     };
     expect(Value.Check(RecordFieldOptionType, missingSource)).toBe(false);
 
     const missingKey = {
-      source: 'Direction',
-      name: 'Name',
+      source: 'direction',
+      name: 'name',
     };
     expect(Value.Check(RecordFieldOptionType, missingKey)).toBe(false);
 
     const missingName = {
-      source: 'Direction',
-      key: 'Key',
+      source: 'direction',
+      key: 'key',
     };
     expect(Value.Check(RecordFieldOptionType, missingName)).toBe(false);
   });
 
   it('RecordFieldOptionType accepts optional allowUserInput boolean', () => {
     const optionWithAllowUserInputTrue = {
-      source: 'Direction',
-      key: 'Key',
-      name: 'Name',
+      source: 'direction',
+      key: 'key',
+      name: 'name',
       allowUserInput: true,
     };
     expect(Value.Check(RecordFieldOptionType, optionWithAllowUserInputTrue)).toBe(true);
 
     const optionWithAllowUserInputFalse = {
-      source: 'Direction',
-      key: 'Key',
-      name: 'Name',
+      source: 'direction',
+      key: 'key',
+      name: 'name',
       allowUserInput: false,
     };
     expect(Value.Check(RecordFieldOptionType, optionWithAllowUserInputFalse)).toBe(true);
 
     const optionWithInvalidAllowUserInput = {
-      source: 'Direction',
-      key: 'Key',
-      name: 'Name',
+      source: 'direction',
+      key: 'key',
+      name: 'name',
       allowUserInput: 'true',
     };
     expect(Value.Check(RecordFieldOptionType, optionWithInvalidAllowUserInput)).toBe(false);
@@ -307,7 +307,7 @@ describe('Record domain', () => {
       recordSchema: {
         fields: [
           {
-            key: 'Title',
+            key: 'title',
             name: 'Title',
             type: 'string',
             required: true,
@@ -340,7 +340,7 @@ describe('Record domain', () => {
       recordSchema: {
         fields: [
           {
-            key: 'Title',
+            key: 'title',
             name: 'Title',
             type: 'string',
             required: true,
@@ -369,7 +369,7 @@ describe('Record domain', () => {
         recordSchema: {
           fields: [
             {
-              key: 'Subject',
+              key: 'subject',
               name: 'Subject',
               type: 'string',
               required: true,
@@ -396,7 +396,7 @@ describe('Record domain', () => {
         recordSchema: {
           fields: [
             {
-              key: 'Name',
+              key: 'name',
               name: 'Name',
               type: 'string',
               required: true,
@@ -428,7 +428,7 @@ describe('Record domain', () => {
         recordSchema: {
           fields: [
             {
-              key: 'Subject',
+              key: 'subject',
               name: 'Subject',
               type: 'string',
               required: true,
@@ -449,7 +449,7 @@ describe('Record domain', () => {
         recordSchema: {
           fields: [
             {
-              key: 'Name',
+              key: 'name',
               name: 'Name',
               type: 'string',
               required: true,
@@ -469,7 +469,7 @@ describe('Record domain', () => {
   describe('RecordSchemaOptionTupleType and RecordSchemaType.options', () => {
     it('validates RecordSchemaOptionTupleType as Record<string, unknown>', () => {
       expect(RecordSchemaOptionTupleType).toBeDefined();
-      const validTuple = { Key: 'IN', Name: 'Incoming', extra: 123 };
+      const validTuple = { key: 'IN', name: 'Incoming', extra: 123 };
       expect(Value.Check(RecordSchemaOptionTupleType, validTuple)).toBe(true);
 
       const invalidTuple = 'not-an-object';
@@ -480,9 +480,9 @@ describe('Record domain', () => {
       const validSchemaWithOptions = {
         fields: [{ key: 'f1', name: 'Field 1', type: 'string', required: true }],
         options: {
-          Direction: [
-            { Key: 'IN', Name: 'Incoming' },
-            { Key: 'OT', Name: 'Outgoing' },
+          direction: [
+            { key: 'IN', name: 'Incoming' },
+            { key: 'OT', name: 'Outgoing' },
           ],
         },
       };
@@ -491,7 +491,7 @@ describe('Record domain', () => {
       const invalidSchemaWithOptions = {
         fields: [{ key: 'f1', name: 'Field 1', type: 'string', required: true }],
         options: {
-          Direction: 'invalid-not-array',
+          direction: 'invalid-not-array',
         },
       };
       expect(Value.Check(RecordSchemaType, invalidSchemaWithOptions)).toBe(false);
@@ -499,19 +499,19 @@ describe('Record domain', () => {
   });
 
   describe('RecordIdentitySchemaType', () => {
-    it('validates Id, IdRecord, and IdGroup keys with extensible string properties', () => {
+    it('validates id, idRecord, and idGroup keys with extensible string properties', () => {
       expect(RecordIdentitySchemaType).toBeDefined();
 
       const validIdentity = {
-        Id: '{{Key}}',
-        IdRecord: '{{Key}}-{{Date}}',
-        IdGroup: '{{Contact}}',
+        id: '{{key}}',
+        idRecord: '{{key}}-{{date}}',
+        idGroup: '{{contact}}',
         customProperty: 'custom-value',
       };
       expect(Value.Check(RecordIdentitySchemaType, validIdentity)).toBe(true);
 
       const validPartialIdentity = {
-        Id: '{{Key}}',
+        id: '{{key}}',
       };
       expect(Value.Check(RecordIdentitySchemaType, validPartialIdentity)).toBe(true);
 
@@ -519,12 +519,12 @@ describe('Record domain', () => {
       expect(Value.Check(RecordIdentitySchemaType, emptyIdentity)).toBe(true);
 
       const invalidNonStringValue = {
-        Id: 123,
+        id: 123,
       };
       expect(Value.Check(RecordIdentitySchemaType, invalidNonStringValue)).toBe(false);
 
       const invalidNonStringExtensibleValue = {
-        Id: '{{Key}}',
+        id: '{{key}}',
         customField: 999,
       };
       expect(Value.Check(RecordIdentitySchemaType, invalidNonStringExtensibleValue)).toBe(false);
@@ -534,9 +534,9 @@ describe('Record domain', () => {
       const schemaWithIdentity = {
         fields: [{ key: 'f1', name: 'Field 1', type: 'string', required: true }],
         identity: {
-          Id: '{{Key}}',
-          IdRecord: '{{Key}}-{{Date}}',
-          IdGroup: '{{Contact}}',
+          id: '{{key}}',
+          idRecord: '{{key}}-{{date}}',
+          idGroup: '{{contact}}',
         },
       };
       expect(Value.Check(RecordSchemaType, schemaWithIdentity)).toBe(true);
@@ -544,7 +544,7 @@ describe('Record domain', () => {
       const schemaWithInvalidIdentity = {
         fields: [{ key: 'f1', name: 'Field 1', type: 'string', required: true }],
         identity: {
-          Id: 123,
+          id: 123,
         },
       };
       expect(Value.Check(RecordSchemaType, schemaWithInvalidIdentity)).toBe(false);
@@ -555,8 +555,8 @@ describe('Record domain', () => {
     it('accepts optional matchFields as Record<string, string>', () => {
       const validRule = {
         matchFields: {
-          Direction: 'IN',
-          Status: 'Active',
+          direction: 'IN',
+          status: 'Active',
         },
         workflow: 'HandleIncoming',
       };
@@ -571,7 +571,7 @@ describe('Record domain', () => {
     it('rejects matchFields with non-string values', () => {
       const invalidRule = {
         matchFields: {
-          Direction: 123,
+          direction: 123,
         },
         workflow: 'HandleIncoming',
       };
@@ -582,7 +582,7 @@ describe('Record domain', () => {
   describe('RecordFieldType.defaultValue', () => {
     it('accepts optional defaultValue as string', () => {
       const fieldWithDefault = {
-        key: 'Status',
+        key: 'status',
         name: 'Status',
         type: 'string',
         required: false,
@@ -591,7 +591,7 @@ describe('Record domain', () => {
       expect(Value.Check(RecordFieldType, fieldWithDefault)).toBe(true);
 
       const fieldWithoutDefault = {
-        key: 'Status',
+        key: 'status',
         name: 'Status',
         type: 'string',
         required: false,
@@ -601,7 +601,7 @@ describe('Record domain', () => {
 
     it('rejects non-string defaultValue', () => {
       const invalidField = {
-        key: 'Status',
+        key: 'status',
         name: 'Status',
         type: 'string',
         required: false,
@@ -614,7 +614,7 @@ describe('Record domain', () => {
   describe('RecordFieldType.required', () => {
     it('allows omitting required property and defaults to valid schema', () => {
       const fieldWithoutRequired = {
-        key: 'Description',
+        key: 'description',
         name: 'Description',
         type: 'string',
       };
@@ -623,7 +623,7 @@ describe('Record domain', () => {
 
     it('accepts boolean required property when provided', () => {
       const fieldWithRequiredTrue = {
-        key: 'Title',
+        key: 'title',
         name: 'Title',
         type: 'string',
         required: true,
@@ -631,7 +631,7 @@ describe('Record domain', () => {
       expect(Value.Check(RecordFieldType, fieldWithRequiredTrue)).toBe(true);
 
       const fieldWithRequiredFalse = {
-        key: 'Notes',
+        key: 'notes',
         name: 'Notes',
         type: 'string',
         required: false,
@@ -641,7 +641,7 @@ describe('Record domain', () => {
 
     it('rejects non-boolean required property', () => {
       const fieldWithInvalidRequired = {
-        key: 'Title',
+        key: 'title',
         name: 'Title',
         type: 'string',
         required: 'yes',
@@ -653,7 +653,7 @@ describe('Record domain', () => {
   describe('formatValidationErrors', () => {
     it('returns empty array when there are no errors', () => {
       const Schema = RecordModel;
-      const validRecord = { id: 'rec-1', type: 'submittal', data: { Subject: 'Submittal 1' } };
+      const validRecord = { id: 'rec-1', type: 'submittal', data: { subject: 'Submittal 1' } };
       expect(formatValidationErrors(Schema, validRecord)).toEqual([]);
     });
 
@@ -670,25 +670,25 @@ describe('Record domain', () => {
     it('validates CalculatedFieldType with key, template, and optional description', () => {
       expect(CalculatedFieldType).toBeDefined();
       const validCalcField = {
-        key: 'Summary',
-        template: '{{Title}} - {{Notes}}',
+        key: 'summary',
+        template: '{{title}} - {{notes}}',
         description: 'Auto-generated summary',
       };
       expect(Value.Check(CalculatedFieldType, validCalcField)).toBe(true);
 
       const validWithoutDesc = {
-        key: 'Summary',
-        template: '{{Title}} - {{Notes}}',
+        key: 'summary',
+        template: '{{title}} - {{notes}}',
       };
       expect(Value.Check(CalculatedFieldType, validWithoutDesc)).toBe(true);
 
       const missingTemplate = {
-        key: 'Summary',
+        key: 'summary',
       };
       expect(Value.Check(CalculatedFieldType, missingTemplate)).toBe(false);
 
       const missingKey = {
-        template: '{{Title}}',
+        template: '{{title}}',
       };
       expect(Value.Check(CalculatedFieldType, missingKey)).toBe(false);
     });
@@ -700,21 +700,21 @@ describe('Record domain', () => {
 
     it('validates RecordSchemaType with optional calculatedFields', () => {
       const schemaWithCalcFields = {
-        fields: [{ key: 'Title', name: 'Title', type: 'string', required: true }],
+        fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
         calculatedFields: [
           {
-            key: 'FullTitle',
-            template: 'PREFIX-{{Title}}',
+            key: 'fullTitle',
+            template: 'PREFIX-{{title}}',
           },
         ],
       };
       expect(Value.Check(RecordSchemaType, schemaWithCalcFields)).toBe(true);
 
       const schemaWithInvalidCalcFields = {
-        fields: [{ key: 'Title', name: 'Title', type: 'string', required: true }],
+        fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
         calculatedFields: [
           {
-            key: 'FullTitle',
+            key: 'fullTitle',
             // missing template
           },
         ],
@@ -734,13 +734,13 @@ describe('Record domain', () => {
           name: 'Communication Project',
           recordSchema: {
             fields: [
-              { key: 'Contact', name: 'Contact', type: 'string', required: true },
-              { key: 'Date', name: 'Date', type: 'string', required: true },
+              { key: 'contact', name: 'Contact', type: 'string', required: true },
+              { key: 'date', name: 'Date', type: 'string', required: true },
             ],
             calculatedFields: [
               {
-                key: 'IdRecord',
-                template: '{{Date}}-{{Contact}}',
+                key: 'testCalculatedField',
+                template: '{{date}}-{{contact}}',
               },
             ],
           },
@@ -752,8 +752,8 @@ describe('Record domain', () => {
       const mockEvaluator: TemplateEvaluatorPort = {
         validate: vi.fn().mockReturnValue(true),
         evaluate: vi.fn().mockImplementation((template, ctx) => {
-          if (template === '{{Date}}-{{Contact}}') {
-            return `${ctx.Date}-${ctx.Contact}`;
+          if (template === '{{date}}-{{contact}}') {
+            return `${ctx.date}-${ctx.contact}`;
           }
           return '';
         }),
@@ -765,8 +765,8 @@ describe('Record domain', () => {
       const inputRecord: Record = {
         type: 'comm-project',
         data: {
-          Contact: 'Alice',
-          Date: '260825',
+          contact: 'Alice',
+          date: '260825',
         },
       };
 
@@ -774,9 +774,9 @@ describe('Record domain', () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.data).toEqual({
-          Contact: 'Alice',
-          Date: '260825',
-          IdRecord: '260825-Alice',
+          contact: 'Alice',
+          date: '260825',
+          testCalculatedField: '260825-Alice',
         });
         expect(result.activity).toEqual({
           type: 'LOG_RECORD',
@@ -784,9 +784,9 @@ describe('Record domain', () => {
             record: {
               type: 'comm-project',
               data: {
-                Contact: 'Alice',
-                Date: '260825',
-                IdRecord: '260825-Alice',
+                contact: 'Alice',
+                date: '260825',
+                testCalculatedField: '260825-Alice',
               },
             },
           },
@@ -799,9 +799,9 @@ describe('Record domain', () => {
           record: {
             type: 'comm-project',
             data: {
-              Contact: 'Alice',
-              Date: '260825',
-              IdRecord: '260825-Alice',
+              contact: 'Alice',
+              date: '260825',
+              testCalculatedField: '260825-Alice',
             },
           },
         },
@@ -818,11 +818,11 @@ describe('Record domain', () => {
           name: 'Multi Calc',
           recordSchema: {
             fields: [
-              { key: 'Base1', name: 'Base 1', type: 'string', required: true },
+              { key: 'base1', name: 'Base 1', type: 'string', required: true },
             ],
             calculatedFields: [
-              { key: 'Calc1', template: '{{Base1}}-CALC1' },
-              { key: 'Calc2', template: '{{Calc1}}-CALC2' },
+              { key: 'calc1', template: '{{base1}}-CALC1' },
+              { key: 'calc2', template: '{{calc1}}-CALC2' },
             ],
           },
         },
@@ -845,19 +845,19 @@ describe('Record domain', () => {
 
       await service.processRecord({
         type: 'multi-calc',
-        data: { Base1: 'val1' },
+        data: { base1: 'val1' },
       });
 
       expect(evaluatedContexts).toHaveLength(2);
       // Both evaluations must receive ONLY base payload without Calc1
-      expect(evaluatedContexts[0]).toEqual({ Base1: 'val1' });
-      expect(evaluatedContexts[1]).toEqual({ Base1: 'val1' });
-      expect(evaluatedContexts[1]).not.toHaveProperty('Calc1');
+      expect(evaluatedContexts[0]).toEqual({ base1: 'val1' });
+      expect(evaluatedContexts[1]).toEqual({ base1: 'val1' });
+      expect(evaluatedContexts[1]).not.toHaveProperty('calc1');
     });
   });
 
   describe('RecordService identity evaluation', () => {
-    it('evaluates identity templates (Id -> id, IdRecord, IdGroup) and populates record before activity dispatch', async () => {
+    it('evaluates identity templates (id, idRecord, idGroup) and populates record before activity dispatch', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -867,15 +867,15 @@ describe('Record domain', () => {
           name: 'Communication Project',
           recordSchema: {
             fields: [
-              { key: 'Contact', name: 'Contact', type: 'string', required: true },
-              { key: 'Date', name: 'Date', type: 'string', required: true },
-              { key: 'Direction', name: 'Direction', type: 'string', required: true },
-              { key: 'Description', name: 'Description', type: 'string', required: true },
+              { key: 'contact', name: 'Contact', type: 'string', required: true },
+              { key: 'date', name: 'Date', type: 'string', required: true },
+              { key: 'direction', name: 'Direction', type: 'string', required: true },
+              { key: 'description', name: 'Description', type: 'string', required: true },
             ],
             identity: {
-              Id: '{{Contact}}-{{Date}}-{{Direction}}-{{Description}}',
-              IdRecord: '{{Contact}}-{{Date}}-{{Direction}}-{{Description}}',
-              IdGroup: '{{Contact}}',
+              id: '{{contact}}-{{date}}-{{direction}}-{{description}}',
+              idRecord: '{{contact}}-{{date}}-{{direction}}-{{description}}',
+              idGroup: '{{contact}}',
             },
           },
         },
@@ -886,11 +886,11 @@ describe('Record domain', () => {
       const mockEvaluator: TemplateEvaluatorPort = {
         validate: vi.fn().mockReturnValue(true),
         evaluate: vi.fn().mockImplementation((template, ctx) => {
-          if (template === '{{Contact}}-{{Date}}-{{Direction}}-{{Description}}') {
-            return `${ctx.Contact}-${ctx.Date}-${ctx.Direction}-${ctx.Description}`;
+          if (template === '{{contact}}-{{date}}-{{direction}}-{{description}}') {
+            return `${ctx.contact}-${ctx.date}-${ctx.direction}-${ctx.description}`;
           }
-          if (template === '{{Contact}}') {
-            return `${ctx.Contact}`;
+          if (template === '{{contact}}') {
+            return `${ctx.contact}`;
           }
           return '';
         }),
@@ -902,10 +902,10 @@ describe('Record domain', () => {
       const inputRecord: Record = {
         type: 'comm-project',
         data: {
-          Contact: 'Alice',
-          Date: '260825',
-          Direction: 'IN',
-          Description: 'Project discussion',
+          contact: 'Alice',
+          date: '260825',
+          direction: 'IN',
+          description: 'Project discussion',
         },
       };
 
@@ -913,13 +913,13 @@ describe('Record domain', () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.id).toBe('Alice-260825-IN-Project discussion');
-        expect(result.data.IdRecord).toBe('Alice-260825-IN-Project discussion');
-        expect(result.data.IdGroup).toBe('Alice');
+        expect(result.data.idRecord).toBe('Alice-260825-IN-Project discussion');
+        expect(result.data.idGroup).toBe('Alice');
         expect(result.data.data).toEqual({
-          Contact: 'Alice',
-          Date: '260825',
-          Direction: 'IN',
-          Description: 'Project discussion',
+          contact: 'Alice',
+          date: '260825',
+          direction: 'IN',
+          description: 'Project discussion',
         });
         expect(result.activity).toEqual({
           type: 'LOG_RECORD',
@@ -927,13 +927,13 @@ describe('Record domain', () => {
             record: {
               type: 'comm-project',
               id: 'Alice-260825-IN-Project discussion',
-              IdRecord: 'Alice-260825-IN-Project discussion',
-              IdGroup: 'Alice',
+              idRecord: 'Alice-260825-IN-Project discussion',
+              idGroup: 'Alice',
               data: {
-                Contact: 'Alice',
-                Date: '260825',
-                Direction: 'IN',
-                Description: 'Project discussion',
+                contact: 'Alice',
+                date: '260825',
+                direction: 'IN',
+                description: 'Project discussion',
               },
             },
           },
@@ -946,13 +946,13 @@ describe('Record domain', () => {
           record: {
             type: 'comm-project',
             id: 'Alice-260825-IN-Project discussion',
-            IdRecord: 'Alice-260825-IN-Project discussion',
-            IdGroup: 'Alice',
+            idRecord: 'Alice-260825-IN-Project discussion',
+            idGroup: 'Alice',
             data: {
-              Contact: 'Alice',
-              Date: '260825',
-              Direction: 'IN',
-              Description: 'Project discussion',
+              contact: 'Alice',
+              date: '260825',
+              direction: 'IN',
+              description: 'Project discussion',
             },
           },
         },
@@ -969,15 +969,15 @@ describe('Record domain', () => {
           name: 'Calc and Identity',
           recordSchema: {
             fields: [
-              { key: 'Contact', name: 'Contact', type: 'string', required: true },
+              { key: 'contact', name: 'Contact', type: 'string', required: true },
             ],
             calculatedFields: [
-              { key: 'DerivedField', template: '{{Contact}}-DERIVED' },
+              { key: 'derivedField', template: '{{contact}}-DERIVED' },
             ],
             identity: {
-              Id: '{{Contact}}-ID',
-              IdRecord: '{{DerivedField}}-RECORD',
-              IdGroup: '{{Id}}-GROUP',
+              id: '{{contact}}-ID',
+              idRecord: '{{derivedField}}-RECORD',
+              idGroup: '{{id}}-GROUP',
             },
           },
         },
@@ -1000,20 +1000,19 @@ describe('Record domain', () => {
 
       await service.processRecord({
         type: 'calc-and-identity',
-        data: { Contact: 'Bob' },
+        data: { contact: 'Bob' },
       });
 
       // Total evaluations: 1 calculated field + 3 identity templates = 4
       expect(evaluatedContexts).toHaveLength(4);
 
-      // All evaluations must only see basePayload { Contact: 'Bob' }
+      // All evaluations must only see basePayload { contact: 'Bob' }
       for (const item of evaluatedContexts) {
-        expect(item.ctx).toEqual({ Contact: 'Bob' });
-        expect(item.ctx).not.toHaveProperty('DerivedField');
-        expect(item.ctx).not.toHaveProperty('Id');
+        expect(item.ctx).toEqual({ contact: 'Bob' });
+        expect(item.ctx).not.toHaveProperty('derivedField');
         expect(item.ctx).not.toHaveProperty('id');
-        expect(item.ctx).not.toHaveProperty('IdRecord');
-        expect(item.ctx).not.toHaveProperty('IdGroup');
+        expect(item.ctx).not.toHaveProperty('idRecord');
+        expect(item.ctx).not.toHaveProperty('idGroup');
       }
     });
   });
@@ -1030,21 +1029,21 @@ describe('Record domain', () => {
           recordSchema: {
             fields: [
               {
-                key: 'Direction',
+                key: 'direction',
                 name: 'Direction',
                 type: 'string',
                 required: true,
                 options: {
-                  source: 'Direction',
-                  key: 'Key',
-                  name: 'Name',
+                  source: 'direction',
+                  key: 'key',
+                  name: 'name',
                 },
               },
             ],
             options: {
-              Direction: [
-                { Key: 'IN', Name: 'Incoming' },
-                { Key: 'OT', Name: 'Outgoing' },
+              direction: [
+                { key: 'IN', name: 'Incoming' },
+                { key: 'OT', name: 'Outgoing' },
               ],
             },
           },
@@ -1059,14 +1058,14 @@ describe('Record domain', () => {
       const validRecord: Record = {
         type: 'comm-project',
         data: {
-          Direction: 'IN',
+          direction: 'IN',
         },
       };
 
       const result = await service.processRecord(validRecord);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.data).toEqual({ Direction: { Key: 'IN', Name: 'Incoming' } });
+        expect(result.data.data).toEqual({ direction: { key: 'IN', name: 'Incoming' } });
       }
       expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
     });
@@ -1082,21 +1081,21 @@ describe('Record domain', () => {
           recordSchema: {
             fields: [
               {
-                key: 'Direction',
+                key: 'direction',
                 name: 'Direction',
                 type: 'string',
                 required: true,
                 options: {
-                  source: 'Direction',
-                  key: 'Key',
-                  name: 'Name',
+                  source: 'direction',
+                  key: 'key',
+                  name: 'name',
                 },
               },
             ],
             options: {
-              Direction: [
-                { Key: 'IN', Name: 'Incoming' },
-                { Key: 'OT', Name: 'Outgoing' },
+              direction: [
+                { key: 'IN', name: 'Incoming' },
+                { key: 'OT', name: 'Outgoing' },
               ],
             },
           },
@@ -1111,7 +1110,7 @@ describe('Record domain', () => {
       const invalidRecord = {
         type: 'comm-project',
         data: {
-          Direction: 'INVALID_DIR',
+          direction: 'INVALID_DIR',
         },
       };
 
@@ -1119,7 +1118,7 @@ describe('Record domain', () => {
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.errors.length).toBeGreaterThan(0);
-        expect(result.errors.some((err) => err.includes('/Direction:'))).toBe(true);
+        expect(result.errors.some((err) => err.includes('/direction:'))).toBe(true);
       }
       expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
     });
@@ -1135,21 +1134,21 @@ describe('Record domain', () => {
           recordSchema: {
             fields: [
               {
-                key: 'Direction',
+                key: 'direction',
                 name: 'Direction',
                 type: 'string',
                 required: false,
                 options: {
-                  source: 'Direction',
-                  key: 'Key',
-                  name: 'Name',
+                  source: 'direction',
+                  key: 'key',
+                  name: 'name',
                 },
               },
             ],
             options: {
-              Direction: [
-                { Key: 'IN', Name: 'Incoming' },
-                { Key: 'OT', Name: 'Outgoing' },
+              direction: [
+                { key: 'IN', name: 'Incoming' },
+                { key: 'OT', name: 'Outgoing' },
               ],
             },
           },
@@ -1176,26 +1175,26 @@ describe('Record domain', () => {
       const validRecord: Record = {
         type: 'comm-project',
         data: {
-          Direction: 'OT',
+          direction: 'OT',
         },
       };
       const validResult = await service.processRecord(validRecord);
       expect(validResult.success).toBe(true);
       if (validResult.success) {
-        expect(validResult.data.data).toEqual({ Direction: { Key: 'OT', Name: 'Outgoing' } });
+        expect(validResult.data.data).toEqual({ direction: { key: 'OT', name: 'Outgoing' } });
       }
 
       // Providing invalid option
       const invalidRecord = {
         type: 'comm-project',
         data: {
-          Direction: 'UNKNOWN',
+          direction: 'UNKNOWN',
         },
       };
       const invalidResult = await service.processRecord(invalidRecord);
       expect(invalidResult.success).toBe(false);
       if (!invalidResult.success) {
-        expect(invalidResult.errors.some((err) => err.includes('/Direction:'))).toBe(true);
+        expect(invalidResult.errors.some((err) => err.includes('/direction:'))).toBe(true);
       }
     });
 
@@ -1210,14 +1209,14 @@ describe('Record domain', () => {
           recordSchema: {
             fields: [
               {
-                key: 'Category',
+                key: 'category',
                 name: 'Category',
                 type: 'string',
                 required: true,
                 options: {
-                  source: 'MissingSource',
-                  key: 'Key',
-                  name: 'Name',
+                  source: 'missingSource',
+                  key: 'key',
+                  name: 'name',
                 },
               },
             ],
@@ -1233,13 +1232,13 @@ describe('Record domain', () => {
       const recordWithMissingSourceVal = {
         type: 'comm-project',
         data: {
-          Category: 'AnyValue',
+          category: 'AnyValue',
         },
       };
       const result = await service.processRecord(recordWithMissingSourceVal);
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.errors.some((err) => err.includes('/Category:'))).toBe(true);
+        expect(result.errors.some((err) => err.includes('/category:'))).toBe(true);
       }
     });
 
@@ -1254,22 +1253,22 @@ describe('Record domain', () => {
           recordSchema: {
             fields: [
               {
-                key: 'Direction',
+                key: 'direction',
                 name: 'Direction',
                 type: 'string',
                 required: true,
                 options: {
-                  source: 'Direction',
-                  key: 'Key',
-                  name: 'Name',
+                  source: 'direction',
+                  key: 'key',
+                  name: 'name',
                   allowUserInput: true,
                 },
               },
             ],
             options: {
-              Direction: [
-                { Key: 'IN', Name: 'Incoming' },
-                { Key: 'OT', Name: 'Outgoing' },
+              direction: [
+                { key: 'IN', name: 'Incoming' },
+                { key: 'OT', name: 'Outgoing' },
               ],
             },
           },
@@ -1285,29 +1284,29 @@ describe('Record domain', () => {
       const optionRecord: Record = {
         type: 'comm-project',
         data: {
-          Direction: 'IN',
+          direction: 'IN',
         },
       };
       const optionResult = await service.processRecord(optionRecord);
       expect(optionResult.success).toBe(true);
       if (optionResult.success) {
-        expect(optionResult.data.data).toEqual({ Direction: { Key: 'IN', Name: 'Incoming' } });
+        expect(optionResult.data.data).toEqual({ direction: { key: 'IN', name: 'Incoming' } });
       }
 
       // Accepts arbitrary custom text string outside option list and synthesizes fallback tuple
       const customRecord: Record = {
         type: 'comm-project',
         data: {
-          Direction: 'Custom External Message',
+          direction: 'Custom External Message',
         },
       };
       const customResult = await service.processRecord(customRecord);
       expect(customResult.success).toBe(true);
       if (customResult.success) {
         expect(customResult.data.data).toEqual({
-          Direction: {
-            Key: 'Custom External Message',
-            Name: 'Custom External Message',
+          direction: {
+            key: 'Custom External Message',
+            name: 'Custom External Message',
           },
         });
       }
@@ -1325,22 +1324,22 @@ describe('Record domain', () => {
           recordSchema: {
             fields: [
               {
-                key: 'Direction',
+                key: 'direction',
                 name: 'Direction',
                 type: 'string',
                 required: true,
                 options: {
-                  source: 'Direction',
-                  key: 'Key',
-                  name: 'Name',
+                  source: 'direction',
+                  key: 'key',
+                  name: 'name',
                   allowUserInput: true,
                 },
               },
             ],
             options: {
-              Direction: [
-                { Key: 'IN', Name: 'Incoming' },
-                { Key: 'OT', Name: 'Outgoing' },
+              direction: [
+                { key: 'IN', name: 'Incoming' },
+                { key: 'OT', name: 'Outgoing' },
               ],
             },
           },
@@ -1355,13 +1354,13 @@ describe('Record domain', () => {
       const invalidTypeRecord = {
         type: 'comm-project',
         data: {
-          Direction: 12345,
+          direction: 12345,
         },
       };
       const result = await service.processRecord(invalidTypeRecord);
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.errors.some((err) => err.includes('/Direction:'))).toBe(true);
+        expect(result.errors.some((err) => err.includes('/direction:'))).toBe(true);
       }
       expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
     });
@@ -1377,31 +1376,31 @@ describe('Record domain', () => {
           recordSchema: {
             fields: [
               {
-                key: 'Direction',
+                key: 'direction',
                 name: 'Direction',
                 type: 'string',
                 required: true,
                 options: {
-                  source: 'Direction',
-                  key: 'Key',
-                  name: 'Name',
+                  source: 'direction',
+                  key: 'key',
+                  name: 'name',
                   allowUserInput: true,
                 },
               },
               {
-                key: 'Category',
+                key: 'category',
                 name: 'Category',
                 type: 'string',
                 required: false,
                 options: {
-                  source: 'Category',
-                  key: 'Key',
-                  name: 'Name',
+                  source: 'category',
+                  key: 'key',
+                  name: 'name',
                 },
               },
             ],
             options: {
-              Direction: [{ Key: 'IN', Name: 'Incoming' }],
+              direction: [{ key: 'IN', name: 'Incoming' }],
             },
           },
         },
@@ -1429,34 +1428,34 @@ describe('Record domain', () => {
           name: 'Submittal Record',
           recordSchema: {
             fields: [
-              { key: 'Title', name: 'Title', type: 'string', required: true },
+              { key: 'title', name: 'Title', type: 'string', required: true },
               {
-                key: 'Status',
+                key: 'status',
                 name: 'Status',
                 type: 'string',
                 required: true,
                 options: {
-                  source: 'Statuses',
-                  key: 'Code',
-                  name: 'Label',
+                  source: 'statuses',
+                  key: 'code',
+                  name: 'label',
                 },
               },
             ],
             options: {
-              Statuses: [
+              statuses: [
                 {
-                  Code: 'APP',
-                  Label: 'Approved',
-                  Description: 'Fully approved without exceptions',
-                  Color: '#00FF00',
-                  RequiresSignature: true,
+                  code: 'APP',
+                  label: 'Approved',
+                  description: 'Fully approved without exceptions',
+                  color: '#00FF00',
+                  requiresSignature: true,
                 },
                 {
-                  Code: 'REJ',
-                  Label: 'Rejected',
-                  Description: 'Rejected by structural engineer',
-                  Color: '#FF0000',
-                  RequiresSignature: false,
+                  code: 'REJ',
+                  label: 'Rejected',
+                  description: 'Rejected by structural engineer',
+                  color: '#FF0000',
+                  requiresSignature: false,
                 },
               ],
             },
@@ -1473,8 +1472,8 @@ describe('Record domain', () => {
         id: 'rec-sub-1',
         type: 'submittal',
         data: {
-          Title: 'Foundation Plan Review',
-          Status: 'APP',
+          title: 'Foundation Plan Review',
+          status: 'APP',
         },
       };
 
@@ -1482,13 +1481,13 @@ describe('Record domain', () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.data).toEqual({
-          Title: 'Foundation Plan Review',
-          Status: {
-            Code: 'APP',
-            Label: 'Approved',
-            Description: 'Fully approved without exceptions',
-            Color: '#00FF00',
-            RequiresSignature: true,
+          title: 'Foundation Plan Review',
+          status: {
+            code: 'APP',
+            label: 'Approved',
+            description: 'Fully approved without exceptions',
+            color: '#00FF00',
+            requiresSignature: true,
           },
         });
 
@@ -1499,13 +1498,13 @@ describe('Record domain', () => {
               id: 'rec-sub-1',
               type: 'submittal',
               data: {
-                Title: 'Foundation Plan Review',
-                Status: {
-                  Code: 'APP',
-                  Label: 'Approved',
-                  Description: 'Fully approved without exceptions',
-                  Color: '#00FF00',
-                  RequiresSignature: true,
+                title: 'Foundation Plan Review',
+                status: {
+                  code: 'APP',
+                  label: 'Approved',
+                  description: 'Fully approved without exceptions',
+                  color: '#00FF00',
+                  requiresSignature: true,
                 },
               },
             },
@@ -1520,13 +1519,13 @@ describe('Record domain', () => {
             id: 'rec-sub-1',
             type: 'submittal',
             data: {
-              Title: 'Foundation Plan Review',
-              Status: {
-                Code: 'APP',
-                Label: 'Approved',
-                Description: 'Fully approved without exceptions',
-                Color: '#00FF00',
-                RequiresSignature: true,
+              title: 'Foundation Plan Review',
+              status: {
+                code: 'APP',
+                label: 'Approved',
+                description: 'Fully approved without exceptions',
+                color: '#00FF00',
+                requiresSignature: true,
               },
             },
           },
@@ -1545,22 +1544,22 @@ describe('Record domain', () => {
           recordSchema: {
             fields: [
               {
-                key: 'SupplierType',
+                key: 'supplierType',
                 name: 'Supplier Type',
                 type: 'string',
                 required: true,
                 options: {
-                  source: 'SupplierTypes',
-                  key: 'TypeCode',
-                  name: 'TypeDisplayName',
+                  source: 'supplierTypes',
+                  key: 'typeCode',
+                  name: 'typeDisplayName',
                   allowUserInput: true,
                 },
               },
             ],
             options: {
-              SupplierTypes: [
-                { TypeCode: 'CON', TypeDisplayName: 'Concrete Subcontractor' },
-                { TypeCode: 'STL', TypeDisplayName: 'Steel Fabricator' },
+              supplierTypes: [
+                { typeCode: 'CON', typeDisplayName: 'Concrete Subcontractor' },
+                { typeCode: 'STL', typeDisplayName: 'Steel Fabricator' },
               ],
             },
           },
@@ -1575,7 +1574,7 @@ describe('Record domain', () => {
       const inputRecord: Record = {
         type: 'vendor-record',
         data: {
-          SupplierType: 'Custom Acoustic Consultant',
+          supplierType: 'Custom Acoustic Consultant',
         },
       };
 
@@ -1583,9 +1582,9 @@ describe('Record domain', () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.data).toEqual({
-          SupplierType: {
-            TypeCode: 'Custom Acoustic Consultant',
-            TypeDisplayName: 'Custom Acoustic Consultant',
+          supplierType: {
+            typeCode: 'Custom Acoustic Consultant',
+            typeDisplayName: 'Custom Acoustic Consultant',
           },
         });
       }
@@ -1601,51 +1600,51 @@ describe('Record domain', () => {
           name: 'Communication Project',
           recordSchema: {
             fields: [
-              { key: 'Contact', name: 'Contact', type: 'string', required: true },
-              { key: 'Date', name: 'Date', type: 'string', required: true },
+              { key: 'contact', name: 'Contact', type: 'string', required: true },
+              { key: 'date', name: 'Date', type: 'string', required: true },
               {
-                key: 'Direction',
+                key: 'direction',
                 name: 'Direction',
                 type: 'string',
                 required: true,
                 options: {
-                  source: 'Direction',
-                  key: 'Key',
-                  name: 'Name',
+                  source: 'direction',
+                  key: 'key',
+                  name: 'name',
                 },
               },
               {
-                key: 'DeliveryMethod',
+                key: 'deliveryMethod',
                 name: 'Delivery Method',
                 type: 'string',
                 required: true,
                 options: {
-                  source: 'DeliveryMethods',
-                  key: 'Code',
-                  name: 'Title',
+                  source: 'deliveryMethods',
+                  key: 'code',
+                  name: 'title',
                   allowUserInput: true,
                 },
               },
             ],
             calculatedFields: [
               {
-                key: 'FullSummary',
-                template: '{{Direction.Name}} from {{Contact}} via {{DeliveryMethod.Title}}',
+                key: 'fullSummary',
+                template: '{{direction.name}} from {{contact}} via {{deliveryMethod.title}}',
               },
             ],
             identity: {
-              Id: '{{Contact}}-{{Date}}-{{Direction.Key}}-{{DeliveryMethod.Code}}',
-              IdRecord: '{{Contact}}-{{Date}}-{{Direction.Key}}-{{DeliveryMethod.Code}}',
-              IdGroup: '{{Contact}}',
+              id: '{{contact}}-{{date}}-{{direction.key}}-{{deliveryMethod.code}}',
+              idRecord: '{{contact}}-{{date}}-{{direction.key}}-{{deliveryMethod.code}}',
+              idGroup: '{{contact}}',
             },
             options: {
-              Direction: [
-                { Key: 'IN', Name: 'Incoming' },
-                { Key: 'OT', Name: 'Outgoing' },
+              direction: [
+                { key: 'IN', name: 'Incoming' },
+                { key: 'OT', name: 'Outgoing' },
               ],
-              DeliveryMethods: [
-                { Code: 'EML', Title: 'Email Delivery' },
-                { Code: 'FED', Title: 'FedEx Courier' },
+              deliveryMethods: [
+                { code: 'EML', title: 'Email Delivery' },
+                { code: 'FED', title: 'FedEx Courier' },
               ],
             },
           },
@@ -1660,18 +1659,18 @@ describe('Record domain', () => {
         validate: vi.fn().mockReturnValue(true),
         evaluate: vi.fn().mockImplementation((template, ctx) => {
           evaluatedContexts.push({ template, ctx: JSON.parse(JSON.stringify(ctx)) });
-          if (template === '{{Direction.Name}} from {{Contact}} via {{DeliveryMethod.Title}}') {
-            const dir = ctx.Direction as { Name: string };
-            const del = ctx.DeliveryMethod as { Title: string };
-            return `${dir.Name} from ${ctx.Contact} via ${del.Title}`;
+          if (template === '{{direction.name}} from {{contact}} via {{deliveryMethod.title}}') {
+            const dir = ctx.direction as { name: string };
+            const del = ctx.deliveryMethod as { title: string };
+            return `${dir.name} from ${ctx.contact} via ${del.title}`;
           }
-          if (template === '{{Contact}}-{{Date}}-{{Direction.Key}}-{{DeliveryMethod.Code}}') {
-            const dir = ctx.Direction as { Key: string };
-            const del = ctx.DeliveryMethod as { Code: string };
-            return `${ctx.Contact}-${ctx.Date}-${dir.Key}-${del.Code}`;
+          if (template === '{{contact}}-{{date}}-{{direction.key}}-{{deliveryMethod.code}}') {
+            const dir = ctx.direction as { key: string };
+            const del = ctx.deliveryMethod as { code: string };
+            return `${ctx.contact}-${ctx.date}-${dir.key}-${del.code}`;
           }
-          if (template === '{{Contact}}') {
-            return `${ctx.Contact}`;
+          if (template === '{{contact}}') {
+            return `${ctx.contact}`;
           }
           return '';
         }),
@@ -1680,14 +1679,14 @@ describe('Record domain', () => {
       const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      // Test with matched Direction tuple and synthesized DeliveryMethod fallback tuple
+      // Test with matched direction tuple and synthesized deliveryMethod fallback tuple
       const inputRecord: Record = {
         type: 'comm-project',
         data: {
-          Contact: 'Alice',
-          Date: '260825',
-          Direction: 'IN',
-          DeliveryMethod: 'Hand Carried Drone', // arbitrary combo-box input
+          contact: 'Alice',
+          date: '260825',
+          direction: 'IN',
+          deliveryMethod: 'Hand Carried Drone', // arbitrary combo-box input
         },
       };
 
@@ -1695,29 +1694,29 @@ describe('Record domain', () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.id).toBe('Alice-260825-IN-Hand Carried Drone');
-        expect(result.data.IdRecord).toBe('Alice-260825-IN-Hand Carried Drone');
-        expect(result.data.IdGroup).toBe('Alice');
+        expect(result.data.idRecord).toBe('Alice-260825-IN-Hand Carried Drone');
+        expect(result.data.idGroup).toBe('Alice');
         expect(result.data.data).toEqual({
-          Contact: 'Alice',
-          Date: '260825',
-          Direction: {
-            Key: 'IN',
-            Name: 'Incoming',
+          contact: 'Alice',
+          date: '260825',
+          direction: {
+            key: 'IN',
+            name: 'Incoming',
           },
-          DeliveryMethod: {
-            Code: 'Hand Carried Drone',
-            Title: 'Hand Carried Drone',
+          deliveryMethod: {
+            code: 'Hand Carried Drone',
+            title: 'Hand Carried Drone',
           },
-          FullSummary: 'Incoming from Alice via Hand Carried Drone',
+          fullSummary: 'Incoming from Alice via Hand Carried Drone',
         });
       }
 
       // Verify that all Handlebars evaluation calls received the enriched tuple objects in context
       for (const call of evaluatedContexts) {
-        expect(call.ctx.Direction).toEqual({ Key: 'IN', Name: 'Incoming' });
-        expect(call.ctx.DeliveryMethod).toEqual({
-          Code: 'Hand Carried Drone',
-          Title: 'Hand Carried Drone',
+        expect(call.ctx.direction).toEqual({ key: 'IN', name: 'Incoming' });
+        expect(call.ctx.deliveryMethod).toEqual({
+          code: 'Hand Carried Drone',
+          title: 'Hand Carried Drone',
         });
       }
     });

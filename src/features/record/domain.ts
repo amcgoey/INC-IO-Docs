@@ -10,9 +10,9 @@ export const RecordModel = Type.Object({
   // STUB: Pending Chunk 3
   id: Type.Optional(Type.String()),
   // STUB: Pending Chunk 3
-  IdRecord: Type.Optional(Type.String()),
+  idRecord: Type.Optional(Type.String()),
   // STUB: Pending Chunk 3
-  IdGroup: Type.Optional(Type.String()),
+  idGroup: Type.Optional(Type.String()),
   type: Type.String(),
   data: Type.Record(Type.String(), Type.Unknown()),
 });
@@ -54,9 +54,9 @@ export type RecordSchemaOptionTuple = Static<typeof RecordSchemaOptionTupleType>
 
 export const RecordIdentitySchemaType = Type.Object(
   {
-    Id: Type.Optional(Type.String()),
-    IdRecord: Type.Optional(Type.String()),
-    IdGroup: Type.Optional(Type.String()),
+    id: Type.Optional(Type.String()),
+    idRecord: Type.Optional(Type.String()),
+    idGroup: Type.Optional(Type.String()),
   },
   { additionalProperties: Type.String() }
 );
@@ -132,13 +132,12 @@ export type ProcessRecordResult =
 
 /**
  * Maps property names in RecordIdentitySchema to property names in the Record entity model.
- * RecordIdentitySchema defines 'Id' (schema convention) which maps to 'id' on the Record entity,
- * while 'IdRecord' and 'IdGroup' map to 'IdRecord' and 'IdGroup'.
+ * RecordIdentitySchema defines 'id', 'idRecord', and 'idGroup' which map directly to 'id', 'idRecord', and 'idGroup' on the Record entity.
  */
 const IDENTITY_SCHEMA_TO_RECORD_FIELD_MAPPING = {
-  Id: 'id',
-  IdRecord: 'IdRecord',
-  IdGroup: 'IdGroup',
+  id: 'id',
+  idRecord: 'idRecord',
+  idGroup: 'idGroup',
 } as const;
 
 function compileFieldSchema(field: RecordField, recordSchema: RecordSchema, recordTypeKey: string): TSchema {

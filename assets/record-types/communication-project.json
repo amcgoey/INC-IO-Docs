@@ -4,33 +4,33 @@
   "recordSchema": {
     "fields": [
       {
-        "key": "Contact",
+        "key": "contact",
         "name": "Contact",
         "type": "string",
         "description": "Contact folder name",
         "required": true
       },
       {
-        "key": "Date",
+        "key": "date",
         "name": "Date",
         "type": "string",
         "description": "Date in yyMMdd format",
         "required": true
       },
       {
-        "key": "Direction",
+        "key": "direction",
         "name": "Direction",
         "type": "string",
         "description": "Communication direction",
         "required": true,
         "options": {
-          "source": "Direction",
-          "key": "Key",
-          "name": "Name"
+          "source": "direction",
+          "key": "key",
+          "name": "name"
         }
       },
       {
-        "key": "Description",
+        "key": "description",
         "name": "Description",
         "type": "string",
         "description": "Description of communication",
@@ -39,24 +39,24 @@
     ],
     "calculatedFields": [
       {
-        "key": "TestCalculatedField",
-        "template": "{{Date}}-{{Direction.Key}}-{{Contact}}-{{Description}}"
+        "key": "testCalculatedField",
+        "template": "{{date}}-{{direction.key}}-{{contact}}-{{description}}"
       }
     ],
     "identity": {
-      "Id": "{{Contact}}-{{Date}}-{{Direction.Key}}-{{Description}}",
-      "IdRecord": "{{Contact}}-{{Date}}-{{Direction.Key}}-{{Description}}",
-      "IdGroup": "{{Contact}}"
+      "id": "{{contact}}-{{date}}-{{direction.key}}-{{description}}",
+      "idRecord": "{{contact}}-{{date}}-{{direction.key}}-{{description}}",
+      "idGroup": "{{contact}}"
     },
     "options": {
-      "Direction": [
+      "direction": [
         {
-          "Key": "IN",
-          "Name": "Incoming"
+          "key": "IN",
+          "name": "Incoming"
         },
         {
-          "Key": "OT",
-          "Name": "Outgoing"
+          "key": "OT",
+          "name": "Outgoing"
         }
       ]
     }
