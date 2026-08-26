@@ -1,0 +1,31 @@
+{
+  "key": "test-record",
+  "name": "Test Record",
+  "recordSchema": {
+    "fields": [
+      {
+        "key": "title",
+        "name": "Title",
+        "type": "string",
+        "required": true
+      }
+    ]
+  },
+  "recordUiConfig": {
+    "events": {
+      "onSubmit": {
+        "catchAllWorkflow": "SubmitTestWorkflow"
+      }
+    }
+  },
+  "recordWorkflowConfig": {
+    "workflows": [
+      {
+        "name": "SubmitTestWorkflow"
+      }
+    ]
+  },
+  "storageContextConfig": {
+    "rootFolder": "TestRecords"
+  }
+}

@@ -652,6 +652,59 @@ describe('App integration tests', () => {
       });
     });
   });
+
+  describe('End-to-End Initialization Flow', () => {
+    it('initializes app with real adapters using fixture manifest and returns stripped FormSchemas via GET /forms', async () => {
+      const manifestPath = path.resolve(__dirname, 'fixtures/manifest.json');
+      const e2eApp = createApp({ manifestPath });
+
+      await e2eApp.initialize();
+
+      const response = await e2eApp.server.inject({
+        method: 'GET',
+        url: '/forms',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(Array.isArray(body)).toBe(true);
+      expect(body).toHaveLength(1);
+
+      const expectedForm = {
+        key: 'test-record',
+        name: 'Test Record',
+        recordSchema: {
+          fields: [
+            {
+              key: 'title',
+              name: 'Title',
+              type: 'string',
+              required: true,
+            },
+          ],
+        },
+        recordUiConfig: {
+          events: {
+            onSubmit: {
+              catchAllWorkflow: 'SubmitTestWorkflow',
+            },
+          },
+        },
+      };
+
+      expect(body[0]).toEqual(expectedForm);
+
+      // Verify strict contract validation against FormSchemaType
+      expect(Value.Check(FormSchemaType, body[0])).toBe(true);
+
+      // Verify backend configurations are stripped out
+      expect(body[0]).not.toHaveProperty('recordWorkflowConfig');
+      expect(body[0]).not.toHaveProperty('storageContextConfig');
+      expect(Object.keys(body[0]).sort()).toEqual(
+        ['key', 'name', 'recordSchema', 'recordUiConfig'].sort()
+      );
+    });
+  });
 });
 
 
