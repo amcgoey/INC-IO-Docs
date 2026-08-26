@@ -30,6 +30,7 @@ export const RecordFieldOptionType = Type.Object({
   source: Type.String(),
   key: Type.String(),
   name: Type.String(),
+  allowUserInput: Type.Optional(Type.Boolean()),
 });
 
 export type RecordFieldOption = Static<typeof RecordFieldOptionType>;
@@ -138,7 +139,7 @@ const IDENTITY_FIELD_MAPPING = {
 function compileFieldSchema(field: RecordField, recordSchema: RecordSchema, recordTypeKey: string): TSchema {
   let fieldSchema: TSchema;
   if (field.type === 'string') {
-    if (field.options) {
+    if (field.options && !field.options.allowUserInput) {
       const { source, key } = field.options;
       const optionTuples = recordSchema.options?.[source] ?? [];
       const uniqueKeys = Array.from(

@@ -567,6 +567,74 @@ describe('App integration tests', () => {
       expect(body.errors.some((err: string) => err.includes('/Direction:'))).toBe(true);
       expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
     });
+
+    it('accepts arbitrary string inputs when a record schema defines a combo-box with allowUserInput: true', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const customRecordTypes: RecordType[] = [
+        {
+          key: 'combobox-record',
+          name: 'Combobox Record',
+          recordSchema: {
+            fields: [
+              {
+                key: 'Category',
+                name: 'Category',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'Categories',
+                  key: 'Key',
+                  name: 'Name',
+                  allowUserInput: true,
+                },
+              },
+            ],
+            options: {
+              Categories: [
+                { Key: 'CAT_A', Name: 'Category A' },
+                { Key: 'CAT_B', Name: 'Category B' },
+              ],
+            },
+          },
+        },
+      ];
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(customRecordTypes),
+      };
+
+      const customApp = createApp({
+        manifestRegistry: customRegistry,
+        activityEngine: mockDispatcher,
+      });
+
+      await customApp.initialize();
+
+      const customPayload = {
+        type: 'combobox-record',
+        data: {
+          Category: 'NonStandardCategoryXYZ',
+        },
+      };
+
+      const response = await customApp.server.inject({
+        method: 'POST',
+        url: '/records',
+        payload: customPayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.success).toBe(true);
+      expect(body.data.data.Category).toBe('NonStandardCategoryXYZ');
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
+        type: 'LOG_RECORD',
+        payload: { record: expect.objectContaining({ data: { Category: 'NonStandardCategoryXYZ' } }) },
+      });
+    });
   });
 });
 

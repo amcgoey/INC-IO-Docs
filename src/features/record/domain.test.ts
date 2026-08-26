@@ -274,6 +274,32 @@ describe('Record domain', () => {
     expect(Value.Check(RecordFieldOptionType, missingName)).toBe(false);
   });
 
+  it('RecordFieldOptionType accepts optional allowUserInput boolean', () => {
+    const optionWithAllowUserInputTrue = {
+      source: 'Direction',
+      key: 'Key',
+      name: 'Name',
+      allowUserInput: true,
+    };
+    expect(Value.Check(RecordFieldOptionType, optionWithAllowUserInputTrue)).toBe(true);
+
+    const optionWithAllowUserInputFalse = {
+      source: 'Direction',
+      key: 'Key',
+      name: 'Name',
+      allowUserInput: false,
+    };
+    expect(Value.Check(RecordFieldOptionType, optionWithAllowUserInputFalse)).toBe(true);
+
+    const optionWithInvalidAllowUserInput = {
+      source: 'Direction',
+      key: 'Key',
+      name: 'Name',
+      allowUserInput: 'true',
+    };
+    expect(Value.Check(RecordFieldOptionType, optionWithInvalidAllowUserInput)).toBe(false);
+  });
+
   it('RecordTypeSchema allows optional backend config stubs', () => {
     const recordTypeWithBackendConfigs: RecordType = {
       key: 'submittal',
@@ -1209,6 +1235,174 @@ describe('Record domain', () => {
       if (!result.success) {
         expect(result.errors.some((err) => err.includes('/Category:'))).toBe(true);
       }
+    });
+
+    it('accepts arbitrary string inputs when lookup field has allowUserInput: true (combo-box)', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'comm-project',
+          name: 'Communication Project',
+          recordSchema: {
+            fields: [
+              {
+                key: 'Direction',
+                name: 'Direction',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'Direction',
+                  key: 'Key',
+                  name: 'Name',
+                  allowUserInput: true,
+                },
+              },
+            ],
+            options: {
+              Direction: [
+                { Key: 'IN', Name: 'Incoming' },
+                { Key: 'OT', Name: 'Outgoing' },
+              ],
+            },
+          },
+        },
+      ];
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      // Accepts standard option from list
+      const optionRecord: Record = {
+        type: 'comm-project',
+        data: {
+          Direction: 'IN',
+        },
+      };
+      const optionResult = await service.processRecord(optionRecord);
+      expect(optionResult.success).toBe(true);
+
+      // Accepts arbitrary custom text string outside option list
+      const customRecord: Record = {
+        type: 'comm-project',
+        data: {
+          Direction: 'Custom External Message',
+        },
+      };
+      const customResult = await service.processRecord(customRecord);
+      expect(customResult.success).toBe(true);
+      if (customResult.success) {
+        expect(customResult.data.data).toEqual({ Direction: 'Custom External Message' });
+      }
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects non-string input when allowUserInput: true', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'comm-project',
+          name: 'Communication Project',
+          recordSchema: {
+            fields: [
+              {
+                key: 'Direction',
+                name: 'Direction',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'Direction',
+                  key: 'Key',
+                  name: 'Name',
+                  allowUserInput: true,
+                },
+              },
+            ],
+            options: {
+              Direction: [
+                { Key: 'IN', Name: 'Incoming' },
+                { Key: 'OT', Name: 'Outgoing' },
+              ],
+            },
+          },
+        },
+      ];
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const invalidTypeRecord = {
+        type: 'comm-project',
+        data: {
+          Direction: 12345,
+        },
+      };
+      const result = await service.processRecord(invalidTypeRecord);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors.some((err) => err.includes('/Direction:'))).toBe(true);
+      }
+      expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('passes allowUserInput flag through FormSchema in getForms()', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn(),
+      };
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'comm-project',
+          name: 'Communication Project',
+          recordSchema: {
+            fields: [
+              {
+                key: 'Direction',
+                name: 'Direction',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'Direction',
+                  key: 'Key',
+                  name: 'Name',
+                  allowUserInput: true,
+                },
+              },
+              {
+                key: 'Category',
+                name: 'Category',
+                type: 'string',
+                required: false,
+                options: {
+                  source: 'Category',
+                  key: 'Key',
+                  name: 'Name',
+                },
+              },
+            ],
+            options: {
+              Direction: [{ Key: 'IN', Name: 'Incoming' }],
+            },
+          },
+        },
+      ];
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const forms = await service.getForms();
+      expect(forms).toHaveLength(1);
+      expect(forms[0].recordSchema.fields[0].options?.allowUserInput).toBe(true);
+      expect(forms[0].recordSchema.fields[1].options?.allowUserInput).toBeUndefined();
+      expect(Value.Check(FormSchemaType, forms[0])).toBe(true);
     });
   });
 });
