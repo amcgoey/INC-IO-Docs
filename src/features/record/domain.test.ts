@@ -32,7 +32,7 @@ describe('Record domain', () => {
 
   const defaultEvaluator: TemplateEvaluatorPort = {
     validate: vi.fn().mockReturnValue(true),
-    evaluate: vi.fn().mockReturnValue(''),
+    evaluate: vi.fn().mockImplementation((template: string) => template),
   };
 
   it('should export RecordModel schema', () => {
@@ -799,7 +799,7 @@ describe('Record domain', () => {
           if (template === '{{date}}-{{contact}}') {
             return `${ctx.date}-${ctx.contact}`;
           }
-          return '';
+          return template;
         }),
       };
 
@@ -940,7 +940,7 @@ describe('Record domain', () => {
           if (template === '{{contact}}') {
             return `${ctx.contact}`;
           }
-          return '';
+          return template;
         }),
       };
 
@@ -1691,7 +1691,7 @@ describe('Record domain', () => {
           if (template === '{{contact}}') {
             return `${ctx.contact}`;
           }
-          return '';
+          return template;
         }),
       };
 
@@ -1907,7 +1907,7 @@ describe('Record domain', () => {
         if (template === '{{contact}}') {
           return `${ctx.contact}`;
         }
-        return '';
+        return template;
       }),
     };
 
@@ -2111,7 +2111,165 @@ describe('Record domain', () => {
       expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
     });
   });
+
+  describe('Activity payload Handlebars template resolution', () => {
+    it('evaluates activity payload template strings using TemplateEvaluatorPort with context { Record, RecordSchema } before dispatch', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const recordTypeWithTemplates: RecordType = {
+        key: 'comm-project',
+        name: 'Communication Project',
+        recordSchema: {
+          fields: [
+            { key: 'contact', name: 'Contact Person', type: 'string', required: true },
+            { key: 'subject', name: 'Subject', type: 'string', required: true },
+          ],
+          calculatedFields: [
+            { key: 'fullSubject', template: 'PROJ-{{subject}}' },
+          ],
+          identity: {
+            id: 'REC-{{contact}}',
+          },
+        },
+        recordUiConfig: {
+          events: {
+            onSubmit: {
+              catchAllWorkflow: 'DispatchActivityWorkflow',
+            },
+          },
+        },
+        recordWorkflowConfig: {
+          workflows: [
+            {
+              name: 'DispatchActivityWorkflow',
+              activitySequence: [
+                {
+                  type: 'NOTIFY_CLIENT',
+                  payload: {
+                    recipient: '{{Record.data.contact}}',
+                    recordId: '{{Record.id}}',
+                    subject: '{{Record.data.fullSubject}}',
+                    schemaField: '{{RecordSchema.fields.[0].name}}',
+                    staticNumber: 42,
+                    staticBoolean: true,
+                    nested: {
+                      message: 'Hello {{Record.data.contact}}',
+                      tags: ['tag-{{Record.data.contact}}', 'constant-tag'],
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([recordTypeWithTemplates]),
+      };
+
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template: string, ctx: { [key: string]: unknown }) => {
+          if (template === 'PROJ-{{subject}}') {
+            return `PROJ-${ctx.subject}`;
+          }
+          if (template === 'REC-{{contact}}') {
+            return `REC-${ctx.contact}`;
+          }
+          if (template === '{{Record.data.contact}}') {
+            const record = ctx.Record as Record;
+            return record.data.contact as string;
+          }
+          if (template === '{{Record.id}}') {
+            const record = ctx.Record as Record;
+            return record.id as string;
+          }
+          if (template === '{{Record.data.fullSubject}}') {
+            const record = ctx.Record as Record;
+            return record.data.fullSubject as string;
+          }
+          if (template === '{{RecordSchema.fields.[0].name}}') {
+            const schema = ctx.RecordSchema as RecordType['recordSchema'];
+            return schema.fields[0].name;
+          }
+          if (template === 'Hello {{Record.data.contact}}') {
+            const record = ctx.Record as Record;
+            return `Hello ${record.data.contact}`;
+          }
+          if (template === 'tag-{{Record.data.contact}}') {
+            const record = ctx.Record as Record;
+            return `tag-${record.data.contact}`;
+          }
+          return template;
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'comm-project',
+        data: {
+          contact: 'Jane Doe',
+          subject: 'Review Meeting',
+        },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+
+      expect(result.success).toBe(true);
+
+      const expectedEnrichedRecord: Record = {
+        type: 'comm-project',
+        id: 'REC-Jane Doe',
+        data: {
+          contact: 'Jane Doe',
+          subject: 'Review Meeting',
+          fullSubject: 'PROJ-Review Meeting',
+        },
+      };
+
+      const expectedResolvedPayload = {
+        recipient: 'Jane Doe',
+        recordId: 'REC-Jane Doe',
+        subject: 'PROJ-Review Meeting',
+        schemaField: 'Contact Person',
+        staticNumber: 42,
+        staticBoolean: true,
+        nested: {
+          message: 'Hello Jane Doe',
+          tags: ['tag-Jane Doe', 'constant-tag'],
+        },
+      };
+
+      const expectedActivity = {
+        type: 'NOTIFY_CLIENT',
+        payload: expectedResolvedPayload,
+      };
+
+      if (result.success) {
+        expect(result.data).toEqual(expectedEnrichedRecord);
+        expect(result.activities).toEqual([expectedActivity]);
+      }
+
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(expectedActivity);
+
+      // Verify that mockEvaluator was called with the exact required context
+      expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
+        '{{Record.data.contact}}',
+        expect.objectContaining({
+          Record: expectedEnrichedRecord,
+          RecordSchema: recordTypeWithTemplates.recordSchema,
+        })
+      );
+    });
+  });
 });
+
 
 
 

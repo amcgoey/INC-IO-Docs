@@ -756,7 +756,120 @@ describe('App integration tests', () => {
       );
     });
   });
+
+  describe('End-to-End Handlebars Activity Payload Resolution', () => {
+    it('evaluates activity payload templates with real HandlebarsAdapter injecting Record and RecordSchema context', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const customRecordTypes: RecordType[] = [
+        {
+          key: 'comm-project',
+          name: 'Communication Project',
+          recordSchema: {
+            fields: [
+              { key: 'contact', name: 'Contact Person', type: 'string', required: true },
+              { key: 'description', name: 'Description', type: 'string', required: true },
+            ],
+            calculatedFields: [
+              { key: 'summary', template: 'COMM: {{contact}} - {{description}}' },
+            ],
+            identity: {
+              id: 'ID-{{contact}}',
+              idRecord: 'IDREC-{{contact}}',
+              idGroup: 'GRP-{{contact}}',
+            },
+          },
+          recordUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'HandleCommWorkflow',
+              },
+            },
+          },
+          recordWorkflowConfig: {
+            workflows: [
+              {
+                name: 'HandleCommWorkflow',
+                activitySequence: [
+                  {
+                    type: 'CONSOLE_LOG',
+                    payload: {
+                      recordId: '{{Record.id}}',
+                      idRecord: '{{Record.idRecord}}',
+                      idGroup: '{{Record.idGroup}}',
+                      contactName: '{{Record.data.contact}}',
+                      calculatedSummary: '{{Record.data.summary}}',
+                      recordTypeName: '{{RecordSchema.fields.[0].name}}',
+                      nested: {
+                        templateString: 'Target: {{Record.data.contact}}',
+                        list: ['item-{{Record.data.contact}}', 'static-item'],
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(customRecordTypes),
+      };
+
+      const appInstance = createApp({
+        manifestRegistry: customRegistry,
+        activityEngine: mockDispatcher,
+      });
+
+      await appInstance.initialize();
+
+      const response = await appInstance.server.inject({
+        method: 'POST',
+        url: '/records?eventName=onSubmit',
+        payload: {
+          type: 'comm-project',
+          data: {
+            contact: 'Jane Doe',
+            description: 'Design Review',
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.success).toBe(true);
+
+      const expectedResolvedPayload = {
+        recordId: 'ID-Jane Doe',
+        idRecord: 'IDREC-Jane Doe',
+        idGroup: 'GRP-Jane Doe',
+        contactName: 'Jane Doe',
+        calculatedSummary: 'COMM: Jane Doe - Design Review',
+        recordTypeName: 'Contact Person',
+        nested: {
+          templateString: 'Target: Jane Doe',
+          list: ['item-Jane Doe', 'static-item'],
+        },
+      };
+
+      expect(body.activities).toEqual([
+        {
+          type: 'CONSOLE_LOG',
+          payload: expectedResolvedPayload,
+        },
+      ]);
+
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
+        type: 'CONSOLE_LOG',
+        payload: expectedResolvedPayload,
+      });
+    });
+  });
 });
+
 
 
 

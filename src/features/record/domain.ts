@@ -1,6 +1,13 @@
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import type { ActivityDispatcherPort, ManifestRegistryPort, RecordServicePort, SchemaQueryPort, TemplateEvaluatorPort } from './ports';
+import type {
+  ActivityDispatcherPort,
+  ManifestRegistryPort,
+  RecordServicePort,
+  SchemaQueryPort,
+  TemplateEvaluationContext,
+  TemplateEvaluatorPort,
+} from './ports';
 
 export function formatValidationErrors<T extends TSchema>(schema: T, value: unknown): string[] {
   return [...Value.Errors(schema, value)].map((e) => `${e.path}: ${e.message}`);
@@ -221,6 +228,27 @@ function matchesRule(matchFields: { [key: string]: string } | undefined, record:
   return true;
 }
 
+function resolvePayloadTemplates(
+  value: unknown,
+  evaluator: TemplateEvaluatorPort,
+  context: TemplateEvaluationContext
+): unknown {
+  if (typeof value === 'string') {
+    return evaluator.evaluate(value, context);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => resolvePayloadTemplates(item, evaluator, context));
+  }
+  if (value !== null && typeof value === 'object') {
+    const result: { [key: string]: unknown } = {};
+    for (const [k, v] of Object.entries(value as { [key: string]: unknown })) {
+      result[k] = resolvePayloadTemplates(v, evaluator, context);
+    }
+    return result;
+  }
+  return value;
+}
+
 export class RecordService implements RecordServicePort, SchemaQueryPort {
   private recordTypes: RecordType[] = [];
   private compiledSchemas = new Map<string, TSchema>();
@@ -387,14 +415,32 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
     }
 
     const activities = workflow.activitySequence ?? [];
+    const evaluationContext: TemplateEvaluationContext = {
+      Record: enrichedRecord,
+      RecordSchema: recordType.recordSchema,
+    };
+
+    const resolvedActivities: Activity[] = [];
     for (const activity of activities) {
-      await this.dispatcher.dispatch(activity);
+      const resolvedPayload = (resolvePayloadTemplates(
+        activity.payload,
+        this.templateEvaluator,
+        evaluationContext
+      ) ?? {}) as { [key: string]: unknown };
+
+      const resolvedActivity: Activity = {
+        type: activity.type,
+        payload: resolvedPayload,
+      };
+
+      await this.dispatcher.dispatch(resolvedActivity);
+      resolvedActivities.push(resolvedActivity);
     }
 
     return {
       success: true,
       data: enrichedRecord,
-      activities,
+      activities: resolvedActivities,
     };
   }
 }
