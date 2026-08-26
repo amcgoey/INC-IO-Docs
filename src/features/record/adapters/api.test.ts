@@ -67,15 +67,18 @@ describe('Record Feature API driving adapter', () => {
     expect(mockSchemaQuery.getForms).toHaveBeenCalled();
     expect(formsResponse.body).toEqual([mockForm]);
 
-    // Test POST /records success
+    // Test POST /records success with eventName query parameter
     const validPayload = {
       id: 'rec-1',
       type: 'submittal',
       title: 'Structural Steel Spec',
     };
-    const recordsResponse = await recordsRoute!.handler({ body: validPayload });
+    const recordsResponse = await recordsRoute!.handler({
+      body: validPayload,
+      query: { eventName: 'onSubmit' },
+    });
     expect(recordsResponse.status).toBe(200);
-    expect(mockService.processRecord).toHaveBeenCalledWith(validPayload);
+    expect(mockService.processRecord).toHaveBeenCalledWith(validPayload, 'onSubmit');
     expect(recordsResponse.body).toEqual({
       success: true,
       data: validPayload,
@@ -84,6 +87,33 @@ describe('Record Feature API driving adapter', () => {
         payload: { record: validPayload },
       },
     });
+  });
+
+  it('POST /records forwards undefined eventName when query parameter is omitted', async () => {
+    const mockSchemaQuery: SchemaQueryPort = {
+      getForms: vi.fn().mockResolvedValue([]),
+    };
+
+    const mockService: RecordServicePort = {
+      processRecord: vi.fn().mockResolvedValue({
+        success: true,
+        data: { id: 'rec-1', type: 'submittal', title: 'Structural Steel Spec' },
+        activities: [],
+      }),
+    };
+
+    const { router: mockRouter, registeredRoutes } = createMockRouter();
+
+    registerRecordFeatureRoutes(mockRouter, { service: mockService, schemaQuery: mockSchemaQuery });
+
+    const recordsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/records');
+    expect(recordsRoute).toBeDefined();
+
+    const validPayload = { id: 'rec-1', type: 'submittal', title: 'Structural Steel Spec' };
+    const response = await recordsRoute!.handler({ body: validPayload });
+
+    expect(response.status).toBe(200);
+    expect(mockService.processRecord).toHaveBeenCalledWith(validPayload, undefined);
   });
 
   it('POST /records returns 400 when service returns failure', async () => {
@@ -109,7 +139,7 @@ describe('Record Feature API driving adapter', () => {
     const response = await recordsRoute!.handler({ body: invalidPayload });
 
     expect(response.status).toBe(400);
-    expect(mockService.processRecord).toHaveBeenCalledWith(invalidPayload);
+    expect(mockService.processRecord).toHaveBeenCalledWith(invalidPayload, undefined);
     expect(response.body).toEqual({
       success: false,
       errors: ['id: Expected string'],

@@ -6,7 +6,7 @@ export interface ActivityDispatcherPort {
 }
 
 export interface RecordServicePort {
-  processRecord(payload?: unknown): Promise<ProcessRecordResult>;
+  processRecord(payload?: unknown, eventName?: string): Promise<ProcessRecordResult>;
 }
 
 export interface SchemaQueryPort {

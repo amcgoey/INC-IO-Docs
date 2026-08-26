@@ -106,12 +106,30 @@ export const RecordUiConfigType = Type.Object({
 
 export type RecordUiConfig = Static<typeof RecordUiConfigType>;
 
+export const WorkflowType = Type.Object(
+  {
+    name: Type.String(),
+    engine: Type.Optional(Type.String()),
+    activities: Type.Optional(Type.Array(ActivityType)),
+    activitySequence: Type.Optional(Type.Array(ActivityType)),
+  },
+  { additionalProperties: Type.Unknown() }
+);
+
+export type Workflow = Static<typeof WorkflowType>;
+
+export const RecordWorkflowConfigType = Type.Object({
+  workflows: Type.Array(WorkflowType),
+});
+
+export type RecordWorkflowConfig = Static<typeof RecordWorkflowConfigType>;
+
 export const RecordTypeSchema = Type.Object({
   key: Type.String(),
   name: Type.String(),
   recordSchema: RecordSchemaType,
   recordUiConfig: Type.Optional(RecordUiConfigType),
-  recordWorkflowConfig: Type.Optional(Type.Unknown()),
+  recordWorkflowConfig: Type.Optional(RecordWorkflowConfigType),
   storageContextConfig: Type.Optional(Type.Unknown()),
 });
 
@@ -127,7 +145,7 @@ export const FormSchemaType = Type.Object({
 export type FormSchema = Static<typeof FormSchemaType>;
 
 export type ProcessRecordResult =
-  | { success: true; data: Record; activity: Activity }
+  | { success: true; data: Record; activities: Activity[]; activity?: Activity }
   | { success: false; errors: string[] };
 
 /**
@@ -175,6 +193,39 @@ function compileFieldSchema(field: RecordField, recordSchema: RecordSchema, reco
   return fieldSchema;
 }
 
+function matchesRule(matchFields: { [key: string]: string } | undefined, record: Record): boolean {
+  if (!matchFields || Object.keys(matchFields).length === 0) {
+    return true;
+  }
+  const recordData = record.data as { [key: string]: unknown };
+  const recordObj = record as unknown as { [key: string]: unknown };
+
+  for (const [key, expectedValue] of Object.entries(matchFields)) {
+    const rawValue = recordData[key] !== undefined ? recordData[key] : recordObj[key];
+    if (rawValue === undefined || rawValue === null) {
+      return false;
+    }
+    if (typeof rawValue === 'string') {
+      if (rawValue !== expectedValue) {
+        return false;
+      }
+    } else if (typeof rawValue === 'object') {
+      const obj = rawValue as { [key: string]: unknown };
+      const match =
+        obj.key === expectedValue ||
+        obj.id === expectedValue ||
+        obj.code === expectedValue ||
+        Object.values(obj).some((v) => String(v) === expectedValue);
+      if (!match) {
+        return false;
+      }
+    } else if (String(rawValue) !== expectedValue) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export class RecordService implements RecordServicePort, SchemaQueryPort {
   private recordTypes: RecordType[] = [];
   private compiledSchemas = new Map<string, TSchema>();
@@ -214,7 +265,7 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
     });
   }
 
-  async processRecord(payload?: unknown): Promise<ProcessRecordResult> {
+  async processRecord(payload?: unknown, eventName?: string): Promise<ProcessRecordResult> {
     if (!Value.Check(RecordModel, payload)) {
       const errors = formatValidationErrors(RecordModel, payload);
       return {
@@ -304,18 +355,52 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       data: resolvedData,
     };
 
-    // STUB: Raw payload dispatch is an interim solution pending Chunk 3
-    const activity: Activity = {
-      type: 'LOG_RECORD',
-      payload: { record: enrichedRecord },
-    };
+    let selectedWorkflowName: string | undefined;
 
-    await this.dispatcher.dispatch(activity);
+    if (eventName && recordType.recordUiConfig?.events?.[eventName]) {
+      const uiEvent = recordType.recordUiConfig.events[eventName];
+      if (uiEvent.rules && uiEvent.rules.length > 0) {
+        for (const rule of uiEvent.rules) {
+          if (matchesRule(rule.matchFields, enrichedRecord)) {
+            selectedWorkflowName = rule.workflow;
+            break;
+          }
+        }
+      }
+
+      if (!selectedWorkflowName && uiEvent.catchAllWorkflow) {
+        selectedWorkflowName = uiEvent.catchAllWorkflow;
+      }
+    }
+
+    if (!selectedWorkflowName) {
+      return {
+        success: true,
+        data: enrichedRecord,
+        activities: [],
+      };
+    }
+
+    const workflow = recordType.recordWorkflowConfig?.workflows.find(
+      (w) => w.name === selectedWorkflowName
+    );
+
+    if (!workflow) {
+      throw new Error(
+        `Workflow '${selectedWorkflowName}' not found in configuration for RecordType '${recordType.key}'`
+      );
+    }
+
+    const activities = workflow.activitySequence ?? workflow.activities ?? [];
+    for (const activity of activities) {
+      await this.dispatcher.dispatch(activity);
+    }
 
     return {
       success: true,
       data: enrichedRecord,
-      activity,
+      activities,
+      activity: activities[0],
     };
   }
 }

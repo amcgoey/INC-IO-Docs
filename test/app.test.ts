@@ -36,7 +36,17 @@ describe('App integration tests', () => {
           },
         },
         recordWorkflowConfig: {
-          workflows: [{ name: 'SubmitCommProject' }],
+          workflows: [
+            {
+              name: 'SubmitCommProject',
+              activitySequence: [
+                {
+                  type: 'LOG_RECORD',
+                  payload: { status: 'submitted' },
+                },
+              ],
+            },
+          ],
         },
         storageContextConfig: {
           rootFolder: 'CommunicationProjects',
@@ -61,7 +71,43 @@ describe('App integration tests', () => {
   });
 
   describe('Route endpoints', () => {
-    it('POST /records should return 200 and dispatch activity for valid record payload', async () => {
+    it('POST /records?eventName=onSubmit should return 200 and dispatch activity for valid record payload', async () => {
+      const validRecord = {
+        type: 'communication-project',
+        data: {
+          contact: 'Jane Doe',
+        },
+      };
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/records?eventName=onSubmit',
+        payload: validRecord,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        success: true,
+        data: validRecord,
+        activities: [
+          {
+            type: 'LOG_RECORD',
+            payload: { status: 'submitted' },
+          },
+        ],
+        activity: {
+          type: 'LOG_RECORD',
+          payload: { status: 'submitted' },
+        },
+      });
+      expect(mockActivityEngine.dispatch).toHaveBeenCalledWith({
+        type: 'LOG_RECORD',
+        payload: { status: 'submitted' },
+      });
+    });
+
+    it('POST /records without eventName should return 200 with empty activities and not dispatch', async () => {
       const validRecord = {
         type: 'communication-project',
         data: {
@@ -80,15 +126,9 @@ describe('App integration tests', () => {
       expect(body).toEqual({
         success: true,
         data: validRecord,
-        activity: {
-          type: 'LOG_RECORD',
-          payload: { record: validRecord },
-        },
+        activities: [],
       });
-      expect(mockActivityEngine.dispatch).toHaveBeenCalledWith({
-        type: 'LOG_RECORD',
-        payload: { record: validRecord },
-      });
+      expect(mockActivityEngine.dispatch).not.toHaveBeenCalled();
     });
 
     it('POST /records should return 400 for invalid record payload', async () => {
@@ -513,7 +553,7 @@ describe('App integration tests', () => {
 
       const response = await prodApp.server.inject({
         method: 'POST',
-        url: '/records',
+        url: '/records?eventName=onSubmit',
         payload: basePayload,
       });
 
@@ -524,14 +564,14 @@ describe('App integration tests', () => {
       expect(body.activity).toEqual({
         type: 'LOG_RECORD',
         payload: {
-          record: expectedRecord,
+          status: 'filed',
         },
       });
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
         type: 'LOG_RECORD',
         payload: {
-          record: expectedRecord,
+          status: 'filed',
         },
       });
     });
@@ -603,6 +643,26 @@ describe('App integration tests', () => {
               ],
             },
           },
+          recordUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'SubmitCombobox',
+              },
+            },
+          },
+          recordWorkflowConfig: {
+            workflows: [
+              {
+                name: 'SubmitCombobox',
+                activitySequence: [
+                  {
+                    type: 'LOG_RECORD',
+                    payload: { status: 'combobox_handled' },
+                  },
+                ],
+              },
+            ],
+          },
         },
       ];
 
@@ -626,7 +686,7 @@ describe('App integration tests', () => {
 
       const response = await customApp.server.inject({
         method: 'POST',
-        url: '/records',
+        url: '/records?eventName=onSubmit',
         payload: customPayload,
       });
 
@@ -640,14 +700,7 @@ describe('App integration tests', () => {
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
         type: 'LOG_RECORD',
         payload: {
-          record: expect.objectContaining({
-            data: {
-              category: {
-                key: 'NonStandardCategoryXYZ',
-                name: 'NonStandardCategoryXYZ',
-              },
-            },
-          }),
+          status: 'combobox_handled',
         },
       });
     });

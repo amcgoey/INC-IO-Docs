@@ -12,6 +12,8 @@ import {
   CalculatedFieldType,
   SystemContextSchema,
   UiEventRuleType,
+  WorkflowType,
+  RecordWorkflowConfigType,
   FormSchemaType,
   ActivityType,
   formatValidationErrors,
@@ -65,6 +67,26 @@ describe('Record domain', () => {
             },
           ],
         },
+        recordUiConfig: {
+          events: {
+            onSubmit: {
+              catchAllWorkflow: 'SubmitSubmittalWorkflow',
+            },
+          },
+        },
+        recordWorkflowConfig: {
+          workflows: [
+            {
+              name: 'SubmitSubmittalWorkflow',
+              activitySequence: [
+                {
+                  type: 'LOG_RECORD',
+                  payload: { record: { title: 'Foundation Plan' } },
+                },
+              ],
+            },
+          ],
+        },
       },
     ];
     const registryWithSubmittal: ManifestRegistryPort = {
@@ -81,19 +103,25 @@ describe('Record domain', () => {
       },
     };
 
-    const result = await service.processRecord(validRecord);
+    const result = await service.processRecord(validRecord, 'onSubmit');
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data).toEqual(validRecord);
       expect(result.activity).toEqual({
         type: 'LOG_RECORD',
-        payload: { record: validRecord },
+        payload: { record: { title: 'Foundation Plan' } },
       });
+      expect(result.activities).toEqual([
+        {
+          type: 'LOG_RECORD',
+          payload: { record: { title: 'Foundation Plan' } },
+        },
+      ]);
     }
 
     expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
       type: 'LOG_RECORD',
-      payload: { record: validRecord },
+      payload: { record: { title: 'Foundation Plan' } },
     });
   });
 
@@ -744,6 +772,26 @@ describe('Record domain', () => {
               },
             ],
           },
+          recordUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'HandleCommWorkflow',
+              },
+            },
+          },
+          recordWorkflowConfig: {
+            workflows: [
+              {
+                name: 'HandleCommWorkflow',
+                activitySequence: [
+                  {
+                    type: 'LOG_RECORD',
+                    payload: { status: 'calculated' },
+                  },
+                ],
+              },
+            ],
+          },
         },
       ];
       const customRegistry: ManifestRegistryPort = {
@@ -770,7 +818,7 @@ describe('Record domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord);
+      const result = await service.processRecord(inputRecord, 'onSubmit');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.data).toEqual({
@@ -780,31 +828,13 @@ describe('Record domain', () => {
         });
         expect(result.activity).toEqual({
           type: 'LOG_RECORD',
-          payload: {
-            record: {
-              type: 'comm-project',
-              data: {
-                contact: 'Alice',
-                date: '260825',
-                testCalculatedField: '260825-Alice',
-              },
-            },
-          },
+          payload: { status: 'calculated' },
         });
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
         type: 'LOG_RECORD',
-        payload: {
-          record: {
-            type: 'comm-project',
-            data: {
-              contact: 'Alice',
-              date: '260825',
-              testCalculatedField: '260825-Alice',
-            },
-          },
-        },
+        payload: { status: 'calculated' },
       });
     });
 
@@ -878,6 +908,26 @@ describe('Record domain', () => {
               idGroup: '{{contact}}',
             },
           },
+          recordUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'IdentityWorkflow',
+              },
+            },
+          },
+          recordWorkflowConfig: {
+            workflows: [
+              {
+                name: 'IdentityWorkflow',
+                activitySequence: [
+                  {
+                    type: 'LOG_RECORD',
+                    payload: { status: 'identified' },
+                  },
+                ],
+              },
+            ],
+          },
         },
       ];
       const customRegistry: ManifestRegistryPort = {
@@ -909,7 +959,7 @@ describe('Record domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord);
+      const result = await service.processRecord(inputRecord, 'onSubmit');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.id).toBe('Alice-260825-IN-Project discussion');
@@ -923,39 +973,13 @@ describe('Record domain', () => {
         });
         expect(result.activity).toEqual({
           type: 'LOG_RECORD',
-          payload: {
-            record: {
-              type: 'comm-project',
-              id: 'Alice-260825-IN-Project discussion',
-              idRecord: 'Alice-260825-IN-Project discussion',
-              idGroup: 'Alice',
-              data: {
-                contact: 'Alice',
-                date: '260825',
-                direction: 'IN',
-                description: 'Project discussion',
-              },
-            },
-          },
+          payload: { status: 'identified' },
         });
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
         type: 'LOG_RECORD',
-        payload: {
-          record: {
-            type: 'comm-project',
-            id: 'Alice-260825-IN-Project discussion',
-            idRecord: 'Alice-260825-IN-Project discussion',
-            idGroup: 'Alice',
-            data: {
-              contact: 'Alice',
-              date: '260825',
-              direction: 'IN',
-              description: 'Project discussion',
-            },
-          },
-        },
+        payload: { status: 'identified' },
       });
     });
 
@@ -1066,8 +1090,9 @@ describe('Record domain', () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.data).toEqual({ direction: { key: 'IN', name: 'Incoming' } });
+        expect(result.activities).toEqual([]);
       }
-      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
+      expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
     });
 
     it('rejects invalid string inputs not matching any option tuple key for lookup fields', async () => {
@@ -1291,6 +1316,7 @@ describe('Record domain', () => {
       expect(optionResult.success).toBe(true);
       if (optionResult.success) {
         expect(optionResult.data.data).toEqual({ direction: { key: 'IN', name: 'Incoming' } });
+        expect(optionResult.activities).toEqual([]);
       }
 
       // Accepts arbitrary custom text string outside option list and synthesizes fallback tuple
@@ -1309,8 +1335,9 @@ describe('Record domain', () => {
             name: 'Custom External Message',
           },
         });
+        expect(customResult.activities).toEqual([]);
       }
-      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
+      expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
     });
 
     it('rejects non-string input when allowUserInput: true', async () => {
@@ -1460,6 +1487,26 @@ describe('Record domain', () => {
               ],
             },
           },
+          recordUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'SubmitWorkflow',
+              },
+            },
+          },
+          recordWorkflowConfig: {
+            workflows: [
+              {
+                name: 'SubmitWorkflow',
+                activitySequence: [
+                  {
+                    type: 'LOG_RECORD',
+                    payload: { status: 'submittal_filed' },
+                  },
+                ],
+              },
+            ],
+          },
         },
       ];
       const customRegistry: ManifestRegistryPort = {
@@ -1477,7 +1524,7 @@ describe('Record domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord);
+      const result = await service.processRecord(inputRecord, 'onSubmit');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.data).toEqual({
@@ -1493,43 +1540,13 @@ describe('Record domain', () => {
 
         expect(result.activity).toEqual({
           type: 'LOG_RECORD',
-          payload: {
-            record: {
-              id: 'rec-sub-1',
-              type: 'submittal',
-              data: {
-                title: 'Foundation Plan Review',
-                status: {
-                  code: 'APP',
-                  label: 'Approved',
-                  description: 'Fully approved without exceptions',
-                  color: '#00FF00',
-                  requiresSignature: true,
-                },
-              },
-            },
-          },
+          payload: { status: 'submittal_filed' },
         });
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
         type: 'LOG_RECORD',
-        payload: {
-          record: {
-            id: 'rec-sub-1',
-            type: 'submittal',
-            data: {
-              title: 'Foundation Plan Review',
-              status: {
-                code: 'APP',
-                label: 'Approved',
-                description: 'Fully approved without exceptions',
-                color: '#00FF00',
-                requiresSignature: true,
-              },
-            },
-          },
-        },
+        payload: { status: 'submittal_filed' },
       });
     });
 
@@ -1719,6 +1736,437 @@ describe('Record domain', () => {
           title: 'Hand Carried Drone',
         });
       }
+    });
+  });
+
+  describe('RecordWorkflowConfig and WorkflowType validation', () => {
+    it('validates WorkflowType with name and optional activity sequences', () => {
+      const validWorkflow = {
+        name: 'ProcessSubmission',
+        activitySequence: [
+          {
+            type: 'LOG_RECORD',
+            payload: { key: 'value' },
+          },
+        ],
+      };
+      expect(Value.Check(WorkflowType, validWorkflow)).toBe(true);
+
+      const workflowWithActivities = {
+        name: 'ProcessSubmission',
+        activities: [
+          {
+            type: 'LOG_RECORD',
+            payload: { key: 'value' },
+          },
+        ],
+      };
+      expect(Value.Check(WorkflowType, workflowWithActivities)).toBe(true);
+
+      const workflowWithoutActivities = {
+        name: 'EmptyWorkflow',
+      };
+      expect(Value.Check(WorkflowType, workflowWithoutActivities)).toBe(true);
+
+      const invalidWorkflow = {
+        // missing name
+        activities: [],
+      };
+      expect(Value.Check(WorkflowType, invalidWorkflow)).toBe(false);
+    });
+
+    it('validates RecordWorkflowConfigType with workflows array', () => {
+      const validConfig = {
+        workflows: [
+          { name: 'Workflow1' },
+          { name: 'Workflow2', activitySequence: [] },
+        ],
+      };
+      expect(Value.Check(RecordWorkflowConfigType, validConfig)).toBe(true);
+
+      const invalidConfig = {
+        workflows: 'not-an-array',
+      };
+      expect(Value.Check(RecordWorkflowConfigType, invalidConfig)).toBe(false);
+    });
+  });
+
+  describe('RecordService Event Routing & Workflow Dispatch', () => {
+    const mockWorkflowRecordType: RecordType = {
+      key: 'comm-project',
+      name: 'Communication Project',
+      recordSchema: {
+        fields: [
+          { key: 'contact', name: 'Contact', type: 'string', required: true },
+          { key: 'date', name: 'Date', type: 'string', required: true },
+          {
+            key: 'direction',
+            name: 'Direction',
+            type: 'string',
+            required: true,
+            options: {
+              source: 'direction',
+              key: 'key',
+              name: 'name',
+            },
+          },
+          { key: 'description', name: 'Description', type: 'string', required: true },
+        ],
+        calculatedFields: [
+          {
+            key: 'testCalculatedField',
+            template: '{{date}}-{{direction.key}}-{{contact}}-{{description}}',
+          },
+        ],
+        identity: {
+          id: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
+          idRecord: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
+          idGroup: '{{contact}}',
+        },
+        options: {
+          direction: [
+            { key: 'IN', name: 'Incoming' },
+            { key: 'OT', name: 'Outgoing' },
+          ],
+        },
+      },
+      recordUiConfig: {
+        events: {
+          onSubmit: {
+            rules: [
+              {
+                matchFields: {
+                  direction: 'IN',
+                },
+                workflow: 'IncomingWorkflow',
+              },
+              {
+                matchFields: {
+                  direction: 'OT',
+                  contact: '_Client - AAA',
+                },
+                workflow: 'ClientOutgoingWorkflow',
+              },
+            ],
+            catchAllWorkflow: 'GeneralCommWorkflow',
+          },
+          onDraft: {
+            catchAllWorkflow: 'SaveDraftWorkflow',
+          },
+          onNoMatchEvent: {
+            rules: [
+              {
+                matchFields: {
+                  direction: 'NON_EXISTENT',
+                },
+                workflow: 'NeverMatchesWorkflow',
+              },
+            ],
+          },
+          onMissingWorkflowEvent: {
+            catchAllWorkflow: 'NonExistentWorkflow',
+          },
+        },
+      },
+      recordWorkflowConfig: {
+        workflows: [
+          {
+            name: 'IncomingWorkflow',
+            activitySequence: [
+              {
+                type: 'LOG_RECORD',
+                payload: { step: 1, action: 'log_incoming' },
+              },
+              {
+                type: 'NOTIFY_TEAM',
+                payload: { step: 2, channel: 'inbound-docs' },
+              },
+            ],
+          },
+          {
+            name: 'ClientOutgoingWorkflow',
+            activitySequence: [
+              {
+                type: 'CLIENT_ACTIVITY',
+                payload: { step: 1, target: 'client' },
+              },
+            ],
+          },
+          {
+            name: 'GeneralCommWorkflow',
+            activitySequence: [
+              {
+                type: 'GENERAL_ACTIVITY',
+                payload: { action: 'general' },
+              },
+            ],
+          },
+          {
+            name: 'SaveDraftWorkflow',
+            activities: [
+              {
+                type: 'SAVE_DRAFT',
+                payload: { draft: true },
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const mockEvaluator: TemplateEvaluatorPort = {
+      validate: vi.fn().mockReturnValue(true),
+      evaluate: vi.fn().mockImplementation((template, ctx) => {
+        if (template === '{{date}}-{{direction.key}}-{{contact}}-{{description}}') {
+          const dir = ctx.direction as { key: string };
+          return `${ctx.date}-${dir.key}-${ctx.contact}-${ctx.description}`;
+        }
+        if (template === '{{contact}}-{{date}}-{{direction.key}}-{{description}}') {
+          const dir = ctx.direction as { key: string };
+          return `${ctx.contact}-${ctx.date}-${dir.key}-${ctx.description}`;
+        }
+        if (template === '{{contact}}') {
+          return `${ctx.contact}`;
+        }
+        return '';
+      }),
+    };
+
+    it('matches first event rule against enriched lookup tuple and dispatches activity sequence', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([mockWorkflowRecordType]),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'comm-project',
+        data: {
+          contact: 'Jane Doe',
+          date: '260825',
+          direction: 'IN',
+          description: 'Inbound message',
+        },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.activities).toHaveLength(2);
+        expect(result.activities).toEqual([
+          { type: 'LOG_RECORD', payload: { step: 1, action: 'log_incoming' } },
+          { type: 'NOTIFY_TEAM', payload: { step: 2, channel: 'inbound-docs' } },
+        ]);
+        expect(result.activity).toEqual({
+          type: 'LOG_RECORD',
+          payload: { step: 1, action: 'log_incoming' },
+        });
+      }
+
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
+      expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(1, {
+        type: 'LOG_RECORD',
+        payload: { step: 1, action: 'log_incoming' },
+      });
+      expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(2, {
+        type: 'NOTIFY_TEAM',
+        payload: { step: 2, channel: 'inbound-docs' },
+      });
+    });
+
+    it('matches multi-field rule (contact + direction) and dispatches activity', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([mockWorkflowRecordType]),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'comm-project',
+        data: {
+          contact: '_Client - AAA',
+          date: '260826',
+          direction: 'OT',
+          description: 'ASR 06 Design Changes',
+        },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.activities).toEqual([
+          { type: 'CLIENT_ACTIVITY', payload: { step: 1, target: 'client' } },
+        ]);
+      }
+
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
+        type: 'CLIENT_ACTIVITY',
+        payload: { step: 1, target: 'client' },
+      });
+    });
+
+    it('falls back to catchAllWorkflow when no rules match', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([mockWorkflowRecordType]),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'comm-project',
+        data: {
+          contact: 'Other Contractor',
+          date: '260826',
+          direction: 'OT',
+          description: 'Outbound to other contractor',
+        },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.activities).toEqual([
+          { type: 'GENERAL_ACTIVITY', payload: { action: 'general' } },
+        ]);
+      }
+
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
+        type: 'GENERAL_ACTIVITY',
+        payload: { action: 'general' },
+      });
+    });
+
+    it('returns success with activities: [] when no rules match and no catch-all exists', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([mockWorkflowRecordType]),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'comm-project',
+        data: {
+          contact: 'Anyone',
+          date: '260826',
+          direction: 'OT',
+          description: 'Testing no match event',
+        },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onNoMatchEvent');
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.activities).toEqual([]);
+      }
+      expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('returns success with activities: [] when eventName is omitted or not found in config', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([mockWorkflowRecordType]),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'comm-project',
+        data: {
+          contact: 'Jane Doe',
+          date: '260825',
+          direction: 'IN',
+          description: 'Inbound message',
+        },
+      };
+
+      // When eventName is undefined
+      const resultNoEvent = await service.processRecord(inputRecord);
+      expect(resultNoEvent.success).toBe(true);
+      if (resultNoEvent.success) {
+        expect(resultNoEvent.activities).toEqual([]);
+      }
+      expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+
+      // When eventName does not exist
+      const resultUnknownEvent = await service.processRecord(inputRecord, 'onNonExistentEvent');
+      expect(resultUnknownEvent.success).toBe(true);
+      if (resultUnknownEvent.success) {
+        expect(resultUnknownEvent.activities).toEqual([]);
+      }
+      expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('throws runtime error when matched workflow is missing from configuration', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([mockWorkflowRecordType]),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'comm-project',
+        data: {
+          contact: 'Jane Doe',
+          date: '260825',
+          direction: 'IN',
+          description: 'Test message',
+        },
+      };
+
+      await expect(service.processRecord(inputRecord, 'onMissingWorkflowEvent')).rejects.toThrow(
+        /Workflow 'NonExistentWorkflow' not found in configuration for RecordType 'comm-project'/
+      );
+      expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('dispatches activities defined on workflow.activities fallback', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([mockWorkflowRecordType]),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'comm-project',
+        data: {
+          contact: 'Jane Doe',
+          date: '260825',
+          direction: 'IN',
+          description: 'Draft message',
+        },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onDraft');
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.activities).toEqual([
+          { type: 'SAVE_DRAFT', payload: { draft: true } },
+        ]);
+      }
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
+        type: 'SAVE_DRAFT',
+        payload: { draft: true },
+      });
     });
   });
 });

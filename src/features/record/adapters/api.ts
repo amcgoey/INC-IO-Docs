@@ -25,7 +25,9 @@ export function registerRecordFeatureRoutes(router: HttpServer, opts: RecordFeat
     method: 'POST',
     url: '/records',
     handler: async (request) => {
-      const result = await service.processRecord(request.body);
+      const query = request.query as Record<string, string | undefined> | undefined;
+      const eventName = typeof query === 'object' && query !== null ? query.eventName : undefined;
+      const result = await service.processRecord(request.body, eventName);
       return {
         status: result.success ? 200 : 400,
         body: result,

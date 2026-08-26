@@ -67,5 +67,20 @@
         "catchAllWorkflow": "FileCommProject"
       }
     }
+  },
+  "recordWorkflowConfig": {
+    "workflows": [
+      {
+        "name": "FileCommProject",
+        "activitySequence": [
+          {
+            "type": "LOG_RECORD",
+            "payload": {
+              "status": "filed"
+            }
+          }
+        ]
+      }
+    ]
   }
 }
