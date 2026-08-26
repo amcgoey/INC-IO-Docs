@@ -96,10 +96,6 @@ describe('App integration tests', () => {
             payload: { status: 'submitted' },
           },
         ],
-        activity: {
-          type: 'LOG_RECORD',
-          payload: { status: 'submitted' },
-        },
       });
       expect(mockActivityEngine.dispatch).toHaveBeenCalledWith({
         type: 'LOG_RECORD',
@@ -561,12 +557,14 @@ describe('App integration tests', () => {
       const body = JSON.parse(response.payload);
       expect(body.success).toBe(true);
       expect(body.data).toEqual(expectedRecord);
-      expect(body.activity).toEqual({
-        type: 'LOG_RECORD',
-        payload: {
-          status: 'filed',
+      expect(body.activities).toEqual([
+        {
+          type: 'LOG_RECORD',
+          payload: {
+            status: 'filed',
+          },
         },
-      });
+      ]);
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
         type: 'LOG_RECORD',

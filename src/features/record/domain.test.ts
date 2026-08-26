@@ -107,10 +107,6 @@ describe('Record domain', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data).toEqual(validRecord);
-      expect(result.activity).toEqual({
-        type: 'LOG_RECORD',
-        payload: { record: { title: 'Foundation Plan' } },
-      });
       expect(result.activities).toEqual([
         {
           type: 'LOG_RECORD',
@@ -350,7 +346,7 @@ describe('Record domain', () => {
         },
       },
       recordWorkflowConfig: {
-        workflows: [{ name: 'SubmitSubmittal', engine: 'temporal' }],
+        workflows: [{ name: 'SubmitSubmittal' }],
       },
       storageContextConfig: {
         rootFolder: 'Submittals',
@@ -826,10 +822,12 @@ describe('Record domain', () => {
           date: '260825',
           testCalculatedField: '260825-Alice',
         });
-        expect(result.activity).toEqual({
-          type: 'LOG_RECORD',
-          payload: { status: 'calculated' },
-        });
+        expect(result.activities).toEqual([
+          {
+            type: 'LOG_RECORD',
+            payload: { status: 'calculated' },
+          },
+        ]);
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
@@ -971,10 +969,12 @@ describe('Record domain', () => {
           direction: 'IN',
           description: 'Project discussion',
         });
-        expect(result.activity).toEqual({
-          type: 'LOG_RECORD',
-          payload: { status: 'identified' },
-        });
+        expect(result.activities).toEqual([
+          {
+            type: 'LOG_RECORD',
+            payload: { status: 'identified' },
+          },
+        ]);
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
@@ -1538,10 +1538,12 @@ describe('Record domain', () => {
           },
         });
 
-        expect(result.activity).toEqual({
-          type: 'LOG_RECORD',
-          payload: { status: 'submittal_filed' },
-        });
+        expect(result.activities).toEqual([
+          {
+            type: 'LOG_RECORD',
+            payload: { status: 'submittal_filed' },
+          },
+        ]);
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
@@ -1740,7 +1742,7 @@ describe('Record domain', () => {
   });
 
   describe('RecordWorkflowConfig and WorkflowType validation', () => {
-    it('validates WorkflowType with name and optional activity sequences', () => {
+    it('validates WorkflowType with name and optional activitySequence', () => {
       const validWorkflow = {
         name: 'ProcessSubmission',
         activitySequence: [
@@ -1752,17 +1754,6 @@ describe('Record domain', () => {
       };
       expect(Value.Check(WorkflowType, validWorkflow)).toBe(true);
 
-      const workflowWithActivities = {
-        name: 'ProcessSubmission',
-        activities: [
-          {
-            type: 'LOG_RECORD',
-            payload: { key: 'value' },
-          },
-        ],
-      };
-      expect(Value.Check(WorkflowType, workflowWithActivities)).toBe(true);
-
       const workflowWithoutActivities = {
         name: 'EmptyWorkflow',
       };
@@ -1770,7 +1761,7 @@ describe('Record domain', () => {
 
       const invalidWorkflow = {
         // missing name
-        activities: [],
+        activitySequence: [],
       };
       expect(Value.Check(WorkflowType, invalidWorkflow)).toBe(false);
     });
@@ -1850,9 +1841,6 @@ describe('Record domain', () => {
             ],
             catchAllWorkflow: 'GeneralCommWorkflow',
           },
-          onDraft: {
-            catchAllWorkflow: 'SaveDraftWorkflow',
-          },
           onNoMatchEvent: {
             rules: [
               {
@@ -1898,15 +1886,6 @@ describe('Record domain', () => {
               {
                 type: 'GENERAL_ACTIVITY',
                 payload: { action: 'general' },
-              },
-            ],
-          },
-          {
-            name: 'SaveDraftWorkflow',
-            activities: [
-              {
-                type: 'SAVE_DRAFT',
-                payload: { draft: true },
               },
             ],
           },
@@ -1960,10 +1939,6 @@ describe('Record domain', () => {
           { type: 'LOG_RECORD', payload: { step: 1, action: 'log_incoming' } },
           { type: 'NOTIFY_TEAM', payload: { step: 2, channel: 'inbound-docs' } },
         ]);
-        expect(result.activity).toEqual({
-          type: 'LOG_RECORD',
-          payload: { step: 1, action: 'log_incoming' },
-        });
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
@@ -2134,39 +2109,6 @@ describe('Record domain', () => {
         /Workflow 'NonExistentWorkflow' not found in configuration for RecordType 'comm-project'/
       );
       expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
-    });
-
-    it('dispatches activities defined on workflow.activities fallback', async () => {
-      const mockDispatcher: ActivityDispatcherPort = {
-        dispatch: vi.fn().mockResolvedValue(undefined),
-      };
-      const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue([mockWorkflowRecordType]),
-      };
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
-      await service.initialize();
-
-      const inputRecord: Record = {
-        type: 'comm-project',
-        data: {
-          contact: 'Jane Doe',
-          date: '260825',
-          direction: 'IN',
-          description: 'Draft message',
-        },
-      };
-
-      const result = await service.processRecord(inputRecord, 'onDraft');
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.activities).toEqual([
-          { type: 'SAVE_DRAFT', payload: { draft: true } },
-        ]);
-      }
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'SAVE_DRAFT',
-        payload: { draft: true },
-      });
     });
   });
 });

@@ -106,15 +106,10 @@ export const RecordUiConfigType = Type.Object({
 
 export type RecordUiConfig = Static<typeof RecordUiConfigType>;
 
-export const WorkflowType = Type.Object(
-  {
-    name: Type.String(),
-    engine: Type.Optional(Type.String()),
-    activities: Type.Optional(Type.Array(ActivityType)),
-    activitySequence: Type.Optional(Type.Array(ActivityType)),
-  },
-  { additionalProperties: Type.Unknown() }
-);
+export const WorkflowType = Type.Object({
+  name: Type.String(),
+  activitySequence: Type.Optional(Type.Array(ActivityType)),
+});
 
 export type Workflow = Static<typeof WorkflowType>;
 
@@ -145,7 +140,7 @@ export const FormSchemaType = Type.Object({
 export type FormSchema = Static<typeof FormSchemaType>;
 
 export type ProcessRecordResult =
-  | { success: true; data: Record; activities: Activity[]; activity?: Activity }
+  | { success: true; data: Record; activities: Activity[] }
   | { success: false; errors: string[] };
 
 /**
@@ -391,7 +386,7 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       );
     }
 
-    const activities = workflow.activitySequence ?? workflow.activities ?? [];
+    const activities = workflow.activitySequence ?? [];
     for (const activity of activities) {
       await this.dispatcher.dispatch(activity);
     }
@@ -400,7 +395,6 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       success: true,
       data: enrichedRecord,
       activities,
-      activity: activities[0],
     };
   }
 }

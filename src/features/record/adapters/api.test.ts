@@ -42,10 +42,12 @@ describe('Record Feature API driving adapter', () => {
       processRecord: vi.fn().mockResolvedValue({
         success: true,
         data: { id: 'rec-1', type: 'submittal', title: 'Structural Steel Spec' },
-        activity: {
-          type: 'LOG_RECORD',
-          payload: { record: { id: 'rec-1', type: 'submittal', title: 'Structural Steel Spec' } },
-        },
+        activities: [
+          {
+            type: 'LOG_RECORD',
+            payload: { record: { id: 'rec-1', type: 'submittal', title: 'Structural Steel Spec' } },
+          },
+        ],
       }),
     };
 
@@ -82,10 +84,12 @@ describe('Record Feature API driving adapter', () => {
     expect(recordsResponse.body).toEqual({
       success: true,
       data: validPayload,
-      activity: {
-        type: 'LOG_RECORD',
-        payload: { record: validPayload },
-      },
+      activities: [
+        {
+          type: 'LOG_RECORD',
+          payload: { record: validPayload },
+        },
+      ],
     });
   });
 
