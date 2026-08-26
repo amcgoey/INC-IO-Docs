@@ -37,12 +37,7 @@
         "required": true
       }
     ],
-    "calculatedFields": [
-      {
-        "key": "testCalculatedField",
-        "template": "{{date}}-{{direction.key}}-{{contact}}-{{description}}"
-      }
-    ],
+
     "identity": {
       "id": "{{contact}}-{{date}}-{{direction.key}}-{{description}}",
       "idRecord": "{{contact}}-{{date}}-{{direction.key}}-{{description}}",

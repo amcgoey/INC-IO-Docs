@@ -503,7 +503,7 @@ describe('App integration tests', () => {
   });
 
   describe('End-to-End Calculated Fields and Identity Properties Resolution', () => {
-    it('resolves testCalculatedField and identity properties (id, idRecord, idGroup) from communication-project.json and enriches payload before dispatching activity', async () => {
+    it('resolves identity properties (id, idRecord, idGroup) from communication-project.json and enriches payload before dispatching activity', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -526,7 +526,6 @@ describe('App integration tests', () => {
         },
       };
 
-      const expectedCalculatedValue = '260825-IN-Jane Doe-Quarterly review discussion';
       const expectedIdentityValue = 'Jane Doe-260825-IN-Quarterly review discussion';
       const expectedGroupId = 'Jane Doe';
 
@@ -536,7 +535,6 @@ describe('App integration tests', () => {
           key: 'IN',
           name: 'Incoming',
         },
-        testCalculatedField: expectedCalculatedValue,
       };
 
       const expectedRecord = {
