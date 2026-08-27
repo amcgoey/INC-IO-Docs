@@ -126,13 +126,44 @@ describe('Workspace Feature Routes', () => {
       );
     });
 
-    it('returns 400 when recordService fails validation', async () => {
-      (mockRecordService.processRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
-        success: false,
-        errors: ['Invalid record data'],
-      });
+    it('returns 200 with AuthorizationAction when userOAuthToken is missing in event payload', async () => {
+      const payloadWithoutToken = {
+        drive: {
+          selectedItems: [{ id: 'file-123', title: 'FileWithoutToken.pdf' }],
+        },
+      };
 
       const response = await server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt',
+        },
+        payload: payloadWithoutToken,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        action: {
+          authorizationAction: {
+            authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+          },
+        },
+      });
+      expect(mockRecordService.processRecord).not.toHaveBeenCalled();
+    });
+
+    it('returns 200 with custom authorizationUrl when configured and userOAuthToken is missing', async () => {
+      const customServer = createHttpServer();
+      const customAuthUrl = 'https://accounts.google.com/o/oauth2/v2/auth?client_id=my-app';
+      registerWorkspaceFeatureRoutes(customServer, {
+        authVerifier: mockAuthVerifier,
+        recordService: mockRecordService,
+        authorizationUrl: customAuthUrl,
+      });
+
+      const response = await customServer.inject({
         method: 'POST',
         url: '/workspace/action',
         headers: {
@@ -141,10 +172,65 @@ describe('Workspace Feature Routes', () => {
         payload: {},
       });
 
-      expect(response.statusCode).toBe(400);
+      expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body.success).toBe(false);
-      expect(body.errors).toEqual(['Invalid record data']);
+      expect(body.action.authorizationAction.authorizationUrl).toBe(customAuthUrl);
+    });
+
+    it('returns 200 with native Error Card when recordService fails validation', async () => {
+      (mockRecordService.processRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: false,
+        errors: ['Invalid record data: Field contact is required'],
+      });
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.renderActions).toBeDefined();
+      expect(body.renderActions.action.notification.text).toContain(
+        'Invalid record data: Field contact is required'
+      );
+      expect(
+        body.renderActions.action.navigations[0].pushCard.sections[0].widgets[0].textParagraph.text
+      ).toContain('Invalid record data: Field contact is required');
+    });
+
+    it('returns 200 with native Error Card when recordService or driven adapter throws an error', async () => {
+      (mockRecordService.processRecord as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Google Drive API error in moveFile: 403 Forbidden')
+      );
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.renderActions).toBeDefined();
+      expect(body.renderActions.action.notification.text).toContain(
+        'Google Drive API error in moveFile: 403 Forbidden'
+      );
     });
 
     it('returns 401 when auth verification fails for action endpoint', async () => {

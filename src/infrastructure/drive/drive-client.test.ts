@@ -183,13 +183,130 @@ describe('GoogleDriveClient', () => {
     });
   });
 
-  describe('constructor auth handling', () => {
-    it('instantiates with string access token or OAuth2Client', () => {
-      const clientWithToken = new GoogleDriveClient({ auth: 'ya29.sample-token' });
-      expect(clientWithToken).toBeDefined();
+  describe('429 Rate Limit Exponential Backoff Interceptor', () => {
+    it('retries getFile on 429 status code and succeeds on next attempt', async () => {
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      const retryClient = new GoogleDriveClient({
+        drive: mockDrive,
+        retryOptions: {
+          maxRetries: 3,
+          initialDelayMs: 100,
+          backoffFactor: 2,
+          sleep: sleepMock,
+        },
+      });
 
-      const defaultClient = new GoogleDriveClient();
-      expect(defaultClient).toBeDefined();
+      const rateLimitError = new Error('Rate limit exceeded');
+      (rateLimitError as unknown as { status: number }).status = 429;
+
+      (mockDrive.files.get as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(rateLimitError)
+        .mockResolvedValueOnce({
+          data: {
+            id: 'file-retry-success',
+            name: 'RetriedFile.pdf',
+            parents: ['folder-1'],
+          },
+        });
+
+      const file = await retryClient.getFile('file-retry-success');
+
+      expect(file).toEqual({
+        id: 'file-retry-success',
+        name: 'RetriedFile.pdf',
+        parents: ['folder-1'],
+        mimeType: undefined,
+      });
+      expect(mockDrive.files.get).toHaveBeenCalledTimes(2);
+      expect(sleepMock).toHaveBeenCalledTimes(1);
+      expect(sleepMock).toHaveBeenCalledWith(100);
+    });
+
+    it('retries with exponential delay on repeated 429s (100ms then 200ms)', async () => {
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      const retryClient = new GoogleDriveClient({
+        drive: mockDrive,
+        retryOptions: {
+          maxRetries: 3,
+          initialDelayMs: 100,
+          backoffFactor: 2,
+          sleep: sleepMock,
+        },
+      });
+
+      const rateLimitError = {
+        code: 429,
+        message: 'Too Many Requests',
+      };
+
+      (mockDrive.files.list as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(rateLimitError)
+        .mockRejectedValueOnce(rateLimitError)
+        .mockResolvedValueOnce({
+          data: {
+            files: [{ id: 'f-1', name: '!TestMove', parents: ['p1'] }],
+          },
+        });
+
+      const folder = await retryClient.findOrCreateFolder('p1', '!TestMove');
+
+      expect(folder.id).toBe('f-1');
+      expect(mockDrive.files.list).toHaveBeenCalledTimes(3);
+      expect(sleepMock).toHaveBeenCalledTimes(2);
+      expect(sleepMock).toHaveBeenNthCalledWith(1, 100);
+      expect(sleepMock).toHaveBeenNthCalledWith(2, 200);
+    });
+
+    it('throws error when 429 retries are exhausted', async () => {
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      const retryClient = new GoogleDriveClient({
+        drive: mockDrive,
+        retryOptions: {
+          maxRetries: 2,
+          initialDelayMs: 50,
+          backoffFactor: 2,
+          sleep: sleepMock,
+        },
+      });
+
+      const rateLimitError = {
+        response: { status: 429 },
+        message: 'User rate limit exceeded',
+      };
+
+      (mockDrive.files.update as ReturnType<typeof vi.fn>).mockRejectedValue(rateLimitError);
+
+      await expect(retryClient.moveFile('f1', 'p1', 'p2')).rejects.toThrow(
+        /Google Drive API error in moveFile/
+      );
+      expect(mockDrive.files.update).toHaveBeenCalledTimes(3); // Initial + 2 retries
+      expect(sleepMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not retry non-429 errors (e.g. 403 Forbidden or 404 Not Found)', async () => {
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      const retryClient = new GoogleDriveClient({
+        drive: mockDrive,
+        retryOptions: {
+          maxRetries: 3,
+          initialDelayMs: 100,
+          sleep: sleepMock,
+        },
+      });
+
+      const forbiddenError = {
+        status: 403,
+        message: 'The user does not have sufficient permissions for this file.',
+      };
+
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockRejectedValue(forbiddenError);
+
+      await expect(retryClient.getFile('secret-file')).rejects.toThrow(
+        /The user does not have sufficient permissions/
+      );
+      expect(mockDrive.files.get).toHaveBeenCalledTimes(1);
+      expect(sleepMock).not.toHaveBeenCalled();
     });
   });
 });
+

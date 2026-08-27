@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import nock from 'nock';
 import { createApp, type AppInstance } from '../src/app/server';
 import type { AuthVerifierPort, AuthVerificationResult } from '../src/features/workspace/ports';
+import { GoogleDriveClient } from '../src/infrastructure/drive/drive-client';
 
 describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
   let app: AppInstance;
@@ -272,5 +273,177 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
       const body = JSON.parse(response.payload);
       expect(body.error).toBe('Unauthorized');
     });
+
+    it('returns 200 with AuthorizationAction when userOAuthToken is missing in action payload', async () => {
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          commonEventObject: { hostApp: 'DRIVE' },
+          drive: {
+            selectedItems: [{ id: 'doc-123', title: 'File.pdf' }],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        action: {
+          authorizationAction: {
+            authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+          },
+        },
+      });
+    });
+
+    it('retries on 429 rate limit from Google Drive API with backoff and succeeds', async () => {
+      const fileId = 'retry-file-429';
+      const fileName = 'RateLimitedDoc.pdf';
+      const currentParentId = 'parent-p1';
+      const targetFolderId = 'folder-target';
+
+      // 1. First GET returns 429 Too Many Requests
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType&supportsAllDrives=true`)
+        .reply(429, {
+          error: {
+            code: 429,
+            message: 'User rate limit exceeded',
+          },
+        });
+
+      // 2. Second GET (retry) succeeds with 200
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType&supportsAllDrives=true`)
+        .reply(200, {
+          id: fileId,
+          name: fileName,
+          parents: [currentParentId],
+          mimeType: 'application/pdf',
+        });
+
+      // 3. List folders returns existing !TestMove folder
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          files: [
+            {
+              id: targetFolderId,
+              name: '!TestMove',
+              parents: [currentParentId],
+            },
+          ],
+        });
+
+      // 4. Move file succeeds
+      nock('https://www.googleapis.com')
+        .patch(
+          `/drive/v3/files/${fileId}?addParents=${targetFolderId}&removeParents=${currentParentId}&fields=id%2C%20name%2C%20parents%2C%20mimeType&supportsAllDrives=true`
+        )
+        .reply(200, {
+          id: fileId,
+          name: fileName,
+          parents: [targetFolderId],
+        });
+
+      const fastRetryApp = createApp({
+        manifestPath: path.resolve(__dirname, 'fixtures/manifest.json'),
+        authVerifier: mockAuthVerifier,
+        driveService: new GoogleDriveClient({
+          retryOptions: {
+            maxRetries: 3,
+            initialDelayMs: 10,
+            backoffFactor: 1.5,
+          },
+        }),
+      });
+
+      await fastRetryApp.initialize();
+
+      const response = await fastRetryApp.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          drive: {
+            selectedItems: [
+              {
+                id: fileId,
+                title: fileName,
+              },
+            ],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        renderActions: {
+          action: {
+            notification: {
+              text: `Moved '${fileName}' to '!TestMove'`,
+            },
+          },
+        },
+      });
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('bubbles unhandled Google Drive API errors (e.g. 403 Forbidden) into a native Workspace UI Error Card', async () => {
+      const fileId = 'forbidden-file';
+
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType&supportsAllDrives=true`)
+        .reply(403, {
+          error: {
+            code: 403,
+            message: 'The user does not have sufficient permissions for this file.',
+          },
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          drive: {
+            selectedItems: [
+              {
+                id: fileId,
+                title: 'ForbiddenFile.pdf',
+              },
+            ],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.renderActions).toBeDefined();
+      expect(body.renderActions.action.notification.text).toContain(
+        'Google Drive API error in getFile'
+      );
+      expect(
+        body.renderActions.action.navigations[0].pushCard.sections[0].widgets[0].textParagraph.text
+      ).toContain('Google Drive API error in getFile');
+      expect(nock.isDone()).toBe(true);
+    });
   });
 });
+

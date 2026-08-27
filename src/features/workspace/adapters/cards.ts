@@ -45,3 +45,48 @@ export function buildToastNotification(fileName: string, destinationFolder: stri
     },
   };
 }
+
+export function buildErrorCard(errorMessage: string, title = 'Error') {
+  return {
+    renderActions: {
+      action: {
+        navigations: [
+          {
+            pushCard: {
+              header: {
+                title,
+              },
+              sections: [
+                {
+                  widgets: [
+                    {
+                      textParagraph: {
+                        text: errorMessage,
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+        notification: {
+          text: errorMessage,
+        },
+      },
+    },
+  };
+}
+
+export function buildAuthorizationAction(
+  authorizationUrl = 'https://accounts.google.com/o/oauth2/v2/auth'
+) {
+  return {
+    action: {
+      authorizationAction: {
+        authorizationUrl,
+      },
+    },
+  };
+}
+

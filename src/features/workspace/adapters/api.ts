@@ -5,43 +5,72 @@ import {
   extractWorkspaceExecutionContext,
   type WorkspaceExecutionContext,
 } from '../domain';
-import { buildHomepageCard, buildToastNotification } from './cards';
+import {
+  buildHomepageCard,
+  buildToastNotification,
+  buildErrorCard,
+  buildAuthorizationAction,
+} from './cards';
 
 export interface WorkspaceFeatureApiOptions {
   authVerifier: AuthVerifierPort;
   recordService?: RecordServicePort | undefined;
   defaultRecordType?: string | undefined;
   defaultEventName?: string | undefined;
+  authorizationUrl?: string | undefined;
 }
 
 async function authenticateRequest(
   request: HttpRequest,
   authVerifier: AuthVerifierPort
 ): Promise<{ authResult: AuthVerificationResult; unauthorizedResponse?: HttpResponse }> {
-  const authHeader = request.headers?.['authorization'] as string | undefined;
-  const authResult = await authVerifier.verifyToken(authHeader);
+  try {
+    const authHeader = request.headers?.['authorization'] as string | undefined;
+    const authResult = await authVerifier.verifyToken(authHeader);
 
-  if (!authResult.isValid) {
+    if (!authResult.isValid) {
+      return {
+        authResult,
+        unauthorizedResponse: {
+          status: 401,
+          body: {
+            error: 'Unauthorized',
+            message: authResult.error ?? 'Invalid authentication token',
+          },
+        },
+      };
+    }
+
+    return { authResult };
+  } catch (error) {
     return {
-      authResult,
+      authResult: {
+        isValid: false,
+        error: error instanceof Error ? error.message : 'Authentication verification error',
+      },
       unauthorizedResponse: {
         status: 401,
         body: {
           error: 'Unauthorized',
-          message: authResult.error ?? 'Invalid authentication token',
+          message: error instanceof Error ? error.message : 'Authentication verification error',
         },
       },
     };
   }
-
-  return { authResult };
 }
+
 
 export function registerWorkspaceFeatureRoutes(
   router: HttpServer,
   opts: WorkspaceFeatureApiOptions
 ): void {
-  const { authVerifier, recordService, defaultRecordType = 'test-record', defaultEventName = 'onSubmit' } = opts;
+  const {
+    authVerifier,
+    recordService,
+    defaultRecordType = 'test-record',
+    defaultEventName = 'onSubmit',
+    authorizationUrl,
+  } = opts;
 
   router.registerRoute({
     method: 'POST',
@@ -59,11 +88,10 @@ export function registerWorkspaceFeatureRoutes(
         };
       } catch (error) {
         return {
-          status: 500,
-          body: {
-            error: 'Internal Server Error',
-            message: error instanceof Error ? error.message : 'Unknown error in /workspace/homepage',
-          },
+          status: 200,
+          body: buildErrorCard(
+            error instanceof Error ? error.message : 'Unknown error in /workspace/homepage'
+          ),
         };
       }
     },
@@ -85,11 +113,20 @@ export function registerWorkspaceFeatureRoutes(
           traceHeader
         );
 
+        if (!context.userOAuthToken) {
+          return {
+            status: 200,
+            body: buildAuthorizationAction(authorizationUrl),
+          };
+        }
+
         const selectedItem = context.selectedItems?.[0];
         const initialFileName = selectedItem?.title ?? 'selected file';
 
         if (recordService) {
-          const bodyObj = (request.body && typeof request.body === 'object' ? request.body : {}) as Record<string, unknown>;
+          const bodyObj = (
+            request.body && typeof request.body === 'object' ? request.body : {}
+          ) as Record<string, unknown>;
           const recordPayload = bodyObj.record ?? {
             type: defaultRecordType,
             data: {
@@ -97,14 +134,19 @@ export function registerWorkspaceFeatureRoutes(
             },
           };
 
-          const result = await recordService.processRecord(recordPayload, defaultEventName, context);
+          const result = await recordService.processRecord(
+            recordPayload,
+            defaultEventName,
+            context
+          );
           if (!result.success) {
+            const errorMessage =
+              result.errors && result.errors.length > 0
+                ? result.errors.join('; ')
+                : 'Record processing failed';
             return {
-              status: 400,
-              body: {
-                success: false,
-                errors: result.errors,
-              },
+              status: 200,
+              body: buildErrorCard(errorMessage),
             };
           }
         }
@@ -118,14 +160,14 @@ export function registerWorkspaceFeatureRoutes(
           body: buildToastNotification(finalFileName, destinationFolder),
         };
       } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : 'Unknown error in /workspace/action';
         return {
-          status: 500,
-          body: {
-            error: 'Internal Server Error',
-            message: error instanceof Error ? error.message : 'Unknown error in /workspace/action',
-          },
+          status: 200,
+          body: buildErrorCard(errorMessage),
         };
       }
     },
   });
 }
+

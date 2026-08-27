@@ -8,15 +8,52 @@ export interface DriveFileMetadata {
   mimeType?: string | undefined;
 }
 
+export interface DriveRetryOptions {
+  maxRetries?: number;
+  initialDelayMs?: number;
+  backoffFactor?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
 export interface GoogleDriveClientOptions {
   auth?: OAuth2Client | string | undefined;
   drive?: drive_v3.Drive | undefined;
+  retryOptions?: DriveRetryOptions | undefined;
+}
+
+function isRateLimitError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const err = error as Record<string, unknown>;
+  if (err.status === 429 || err.code === 429 || err.code === '429') return true;
+  if (err.response && typeof err.response === 'object') {
+    const res = err.response as Record<string, unknown>;
+    if (res.status === 429) return true;
+  }
+  return false;
+}
+
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (
+    error &&
+    typeof error === 'object' &&
+    'message' in error &&
+    typeof (error as { message: unknown }).message === 'string'
+  ) {
+    return (error as { message: string }).message;
+  }
+  return String(error);
 }
 
 export class GoogleDriveClient {
   private readonly defaultDrive: drive_v3.Drive;
+  private readonly retryOptions: DriveRetryOptions;
 
   constructor(options: GoogleDriveClientOptions = {}) {
+    this.retryOptions = options.retryOptions ?? {};
+
     if (options.drive) {
       this.defaultDrive = options.drive;
     } else if (typeof options.auth === 'string') {
@@ -40,14 +77,40 @@ export class GoogleDriveClient {
     return google.drive({ version: 'v3', auth: oauth2Client as any });
   }
 
+  private async executeWithRetry<T>(operation: () => Promise<T>): Promise<T> {
+    const maxRetries = this.retryOptions.maxRetries ?? 3;
+    const initialDelayMs = this.retryOptions.initialDelayMs ?? 1000;
+    const backoffFactor = this.retryOptions.backoffFactor ?? 2;
+    const sleep =
+      this.retryOptions.sleep ??
+      ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+
+    let attempt = 0;
+    while (true) {
+      try {
+        return await operation();
+      } catch (error) {
+        if (isRateLimitError(error) && attempt < maxRetries) {
+          const delay = initialDelayMs * Math.pow(backoffFactor, attempt);
+          attempt++;
+          await sleep(delay);
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
   async getFile(fileId: string, auth?: string): Promise<DriveFileMetadata> {
     const drive = this.getDrive(auth);
     try {
-      const res = await drive.files.get({
-        fileId,
-        fields: 'id, name, parents, mimeType',
-        supportsAllDrives: true,
-      });
+      const res = await this.executeWithRetry(() =>
+        drive.files.get({
+          fileId,
+          fields: 'id, name, parents, mimeType',
+          supportsAllDrives: true,
+        })
+      );
 
       if (!res.data.id || !res.data.name) {
         throw new Error(`Failed to retrieve file metadata for fileId '${fileId}'`);
@@ -64,25 +127,31 @@ export class GoogleDriveClient {
         throw error;
       }
       throw new Error(
-        `Google Drive API error in getFile: ${error instanceof Error ? error.message : String(error)}`,
+        `Google Drive API error in getFile: ${formatErrorMessage(error)}`,
         { cause: error }
       );
     }
   }
 
-  async findOrCreateFolder(parentId: string, folderName: string, auth?: string): Promise<DriveFileMetadata> {
+  async findOrCreateFolder(
+    parentId: string,
+    folderName: string,
+    auth?: string
+  ): Promise<DriveFileMetadata> {
     const drive = this.getDrive(auth);
     try {
       const escapedName = folderName.replace(/'/g, "\\'");
       const q = `'${parentId}' in parents and name = '${escapedName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-      
-      const res = await drive.files.list({
-        q,
-        fields: 'files(id, name, parents, mimeType)',
-        spaces: 'drive',
-        includeItemsFromAllDrives: true,
-        supportsAllDrives: true,
-      });
+
+      const res = await this.executeWithRetry(() =>
+        drive.files.list({
+          q,
+          fields: 'files(id, name, parents, mimeType)',
+          spaces: 'drive',
+          includeItemsFromAllDrives: true,
+          supportsAllDrives: true,
+        })
+      );
 
       const existingFolder = res.data.files?.[0];
       if (existingFolder?.id && existingFolder?.name) {
@@ -94,15 +163,17 @@ export class GoogleDriveClient {
         };
       }
 
-      const createRes = await drive.files.create({
-        requestBody: {
-          name: folderName,
-          mimeType: 'application/vnd.google-apps.folder',
-          parents: [parentId],
-        },
-        fields: 'id, name, parents, mimeType',
-        supportsAllDrives: true,
-      });
+      const createRes = await this.executeWithRetry(() =>
+        drive.files.create({
+          requestBody: {
+            name: folderName,
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: [parentId],
+          },
+          fields: 'id, name, parents, mimeType',
+          supportsAllDrives: true,
+        })
+      );
 
       if (!createRes.data.id || !createRes.data.name) {
         throw new Error(`Failed to create folder '${folderName}' in parent '${parentId}'`);
@@ -115,26 +186,37 @@ export class GoogleDriveClient {
         mimeType: createRes.data.mimeType ?? 'application/vnd.google-apps.folder',
       };
     } catch (error) {
-      if (error instanceof Error && (error.message.includes('Failed to create') || error.message.includes('Google Drive API'))) {
+      if (
+        error instanceof Error &&
+        (error.message.includes('Failed to create') ||
+          error.message.includes('Google Drive API'))
+      ) {
         throw error;
       }
       throw new Error(
-        `Google Drive API error in findOrCreateFolder: ${error instanceof Error ? error.message : String(error)}`,
+        `Google Drive API error in findOrCreateFolder: ${formatErrorMessage(error)}`,
         { cause: error }
       );
     }
   }
 
-  async moveFile(fileId: string, currentParentId: string, targetFolderId: string, auth?: string): Promise<DriveFileMetadata> {
+  async moveFile(
+    fileId: string,
+    currentParentId: string,
+    targetFolderId: string,
+    auth?: string
+  ): Promise<DriveFileMetadata> {
     const drive = this.getDrive(auth);
     try {
-      const res = await drive.files.update({
-        fileId,
-        addParents: targetFolderId,
-        removeParents: currentParentId,
-        fields: 'id, name, parents, mimeType',
-        supportsAllDrives: true,
-      });
+      const res = await this.executeWithRetry(() =>
+        drive.files.update({
+          fileId,
+          addParents: targetFolderId,
+          removeParents: currentParentId,
+          fields: 'id, name, parents, mimeType',
+          supportsAllDrives: true,
+        })
+      );
 
       if (!res.data.id || !res.data.name) {
         throw new Error(`Failed to move file '${fileId}' to folder '${targetFolderId}'`);
@@ -151,9 +233,10 @@ export class GoogleDriveClient {
         throw error;
       }
       throw new Error(
-        `Google Drive API error in moveFile: ${error instanceof Error ? error.message : String(error)}`,
+        `Google Drive API error in moveFile: ${formatErrorMessage(error)}`,
         { cause: error }
       );
     }
   }
 }
+
