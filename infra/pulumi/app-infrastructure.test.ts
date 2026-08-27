@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import * as pulumi from "@pulumi/pulumi";
 
 function promiseOf<T>(output: pulumi.Output<T>): Promise<T> {
@@ -87,12 +87,18 @@ describe("AppInfrastructure ComponentResource", () => {
     expect(runRes?.inputs.name).toBe("inc-io-docs-dev");
 
     // Check IAM Binding for invoker
-    const iamRes = Object.values(resources).find(
+    const iamBindings = Object.values(resources).filter(
       (r) => r.type.includes("ServiceIamMember")
     );
-    expect(iamRes).toBeDefined();
-    expect(iamRes?.inputs.role).toBe("roles/run.invoker");
-    expect(iamRes?.inputs.member).toBe("serviceAccount:addon-invoker@mock-project.iam.gserviceaccount.com");
+    expect(iamBindings.length).toBe(2);
+
+    const invokerIamRes = iamBindings.find(r => r.inputs.member === "serviceAccount:addon-invoker@mock-project.iam.gserviceaccount.com");
+    expect(invokerIamRes).toBeDefined();
+    expect(invokerIamRes?.inputs.role).toBe("roles/run.invoker");
+
+    const workspaceIamRes = iamBindings.find(r => r.inputs.member === "serviceAccount:service-137115190443@gcp-sa-gsuiteaddons.iam.gserviceaccount.com");
+    expect(workspaceIamRes).toBeDefined();
+    expect(workspaceIamRes?.inputs.role).toBe("roles/run.invoker");
 
     // Verify NO public access (allUsers) IAM binding exists
     const publicAccessBinding = Object.values(resources).find(
