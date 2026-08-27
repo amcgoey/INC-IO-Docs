@@ -5,7 +5,7 @@
 .DESCRIPTION
     Checks/installs ngrok (via Chocolatey or winget), configures the auth token, spins up
     an HTTP tunnel for local development, queries the ngrok API for the public URL, and
-    dynamically updates infra/deployment.json.
+    dynamically updates infra/deployment.json without BOM.
 
 .PARAMETER Port
     The local port where the development server is listening. Default is 8080.
@@ -49,6 +49,13 @@ function Assert-Success {
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: $Message" -ForegroundColor Red
         exit $LASTEXITCODE
+    }
+}
+
+function Stop-TunnelProcess {
+    param($Process)
+    if ($Process -and -not $Process.HasExited) {
+        Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -142,9 +149,7 @@ if ($publicHttpsUrl) {
 
 if (-not $publicHttpsUrl) {
     Write-Host "FATAL: Could not retrieve public tunnel URL from ngrok." -ForegroundColor Red
-    if ($tunnelProcess -and -not $tunnelProcess.HasExited) {
-        Stop-Process -Id $tunnelProcess.Id -Force -ErrorAction SilentlyContinue
-    }
+    Stop-TunnelProcess -Process $tunnelProcess
     exit 1
 }
 
@@ -153,9 +158,7 @@ Write-Host "Active HTTPS Tunnel: $publicHttpsUrl" -ForegroundColor Green
 # 4. Update deployment.json
 if (-not (Test-Path $ManifestPath)) {
     Write-Host "ERROR: Manifest file not found at '$ManifestPath'." -ForegroundColor Red
-    if ($tunnelProcess -and -not $tunnelProcess.HasExited) {
-        Stop-Process -Id $tunnelProcess.Id -Force -ErrorAction SilentlyContinue
-    }
+    Stop-TunnelProcess -Process $tunnelProcess
     exit 1
 }
 
@@ -179,7 +182,8 @@ if ($manifestContent.addOns) {
 }
 
 $updatedJson = $manifestContent | ConvertTo-Json -Depth 10
-[System.IO.File]::WriteAllText((Resolve-Path $ManifestPath).Path, $updatedJson, [System.Text.Encoding]::UTF8)
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[System.IO.File]::WriteAllText((Resolve-Path $ManifestPath).Path, $updatedJson, $utf8NoBom)
 
 Write-Host "Manifest updated successfully with $homepageUrl" -ForegroundColor Green
 Write-Host ""
@@ -215,9 +219,7 @@ if ($tunnelProcess -and -not $NonInteractive) {
     Write-Host "Tunnel is running (PID: $($tunnelProcess.Id))." -ForegroundColor Cyan
     Write-Host "Press [Enter] to stop the tunnel and exit..."
     Read-Host | Out-Null
-    if (-not $tunnelProcess.HasExited) {
-        Write-Host "Stopping ngrok tunnel..."
-        Stop-Process -Id $tunnelProcess.Id -Force -ErrorAction SilentlyContinue
-    }
+    Write-Host "Stopping ngrok tunnel..."
+    Stop-TunnelProcess -Process $tunnelProcess
     Write-Host "Tunnel stopped." -ForegroundColor Yellow
 }
