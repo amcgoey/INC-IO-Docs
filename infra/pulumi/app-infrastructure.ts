@@ -65,6 +65,8 @@ export class AppInfrastructure extends pulumi.ComponentResource {
       "artifactregistry.googleapis.com",
       "run.googleapis.com",
       "compute.googleapis.com",
+      "drive.googleapis.com",
+      "appsmarket.googleapis.com",
     ];
 
     const enabledApis = requiredApis.map(
