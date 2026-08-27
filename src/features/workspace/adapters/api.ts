@@ -1,6 +1,6 @@
-import type { HttpServer } from '../../../infrastructure/http';
+import type { HttpRequest, HttpResponse, HttpServer } from '../../../infrastructure/http';
 import type { RecordServicePort } from '../../record/ports';
-import type { AuthVerifierPort } from '../ports';
+import type { AuthVerifierPort, AuthVerificationResult } from '../ports';
 import {
   extractWorkspaceExecutionContext,
   buildHomepageCard,
@@ -15,6 +15,29 @@ export interface WorkspaceFeatureApiOptions {
   defaultEventName?: string | undefined;
 }
 
+async function authenticateRequest(
+  request: HttpRequest,
+  authVerifier: AuthVerifierPort
+): Promise<{ authResult: AuthVerificationResult; unauthorizedResponse?: HttpResponse }> {
+  const authHeader = request.headers?.['authorization'] as string | undefined;
+  const authResult = await authVerifier.verifyToken(authHeader);
+
+  if (!authResult.isValid) {
+    return {
+      authResult,
+      unauthorizedResponse: {
+        status: 401,
+        body: {
+          error: 'Unauthorized',
+          message: authResult.error ?? 'Invalid authentication token',
+        },
+      },
+    };
+  }
+
+  return { authResult };
+}
+
 export function registerWorkspaceFeatureRoutes(
   router: HttpServer,
   opts: WorkspaceFeatureApiOptions
@@ -26,17 +49,9 @@ export function registerWorkspaceFeatureRoutes(
     url: '/workspace/homepage',
     handler: async (request) => {
       try {
-        const authHeader = request.headers?.['authorization'] as string | undefined;
-        const authResult = await authVerifier.verifyToken(authHeader);
-
-        if (!authResult.isValid) {
-          return {
-            status: 401,
-            body: {
-              error: 'Unauthorized',
-              message: authResult.error ?? 'Invalid authentication token',
-            },
-          };
+        const { unauthorizedResponse } = await authenticateRequest(request, authVerifier);
+        if (unauthorizedResponse) {
+          return unauthorizedResponse;
         }
 
         return {
@@ -60,17 +75,9 @@ export function registerWorkspaceFeatureRoutes(
     url: '/workspace/action',
     handler: async (request) => {
       try {
-        const authHeader = request.headers?.['authorization'] as string | undefined;
-        const authResult = await authVerifier.verifyToken(authHeader);
-
-        if (!authResult.isValid) {
-          return {
-            status: 401,
-            body: {
-              error: 'Unauthorized',
-              message: authResult.error ?? 'Invalid authentication token',
-            },
-          };
+        const { unauthorizedResponse } = await authenticateRequest(request, authVerifier);
+        if (unauthorizedResponse) {
+          return unauthorizedResponse;
         }
 
         const traceHeader = request.headers?.['x-cloud-trace-context'] as string | undefined;

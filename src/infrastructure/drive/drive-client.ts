@@ -14,27 +14,42 @@ export interface GoogleDriveClientOptions {
 }
 
 export class GoogleDriveClient {
-  private readonly drive: drive_v3.Drive;
+  private readonly defaultDrive: drive_v3.Drive;
+  private readonly clientsByToken = new Map<string, drive_v3.Drive>();
 
   constructor(options: GoogleDriveClientOptions = {}) {
     if (options.drive) {
-      this.drive = options.drive;
+      this.defaultDrive = options.drive;
     } else if (typeof options.auth === 'string') {
       const oauth2Client = new OAuth2Client();
       oauth2Client.setCredentials({ access_token: options.auth });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.drive = google.drive({ version: 'v3', auth: oauth2Client as any });
+      this.defaultDrive = google.drive({ version: 'v3', auth: oauth2Client as any });
     } else if (options.auth) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.drive = google.drive({ version: 'v3', auth: options.auth as any });
+      this.defaultDrive = google.drive({ version: 'v3', auth: options.auth as any });
     } else {
-      this.drive = google.drive({ version: 'v3' });
+      this.defaultDrive = google.drive({ version: 'v3' });
     }
   }
 
-  async getFile(fileId: string): Promise<DriveFileMetadata> {
+  private getDrive(auth?: string): drive_v3.Drive {
+    if (!auth) return this.defaultDrive;
+    let drive = this.clientsByToken.get(auth);
+    if (!drive) {
+      const oauth2Client = new OAuth2Client();
+      oauth2Client.setCredentials({ access_token: auth });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      drive = google.drive({ version: 'v3', auth: oauth2Client as any });
+      this.clientsByToken.set(auth, drive);
+    }
+    return drive;
+  }
+
+  async getFile(fileId: string, auth?: string): Promise<DriveFileMetadata> {
+    const drive = this.getDrive(auth);
     try {
-      const res = await this.drive.files.get({
+      const res = await drive.files.get({
         fileId,
         fields: 'id, name, parents, mimeType',
         supportsAllDrives: true,
@@ -61,12 +76,13 @@ export class GoogleDriveClient {
     }
   }
 
-  async findOrCreateFolder(parentId: string, folderName: string): Promise<DriveFileMetadata> {
+  async findOrCreateFolder(parentId: string, folderName: string, auth?: string): Promise<DriveFileMetadata> {
+    const drive = this.getDrive(auth);
     try {
       const escapedName = folderName.replace(/'/g, "\\'");
       const q = `'${parentId}' in parents and name = '${escapedName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
       
-      const res = await this.drive.files.list({
+      const res = await drive.files.list({
         q,
         fields: 'files(id, name, parents, mimeType)',
         spaces: 'drive',
@@ -84,7 +100,7 @@ export class GoogleDriveClient {
         };
       }
 
-      const createRes = await this.drive.files.create({
+      const createRes = await drive.files.create({
         requestBody: {
           name: folderName,
           mimeType: 'application/vnd.google-apps.folder',
@@ -115,9 +131,10 @@ export class GoogleDriveClient {
     }
   }
 
-  async moveFile(fileId: string, currentParentId: string, targetFolderId: string): Promise<DriveFileMetadata> {
+  async moveFile(fileId: string, currentParentId: string, targetFolderId: string, auth?: string): Promise<DriveFileMetadata> {
+    const drive = this.getDrive(auth);
     try {
-      const res = await this.drive.files.update({
+      const res = await drive.files.update({
         fileId,
         addParents: targetFolderId,
         removeParents: currentParentId,

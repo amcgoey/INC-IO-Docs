@@ -52,14 +52,7 @@ export function createApp(options?: AppOptions): AppInstance {
   }
 
   const driveService: DriveServicePort =
-    options?.driveService ?? {
-      getFile: (fileId: string, auth?: string) =>
-        new GoogleDriveClient(auth !== undefined ? { auth } : {}).getFile(fileId),
-      findOrCreateFolder: (parentId: string, folderName: string, auth?: string) =>
-        new GoogleDriveClient(auth !== undefined ? { auth } : {}).findOrCreateFolder(parentId, folderName),
-      moveFile: (fileId: string, currentParentId: string, targetFolderId: string, auth?: string) =>
-        new GoogleDriveClient(auth !== undefined ? { auth } : {}).moveFile(fileId, currentParentId, targetFolderId),
-    };
+    options?.driveService ?? new GoogleDriveClient();
 
   const driveActivityHandler = new DriveActivityHandler(driveService);
   const activityEngine = options?.activityEngine ?? new ActivityEngine([driveActivityHandler]);
