@@ -129,7 +129,7 @@ describe('Workspace Feature Routes', () => {
       expect(body).toEqual({
         action: {
           notification: {
-            text: "Moved 'Proposal.pdf' to '!TestMove'",
+            text: "Moved 'Proposal.pdf' to 'Unfiled'",
           },
         },
       });

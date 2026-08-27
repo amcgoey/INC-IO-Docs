@@ -51,9 +51,19 @@ export interface AppConfigurationProviderPort {
   getDriveConfig(): Promise<DriveConfiguration | undefined>;
 }
 
-export interface DriveServicePort {
-  getFile(fileId: string, auth?: string): Promise<DriveFileResult>;
-  findOrCreateFolder(parentId: string, folderName: string, auth?: string): Promise<DriveFileResult>;
-  moveFile(fileId: string, currentParentId: string, targetFolderId: string, auth?: string): Promise<DriveFileResult>;
+export interface DriveServiceOptions {
+  auth?: string | undefined;
 }
+
+export interface DriveServicePort {
+  getFile(fileId: string, options?: DriveServiceOptions): Promise<DriveFileResult>;
+  findOrCreateFolder(parentId: string, folderName: string, options?: DriveServiceOptions): Promise<DriveFileResult>;
+  moveFile(
+    fileId: string,
+    currentParentId: string,
+    targetFolderId: string,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult>;
+}
+
 

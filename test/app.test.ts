@@ -1009,7 +1009,7 @@ describe('App integration tests', () => {
       expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
         'folder-parent-1',
         '!CustomDestination',
-        'ya29.user-token'
+        { auth: 'ya29.user-token' }
       );
     });
   });

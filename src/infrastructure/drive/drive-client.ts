@@ -23,6 +23,10 @@ export interface DriveConfigProvider {
   } | undefined>;
 }
 
+export interface DriveOperationOptions {
+  auth?: string | undefined;
+}
+
 export interface GoogleDriveClientOptions {
   auth?: OAuth2Client | string | undefined;
   drive?: drive_v3.Drive | undefined;
@@ -114,8 +118,8 @@ export class GoogleDriveClient {
     }
   }
 
-  async getFile(fileId: string, auth?: string): Promise<DriveFileMetadata> {
-    const drive = this.getDrive(auth);
+  async getFile(fileId: string, options?: DriveOperationOptions): Promise<DriveFileMetadata> {
+    const drive = this.getDrive(options?.auth);
     try {
       const res = await this.executeWithRetry(() =>
         drive.files.get({
@@ -149,9 +153,9 @@ export class GoogleDriveClient {
   async findOrCreateFolder(
     parentId: string,
     folderName: string,
-    auth?: string
+    options?: DriveOperationOptions
   ): Promise<DriveFileMetadata> {
-    const drive = this.getDrive(auth);
+    const drive = this.getDrive(options?.auth);
     try {
       const escapedName = folderName.replace(/'/g, "\\'");
       const q = `'${parentId}' in parents and name = '${escapedName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
@@ -217,9 +221,9 @@ export class GoogleDriveClient {
     fileId: string,
     currentParentId: string,
     targetFolderId: string,
-    auth?: string
+    options?: DriveOperationOptions
   ): Promise<DriveFileMetadata> {
-    const drive = this.getDrive(auth);
+    const drive = this.getDrive(options?.auth);
     try {
       const res = await this.executeWithRetry(() =>
         drive.files.update({

@@ -37,7 +37,7 @@ export class DriveActivityHandler implements ActivityHandler {
       ? await this.options.configProvider.getDriveConfig()
       : undefined;
     const defaultTargetName =
-      driveConfig?.defaultFolderName ?? this.options.defaultFolderName ?? '!TestMove';
+      driveConfig?.defaultFolderName ?? this.options.defaultFolderName ?? 'Unfiled';
     const folderName =
       typeof activity.payload?.folderName === 'string'
         ? activity.payload.folderName
@@ -62,11 +62,13 @@ export class DriveActivityHandler implements ActivityHandler {
       auth = ctx.userOAuthToken;
     }
 
+    const driveOptions = auth ? { auth } : undefined;
+
     try {
-      const file = await this.driveService.getFile(fileId, auth);
+      const file = await this.driveService.getFile(fileId, driveOptions);
       const currentParentId = file.parents?.[0] ?? 'root';
-      const targetFolder = await this.driveService.findOrCreateFolder(currentParentId, folderName, auth);
-      const movedFile = await this.driveService.moveFile(fileId, currentParentId, targetFolder.id, auth);
+      const targetFolder = await this.driveService.findOrCreateFolder(currentParentId, folderName, driveOptions);
+      const movedFile = await this.driveService.moveFile(fileId, currentParentId, targetFolder.id, driveOptions);
 
       const result: DriveActivityExecutionResult = {
         fileId: movedFile.id,

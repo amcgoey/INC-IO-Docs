@@ -20,8 +20,6 @@ export interface WorkspaceFeatureApiOptions {
   authVerifier: AuthVerifierPort;
   recordService?: RecordServicePort | undefined;
   configProvider?: WorkspaceConfigProviderPort | undefined;
-  defaultRecordType?: string | undefined;
-  defaultEventName?: string | undefined;
   authorizationUrl?: string | undefined;
 }
 
@@ -64,6 +62,18 @@ async function authenticateRequest(
   }
 }
 
+function withAuthentication(
+  authVerifier: AuthVerifierPort,
+  handler: (request: HttpRequest) => Promise<HttpResponse>
+): (request: HttpRequest) => Promise<HttpResponse> {
+  return async (request: HttpRequest): Promise<HttpResponse> => {
+    const { unauthorizedResponse } = await authenticateRequest(request, authVerifier);
+    if (unauthorizedResponse) {
+      return unauthorizedResponse;
+    }
+    return handler(request);
+  };
+}
 
 export function registerWorkspaceFeatureRoutes(
   router: HttpServer,
@@ -73,21 +83,14 @@ export function registerWorkspaceFeatureRoutes(
     authVerifier,
     recordService,
     configProvider,
-    defaultRecordType = 'test-record',
-    defaultEventName = 'onSubmit',
     authorizationUrl,
   } = opts;
 
   router.registerRoute({
     method: 'POST',
     url: '/workspace/homepage',
-    handler: async (request) => {
+    handler: withAuthentication(authVerifier, async () => {
       try {
-        const { unauthorizedResponse } = await authenticateRequest(request, authVerifier);
-        if (unauthorizedResponse) {
-          return unauthorizedResponse;
-        }
-
         const wsConfig = configProvider
           ? await configProvider.getWorkspaceConfig()
           : undefined;
@@ -107,19 +110,14 @@ export function registerWorkspaceFeatureRoutes(
           ),
         };
       }
-    },
+    }),
   });
 
   router.registerRoute({
     method: 'POST',
     url: '/workspace/action',
-    handler: async (request) => {
+    handler: withAuthentication(authVerifier, async (request) => {
       try {
-        const { unauthorizedResponse } = await authenticateRequest(request, authVerifier);
-        if (unauthorizedResponse) {
-          return unauthorizedResponse;
-        }
-
         const traceHeader = request.headers?.['x-cloud-trace-context'] as string | undefined;
         const context: WorkspaceExecutionContext = extractWorkspaceExecutionContext(
           request.body,
@@ -138,9 +136,9 @@ export function registerWorkspaceFeatureRoutes(
           : undefined;
 
         const effectiveRecordType =
-          wsConfig?.defaultRecordType ?? defaultRecordType;
+          wsConfig?.defaultRecordType ?? 'test-record';
         const effectiveEventName =
-          wsConfig?.defaultEventName ?? defaultEventName;
+          wsConfig?.defaultEventName ?? 'onSubmit';
 
         const selectedItem = context.selectedItems?.[0];
         const initialFileName = selectedItem?.title ?? 'selected file';
@@ -173,10 +171,9 @@ export function registerWorkspaceFeatureRoutes(
           }
         }
 
-
         const executedResult = context.lastExecutionResult;
         const finalFileName = executedResult?.fileName ?? initialFileName;
-        const destinationFolder = executedResult?.destinationFolder ?? '!TestMove';
+        const destinationFolder = executedResult?.destinationFolder ?? 'Unfiled';
 
         return {
           status: 200,
@@ -190,7 +187,8 @@ export function registerWorkspaceFeatureRoutes(
           body: buildErrorCard(errorMessage),
         };
       }
-    },
+    }),
   });
 }
+
 

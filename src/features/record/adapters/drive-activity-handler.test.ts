@@ -16,7 +16,7 @@ describe('DriveActivityHandler', () => {
       }),
       findOrCreateFolder: vi.fn().mockResolvedValue({
         id: 'testmove-folder-id',
-        name: '!TestMove',
+        name: 'Unfiled',
         parents: ['folder-parent-xyz'],
       }),
       moveFile: vi.fn().mockResolvedValue({
@@ -48,7 +48,7 @@ describe('DriveActivityHandler', () => {
         type: 'MOVE_DRIVE_FILE',
         payload: {
           fileId: 'file-123',
-          folderName: '!TestMove',
+          folderName: 'Unfiled',
         },
       };
 
@@ -56,29 +56,29 @@ describe('DriveActivityHandler', () => {
 
       await handler.handle(activity, context);
 
-      expect(mockDriveService.getFile).toHaveBeenCalledWith('file-123', 'ya29.mock-token');
+      expect(mockDriveService.getFile).toHaveBeenCalledWith('file-123', { auth: 'ya29.mock-token' });
       expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
         'folder-parent-xyz',
-        '!TestMove',
-        'ya29.mock-token'
+        'Unfiled',
+        { auth: 'ya29.mock-token' }
       );
       expect(mockDriveService.moveFile).toHaveBeenCalledWith(
         'file-123',
         'folder-parent-xyz',
         'testmove-folder-id',
-        'ya29.mock-token'
+        { auth: 'ya29.mock-token' }
       );
 
       expect(handler.getLastExecutionResult()).toEqual({
         fileId: 'file-123',
         fileName: 'Report.docx',
-        destinationFolder: '!TestMove',
+        destinationFolder: 'Unfiled',
       });
 
       expect((context as Record<string, unknown>).lastExecutionResult).toEqual({
         fileId: 'file-123',
         fileName: 'Report.docx',
-        destinationFolder: '!TestMove',
+        destinationFolder: 'Unfiled',
       });
     });
 
@@ -95,17 +95,17 @@ describe('DriveActivityHandler', () => {
 
       await handler.handle(activity, context);
 
-      expect(mockDriveService.getFile).toHaveBeenCalledWith('selected-file-789', 'ya29.token-abc');
+      expect(mockDriveService.getFile).toHaveBeenCalledWith('selected-file-789', { auth: 'ya29.token-abc' });
       expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
         'folder-parent-xyz',
-        '!TestMove',
-        'ya29.token-abc'
+        'Unfiled',
+        { auth: 'ya29.token-abc' }
       );
       expect(mockDriveService.moveFile).toHaveBeenCalledWith(
         'selected-file-789',
         'folder-parent-xyz',
         'testmove-folder-id',
-        'ya29.token-abc'
+        { auth: 'ya29.token-abc' }
       );
     });
 
@@ -134,7 +134,7 @@ describe('DriveActivityHandler', () => {
 
       await handler.handle(activity);
 
-      expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith('root', '!TestMove', undefined);
+      expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith('root', 'Unfiled', undefined);
       expect(mockDriveService.moveFile).toHaveBeenCalledWith(
         'root-file-123',
         'root',

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { GoogleDriveClient } from './drive-client';
-import type { drive_v3 } from 'googleapis';
+import { google, type drive_v3 } from 'googleapis';
 
 describe('GoogleDriveClient', () => {
   let mockDrive: drive_v3.Drive;
@@ -63,6 +63,31 @@ describe('GoogleDriveClient', () => {
       await expect(client.getFile('missing-file')).rejects.toThrow(
         /Google Drive API error in getFile: 404 Not Found/
       );
+    });
+
+    it('accepts options with custom auth token and invokes drive client', async () => {
+      const customDriveMock = {
+        files: {
+          get: vi.fn().mockResolvedValue({
+            data: {
+              id: 'file-auth-123',
+              name: 'Secure.pdf',
+              parents: ['p1'],
+            },
+          }),
+        },
+      };
+      const driveSpy = vi.spyOn(google, 'drive').mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
+
+      const file = await client.getFile('file-auth-123', { auth: 'ya29.custom-token' });
+      expect(file).toEqual({
+        id: 'file-auth-123',
+        name: 'Secure.pdf',
+        parents: ['p1'],
+        mimeType: undefined,
+      });
+      expect(driveSpy).toHaveBeenCalled();
+      driveSpy.mockRestore();
     });
   });
 
