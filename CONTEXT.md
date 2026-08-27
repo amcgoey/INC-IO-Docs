@@ -38,8 +38,13 @@ A set of Handlebars templates used to generate unique identifiers (e.g., `id`, `
 A `RecordField` that links to a set of predefined option tuples. It validates against these tuples (unless configured for arbitrary input) and is enriched into a full tuple object prior to Handlebars evaluation so that templates can access both the machine-friendly identifier and the human-friendly display name.
 _Avoid_: ListField
 
+**StorageContext**:
+A configuration block (`storageContextConfig`) within a `RecordType` defining storage identifiers and paths (such as `targetFolderId`). Its Handlebars templates are evaluated against the enriched `Record` payload, and the resolved values are injected into the evaluation context under `StorageContext` for use in Activity payload templates.
+_Avoid_: StorageConfig, StorageMapping, DriveContext
+
 **Manifest**:
 The root configuration file (`manifest.json`) that registers available `RecordType` schemas and wires up the backend application paths. It also centralizes the loading of other app-specific configuration resources.
 
 **Workspace Addon**:
 The upcoming Google Workspace Alternate Runtime that will serve as the primary UI for users. It is an infrastructure module that will act as a driving adapter calling the core endpoints.
+
