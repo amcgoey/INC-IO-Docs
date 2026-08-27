@@ -15,10 +15,19 @@ export interface DriveRetryOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
+export interface DriveConfigProvider {
+  getDriveConfig(): Promise<{
+    maxRetries?: number | undefined;
+    initialDelayMs?: number | undefined;
+    backoffFactor?: number | undefined;
+  } | undefined>;
+}
+
 export interface GoogleDriveClientOptions {
   auth?: OAuth2Client | string | undefined;
   drive?: drive_v3.Drive | undefined;
   retryOptions?: DriveRetryOptions | undefined;
+  configProvider?: DriveConfigProvider | undefined;
 }
 
 function isRateLimitError(error: unknown): boolean {
@@ -50,9 +59,11 @@ function formatErrorMessage(error: unknown): string {
 export class GoogleDriveClient {
   private readonly defaultDrive: drive_v3.Drive;
   private readonly retryOptions: DriveRetryOptions;
+  private readonly configProvider?: DriveConfigProvider | undefined;
 
   constructor(options: GoogleDriveClientOptions = {}) {
     this.retryOptions = options.retryOptions ?? {};
+    this.configProvider = options.configProvider;
 
     if (options.drive) {
       this.defaultDrive = options.drive;
@@ -78,12 +89,14 @@ export class GoogleDriveClient {
   }
 
   private async executeWithRetry<T>(operation: () => Promise<T>): Promise<T> {
-    const maxRetries = this.retryOptions.maxRetries ?? 3;
-    const initialDelayMs = this.retryOptions.initialDelayMs ?? 1000;
-    const backoffFactor = this.retryOptions.backoffFactor ?? 2;
+    const dynamicConfig = this.configProvider ? await this.configProvider.getDriveConfig() : undefined;
+    const maxRetries = dynamicConfig?.maxRetries ?? this.retryOptions.maxRetries ?? 3;
+    const initialDelayMs = dynamicConfig?.initialDelayMs ?? this.retryOptions.initialDelayMs ?? 1000;
+    const backoffFactor = dynamicConfig?.backoffFactor ?? this.retryOptions.backoffFactor ?? 2;
     const sleep =
       this.retryOptions.sleep ??
       ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+
 
     let attempt = 0;
     while (true) {

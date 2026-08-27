@@ -523,4 +523,127 @@ describe('ManifestRegistryAdapter', () => {
       );
     });
   });
+
+  describe('Configuration Provider', () => {
+    it('loads and returns drive and workspace configuration when defined in manifest', async () => {
+      const manifestPath = await createManifestFixture(
+        tempDir,
+        {},
+        {
+          recordTypes: [],
+          configuration: {
+            workspace: {
+              appTitle: 'Custom Docs App',
+              actionButtonText: 'Submit Document',
+              defaultRecordType: 'custom-type',
+              defaultEventName: 'onCustomSubmit',
+            },
+            drive: {
+              defaultFolderName: 'SpecialFolder',
+              maxRetries: 5,
+              initialDelayMs: 2000,
+              backoffFactor: 3,
+            },
+          },
+        }
+      );
+
+      const adapter = new ManifestRegistryAdapter({
+        manifestPath,
+        templateEvaluator: mockEvaluator,
+      });
+
+      const driveConfig = await adapter.getDriveConfig();
+      expect(driveConfig).toEqual({
+        defaultFolderName: 'SpecialFolder',
+        maxRetries: 5,
+        initialDelayMs: 2000,
+        backoffFactor: 3,
+      });
+
+      const wsConfig = await adapter.getWorkspaceConfig();
+      expect(wsConfig).toEqual({
+        appTitle: 'Custom Docs App',
+        actionButtonText: 'Submit Document',
+        defaultRecordType: 'custom-type',
+        defaultEventName: 'onCustomSubmit',
+      });
+    });
+
+    it('returns undefined for drive/workspace configs when configuration block is absent in manifest', async () => {
+      const manifestPath = await createManifestFixture(
+        tempDir,
+        {},
+        { recordTypes: [] }
+      );
+
+      const adapter = new ManifestRegistryAdapter({
+        manifestPath,
+        templateEvaluator: mockEvaluator,
+      });
+
+      const driveConfig = await adapter.getDriveConfig();
+      expect(driveConfig).toBeUndefined();
+
+      const wsConfig = await adapter.getWorkspaceConfig();
+      expect(wsConfig).toBeUndefined();
+    });
+
+    it('caches configuration so subsequent calls do not re-read from disk', async () => {
+      const manifestPath = await createManifestFixture(
+        tempDir,
+        {},
+        {
+          recordTypes: [],
+          configuration: {
+            workspace: { appTitle: 'Initial Title' },
+          },
+        }
+      );
+
+      const adapter = new ManifestRegistryAdapter({
+        manifestPath,
+        templateEvaluator: mockEvaluator,
+      });
+
+      const wsConfig1 = await adapter.getWorkspaceConfig();
+      expect(wsConfig1?.appTitle).toBe('Initial Title');
+
+      // Mutate file on disk to verify cache is used
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({
+          recordTypes: [],
+          configuration: { workspace: { appTitle: 'Mutated Title' } },
+        }),
+        'utf-8'
+      );
+
+      const wsConfig2 = await adapter.getWorkspaceConfig();
+      expect(wsConfig2?.appTitle).toBe('Initial Title');
+    });
+
+    it('throws error when manifest contains invalid configuration types', async () => {
+      const manifestPath = await createManifestFixture(
+        tempDir,
+        {},
+        {
+          recordTypes: [],
+          configuration: {
+            drive: {
+              maxRetries: 'five', // invalid type
+            },
+          },
+        }
+      );
+
+      const adapter = new ManifestRegistryAdapter({
+        manifestPath,
+        templateEvaluator: mockEvaluator,
+      });
+
+      await expect(adapter.getDriveConfig()).rejects.toThrow(/invalid manifest/i);
+    });
+  });
 });
+

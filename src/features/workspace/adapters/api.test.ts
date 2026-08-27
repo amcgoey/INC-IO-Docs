@@ -47,6 +47,37 @@ describe('Workspace Feature Routes', () => {
       expect(mockAuthVerifier.verifyToken).toHaveBeenCalledWith('Bearer valid-token');
     });
 
+    it('returns 200 with custom title and button text when configProvider provides workspace config', async () => {
+      const customServer = createHttpServer();
+      const mockConfigProvider = {
+        getWorkspaceConfig: vi.fn().mockResolvedValue({
+          appTitle: 'Enterprise Archiver',
+          actionButtonText: 'Archive Record',
+        }),
+      };
+
+      registerWorkspaceFeatureRoutes(customServer, {
+        authVerifier: mockAuthVerifier,
+        configProvider: mockConfigProvider,
+      });
+
+      const response = await customServer.inject({
+        method: 'POST',
+        url: '/workspace/homepage',
+        headers: {
+          authorization: 'Bearer valid-token',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.action.navigations[0].pushCard.header.title).toBe('Enterprise Archiver');
+      expect(
+        body.action.navigations[0].pushCard.sections[0].widgets[0].buttonList.buttons[0].text
+      ).toBe('Archive Record');
+      expect(mockConfigProvider.getWorkspaceConfig).toHaveBeenCalled();
+    });
+
     it('returns 401 when auth verification fails', async () => {
       (mockAuthVerifier.verifyToken as ReturnType<typeof vi.fn>).mockResolvedValue({
         isValid: false,
@@ -64,6 +95,7 @@ describe('Workspace Feature Routes', () => {
       expect(body.message).toBe('Invalid token signature');
     });
   });
+
 
   describe('POST /workspace/action', () => {
     it('returns 200 with toast notification on successful action execution', async () => {
@@ -123,6 +155,53 @@ describe('Workspace Feature Routes', () => {
         })
       );
     });
+
+    it('resolves defaultRecordType and defaultEventName dynamically from configProvider for action execution', async () => {
+      const customServer = createHttpServer();
+      const mockConfigProvider = {
+        getWorkspaceConfig: vi.fn().mockResolvedValue({
+          defaultRecordType: 'custom-record-type',
+          defaultEventName: 'onCustomAction',
+        }),
+      };
+
+      registerWorkspaceFeatureRoutes(customServer, {
+        authVerifier: mockAuthVerifier,
+        recordService: mockRecordService,
+        configProvider: mockConfigProvider,
+      });
+
+      const eventPayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.valid-oauth-token',
+        },
+        drive: {
+          selectedItems: [{ id: 'file-999', title: 'Invoice.pdf' }],
+        },
+      };
+
+      const response = await customServer.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt',
+        },
+        payload: eventPayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockRecordService.processRecord).toHaveBeenCalledWith(
+        {
+          type: 'custom-record-type',
+          data: {
+            title: 'Invoice.pdf',
+          },
+        },
+        'onCustomAction',
+        expect.any(Object)
+      );
+    });
+
 
     it('returns 200 with AuthorizationAction when userOAuthToken is missing in event payload', async () => {
       const payloadWithoutToken = {

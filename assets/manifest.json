@@ -1,5 +1,19 @@
 {
   "recordTypes": [
     "./record-types/communication-project.json"
-  ]
+  ],
+  "configuration": {
+    "workspace": {
+      "appTitle": "INC-IO Docs",
+      "actionButtonText": "Move Selected File",
+      "defaultRecordType": "communication-project",
+      "defaultEventName": "onSubmit"
+    },
+    "drive": {
+      "defaultFolderName": "!TestMove",
+      "maxRetries": 3,
+      "initialDelayMs": 1000,
+      "backoffFactor": 2
+    }
+  }
 }

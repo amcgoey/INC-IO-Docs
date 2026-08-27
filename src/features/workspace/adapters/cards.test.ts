@@ -17,7 +17,21 @@ describe('Workspace Cards Adapter', () => {
       expect(button.text).toBe('Move Selected File');
       expect(button.onClick.action.actionMethodName).toBe('moveSelectedFile');
     });
+
+    it('returns a card with custom appTitle and actionButtonText when options are provided', () => {
+      const card = buildHomepageCard({
+        appTitle: 'Custom Title',
+        actionButtonText: 'Custom Action',
+      });
+
+      expect(card.action.navigations[0].pushCard.header.title).toBe('Custom Title');
+      const button =
+        card.action.navigations[0].pushCard.sections[0].widgets[0].buttonList.buttons[0];
+      expect(button.text).toBe('Custom Action');
+      expect(button.onClick.action.actionMethodName).toBe('moveSelectedFile');
+    });
   });
+
 
   describe('buildToastNotification', () => {
     it('returns a notification toast with fileName and destinationFolder', () => {

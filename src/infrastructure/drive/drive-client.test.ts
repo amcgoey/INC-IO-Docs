@@ -307,6 +307,42 @@ describe('GoogleDriveClient', () => {
       expect(mockDrive.files.get).toHaveBeenCalledTimes(1);
       expect(sleepMock).not.toHaveBeenCalled();
     });
+
+    it('fetches retry configuration dynamically from DriveConfigProvider', async () => {
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      const mockConfigProvider = {
+        getDriveConfig: vi.fn().mockResolvedValue({
+          maxRetries: 1,
+          initialDelayMs: 250,
+          backoffFactor: 3,
+        }),
+      };
+
+      const retryClient = new GoogleDriveClient({
+        drive: mockDrive,
+        configProvider: mockConfigProvider,
+        retryOptions: {
+          sleep: sleepMock,
+        },
+      });
+
+      const rateLimitError = { status: 429 };
+      (mockDrive.files.get as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(rateLimitError)
+        .mockResolvedValueOnce({
+          data: {
+            id: 'file-dyn',
+            name: 'Dynamic.pdf',
+          },
+        });
+
+      const result = await retryClient.getFile('file-dyn');
+      expect(result.id).toBe('file-dyn');
+      expect(mockConfigProvider.getDriveConfig).toHaveBeenCalled();
+      expect(mockDrive.files.get).toHaveBeenCalledTimes(2);
+      expect(sleepMock).toHaveBeenCalledWith(250);
+    });
   });
 });
+
 

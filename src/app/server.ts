@@ -11,11 +11,12 @@ import { GoogleJwtVerifier } from '../infrastructure/workspace-addon/jwt-verifie
 import { RecordService } from '../features/record/domain';
 import type {
   ActivityDispatcherPort,
+  AppConfigurationProviderPort,
   DriveServicePort,
   ManifestRegistryPort,
   TemplateEvaluatorPort,
 } from '../features/record/ports';
-import type { AuthVerifierPort } from '../features/workspace/ports';
+import type { AuthVerifierPort, WorkspaceConfigProviderPort } from '../features/workspace/ports';
 
 TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 
@@ -52,10 +53,22 @@ export function createApp(options?: AppOptions): AppInstance {
     manifestRegistry = new ManifestRegistryAdapter({ manifestPath, templateEvaluator });
   }
 
-  const driveService: DriveServicePort =
-    options?.driveService ?? new GoogleDriveClient();
+  const driveConfigProvider =
+    manifestRegistry && 'getDriveConfig' in manifestRegistry
+      ? (manifestRegistry as AppConfigurationProviderPort)
+      : undefined;
 
-  const driveActivityHandler = new DriveActivityHandler(driveService);
+  const workspaceConfigProvider =
+    manifestRegistry && 'getWorkspaceConfig' in manifestRegistry
+      ? (manifestRegistry as WorkspaceConfigProviderPort)
+      : undefined;
+
+  const driveService: DriveServicePort =
+    options?.driveService ?? new GoogleDriveClient({ configProvider: driveConfigProvider });
+
+  const driveActivityHandler = new DriveActivityHandler(driveService, {
+    configProvider: driveConfigProvider,
+  });
   const activityEngine = options?.activityEngine ?? new ActivityEngine([driveActivityHandler]);
   const recordService = new RecordService(activityEngine, manifestRegistry, templateEvaluator);
 
@@ -65,11 +78,13 @@ export function createApp(options?: AppOptions): AppInstance {
   registerWorkspaceFeatureRoutes(server, {
     authVerifier,
     recordService,
+    configProvider: workspaceConfigProvider,
     authorizationUrl:
       options?.authorizationUrl ??
       process.env.GOOGLE_WORKSPACE_AUTH_URL ??
       process.env.WORKSPACE_AUTH_URL,
   });
+
 
 
   const initialize = async () => {

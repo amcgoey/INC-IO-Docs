@@ -866,7 +866,155 @@ describe('App integration tests', () => {
       });
     });
   });
+
+  describe('End-to-End Manifest Configuration in createApp', () => {
+    let tempDir: string;
+
+    beforeEach(async () => {
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'inc-io-app-config-test-'));
+      vi.unstubAllEnvs();
+    });
+
+    afterEach(async () => {
+      vi.unstubAllEnvs();
+      await fs.rm(tempDir, { recursive: true, force: true });
+    });
+
+    it('propagates workspace configuration from manifest to /workspace/homepage and /workspace/action', async () => {
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      const recordTypePath = path.join(tempDir, 'custom-record.json');
+      const customRecord = {
+        key: 'configured-record-type',
+        name: 'Configured Record Type',
+        recordSchema: { fields: [{ key: 'title', name: 'Title', type: 'string', required: true }] },
+        recordUiConfig: {
+          events: {
+            onConfiguredSubmit: {
+              catchAllWorkflow: 'ConfiguredWorkflow',
+            },
+          },
+        },
+        recordWorkflowConfig: {
+          workflows: [
+            {
+              name: 'ConfiguredWorkflow',
+              activitySequence: [
+                {
+                  type: 'MOVE_DRIVE_FILE',
+                  payload: {},
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      await fs.writeFile(recordTypePath, JSON.stringify(customRecord));
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({
+          recordTypes: ['./custom-record.json'],
+          configuration: {
+            workspace: {
+              appTitle: 'Custom Enterprise Workspace',
+              actionButtonText: 'File In Custom Folder',
+              defaultRecordType: 'configured-record-type',
+              defaultEventName: 'onConfiguredSubmit',
+            },
+            drive: {
+              defaultFolderName: '!CustomDestination',
+            },
+          },
+        })
+      );
+
+      const mockDriveService = {
+        getFile: vi.fn().mockResolvedValue({
+          id: 'file-123',
+          name: 'ImportantDocument.pdf',
+          parents: ['folder-parent-1'],
+        }),
+        findOrCreateFolder: vi.fn().mockResolvedValue({
+          id: 'custom-folder-id',
+          name: '!CustomDestination',
+          parents: ['folder-parent-1'],
+        }),
+        moveFile: vi.fn().mockResolvedValue({
+          id: 'file-123',
+          name: 'ImportantDocument.pdf',
+          parents: ['custom-folder-id'],
+        }),
+      };
+
+      const mockAuthVerifier = {
+        verifyToken: vi.fn().mockResolvedValue({
+          isValid: true,
+          payload: { email: 'user@example.com' },
+        }),
+      };
+
+      const appInstance = createApp({
+        manifestPath,
+        driveService: mockDriveService,
+        authVerifier: mockAuthVerifier,
+      });
+
+      await appInstance.initialize();
+
+      // 1. Verify /workspace/homepage card includes configured title and button text
+      const homepageRes = await appInstance.server.inject({
+        method: 'POST',
+        url: '/workspace/homepage',
+        headers: { authorization: 'Bearer token' },
+      });
+
+      expect(homepageRes.statusCode).toBe(200);
+      const homepageBody = JSON.parse(homepageRes.payload);
+      expect(homepageBody.action.navigations[0].pushCard.header.title).toBe(
+        'Custom Enterprise Workspace'
+      );
+      expect(
+        homepageBody.action.navigations[0].pushCard.sections[0].widgets[0].buttonList.buttons[0]
+          .text
+      ).toBe('File In Custom Folder');
+
+      // 2. Verify /workspace/action triggers recordService with defaultRecordType & defaultEventName from config,
+      // and DriveActivityHandler moves to !CustomDestination folder
+      const actionRes = await appInstance.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.user-token',
+          },
+          drive: {
+            selectedItems: [{ id: 'file-123', title: 'ImportantDocument.pdf' }],
+          },
+        },
+      });
+
+      expect(actionRes.statusCode).toBe(200);
+      const actionBody = JSON.parse(actionRes.payload);
+      expect(actionBody).toEqual({
+        action: {
+          notification: {
+            text: "Moved 'ImportantDocument.pdf' to '!CustomDestination'",
+          },
+        },
+      });
+
+      expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
+        'folder-parent-1',
+        '!CustomDestination',
+        'ya29.user-token'
+      );
+    });
+  });
 });
+
 
 
 

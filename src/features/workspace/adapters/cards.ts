@@ -1,11 +1,18 @@
-export function buildHomepageCard() {
+export interface HomepageCardOptions {
+  appTitle?: string | undefined;
+  actionButtonText?: string | undefined;
+}
+
+export function buildHomepageCard(options?: HomepageCardOptions) {
+  const title = options?.appTitle ?? 'INC-IO Docs';
+  const buttonText = options?.actionButtonText ?? 'Move Selected File';
   return {
     action: {
       navigations: [
         {
           pushCard: {
             header: {
-              title: 'INC-IO Docs',
+              title,
             },
             sections: [
               {
@@ -14,7 +21,7 @@ export function buildHomepageCard() {
                     buttonList: {
                       buttons: [
                         {
-                          text: 'Move Selected File',
+                          text: buttonText,
                           onClick: {
                             action: {
                               actionMethodName: 'moveSelectedFile',
@@ -33,6 +40,7 @@ export function buildHomepageCard() {
     },
   };
 }
+
 
 export function buildToastNotification(fileName: string, destinationFolder: string) {
   return {

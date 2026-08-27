@@ -1,5 +1,19 @@
 {
   "recordTypes": [
     "./test-record.json"
-  ]
-}
+  ],
+  "configuration": {
+    "workspace": {
+      "appTitle": "INC-IO Docs",
+      "actionButtonText": "Move Selected File",
+      "defaultRecordType": "test-record",
+      "defaultEventName": "onSubmit"
+    },
+    "drive": {
+      "defaultFolderName": "!TestMove",
+      "maxRetries": 3,
+      "initialDelayMs": 1000,
+      "backoffFactor": 2
+    }
+  }
+}

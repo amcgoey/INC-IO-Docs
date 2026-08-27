@@ -1,5 +1,5 @@
 import type { Activity } from '../domain';
-import type { ActivityHandler, DriveServicePort } from '../ports';
+import type { ActivityHandler, AppConfigurationProviderPort, DriveServicePort } from '../ports';
 
 export interface DriveActivityExecutionResult {
   fileId: string;
@@ -8,9 +8,11 @@ export interface DriveActivityExecutionResult {
 }
 
 export interface DriveActivityHandlerOptions {
-  defaultFolderName?: string;
-  fallbackAuth?: string;
+  defaultFolderName?: string | undefined;
+  fallbackAuth?: string | undefined;
+  configProvider?: AppConfigurationProviderPort | undefined;
 }
+
 
 export class DriveActivityHandler implements ActivityHandler {
   private lastResult: DriveActivityExecutionResult | null = null;
@@ -29,7 +31,13 @@ export class DriveActivityHandler implements ActivityHandler {
   }
 
   async handle<TContext = unknown>(activity: Activity, context?: TContext): Promise<void> {
-    const defaultTargetName = this.options.defaultFolderName ?? '!TestMove';
+    const ctx = context && typeof context === 'object' ? (context as Record<string, unknown>) : undefined;
+
+    const driveConfig = this.options.configProvider
+      ? await this.options.configProvider.getDriveConfig()
+      : undefined;
+    const defaultTargetName =
+      driveConfig?.defaultFolderName ?? this.options.defaultFolderName ?? '!TestMove';
     const folderName =
       typeof activity.payload?.folderName === 'string'
         ? activity.payload.folderName
@@ -38,8 +46,7 @@ export class DriveActivityHandler implements ActivityHandler {
     let fileId =
       typeof activity.payload?.fileId === 'string' ? activity.payload.fileId : undefined;
 
-    if (!fileId && context && typeof context === 'object') {
-      const ctx = context as Record<string, unknown>;
+    if (!fileId && ctx) {
       const selectedItems = ctx.selectedItems as Array<{ id: string }> | undefined;
       if (Array.isArray(selectedItems) && selectedItems.length > 0 && selectedItems[0]?.id) {
         fileId = selectedItems[0].id;
@@ -51,11 +58,8 @@ export class DriveActivityHandler implements ActivityHandler {
     }
 
     let auth = this.options.fallbackAuth;
-    if (context && typeof context === 'object') {
-      const ctx = context as Record<string, unknown>;
-      if (typeof ctx.userOAuthToken === 'string') {
-        auth = ctx.userOAuthToken;
-      }
+    if (ctx && typeof ctx.userOAuthToken === 'string') {
+      auth = ctx.userOAuthToken;
     }
 
     try {
@@ -72,9 +76,10 @@ export class DriveActivityHandler implements ActivityHandler {
 
       this.lastResult = result;
 
-      if (context && typeof context === 'object') {
-        (context as Record<string, unknown>).lastExecutionResult = result;
+      if (ctx) {
+        ctx.lastExecutionResult = result;
       }
+
     } catch (error) {
       throw new Error(
         `DriveActivityHandler failed to move file: ${error instanceof Error ? error.message : String(error)}`,

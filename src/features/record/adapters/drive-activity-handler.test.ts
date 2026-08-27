@@ -142,5 +142,65 @@ describe('DriveActivityHandler', () => {
         undefined
       );
     });
+
+
+    it('uses defaultFolderName from configProvider when activity payload omits folderName', async () => {
+      const mockConfigProvider = {
+        getDriveConfig: vi.fn().mockResolvedValue({
+          defaultFolderName: 'ManifestFolder',
+        }),
+      };
+
+      (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'manifest-folder-id',
+        name: 'ManifestFolder',
+        parents: ['folder-parent-xyz'],
+      });
+
+      const configHandler = new DriveActivityHandler(mockDriveService, {
+        configProvider: mockConfigProvider,
+      });
+
+      const activity: Activity = {
+        type: 'MOVE_DRIVE_FILE',
+        payload: { fileId: 'file-123' },
+      };
+
+      await configHandler.handle(activity);
+
+      expect(mockConfigProvider.getDriveConfig).toHaveBeenCalled();
+      expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
+        'folder-parent-xyz',
+        'ManifestFolder',
+        undefined
+      );
+      expect(configHandler.getLastExecutionResult()?.destinationFolder).toBe('ManifestFolder');
+    });
+
+    it('prioritizes activity.payload.folderName over configProvider', async () => {
+      const mockConfigProvider = {
+        getDriveConfig: vi.fn().mockResolvedValue({
+          defaultFolderName: 'ManifestFolder',
+        }),
+      };
+
+      const configHandler = new DriveActivityHandler(mockDriveService, {
+        configProvider: mockConfigProvider,
+      });
+
+      const activity: Activity = {
+        type: 'MOVE_DRIVE_FILE',
+        payload: { fileId: 'file-123', folderName: 'PayloadFolder' },
+      };
+
+      await configHandler.handle(activity);
+
+      expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
+        'folder-parent-xyz',
+        'PayloadFolder',
+        undefined
+      );
+    });
   });
 });
+

@@ -1,6 +1,10 @@
 import type { HttpRequest, HttpResponse, HttpServer } from '../../../infrastructure/http';
 import type { RecordServicePort } from '../../record/ports';
-import type { AuthVerifierPort, AuthVerificationResult } from '../ports';
+import type {
+  AuthVerifierPort,
+  AuthVerificationResult,
+  WorkspaceConfigProviderPort,
+} from '../ports';
 import {
   extractWorkspaceExecutionContext,
   type WorkspaceExecutionContext,
@@ -15,6 +19,7 @@ import {
 export interface WorkspaceFeatureApiOptions {
   authVerifier: AuthVerifierPort;
   recordService?: RecordServicePort | undefined;
+  configProvider?: WorkspaceConfigProviderPort | undefined;
   defaultRecordType?: string | undefined;
   defaultEventName?: string | undefined;
   authorizationUrl?: string | undefined;
@@ -67,6 +72,7 @@ export function registerWorkspaceFeatureRoutes(
   const {
     authVerifier,
     recordService,
+    configProvider,
     defaultRecordType = 'test-record',
     defaultEventName = 'onSubmit',
     authorizationUrl,
@@ -82,9 +88,16 @@ export function registerWorkspaceFeatureRoutes(
           return unauthorizedResponse;
         }
 
+        const wsConfig = configProvider
+          ? await configProvider.getWorkspaceConfig()
+          : undefined;
+
         return {
           status: 200,
-          body: buildHomepageCard(),
+          body: buildHomepageCard({
+            appTitle: wsConfig?.appTitle,
+            actionButtonText: wsConfig?.actionButtonText,
+          }),
         };
       } catch (error) {
         return {
@@ -120,6 +133,15 @@ export function registerWorkspaceFeatureRoutes(
           };
         }
 
+        const wsConfig = configProvider
+          ? await configProvider.getWorkspaceConfig()
+          : undefined;
+
+        const effectiveRecordType =
+          wsConfig?.defaultRecordType ?? defaultRecordType;
+        const effectiveEventName =
+          wsConfig?.defaultEventName ?? defaultEventName;
+
         const selectedItem = context.selectedItems?.[0];
         const initialFileName = selectedItem?.title ?? 'selected file';
 
@@ -128,7 +150,7 @@ export function registerWorkspaceFeatureRoutes(
             request.body && typeof request.body === 'object' ? request.body : {}
           ) as Record<string, unknown>;
           const recordPayload = bodyObj.record ?? {
-            type: defaultRecordType,
+            type: effectiveRecordType,
             data: {
               title: initialFileName,
             },
@@ -136,7 +158,7 @@ export function registerWorkspaceFeatureRoutes(
 
           const result = await recordService.processRecord(
             recordPayload,
-            defaultEventName,
+            effectiveEventName,
             context
           );
           if (!result.success) {
@@ -150,6 +172,7 @@ export function registerWorkspaceFeatureRoutes(
             };
           }
         }
+
 
         const executedResult = context.lastExecutionResult;
         const finalFileName = executedResult?.fileName ?? initialFileName;

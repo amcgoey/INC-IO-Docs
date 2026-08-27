@@ -40,8 +40,20 @@ export interface DriveFileResult {
   mimeType?: string | undefined;
 }
 
+export interface DriveConfiguration {
+  defaultFolderName?: string | undefined;
+  maxRetries?: number | undefined;
+  initialDelayMs?: number | undefined;
+  backoffFactor?: number | undefined;
+}
+
+export interface AppConfigurationProviderPort {
+  getDriveConfig(): Promise<DriveConfiguration | undefined>;
+}
+
 export interface DriveServicePort {
   getFile(fileId: string, auth?: string): Promise<DriveFileResult>;
   findOrCreateFolder(parentId: string, folderName: string, auth?: string): Promise<DriveFileResult>;
   moveFile(fileId: string, currentParentId: string, targetFolderId: string, auth?: string): Promise<DriveFileResult>;
 }
+

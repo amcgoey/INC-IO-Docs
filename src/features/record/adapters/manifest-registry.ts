@@ -3,10 +3,41 @@ import * as path from 'node:path';
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import { RecordTypeSchema, SystemContextSchema, formatValidationErrors, type RecordType } from '../domain';
-import type { ManifestRegistryPort, TemplateEvaluatorPort } from '../ports';
+import type {
+  AppConfigurationProviderPort,
+  DriveConfiguration,
+  ManifestRegistryPort,
+  TemplateEvaluatorPort,
+} from '../ports';
+import type {
+  WorkspaceConfigProviderPort,
+  WorkspaceConfiguration,
+} from '../../workspace/ports';
+
+export const WorkspaceConfigurationSchema = Type.Object({
+  appTitle: Type.Optional(Type.String()),
+  actionButtonText: Type.Optional(Type.String()),
+  defaultRecordType: Type.Optional(Type.String()),
+  defaultEventName: Type.Optional(Type.String()),
+});
+
+export const DriveConfigurationSchema = Type.Object({
+  defaultFolderName: Type.Optional(Type.String()),
+  maxRetries: Type.Optional(Type.Number()),
+  initialDelayMs: Type.Optional(Type.Number()),
+  backoffFactor: Type.Optional(Type.Number()),
+});
+
+export const AppConfigurationSchema = Type.Object({
+  workspace: Type.Optional(WorkspaceConfigurationSchema),
+  drive: Type.Optional(DriveConfigurationSchema),
+});
+
+export type AppConfiguration = Static<typeof AppConfigurationSchema>;
 
 const ManifestSchema = Type.Object({
   recordTypes: Type.Array(Type.String()),
+  configuration: Type.Optional(AppConfigurationSchema),
 });
 
 export interface ManifestRegistryAdapterOptions {
@@ -37,9 +68,16 @@ function validateAndCleanSchema<T extends TSchema>(
   return cleaned as Static<T>;
 }
 
-export class ManifestRegistryAdapter implements ManifestRegistryPort {
+export class ManifestRegistryAdapter
+  implements
+    ManifestRegistryPort,
+    AppConfigurationProviderPort,
+    WorkspaceConfigProviderPort
+{
   private readonly manifestPath: string;
   private readonly templateEvaluator: TemplateEvaluatorPort;
+  private cachedConfiguration: AppConfiguration | undefined = undefined;
+  private isManifestLoaded = false;
 
   constructor(options?: ManifestRegistryAdapterOptions) {
     if (!options?.manifestPath) {
@@ -54,6 +92,35 @@ export class ManifestRegistryAdapter implements ManifestRegistryPort {
     }
     this.manifestPath = options.manifestPath;
     this.templateEvaluator = options.templateEvaluator;
+  }
+
+  private async loadManifest(): Promise<Static<typeof ManifestSchema>> {
+    const manifestContent = await fs.readFile(this.manifestPath, 'utf-8');
+    const manifestData = parseJson(manifestContent, `manifest file at "${this.manifestPath}"`);
+
+    const validatedManifest = validateAndCleanSchema(
+      ManifestSchema,
+      manifestData,
+      `Invalid manifest file structure at "${this.manifestPath}"`
+    );
+
+    this.cachedConfiguration = validatedManifest.configuration;
+    this.isManifestLoaded = true;
+    return validatedManifest;
+  }
+
+  async getDriveConfig(): Promise<DriveConfiguration | undefined> {
+    if (!this.isManifestLoaded) {
+      await this.loadManifest();
+    }
+    return this.cachedConfiguration?.drive;
+  }
+
+  async getWorkspaceConfig(): Promise<WorkspaceConfiguration | undefined> {
+    if (!this.isManifestLoaded) {
+      await this.loadManifest();
+    }
+    return this.cachedConfiguration?.workspace;
   }
 
   private validateTemplate(
@@ -72,17 +139,10 @@ export class ManifestRegistryAdapter implements ManifestRegistryPort {
   }
 
   async loadAll(): Promise<RecordType[]> {
-    const manifestContent = await fs.readFile(this.manifestPath, 'utf-8');
-    const manifestData = parseJson(manifestContent, `manifest file at "${this.manifestPath}"`);
-
-    const validatedManifest = validateAndCleanSchema(
-      ManifestSchema,
-      manifestData,
-      `Invalid manifest file structure at "${this.manifestPath}"`
-    );
-
+    const validatedManifest = await this.loadManifest();
     const manifestDir = path.dirname(this.manifestPath);
     const recordTypes: RecordType[] = [];
+
 
     for (const recordTypeRelPath of validatedManifest.recordTypes) {
       const resolvedPath = path.resolve(manifestDir, recordTypeRelPath);
