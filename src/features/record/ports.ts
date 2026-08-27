@@ -1,6 +1,11 @@
 import type { Activity, FormSchema, ProcessRecordResult, RecordType } from './domain';
 
 
+export interface ActivityHandler {
+  canHandle(activity: Activity): boolean;
+  handle<TContext = unknown>(activity: Activity, context?: TContext): Promise<void> | void;
+}
+
 export interface ActivityDispatcherPort {
   dispatch<TContext = unknown>(activity: Activity, context?: TContext): Promise<void> | void;
 }
