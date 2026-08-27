@@ -1,11 +1,20 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ActivityEngine } from './activity-engine';
 import type { Activity } from '../domain';
 import type { ActivityHandler } from '../ports';
 
 describe('ActivityEngine driven adapter', () => {
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+  });
+
   it('logs activity to console when no handlers are configured', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const engine = new ActivityEngine();
     const activity: Activity = {
       type: 'LOG_RECORD',
@@ -15,11 +24,9 @@ describe('ActivityEngine driven adapter', () => {
     await engine.dispatch(activity);
 
     expect(consoleSpy).toHaveBeenCalledWith('Executing activity: LOG_RECORD', activity.payload);
-    consoleSpy.mockRestore();
   });
 
   it('accepts generic context parameter during dispatch and logs to console when no handlers match', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const engine = new ActivityEngine();
     const activity: Activity = {
       type: 'LOG_RECORD',
@@ -30,7 +37,6 @@ describe('ActivityEngine driven adapter', () => {
     await engine.dispatch(activity, context);
 
     expect(consoleSpy).toHaveBeenCalledWith('Executing activity: LOG_RECORD', activity.payload);
-    consoleSpy.mockRestore();
   });
 
   it('delegates activity dispatch to matching ActivityHandler', async () => {
@@ -101,7 +107,6 @@ describe('ActivityEngine driven adapter', () => {
   });
 
   it('falls back to console.log when configured handlers cannot handle the activity', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const handler: ActivityHandler = {
       canHandle: vi.fn(() => false),
       handle: vi.fn().mockResolvedValue(undefined),
@@ -118,6 +123,5 @@ describe('ActivityEngine driven adapter', () => {
     expect(handler.canHandle).toHaveBeenCalledWith(activity);
     expect(handler.handle).not.toHaveBeenCalled();
     expect(consoleSpy).toHaveBeenCalledWith('Executing activity: UNHANDLED_TYPE', activity.payload);
-    consoleSpy.mockRestore();
   });
 });
