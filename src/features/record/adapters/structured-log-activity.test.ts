@@ -19,4 +19,19 @@ describe('StructuredLogActivity driven adapter', () => {
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(activity.payload));
     consoleSpy.mockRestore();
   });
+
+  it('accepts generic context parameter during dispatch', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const adapter = new StructuredLogActivity();
+    const activity: Activity = {
+      type: 'LOG_RECORD',
+      payload: { test: 123 },
+    };
+    const context = { userToken: 'sample-oauth-token' };
+
+    await adapter.dispatch(activity, context);
+
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(activity.payload));
+    consoleSpy.mockRestore();
+  });
 });

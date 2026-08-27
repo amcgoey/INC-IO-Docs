@@ -2595,6 +2595,234 @@ describe('Record domain', () => {
       );
     });
   });
+
+  describe('Generic Execution Context (TContext) Propagation & Isolation', () => {
+    interface CustomExecutionContext {
+      oauthToken: string;
+      userId: string;
+      traceId: string;
+    }
+
+    const testRecordType: RecordType = {
+      key: 'secureRecord',
+      name: 'Secure Record',
+      recordSchema: {
+        fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+        calculatedFields: [
+          {
+            key: 'calculatedTitle',
+            template: 'PREFIX-{{title}}',
+          },
+        ],
+        identity: {
+          id: 'ID-{{title}}',
+        },
+      },
+      recordUiConfig: {
+        events: {
+          onSubmit: {
+            catchAllWorkflow: 'ExecuteSecureAction',
+          },
+        },
+      },
+      storageContextConfig: {
+        folder: 'DynamicFolder-{{Record.data.title}}',
+      },
+      recordWorkflowConfig: {
+        workflows: [
+          {
+            name: 'ExecuteSecureAction',
+            activitySequence: [
+              {
+                type: 'MOVE_FILE',
+                payload: {
+                  folder: '{{StorageContext.folder}}',
+                  fileTitle: '{{Record.data.title}}',
+                },
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    it('forwards generic TContext to ActivityDispatcherPort.dispatch', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([testRecordType]),
+      };
+
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template: string, ctx: { [key: string]: unknown }) => {
+          if (template === 'PREFIX-{{title}}') return `PREFIX-${ctx.title}`;
+          if (template === 'ID-{{title}}') return `ID-${ctx.title}`;
+          if (template === 'DynamicFolder-{{Record.data.title}}') {
+            const record = ctx.Record as Record;
+            return `DynamicFolder-${record.data.title}`;
+          }
+          if (template === '{{StorageContext.folder}}') {
+            const storageCtx = ctx.StorageContext as { folder: string };
+            return storageCtx.folder;
+          }
+          if (template === '{{Record.data.title}}') {
+            const record = ctx.Record as Record;
+            return record.data.title as string;
+          }
+          return template;
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'secureRecord',
+        data: { title: 'SecretDoc' },
+      };
+
+      const executionContext: CustomExecutionContext = {
+        oauthToken: 'ya29.sensitive-oauth-token',
+        userId: 'user-12345',
+        traceId: 'trace-abc-xyz',
+      };
+
+      const result = await service.processRecord<CustomExecutionContext>(
+        inputRecord,
+        'onSubmit',
+        executionContext
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+        {
+          type: 'MOVE_FILE',
+          payload: {
+            folder: 'DynamicFolder-SecretDoc',
+            fileTitle: 'SecretDoc',
+          },
+        },
+        executionContext
+      );
+    });
+
+    it('forwards undefined context to ActivityDispatcherPort.dispatch when no context is provided', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([testRecordType]),
+      };
+
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template: string, ctx: { [key: string]: unknown }) => {
+          if (template === 'PREFIX-{{title}}') return `PREFIX-${ctx.title}`;
+          if (template === 'ID-{{title}}') return `ID-${ctx.title}`;
+          if (template === 'DynamicFolder-{{Record.data.title}}') {
+            const record = ctx.Record as Record;
+            return `DynamicFolder-${record.data.title}`;
+          }
+          if (template === '{{StorageContext.folder}}') {
+            const storageCtx = ctx.StorageContext as { folder: string };
+            return storageCtx.folder;
+          }
+          if (template === '{{Record.data.title}}') {
+            const record = ctx.Record as Record;
+            return record.data.title as string;
+          }
+          return template;
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'secureRecord',
+        data: { title: 'PublicDoc' },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+
+      expect(result.success).toBe(true);
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
+        type: 'MOVE_FILE',
+        payload: {
+          folder: 'DynamicFolder-PublicDoc',
+          fileTitle: 'PublicDoc',
+        },
+      });
+    });
+
+    it('strictly isolates TemplateEvaluatorPort evaluation context from TContext', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([testRecordType]),
+      };
+
+      const capturedContexts: Array<{ [key: string]: unknown }> = [];
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template: string, ctx: { [key: string]: unknown }) => {
+          capturedContexts.push({ ...ctx });
+          if (template === 'PREFIX-{{title}}') return `PREFIX-${ctx.title}`;
+          if (template === 'ID-{{title}}') return `ID-${ctx.title}`;
+          if (template === 'DynamicFolder-{{Record.data.title}}') {
+            const record = ctx.Record as Record;
+            return `DynamicFolder-${record.data.title}`;
+          }
+          if (template === '{{StorageContext.folder}}') {
+            const storageCtx = ctx.StorageContext as { folder: string };
+            return storageCtx?.folder ?? '';
+          }
+          if (template === '{{Record.data.title}}') {
+            const record = ctx.Record as Record;
+            return (record?.data?.title as string) ?? '';
+          }
+          return template;
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'secureRecord',
+        data: { title: 'SensitiveRecord' },
+      };
+
+      const sensitiveContext: CustomExecutionContext = {
+        oauthToken: 'SUPER_SECRET_OAUTH_TOKEN_NEVER_EXPOSE',
+        userId: 'admin-user',
+        traceId: 'trace-999',
+      };
+
+      await service.processRecord<CustomExecutionContext>(
+        inputRecord,
+        'onSubmit',
+        sensitiveContext
+      );
+
+      // Verify that none of the evaluation contexts passed to mockEvaluator.evaluate contain sensitiveContext keys or values
+      expect(capturedContexts.length).toBeGreaterThan(0);
+      for (const evalCtx of capturedContexts) {
+        expect(evalCtx).not.toHaveProperty('oauthToken');
+        expect(evalCtx).not.toHaveProperty('userId');
+        expect(evalCtx).not.toHaveProperty('traceId');
+        expect(JSON.stringify(evalCtx)).not.toContain('SUPER_SECRET_OAUTH_TOKEN_NEVER_EXPOSE');
+      }
+    });
+  });
 });
 
 

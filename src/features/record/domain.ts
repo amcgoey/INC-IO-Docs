@@ -292,7 +292,11 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
     });
   }
 
-  async processRecord(payload?: unknown, eventName?: string): Promise<ProcessRecordResult> {
+  async processRecord<TContext = unknown>(
+    payload?: unknown,
+    eventName?: string,
+    context?: TContext
+  ): Promise<ProcessRecordResult> {
     if (!Value.Check(RecordModel, payload)) {
       const errors = formatValidationErrors(RecordModel, payload);
       return {
@@ -447,7 +451,11 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
         payload: resolvedPayload,
       };
 
-      await this.dispatcher.dispatch(resolvedActivity);
+      if (context !== undefined) {
+        await this.dispatcher.dispatch(resolvedActivity, context);
+      } else {
+        await this.dispatcher.dispatch(resolvedActivity);
+      }
       resolvedActivities.push(resolvedActivity);
     }
 

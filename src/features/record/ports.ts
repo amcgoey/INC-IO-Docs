@@ -2,11 +2,15 @@ import type { Activity, FormSchema, ProcessRecordResult, RecordType } from './do
 
 
 export interface ActivityDispatcherPort {
-  dispatch(activity: Activity): Promise<void> | void;
+  dispatch<TContext = unknown>(activity: Activity, context?: TContext): Promise<void> | void;
 }
 
 export interface RecordServicePort {
-  processRecord(payload?: unknown, eventName?: string): Promise<ProcessRecordResult>;
+  processRecord<TContext = unknown>(
+    payload?: unknown,
+    eventName?: string,
+    context?: TContext
+  ): Promise<ProcessRecordResult>;
 }
 
 export interface SchemaQueryPort {

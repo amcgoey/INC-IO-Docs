@@ -16,4 +16,19 @@ describe('ActivityEngine driven adapter', () => {
     expect(consoleSpy).toHaveBeenCalledWith('Executing activity: LOG_RECORD', activity.payload);
     consoleSpy.mockRestore();
   });
+
+  it('accepts generic context parameter during dispatch', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const engine = new ActivityEngine();
+    const activity: Activity = {
+      type: 'LOG_RECORD',
+      payload: { record: { id: 'rec-1' } },
+    };
+    const context = { oauthToken: 'secret-token-xyz' };
+
+    await engine.dispatch(activity, context);
+
+    expect(consoleSpy).toHaveBeenCalledWith('Executing activity: LOG_RECORD', activity.payload);
+    consoleSpy.mockRestore();
+  });
 });
