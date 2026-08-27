@@ -169,11 +169,9 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
 
       // Verify Google Workspace Toast Notification structure
       expect(body).toEqual({
-        renderActions: {
-          action: {
-            notification: {
-              text: `Moved '${fileName}' to '!TestMove'`,
-            },
+        action: {
+          notification: {
+            text: `Moved '${fileName}' to '!TestMove'`,
           },
         },
       });
@@ -247,11 +245,9 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
       expect(body).toEqual({
-        renderActions: {
-          action: {
-            notification: {
-              text: `Moved '${fileName}' to '!TestMove'`,
-            },
+        action: {
+          notification: {
+            text: `Moved '${fileName}' to '!TestMove'`,
           },
         },
       });
@@ -389,11 +385,9 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
       expect(body).toEqual({
-        renderActions: {
-          action: {
-            notification: {
-              text: `Moved '${fileName}' to '!TestMove'`,
-            },
+        action: {
+          notification: {
+            text: `Moved '${fileName}' to '!TestMove'`,
           },
         },
       });
@@ -435,12 +429,12 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body.renderActions).toBeDefined();
-      expect(body.renderActions.action.notification.text).toContain(
+      expect(body.action).toBeDefined();
+      expect(body.action.notification.text).toContain(
         'Google Drive API error in getFile'
       );
       expect(
-        body.renderActions.action.navigations[0].pushCard.sections[0].widgets[0].textParagraph.text
+        body.action.navigations[0].pushCard.sections[0].widgets[0].textParagraph.text
       ).toContain('Google Drive API error in getFile');
       expect(nock.isDone()).toBe(true);
     });

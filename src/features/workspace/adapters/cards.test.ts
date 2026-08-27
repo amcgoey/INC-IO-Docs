@@ -23,11 +23,9 @@ describe('Workspace Cards Adapter', () => {
     it('returns a notification toast with fileName and destinationFolder', () => {
       const toast = buildToastNotification('Report.pdf', '!TestMove');
       expect(toast).toEqual({
-        renderActions: {
-          action: {
-            notification: {
-              text: "Moved 'Report.pdf' to '!TestMove'",
-            },
+        action: {
+          notification: {
+            text: "Moved 'Report.pdf' to '!TestMove'",
           },
         },
       });
@@ -38,31 +36,29 @@ describe('Workspace Cards Adapter', () => {
     it('returns an error card with error title and description', () => {
       const errorCard = buildErrorCard('File not found in Google Drive', 'Drive Error');
       expect(errorCard).toEqual({
-        renderActions: {
-          action: {
-            navigations: [
-              {
-                pushCard: {
-                  header: {
-                    title: 'Drive Error',
-                  },
-                  sections: [
-                    {
-                      widgets: [
-                        {
-                          textParagraph: {
-                            text: 'File not found in Google Drive',
-                          },
-                        },
-                      ],
-                    },
-                  ],
+        action: {
+          navigations: [
+            {
+              pushCard: {
+                header: {
+                  title: 'Drive Error',
                 },
+                sections: [
+                  {
+                    widgets: [
+                      {
+                        textParagraph: {
+                          text: 'File not found in Google Drive',
+                        },
+                      },
+                    ],
+                  },
+                ],
               },
-            ],
-            notification: {
-              text: 'File not found in Google Drive',
             },
+          ],
+          notification: {
+            text: 'File not found in Google Drive',
           },
         },
       });
@@ -70,7 +66,7 @@ describe('Workspace Cards Adapter', () => {
 
     it('defaults error card title to Error', () => {
       const errorCard = buildErrorCard('Something went wrong');
-      expect(errorCard.renderActions.action.navigations[0].pushCard.header.title).toBe('Error');
+      expect(errorCard.action.navigations[0].pushCard.header.title).toBe('Error');
     });
   });
 

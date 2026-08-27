@@ -95,11 +95,9 @@ describe('Workspace Feature Routes', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
       expect(body).toEqual({
-        renderActions: {
-          action: {
-            notification: {
-              text: "Moved 'Proposal.pdf' to '!TestMove'",
-            },
+        action: {
+          notification: {
+            text: "Moved 'Proposal.pdf' to '!TestMove'",
           },
         },
       });
@@ -198,12 +196,12 @@ describe('Workspace Feature Routes', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body.renderActions).toBeDefined();
-      expect(body.renderActions.action.notification.text).toContain(
+      expect(body.action).toBeDefined();
+      expect(body.action.notification.text).toContain(
         'Invalid record data: Field contact is required'
       );
       expect(
-        body.renderActions.action.navigations[0].pushCard.sections[0].widgets[0].textParagraph.text
+        body.action.navigations[0].pushCard.sections[0].widgets[0].textParagraph.text
       ).toContain('Invalid record data: Field contact is required');
     });
 
@@ -227,8 +225,8 @@ describe('Workspace Feature Routes', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body.renderActions).toBeDefined();
-      expect(body.renderActions.action.notification.text).toContain(
+      expect(body.action).toBeDefined();
+      expect(body.action.notification.text).toContain(
         'Google Drive API error in moveFile: 403 Forbidden'
       );
     });

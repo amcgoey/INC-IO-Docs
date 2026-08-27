@@ -36,11 +36,9 @@ export function buildHomepageCard() {
 
 export function buildToastNotification(fileName: string, destinationFolder: string) {
   return {
-    renderActions: {
-      action: {
-        notification: {
-          text: `Moved '${fileName}' to '${destinationFolder}'`,
-        },
+    action: {
+      notification: {
+        text: `Moved '${fileName}' to '${destinationFolder}'`,
       },
     },
   };
@@ -48,31 +46,29 @@ export function buildToastNotification(fileName: string, destinationFolder: stri
 
 export function buildErrorCard(errorMessage: string, title = 'Error') {
   return {
-    renderActions: {
-      action: {
-        navigations: [
-          {
-            pushCard: {
-              header: {
-                title,
-              },
-              sections: [
-                {
-                  widgets: [
-                    {
-                      textParagraph: {
-                        text: errorMessage,
-                      },
-                    },
-                  ],
-                },
-              ],
+    action: {
+      navigations: [
+        {
+          pushCard: {
+            header: {
+              title,
             },
+            sections: [
+              {
+                widgets: [
+                  {
+                    textParagraph: {
+                      text: errorMessage,
+                    },
+                  },
+                ],
+              },
+            ],
           },
-        ],
-        notification: {
-          text: errorMessage,
         },
+      ],
+      notification: {
+        text: errorMessage,
       },
     },
   };
