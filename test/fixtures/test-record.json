@@ -24,9 +24,9 @@
         "name": "SubmitTestWorkflow",
         "activitySequence": [
           {
-            "type": "LOG_RECORD",
+            "type": "MOVE_DRIVE_FILE",
             "payload": {
-              "status": "tested"
+              "folderName": "!TestMove"
             }
           }
         ]

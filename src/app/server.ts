@@ -1,20 +1,32 @@
 import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import { createHttpServer, type HttpServer } from '../infrastructure/http';
 import { registerRecordFeatureRoutes } from '../features/record/adapters/api';
+import { registerWorkspaceFeatureRoutes } from '../features/workspace/adapters/api';
 import { ActivityEngine } from '../features/record/adapters/activity-engine';
+import { DriveActivityHandler } from '../features/record/adapters/drive-activity-handler';
 import { ManifestRegistryAdapter } from '../features/record/adapters/manifest-registry';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
+import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
+import { GoogleJwtVerifier } from '../infrastructure/workspace-addon/jwt-verifier';
 import { RecordService } from '../features/record/domain';
-import type { ActivityDispatcherPort, ManifestRegistryPort, TemplateEvaluatorPort } from '../features/record/ports';
+import type {
+  ActivityDispatcherPort,
+  DriveServicePort,
+  ManifestRegistryPort,
+  TemplateEvaluatorPort,
+} from '../features/record/ports';
+import type { AuthVerifierPort } from '../features/workspace/ports';
 
 TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 
 export interface AppOptions {
-  manifestRegistry?: ManifestRegistryPort;
-  manifestPath?: string;
-  activityEngine?: ActivityDispatcherPort;
-  templateEvaluator?: TemplateEvaluatorPort;
-  logger?: boolean;
+  manifestRegistry?: ManifestRegistryPort | undefined;
+  manifestPath?: string | undefined;
+  activityEngine?: ActivityDispatcherPort | undefined;
+  templateEvaluator?: TemplateEvaluatorPort | undefined;
+  authVerifier?: AuthVerifierPort | undefined;
+  driveService?: DriveServicePort | undefined;
+  logger?: boolean | undefined;
 }
 
 export interface AppInstance {
@@ -25,7 +37,7 @@ export interface AppInstance {
 }
 
 export function createApp(options?: AppOptions): AppInstance {
-  const server = createHttpServer({ logger: options?.logger ?? false });
+  const server = createHttpServer(options?.logger !== undefined ? { logger: options.logger } : {});
   const templateEvaluator = options?.templateEvaluator ?? new HandlebarsAdapter();
 
   let manifestRegistry = options?.manifestRegistry;
@@ -39,9 +51,28 @@ export function createApp(options?: AppOptions): AppInstance {
     manifestRegistry = new ManifestRegistryAdapter({ manifestPath, templateEvaluator });
   }
 
-  const activityEngine = options?.activityEngine ?? new ActivityEngine();
+  const driveService: DriveServicePort =
+    options?.driveService ?? {
+      getFile: (fileId: string, auth?: string) =>
+        new GoogleDriveClient(auth !== undefined ? { auth } : {}).getFile(fileId),
+      findOrCreateFolder: (parentId: string, folderName: string, auth?: string) =>
+        new GoogleDriveClient(auth !== undefined ? { auth } : {}).findOrCreateFolder(parentId, folderName),
+      moveFile: (fileId: string, currentParentId: string, targetFolderId: string, auth?: string) =>
+        new GoogleDriveClient(auth !== undefined ? { auth } : {}).moveFile(fileId, currentParentId, targetFolderId),
+    };
+
+  const driveActivityHandler = new DriveActivityHandler(driveService);
+  const activityEngine = options?.activityEngine ?? new ActivityEngine([driveActivityHandler]);
   const recordService = new RecordService(activityEngine, manifestRegistry, templateEvaluator);
+
+  const authVerifier: AuthVerifierPort = options?.authVerifier ?? new GoogleJwtVerifier();
+
   registerRecordFeatureRoutes(server, { service: recordService, schemaQuery: recordService });
+  registerWorkspaceFeatureRoutes(server, {
+    authVerifier,
+    recordService,
+    driveActivityHandler,
+  });
 
   const initialize = async () => {
     await recordService.initialize();
@@ -73,6 +104,3 @@ export const start = async (port = 8080, host = '0.0.0.0') => {
 if (require.main === module) {
   void start();
 }
-
-
-

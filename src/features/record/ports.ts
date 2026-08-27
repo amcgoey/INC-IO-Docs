@@ -33,5 +33,15 @@ export interface TemplateEvaluatorPort {
   evaluate(template: string, context: TemplateEvaluationContext): string;
 }
 
+export interface DriveFileResult {
+  id: string;
+  name: string;
+  parents?: string[] | undefined;
+  mimeType?: string | undefined;
+}
 
-
+export interface DriveServicePort {
+  getFile(fileId: string, auth?: string): Promise<DriveFileResult>;
+  findOrCreateFolder(parentId: string, folderName: string, auth?: string): Promise<DriveFileResult>;
+  moveFile(fileId: string, currentParentId: string, targetFolderId: string, auth?: string): Promise<DriveFileResult>;
+}
