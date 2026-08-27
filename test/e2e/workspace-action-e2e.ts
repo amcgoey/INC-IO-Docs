@@ -32,7 +32,9 @@ async function runE2E(): Promise<void> {
 
   console.log('--- Workspace-to-Drive E2E Synthetic Test Runner ---');
 
-  if (!accessToken && (!clientId || !clientSecret || !refreshToken)) {
+  const hasLiveCredentials = !!(accessToken || (clientId && clientSecret && refreshToken));
+
+  if (!hasLiveCredentials) {
     console.log(
       'Notice: Live Google OAuth credentials not found in environment or .env file.\n' +
         'To run against live Google Drive API:\n' +
@@ -40,10 +42,8 @@ async function runE2E(): Promise<void> {
         '  2. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN (or GOOGLE_ACCESS_TOKEN)\n' +
         '  3. Re-run: npx tsx test/e2e/workspace-action-e2e.ts\n'
     );
-    console.log('Running dry-run verification with synthetic in-memory app...');
-  }
-
-  if (!accessToken && clientId && clientSecret && refreshToken) {
+    console.log('Running fallback synthetic verification with in-memory app...');
+  } else if (!accessToken && clientId && clientSecret && refreshToken) {
     console.log('Minting user OAuth access token using refresh token...');
     const oauth2Client = new OAuth2Client(clientId, clientSecret);
     oauth2Client.setCredentials({ refresh_token: refreshToken });
@@ -57,8 +57,8 @@ async function runE2E(): Promise<void> {
 
   const manifestPath =
     process.env.APP_MANIFEST_PATH ?? path.resolve(process.cwd(), 'test/fixtures/manifest.json');
-  
-  const app = createApp({
+
+  const appOptions = {
     manifestPath,
     logger: false,
     authVerifier: {
@@ -67,25 +67,30 @@ async function runE2E(): Promise<void> {
         payload: { email: 'e2e-tester@example.com' },
       }),
     },
-    driveService: {
-      getFile: async (fileId) => ({
-        id: fileId,
-        name: 'E2E_Test_Document.pdf',
-        parents: ['root'],
-      }),
-      findOrCreateFolder: async () => ({
-        id: 'mock-testmove-folder-id',
-        name: '!TestMove',
-        parents: ['root'],
-      }),
-      moveFile: async (fileId) => ({
-        id: fileId,
-        name: 'E2E_Test_Document.pdf',
-        parents: ['mock-testmove-folder-id'],
-      }),
-    },
-  });
+    ...(hasLiveCredentials
+      ? {}
+      : {
+          driveService: {
+            getFile: async (fileId: string) => ({
+              id: fileId,
+              name: 'E2E_Test_Document.pdf',
+              parents: ['root'],
+            }),
+            findOrCreateFolder: async () => ({
+              id: 'mock-testmove-folder-id',
+              name: '!TestMove',
+              parents: ['root'],
+            }),
+            moveFile: async (fileId: string) => ({
+              id: fileId,
+              name: 'E2E_Test_Document.pdf',
+              parents: ['mock-testmove-folder-id'],
+            }),
+          },
+        }),
+  };
 
+  const app = createApp(appOptions);
   await app.initialize();
 
   const fileId = targetFileId || 'e2e-synthetic-file-id';

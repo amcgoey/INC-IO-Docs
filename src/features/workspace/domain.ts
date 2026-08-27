@@ -1,4 +1,5 @@
 import { Type, type Static } from '@sinclair/typebox';
+import { Value } from '@sinclair/typebox/value';
 
 export const WorkspaceDriveSelectedItemType = Type.Object({
   id: Type.String(),
@@ -42,6 +43,12 @@ export const WorkspaceEventPayloadType = Type.Object({
 
 export type WorkspaceEventPayload = Static<typeof WorkspaceEventPayloadType>;
 
+export interface WorkspaceExecutionResult {
+  fileId?: string | undefined;
+  fileName: string;
+  destinationFolder: string;
+}
+
 export interface WorkspaceExecutionContext {
   userOAuthToken?: string | undefined;
   userEmail?: string | undefined;
@@ -50,13 +57,20 @@ export interface WorkspaceExecutionContext {
   traceId?: string | undefined;
   selectedItems?: WorkspaceDriveSelectedItem[] | undefined;
   rawEvent?: unknown;
+  lastExecutionResult?: WorkspaceExecutionResult | undefined;
 }
 
 export function extractWorkspaceExecutionContext(
   payload: unknown,
   traceId?: string
 ): WorkspaceExecutionContext {
-  const event = (payload && typeof payload === 'object' ? payload : {}) as Partial<WorkspaceEventPayload>;
+  let event: Partial<WorkspaceEventPayload> = {};
+  if (Value.Check(WorkspaceEventPayloadType, payload)) {
+    event = payload;
+  } else if (payload && typeof payload === 'object') {
+    event = payload as Partial<WorkspaceEventPayload>;
+  }
+
   const userOAuthToken =
     event.authorizationEventObject?.userOAuthToken ?? event.userOAuthToken;
 

@@ -71,7 +71,6 @@ export function createApp(options?: AppOptions): AppInstance {
   registerWorkspaceFeatureRoutes(server, {
     authVerifier,
     recordService,
-    driveActivityHandler,
   });
 
   const initialize = async () => {

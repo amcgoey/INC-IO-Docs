@@ -7,12 +7,10 @@ import {
   buildToastNotification,
   type WorkspaceExecutionContext,
 } from '../domain';
-import type { DriveActivityHandler } from '../../record/adapters/drive-activity-handler';
 
 export interface WorkspaceFeatureApiOptions {
   authVerifier: AuthVerifierPort;
   recordService?: RecordServicePort | undefined;
-  driveActivityHandler?: DriveActivityHandler | undefined;
   defaultRecordType?: string | undefined;
   defaultEventName?: string | undefined;
 }
@@ -76,8 +74,10 @@ export function registerWorkspaceFeatureRoutes(
         }
 
         const traceHeader = request.headers?.['x-cloud-trace-context'] as string | undefined;
-        const context: WorkspaceExecutionContext & { lastExecutionResult?: { fileName: string; destinationFolder: string } | undefined } =
-          extractWorkspaceExecutionContext(request.body, traceHeader);
+        const context: WorkspaceExecutionContext = extractWorkspaceExecutionContext(
+          request.body,
+          traceHeader
+        );
 
         const selectedItem = context.selectedItems?.[0];
         const initialFileName = selectedItem?.title ?? 'selected file';
@@ -103,8 +103,7 @@ export function registerWorkspaceFeatureRoutes(
           }
         }
 
-        const executedResult =
-          context.lastExecutionResult ?? opts.driveActivityHandler?.getLastExecutionResult();
+        const executedResult = context.lastExecutionResult;
         const finalFileName = executedResult?.fileName ?? initialFileName;
         const destinationFolder = executedResult?.destinationFolder ?? '!TestMove';
 
