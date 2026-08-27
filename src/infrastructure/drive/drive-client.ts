@@ -15,7 +15,6 @@ export interface GoogleDriveClientOptions {
 
 export class GoogleDriveClient {
   private readonly defaultDrive: drive_v3.Drive;
-  private readonly clientsByToken = new Map<string, drive_v3.Drive>();
 
   constructor(options: GoogleDriveClientOptions = {}) {
     if (options.drive) {
@@ -35,15 +34,10 @@ export class GoogleDriveClient {
 
   private getDrive(auth?: string): drive_v3.Drive {
     if (!auth) return this.defaultDrive;
-    let drive = this.clientsByToken.get(auth);
-    if (!drive) {
-      const oauth2Client = new OAuth2Client();
-      oauth2Client.setCredentials({ access_token: auth });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      drive = google.drive({ version: 'v3', auth: oauth2Client as any });
-      this.clientsByToken.set(auth, drive);
-    }
-    return drive;
+    const oauth2Client = new OAuth2Client();
+    oauth2Client.setCredentials({ access_token: auth });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return google.drive({ version: 'v3', auth: oauth2Client as any });
   }
 
   async getFile(fileId: string, auth?: string): Promise<DriveFileMetadata> {

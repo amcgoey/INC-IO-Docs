@@ -3,10 +3,9 @@ import type { RecordServicePort } from '../../record/ports';
 import type { AuthVerifierPort, AuthVerificationResult } from '../ports';
 import {
   extractWorkspaceExecutionContext,
-  buildHomepageCard,
-  buildToastNotification,
   type WorkspaceExecutionContext,
 } from '../domain';
+import { buildHomepageCard, buildToastNotification } from './cards';
 
 export interface WorkspaceFeatureApiOptions {
   authVerifier: AuthVerifierPort;
