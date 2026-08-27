@@ -142,7 +142,7 @@ export class AppInfrastructure extends pulumi.ComponentResource {
     );
 
     // 6. Grant roles/run.invoker to the Google Workspace Add-ons system service account
-    const workspaceIamMember = new gcp.cloudrunv2.ServiceIamMember(
+    new gcp.cloudrunv2.ServiceIamMember(
       `${name}-workspace-iam`,
       {
         name: service.name,

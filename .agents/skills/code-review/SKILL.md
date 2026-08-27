@@ -20,7 +20,7 @@ Whatever the user said is the fixed point — a commit SHA, branch name, tag, `m
 
 Capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`.
 
-Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`) and the diff is non-empty. A bad ref or empty diff should fail here — not inside two parallel sub-agents.
+Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`) and the diff is non-empty. Run `npm run typecheck` and `npm run lint` on `HEAD` to guarantee a clean baseline. A bad ref, empty diff, or dirty tree should fail here — not inside two parallel sub-agents.
 
 ### 2. Identify the spec source
 

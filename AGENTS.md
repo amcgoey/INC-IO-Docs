@@ -38,4 +38,4 @@ The structure balances **Locality** (feature-first) with **Leverage** (shared, d
 1. **Dependency Inversion**: Domain and Ports must never import from Adapters. Adapters depend on Ports.
 2. **Type-Safety**: Use `Typebox` for JSON schema validation and TypeScript type inference.
 3. **Testing**: Use `Vitest`. Unit tests must be co-located with their subjects in `src/` and should mock driven ports. Integration tests in `test/` can test the real adapters.
-4. **Verification**: A change is not complete until `npm run typecheck` passes cleanly.
+4. **Verification**: A change is not complete until `npm run typecheck` and `npm run lint` pass cleanly.
