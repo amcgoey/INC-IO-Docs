@@ -26,6 +26,7 @@ export interface AppOptions {
   templateEvaluator?: TemplateEvaluatorPort | undefined;
   authVerifier?: AuthVerifierPort | undefined;
   driveService?: DriveServicePort | undefined;
+  authorizationUrl?: string | undefined;
   logger?: boolean | undefined;
 }
 
@@ -64,7 +65,12 @@ export function createApp(options?: AppOptions): AppInstance {
   registerWorkspaceFeatureRoutes(server, {
     authVerifier,
     recordService,
+    authorizationUrl:
+      options?.authorizationUrl ??
+      process.env.GOOGLE_WORKSPACE_AUTH_URL ??
+      process.env.WORKSPACE_AUTH_URL,
   });
+
 
   const initialize = async () => {
     await recordService.initialize();
