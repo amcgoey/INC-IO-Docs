@@ -73,3 +73,18 @@ export function extractWorkspaceExecutionContext(
     rawEvent: payload,
   };
 }
+
+export function findLatestFileLocator<TFile extends { name: string }>(
+  outputs?: { files?: TFile[] | undefined }[] | undefined
+): TFile | undefined {
+  if (!outputs || outputs.length === 0) {
+    return undefined;
+  }
+  for (let i = outputs.length - 1; i >= 0; i--) {
+    const output = outputs[i];
+    if (output.files && output.files.length > 0) {
+      return output.files[output.files.length - 1];
+    }
+  }
+  return undefined;
+}

@@ -1,10 +1,12 @@
-import type { FileLocator, RecordServicePort } from '../../record/ports';
 import type {
   AuthVerifierPort,
   WorkspaceConfigProviderPort,
+  WorkspaceRecordRunnerPort,
+  WorkspaceFileLocator,
 } from '../ports';
 import {
   extractWorkspaceExecutionContext,
+  findLatestFileLocator,
   type WorkspaceExecutionContext,
 } from '../domain';
 import {
@@ -42,7 +44,7 @@ export interface HttpServer {
 
 export interface WorkspaceFeatureApiOptions {
   authVerifier: AuthVerifierPort;
-  recordService?: RecordServicePort | undefined;
+  recordService?: WorkspaceRecordRunnerPort | undefined;
   configProvider?: WorkspaceConfigProviderPort | undefined;
   authorizationUrl?: string | undefined;
 }
@@ -147,7 +149,7 @@ export function registerWorkspaceFeatureRoutes(
         const selectedItem = context.selectedItems?.[0];
         const initialFileName = selectedItem?.title ?? 'selected file';
 
-        let latestFileLocator: FileLocator | undefined;
+        let latestFileLocator: WorkspaceFileLocator | undefined;
 
         if (recordService) {
           const bodyObj = (
@@ -176,23 +178,17 @@ export function registerWorkspaceFeatureRoutes(
             };
           }
 
-          if (result.outputs && result.outputs.length > 0) {
-            for (let i = result.outputs.length - 1; i >= 0; i--) {
-              const output = result.outputs[i];
-              if (output.files && output.files.length > 0) {
-                latestFileLocator = output.files[output.files.length - 1];
-                break;
-              }
-            }
-          }
+          latestFileLocator = findLatestFileLocator(result.outputs);
         }
 
-        const finalFileName = latestFileLocator?.name ?? initialFileName;
-        const destinationFolder = latestFileLocator?.parentName ?? 'Unfiled';
+        const notificationTarget = latestFileLocator ?? {
+          name: initialFileName,
+          parentName: 'Unfiled',
+        };
 
         return {
           status: 200,
-          body: buildToastNotification(finalFileName, destinationFolder),
+          body: buildToastNotification(notificationTarget),
         };
       } catch (error) {
         const errorMessage =

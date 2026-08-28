@@ -19,3 +19,33 @@ export interface WorkspaceConfigProviderPort {
   getWorkspaceConfig(): Promise<WorkspaceConfiguration | undefined>;
 }
 
+export interface WorkspaceFileLocator {
+  id: string;
+  name: string;
+  parentName?: string | undefined;
+  mimeType?: string | undefined;
+  uri?: string | undefined;
+}
+
+export interface WorkspaceActivityResult {
+  success?: boolean | undefined;
+  error?: string | undefined;
+  files?: WorkspaceFileLocator[] | undefined;
+  contextVariables?: Record<string, unknown> | undefined;
+  recordDataPatch?: Record<string, unknown> | undefined;
+}
+
+export interface WorkspaceRecordProcessResult {
+  success: boolean;
+  errors?: string[] | undefined;
+  outputs?: WorkspaceActivityResult[] | undefined;
+}
+
+export interface WorkspaceRecordRunnerPort {
+  processRecord<TContext = unknown>(
+    payload?: unknown,
+    eventName?: string,
+    context?: TContext
+  ): Promise<WorkspaceRecordProcessResult>;
+}
+

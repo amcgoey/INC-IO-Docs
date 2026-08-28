@@ -56,6 +56,33 @@ describe('Workspace Cards Adapter', () => {
         },
       });
     });
+
+    it('returns a notification toast when provided a ToastNotificationTarget object', () => {
+      const toast = buildToastNotification({
+        name: 'Report.pdf',
+        parentName: 'FinalArchive',
+      });
+      expect(toast).toEqual({
+        action: {
+          notification: {
+            text: "Moved 'Report.pdf' to 'FinalArchive'",
+          },
+        },
+      });
+    });
+
+    it('falls back to Unfiled when ToastNotificationTarget parentName is undefined', () => {
+      const toast = buildToastNotification({
+        name: 'Report.pdf',
+      });
+      expect(toast).toEqual({
+        action: {
+          notification: {
+            text: "Moved 'Report.pdf' to 'Unfiled'",
+          },
+        },
+      });
+    });
   });
 
   describe('buildErrorCard', () => {

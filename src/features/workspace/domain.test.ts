@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   extractWorkspaceExecutionContext,
+  findLatestFileLocator,
   type WorkspaceEventPayload,
 } from './domain';
 
@@ -75,6 +76,43 @@ describe('Workspace Domain Helpers', () => {
       const context = extractWorkspaceExecutionContext(invalidPayload);
       expect(context.userOAuthToken).toBeUndefined();
       expect(context.rawEvent).toBe(invalidPayload);
+    });
+  });
+
+  describe('findLatestFileLocator', () => {
+    it('returns undefined when outputs array is empty or undefined', () => {
+      expect(findLatestFileLocator(undefined)).toBeUndefined();
+      expect(findLatestFileLocator([])).toBeUndefined();
+    });
+
+    it('returns the last file locator when multiple outputs and files exist', () => {
+      const outputs = [
+        {
+          files: [
+            { id: '1', name: 'File1.pdf' },
+            { id: '2', name: 'File2.pdf' },
+          ],
+        },
+        {
+          files: [],
+        },
+        {
+          files: [
+            { id: '3', name: 'File3.pdf', parentName: 'TargetFolder' },
+          ],
+        },
+      ];
+
+      expect(findLatestFileLocator(outputs)).toEqual({
+        id: '3',
+        name: 'File3.pdf',
+        parentName: 'TargetFolder',
+      });
+    });
+
+    it('returns undefined when none of the outputs have files', () => {
+      const outputs = [{ files: [] }, {}];
+      expect(findLatestFileLocator(outputs)).toBeUndefined();
     });
   });
 });

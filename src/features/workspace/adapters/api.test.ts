@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHttpServer, type HttpServer } from '../../../infrastructure/http';
 import { registerWorkspaceFeatureRoutes } from './api';
-import type { AuthVerifierPort } from '../ports';
-import type { RecordServicePort } from '../../record/ports';
+import type { AuthVerifierPort, WorkspaceRecordRunnerPort } from '../ports';
 
 describe('Workspace Feature Routes', () => {
   let server: HttpServer;
   let mockAuthVerifier: AuthVerifierPort;
-  let mockRecordService: RecordServicePort;
+  let mockRecordService: WorkspaceRecordRunnerPort;
 
   beforeEach(() => {
     server = createHttpServer();
