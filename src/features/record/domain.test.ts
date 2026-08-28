@@ -19,6 +19,7 @@ import {
   ActivityType,
   ActivityOutputType,
   FileLocatorType,
+  ExecutionContextSchema,
   formatValidationErrors,
   type Activity,
   type ActivityOutput,
@@ -28,7 +29,7 @@ import {
   type FormSchema,
   type StorageContextConfig,
 } from './domain';
-import type { ActivityDispatcherPort, ManifestRegistryPort, TemplateEvaluationContext, TemplateEvaluatorPort } from './ports';
+import type { ActivityDispatcherPort, ExecutionContext, ManifestRegistryPort, TemplateEvaluationContext, TemplateEvaluatorPort } from './ports';
 import { StructuredLogActivity } from './adapters/structured-log-activity';
 
 
@@ -122,6 +123,28 @@ describe('Record domain', () => {
       files: [{ id: 'file-1' }], // missing name
     };
     expect(Value.Check(ActivityOutputType, invalidFiles)).toBe(false);
+  });
+
+  it('should export ExecutionContextSchema and validate valid and invalid execution contexts', () => {
+    expect(ExecutionContextSchema).toBeDefined();
+    const validContext: ExecutionContext = {
+      credentials: { oauthToken: 'ya29.sample-token' },
+      resources: { primaryTargetId: 'file-123' },
+    };
+    expect(Value.Check(ExecutionContextSchema, validContext)).toBe(true);
+
+    const emptyContext: ExecutionContext = {};
+    expect(Value.Check(ExecutionContextSchema, emptyContext)).toBe(true);
+
+    const invalidCreds = {
+      credentials: 'invalid-string',
+    };
+    expect(Value.Check(ExecutionContextSchema, invalidCreds)).toBe(false);
+
+    const invalidResources = {
+      resources: { primaryTargetId: 12345 },
+    };
+    expect(Value.Check(ExecutionContextSchema, invalidResources)).toBe(false);
   });
 
   it('processRecord validates payload, dispatches Activity, and returns success result', async () => {
@@ -2674,13 +2697,7 @@ describe('Record domain', () => {
     });
   });
 
-  describe('Generic Execution Context (TContext) Propagation & Isolation', () => {
-    interface CustomExecutionContext {
-      oauthToken: string;
-      userId: string;
-      traceId: string;
-    }
-
+  describe('Execution Context (ExecutionContext) Propagation & Isolation', () => {
     const testRecordType: RecordType = {
       key: 'secureRecord',
       name: 'Secure Record',
@@ -2724,7 +2741,7 @@ describe('Record domain', () => {
       },
     };
 
-    it('forwards generic TContext to ActivityDispatcherPort.dispatch', async () => {
+    it('forwards ExecutionContext to ActivityDispatcherPort.dispatch', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -2762,13 +2779,16 @@ describe('Record domain', () => {
         data: { title: 'SecretDoc' },
       };
 
-      const executionContext: CustomExecutionContext = {
-        oauthToken: 'ya29.sensitive-oauth-token',
-        userId: 'user-12345',
-        traceId: 'trace-abc-xyz',
+      const executionContext: ExecutionContext = {
+        credentials: {
+          oauthToken: 'ya29.sensitive-oauth-token',
+        },
+        resources: {
+          primaryTargetId: 'user-12345',
+        },
       };
 
-      const result = await service.processRecord<CustomExecutionContext>(
+      const result = await service.processRecord(
         inputRecord,
         'onSubmit',
         executionContext
@@ -2839,7 +2859,7 @@ describe('Record domain', () => {
       });
     });
 
-    it('strictly isolates TemplateEvaluatorPort evaluation context from TContext', async () => {
+    it('strictly isolates TemplateEvaluatorPort evaluation context from ExecutionContext', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -2879,13 +2899,13 @@ describe('Record domain', () => {
         data: { title: 'SensitiveRecord' },
       };
 
-      const sensitiveContext: CustomExecutionContext = {
-        oauthToken: 'SUPER_SECRET_OAUTH_TOKEN_NEVER_EXPOSE',
-        userId: 'admin-user',
-        traceId: 'trace-999',
+      const sensitiveContext: ExecutionContext = {
+        credentials: {
+          oauthToken: 'SUPER_SECRET_OAUTH_TOKEN_NEVER_EXPOSE',
+        },
       };
 
-      await service.processRecord<CustomExecutionContext>(
+      await service.processRecord(
         inputRecord,
         'onSubmit',
         sensitiveContext
@@ -2894,9 +2914,8 @@ describe('Record domain', () => {
       // Verify that none of the evaluation contexts passed to mockEvaluator.evaluate contain sensitiveContext keys or values
       expect(capturedContexts.length).toBeGreaterThan(0);
       for (const evalCtx of capturedContexts) {
-        expect(evalCtx).not.toHaveProperty('oauthToken');
-        expect(evalCtx).not.toHaveProperty('userId');
-        expect(evalCtx).not.toHaveProperty('traceId');
+        expect(evalCtx).not.toHaveProperty('credentials');
+        expect(evalCtx).not.toHaveProperty('resources');
         expect(JSON.stringify(evalCtx)).not.toContain('SUPER_SECRET_OAUTH_TOKEN_NEVER_EXPOSE');
       }
     });

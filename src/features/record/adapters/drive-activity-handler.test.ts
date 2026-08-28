@@ -52,7 +52,7 @@ describe('DriveActivityHandler', () => {
         },
       };
 
-      const context = { userOAuthToken: 'ya29.mock-token' };
+      const context = { credentials: { oauthToken: 'ya29.mock-token' } };
 
       const output = await handler.handle(activity, context);
 
@@ -82,15 +82,15 @@ describe('DriveActivityHandler', () => {
       });
     });
 
-    it('extracts fileId from context selectedItems when not in payload', async () => {
+    it('extracts fileId from context resources primaryTargetId when not in payload', async () => {
       const activity: Activity = {
         type: 'MOVE_DRIVE_FILE',
         payload: {},
       };
 
       const context = {
-        userOAuthToken: 'ya29.token-abc',
-        selectedItems: [{ id: 'selected-file-789' }],
+        credentials: { oauthToken: 'ya29.token-abc' },
+        resources: { primaryTargetId: 'selected-file-789' },
       };
 
       await handler.handle(activity, context);

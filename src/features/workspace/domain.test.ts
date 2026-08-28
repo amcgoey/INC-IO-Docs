@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import { Value } from '@sinclair/typebox/value';
 import {
   extractWorkspaceExecutionContext,
   findLatestFileLocator,
+  WorkspaceRecordExecutionContextSchema,
   type WorkspaceEventPayload,
+  type WorkspaceRecordExecutionContext,
 } from './domain';
 
 describe('Workspace Domain Helpers', () => {
@@ -113,6 +116,31 @@ describe('Workspace Domain Helpers', () => {
     it('returns undefined when none of the outputs have files', () => {
       const outputs = [{ files: [] }, {}];
       expect(findLatestFileLocator(outputs)).toBeUndefined();
+    });
+  });
+
+  describe('WorkspaceRecordExecutionContextSchema', () => {
+    it('validates valid and invalid WorkspaceRecordExecutionContext instances', () => {
+      expect(WorkspaceRecordExecutionContextSchema).toBeDefined();
+
+      const validContext: WorkspaceRecordExecutionContext = {
+        credentials: { oauthToken: 'ya29.valid-token' },
+        resources: { primaryTargetId: 'file-123' },
+      };
+      expect(Value.Check(WorkspaceRecordExecutionContextSchema, validContext)).toBe(true);
+
+      const emptyContext: WorkspaceRecordExecutionContext = {};
+      expect(Value.Check(WorkspaceRecordExecutionContextSchema, emptyContext)).toBe(true);
+
+      const invalidCredentials = {
+        credentials: 'invalid-string',
+      };
+      expect(Value.Check(WorkspaceRecordExecutionContextSchema, invalidCredentials)).toBe(false);
+
+      const invalidResources = {
+        resources: 12345,
+      };
+      expect(Value.Check(WorkspaceRecordExecutionContextSchema, invalidResources)).toBe(false);
     });
   });
 });

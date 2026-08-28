@@ -43,6 +43,23 @@ export const WorkspaceEventPayloadType = Type.Object({
 
 export type WorkspaceEventPayload = Static<typeof WorkspaceEventPayloadType>;
 
+export const WorkspaceRecordExecutionContextSchema = Type.Object({
+  credentials: Type.Optional(
+    Type.Object({
+      oauthToken: Type.Optional(Type.String()),
+    })
+  ),
+  resources: Type.Optional(
+    Type.Object({
+      primaryTargetId: Type.Optional(Type.String()),
+    })
+  ),
+});
+
+export type WorkspaceRecordExecutionContext = Static<
+  typeof WorkspaceRecordExecutionContextSchema
+>;
+
 export interface WorkspaceExecutionContext {
   userOAuthToken?: string | undefined;
   userEmail?: string | undefined;

@@ -53,6 +53,21 @@ export const ActivityOutputType = Type.Object({
 
 export type ActivityOutput = Static<typeof ActivityOutputType>;
 
+export const ExecutionContextSchema = Type.Object({
+  credentials: Type.Optional(
+    Type.Object({
+      oauthToken: Type.Optional(Type.String()),
+    })
+  ),
+  resources: Type.Optional(
+    Type.Object({
+      primaryTargetId: Type.Optional(Type.String()),
+    })
+  ),
+});
+
+export type ExecutionContext = Static<typeof ExecutionContextSchema>;
+
 export const RecordFieldOptionType = Type.Object({
   source: Type.String(),
   key: Type.String(),
@@ -318,10 +333,10 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
     });
   }
 
-  async processRecord<TContext = unknown>(
+  async processRecord(
     payload?: unknown,
     eventName?: string,
-    context?: TContext
+    context?: ExecutionContext
   ): Promise<ProcessRecordResult> {
     if (!Value.Check(RecordModel, payload)) {
       const errors = formatValidationErrors(RecordModel, payload);

@@ -20,14 +20,14 @@ describe('StructuredLogActivity driven adapter', () => {
     consoleSpy.mockRestore();
   });
 
-  it('accepts generic context parameter during dispatch', async () => {
+  it('accepts execution context parameter during dispatch', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const adapter = new StructuredLogActivity();
     const activity: Activity = {
       type: 'LOG_RECORD',
       payload: { test: 123 },
     };
-    const context = { userToken: 'sample-oauth-token' };
+    const context = { credentials: { oauthToken: 'sample-oauth-token' } };
 
     await adapter.dispatch(activity, context);
 

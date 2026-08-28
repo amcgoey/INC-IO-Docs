@@ -142,17 +142,14 @@ describe('Workspace Feature Routes', () => {
           },
         },
         'onSubmit',
-        expect.objectContaining({
-          userOAuthToken: 'ya29.sample-user-oauth-token',
-          traceId: 'trace-12345',
-          selectedItems: [
-            {
-              id: 'file-xyz',
-              title: 'Proposal.pdf',
-              mimeType: 'application/pdf',
-            },
-          ],
-        })
+        {
+          credentials: {
+            oauthToken: 'ya29.sample-user-oauth-token',
+          },
+          resources: {
+            primaryTargetId: 'file-xyz',
+          },
+        }
       );
     });
 

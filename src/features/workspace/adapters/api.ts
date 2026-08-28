@@ -162,10 +162,15 @@ export function registerWorkspaceFeatureRoutes(
             },
           };
 
+          const executionContext = {
+            ...(context.userOAuthToken ? { credentials: { oauthToken: context.userOAuthToken } } : {}),
+            ...(selectedItem?.id ? { resources: { primaryTargetId: selectedItem.id } } : {}),
+          };
+
           const result = await recordService.processRecord(
             recordPayload,
             effectiveEventName,
-            context
+            executionContext
           );
           if (!result.success) {
             const errorMessage =

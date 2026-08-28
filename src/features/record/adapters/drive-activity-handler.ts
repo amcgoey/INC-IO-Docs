@@ -1,23 +1,16 @@
 import type { Activity, ActivityOutput, FileLocator } from '../domain';
-import type { ActivityHandler, AppConfigurationProviderPort, DriveServicePort } from '../ports';
-
-export interface DriveActivitySelectedItem {
-  id: string;
-  title?: string | undefined;
-  mimeType?: string | undefined;
-}
-
-export interface DriveActivityContext {
-  selectedItems?: DriveActivitySelectedItem[] | undefined;
-  userOAuthToken?: string | undefined;
-}
+import type {
+  ActivityHandler,
+  AppConfigurationProviderPort,
+  DriveServicePort,
+  ExecutionContext,
+} from '../ports';
 
 export interface DriveActivityHandlerOptions {
   defaultFolderName?: string | undefined;
   fallbackAuth?: string | undefined;
   configProvider?: AppConfigurationProviderPort | undefined;
 }
-
 
 export class DriveActivityHandler implements ActivityHandler {
   constructor(
@@ -33,17 +26,15 @@ export class DriveActivityHandler implements ActivityHandler {
     );
   }
 
-  async handle<TContext = unknown>(
+  async handle(
     activity: Activity,
-    context?: TContext
+    context?: ExecutionContext
   ): Promise<ActivityOutput> {
-    const ctx = context && typeof context === 'object' ? (context as DriveActivityContext) : undefined;
-
     let fileId =
       typeof activity.payload?.fileId === 'string' ? activity.payload.fileId : undefined;
 
-    if (!fileId && ctx?.selectedItems && ctx.selectedItems.length > 0 && ctx.selectedItems[0]?.id) {
-      fileId = ctx.selectedItems[0].id;
+    if (!fileId && context?.resources?.primaryTargetId) {
+      fileId = context.resources.primaryTargetId;
     }
 
     if (!fileId) {
@@ -51,8 +42,8 @@ export class DriveActivityHandler implements ActivityHandler {
     }
 
     let auth = this.options.fallbackAuth;
-    if (ctx?.userOAuthToken) {
-      auth = ctx.userOAuthToken;
+    if (context?.credentials?.oauthToken) {
+      auth = context.credentials.oauthToken;
     }
 
     const driveOptions = auth ? { auth } : undefined;

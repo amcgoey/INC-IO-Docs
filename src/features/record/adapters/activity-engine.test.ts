@@ -26,13 +26,13 @@ describe('ActivityEngine driven adapter', () => {
     expect(consoleSpy).toHaveBeenCalledWith('Executing activity: LOG_RECORD', activity.payload);
   });
 
-  it('accepts generic context parameter during dispatch and logs to console when no handlers match', async () => {
+  it('accepts execution context parameter during dispatch and logs to console when no handlers match', async () => {
     const engine = new ActivityEngine();
     const activity: Activity = {
       type: 'LOG_RECORD',
       payload: { record: { id: 'rec-1' } },
     };
-    const context = { oauthToken: 'secret-token-xyz' };
+    const context = { credentials: { oauthToken: 'secret-token-xyz' } };
 
     await engine.dispatch(activity, context);
 
@@ -50,7 +50,7 @@ describe('ActivityEngine driven adapter', () => {
       type: 'DRIVE_MOVE_FILE',
       payload: { fileId: 'file-123', destinationFolderId: 'folder-456' },
     };
-    const context = { oauthToken: 'auth-token-123' };
+    const context = { credentials: { oauthToken: 'auth-token-123' } };
 
     await engine.dispatch(activity, context);
 

@@ -41,11 +41,15 @@ export interface WorkspaceRecordProcessResult {
   outputs?: WorkspaceActivityResult[] | undefined;
 }
 
+import type { WorkspaceRecordExecutionContext } from './domain';
+
+export type { WorkspaceRecordExecutionContext };
+
 export interface WorkspaceRecordRunnerPort {
-  processRecord<TContext = unknown>(
+  processRecord(
     payload?: unknown,
     eventName?: string,
-    context?: TContext
+    context?: WorkspaceRecordExecutionContext
   ): Promise<WorkspaceRecordProcessResult>;
 }
 
