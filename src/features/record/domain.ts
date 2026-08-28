@@ -33,11 +33,22 @@ export const ActivityType = Type.Object({
 
 export type Activity = Static<typeof ActivityType>;
 
+export const FileLocatorType = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  parentName: Type.Optional(Type.String()),
+  mimeType: Type.Optional(Type.String()),
+  uri: Type.Optional(Type.String()),
+});
+
+export type FileLocator = Static<typeof FileLocatorType>;
+
 export const ActivityOutputType = Type.Object({
   success: Type.Optional(Type.Boolean()),
   error: Type.Optional(Type.String()),
   recordDataPatch: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   contextVariables: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  files: Type.Optional(Type.Array(FileLocatorType)),
 });
 
 export type ActivityOutput = Static<typeof ActivityOutputType>;
@@ -157,11 +168,14 @@ export const FormSchemaType = Type.Object({
   recordUiConfig: Type.Optional(RecordUiConfigType),
 });
 
+export type FormSchema = Static<typeof FormSchemaType>;
+
 export type ProcessRecordResult =
   | {
       success: true;
       data: Record;
       activities: Activity[];
+      outputs: ActivityOutput[];
       contextVariables?: { [key: string]: unknown } | undefined;
     }
   | { success: false; errors: string[] };
@@ -421,6 +435,7 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
         success: true,
         data: enrichedRecord,
         activities: [],
+        outputs: [],
       };
     }
 
@@ -452,6 +467,7 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
 
     const accumulatedContextVariables: { [key: string]: unknown } = {};
     const resolvedActivities: Activity[] = [];
+    const collectedOutputs: ActivityOutput[] = [];
     for (const activity of activities) {
       const resolvedPayload = (resolvePayloadTemplates(
         activity.payload,
@@ -471,6 +487,7 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       resolvedActivities.push(resolvedActivity);
 
       if (output) {
+        collectedOutputs.push(output);
         if (output.success === false) {
           return {
             success: false,
@@ -498,6 +515,7 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       success: true,
       data: enrichedRecord,
       activities: resolvedActivities,
+      outputs: collectedOutputs,
     };
     if (Object.keys(accumulatedContextVariables).length > 0) {
       finalResult.contextVariables = accumulatedContextVariables;

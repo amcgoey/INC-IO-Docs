@@ -43,12 +43,6 @@ export const WorkspaceEventPayloadType = Type.Object({
 
 export type WorkspaceEventPayload = Static<typeof WorkspaceEventPayloadType>;
 
-export interface WorkspaceExecutionResult {
-  fileId?: string | undefined;
-  fileName: string;
-  destinationFolder: string;
-}
-
 export interface WorkspaceExecutionContext {
   userOAuthToken?: string | undefined;
   userEmail?: string | undefined;

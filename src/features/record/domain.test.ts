@@ -18,9 +18,11 @@ import {
   FormSchemaType,
   ActivityType,
   ActivityOutputType,
+  FileLocatorType,
   formatValidationErrors,
   type Activity,
   type ActivityOutput,
+  type FileLocator,
   type Record,
   type RecordType,
   type FormSchema,
@@ -49,12 +51,57 @@ describe('Record domain', () => {
     expect(ActivityType).toBeDefined();
   });
 
+  it('should export FileLocatorType schema and validate valid and invalid file locators', () => {
+    expect(FileLocatorType).toBeDefined();
+
+    const fullFileLocator: FileLocator = {
+      id: 'file-123',
+      name: 'Report.pdf',
+      parentName: 'DestinationFolder',
+      mimeType: 'application/pdf',
+      uri: 'https://drive.google.com/file/d/file-123/view',
+    };
+    expect(Value.Check(FileLocatorType, fullFileLocator)).toBe(true);
+
+    const minimalFileLocator: FileLocator = {
+      id: 'file-456',
+      name: 'Summary.docx',
+    };
+    expect(Value.Check(FileLocatorType, minimalFileLocator)).toBe(true);
+
+    const missingId = {
+      name: 'Summary.docx',
+    };
+    expect(Value.Check(FileLocatorType, missingId)).toBe(false);
+
+    const missingName = {
+      id: 'file-456',
+    };
+    expect(Value.Check(FileLocatorType, missingName)).toBe(false);
+
+    const invalidUriType = {
+      id: 'file-456',
+      name: 'Summary.docx',
+      uri: 12345,
+    };
+    expect(Value.Check(FileLocatorType, invalidUriType)).toBe(false);
+  });
+
   it('should export ActivityOutputType schema and validate valid and invalid outputs', () => {
     expect(ActivityOutputType).toBeDefined();
     const validOutput: ActivityOutput = {
       success: true,
       recordDataPatch: { newField: 'value' },
       contextVariables: { stepResult: 'success' },
+      files: [
+        {
+          id: 'file-1',
+          name: 'Doc.pdf',
+          parentName: 'FolderA',
+          mimeType: 'application/pdf',
+          uri: 'https://drive.google.com/file/d/file-1/view',
+        },
+      ],
     };
     expect(Value.Check(ActivityOutputType, validOutput)).toBe(true);
 
@@ -70,6 +117,11 @@ describe('Record domain', () => {
       recordDataPatch: 'not-an-object',
     };
     expect(Value.Check(ActivityOutputType, invalidPatch)).toBe(false);
+
+    const invalidFiles = {
+      files: [{ id: 'file-1' }], // missing name
+    };
+    expect(Value.Check(ActivityOutputType, invalidFiles)).toBe(false);
   });
 
   it('processRecord validates payload, dispatches Activity, and returns success result', async () => {
@@ -3191,6 +3243,111 @@ describe('Record domain', () => {
 
       expect(result.errors).toEqual(['Database connection dropped']);
       expect(capturedActivities).toEqual(['STEP_FAIL']);
+    });
+
+    it('collects activity outputs including FileLocators and exposes them in ProcessRecordResult.outputs', async () => {
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'multi-step-doc',
+          name: 'Multi Step Document',
+          recordSchema: {
+            fields: [
+              { key: 'title', name: 'Title', type: 'string', required: true },
+            ],
+          },
+          recordUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'MultiStepWorkflow',
+              },
+            },
+          },
+          recordWorkflowConfig: {
+            workflows: [
+              {
+                name: 'MultiStepWorkflow',
+                activitySequence: [
+                  {
+                    type: 'STEP_1_FILE',
+                    payload: {},
+                  },
+                  {
+                    type: 'STEP_2_VOID',
+                    payload: {},
+                  },
+                  {
+                    type: 'STEP_3_FILE',
+                    payload: {},
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+
+      const file1: FileLocator = {
+        id: 'file-step-1',
+        name: 'Step1.pdf',
+        parentName: 'Folder1',
+        mimeType: 'application/pdf',
+        uri: 'https://drive.google.com/file/d/file-step-1/view',
+      };
+
+      const file3: FileLocator = {
+        id: 'file-step-3',
+        name: 'FinalStep3.pdf',
+        parentName: 'DestinationFolder',
+        mimeType: 'application/pdf',
+        uri: 'https://drive.google.com/file/d/file-step-3/view',
+      };
+
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity) => {
+          if (activity.type === 'STEP_1_FILE') {
+            return {
+              success: true,
+              files: [file1],
+            };
+          }
+          if (activity.type === 'STEP_2_VOID') {
+            return undefined; // void return
+          }
+          if (activity.type === 'STEP_3_FILE') {
+            return {
+              success: true,
+              files: [file3],
+            };
+          }
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'multi-step-doc',
+        data: { title: 'Test Multi Step' },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.outputs).toEqual([
+        {
+          success: true,
+          files: [file1],
+        },
+        {
+          success: true,
+          files: [file3],
+        },
+      ]);
     });
   });
 });

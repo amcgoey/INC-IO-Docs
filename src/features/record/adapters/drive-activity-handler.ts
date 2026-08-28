@@ -1,11 +1,5 @@
-import type { Activity, ActivityOutput } from '../domain';
+import type { Activity, ActivityOutput, FileLocator } from '../domain';
 import type { ActivityHandler, AppConfigurationProviderPort, DriveServicePort } from '../ports';
-
-export interface DriveActivityExecutionResult {
-  fileId: string;
-  fileName: string;
-  destinationFolder: string;
-}
 
 export interface DriveActivitySelectedItem {
   id: string;
@@ -26,8 +20,6 @@ export interface DriveActivityHandlerOptions {
 
 
 export class DriveActivityHandler implements ActivityHandler {
-  private lastResult: DriveActivityExecutionResult | null = null;
-
   constructor(
     private readonly driveService: DriveServicePort,
     private readonly options: DriveActivityHandlerOptions = {}
@@ -90,30 +82,24 @@ export class DriveActivityHandler implements ActivityHandler {
       const targetFolder = await this.driveService.findOrCreateFolder(currentParentId, folderName, driveOptions);
       const movedFile = await this.driveService.moveFile(fileId, currentParentId, targetFolder.id, driveOptions);
 
-      const result: DriveActivityExecutionResult = {
-        fileId: movedFile.id,
-        fileName: movedFile.name,
-        destinationFolder: targetFolder.name,
+      const mimeType = movedFile.mimeType ?? file.mimeType;
+      const fileLocator: FileLocator = {
+        id: movedFile.id,
+        name: movedFile.name,
+        parentName: targetFolder.name,
+        ...(mimeType ? { mimeType } : {}),
+        uri: `https://drive.google.com/file/d/${movedFile.id}/view`,
       };
-
-      this.lastResult = result;
 
       return {
         success: true,
-        contextVariables: {
-          lastExecutionResult: result,
-        },
+        files: [fileLocator],
       };
-
     } catch (error) {
       throw new Error(
         `DriveActivityHandler failed to move file: ${error instanceof Error ? error.message : String(error)}`,
         { cause: error }
       );
     }
-  }
-
-  getLastExecutionResult(): DriveActivityExecutionResult | null {
-    return this.lastResult;
   }
 }

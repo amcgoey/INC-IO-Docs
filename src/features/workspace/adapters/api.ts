@@ -1,4 +1,4 @@
-import type { RecordServicePort } from '../../record/ports';
+import type { FileLocator, RecordServicePort } from '../../record/ports';
 import type {
   AuthVerifierPort,
   WorkspaceConfigProviderPort,
@@ -147,7 +147,7 @@ export function registerWorkspaceFeatureRoutes(
         const selectedItem = context.selectedItems?.[0];
         const initialFileName = selectedItem?.title ?? 'selected file';
 
-        let executedResult: WorkspaceExecutionResult | undefined;
+        let latestFileLocator: FileLocator | undefined;
 
         if (recordService) {
           const bodyObj = (
@@ -176,13 +176,19 @@ export function registerWorkspaceFeatureRoutes(
             };
           }
 
-          executedResult = result.contextVariables?.lastExecutionResult as
-            | WorkspaceExecutionResult
-            | undefined;
+          if (result.outputs && result.outputs.length > 0) {
+            for (let i = result.outputs.length - 1; i >= 0; i--) {
+              const output = result.outputs[i];
+              if (output.files && output.files.length > 0) {
+                latestFileLocator = output.files[output.files.length - 1];
+                break;
+              }
+            }
+          }
         }
 
-        const finalFileName = executedResult?.fileName ?? initialFileName;
-        const destinationFolder = executedResult?.destinationFolder ?? 'Unfiled';
+        const finalFileName = latestFileLocator?.name ?? initialFileName;
+        const destinationFolder = latestFileLocator?.parentName ?? 'Unfiled';
 
         return {
           status: 200,

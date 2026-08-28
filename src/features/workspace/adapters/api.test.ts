@@ -19,6 +19,7 @@ describe('Workspace Feature Routes', () => {
         success: true,
         data: { type: 'test-record', data: {} },
         activities: [],
+        outputs: [],
       }),
     };
 
@@ -154,6 +155,77 @@ describe('Workspace Feature Routes', () => {
           ],
         })
       );
+    });
+
+    it('scans result.outputs backwards and renders toast notification using the last populated FileLocator', async () => {
+      (mockRecordService.processRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true,
+        data: { type: 'test-record', data: {} },
+        activities: [],
+        outputs: [
+          {
+            success: true,
+            files: [
+              {
+                id: 'file-1',
+                name: 'InitialDraft.docx',
+                parentName: 'Drafts',
+                mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                uri: 'https://drive.google.com/file/d/file-1/view',
+              },
+            ],
+          },
+          {
+            success: true,
+            files: [
+              {
+                id: 'file-2',
+                name: 'FinalApprovedProposal.pdf',
+                parentName: 'ClientArchive',
+                mimeType: 'application/pdf',
+                uri: 'https://drive.google.com/file/d/file-2/view',
+              },
+            ],
+          },
+          {
+            success: true, // Step after file move that produces no files (e.g. logging step)
+            recordDataPatch: { logged: true },
+          },
+        ],
+      });
+
+      const eventPayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-user-oauth-token',
+        },
+        drive: {
+          selectedItems: [
+            {
+              id: 'file-1',
+              title: 'InitialDraft.docx',
+            },
+          ],
+        },
+      };
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt',
+        },
+        payload: eventPayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        action: {
+          notification: {
+            text: "Moved 'FinalApprovedProposal.pdf' to 'ClientArchive'",
+          },
+        },
+      });
     });
 
     it('resolves defaultRecordType and defaultEventName dynamically from configProvider for action execution', async () => {

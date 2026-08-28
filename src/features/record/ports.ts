@@ -1,4 +1,6 @@
-import type { Activity, ActivityOutput, FormSchema, ProcessRecordResult, RecordType } from './domain';
+import type { Activity, ActivityOutput, FileLocator, FormSchema, ProcessRecordResult, RecordType } from './domain';
+
+export type { FileLocator, ActivityOutput, FormSchema, ProcessRecordResult, RecordType };
 
 
 export interface ActivityHandler {

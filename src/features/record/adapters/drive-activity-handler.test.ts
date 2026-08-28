@@ -69,21 +69,16 @@ describe('DriveActivityHandler', () => {
         { auth: 'ya29.mock-token' }
       );
 
-      expect(handler.getLastExecutionResult()).toEqual({
-        fileId: 'file-123',
-        fileName: 'Report.docx',
-        destinationFolder: 'Unfiled',
-      });
-
       expect(output).toEqual({
         success: true,
-        contextVariables: {
-          lastExecutionResult: {
-            fileId: 'file-123',
-            fileName: 'Report.docx',
-            destinationFolder: 'Unfiled',
+        files: [
+          {
+            id: 'file-123',
+            name: 'Report.docx',
+            parentName: 'Unfiled',
+            uri: 'https://drive.google.com/file/d/file-123/view',
           },
-        },
+        ],
       });
     });
 
@@ -171,7 +166,7 @@ describe('DriveActivityHandler', () => {
         payload: { fileId: 'file-123' },
       };
 
-      await configHandler.handle(activity);
+      const output = await configHandler.handle(activity);
 
       expect(mockConfigProvider.getDriveConfig).toHaveBeenCalled();
       expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
@@ -179,7 +174,7 @@ describe('DriveActivityHandler', () => {
         'ManifestFolder',
         undefined
       );
-      expect(configHandler.getLastExecutionResult()?.destinationFolder).toBe('ManifestFolder');
+      expect(output.files?.[0]?.parentName).toBe('ManifestFolder');
     });
 
     it('prioritizes activity.payload.folderName over configProvider', async () => {
