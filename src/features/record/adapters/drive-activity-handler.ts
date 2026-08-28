@@ -33,9 +33,17 @@ export class DriveActivityHandler implements ActivityHandler {
   async handle<TContext = unknown>(activity: Activity, context?: TContext): Promise<void> {
     const ctx = context && typeof context === 'object' ? (context as Record<string, unknown>) : undefined;
 
-    const driveConfig = this.options.configProvider
-      ? await this.options.configProvider.getDriveConfig()
-      : undefined;
+    let driveConfig;
+    if (this.options.configProvider) {
+      try {
+        driveConfig = await this.options.configProvider.getDriveConfig();
+      } catch (error) {
+        throw new Error(
+          `DriveActivityHandler failed to get drive config: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error }
+        );
+      }
+    }
     const defaultTargetName =
       driveConfig?.defaultFolderName ?? this.options.defaultFolderName ?? 'Unfiled';
     const folderName =

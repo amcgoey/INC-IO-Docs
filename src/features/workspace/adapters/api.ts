@@ -1,4 +1,3 @@
-import type { HttpRequest, HttpResponse, HttpServer } from '../../../infrastructure/http';
 import type { RecordServicePort } from '../../record/ports';
 import type {
   AuthVerifierPort,
@@ -15,6 +14,32 @@ import {
   buildErrorCard,
   buildAuthorizationAction,
 } from './cards';
+
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
+
+export interface HttpRequest {
+  body?: unknown;
+  headers?: Record<string, string | string[] | undefined> | undefined;
+  query?: unknown;
+  params?: unknown;
+}
+
+export interface HttpResponse {
+  status: number;
+  body?: unknown;
+  headers?: Record<string, string>;
+}
+
+export interface RouteDefinition {
+  method: HttpMethod;
+  url: string;
+  schema?: unknown;
+  handler: (request: HttpRequest) => Promise<HttpResponse> | HttpResponse;
+}
+
+export interface HttpServer {
+  registerRoute(route: RouteDefinition): void;
+}
 
 export interface WorkspaceFeatureApiOptions {
   authVerifier: AuthVerifierPort;
@@ -67,11 +92,21 @@ function withAuthentication(
   handler: (request: HttpRequest) => Promise<HttpResponse>
 ): (request: HttpRequest) => Promise<HttpResponse> {
   return async (request: HttpRequest): Promise<HttpResponse> => {
-    const { unauthorizedResponse } = await authenticateRequest(request, authVerifier);
-    if (unauthorizedResponse) {
-      return unauthorizedResponse;
+    try {
+      const { unauthorizedResponse } = await authenticateRequest(request, authVerifier);
+      if (unauthorizedResponse) {
+        return unauthorizedResponse;
+      }
+      return await handler(request);
+    } catch (error) {
+      return {
+        status: 500,
+        body: {
+          error: 'Internal Server Error',
+          message: error instanceof Error ? error.message : 'Authentication processing error',
+        },
+      };
     }
-    return handler(request);
   };
 }
 

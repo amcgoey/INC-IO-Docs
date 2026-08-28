@@ -93,7 +93,14 @@ export class GoogleDriveClient {
   }
 
   private async executeWithRetry<T>(operation: () => Promise<T>): Promise<T> {
-    const dynamicConfig = this.configProvider ? await this.configProvider.getDriveConfig() : undefined;
+    let dynamicConfig;
+    if (this.configProvider) {
+      try {
+        dynamicConfig = await this.configProvider.getDriveConfig();
+      } catch {
+        dynamicConfig = undefined;
+      }
+    }
     const maxRetries = dynamicConfig?.maxRetries ?? this.retryOptions.maxRetries ?? 3;
     const initialDelayMs = dynamicConfig?.initialDelayMs ?? this.retryOptions.initialDelayMs ?? 1000;
     const backoffFactor = dynamicConfig?.backoffFactor ?? this.retryOptions.backoffFactor ?? 2;

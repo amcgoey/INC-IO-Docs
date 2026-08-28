@@ -95,7 +95,15 @@ export class ManifestRegistryAdapter
   }
 
   private async loadManifest(): Promise<Static<typeof ManifestSchema>> {
-    const manifestContent = await fs.readFile(this.manifestPath, 'utf-8');
+    let manifestContent: string;
+    try {
+      manifestContent = await fs.readFile(this.manifestPath, 'utf-8');
+    } catch (err) {
+      throw new Error(
+        `Failed to read manifest file at "${this.manifestPath}": ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err }
+      );
+    }
     const manifestData = parseJson(manifestContent, `manifest file at "${this.manifestPath}"`);
 
     const validatedManifest = validateAndCleanSchema(
@@ -111,14 +119,28 @@ export class ManifestRegistryAdapter
 
   async getDriveConfig(): Promise<DriveConfiguration | undefined> {
     if (!this.isManifestLoaded) {
-      await this.loadManifest();
+      try {
+        await this.loadManifest();
+      } catch (err) {
+        throw new Error(
+          `Failed to load drive config from manifest: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err }
+        );
+      }
     }
     return this.cachedConfiguration?.drive;
   }
 
   async getWorkspaceConfig(): Promise<WorkspaceConfiguration | undefined> {
     if (!this.isManifestLoaded) {
-      await this.loadManifest();
+      try {
+        await this.loadManifest();
+      } catch (err) {
+        throw new Error(
+          `Failed to load workspace config from manifest: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err }
+        );
+      }
     }
     return this.cachedConfiguration?.workspace;
   }
@@ -139,14 +161,29 @@ export class ManifestRegistryAdapter
   }
 
   async loadAll(): Promise<RecordType[]> {
-    const validatedManifest = await this.loadManifest();
+    let validatedManifest: Static<typeof ManifestSchema>;
+    try {
+      validatedManifest = await this.loadManifest();
+    } catch (err) {
+      throw new Error(
+        `Failed to load manifest in loadAll: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err }
+      );
+    }
     const manifestDir = path.dirname(this.manifestPath);
     const recordTypes: RecordType[] = [];
 
-
     for (const recordTypeRelPath of validatedManifest.recordTypes) {
       const resolvedPath = path.resolve(manifestDir, recordTypeRelPath);
-      const fileContent = await fs.readFile(resolvedPath, 'utf-8');
+      let fileContent: string;
+      try {
+        fileContent = await fs.readFile(resolvedPath, 'utf-8');
+      } catch (err) {
+        throw new Error(
+          `Failed to read RecordType file "${recordTypeRelPath}" at "${resolvedPath}": ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err }
+        );
+      }
 
       const rawRecordType = parseJson(
         fileContent,
