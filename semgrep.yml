@@ -30,19 +30,20 @@ rules:
     severity: ERROR
     languages: [typescript, javascript]
     paths:
-      include:
-        - "src/features/**"
       exclude:
+        - "src/app/**"
+        - "src/infrastructure/**"
+        - "test/**"
         - "**/*.test.ts"
+        - "infra/**"
     patterns:
       - pattern-either:
           - pattern: import $X from '$MODULE'
           - pattern: import { ... } from '$MODULE'
           - pattern: import * as $X from '$MODULE'
+          - pattern: import type { ... } from '$MODULE'
+          - pattern: import type $X from '$MODULE'
           - pattern: import '$MODULE'
-      - pattern-not: import type { ... } from '$MODULE'
-      - pattern-not: import type $X from '$MODULE'
-      - pattern-not: import type * as $X from '$MODULE'
       - metavariable-regex:
           metavariable: $MODULE
           regex: '.*infrastructure.*'
