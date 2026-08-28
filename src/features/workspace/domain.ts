@@ -57,19 +57,14 @@ export interface WorkspaceExecutionContext {
   traceId?: string | undefined;
   selectedItems?: WorkspaceDriveSelectedItem[] | undefined;
   rawEvent?: unknown;
-  lastExecutionResult?: WorkspaceExecutionResult | undefined;
 }
 
 export function extractWorkspaceExecutionContext(
   payload: unknown,
   traceId?: string
 ): WorkspaceExecutionContext {
-  let event: Partial<WorkspaceEventPayload> = {};
-  if (Value.Check(WorkspaceEventPayloadType, payload)) {
-    event = payload;
-  } else if (payload && typeof payload === 'object') {
-    event = payload as Partial<WorkspaceEventPayload>;
-  }
+  const event: Partial<WorkspaceEventPayload> =
+    Value.Check(WorkspaceEventPayloadType, payload) ? payload : {};
 
   const userOAuthToken =
     event.authorizationEventObject?.userOAuthToken ?? event.userOAuthToken;

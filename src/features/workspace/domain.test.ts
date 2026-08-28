@@ -67,5 +67,14 @@ describe('Workspace Domain Helpers', () => {
         rawEvent: null,
       });
     });
+
+    it('returns default context when payload fails schema validation', () => {
+      const invalidPayload = {
+        authorizationEventObject: 'invalid-string-instead-of-object',
+      };
+      const context = extractWorkspaceExecutionContext(invalidPayload);
+      expect(context.userOAuthToken).toBeUndefined();
+      expect(context.rawEvent).toBe(invalidPayload);
+    });
   });
 });

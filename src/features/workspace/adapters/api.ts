@@ -147,6 +147,8 @@ export function registerWorkspaceFeatureRoutes(
         const selectedItem = context.selectedItems?.[0];
         const initialFileName = selectedItem?.title ?? 'selected file';
 
+        let executedResult: WorkspaceExecutionResult | undefined;
+
         if (recordService) {
           const bodyObj = (
             request.body && typeof request.body === 'object' ? request.body : {}
@@ -173,9 +175,12 @@ export function registerWorkspaceFeatureRoutes(
               body: buildErrorCard(errorMessage),
             };
           }
+
+          executedResult = result.contextVariables?.lastExecutionResult as
+            | WorkspaceExecutionResult
+            | undefined;
         }
 
-        const executedResult = context.lastExecutionResult;
         const finalFileName = executedResult?.fileName ?? initialFileName;
         const destinationFolder = executedResult?.destinationFolder ?? 'Unfiled';
 

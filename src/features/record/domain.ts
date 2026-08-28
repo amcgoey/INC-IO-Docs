@@ -157,10 +157,13 @@ export const FormSchemaType = Type.Object({
   recordUiConfig: Type.Optional(RecordUiConfigType),
 });
 
-export type FormSchema = Static<typeof FormSchemaType>;
-
 export type ProcessRecordResult =
-  | { success: true; data: Record; activities: Activity[] }
+  | {
+      success: true;
+      data: Record;
+      activities: Activity[];
+      contextVariables?: { [key: string]: unknown } | undefined;
+    }
   | { success: false; errors: string[] };
 
 /**
@@ -447,6 +450,7 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       ...(storageContext !== undefined ? { StorageContext: storageContext } : {}),
     };
 
+    const accumulatedContextVariables: { [key: string]: unknown } = {};
     const resolvedActivities: Activity[] = [];
     for (const activity of activities) {
       const resolvedPayload = (resolvePayloadTemplates(
@@ -485,15 +489,21 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
         }
         if (output.contextVariables) {
           Object.assign(evaluationContext, output.contextVariables);
+          Object.assign(accumulatedContextVariables, output.contextVariables);
         }
       }
     }
 
-    return {
+    const finalResult: ProcessRecordResult = {
       success: true,
       data: enrichedRecord,
       activities: resolvedActivities,
     };
+    if (Object.keys(accumulatedContextVariables).length > 0) {
+      finalResult.contextVariables = accumulatedContextVariables;
+    }
+
+    return finalResult;
   }
 }
 

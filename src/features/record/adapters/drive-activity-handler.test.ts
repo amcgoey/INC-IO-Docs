@@ -54,7 +54,7 @@ describe('DriveActivityHandler', () => {
 
       const context = { userOAuthToken: 'ya29.mock-token' };
 
-      await handler.handle(activity, context);
+      const output = await handler.handle(activity, context);
 
       expect(mockDriveService.getFile).toHaveBeenCalledWith('file-123', { auth: 'ya29.mock-token' });
       expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
@@ -75,10 +75,15 @@ describe('DriveActivityHandler', () => {
         destinationFolder: 'Unfiled',
       });
 
-      expect((context as Record<string, unknown>).lastExecutionResult).toEqual({
-        fileId: 'file-123',
-        fileName: 'Report.docx',
-        destinationFolder: 'Unfiled',
+      expect(output).toEqual({
+        success: true,
+        contextVariables: {
+          lastExecutionResult: {
+            fileId: 'file-123',
+            fileName: 'Report.docx',
+            destinationFolder: 'Unfiled',
+          },
+        },
       });
     });
 

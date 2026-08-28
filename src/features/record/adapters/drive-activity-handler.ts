@@ -1,4 +1,4 @@
-import type { Activity } from '../domain';
+import type { Activity, ActivityOutput } from '../domain';
 import type { ActivityHandler, AppConfigurationProviderPort, DriveServicePort } from '../ports';
 
 export interface DriveActivityExecutionResult {
@@ -16,7 +16,6 @@ export interface DriveActivitySelectedItem {
 export interface DriveActivityContext {
   selectedItems?: DriveActivitySelectedItem[] | undefined;
   userOAuthToken?: string | undefined;
-  lastExecutionResult?: DriveActivityExecutionResult | undefined;
 }
 
 export interface DriveActivityHandlerOptions {
@@ -42,7 +41,10 @@ export class DriveActivityHandler implements ActivityHandler {
     );
   }
 
-  async handle<TContext = unknown>(activity: Activity, context?: TContext): Promise<void> {
+  async handle<TContext = unknown>(
+    activity: Activity,
+    context?: TContext
+  ): Promise<ActivityOutput> {
     const ctx = context && typeof context === 'object' ? (context as DriveActivityContext) : undefined;
 
     let fileId =
@@ -96,9 +98,12 @@ export class DriveActivityHandler implements ActivityHandler {
 
       this.lastResult = result;
 
-      if (ctx) {
-        ctx.lastExecutionResult = result;
-      }
+      return {
+        success: true,
+        contextVariables: {
+          lastExecutionResult: result,
+        },
+      };
 
     } catch (error) {
       throw new Error(
