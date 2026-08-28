@@ -124,4 +124,25 @@ describe('ActivityEngine driven adapter', () => {
     expect(handler.handle).not.toHaveBeenCalled();
     expect(consoleSpy).toHaveBeenCalledWith('Executing activity: UNHANDLED_TYPE', activity.payload);
   });
+
+  it('returns ActivityOutput emitted by matching handler', async () => {
+    const expectedOutput = {
+      success: true,
+      recordDataPatch: { updatedKey: 'new-val' },
+      contextVariables: { step1: 'done' },
+    };
+    const handler: ActivityHandler = {
+      canHandle: vi.fn(() => true),
+      handle: vi.fn().mockResolvedValue(expectedOutput),
+    };
+
+    const engine = new ActivityEngine([handler]);
+    const activity: Activity = {
+      type: 'CUSTOM_ACTIVITY',
+      payload: {},
+    };
+
+    const result = await engine.dispatch(activity);
+    expect(result).toEqual(expectedOutput);
+  });
 });

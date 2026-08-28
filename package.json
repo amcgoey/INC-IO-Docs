@@ -10,7 +10,7 @@
     "dev": "tsx src/app/server.ts",
     "lint": "eslint . && npm run lint:semgrep",
     "lint:eslint": "eslint .",
-    "lint:semgrep": "semgrep scan --config semgrep.yml --error",
+    "lint:semgrep": "semgrep scan --config semgrep.yml --error --severity ERROR",
     "typecheck": "tsc --noEmit && npm --prefix infra/pulumi run typecheck",
     "typecheck:infra": "npm --prefix infra/pulumi run typecheck",
     "build": "tsc",

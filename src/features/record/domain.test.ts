@@ -17,14 +17,17 @@ import {
   StorageContextConfigType,
   FormSchemaType,
   ActivityType,
+  ActivityOutputType,
   formatValidationErrors,
   type Activity,
+  type ActivityOutput,
   type Record,
   type RecordType,
   type FormSchema,
   type StorageContextConfig,
 } from './domain';
-import type { ActivityDispatcherPort, ManifestRegistryPort, TemplateEvaluatorPort } from './ports';
+import type { ActivityDispatcherPort, ManifestRegistryPort, TemplateEvaluationContext, TemplateEvaluatorPort } from './ports';
+import { StructuredLogActivity } from './adapters/structured-log-activity';
 
 
 
@@ -44,6 +47,29 @@ describe('Record domain', () => {
 
   it('should export ActivityType schema', () => {
     expect(ActivityType).toBeDefined();
+  });
+
+  it('should export ActivityOutputType schema and validate valid and invalid outputs', () => {
+    expect(ActivityOutputType).toBeDefined();
+    const validOutput: ActivityOutput = {
+      success: true,
+      recordDataPatch: { newField: 'value' },
+      contextVariables: { stepResult: 'success' },
+    };
+    expect(Value.Check(ActivityOutputType, validOutput)).toBe(true);
+
+    const emptyOutput: ActivityOutput = {};
+    expect(Value.Check(ActivityOutputType, emptyOutput)).toBe(true);
+
+    const invalidOutput = {
+      success: 'not-a-boolean',
+    };
+    expect(Value.Check(ActivityOutputType, invalidOutput)).toBe(false);
+
+    const invalidPatch = {
+      recordDataPatch: 'not-an-object',
+    };
+    expect(Value.Check(ActivityOutputType, invalidPatch)).toBe(false);
   });
 
   it('processRecord validates payload, dispatches Activity, and returns success result', async () => {
@@ -2821,6 +2847,279 @@ describe('Record domain', () => {
         expect(evalCtx).not.toHaveProperty('traceId');
         expect(JSON.stringify(evalCtx)).not.toContain('SUPER_SECRET_OAUTH_TOKEN_NEVER_EXPOSE');
       }
+    });
+  });
+
+  describe('RecordService in-flight context merging', () => {
+    it('merges recordDataPatch and contextVariables from previous activity into subsequent activity payload evaluation', async () => {
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'doc-process',
+          name: 'Document Process',
+          recordSchema: {
+            fields: [
+              { key: 'title', name: 'Title', type: 'string', required: true },
+            ],
+          },
+          recordUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'MultiStepWorkflow',
+              },
+            },
+          },
+          recordWorkflowConfig: {
+            workflows: [
+              {
+                name: 'MultiStepWorkflow',
+                activitySequence: [
+                  {
+                    type: 'STEP_ONE',
+                    payload: { initial: '{{Record.data.title}}' },
+                  },
+                  {
+                    type: 'STEP_TWO',
+                    payload: {
+                      fromPatch: '{{Record.data.generatedFileId}}',
+                      fromContext: '{{stepOneStatus}}',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+
+      const capturedDispatches: Activity[] = [];
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity) => {
+          capturedDispatches.push(activity);
+          if (activity.type === 'STEP_ONE') {
+            return {
+              success: true,
+              recordDataPatch: { generatedFileId: 'file-xyz-987' },
+              contextVariables: { stepOneStatus: 'COMPLETED_SUCCESS' },
+            };
+          }
+          return { success: true };
+        }),
+      };
+
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template: string, ctx: TemplateEvaluationContext) => {
+          if (template === '{{Record.data.title}}') {
+            return (ctx.Record as Record)?.data?.title as string;
+          }
+          if (template === '{{Record.data.generatedFileId}}') {
+            return (ctx.Record as Record)?.data?.generatedFileId as string;
+          }
+          if (template === '{{stepOneStatus}}') {
+            return ctx.stepOneStatus as string;
+          }
+          return template;
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'doc-process',
+        data: { title: 'Initial Document' },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Final returned record data contains patched fields
+      expect(result.data.data).toEqual({
+        title: 'Initial Document',
+        generatedFileId: 'file-xyz-987',
+      });
+
+      // Step two received the resolved payload from in-flight merged context
+      expect(capturedDispatches).toHaveLength(2);
+      expect(capturedDispatches[0]).toEqual({
+        type: 'STEP_ONE',
+        payload: { initial: 'Initial Document' },
+      });
+      expect(capturedDispatches[1]).toEqual({
+        type: 'STEP_TWO',
+        payload: {
+          fromPatch: 'file-xyz-987',
+          fromContext: 'COMPLETED_SUCCESS',
+        },
+      });
+    });
+
+    it('accumulates patches across multiple chained activities', async () => {
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'multi-stage',
+          name: 'Multi Stage',
+          recordSchema: {
+            fields: [
+              { key: 'step0', name: 'Step 0', type: 'string', required: true },
+            ],
+          },
+          recordUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'ChainedWorkflow',
+              },
+            },
+          },
+          recordWorkflowConfig: {
+            workflows: [
+              {
+                name: 'ChainedWorkflow',
+                activitySequence: [
+                  {
+                    type: 'STAGE_A',
+                    payload: {},
+                  },
+                  {
+                    type: 'STAGE_B',
+                    payload: {},
+                  },
+                  {
+                    type: 'STAGE_C',
+                    payload: {},
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity) => {
+          if (activity.type === 'STAGE_A') {
+            return { recordDataPatch: { patchA: 'valA' } };
+          }
+          if (activity.type === 'STAGE_B') {
+            return { recordDataPatch: { patchB: 'valB' } };
+          }
+          return undefined;
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'multi-stage',
+        data: { step0: 'init' },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.data.data).toEqual({
+        step0: 'init',
+        patchA: 'valA',
+        patchB: 'valB',
+      });
+    });
+
+    it('works end-to-end with StructuredLogActivity emitting patch to subsequent activity', async () => {
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'log-pipeline',
+          name: 'Log Pipeline',
+          recordSchema: {
+            fields: [
+              { key: 'inputMsg', name: 'Input Message', type: 'string', required: true },
+            ],
+          },
+          recordUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'LogWorkflow',
+              },
+            },
+          },
+          recordWorkflowConfig: {
+            workflows: [
+              {
+                name: 'LogWorkflow',
+                activitySequence: [
+                  {
+                    type: 'LOG_RECORD',
+                    payload: {
+                      message: 'First step',
+                      recordDataPatch: { enrichedState: 'state-123' },
+                    },
+                  },
+                  {
+                    type: 'LOG_RECORD',
+                    payload: {
+                      message: 'Second step using enriched state',
+                      receivedEnrichedState: '{{Record.data.enrichedState}}',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template: string, ctx: TemplateEvaluationContext) => {
+          if (template === '{{Record.data.enrichedState}}') {
+            return (ctx.Record as Record)?.data?.enrichedState as string;
+          }
+          return template;
+        }),
+      };
+
+      const structuredLogActivity = new StructuredLogActivity();
+      const service = new RecordService(structuredLogActivity, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'log-pipeline',
+        data: { inputMsg: 'Hello' },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.data.data).toEqual({
+        inputMsg: 'Hello',
+        enrichedState: 'state-123',
+      });
+
+      expect(result.activities).toHaveLength(2);
+      expect(result.activities[1].payload).toEqual({
+        message: 'Second step using enriched state',
+        receivedEnrichedState: 'state-123',
+      });
+
+      consoleSpy.mockRestore();
     });
   });
 });

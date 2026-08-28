@@ -33,6 +33,15 @@ export const ActivityType = Type.Object({
 
 export type Activity = Static<typeof ActivityType>;
 
+export const ActivityOutputType = Type.Object({
+  success: Type.Optional(Type.Boolean()),
+  error: Type.Optional(Type.String()),
+  recordDataPatch: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  contextVariables: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+});
+
+export type ActivityOutput = Static<typeof ActivityOutputType>;
+
 export const RecordFieldOptionType = Type.Object({
   source: Type.String(),
   key: Type.String(),
@@ -380,7 +389,7 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       }
     }
 
-    const enrichedRecord: Record = {
+    let enrichedRecord: Record = {
       ...record,
       ...identityUpdates,
       data: resolvedData,
@@ -451,12 +460,27 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
         payload: resolvedPayload,
       };
 
-      if (context !== undefined) {
-        await this.dispatcher.dispatch(resolvedActivity, context);
-      } else {
-        await this.dispatcher.dispatch(resolvedActivity);
-      }
+      const output = (context !== undefined
+        ? await this.dispatcher.dispatch(resolvedActivity, context)
+        : await this.dispatcher.dispatch(resolvedActivity)) as ActivityOutput | void;
+
       resolvedActivities.push(resolvedActivity);
+
+      if (output) {
+        if (output.recordDataPatch) {
+          enrichedRecord = {
+            ...enrichedRecord,
+            data: {
+              ...enrichedRecord.data,
+              ...output.recordDataPatch,
+            },
+          };
+          evaluationContext.Record = enrichedRecord;
+        }
+        if (output.contextVariables) {
+          Object.assign(evaluationContext, output.contextVariables);
+        }
+      }
     }
 
     return {

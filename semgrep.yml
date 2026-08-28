@@ -13,7 +13,13 @@ rules:
         - "src/features/**/domain.ts"
         - "src/features/**/ports.ts"
     patterns:
-      - pattern: "import ... from '$MODULE'"
+      - pattern-either:
+          - pattern: import $X from '$MODULE'
+          - pattern: import { ... } from '$MODULE'
+          - pattern: import * as $X from '$MODULE'
+          - pattern: import type { ... } from '$MODULE'
+          - pattern: import type $X from '$MODULE'
+          - pattern: import '$MODULE'
       - metavariable-regex:
           metavariable: $MODULE
           regex: '^(?!(\.|@sinclair/typebox)).*$|.*adapters.*|.*infrastructure.*'
@@ -24,12 +30,19 @@ rules:
     severity: ERROR
     languages: [typescript, javascript]
     paths:
+      include:
+        - "src/features/**"
       exclude:
-        - "src/app/**"
-        - "src/infrastructure/**"
-        - "test/**"
+        - "**/*.test.ts"
     patterns:
-      - pattern: "import ... from '$MODULE'"
+      - pattern-either:
+          - pattern: import $X from '$MODULE'
+          - pattern: import { ... } from '$MODULE'
+          - pattern: import * as $X from '$MODULE'
+          - pattern: import '$MODULE'
+      - pattern-not: import type { ... } from '$MODULE'
+      - pattern-not: import type $X from '$MODULE'
+      - pattern-not: import type * as $X from '$MODULE'
       - metavariable-regex:
           metavariable: $MODULE
           regex: '.*infrastructure.*'
@@ -43,7 +56,13 @@ rules:
       include:
         - "src/infrastructure/**"
     patterns:
-      - pattern: "import ... from '$MODULE'"
+      - pattern-either:
+          - pattern: import $X from '$MODULE'
+          - pattern: import { ... } from '$MODULE'
+          - pattern: import * as $X from '$MODULE'
+          - pattern: import type { ... } from '$MODULE'
+          - pattern: import type $X from '$MODULE'
+          - pattern: import '$MODULE'
       - metavariable-regex:
           metavariable: $MODULE
           regex: '.*features.*'
@@ -126,7 +145,13 @@ rules:
         - "src/app/**"
         - "src/infrastructure/**"
     patterns:
-      - pattern: "import ... from '$MODULE'"
+      - pattern-either:
+          - pattern: import $X from '$MODULE'
+          - pattern: import { ... } from '$MODULE'
+          - pattern: import * as $X from '$MODULE'
+          - pattern: import type { ... } from '$MODULE'
+          - pattern: import type $X from '$MODULE'
+          - pattern: import '$MODULE'
       - metavariable-regex:
           metavariable: $MODULE
           regex: '(googleapis|fastify|@fastify/.*)'
@@ -143,7 +168,13 @@ rules:
         - "**/*.test.ts"
         - "**/*.test.js"
     patterns:
-      - pattern: "import ... from '$PATH'"
+      - pattern-either:
+          - pattern: import $X from '$PATH'
+          - pattern: import { ... } from '$PATH'
+          - pattern: import * as $X from '$PATH'
+          - pattern: import type { ... } from '$PATH'
+          - pattern: import type $X from '$PATH'
+          - pattern: import '$PATH'
       - metavariable-regex:
           metavariable: $PATH
           regex: '.*test/.*'
