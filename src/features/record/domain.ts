@@ -467,6 +467,12 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       resolvedActivities.push(resolvedActivity);
 
       if (output) {
+        if (output.success === false) {
+          return {
+            success: false,
+            errors: [output.error ?? `Activity execution failed for ${activity.type}`],
+          };
+        }
         if (output.recordDataPatch) {
           enrichedRecord = {
             ...enrichedRecord,

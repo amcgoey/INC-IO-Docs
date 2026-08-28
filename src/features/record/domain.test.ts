@@ -3121,6 +3121,77 @@ describe('Record domain', () => {
 
       consoleSpy.mockRestore();
     });
+
+    it('halts workflow execution and returns failure when activity returns success: false with error', async () => {
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'failing-doc',
+          name: 'Failing Document',
+          recordSchema: {
+            fields: [
+              { key: 'title', name: 'Title', type: 'string', required: true },
+            ],
+          },
+          recordUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'FailingWorkflow',
+              },
+            },
+          },
+          recordWorkflowConfig: {
+            workflows: [
+              {
+                name: 'FailingWorkflow',
+                activitySequence: [
+                  {
+                    type: 'STEP_FAIL',
+                    payload: {},
+                  },
+                  {
+                    type: 'STEP_NEVER_RUN',
+                    payload: {},
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+
+      const capturedActivities: string[] = [];
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity) => {
+          capturedActivities.push(activity.type);
+          if (activity.type === 'STEP_FAIL') {
+            return {
+              success: false,
+              error: 'Database connection dropped',
+            };
+          }
+          return { success: true };
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'failing-doc',
+        data: { title: 'Test Fail' },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+      expect(result.success).toBe(false);
+      if (result.success) return;
+
+      expect(result.errors).toEqual(['Database connection dropped']);
+      expect(capturedActivities).toEqual(['STEP_FAIL']);
+    });
   });
 });
 
