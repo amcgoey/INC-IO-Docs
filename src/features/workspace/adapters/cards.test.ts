@@ -16,6 +16,10 @@ function getCardButton(card: ReturnType<typeof buildHomepageCard>) {
   return card.action.navigations[0].pushCard.sections[0].widgets[0].buttonList.buttons[0];
 }
 
+function getCardText(card: ReturnType<typeof buildErrorCard>) {
+  return card.action.navigations[0].pushCard.sections[0].widgets[0].textParagraph.text;
+}
+
 describe('Workspace Cards Adapter', () => {
   describe('buildHomepageCard', () => {
     it('returns a card with a Move Selected File button', () => {
@@ -57,33 +61,9 @@ describe('Workspace Cards Adapter', () => {
   describe('buildErrorCard', () => {
     it('returns an error card with error title and description', () => {
       const errorCard = buildErrorCard('File not found in Google Drive', 'Drive Error');
-      expect(errorCard).toEqual({
-        action: {
-          navigations: [
-            {
-              pushCard: {
-                header: {
-                  title: 'Drive Error',
-                },
-                sections: [
-                  {
-                    widgets: [
-                      {
-                        textParagraph: {
-                          text: 'File not found in Google Drive',
-                        },
-                      },
-                    ],
-                  },
-                ],
-              },
-            },
-          ],
-          notification: {
-            text: 'File not found in Google Drive',
-          },
-        },
-      });
+      expect(getCardTitle(errorCard)).toBe('Drive Error');
+      expect(getCardText(errorCard)).toBe('File not found in Google Drive');
+      expect(errorCard.action.notification.text).toBe('File not found in Google Drive');
     });
 
     it('defaults error card title to Error', () => {

@@ -63,18 +63,26 @@ export class DriveActivityHandler implements ActivityHandler {
 
     const driveOptions = auth ? { auth } : undefined;
 
+    let driveConfig;
+    if (this.options.configProvider) {
+      try {
+        driveConfig = await this.options.configProvider.getDriveConfig();
+      } catch (error) {
+        throw new Error(
+          `DriveActivityHandler failed to get drive config: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error }
+        );
+      }
+    }
+
+    const defaultTargetName =
+      driveConfig?.defaultFolderName ?? this.options.defaultFolderName ?? 'Unfiled';
+    const folderName =
+      typeof activity.payload?.folderName === 'string'
+        ? activity.payload.folderName
+        : defaultTargetName;
+
     try {
-      const driveConfig = this.options.configProvider
-        ? await this.options.configProvider.getDriveConfig()
-        : undefined;
-
-      const defaultTargetName =
-        driveConfig?.defaultFolderName ?? this.options.defaultFolderName ?? 'Unfiled';
-      const folderName =
-        typeof activity.payload?.folderName === 'string'
-          ? activity.payload.folderName
-          : defaultTargetName;
-
       const file = await this.driveService.getFile(fileId, driveOptions);
       const currentParentId = file.parents?.[0] ?? 'root';
       const targetFolder = await this.driveService.findOrCreateFolder(currentParentId, folderName, driveOptions);

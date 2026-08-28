@@ -201,6 +201,40 @@ describe('DriveActivityHandler', () => {
         undefined
       );
     });
+
+    it('throws configuration error when configProvider.getDriveConfig fails', async () => {
+      const mockConfigProvider = {
+        getDriveConfig: vi.fn().mockRejectedValue(new Error('Config service unavailable')),
+      };
+
+      const configHandler = new DriveActivityHandler(mockDriveService, {
+        configProvider: mockConfigProvider,
+      });
+
+      const activity: Activity = {
+        type: 'MOVE_DRIVE_FILE',
+        payload: { fileId: 'file-123' },
+      };
+
+      await expect(configHandler.handle(activity)).rejects.toThrow(
+        /DriveActivityHandler failed to get drive config: Config service unavailable/
+      );
+    });
+
+    it('throws move file error when driveService operation fails', async () => {
+      (mockDriveService.getFile as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Google Drive API 404 Not Found')
+      );
+
+      const activity: Activity = {
+        type: 'MOVE_DRIVE_FILE',
+        payload: { fileId: 'file-123' },
+      };
+
+      await expect(handler.handle(activity)).rejects.toThrow(
+        /DriveActivityHandler failed to move file: Google Drive API 404 Not Found/
+      );
+    });
   });
 });
 
