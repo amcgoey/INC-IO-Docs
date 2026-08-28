@@ -7,6 +7,18 @@ export interface DriveActivityExecutionResult {
   destinationFolder: string;
 }
 
+export interface DriveActivitySelectedItem {
+  id: string;
+  title?: string | undefined;
+  mimeType?: string | undefined;
+}
+
+export interface DriveActivityContext {
+  selectedItems?: DriveActivitySelectedItem[] | undefined;
+  userOAuthToken?: string | undefined;
+  lastExecutionResult?: DriveActivityExecutionResult | undefined;
+}
+
 export interface DriveActivityHandlerOptions {
   defaultFolderName?: string | undefined;
   fallbackAuth?: string | undefined;
@@ -31,34 +43,13 @@ export class DriveActivityHandler implements ActivityHandler {
   }
 
   async handle<TContext = unknown>(activity: Activity, context?: TContext): Promise<void> {
-    const ctx = context && typeof context === 'object' ? (context as Record<string, unknown>) : undefined;
-
-    let driveConfig;
-    if (this.options.configProvider) {
-      try {
-        driveConfig = await this.options.configProvider.getDriveConfig();
-      } catch (error) {
-        throw new Error(
-          `DriveActivityHandler failed to get drive config: ${error instanceof Error ? error.message : String(error)}`,
-          { cause: error }
-        );
-      }
-    }
-    const defaultTargetName =
-      driveConfig?.defaultFolderName ?? this.options.defaultFolderName ?? 'Unfiled';
-    const folderName =
-      typeof activity.payload?.folderName === 'string'
-        ? activity.payload.folderName
-        : defaultTargetName;
+    const ctx = context && typeof context === 'object' ? (context as DriveActivityContext) : undefined;
 
     let fileId =
       typeof activity.payload?.fileId === 'string' ? activity.payload.fileId : undefined;
 
-    if (!fileId && ctx) {
-      const selectedItems = ctx.selectedItems as Array<{ id: string }> | undefined;
-      if (Array.isArray(selectedItems) && selectedItems.length > 0 && selectedItems[0]?.id) {
-        fileId = selectedItems[0].id;
-      }
+    if (!fileId && ctx?.selectedItems && ctx.selectedItems.length > 0 && ctx.selectedItems[0]?.id) {
+      fileId = ctx.selectedItems[0].id;
     }
 
     if (!fileId) {
@@ -66,13 +57,24 @@ export class DriveActivityHandler implements ActivityHandler {
     }
 
     let auth = this.options.fallbackAuth;
-    if (ctx && typeof ctx.userOAuthToken === 'string') {
+    if (ctx?.userOAuthToken) {
       auth = ctx.userOAuthToken;
     }
 
     const driveOptions = auth ? { auth } : undefined;
 
     try {
+      const driveConfig = this.options.configProvider
+        ? await this.options.configProvider.getDriveConfig()
+        : undefined;
+
+      const defaultTargetName =
+        driveConfig?.defaultFolderName ?? this.options.defaultFolderName ?? 'Unfiled';
+      const folderName =
+        typeof activity.payload?.folderName === 'string'
+          ? activity.payload.folderName
+          : defaultTargetName;
+
       const file = await this.driveService.getFile(fileId, driveOptions);
       const currentParentId = file.parents?.[0] ?? 'root';
       const targetFolder = await this.driveService.findOrCreateFolder(currentParentId, folderName, driveOptions);

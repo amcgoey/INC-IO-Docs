@@ -6,14 +6,23 @@ import {
   buildAuthorizationAction,
 } from './cards';
 
+function getCardTitle(
+  card: ReturnType<typeof buildHomepageCard> | ReturnType<typeof buildErrorCard>
+) {
+  return card.action.navigations[0].pushCard.header.title;
+}
+
+function getCardButton(card: ReturnType<typeof buildHomepageCard>) {
+  return card.action.navigations[0].pushCard.sections[0].widgets[0].buttonList.buttons[0];
+}
+
 describe('Workspace Cards Adapter', () => {
   describe('buildHomepageCard', () => {
     it('returns a card with a Move Selected File button', () => {
       const card = buildHomepageCard();
 
-      expect(card.action.navigations[0].pushCard.header.title).toBe('INC-IO Docs');
-      const button =
-        card.action.navigations[0].pushCard.sections[0].widgets[0].buttonList.buttons[0];
+      expect(getCardTitle(card)).toBe('INC-IO Docs');
+      const button = getCardButton(card);
       expect(button.text).toBe('Move Selected File');
       expect(button.onClick.action.actionMethodName).toBe('moveSelectedFile');
     });
@@ -24,9 +33,8 @@ describe('Workspace Cards Adapter', () => {
         actionButtonText: 'Custom Action',
       });
 
-      expect(card.action.navigations[0].pushCard.header.title).toBe('Custom Title');
-      const button =
-        card.action.navigations[0].pushCard.sections[0].widgets[0].buttonList.buttons[0];
+      expect(getCardTitle(card)).toBe('Custom Title');
+      const button = getCardButton(card);
       expect(button.text).toBe('Custom Action');
       expect(button.onClick.action.actionMethodName).toBe('moveSelectedFile');
     });
@@ -80,7 +88,7 @@ describe('Workspace Cards Adapter', () => {
 
     it('defaults error card title to Error', () => {
       const errorCard = buildErrorCard('Something went wrong');
-      expect(errorCard.action.navigations[0].pushCard.header.title).toBe('Error');
+      expect(getCardTitle(errorCard)).toBe('Error');
     });
   });
 

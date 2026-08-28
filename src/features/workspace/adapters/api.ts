@@ -1,7 +1,6 @@
 import type { RecordServicePort } from '../../record/ports';
 import type {
   AuthVerifierPort,
-  AuthVerificationResult,
   WorkspaceConfigProviderPort,
 } from '../ports';
 import {
@@ -48,55 +47,25 @@ export interface WorkspaceFeatureApiOptions {
   authorizationUrl?: string | undefined;
 }
 
-async function authenticateRequest(
-  request: HttpRequest,
-  authVerifier: AuthVerifierPort
-): Promise<{ authResult: AuthVerificationResult; unauthorizedResponse?: HttpResponse }> {
-  try {
-    const authHeader = request.headers?.['authorization'] as string | undefined;
-    const authResult = await authVerifier.verifyToken(authHeader);
-
-    if (!authResult.isValid) {
-      return {
-        authResult,
-        unauthorizedResponse: {
-          status: 401,
-          body: {
-            error: 'Unauthorized',
-            message: authResult.error ?? 'Invalid authentication token',
-          },
-        },
-      };
-    }
-
-    return { authResult };
-  } catch (error) {
-    return {
-      authResult: {
-        isValid: false,
-        error: error instanceof Error ? error.message : 'Authentication verification error',
-      },
-      unauthorizedResponse: {
-        status: 401,
-        body: {
-          error: 'Unauthorized',
-          message: error instanceof Error ? error.message : 'Authentication verification error',
-        },
-      },
-    };
-  }
-}
-
 function withAuthentication(
   authVerifier: AuthVerifierPort,
   handler: (request: HttpRequest) => Promise<HttpResponse>
 ): (request: HttpRequest) => Promise<HttpResponse> {
   return async (request: HttpRequest): Promise<HttpResponse> => {
     try {
-      const { unauthorizedResponse } = await authenticateRequest(request, authVerifier);
-      if (unauthorizedResponse) {
-        return unauthorizedResponse;
+      const authHeader = request.headers?.['authorization'] as string | undefined;
+      const authResult = await authVerifier.verifyToken(authHeader);
+
+      if (!authResult.isValid) {
+        return {
+          status: 401,
+          body: {
+            error: 'Unauthorized',
+            message: authResult.error ?? 'Invalid authentication token',
+          },
+        };
       }
+
       return await handler(request);
     } catch (error) {
       return {
