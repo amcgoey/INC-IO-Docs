@@ -1,0 +1,24 @@
+{
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/drive.addons.metadata.readonly",
+    "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "addOns": {
+    "common": {
+      "name": "INC-IO Docs",
+      "logoUrl": "https://www.gstatic.com/images/branding/product/1x/drive_2020q4_48dp.png",
+      "homepageTrigger": {
+        "runFunction": "https://example.ngrok-free.app/workspace/homepage"
+      }
+    },
+    "drive": {
+      "homepageTrigger": {
+        "runFunction": "https://example.ngrok-free.app/workspace/homepage"
+      },
+      "onItemsSelectedTrigger": {
+        "runFunction": "https://example.ngrok-free.app/workspace/homepage"
+      }
+    }
+  }
+}
