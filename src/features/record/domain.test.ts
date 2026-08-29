@@ -3429,7 +3429,7 @@ describe('Record domain', () => {
       validate: vi.fn().mockImplementation((template: string, allowedVars: string[]) => {
         const matches = Array.from(template.matchAll(/\{\{\{?\s*([a-zA-Z0-9_$.-]+)\s*\}?\}\}/g)).map((m) => m[1]);
         const allowed = new Set(allowedVars);
-        return matches.every((v) => allowed.has(v));
+        return matches.every((v) => allowed.has(v) || (v.startsWith('Context.') && allowed.has('Context')));
       }),
       evaluate: vi.fn().mockImplementation((tpl: string) => tpl),
     });
@@ -3762,6 +3762,46 @@ describe('Record domain', () => {
       const errors = validateManifestTemplates(manifest, syntaxErrorEvaluator);
       expect(errors).toEqual([
         'Invalid template at "recordSchema.calculatedFields[0].template": references unknown fields or is malformed.',
+      ]);
+    });
+
+    it('strictly enforces Record.id and Record.type in execution variables, rejecting Record.idRecord and Record.idGroup', () => {
+      const evaluator = createEvaluator();
+      const manifestWithScopeCreepVars: RecordType = {
+        key: 'scope-creep-record',
+        name: 'Scope Creep Record',
+        recordSchema: {
+          fields: [{ key: 'contact', name: 'Contact', type: 'string' }],
+          identity: {
+            id: 'ID-{{contact}}',
+            idRecord: 'REC-{{contact}}',
+            idGroup: 'GRP-{{contact}}',
+          },
+        },
+        recordWorkflowConfig: {
+          workflows: [
+            {
+              name: 'W1',
+              activitySequence: [
+                {
+                  type: 'ACT_1',
+                  payload: {
+                    validId: '{{Record.id}}',
+                    validType: '{{Record.type}}',
+                    invalidIdRecord: '{{Record.idRecord}}',
+                    invalidIdGroup: '{{Record.idGroup}}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const errors = validateManifestTemplates(manifestWithScopeCreepVars, evaluator);
+      expect(errors).toEqual([
+        'Invalid template at "recordWorkflowConfig.workflows[0].activitySequence[0].payload.invalidIdRecord": references unknown fields or is malformed.',
+        'Invalid template at "recordWorkflowConfig.workflows[0].activitySequence[0].payload.invalidIdGroup": references unknown fields or is malformed.',
       ]);
     });
   });

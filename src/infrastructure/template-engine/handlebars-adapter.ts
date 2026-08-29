@@ -91,7 +91,15 @@ export class HandlebarsAdapter {
       const referencedVariables = this.extractVariables(template);
       const allowedSet = new Set(allowedVariables);
 
-      return referencedVariables.every((variable) => allowedSet.has(variable));
+      return referencedVariables.every((variable) => {
+        if (allowedSet.has(variable)) {
+          return true;
+        }
+        if (variable.startsWith('Context.') && allowedSet.has('Context')) {
+          return true;
+        }
+        return false;
+      });
     } catch {
       return false;
     }

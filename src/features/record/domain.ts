@@ -53,6 +53,16 @@ export const ActivityOutputType = Type.Object({
 
 export type ActivityOutput = Static<typeof ActivityOutputType>;
 
+/**
+ * ExecutionContext represents ambient infrastructure runtime variables (credentials, target resources)
+ * passed into activity dispatching.
+ *
+ * NOTE ON CODE DUPLICATION:
+ * This schema is intentionally defined independently within the `record` feature boundary and mirrors
+ * `WorkspaceRecordExecutionContextSchema` in the `workspace` feature. In accordance with ADR 0001
+ * (Hybrid Hexagonal Architecture - Locality over Layering) and Hexagonal Architecture boundary rules,
+ * feature slices are self-contained and must not share internal domain models across feature boundaries.
+ */
 export const ExecutionContextSchema = Type.Object({
   credentials: Type.Optional(
     Type.Object({
@@ -569,21 +579,6 @@ function flattenObjectPaths(obj: unknown, prefix = ''): string[] {
 }
 
 /**
- * Extracts any variables referencing the dynamic `Context` namespace from a template string.
- */
-function extractContextVariables(template: string): string[] {
-  const matches = template.matchAll(/\{\{\{?\s*([a-zA-Z0-9_$.-]+)\s*\}?\}\}/g);
-  const vars: string[] = [];
-  for (const match of matches) {
-    const varName = match[1];
-    if (varName === 'Context' || varName.startsWith('Context.')) {
-      vars.push(varName);
-    }
-  }
-  return vars;
-}
-
-/**
  * Traverses an arbitrary JSON structure and invokes a callback for every string template encountered.
  */
 export function walkTemplates(
@@ -643,16 +638,8 @@ function getBaseVariables(manifest: RecordType): string[] {
 function getExecutionVariables(manifest: RecordType, baseVariables: string[]): string[] {
   const vars: string[] = [
     'Record.id',
-    'Record.idRecord',
-    'Record.idGroup',
     'Record.type',
   ];
-
-  if (manifest.recordSchema.identity) {
-    for (const propKey of Object.keys(manifest.recordSchema.identity)) {
-      vars.push(`Record.${propKey}`);
-    }
-  }
 
   for (const baseVar of baseVariables) {
     vars.push(`Record.data.${baseVar}`);
@@ -713,9 +700,7 @@ export function validateManifestTemplates(
 
   if (manifest.storageContextConfig) {
     walkTemplates(manifest.storageContextConfig, 'storageContextConfig', (path, template) => {
-      const dynamicVars = extractContextVariables(template);
-      const allowed = dynamicVars.length > 0 ? [...executionVariables, ...dynamicVars] : executionVariables;
-      if (!evaluator.validate(template, allowed)) {
+      if (!evaluator.validate(template, executionVariables)) {
         errors.push(`Invalid template at "${path}": references unknown fields or is malformed.`);
       }
     });
@@ -723,9 +708,7 @@ export function validateManifestTemplates(
 
   if (manifest.recordWorkflowConfig) {
     walkTemplates(manifest.recordWorkflowConfig, 'recordWorkflowConfig', (path, template) => {
-      const dynamicVars = extractContextVariables(template);
-      const allowed = dynamicVars.length > 0 ? [...executionVariables, ...dynamicVars] : executionVariables;
-      if (!evaluator.validate(template, allowed)) {
+      if (!evaluator.validate(template, executionVariables)) {
         errors.push(`Invalid template at "${path}": references unknown fields or is malformed.`);
       }
     });

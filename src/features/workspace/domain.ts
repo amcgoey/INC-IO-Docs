@@ -43,6 +43,16 @@ export const WorkspaceEventPayloadType = Type.Object({
 
 export type WorkspaceEventPayload = Static<typeof WorkspaceEventPayloadType>;
 
+/**
+ * WorkspaceRecordExecutionContext represents the execution context contract required when the workspace
+ * feature executes records via its driven port (WorkspaceRecordRunnerPort).
+ *
+ * NOTE ON CODE DUPLICATION:
+ * This schema is intentionally defined independently within the `workspace` feature boundary and mirrors
+ * `ExecutionContextSchema` in the `record` feature. In accordance with ADR 0001 (Hybrid Hexagonal Architecture)
+ * and Hexagonal Architecture boundary rules, feature slices are self-contained and must not import domain
+ * models from other feature contexts.
+ */
 export const WorkspaceRecordExecutionContextSchema = Type.Object({
   credentials: Type.Optional(
     Type.Object({

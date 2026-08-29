@@ -69,6 +69,21 @@ describe('HandlebarsAdapter', () => {
       const template = '{{uppercase Title}}';
       expect(adapter.validate(template, ['Title', 'uppercase'])).toBe(false);
     });
+
+    it('natively supports namespace/root wildcarding when Context is in allowedVariables', () => {
+      const template = '{{Context.generatedFolderId}}-{{Context.stepResults.destinationPath}}-{{Context}}';
+      expect(adapter.validate(template, ['Context'])).toBe(true);
+    });
+
+    it('rejects Context.* variables when Context is not in allowedVariables', () => {
+      const template = '{{Context.generatedFolderId}}';
+      expect(adapter.validate(template, ['Date', 'Direction'])).toBe(false);
+    });
+
+    it('does not wildcard other namespaces that are not authorized', () => {
+      const template = '{{OtherNamespace.foo}}';
+      expect(adapter.validate(template, ['Context'])).toBe(false);
+    });
   });
 
   describe('evaluate', () => {
