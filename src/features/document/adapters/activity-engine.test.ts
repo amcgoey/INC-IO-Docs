@@ -18,7 +18,7 @@ describe('ActivityEngine driven adapter', () => {
     const engine = new ActivityEngine();
     const activity: Activity = {
       type: 'LOG_RECORD',
-      payload: { record: { id: 'rec-1', type: 'submittal', title: 'Test' } },
+      payload: { document: { id: 'rec-1', type: 'submittal', title: 'Test' } },
     };
 
     await engine.dispatch(activity);
@@ -30,7 +30,7 @@ describe('ActivityEngine driven adapter', () => {
     const engine = new ActivityEngine();
     const activity: Activity = {
       type: 'LOG_RECORD',
-      payload: { record: { id: 'rec-1' } },
+      payload: { document: { id: 'rec-1' } },
     };
     const context = { credentials: { oauthToken: 'secret-token-xyz' } };
 
@@ -128,7 +128,7 @@ describe('ActivityEngine driven adapter', () => {
   it('returns ActivityOutput emitted by matching handler', async () => {
     const expectedOutput = {
       success: true,
-      recordDataPatch: { updatedKey: 'new-val' },
+      documentDataPatch: { updatedKey: 'new-val' },
       contextVariables: { step1: 'done' },
     };
     const handler: ActivityHandler = {

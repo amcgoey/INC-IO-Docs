@@ -44,16 +44,16 @@ export const WorkspaceEventPayloadType = Type.Object({
 export type WorkspaceEventPayload = Static<typeof WorkspaceEventPayloadType>;
 
 /**
- * WorkspaceRecordExecutionContext represents the execution context contract required when the workspace
- * feature executes records via its driven port (WorkspaceRecordRunnerPort).
+ * WorkspaceDocumentExecutionContext represents the execution context contract required when the workspace
+ * feature executes records via its driven port (WorkspaceDocumentRunnerPort).
  *
  * NOTE ON CODE DUPLICATION:
  * This schema is intentionally defined independently within the `workspace` feature boundary and mirrors
- * `ExecutionContextSchema` in the `record` feature. In accordance with ADR 0001 (Hybrid Hexagonal Architecture)
+ * `ExecutionContextSchema` in the `document` feature. In accordance with ADR 0001 (Hybrid Hexagonal Architecture)
  * and Hexagonal Architecture boundary rules, feature slices are self-contained and must not import domain
  * models from other feature contexts.
  */
-export const WorkspaceRecordExecutionContextSchema = Type.Object({
+export const WorkspaceDocumentExecutionContextSchema = Type.Object({
   credentials: Type.Optional(
     Type.Object({
       oauthToken: Type.Optional(Type.String()),
@@ -66,8 +66,8 @@ export const WorkspaceRecordExecutionContextSchema = Type.Object({
   ),
 });
 
-export type WorkspaceRecordExecutionContext = Static<
-  typeof WorkspaceRecordExecutionContextSchema
+export type WorkspaceDocumentExecutionContext = Static<
+  typeof WorkspaceDocumentExecutionContextSchema
 >;
 
 export interface WorkspaceExecutionContext {
@@ -101,9 +101,9 @@ export function extractWorkspaceExecutionContext(
   };
 }
 
-export function createWorkspaceRecordExecutionContext(
+export function createWorkspaceDocumentExecutionContext(
   context: WorkspaceExecutionContext
-): WorkspaceRecordExecutionContext {
+): WorkspaceDocumentExecutionContext {
   const selectedItem = context.selectedItems?.[0];
   return {
     ...(context.userOAuthToken ? { credentials: { oauthToken: context.userOAuthToken } } : {}),

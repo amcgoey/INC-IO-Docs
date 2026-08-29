@@ -1,22 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHttpServer, type HttpServer } from '../../../infrastructure/http';
 import { registerWorkspaceFeatureRoutes } from './api';
-import type { AuthVerifierPort, WorkspaceRecordRunnerPort } from '../ports';
+import type { AuthVerifierPort, WorkspaceDocumentRunnerPort } from '../ports';
 
 describe('Workspace Feature Routes', () => {
   let server: HttpServer;
   let mockAuthVerifier: AuthVerifierPort;
-  let mockRecordService: WorkspaceRecordRunnerPort;
+  let mockDocumentService: WorkspaceDocumentRunnerPort;
 
   beforeEach(() => {
     server = createHttpServer();
     mockAuthVerifier = {
       verifyToken: vi.fn().mockResolvedValue({ isValid: true, payload: { email: 'user@example.com' } }),
     };
-    mockRecordService = {
+    mockDocumentService = {
       processRecord: vi.fn().mockResolvedValue({
         success: true,
-        data: { type: 'test-record', data: {} },
+        data: { type: 'test-document', data: {} },
         activities: [],
         outputs: [],
       }),
@@ -24,7 +24,7 @@ describe('Workspace Feature Routes', () => {
 
     registerWorkspaceFeatureRoutes(server, {
       authVerifier: mockAuthVerifier,
-      recordService: mockRecordService,
+      documentService: mockDocumentService,
     });
   });
 
@@ -52,7 +52,7 @@ describe('Workspace Feature Routes', () => {
       const mockConfigProvider = {
         getWorkspaceConfig: vi.fn().mockResolvedValue({
           appTitle: 'Enterprise Archiver',
-          actionButtonText: 'Archive Record',
+          actionButtonText: 'Archive Document',
         }),
       };
 
@@ -74,7 +74,7 @@ describe('Workspace Feature Routes', () => {
       expect(body.action.navigations[0].pushCard.header.title).toBe('Enterprise Archiver');
       expect(
         body.action.navigations[0].pushCard.sections[0].widgets[0].buttonList.buttons[0].text
-      ).toBe('Archive Record');
+      ).toBe('Archive Document');
       expect(mockConfigProvider.getWorkspaceConfig).toHaveBeenCalled();
     });
 
@@ -134,9 +134,9 @@ describe('Workspace Feature Routes', () => {
         },
       });
 
-      expect(mockRecordService.processRecord).toHaveBeenCalledWith(
+      expect(mockDocumentService.processRecord).toHaveBeenCalledWith(
         {
-          type: 'test-record',
+          type: 'test-document',
           data: {
             title: 'Proposal.pdf',
           },
@@ -154,9 +154,9 @@ describe('Workspace Feature Routes', () => {
     });
 
     it('scans result.outputs backwards and renders toast notification using the last populated FileLocator', async () => {
-      (mockRecordService.processRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (mockDocumentService.processRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
         success: true,
-        data: { type: 'test-record', data: {} },
+        data: { type: 'test-document', data: {} },
         activities: [],
         outputs: [
           {
@@ -185,7 +185,7 @@ describe('Workspace Feature Routes', () => {
           },
           {
             success: true, // Step after file move that produces no files (e.g. logging step)
-            recordDataPatch: { logged: true },
+            documentDataPatch: { logged: true },
           },
         ],
       });
@@ -224,18 +224,18 @@ describe('Workspace Feature Routes', () => {
       });
     });
 
-    it('resolves defaultRecordType and defaultEventName dynamically from configProvider for action execution', async () => {
+    it('resolves defaultDocumentType and defaultEventName dynamically from configProvider for action execution', async () => {
       const customServer = createHttpServer();
       const mockConfigProvider = {
         getWorkspaceConfig: vi.fn().mockResolvedValue({
-          defaultRecordType: 'custom-record-type',
+          defaultDocumentType: 'custom-document-type',
           defaultEventName: 'onCustomAction',
         }),
       };
 
       registerWorkspaceFeatureRoutes(customServer, {
         authVerifier: mockAuthVerifier,
-        recordService: mockRecordService,
+        documentService: mockDocumentService,
         configProvider: mockConfigProvider,
       });
 
@@ -258,9 +258,9 @@ describe('Workspace Feature Routes', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(mockRecordService.processRecord).toHaveBeenCalledWith(
+      expect(mockDocumentService.processRecord).toHaveBeenCalledWith(
         {
-          type: 'custom-record-type',
+          type: 'custom-document-type',
           data: {
             title: 'Invoice.pdf',
           },
@@ -296,7 +296,7 @@ describe('Workspace Feature Routes', () => {
           },
         },
       });
-      expect(mockRecordService.processRecord).not.toHaveBeenCalled();
+      expect(mockDocumentService.processRecord).not.toHaveBeenCalled();
     });
 
     it('returns 200 with custom authorizationUrl when configured and userOAuthToken is missing', async () => {
@@ -304,7 +304,7 @@ describe('Workspace Feature Routes', () => {
       const customAuthUrl = 'https://accounts.google.com/o/oauth2/v2/auth?client_id=my-app';
       registerWorkspaceFeatureRoutes(customServer, {
         authVerifier: mockAuthVerifier,
-        recordService: mockRecordService,
+        documentService: mockDocumentService,
         authorizationUrl: customAuthUrl,
       });
 
@@ -322,10 +322,10 @@ describe('Workspace Feature Routes', () => {
       expect(body.action.authorizationAction.authorizationUrl).toBe(customAuthUrl);
     });
 
-    it('returns 200 with native Error Card when recordService fails validation', async () => {
-      (mockRecordService.processRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+    it('returns 200 with native Error Card when documentService fails validation', async () => {
+      (mockDocumentService.processRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
         success: false,
-        errors: ['Invalid record data: Field contact is required'],
+        errors: ['Invalid document data: Field contact is required'],
       });
 
       const response = await server.inject({
@@ -345,15 +345,15 @@ describe('Workspace Feature Routes', () => {
       const body = JSON.parse(response.payload);
       expect(body.action).toBeDefined();
       expect(body.action.notification.text).toContain(
-        'Invalid record data: Field contact is required'
+        'Invalid document data: Field contact is required'
       );
       expect(
         body.action.navigations[0].pushCard.sections[0].widgets[0].textParagraph.text
-      ).toContain('Invalid record data: Field contact is required');
+      ).toContain('Invalid document data: Field contact is required');
     });
 
-    it('returns 200 with native Error Card when recordService or driven adapter throws an error', async () => {
-      (mockRecordService.processRecord as ReturnType<typeof vi.fn>).mockRejectedValue(
+    it('returns 200 with native Error Card when documentService or driven adapter throws an error', async () => {
+      (mockDocumentService.processRecord as ReturnType<typeof vi.fn>).mockRejectedValue(
         new Error('Google Drive API error in moveFile: 403 Forbidden')
       );
 
@@ -390,7 +390,7 @@ describe('Workspace Feature Routes', () => {
       });
 
       expect(response.statusCode).toBe(401);
-      expect(mockRecordService.processRecord).not.toHaveBeenCalled();
+      expect(mockDocumentService.processRecord).not.toHaveBeenCalled();
     });
   });
 });

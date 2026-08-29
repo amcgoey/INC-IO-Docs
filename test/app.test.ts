@@ -4,21 +4,21 @@ import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { createApp, type AppInstance } from '../src/app/server';
-import type { ManifestRegistryPort, ActivityDispatcherPort } from '../src/features/record/ports';
-import { FormSchemaType, type RecordType } from '../src/features/record/domain';
+import type { ManifestRegistryPort, ActivityDispatcherPort } from '../src/features/document/ports';
+import { FormSchemaType, type DocumentType } from '../src/features/document/domain';
 
 describe('App integration tests', () => {
   let app: AppInstance;
   let mockManifestRegistry: ManifestRegistryPort;
   let mockActivityEngine: ActivityDispatcherPort;
-  let mockRecordTypes: RecordType[];
+  let mockDocumentTypes: DocumentType[];
 
   beforeEach(async () => {
-    mockRecordTypes = [
+    mockDocumentTypes = [
       {
         key: 'communication-project',
         name: 'Communication Project',
-        recordSchema: {
+        documentSchema: {
           fields: [
             {
               key: 'contact',
@@ -28,14 +28,14 @@ describe('App integration tests', () => {
             },
           ],
         },
-        recordUiConfig: {
+        documentUiConfig: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'SubmitCommProject',
             },
           },
         },
-        recordWorkflowConfig: {
+        documentWorkflowConfig: {
           workflows: [
             {
               name: 'SubmitCommProject',
@@ -55,7 +55,7 @@ describe('App integration tests', () => {
     ];
 
     mockManifestRegistry = {
-      loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
     };
 
     mockActivityEngine = {
@@ -71,7 +71,7 @@ describe('App integration tests', () => {
   });
 
   describe('Route endpoints', () => {
-    it('POST /records?eventName=onSubmit should return 200 and dispatch activity for valid record payload', async () => {
+    it('POST /documents?eventName=onSubmit should return 200 and dispatch activity for valid Document payload', async () => {
       const validRecord = {
         type: 'communication-project',
         data: {
@@ -81,7 +81,7 @@ describe('App integration tests', () => {
 
       const response = await app.server.inject({
         method: 'POST',
-        url: '/records?eventName=onSubmit',
+        url: '/documents?eventName=onSubmit',
         payload: validRecord,
       });
 
@@ -104,7 +104,7 @@ describe('App integration tests', () => {
       });
     });
 
-    it('POST /records without eventName should return 200 with empty activities and not dispatch', async () => {
+    it('POST /documents without eventName should return 200 with empty activities and not dispatch', async () => {
       const validRecord = {
         type: 'communication-project',
         data: {
@@ -114,7 +114,7 @@ describe('App integration tests', () => {
 
       const response = await app.server.inject({
         method: 'POST',
-        url: '/records',
+        url: '/documents',
         payload: validRecord,
       });
 
@@ -129,12 +129,12 @@ describe('App integration tests', () => {
       expect(mockActivityEngine.dispatch).not.toHaveBeenCalled();
     });
 
-    it('POST /records should return 400 for invalid record payload', async () => {
+    it('POST /documents should return 400 for invalid Document payload', async () => {
       const response = await app.server.inject({
         method: 'POST',
-        url: '/records',
+        url: '/documents',
         payload: {
-          invalid: 'record payload',
+          invalid: 'Document payload',
         },
       });
 
@@ -147,10 +147,10 @@ describe('App integration tests', () => {
       expect(mockActivityEngine.dispatch).not.toHaveBeenCalled();
     });
 
-    it('POST /records should return 400 when dynamic data payload fails schema validation', async () => {
+    it('POST /documents should return 400 when dynamic data payload fails schema validation', async () => {
       const response = await app.server.inject({
         method: 'POST',
-        url: '/records',
+        url: '/documents',
         payload: {
           type: 'communication-project',
           data: {},
@@ -166,10 +166,10 @@ describe('App integration tests', () => {
       expect(mockActivityEngine.dispatch).not.toHaveBeenCalled();
     });
 
-    it('POST /records should return 400 for unknown record type', async () => {
+    it('POST /documents should return 400 for unknown Document type', async () => {
       const response = await app.server.inject({
         method: 'POST',
-        url: '/records',
+        url: '/documents',
         payload: {
           type: 'unknown-type',
           data: { contact: 'Jane Doe' },
@@ -180,7 +180,7 @@ describe('App integration tests', () => {
       const body = JSON.parse(response.payload);
       expect(body).toEqual({
         success: false,
-        errors: expect.arrayContaining(['Unknown record type: unknown-type']),
+        errors: expect.arrayContaining(['Unknown document type: unknown-type']),
       });
       expect(mockActivityEngine.dispatch).not.toHaveBeenCalled();
     });
@@ -198,7 +198,7 @@ describe('App integration tests', () => {
       expect(body[0]).toEqual({
         key: 'communication-project',
         name: 'Communication Project',
-        recordSchema: {
+        documentSchema: {
           fields: [
             {
               key: 'contact',
@@ -208,7 +208,7 @@ describe('App integration tests', () => {
             },
           ],
         },
-        recordUiConfig: {
+        documentUiConfig: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'SubmitCommProject',
@@ -221,9 +221,9 @@ describe('App integration tests', () => {
       expect(Value.Check(FormSchemaType, body[0])).toBe(true);
 
       // Verify backend-only and undeclared properties are not present
-      expect(body[0]).not.toHaveProperty('recordWorkflowConfig');
+      expect(body[0]).not.toHaveProperty('documentWorkflowConfig');
       expect(body[0]).not.toHaveProperty('storageContextConfig');
-      expect(Object.keys(body[0]).sort()).toEqual(['key', 'name', 'recordSchema', 'recordUiConfig'].sort());
+      expect(Object.keys(body[0]).sort()).toEqual(['key', 'name', 'documentSchema', 'documentUiConfig'].sort());
 
       expect(mockManifestRegistry.loadAll).toHaveBeenCalledTimes(1);
     });
@@ -244,7 +244,7 @@ describe('App integration tests', () => {
       expect(body.length).toBeGreaterThan(0);
       for (const form of body) {
         expect(Value.Check(FormSchemaType, form)).toBe(true);
-        expect(form).not.toHaveProperty('recordWorkflowConfig');
+        expect(form).not.toHaveProperty('documentWorkflowConfig');
         expect(form).not.toHaveProperty('storageContextConfig');
       }
       vi.unstubAllEnvs();
@@ -298,10 +298,10 @@ describe('App integration tests', () => {
 
     it('fails fast on app initialization when ManifestRegistryPort rejects with schema validation error', async () => {
       const failingApp = createAppWithFailingRegistry(
-        new Error('Invalid RecordType schema in "./schemas/invalid.json": /recordSchema/fields: Expected array')
+        new Error('Invalid DocumentType schema in "./schemas/invalid.json": /DocumentSchema/fields: Expected array')
       );
 
-      await expect(failingApp.initialize()).rejects.toThrow(/Invalid RecordType schema/);
+      await expect(failingApp.initialize()).rejects.toThrow(/Invalid DocumentType schema/);
     });
 
     it('fails fast and halts startup before starting HTTP server when start() fails', async () => {
@@ -338,52 +338,52 @@ describe('App integration tests', () => {
 
     it('fails fast during startup when manifest file schema is invalid', async () => {
       const invalidManifestPath = path.join(tempDir, 'invalid-manifest.json');
-      await fs.writeFile(invalidManifestPath, JSON.stringify({ recordTypes: 'not-an-array' }));
+      await fs.writeFile(invalidManifestPath, JSON.stringify({ documentTypes: 'not-an-array' }));
       const failingApp = createApp({ manifestPath: invalidManifestPath });
 
       await expect(failingApp.initialize()).rejects.toThrow(/Invalid manifest file structure/);
     });
 
-    it('fails fast during startup when a referenced RecordType file is missing', async () => {
+    it('fails fast during startup when a referenced DocumentType file is missing', async () => {
       const manifestPath = path.join(tempDir, 'manifest.json');
       await fs.writeFile(
         manifestPath,
-        JSON.stringify({ recordTypes: ['./missing-record-type.json'] })
+        JSON.stringify({ documentTypes: ['./missing-Document-type.json'] })
       );
       const failingApp = createApp({ manifestPath });
 
       await expect(failingApp.initialize()).rejects.toThrow(/ENOENT|no such file/i);
     });
 
-    it('fails fast during startup when a referenced RecordType file contains corrupted JSON', async () => {
+    it('fails fast during startup when a referenced DocumentType file contains corrupted JSON', async () => {
       const manifestPath = path.join(tempDir, 'manifest.json');
-      const recordTypePath = path.join(tempDir, 'corrupted-record.json');
-      await fs.writeFile(manifestPath, JSON.stringify({ recordTypes: ['./corrupted-record.json'] }));
-      await fs.writeFile(recordTypePath, '{ invalid json');
+      const documentTypePath = path.join(tempDir, 'corrupted-Document.json');
+      await fs.writeFile(manifestPath, JSON.stringify({ documentTypes: ['./corrupted-Document.json'] }));
+      await fs.writeFile(documentTypePath, '{ invalid json');
       const failingApp = createApp({ manifestPath });
 
-      await expect(failingApp.initialize()).rejects.toThrow(/Invalid JSON in RecordType file/);
+      await expect(failingApp.initialize()).rejects.toThrow(/Invalid JSON in DocumentType file/);
     });
 
-    it('fails fast during startup when a referenced RecordType file fails schema validation', async () => {
+    it('fails fast during startup when a referenced DocumentType file fails schema validation', async () => {
       const manifestPath = path.join(tempDir, 'manifest.json');
-      const recordTypePath = path.join(tempDir, 'invalid-record.json');
-      await fs.writeFile(manifestPath, JSON.stringify({ recordTypes: ['./invalid-record.json'] }));
+      const documentTypePath = path.join(tempDir, 'invalid-Document.json');
+      await fs.writeFile(manifestPath, JSON.stringify({ documentTypes: ['./invalid-Document.json'] }));
       await fs.writeFile(
-        recordTypePath,
-        JSON.stringify({ key: 'invalid', name: 'Invalid', recordSchema: { fields: 'not-an-array' } })
+        documentTypePath,
+        JSON.stringify({ key: 'invalid', name: 'Invalid', documentSchema: { fields: 'not-an-array' } })
       );
       const failingApp = createApp({ manifestPath });
 
-      await expect(failingApp.initialize()).rejects.toThrow(/Invalid RecordType schema/);
+      await expect(failingApp.initialize()).rejects.toThrow(/Invalid DocumentType schema/);
     });
 
-    it('fails fast during startup when a RecordType contains an unsupported field type', async () => {
-      const unsupportedRecordTypes: RecordType[] = [
+    it('fails fast during startup when a DocumentType contains an unsupported field type', async () => {
+      const unsupportedDocumentTypes: DocumentType[] = [
         {
-          key: 'unsupported-field-record',
-          name: 'Unsupported Field Record',
-          recordSchema: {
+          key: 'unsupported-field-Document',
+          name: 'Unsupported Field Document',
+          documentSchema: {
             fields: [
               {
                 key: 'BadField',
@@ -396,7 +396,7 @@ describe('App integration tests', () => {
         },
       ];
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(unsupportedRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(unsupportedDocumentTypes),
       };
       const failingApp = createApp({ manifestRegistry: customRegistry });
 
@@ -419,44 +419,44 @@ describe('App integration tests', () => {
 
     it('resolves manifest strictly from options.manifestPath', async () => {
       const manifestPath = path.join(tempDir, 'manifest.json');
-      const recordTypePath = path.join(tempDir, 'custom-record.json');
+      const documentTypePath = path.join(tempDir, 'custom-Document.json');
       const customRecord = {
-        key: 'custom-record-key',
-        name: 'Custom Record Name',
-        recordSchema: { fields: [{ key: 'title', name: 'Title', type: 'string', required: true }] },
+        key: 'custom-Document-key',
+        name: 'Custom Document Name',
+        documentSchema: { fields: [{ key: 'title', name: 'Title', type: 'string', required: true }] },
       };
-      await fs.writeFile(recordTypePath, JSON.stringify(customRecord));
-      await fs.writeFile(manifestPath, JSON.stringify({ recordTypes: ['./custom-record.json'] }));
+      await fs.writeFile(documentTypePath, JSON.stringify(customRecord));
+      await fs.writeFile(manifestPath, JSON.stringify({ documentTypes: ['./custom-Document.json'] }));
 
       const appInstance = createApp({ manifestPath });
       await appInstance.initialize();
-      const forms = await appInstance.recordService.getForms();
+      const forms = await appInstance.documentService.getForms();
 
       expect(forms).toHaveLength(1);
-      expect(forms[0].key).toBe('custom-record-key');
-      expect(forms[0].name).toBe('Custom Record Name');
+      expect(forms[0].key).toBe('custom-Document-key');
+      expect(forms[0].name).toBe('Custom Document Name');
     });
 
     it('resolves manifest strictly from APP_MANIFEST_PATH environment variable', async () => {
       const manifestPath = path.join(tempDir, 'env-manifest.json');
-      const recordTypePath = path.join(tempDir, 'env-record.json');
+      const documentTypePath = path.join(tempDir, 'env-Document.json');
       const customRecord = {
-        key: 'env-record-key',
-        name: 'Env Record Name',
-        recordSchema: { fields: [{ key: 'code', name: 'Code', type: 'string', required: true }] },
+        key: 'env-Document-key',
+        name: 'Env Document Name',
+        documentSchema: { fields: [{ key: 'code', name: 'Code', type: 'string', required: true }] },
       };
-      await fs.writeFile(recordTypePath, JSON.stringify(customRecord));
-      await fs.writeFile(manifestPath, JSON.stringify({ recordTypes: ['./env-record.json'] }));
+      await fs.writeFile(documentTypePath, JSON.stringify(customRecord));
+      await fs.writeFile(manifestPath, JSON.stringify({ documentTypes: ['./env-Document.json'] }));
 
       vi.stubEnv('APP_MANIFEST_PATH', manifestPath);
 
       const appInstance = createApp();
       await appInstance.initialize();
-      const forms = await appInstance.recordService.getForms();
+      const forms = await appInstance.documentService.getForms();
 
       expect(forms).toHaveLength(1);
-      expect(forms[0].key).toBe('env-record-key');
-      expect(forms[0].name).toBe('Env Record Name');
+      expect(forms[0].key).toBe('env-Document-key');
+      expect(forms[0].name).toBe('Env Document Name');
 
       const response = await appInstance.server.inject({
         method: 'GET',
@@ -465,39 +465,39 @@ describe('App integration tests', () => {
       expect(response.statusCode).toBe(200);
       const responseBody = JSON.parse(response.payload);
       expect(responseBody).toHaveLength(1);
-      expect(responseBody[0].key).toBe('env-record-key');
+      expect(responseBody[0].key).toBe('env-Document-key');
     });
 
     it('prefers options.manifestPath over APP_MANIFEST_PATH environment variable', async () => {
       const optManifestPath = path.join(tempDir, 'opt-manifest.json');
-      const optRecordTypePath = path.join(tempDir, 'opt-record.json');
+      const optDocumentTypePath = path.join(tempDir, 'opt-Document.json');
       await fs.writeFile(
-        optRecordTypePath,
+        optDocumentTypePath,
         JSON.stringify({
           key: 'option-key',
           name: 'Option Name',
-          recordSchema: { fields: [] },
+          documentSchema: { fields: [] },
         })
       );
-      await fs.writeFile(optManifestPath, JSON.stringify({ recordTypes: ['./opt-record.json'] }));
+      await fs.writeFile(optManifestPath, JSON.stringify({ documentTypes: ['./opt-Document.json'] }));
 
       const envManifestPath = path.join(tempDir, 'env-manifest.json');
-      const envRecordTypePath = path.join(tempDir, 'env-record.json');
+      const envDocumentTypePath = path.join(tempDir, 'env-Document.json');
       await fs.writeFile(
-        envRecordTypePath,
+        envDocumentTypePath,
         JSON.stringify({
           key: 'env-key',
           name: 'Env Name',
-          recordSchema: { fields: [] },
+          documentSchema: { fields: [] },
         })
       );
-      await fs.writeFile(envManifestPath, JSON.stringify({ recordTypes: ['./env-record.json'] }));
+      await fs.writeFile(envManifestPath, JSON.stringify({ documentTypes: ['./env-Document.json'] }));
 
       vi.stubEnv('APP_MANIFEST_PATH', envManifestPath);
 
       const appInstance = createApp({ manifestPath: optManifestPath });
       await appInstance.initialize();
-      const forms = await appInstance.recordService.getForms();
+      const forms = await appInstance.documentService.getForms();
 
       expect(forms).toHaveLength(1);
       expect(forms[0].key).toBe('option-key');
@@ -505,7 +505,7 @@ describe('App integration tests', () => {
   });
 
   describe('End-to-End Calculated Fields and Identity Properties Resolution', () => {
-    it('resolves identity properties (id, idRecord, idGroup) from communication-project.json and enriches payload before dispatching activity', async () => {
+    it('resolves identity properties (id, idDocument, idGroup) from communication-project.json and enriches payload before dispatching activity', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -542,14 +542,14 @@ describe('App integration tests', () => {
       const expectedRecord = {
         type: 'communication-project',
         id: expectedIdentityValue,
-        idRecord: expectedIdentityValue,
+        idDocument: expectedIdentityValue,
         idGroup: expectedGroupId,
         data: expectedEnrichedData,
       };
 
       const response = await prodApp.server.inject({
         method: 'POST',
-        url: '/records?eventName=onSubmit',
+        url: '/documents?eventName=onSubmit',
         payload: basePayload,
       });
 
@@ -599,7 +599,7 @@ describe('App integration tests', () => {
 
       const response = await prodApp.server.inject({
         method: 'POST',
-        url: '/records',
+        url: '/documents',
         payload: invalidPayload,
       });
 
@@ -610,16 +610,16 @@ describe('App integration tests', () => {
       expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
     });
 
-    it('accepts arbitrary string inputs when a record schema defines a combo-box with allowUserInput: true', async () => {
+    it('accepts arbitrary string inputs when a Document schema defines a combo-box with allowUserInput: true', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
 
-      const customRecordTypes: RecordType[] = [
+      const customDocumentTypes: DocumentType[] = [
         {
-          key: 'combobox-record',
-          name: 'Combobox Record',
-          recordSchema: {
+          key: 'combobox-Document',
+          name: 'Combobox Document',
+          documentSchema: {
             fields: [
               {
                 key: 'category',
@@ -641,14 +641,14 @@ describe('App integration tests', () => {
               ],
             },
           },
-          recordUiConfig: {
+          documentUiConfig: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'SubmitCombobox',
               },
             },
           },
-          recordWorkflowConfig: {
+          documentWorkflowConfig: {
             workflows: [
               {
                 name: 'SubmitCombobox',
@@ -665,7 +665,7 @@ describe('App integration tests', () => {
       ];
 
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(customRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(customDocumentTypes),
       };
 
       const customApp = createApp({
@@ -676,7 +676,7 @@ describe('App integration tests', () => {
       await customApp.initialize();
 
       const customPayload = {
-        type: 'combobox-record',
+        type: 'combobox-Document',
         data: {
           category: 'NonStandardCategoryXYZ',
         },
@@ -684,7 +684,7 @@ describe('App integration tests', () => {
 
       const response = await customApp.server.inject({
         method: 'POST',
-        url: '/records?eventName=onSubmit',
+        url: '/documents?eventName=onSubmit',
         payload: customPayload,
       });
 
@@ -722,9 +722,9 @@ describe('App integration tests', () => {
       expect(body).toHaveLength(1);
 
       const expectedForm = {
-        key: 'test-record',
-        name: 'Test Record',
-        recordSchema: {
+        key: 'test-document',
+        name: 'Test Document',
+        documentSchema: {
           fields: [
             {
               key: 'title',
@@ -734,7 +734,7 @@ describe('App integration tests', () => {
             },
           ],
         },
-        recordUiConfig: {
+        documentUiConfig: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'SubmitTestWorkflow',
@@ -749,25 +749,25 @@ describe('App integration tests', () => {
       expect(Value.Check(FormSchemaType, body[0])).toBe(true);
 
       // Verify backend configurations are stripped out
-      expect(body[0]).not.toHaveProperty('recordWorkflowConfig');
+      expect(body[0]).not.toHaveProperty('documentWorkflowConfig');
       expect(body[0]).not.toHaveProperty('storageContextConfig');
       expect(Object.keys(body[0]).sort()).toEqual(
-        ['key', 'name', 'recordSchema', 'recordUiConfig'].sort()
+        ['key', 'name', 'documentSchema', 'documentUiConfig'].sort()
       );
     });
   });
 
   describe('End-to-End Handlebars Activity Payload Resolution', () => {
-    it('evaluates activity payload templates with real HandlebarsAdapter injecting Record and RecordSchema context', async () => {
+    it('evaluates activity payload templates with real HandlebarsAdapter injecting Document and DocumentSchema context', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
 
-      const customRecordTypes: RecordType[] = [
+      const customDocumentTypes: DocumentType[] = [
         {
           key: 'comm-project',
           name: 'Communication Project',
-          recordSchema: {
+          documentSchema: {
             fields: [
               { key: 'contact', name: 'Contact Person', type: 'string', required: true },
               { key: 'description', name: 'Description', type: 'string', required: true },
@@ -777,18 +777,18 @@ describe('App integration tests', () => {
             ],
             identity: {
               id: 'ID-{{contact}}',
-              idRecord: 'IDREC-{{contact}}',
+              idDocument: 'IDREC-{{contact}}',
               idGroup: 'GRP-{{contact}}',
             },
           },
-          recordUiConfig: {
+          documentUiConfig: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'HandleCommWorkflow',
               },
             },
           },
-          recordWorkflowConfig: {
+          documentWorkflowConfig: {
             workflows: [
               {
                 name: 'HandleCommWorkflow',
@@ -796,15 +796,15 @@ describe('App integration tests', () => {
                   {
                     type: 'CONSOLE_LOG',
                     payload: {
-                      recordId: '{{Record.id}}',
-                      idRecord: '{{Record.idRecord}}',
-                      idGroup: '{{Record.idGroup}}',
-                      contactName: '{{Record.data.contact}}',
-                      calculatedSummary: '{{Record.data.summary}}',
-                      recordTypeName: '{{RecordSchema.fields.[0].name}}',
+                      documentId: '{{Document.id}}',
+                      idDocument: '{{Document.idDocument}}',
+                      idGroup: '{{Document.idGroup}}',
+                      contactName: '{{Document.data.contact}}',
+                      calculatedSummary: '{{Document.data.summary}}',
+                      documentTypeName: '{{documentSchema.fields.[0].name}}',
                       nested: {
-                        templateString: 'Target: {{Record.data.contact}}',
-                        list: ['item-{{Record.data.contact}}', 'static-item'],
+                        templateString: 'Target: {{Document.data.contact}}',
+                        list: ['item-{{Document.data.contact}}', 'static-item'],
                       },
                     },
                   },
@@ -816,7 +816,7 @@ describe('App integration tests', () => {
       ];
 
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(customRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(customDocumentTypes),
       };
 
       const appInstance = createApp({
@@ -828,7 +828,7 @@ describe('App integration tests', () => {
 
       const response = await appInstance.server.inject({
         method: 'POST',
-        url: '/records?eventName=onSubmit',
+        url: '/documents?eventName=onSubmit',
         payload: {
           type: 'comm-project',
           data: {
@@ -843,12 +843,12 @@ describe('App integration tests', () => {
       expect(body.success).toBe(true);
 
       const expectedResolvedPayload = {
-        recordId: 'ID-Jane Doe',
-        idRecord: 'IDREC-Jane Doe',
+        documentId: 'ID-Jane Doe',
+        idDocument: 'IDREC-Jane Doe',
         idGroup: 'GRP-Jane Doe',
         contactName: 'Jane Doe',
         calculatedSummary: 'COMM: Jane Doe - Design Review',
-        recordTypeName: 'Contact Person',
+        documentTypeName: 'Contact Person',
         nested: {
           templateString: 'Target: Jane Doe',
           list: ['item-Jane Doe', 'static-item'],
@@ -884,19 +884,19 @@ describe('App integration tests', () => {
 
     it('propagates workspace configuration from manifest to /workspace/homepage and /workspace/action', async () => {
       const manifestPath = path.join(tempDir, 'manifest.json');
-      const recordTypePath = path.join(tempDir, 'custom-record.json');
+      const documentTypePath = path.join(tempDir, 'custom-Document.json');
       const customRecord = {
-        key: 'configured-record-type',
-        name: 'Configured Record Type',
-        recordSchema: { fields: [{ key: 'title', name: 'Title', type: 'string', required: true }] },
-        recordUiConfig: {
+        key: 'configured-Document-type',
+        name: 'Configured Document Type',
+        documentSchema: { fields: [{ key: 'title', name: 'Title', type: 'string', required: true }] },
+        documentUiConfig: {
           events: {
             onConfiguredSubmit: {
               catchAllWorkflow: 'ConfiguredWorkflow',
             },
           },
         },
-        recordWorkflowConfig: {
+        documentWorkflowConfig: {
           workflows: [
             {
               name: 'ConfiguredWorkflow',
@@ -911,16 +911,16 @@ describe('App integration tests', () => {
         },
       };
 
-      await fs.writeFile(recordTypePath, JSON.stringify(customRecord));
+      await fs.writeFile(documentTypePath, JSON.stringify(customRecord));
       await fs.writeFile(
         manifestPath,
         JSON.stringify({
-          recordTypes: ['./custom-record.json'],
+          documentTypes: ['./custom-Document.json'],
           configuration: {
             workspace: {
               appTitle: 'Custom Enterprise Workspace',
               actionButtonText: 'File In Custom Folder',
-              defaultRecordType: 'configured-record-type',
+              defaultDocumentType: 'configured-Document-type',
               defaultEventName: 'onConfiguredSubmit',
             },
             drive: {
@@ -980,7 +980,7 @@ describe('App integration tests', () => {
           .text
       ).toBe('File In Custom Folder');
 
-      // 2. Verify /workspace/action triggers recordService with defaultRecordType & defaultEventName from config,
+      // 2. Verify /workspace/action triggers DocumentService with defaultDocumentType & defaultEventName from config,
       // and DriveActivityHandler moves to !CustomDestination folder
       const actionRes = await appInstance.server.inject({
         method: 'POST',

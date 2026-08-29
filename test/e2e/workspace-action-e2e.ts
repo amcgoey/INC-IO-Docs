@@ -121,8 +121,8 @@ async function runE2E(): Promise<void> {
           },
         ],
       },
-      record: {
-        type: 'test-record',
+      Document: {
+        type: 'test-Document',
         data: {
           title: fileName,
         },

@@ -1,39 +1,39 @@
 import * as path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { ManifestRegistryAdapter } from '../../src/features/record/adapters/manifest-registry';
+import { ManifestRegistryAdapter } from '../../src/features/document/adapters/manifest-registry';
 import { HandlebarsAdapter } from '../../src/infrastructure/template-engine/handlebars-adapter';
 import {
-  RecordTypeSchema,
+  DocumentTypeSchema,
   FormSchemaType,
   formatValidationErrors,
-} from '../../src/features/record/domain';
+} from '../../src/features/document/domain';
 import { Value } from '@sinclair/typebox/value';
 
-describe('RecordType JSON files schema validation', () => {
-  it('should validate all RecordType JSON files referenced by manifest.json against Typebox schemas', async () => {
+describe('DocumentType JSON files schema validation', () => {
+  it('should validate all DocumentType JSON files referenced by manifest.json against Typebox schemas', async () => {
     const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
     const adapter = new ManifestRegistryAdapter({
       manifestPath,
       templateEvaluator: new HandlebarsAdapter(),
     });
-    const recordTypes = await adapter.loadAll();
+    const documentTypes = await adapter.loadAll();
 
-    expect(recordTypes.length).toBeGreaterThan(0);
-    for (const recordType of recordTypes) {
-      const errors = formatValidationErrors(RecordTypeSchema, recordType);
+    expect(documentTypes.length).toBeGreaterThan(0);
+    for (const documentType of documentTypes) {
+      const errors = formatValidationErrors(DocumentTypeSchema, documentType);
       expect(errors).toEqual([]);
-      expect(Value.Check(RecordTypeSchema, recordType)).toBe(true);
+      expect(Value.Check(DocumentTypeSchema, documentType)).toBe(true);
 
       // Verify essential properties
-      expect(typeof recordType.key).toBe('string');
-      expect(recordType.key.length).toBeGreaterThan(0);
-      expect(typeof recordType.name).toBe('string');
-      expect(recordType.name.length).toBeGreaterThan(0);
+      expect(typeof documentType.key).toBe('string');
+      expect(documentType.key.length).toBeGreaterThan(0);
+      expect(typeof documentType.name).toBe('string');
+      expect(documentType.name.length).toBeGreaterThan(0);
 
       // Verify fields
-      expect(Array.isArray(recordType.recordSchema.fields)).toBe(true);
-      expect(recordType.recordSchema.fields.length).toBeGreaterThan(0);
-      for (const field of recordType.recordSchema.fields) {
+      expect(Array.isArray(documentType.documentSchema.fields)).toBe(true);
+      expect(documentType.documentSchema.fields.length).toBeGreaterThan(0);
+      for (const field of documentType.documentSchema.fields) {
         expect(typeof field.key).toBe('string');
         expect(typeof field.name).toBe('string');
         expect(typeof field.type).toBe('string');
@@ -41,9 +41,9 @@ describe('RecordType JSON files schema validation', () => {
       }
 
       // Verify calculatedFields if present
-      if (recordType.recordSchema.calculatedFields) {
-        expect(Array.isArray(recordType.recordSchema.calculatedFields)).toBe(true);
-        for (const calcField of recordType.recordSchema.calculatedFields) {
+      if (documentType.documentSchema.calculatedFields) {
+        expect(Array.isArray(documentType.documentSchema.calculatedFields)).toBe(true);
+        for (const calcField of documentType.documentSchema.calculatedFields) {
           expect(typeof calcField.key).toBe('string');
           expect(calcField.key.length).toBeGreaterThan(0);
           expect(typeof calcField.template).toBe('string');
@@ -52,33 +52,33 @@ describe('RecordType JSON files schema validation', () => {
       }
 
       // Verify identity if present
-      if (recordType.recordSchema.identity) {
-        expect(typeof recordType.recordSchema.identity).toBe('object');
-        if (recordType.recordSchema.identity.id) {
-          expect(typeof recordType.recordSchema.identity.id).toBe('string');
-          expect(recordType.recordSchema.identity.id.length).toBeGreaterThan(0);
+      if (documentType.documentSchema.identity) {
+        expect(typeof documentType.documentSchema.identity).toBe('object');
+        if (documentType.documentSchema.identity.id) {
+          expect(typeof documentType.documentSchema.identity.id).toBe('string');
+          expect(documentType.documentSchema.identity.id.length).toBeGreaterThan(0);
         }
-        if (recordType.recordSchema.identity.idRecord) {
-          expect(typeof recordType.recordSchema.identity.idRecord).toBe('string');
-          expect(recordType.recordSchema.identity.idRecord.length).toBeGreaterThan(0);
+        if (documentType.documentSchema.identity.idDocument) {
+          expect(typeof documentType.documentSchema.identity.idDocument).toBe('string');
+          expect(documentType.documentSchema.identity.idDocument.length).toBeGreaterThan(0);
         }
-        if (recordType.recordSchema.identity.idGroup) {
-          expect(typeof recordType.recordSchema.identity.idGroup).toBe('string');
-          expect(recordType.recordSchema.identity.idGroup.length).toBeGreaterThan(0);
+        if (documentType.documentSchema.identity.idGroup) {
+          expect(typeof documentType.documentSchema.identity.idGroup).toBe('string');
+          expect(documentType.documentSchema.identity.idGroup.length).toBeGreaterThan(0);
         }
       }
 
       // Verify FormSchema projection matches tightened FormSchemaType
       const formSchema = {
-        key: recordType.key,
-        name: recordType.name,
-        recordSchema: recordType.recordSchema,
-        ...(recordType.recordUiConfig !== undefined && {
-          recordUiConfig: recordType.recordUiConfig,
+        key: documentType.key,
+        name: documentType.name,
+        documentSchema: documentType.documentSchema,
+        ...(documentType.documentUiConfig !== undefined && {
+          documentUiConfig: documentType.documentUiConfig,
         }),
       };
       expect(Value.Check(FormSchemaType, formSchema)).toBe(true);
-      expect(formSchema).not.toHaveProperty('recordWorkflowConfig');
+      expect(formSchema).not.toHaveProperty('documentWorkflowConfig');
       expect(formSchema).not.toHaveProperty('storageContextConfig');
     }
   });

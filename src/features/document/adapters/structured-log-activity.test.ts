@@ -49,7 +49,7 @@ describe('StructuredLogActivity driven adapter', () => {
       type: 'STRUCTURED_LOG',
       payload: {
         message: 'Patching state',
-        recordDataPatch: { patchedField: 'patched-value' },
+        documentDataPatch: { patchedField: 'patched-value' },
         contextVariables: { customVar: 'custom-val' },
       },
     };

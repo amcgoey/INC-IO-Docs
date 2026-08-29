@@ -4,8 +4,8 @@ import type {
   ExecutionContext,
   FileLocator,
   FormSchema,
-  ProcessRecordResult,
-  RecordType,
+  ProcessDocumentResult,
+  DocumentType,
 } from './domain';
 
 export type {
@@ -13,8 +13,8 @@ export type {
   ActivityOutput,
   ExecutionContext,
   FormSchema,
-  ProcessRecordResult,
-  RecordType,
+  ProcessDocumentResult,
+  DocumentType,
 };
 
 export interface ActivityHandler {
@@ -32,12 +32,12 @@ export interface ActivityDispatcherPort {
   ): Promise<ActivityOutput | void> | ActivityOutput | void;
 }
 
-export interface RecordServicePort {
+export interface DocumentServicePort {
   processRecord(
     payload?: unknown,
     eventName?: string,
     context?: ExecutionContext
-  ): Promise<ProcessRecordResult>;
+  ): Promise<ProcessDocumentResult>;
 }
 
 export interface SchemaQueryPort {
@@ -45,7 +45,7 @@ export interface SchemaQueryPort {
 }
 
 export interface ManifestRegistryPort {
-  loadAll(): Promise<RecordType[]>;
+  loadAll(): Promise<DocumentType[]>;
 }
 
 export type TemplateEvaluationContext = { [key: string]: unknown };

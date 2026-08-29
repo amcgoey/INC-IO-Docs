@@ -1,21 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { RecordService, type RecordType, type Record, type Activity } from '../src/features/record/domain';
+import { DocumentService, type DocumentType, type Document, type Activity } from '../src/features/document/domain';
 import { HandlebarsAdapter } from '../src/infrastructure/template-engine/handlebars-adapter';
-import { StructuredLogActivity } from '../src/features/record/adapters/structured-log-activity';
-import { ActivityEngine } from '../src/features/record/adapters/activity-engine';
-import type { ManifestRegistryPort } from '../src/features/record/ports';
+import { StructuredLogActivity } from '../src/features/document/adapters/structured-log-activity';
+import { ActivityEngine } from '../src/features/document/adapters/activity-engine';
+import type { ManifestRegistryPort } from '../src/features/document/ports';
 
 describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
-  let recordService: RecordService;
+  let documentService: DocumentService;
   let handlebarsAdapter: HandlebarsAdapter;
   let activityEngine: ActivityEngine;
   let structuredLogActivity: StructuredLogActivity;
   let consoleSpy: ReturnType<typeof vi.spyOn>;
 
-  const communicationProjectRecordType: RecordType = {
+  const communicationProjectDocumentType: DocumentType = {
     key: 'communication-project',
     name: 'Communication Project',
-    recordSchema: {
+    documentSchema: {
       fields: [
         {
           key: 'contact',
@@ -63,7 +63,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
       ],
       identity: {
         id: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
-        idRecord: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
+        idDocument: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
         idGroup: '{{contact}}',
       },
       options: {
@@ -79,7 +79,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
         ],
       },
     },
-    recordUiConfig: {
+    documentUiConfig: {
       events: {
         onSubmit: {
           rules: [
@@ -97,10 +97,10 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
       },
     },
     storageContextConfig: {
-      folder: '1Admin\\Communication\\\\{{Record.data.contact}}',
-      subfolder: 'Archive\\\\{{Record.data.direction.key}}',
+      folder: '1Admin\\Communication\\\\{{Document.data.contact}}',
+      subfolder: 'Archive\\\\{{Document.data.direction.key}}',
     },
-    recordWorkflowConfig: {
+    documentWorkflowConfig: {
       workflows: [
         {
           name: 'OutgoingCommWorkflow',
@@ -108,8 +108,8 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
             {
               type: 'LOG_RECORD',
               payload: {
-                targetPath: '{{StorageContext.folder}}\\\\{{Record.data.summary}}',
-                archivePath: '{{StorageContext.subfolder}}\\\\{{Record.data.testCalculatedField}}',
+                targetPath: '{{StorageContext.folder}}\\\\{{Document.data.summary}}',
+                archivePath: '{{StorageContext.subfolder}}\\\\{{Document.data.testCalculatedField}}',
               },
             },
           ],
@@ -120,8 +120,8 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
             {
               type: 'LOG_RECORD',
               payload: {
-                targetPath: '{{StorageContext.folder}}\\\\{{Record.data.summary}}',
-                archivePath: '{{StorageContext.subfolder}}\\\\{{Record.data.testCalculatedField}}',
+                targetPath: '{{StorageContext.folder}}\\\\{{Document.data.summary}}',
+                archivePath: '{{StorageContext.subfolder}}\\\\{{Document.data.testCalculatedField}}',
               },
             },
           ],
@@ -132,8 +132,8 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
             {
               type: 'LOG_RECORD',
               payload: {
-                targetPath: '{{StorageContext.folder}}\\\\{{Record.data.summary}}',
-                archivePath: '{{StorageContext.subfolder}}\\\\{{Record.data.testCalculatedField}}',
+                targetPath: '{{StorageContext.folder}}\\\\{{Document.data.summary}}',
+                archivePath: '{{StorageContext.subfolder}}\\\\{{Document.data.testCalculatedField}}',
               },
             },
           ],
@@ -146,23 +146,23 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const mockRegistry: ManifestRegistryPort = {
-      loadAll: vi.fn().mockResolvedValue([communicationProjectRecordType]),
+      loadAll: vi.fn().mockResolvedValue([communicationProjectDocumentType]),
     };
 
     handlebarsAdapter = new HandlebarsAdapter();
     structuredLogActivity = new StructuredLogActivity();
     activityEngine = new ActivityEngine([structuredLogActivity]);
-    recordService = new RecordService(activityEngine, mockRegistry, handlebarsAdapter);
+    documentService = new DocumentService(activityEngine, mockRegistry, handlebarsAdapter);
 
-    await recordService.initialize();
+    await documentService.initialize();
   });
 
   afterEach(() => {
     consoleSpy.mockRestore();
   });
 
-  it('routes and executes Record 1 (Client - AAA) with option enrichment, identities, calculated fields, and precise path resolution', async () => {
-    const record1: Record = {
+  it('routes and executes Document 1 (Client - AAA) with option enrichment, identities, calculated fields, and precise path resolution', async () => {
+    const record1: Document = {
       type: 'communication-project',
       data: {
         contact: '_Client - AAA',
@@ -172,7 +172,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
       },
     };
 
-    const result = await recordService.processRecord(record1, 'onSubmit');
+    const result = await documentService.processRecord(record1, 'onSubmit');
 
     expect(result.success).toBe(true);
     if (!result.success) return;
@@ -181,7 +181,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     expect(result.data).toEqual({
       type: 'communication-project',
       id: '_Client - AAA-260826-OT-ASR 06 Design Changes',
-      idRecord: '_Client - AAA-260826-OT-ASR 06 Design Changes',
+      idDocument: '_Client - AAA-260826-OT-ASR 06 Design Changes',
       idGroup: '_Client - AAA',
       data: {
         contact: '_Client - AAA',
@@ -210,8 +210,8 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(expectedPayload));
   });
 
-  it('routes and executes Record 2 (Architect - BBB) with option enrichment, identities, calculated fields, and precise path resolution', async () => {
-    const record2: Record = {
+  it('routes and executes Document 2 (Architect - BBB) with option enrichment, identities, calculated fields, and precise path resolution', async () => {
+    const record2: Document = {
       type: 'communication-project',
       data: {
         contact: 'Architect - BBB',
@@ -221,7 +221,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
       },
     };
 
-    const result = await recordService.processRecord(record2, 'onSubmit');
+    const result = await documentService.processRecord(record2, 'onSubmit');
 
     expect(result.success).toBe(true);
     if (!result.success) return;
@@ -230,7 +230,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     expect(result.data).toEqual({
       type: 'communication-project',
       id: 'Architect - BBB-260715-IN-CD Comments',
-      idRecord: 'Architect - BBB-260715-IN-CD Comments',
+      idDocument: 'Architect - BBB-260715-IN-CD Comments',
       idGroup: 'Architect - BBB',
       data: {
         contact: 'Architect - BBB',

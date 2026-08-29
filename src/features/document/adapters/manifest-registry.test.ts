@@ -23,15 +23,15 @@ describe('ManifestRegistryAdapter', () => {
     const schemasDir = path.join(dir, 'schemas');
     await fs.mkdir(schemasDir, { recursive: true });
 
-    const recordTypePaths: string[] = [];
+    const documentTypePaths: string[] = [];
     for (const [filename, schema] of Object.entries(schemas)) {
       const filePath = path.join(schemasDir, filename);
       await fs.writeFile(filePath, typeof schema === 'string' ? schema : JSON.stringify(schema), 'utf-8');
-      recordTypePaths.push(`./schemas/${filename}`);
+      documentTypePaths.push(`./schemas/${filename}`);
     }
 
     const manifestPath = path.join(dir, 'manifest.json');
-    const manifestContent = manifestOverrides ?? { recordTypes: recordTypePaths };
+    const manifestContent = manifestOverrides ?? { documentTypes: documentTypePaths };
     await fs.writeFile(
       manifestPath,
       typeof manifestContent === 'string' ? manifestContent : JSON.stringify(manifestContent),
@@ -68,7 +68,7 @@ describe('ManifestRegistryAdapter', () => {
     await expect(adapter.loadAll()).rejects.toThrow(/invalid json/i);
   });
 
-  it('throws an error if manifest structure is invalid (missing recordTypes array)', async () => {
+  it('throws an error if manifest structure is invalid (missing documentTypes array)', async () => {
     const manifestPath = path.join(tempDir, 'manifest.json');
     await fs.writeFile(manifestPath, JSON.stringify({ wrongField: [] }), 'utf-8');
 
@@ -76,11 +76,11 @@ describe('ManifestRegistryAdapter', () => {
     await expect(adapter.loadAll()).rejects.toThrow(/invalid manifest/i);
   });
 
-  it('throws an error if a referenced record type file is missing', async () => {
+  it('throws an error if a referenced document type file is missing', async () => {
     const manifestPath = path.join(tempDir, 'manifest.json');
     await fs.writeFile(
       manifestPath,
-      JSON.stringify({ recordTypes: ['./missing-type.json'] }),
+      JSON.stringify({ documentTypes: ['./missing-type.json'] }),
       'utf-8'
     );
 
@@ -88,33 +88,33 @@ describe('ManifestRegistryAdapter', () => {
     await expect(adapter.loadAll()).rejects.toThrow();
   });
 
-  it('throws an error if a referenced record type file contains malformed JSON', async () => {
+  it('throws an error if a referenced document type file contains malformed JSON', async () => {
     const manifestPath = await createManifestFixture(
       tempDir,
-      { 'invalid-json-type.json': '{ malformed record json }' }
+      { 'invalid-json-type.json': '{ malformed document json }' }
     );
 
     const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
     await expect(adapter.loadAll()).rejects.toThrow(/invalid json/i);
   });
 
-  it('anti-corruption layer: rejects record type JSON missing required fields', async () => {
+  it('anti-corruption layer: rejects document type JSON missing required fields', async () => {
     // Missing 'key' and 'fields'
     const manifestPath = await createManifestFixture(
       tempDir,
       {
         'invalid-type.json': {
-          name: 'Invalid Record Type',
-          recordSchema: {},
+          name: 'Invalid Document Type',
+          documentSchema: {},
         },
       }
     );
 
     const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
-    await expect(adapter.loadAll()).rejects.toThrow(/invalid RecordType schema/i);
+    await expect(adapter.loadAll()).rejects.toThrow(/invalid DocumentType schema/i);
   });
 
-  it('anti-corruption layer: rejects record type JSON with invalid field definitions', async () => {
+  it('anti-corruption layer: rejects document type JSON with invalid field definitions', async () => {
     // Field is missing 'type' and 'name'
     const manifestPath = await createManifestFixture(
       tempDir,
@@ -122,7 +122,7 @@ describe('ManifestRegistryAdapter', () => {
         'invalid-field.json': {
           key: 'invalid-field-type',
           name: 'Invalid Field Type',
-          recordSchema: {
+          documentSchema: {
             fields: [
               {
                 key: 'BadField',
@@ -135,14 +135,14 @@ describe('ManifestRegistryAdapter', () => {
     );
 
     const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
-    await expect(adapter.loadAll()).rejects.toThrow(/invalid RecordType schema/i);
+    await expect(adapter.loadAll()).rejects.toThrow(/invalid DocumentType schema/i);
   });
 
-  it('loads and returns validated RecordType objects for valid manifest and schema files', async () => {
+  it('loads and returns validated DocumentType objects for valid manifest and schema files', async () => {
     const commSchema = {
       key: 'comm-project',
       name: 'Communication Project',
-      recordSchema: {
+      documentSchema: {
         fields: [
           {
             key: 'Contact',
@@ -152,7 +152,7 @@ describe('ManifestRegistryAdapter', () => {
           },
         ],
       },
-      recordUiConfig: {
+      documentUiConfig: {
         events: {
           onSubmit: {
             catchAllWorkflow: 'SubmitComm',
@@ -164,7 +164,7 @@ describe('ManifestRegistryAdapter', () => {
     const submittalSchema = {
       key: 'submittal',
       name: 'Submittal',
-      recordSchema: {
+      documentSchema: {
         fields: [
           {
             key: 'SpecNumber',
@@ -189,11 +189,11 @@ describe('ManifestRegistryAdapter', () => {
     expect(result[1]).toEqual(submittalSchema);
   });
 
-  it('loads RecordType with RecordField omitting required property', async () => {
+  it('loads DocumentType with DocumentField omitting required property', async () => {
     const optionalFieldSchema = {
-      key: 'record-with-optional-field',
-      name: 'Record With Optional Field',
-      recordSchema: {
+      key: 'document-with-optional-field',
+      name: 'Document With Optional Field',
+      documentSchema: {
         fields: [
           {
             key: 'FieldWithoutReq',
@@ -212,7 +212,7 @@ describe('ManifestRegistryAdapter', () => {
     const result = await adapter.loadAll();
 
     expect(result).toHaveLength(1);
-    expect(result[0].recordSchema.fields[0].required).toBeUndefined();
+    expect(result[0].documentSchema.fields[0].required).toBeUndefined();
     expect(result[0]).toEqual(optionalFieldSchema);
   });
 
@@ -222,7 +222,7 @@ describe('ManifestRegistryAdapter', () => {
       name: 'Extra Props Type',
       unknownTopLevelProp: 'to-be-stripped',
       anotherSecretKey: 9999,
-      recordSchema: {
+      documentSchema: {
         fields: [
           {
             key: 'FieldOne',
@@ -235,7 +235,7 @@ describe('ManifestRegistryAdapter', () => {
         ],
         undeclaredSchemaProp: 'should-also-be-stripped',
       },
-      recordUiConfig: {
+      documentUiConfig: {
         events: {
           onSubmit: {
             catchAllWorkflow: 'SubmitExtra',
@@ -250,7 +250,7 @@ describe('ManifestRegistryAdapter', () => {
       tempDir,
       { 'extra.json': rawSchemaWithExtraProps },
       {
-        recordTypes: ['./schemas/extra.json'],
+        documentTypes: ['./schemas/extra.json'],
         extraManifestProp: 'remove-me',
       }
     );
@@ -262,7 +262,7 @@ describe('ManifestRegistryAdapter', () => {
     expect(result[0]).toEqual({
       key: 'extra-props-type',
       name: 'Extra Props Type',
-      recordSchema: {
+      documentSchema: {
         fields: [
           {
             key: 'FieldOne',
@@ -272,7 +272,7 @@ describe('ManifestRegistryAdapter', () => {
           },
         ],
       },
-      recordUiConfig: {
+      documentUiConfig: {
         events: {
           onSubmit: {
             catchAllWorkflow: 'SubmitExtra',
@@ -283,19 +283,19 @@ describe('ManifestRegistryAdapter', () => {
 
     expect(result[0]).not.toHaveProperty('unknownTopLevelProp');
     expect(result[0]).not.toHaveProperty('anotherSecretKey');
-    expect(result[0].recordSchema).not.toHaveProperty('undeclaredSchemaProp');
-    expect(result[0].recordSchema.fields[0]).not.toHaveProperty('undeclaredFieldProp');
-    expect(result[0].recordSchema.fields[0]).not.toHaveProperty('extraObj');
-    expect(result[0].recordUiConfig).not.toHaveProperty('bogusUiProp');
-    expect(result[0].recordUiConfig?.events?.onSubmit).not.toHaveProperty('extraUiProp');
+    expect(result[0].documentSchema).not.toHaveProperty('undeclaredSchemaProp');
+    expect(result[0].documentSchema.fields[0]).not.toHaveProperty('undeclaredFieldProp');
+    expect(result[0].documentSchema.fields[0]).not.toHaveProperty('extraObj');
+    expect(result[0].documentUiConfig).not.toHaveProperty('bogusUiProp');
+    expect(result[0].documentUiConfig?.events?.onSubmit).not.toHaveProperty('extraUiProp');
   });
 
   describe('calculatedFields template validation on loadAll', () => {
-    it('successfully loads record types with valid calculatedFields templates when templateEvaluator is provided', async () => {
-      const recordType = {
+    it('successfully loads document types with valid calculatedFields templates when templateEvaluator is provided', async () => {
+      const documentType = {
         key: 'calc-valid',
         name: 'Calc Valid',
-        recordSchema: {
+        documentSchema: {
           fields: [
             { key: 'Title', name: 'Title', type: 'string', required: true },
             { key: 'Category', name: 'Category', type: 'string', required: true },
@@ -310,7 +310,7 @@ describe('ManifestRegistryAdapter', () => {
       };
 
       const manifestPath = await createManifestFixture(tempDir, {
-        'calc-valid.json': recordType,
+        'calc-valid.json': documentType,
       });
 
       const mockEvaluator = {
@@ -325,7 +325,7 @@ describe('ManifestRegistryAdapter', () => {
 
       const result = await adapter.loadAll();
       expect(result).toHaveLength(1);
-      expect(result[0].recordSchema.calculatedFields).toEqual([
+      expect(result[0].documentSchema.calculatedFields).toEqual([
         {
           key: 'FullCode',
           template: '{{Category}}-{{Title}}',
@@ -338,10 +338,10 @@ describe('ManifestRegistryAdapter', () => {
     });
 
     it('includes lookup field tuple properties in allowedVariables for template validation', async () => {
-      const recordType = {
+      const documentType = {
         key: 'calc-lookup',
         name: 'Calc Lookup',
-        recordSchema: {
+        documentSchema: {
           fields: [
             { key: 'Title', name: 'Title', type: 'string', required: true },
             {
@@ -371,7 +371,7 @@ describe('ManifestRegistryAdapter', () => {
       };
 
       const manifestPath = await createManifestFixture(tempDir, {
-        'calc-lookup.json': recordType,
+        'calc-lookup.json': documentType,
       });
 
       const mockEvaluator = {
@@ -399,10 +399,10 @@ describe('ManifestRegistryAdapter', () => {
     });
 
     it('throws explicit fatal domain error if a calculatedFields template references a missing field (e.g. {{DoesNotExist}})', async () => {
-      const recordType = {
+      const documentType = {
         key: 'calc-invalid',
         name: 'Calc Invalid',
-        recordSchema: {
+        documentSchema: {
           fields: [
             { key: 'Title', name: 'Title', type: 'string', required: true },
           ],
@@ -416,7 +416,7 @@ describe('ManifestRegistryAdapter', () => {
       };
 
       const manifestPath = await createManifestFixture(tempDir, {
-        'calc-invalid.json': recordType,
+        'calc-invalid.json': documentType,
       });
 
       const mockEvaluator = {
@@ -430,7 +430,7 @@ describe('ManifestRegistryAdapter', () => {
       });
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid template in "\.\/schemas\/calc-invalid\.json" from manifest ".*": Invalid template at "recordSchema\.calculatedFields\[0\]\.template": references unknown fields or is malformed\./
+        /Invalid template in "\.\/schemas\/calc-invalid\.json" from manifest ".*": Invalid template at "documentSchema\.calculatedFields\[0\]\.template": references unknown fields or is malformed\./
       );
       expect(mockEvaluator.validate).toHaveBeenCalledWith(
         '{{Title}}-{{DoesNotExist}}',
@@ -440,11 +440,11 @@ describe('ManifestRegistryAdapter', () => {
   });
 
   describe('identity template validation on loadAll', () => {
-    it('successfully loads record types with valid identity templates when templateEvaluator is provided', async () => {
-      const recordType = {
+    it('successfully loads document types with valid identity templates when templateEvaluator is provided', async () => {
+      const documentType = {
         key: 'identity-valid',
         name: 'Identity Valid',
-        recordSchema: {
+        documentSchema: {
           fields: [
             { key: 'contact', name: 'Contact', type: 'string', required: true },
             { key: 'date', name: 'Date', type: 'string', required: true },
@@ -453,14 +453,14 @@ describe('ManifestRegistryAdapter', () => {
           ],
           identity: {
             id: '{{contact}}-{{date}}-{{direction}}-{{description}}',
-            idRecord: '{{contact}}-{{date}}-{{direction}}-{{description}}',
+            idDocument: '{{contact}}-{{date}}-{{direction}}-{{description}}',
             idGroup: '{{contact}}',
           },
         },
       };
 
       const manifestPath = await createManifestFixture(tempDir, {
-        'identity-valid.json': recordType,
+        'identity-valid.json': documentType,
       });
 
       const mockEvaluator = {
@@ -475,9 +475,9 @@ describe('ManifestRegistryAdapter', () => {
 
       const result = await adapter.loadAll();
       expect(result).toHaveLength(1);
-      expect(result[0].recordSchema.identity).toEqual({
+      expect(result[0].documentSchema.identity).toEqual({
         id: '{{contact}}-{{date}}-{{direction}}-{{description}}',
-        idRecord: '{{contact}}-{{date}}-{{direction}}-{{description}}',
+        idDocument: '{{contact}}-{{date}}-{{direction}}-{{description}}',
         idGroup: '{{contact}}',
       });
       expect(mockEvaluator.validate).toHaveBeenCalledWith(
@@ -491,10 +491,10 @@ describe('ManifestRegistryAdapter', () => {
     });
 
     it('throws explicit fatal domain error if an identity template references an unknown field or is malformed', async () => {
-      const recordType = {
+      const documentType = {
         key: 'identity-invalid',
         name: 'Identity Invalid',
-        recordSchema: {
+        documentSchema: {
           fields: [
             { key: 'contact', name: 'Contact', type: 'string', required: true },
           ],
@@ -505,7 +505,7 @@ describe('ManifestRegistryAdapter', () => {
       };
 
       const manifestPath = await createManifestFixture(tempDir, {
-        'identity-invalid.json': recordType,
+        'identity-invalid.json': documentType,
       });
 
       const mockEvaluator = {
@@ -519,20 +519,20 @@ describe('ManifestRegistryAdapter', () => {
       });
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid template in "\.\/schemas\/identity-invalid\.json" from manifest ".*": Invalid template at "recordSchema\.identity\.id": references unknown fields or is malformed\./
+        /Invalid template in "\.\/schemas\/identity-invalid\.json" from manifest ".*": Invalid template at "documentSchema\.identity\.id": references unknown fields or is malformed\./
       );
     });
   });
 
   describe('workflow and storageContext template validation on loadAll', () => {
     it('throws explicit fatal domain error if a workflow activity template is invalid', async () => {
-      const recordType = {
+      const documentType = {
         key: 'workflow-invalid',
         name: 'Workflow Invalid',
-        recordSchema: {
+        documentSchema: {
           fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
         },
-        recordWorkflowConfig: {
+        documentWorkflowConfig: {
           workflows: [
             {
               name: 'TestWorkflow',
@@ -540,7 +540,7 @@ describe('ManifestRegistryAdapter', () => {
                 {
                   type: 'LOG_RECORD',
                   payload: {
-                    folder: '{{Record.data.title}}-{{InvalidField}}',
+                    folder: '{{Document.data.title}}-{{InvalidField}}',
                   },
                 },
               ],
@@ -550,7 +550,7 @@ describe('ManifestRegistryAdapter', () => {
       };
 
       const manifestPath = await createManifestFixture(tempDir, {
-        'workflow-invalid.json': recordType,
+        'workflow-invalid.json': documentType,
       });
 
       const mockEvaluator = {
@@ -564,24 +564,24 @@ describe('ManifestRegistryAdapter', () => {
       });
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid template in "\.\/schemas\/workflow-invalid\.json" from manifest ".*": Invalid template at "recordWorkflowConfig\.workflows\[0\]\.activitySequence\[0\]\.payload\.folder": references unknown fields or is malformed\./
+        /Invalid template in "\.\/schemas\/workflow-invalid\.json" from manifest ".*": Invalid template at "documentWorkflowConfig\.workflows\[0\]\.activitySequence\[0\]\.payload\.folder": references unknown fields or is malformed\./
       );
     });
 
     it('throws explicit fatal domain error if a storageContextConfig template is invalid', async () => {
-      const recordType = {
+      const documentType = {
         key: 'storage-invalid',
         name: 'Storage Invalid',
-        recordSchema: {
+        documentSchema: {
           fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
         },
         storageContextConfig: {
-          targetFolder: '{{Record.data.unknownStorageField}}',
+          targetFolder: '{{Document.data.unknownStorageField}}',
         },
       };
 
       const manifestPath = await createManifestFixture(tempDir, {
-        'storage-invalid.json': recordType,
+        'storage-invalid.json': documentType,
       });
 
       const mockEvaluator = {
@@ -606,12 +606,12 @@ describe('ManifestRegistryAdapter', () => {
         tempDir,
         {},
         {
-          recordTypes: [],
+          documentTypes: [],
           configuration: {
             workspace: {
               appTitle: 'Custom Docs App',
               actionButtonText: 'Submit Document',
-              defaultRecordType: 'custom-type',
+              defaultDocumentType: 'custom-type',
               defaultEventName: 'onCustomSubmit',
             },
             drive: {
@@ -641,7 +641,7 @@ describe('ManifestRegistryAdapter', () => {
       expect(wsConfig).toEqual({
         appTitle: 'Custom Docs App',
         actionButtonText: 'Submit Document',
-        defaultRecordType: 'custom-type',
+        defaultDocumentType: 'custom-type',
         defaultEventName: 'onCustomSubmit',
       });
     });
@@ -650,7 +650,7 @@ describe('ManifestRegistryAdapter', () => {
       const manifestPath = await createManifestFixture(
         tempDir,
         {},
-        { recordTypes: [] }
+        { documentTypes: [] }
       );
 
       const adapter = new ManifestRegistryAdapter({
@@ -670,7 +670,7 @@ describe('ManifestRegistryAdapter', () => {
         tempDir,
         {},
         {
-          recordTypes: [],
+          documentTypes: [],
           configuration: {
             workspace: { appTitle: 'Initial Title' },
           },
@@ -689,7 +689,7 @@ describe('ManifestRegistryAdapter', () => {
       await fs.writeFile(
         manifestPath,
         JSON.stringify({
-          recordTypes: [],
+          documentTypes: [],
           configuration: { workspace: { appTitle: 'Mutated Title' } },
         }),
         'utf-8'
@@ -704,7 +704,7 @@ describe('ManifestRegistryAdapter', () => {
         tempDir,
         {},
         {
-          recordTypes: [],
+          documentTypes: [],
           configuration: {
             drive: {
               maxRetries: 'five', // invalid type
