@@ -30,22 +30,18 @@ export class DriveActivityHandler implements ActivityHandler {
     activity: Activity,
     context?: ExecutionContext
   ): Promise<ActivityOutput> {
-    let fileId =
-      typeof activity.payload?.fileId === 'string' ? activity.payload.fileId : undefined;
+    const { resources, credentials } = context ?? {};
+    const payload = activity.payload ?? {};
 
-    if (!fileId && context?.resources?.primaryTargetId) {
-      fileId = context.resources.primaryTargetId;
-    }
+    const payloadFileId =
+      typeof payload.fileId === 'string' ? payload.fileId : undefined;
+    const fileId = payloadFileId ?? resources?.primaryTargetId;
 
     if (!fileId) {
       throw new Error('DriveActivityHandler: No fileId found in activity payload or execution context');
     }
 
-    let auth = this.options.fallbackAuth;
-    if (context?.credentials?.oauthToken) {
-      auth = context.credentials.oauthToken;
-    }
-
+    const auth = credentials?.oauthToken ?? this.options.fallbackAuth;
     const driveOptions = auth ? { auth } : undefined;
 
     let driveConfig;
@@ -63,8 +59,8 @@ export class DriveActivityHandler implements ActivityHandler {
     const defaultTargetName =
       driveConfig?.defaultFolderName ?? this.options.defaultFolderName ?? 'Unfiled';
     const folderName =
-      typeof activity.payload?.folderName === 'string'
-        ? activity.payload.folderName
+      typeof payload.folderName === 'string'
+        ? payload.folderName
         : defaultTargetName;
 
     try {

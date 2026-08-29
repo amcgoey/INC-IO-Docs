@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import {
+  createWorkspaceRecordExecutionContext,
   extractWorkspaceExecutionContext,
   findLatestFileLocator,
   WorkspaceRecordExecutionContextSchema,
   type WorkspaceEventPayload,
+  type WorkspaceExecutionContext,
   type WorkspaceRecordExecutionContext,
 } from './domain';
 
@@ -141,6 +143,45 @@ describe('Workspace Domain Helpers', () => {
         resources: 12345,
       };
       expect(Value.Check(WorkspaceRecordExecutionContextSchema, invalidResources)).toBe(false);
+    });
+  });
+
+  describe('createWorkspaceRecordExecutionContext', () => {
+    it('creates WorkspaceRecordExecutionContext with credentials and resources when present', () => {
+      const context: WorkspaceExecutionContext = {
+        userOAuthToken: 'ya29.my-token',
+        selectedItems: [
+          { id: 'target-file-123', title: 'Doc.pdf' },
+        ],
+      };
+
+      const result = createWorkspaceRecordExecutionContext(context);
+      expect(result).toEqual({
+        credentials: { oauthToken: 'ya29.my-token' },
+        resources: { primaryTargetId: 'target-file-123' },
+      });
+    });
+
+    it('creates empty object when token and selected items are not present', () => {
+      const context: WorkspaceExecutionContext = {};
+      const result = createWorkspaceRecordExecutionContext(context);
+      expect(result).toEqual({});
+    });
+
+    it('handles context with only token or only selected item', () => {
+      const tokenOnly: WorkspaceExecutionContext = {
+        userOAuthToken: 'ya29.token-only',
+      };
+      expect(createWorkspaceRecordExecutionContext(tokenOnly)).toEqual({
+        credentials: { oauthToken: 'ya29.token-only' },
+      });
+
+      const itemOnly: WorkspaceExecutionContext = {
+        selectedItems: [{ id: 'item-only-456' }],
+      };
+      expect(createWorkspaceRecordExecutionContext(itemOnly)).toEqual({
+        resources: { primaryTargetId: 'item-only-456' },
+      });
     });
   });
 });

@@ -90,13 +90,19 @@ export class HandlebarsAdapter {
 
       const referencedVariables = this.extractVariables(template);
       const allowedSet = new Set(allowedVariables);
+      const hasCatchAll = allowedSet.has('*');
+      const wildcardPrefixes = allowedVariables
+        .filter((pattern) => pattern.endsWith('.*') || (pattern.endsWith('*') && pattern !== '*'))
+        .map((pattern) => (pattern.endsWith('.*') ? pattern.slice(0, -2) : pattern.slice(0, -1)));
 
       return referencedVariables.every((variable) => {
-        if (allowedSet.has(variable)) {
+        if (hasCatchAll || allowedSet.has(variable)) {
           return true;
         }
-        if (variable.startsWith('Context.') && allowedSet.has('Context')) {
-          return true;
+        for (const prefix of wildcardPrefixes) {
+          if (variable === prefix || variable.startsWith(`${prefix}.`)) {
+            return true;
+          }
         }
         return false;
       });

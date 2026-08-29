@@ -5,6 +5,7 @@ import type {
   WorkspaceFileLocator,
 } from '../ports';
 import {
+  createWorkspaceRecordExecutionContext,
   extractWorkspaceExecutionContext,
   findLatestFileLocator,
   type WorkspaceExecutionContext,
@@ -162,10 +163,7 @@ export function registerWorkspaceFeatureRoutes(
             },
           };
 
-          const executionContext = {
-            ...(context.userOAuthToken ? { credentials: { oauthToken: context.userOAuthToken } } : {}),
-            ...(selectedItem?.id ? { resources: { primaryTargetId: selectedItem.id } } : {}),
-          };
+          const executionContext = createWorkspaceRecordExecutionContext(context);
 
           const result = await recordService.processRecord(
             recordPayload,

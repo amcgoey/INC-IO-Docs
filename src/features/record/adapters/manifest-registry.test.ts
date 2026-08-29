@@ -430,7 +430,7 @@ describe('ManifestRegistryAdapter', () => {
       });
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid template in "\.\/schemas\/calc-invalid\.json": Invalid template at "recordSchema\.calculatedFields\[0\]\.template": references unknown fields or is malformed\./
+        /Invalid template in "\.\/schemas\/calc-invalid\.json" from manifest ".*": Invalid template at "recordSchema\.calculatedFields\[0\]\.template": references unknown fields or is malformed\./
       );
       expect(mockEvaluator.validate).toHaveBeenCalledWith(
         '{{Title}}-{{DoesNotExist}}',
@@ -519,7 +519,7 @@ describe('ManifestRegistryAdapter', () => {
       });
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid template in "\.\/schemas\/identity-invalid\.json": Invalid template at "recordSchema\.identity\.id": references unknown fields or is malformed\./
+        /Invalid template in "\.\/schemas\/identity-invalid\.json" from manifest ".*": Invalid template at "recordSchema\.identity\.id": references unknown fields or is malformed\./
       );
     });
   });
@@ -564,7 +564,7 @@ describe('ManifestRegistryAdapter', () => {
       });
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid template in "\.\/schemas\/workflow-invalid\.json": Invalid template at "recordWorkflowConfig\.workflows\[0\]\.activitySequence\[0\]\.payload\.folder": references unknown fields or is malformed\./
+        /Invalid template in "\.\/schemas\/workflow-invalid\.json" from manifest ".*": Invalid template at "recordWorkflowConfig\.workflows\[0\]\.activitySequence\[0\]\.payload\.folder": references unknown fields or is malformed\./
       );
     });
 
@@ -595,7 +595,7 @@ describe('ManifestRegistryAdapter', () => {
       });
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid template in "\.\/schemas\/storage-invalid\.json": Invalid template at "storageContextConfig\.targetFolder": references unknown fields or is malformed\./
+        /Invalid template in "\.\/schemas\/storage-invalid\.json" from manifest ".*": Invalid template at "storageContextConfig\.targetFolder": references unknown fields or is malformed\./
       );
     });
   });

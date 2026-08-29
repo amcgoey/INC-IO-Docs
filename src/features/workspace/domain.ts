@@ -101,6 +101,16 @@ export function extractWorkspaceExecutionContext(
   };
 }
 
+export function createWorkspaceRecordExecutionContext(
+  context: WorkspaceExecutionContext
+): WorkspaceRecordExecutionContext {
+  const selectedItem = context.selectedItems?.[0];
+  return {
+    ...(context.userOAuthToken ? { credentials: { oauthToken: context.userOAuthToken } } : {}),
+    ...(selectedItem?.id ? { resources: { primaryTargetId: selectedItem.id } } : {}),
+  };
+}
+
 export function findLatestFileLocator<TFile extends { name: string }>(
   outputs?: { files?: TFile[] | undefined }[] | undefined
 ): TFile | undefined {

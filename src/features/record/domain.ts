@@ -618,13 +618,15 @@ function getBaseVariables(manifest: RecordType): string[] {
   for (const field of manifest.recordSchema.fields) {
     vars.push(field.key);
     if (field.options) {
-      vars.push(`${field.key}.${field.options.key}`);
-      vars.push(`${field.key}.${field.options.name}`);
+      if (field.options.key) {
+        vars.push(`${field.key}.${field.options.key}`);
+      }
+      if (field.options.name) {
+        vars.push(`${field.key}.${field.options.name}`);
+      }
       const optionTuples = manifest.recordSchema.options?.[field.options.source] ?? [];
       for (const tuple of optionTuples) {
-        for (const tupleKey of Object.keys(tuple)) {
-          vars.push(`${field.key}.${tupleKey}`);
-        }
+        vars.push(...flattenObjectPaths(tuple, field.key));
       }
     }
   }
@@ -660,7 +662,7 @@ function getExecutionVariables(manifest: RecordType, baseVariables: string[]): s
     vars.push(...storagePaths);
   }
 
-  vars.push('Context');
+  vars.push('Context.*');
 
   return Array.from(new Set(vars));
 }

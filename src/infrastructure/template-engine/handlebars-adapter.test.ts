@@ -70,19 +70,34 @@ describe('HandlebarsAdapter', () => {
       expect(adapter.validate(template, ['Title', 'uppercase'])).toBe(false);
     });
 
-    it('natively supports namespace/root wildcarding when Context is in allowedVariables', () => {
+    it('natively supports namespace/root wildcarding with wildcard patterns (e.g. Context.*)', () => {
       const template = '{{Context.generatedFolderId}}-{{Context.stepResults.destinationPath}}-{{Context}}';
-      expect(adapter.validate(template, ['Context'])).toBe(true);
+      expect(adapter.validate(template, ['Context.*'])).toBe(true);
     });
 
-    it('rejects Context.* variables when Context is not in allowedVariables', () => {
+    it('supports arbitrary namespace wildcard patterns (e.g. DynamicData.*)', () => {
+      const template = '{{DynamicData.user.id}}-{{DynamicData.meta}}';
+      expect(adapter.validate(template, ['DynamicData.*'])).toBe(true);
+    });
+
+    it('supports global wildcard pattern (*)', () => {
+      const template = '{{Anything.goes}}-{{RandomVar}}';
+      expect(adapter.validate(template, ['*'])).toBe(true);
+    });
+
+    it('rejects variables when wildcard pattern does not match prefix boundary', () => {
+      const template = '{{Contextual}}';
+      expect(adapter.validate(template, ['Context.*'])).toBe(false);
+    });
+
+    it('rejects Context.* variables when Context.* is not in allowedVariables', () => {
       const template = '{{Context.generatedFolderId}}';
       expect(adapter.validate(template, ['Date', 'Direction'])).toBe(false);
     });
 
     it('does not wildcard other namespaces that are not authorized', () => {
       const template = '{{OtherNamespace.foo}}';
-      expect(adapter.validate(template, ['Context'])).toBe(false);
+      expect(adapter.validate(template, ['Context.*'])).toBe(false);
     });
   });
 

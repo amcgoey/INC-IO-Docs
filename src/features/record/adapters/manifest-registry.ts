@@ -192,7 +192,7 @@ export class ManifestRegistryAdapter
       );
       if (templateErrors.length > 0) {
         throw new Error(
-          `Invalid template in "${recordTypeRelPath}": ${templateErrors.join(', ')}`
+          `Invalid template in "${recordTypeRelPath}" from manifest "${this.manifestPath}": ${templateErrors.join(', ')}`
         );
       }
 

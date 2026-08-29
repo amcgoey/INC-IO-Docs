@@ -3429,7 +3429,14 @@ describe('Record domain', () => {
       validate: vi.fn().mockImplementation((template: string, allowedVars: string[]) => {
         const matches = Array.from(template.matchAll(/\{\{\{?\s*([a-zA-Z0-9_$.-]+)\s*\}?\}\}/g)).map((m) => m[1]);
         const allowed = new Set(allowedVars);
-        return matches.every((v) => allowed.has(v) || (v.startsWith('Context.') && allowed.has('Context')));
+        const hasCatchAll = allowed.has('*');
+        const wildcardPrefixes = allowedVars
+          .filter((p) => p.endsWith('.*') || (p.endsWith('*') && p !== '*'))
+          .map((p) => (p.endsWith('.*') ? p.slice(0, -2) : p.slice(0, -1)));
+        return matches.every((v) => {
+          if (hasCatchAll || allowed.has(v)) return true;
+          return wildcardPrefixes.some((prefix) => v === prefix || v.startsWith(`${prefix}.`));
+        });
       }),
       evaluate: vi.fn().mockImplementation((tpl: string) => tpl),
     });
@@ -3553,6 +3560,66 @@ describe('Record domain', () => {
                     label: '{{Record.data.category.label}}',
                     customProp: '{{Record.data.category.customTupleProp}}',
                     calc: '{{Record.data.fullLabel}}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const errors = validateManifestTemplates(manifest, evaluator);
+      expect(errors).toEqual([]);
+    });
+
+    it('recursively expands deeply nested option tuple properties in base variables', () => {
+      const evaluator = createEvaluator();
+      const manifest: RecordType = {
+        key: 'nested-option-test',
+        name: 'Nested Option Test',
+        recordSchema: {
+          fields: [
+            {
+              key: 'department',
+              name: 'Department',
+              type: 'string',
+              options: {
+                source: 'departmentSource',
+                key: 'code',
+                name: 'title',
+              },
+            },
+          ],
+          options: {
+            departmentSource: [
+              {
+                code: 'ENG',
+                title: 'Engineering',
+                metadata: {
+                  division: {
+                    id: 'DIV-10',
+                    tag: 'Core',
+                  },
+                },
+              },
+            ],
+          },
+          calculatedFields: [
+            {
+              key: 'divisionTag',
+              template: '{{department.metadata.division.id}}-{{department.metadata.division.tag}}',
+            },
+          ],
+        },
+        recordWorkflowConfig: {
+          workflows: [
+            {
+              name: 'W1',
+              activitySequence: [
+                {
+                  type: 'ACT_1',
+                  payload: {
+                    divTag: '{{Record.data.department.metadata.division.tag}}',
                   },
                 },
               ],
