@@ -40,7 +40,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/nock": "^10.0.3",
     "@types/node": "^26.2.0",
     "eslint": "^10.8.1",
     "knip": "^6.32.2",
