@@ -30,7 +30,6 @@ import {
   type StorageContextConfig,
 } from './domain';
 import type { ActivityDispatcherPort, ExecutionContext, ManifestRegistryPort, TemplateEvaluationContext, TemplateEvaluatorPort } from './ports';
-import { StructuredLogActivity } from './adapters/structured-log-activity';
 
 
 
@@ -3107,9 +3106,7 @@ describe('Record domain', () => {
       });
     });
 
-    it('works end-to-end with StructuredLogActivity emitting patch to subsequent activity', async () => {
-      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
+    it('propagates recordDataPatch from activity output to subsequent activity in sequence', async () => {
       const mockRecordTypes: RecordType[] = [
         {
           key: 'log-pipeline',
@@ -3132,14 +3129,13 @@ describe('Record domain', () => {
                 name: 'LogWorkflow',
                 activitySequence: [
                   {
-                    type: 'LOG_RECORD',
+                    type: 'STEP_ONE',
                     payload: {
                       message: 'First step',
-                      recordDataPatch: { enrichedState: 'state-123' },
                     },
                   },
                   {
-                    type: 'LOG_RECORD',
+                    type: 'STEP_TWO',
                     payload: {
                       message: 'Second step using enriched state',
                       receivedEnrichedState: '{{Record.data.enrichedState}}',
@@ -3166,8 +3162,18 @@ describe('Record domain', () => {
         }),
       };
 
-      const structuredLogActivity = new StructuredLogActivity();
-      const service = new RecordService(structuredLogActivity, customRegistry, mockEvaluator);
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation((activity: Activity) => {
+          if (activity.type === 'STEP_ONE') {
+            return {
+              success: true,
+              recordDataPatch: { enrichedState: 'state-123' },
+            };
+          }
+          return undefined;
+        }),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputRecord: Record = {
@@ -3189,8 +3195,6 @@ describe('Record domain', () => {
         message: 'Second step using enriched state',
         receivedEnrichedState: 'state-123',
       });
-
-      consoleSpy.mockRestore();
     });
 
     it('halts workflow execution and returns failure when activity returns success: false with error', async () => {

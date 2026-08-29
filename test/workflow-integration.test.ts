@@ -2,11 +2,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RecordService, type RecordType, type Record, type Activity } from '../src/features/record/domain';
 import { HandlebarsAdapter } from '../src/infrastructure/template-engine/handlebars-adapter';
 import { StructuredLogActivity } from '../src/features/record/adapters/structured-log-activity';
+import { ActivityEngine } from '../src/features/record/adapters/activity-engine';
 import type { ManifestRegistryPort } from '../src/features/record/ports';
 
 describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
   let recordService: RecordService;
   let handlebarsAdapter: HandlebarsAdapter;
+  let activityEngine: ActivityEngine;
   let structuredLogActivity: StructuredLogActivity;
   let consoleSpy: ReturnType<typeof vi.spyOn>;
 
@@ -104,7 +106,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
           name: 'OutgoingCommWorkflow',
           activitySequence: [
             {
-              type: 'CREATE_COMMUNICATION',
+              type: 'LOG_RECORD',
               payload: {
                 targetPath: '{{StorageContext.folder}}\\\\{{Record.data.summary}}',
                 archivePath: '{{StorageContext.subfolder}}\\\\{{Record.data.testCalculatedField}}',
@@ -116,7 +118,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
           name: 'IncomingCommWorkflow',
           activitySequence: [
             {
-              type: 'CREATE_COMMUNICATION',
+              type: 'LOG_RECORD',
               payload: {
                 targetPath: '{{StorageContext.folder}}\\\\{{Record.data.summary}}',
                 archivePath: '{{StorageContext.subfolder}}\\\\{{Record.data.testCalculatedField}}',
@@ -128,7 +130,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
           name: 'DefaultCommWorkflow',
           activitySequence: [
             {
-              type: 'CREATE_COMMUNICATION',
+              type: 'LOG_RECORD',
               payload: {
                 targetPath: '{{StorageContext.folder}}\\\\{{Record.data.summary}}',
                 archivePath: '{{StorageContext.subfolder}}\\\\{{Record.data.testCalculatedField}}',
@@ -149,7 +151,8 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
 
     handlebarsAdapter = new HandlebarsAdapter();
     structuredLogActivity = new StructuredLogActivity();
-    recordService = new RecordService(structuredLogActivity, mockRegistry, handlebarsAdapter);
+    activityEngine = new ActivityEngine([structuredLogActivity]);
+    recordService = new RecordService(activityEngine, mockRegistry, handlebarsAdapter);
 
     await recordService.initialize();
   });
@@ -199,7 +202,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     };
 
     const expectedActivity: Activity = {
-      type: 'CREATE_COMMUNICATION',
+      type: 'LOG_RECORD',
       payload: expectedPayload,
     };
 
@@ -248,7 +251,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     };
 
     const expectedActivity: Activity = {
-      type: 'CREATE_COMMUNICATION',
+      type: 'LOG_RECORD',
       payload: expectedPayload,
     };
 

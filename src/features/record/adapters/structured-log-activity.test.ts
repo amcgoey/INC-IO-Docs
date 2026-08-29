@@ -3,7 +3,7 @@ import { StructuredLogActivity } from './structured-log-activity';
 import type { Activity } from '../domain';
 
 describe('StructuredLogActivity driven adapter', () => {
-  it('logs dispatched activity payload as JSON string to stdout via console.log', async () => {
+  it('logs handled activity payload as JSON string to stdout via console.log', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const adapter = new StructuredLogActivity();
     const activity: Activity = {
@@ -14,13 +14,13 @@ describe('StructuredLogActivity driven adapter', () => {
       },
     };
 
-    await adapter.dispatch(activity);
+    await adapter.handle(activity);
 
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(activity.payload));
     consoleSpy.mockRestore();
   });
 
-  it('accepts execution context parameter during dispatch', async () => {
+  it('accepts execution context parameter during handle', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const adapter = new StructuredLogActivity();
     const activity: Activity = {
@@ -29,7 +29,7 @@ describe('StructuredLogActivity driven adapter', () => {
     };
     const context = { credentials: { oauthToken: 'sample-oauth-token' } };
 
-    await adapter.dispatch(activity, context);
+    await adapter.handle(activity, context);
 
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(activity.payload));
     consoleSpy.mockRestore();
@@ -42,7 +42,7 @@ describe('StructuredLogActivity driven adapter', () => {
     expect(adapter.canHandle({ type: 'OTHER_TYPE', payload: {} })).toBe(false);
   });
 
-  it('emits ActivityOutput when recordDataPatch or contextVariables are present in payload', async () => {
+  it('focuses strictly on logging without extracting domain patches or returning activity output', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const adapter = new StructuredLogActivity();
     const activity: Activity = {
@@ -56,11 +56,7 @@ describe('StructuredLogActivity driven adapter', () => {
 
     const output = await adapter.handle(activity);
 
-    expect(output).toEqual({
-      success: true,
-      recordDataPatch: { patchedField: 'patched-value' },
-      contextVariables: { customVar: 'custom-val' },
-    });
+    expect(output).toBeUndefined();
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(activity.payload));
     consoleSpy.mockRestore();
   });
