@@ -21,6 +21,8 @@ import {
   FileLocatorType,
   ExecutionContextSchema,
   formatValidationErrors,
+  validateManifestTemplates,
+  walkTemplates,
   type Activity,
   type ActivityOutput,
   type FileLocator,
@@ -3373,7 +3375,398 @@ describe('Record domain', () => {
       ]);
     });
   });
+
+  describe('walkTemplates', () => {
+    it('recursively finds and visits all string templates with correct dot and array index paths', () => {
+      const visited: Array<{ path: string; template: string }> = [];
+      const testObj = {
+        title: 'Simple Title',
+        nested: {
+          path: '/path/{{Record.data.id}}',
+          deep: {
+            item: 'deep-val',
+          },
+        },
+        list: [
+          'first-item',
+          {
+            payload: {
+              target: 'target-{{val}}',
+            },
+          },
+        ],
+        nullValue: null,
+        numValue: 123,
+        boolValue: true,
+      };
+
+      walkTemplates(testObj, 'root', (path, template) => {
+        visited.push({ path, template });
+      });
+
+      expect(visited).toEqual([
+        { path: 'root.title', template: 'Simple Title' },
+        { path: 'root.nested.path', template: '/path/{{Record.data.id}}' },
+        { path: 'root.nested.deep.item', template: 'deep-val' },
+        { path: 'root.list[0]', template: 'first-item' },
+        { path: 'root.list[1].payload.target', template: 'target-{{val}}' },
+      ]);
+    });
+
+    it('gracefully handles null, undefined, or primitive root objects', () => {
+      const visited: Array<{ path: string; template: string }> = [];
+      walkTemplates(null, 'root', (path, template) => visited.push({ path, template }));
+      walkTemplates(undefined, 'root', (path, template) => visited.push({ path, template }));
+      expect(visited).toEqual([]);
+
+      walkTemplates('direct-string', 'direct', (path, template) => visited.push({ path, template }));
+      expect(visited).toEqual([{ path: 'direct', template: 'direct-string' }]);
+    });
+  });
+
+  describe('validateManifestTemplates', () => {
+    const createEvaluator = (): TemplateEvaluatorPort => ({
+      validate: vi.fn().mockImplementation((template: string, allowedVars: string[]) => {
+        const matches = Array.from(template.matchAll(/\{\{\{?\s*([a-zA-Z0-9_$.-]+)\s*\}?\}\}/g)).map((m) => m[1]);
+        const allowed = new Set(allowedVars);
+        return matches.every((v) => allowed.has(v));
+      }),
+      evaluate: vi.fn().mockImplementation((tpl: string) => tpl),
+    });
+
+    it('returns empty error array for a completely valid RecordType manifest', () => {
+      const evaluator = createEvaluator();
+      const validManifest: RecordType = {
+        key: 'communication-project',
+        name: 'Communication Project',
+        recordSchema: {
+          fields: [
+            { key: 'contact', name: 'Contact', type: 'string', required: true },
+            { key: 'date', name: 'Date', type: 'string', required: true },
+            {
+              key: 'direction',
+              name: 'Direction',
+              type: 'string',
+              required: true,
+              options: {
+                source: 'direction',
+                key: 'key',
+                name: 'name',
+              },
+            },
+            { key: 'description', name: 'Description', type: 'string', required: true },
+          ],
+          calculatedFields: [
+            {
+              key: 'summary',
+              template: '{{date}} {{direction.key}} - {{description}}',
+            },
+            {
+              key: 'testCalculatedField',
+              template: '{{date}}-{{direction.key}}-{{contact}}-{{description}}',
+            },
+          ],
+          identity: {
+            id: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
+            idRecord: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
+            idGroup: '{{contact}}',
+          },
+          options: {
+            direction: [
+              { key: 'IN', name: 'Incoming' },
+              { key: 'OT', name: 'Outgoing' },
+            ],
+          },
+        },
+        storageContextConfig: {
+          folder: '1Admin/Communication/{{Record.data.contact}}',
+          subfolder: 'Archive/{{Record.data.direction.key}}',
+          deep: {
+            nestedFolder: 'Deep/{{Record.data.summary}}',
+          },
+        },
+        recordWorkflowConfig: {
+          workflows: [
+            {
+              name: 'OutgoingCommWorkflow',
+              activitySequence: [
+                {
+                  type: 'LOG_RECORD',
+                  payload: {
+                    targetPath: '{{StorageContext.folder}}/{{Record.data.summary}}',
+                    archivePath: '{{StorageContext.subfolder}}/{{Record.data.testCalculatedField}}',
+                    deepPath: '{{StorageContext.deep.nestedFolder}}',
+                    recordId: '{{Record.id}}',
+                    recordType: '{{Record.type}}',
+                    schemaIdentityId: '{{RecordSchema.identity.id}}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const errors = validateManifestTemplates(validManifest, evaluator);
+      expect(errors).toEqual([]);
+    });
+
+    it('expands option properties and option tuples in base and execution variables', () => {
+      const evaluator = createEvaluator();
+      const manifest: RecordType = {
+        key: 'option-test',
+        name: 'Option Test',
+        recordSchema: {
+          fields: [
+            {
+              key: 'category',
+              name: 'Category',
+              type: 'string',
+              options: {
+                source: 'categorySource',
+                key: 'code',
+                name: 'label',
+              },
+            },
+          ],
+          options: {
+            categorySource: [
+              { code: 'CAT_A', label: 'Category A', customTupleProp: 'extra' },
+            ],
+          },
+          calculatedFields: [
+            {
+              key: 'fullLabel',
+              template: '{{category.code}}-{{category.label}}-{{category.customTupleProp}}',
+            },
+          ],
+        },
+        recordWorkflowConfig: {
+          workflows: [
+            {
+              name: 'W1',
+              activitySequence: [
+                {
+                  type: 'ACT_1',
+                  payload: {
+                    code: '{{Record.data.category.code}}',
+                    label: '{{Record.data.category.label}}',
+                    customProp: '{{Record.data.category.customTupleProp}}',
+                    calc: '{{Record.data.fullLabel}}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const errors = validateManifestTemplates(manifest, evaluator);
+      expect(errors).toEqual([]);
+    });
+
+    it('whitelists dynamic Context.* and Context variables in workflow activities', () => {
+      const evaluator = createEvaluator();
+      const manifest: RecordType = {
+        key: 'context-test',
+        name: 'Context Test',
+        recordSchema: {
+          fields: [{ key: 'title', name: 'Title', type: 'string' }],
+        },
+        recordWorkflowConfig: {
+          workflows: [
+            {
+              name: 'DynamicWorkflow',
+              activitySequence: [
+                {
+                  type: 'CREATE_FOLDER',
+                  payload: {
+                    name: '{{Record.data.title}}',
+                  },
+                },
+                {
+                  type: 'MOVE_FILE',
+                  payload: {
+                    parentFolderId: '{{Context.generatedFolderId}}',
+                    nestedOutput: '{{Context.stepResults.destinationPath}}',
+                    fullContext: '{{Context}}',
+                    validRecordTitle: '{{Record.data.title}}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const errors = validateManifestTemplates(manifest, evaluator);
+      expect(errors).toEqual([]);
+    });
+
+    it('returns exact error path for invalid calculatedFields templates', () => {
+      const evaluator = createEvaluator();
+      const manifest: RecordType = {
+        key: 'bad-calc',
+        name: 'Bad Calc',
+        recordSchema: {
+          fields: [{ key: 'title', name: 'Title', type: 'string' }],
+          calculatedFields: [
+            {
+              key: 'validCalc',
+              template: '{{title}}',
+            },
+            {
+              key: 'badCalc',
+              template: '{{title}}-{{unknownField}}',
+            },
+          ],
+        },
+      };
+
+      const errors = validateManifestTemplates(manifest, evaluator);
+      expect(errors).toEqual([
+        'Invalid template at "recordSchema.calculatedFields[1].template": references unknown fields or is malformed.',
+      ]);
+    });
+
+    it('returns exact error path for invalid identity templates', () => {
+      const evaluator = createEvaluator();
+      const manifest: RecordType = {
+        key: 'bad-identity',
+        name: 'Bad Identity',
+        recordSchema: {
+          fields: [{ key: 'contact', name: 'Contact', type: 'string' }],
+          identity: {
+            id: '{{contact}}',
+            idRecord: '{{contact}}-{{nonExistent}}',
+          },
+        },
+      };
+
+      const errors = validateManifestTemplates(manifest, evaluator);
+      expect(errors).toEqual([
+        'Invalid template at "recordSchema.identity.idRecord": references unknown fields or is malformed.',
+      ]);
+    });
+
+    it('returns exact error path for invalid storageContextConfig templates', () => {
+      const evaluator = createEvaluator();
+      const manifest: RecordType = {
+        key: 'bad-storage',
+        name: 'Bad Storage',
+        recordSchema: {
+          fields: [{ key: 'folderName', name: 'Folder Name', type: 'string' }],
+        },
+        storageContextConfig: {
+          folder: '{{Record.data.folderName}}',
+          subfolder: '{{Record.data.invalidStorageVar}}',
+        },
+      };
+
+      const errors = validateManifestTemplates(manifest, evaluator);
+      expect(errors).toEqual([
+        'Invalid template at "storageContextConfig.subfolder": references unknown fields or is malformed.',
+      ]);
+    });
+
+    it('returns exact error path for invalid workflow activity payload templates', () => {
+      const evaluator = createEvaluator();
+      const manifest: RecordType = {
+        key: 'bad-workflow',
+        name: 'Bad Workflow',
+        recordSchema: {
+          fields: [{ key: 'title', name: 'Title', type: 'string' }],
+        },
+        recordWorkflowConfig: {
+          workflows: [
+            {
+              name: 'W1',
+              activitySequence: [
+                {
+                  type: 'ACT_1',
+                  payload: {
+                    folder: '{{Record.data.unknownActivityVar}}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const errors = validateManifestTemplates(manifest, evaluator);
+      expect(errors).toEqual([
+        'Invalid template at "recordWorkflowConfig.workflows[0].activitySequence[0].payload.folder": references unknown fields or is malformed.',
+      ]);
+    });
+
+    it('collects and returns multiple validation errors across different manifest sections', () => {
+      const evaluator = createEvaluator();
+      const manifest: RecordType = {
+        key: 'multi-error',
+        name: 'Multi Error',
+        recordSchema: {
+          fields: [{ key: 'title', name: 'Title', type: 'string' }],
+          calculatedFields: [
+            { key: 'calc1', template: '{{missing1}}' },
+          ],
+          identity: {
+            id: '{{missing2}}',
+          },
+        },
+        storageContextConfig: {
+          base: '{{Record.data.missing3}}',
+        },
+        recordWorkflowConfig: {
+          workflows: [
+            {
+              name: 'W1',
+              activitySequence: [
+                {
+                  type: 'ACT_1',
+                  payload: {
+                    badPayload: '{{Record.data.missing4}}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const errors = validateManifestTemplates(manifest, evaluator);
+      expect(errors).toEqual([
+        'Invalid template at "recordSchema.calculatedFields[0].template": references unknown fields or is malformed.',
+        'Invalid template at "recordSchema.identity.id": references unknown fields or is malformed.',
+        'Invalid template at "storageContextConfig.base": references unknown fields or is malformed.',
+        'Invalid template at "recordWorkflowConfig.workflows[0].activitySequence[0].payload.badPayload": references unknown fields or is malformed.',
+      ]);
+    });
+
+    it('fails when evaluator reports syntax error or malformed template', () => {
+      const syntaxErrorEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(false),
+        evaluate: vi.fn(),
+      };
+      const manifest: RecordType = {
+        key: 'malformed-template',
+        name: 'Malformed Template',
+        recordSchema: {
+          fields: [{ key: 'title', name: 'Title', type: 'string' }],
+          calculatedFields: [
+            { key: 'broken', template: '{{#if title}}malformed{{/if}}' },
+          ],
+        },
+      };
+
+      const errors = validateManifestTemplates(manifest, syntaxErrorEvaluator);
+      expect(errors).toEqual([
+        'Invalid template at "recordSchema.calculatedFields[0].template": references unknown fields or is malformed.',
+      ]);
+    });
+  });
 });
+
 
 
 

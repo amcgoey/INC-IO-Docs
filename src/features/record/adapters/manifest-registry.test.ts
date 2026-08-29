@@ -430,7 +430,7 @@ describe('ManifestRegistryAdapter', () => {
       });
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid calculated field template in "\.\/schemas\/calc-invalid\.json" for field "BadCalc"/
+        /Invalid template in "\.\/schemas\/calc-invalid\.json": Invalid template at "recordSchema\.calculatedFields\[0\]\.template": references unknown fields or is malformed\./
       );
       expect(mockEvaluator.validate).toHaveBeenCalledWith(
         '{{Title}}-{{DoesNotExist}}',
@@ -519,7 +519,83 @@ describe('ManifestRegistryAdapter', () => {
       });
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid identity template in "\.\/schemas\/identity-invalid\.json" for property "id": template "{{contact}}-{{unknownField}}" references unknown fields or is malformed\./
+        /Invalid template in "\.\/schemas\/identity-invalid\.json": Invalid template at "recordSchema\.identity\.id": references unknown fields or is malformed\./
+      );
+    });
+  });
+
+  describe('workflow and storageContext template validation on loadAll', () => {
+    it('throws explicit fatal domain error if a workflow activity template is invalid', async () => {
+      const recordType = {
+        key: 'workflow-invalid',
+        name: 'Workflow Invalid',
+        recordSchema: {
+          fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+        },
+        recordWorkflowConfig: {
+          workflows: [
+            {
+              name: 'TestWorkflow',
+              activitySequence: [
+                {
+                  type: 'LOG_RECORD',
+                  payload: {
+                    folder: '{{Record.data.title}}-{{InvalidField}}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const manifestPath = await createManifestFixture(tempDir, {
+        'workflow-invalid.json': recordType,
+      });
+
+      const mockEvaluator = {
+        validate: vi.fn().mockImplementation((tpl: string) => !tpl.includes('InvalidField')),
+        evaluate: vi.fn(),
+      };
+
+      const adapter = new ManifestRegistryAdapter({
+        manifestPath,
+        templateEvaluator: mockEvaluator,
+      });
+
+      await expect(adapter.loadAll()).rejects.toThrow(
+        /Invalid template in "\.\/schemas\/workflow-invalid\.json": Invalid template at "recordWorkflowConfig\.workflows\[0\]\.activitySequence\[0\]\.payload\.folder": references unknown fields or is malformed\./
+      );
+    });
+
+    it('throws explicit fatal domain error if a storageContextConfig template is invalid', async () => {
+      const recordType = {
+        key: 'storage-invalid',
+        name: 'Storage Invalid',
+        recordSchema: {
+          fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+        },
+        storageContextConfig: {
+          targetFolder: '{{Record.data.unknownStorageField}}',
+        },
+      };
+
+      const manifestPath = await createManifestFixture(tempDir, {
+        'storage-invalid.json': recordType,
+      });
+
+      const mockEvaluator = {
+        validate: vi.fn().mockImplementation((tpl: string) => !tpl.includes('unknownStorageField')),
+        evaluate: vi.fn(),
+      };
+
+      const adapter = new ManifestRegistryAdapter({
+        manifestPath,
+        templateEvaluator: mockEvaluator,
+      });
+
+      await expect(adapter.loadAll()).rejects.toThrow(
+        /Invalid template in "\.\/schemas\/storage-invalid\.json": Invalid template at "storageContextConfig\.targetFolder": references unknown fields or is malformed\./
       );
     });
   });

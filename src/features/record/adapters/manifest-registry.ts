@@ -2,7 +2,12 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import { RecordTypeSchema, SystemContextSchema, formatValidationErrors, type RecordType } from '../domain';
+import {
+  RecordTypeSchema,
+  formatValidationErrors,
+  validateManifestTemplates,
+  type RecordType,
+} from '../domain';
 import type {
   AppConfigurationProviderPort,
   DriveConfiguration,
@@ -145,21 +150,6 @@ export class ManifestRegistryAdapter
     return this.cachedConfiguration?.workspace;
   }
 
-  private validateTemplate(
-    template: string,
-    allowedVariables: string[],
-    recordTypeRelPath: string,
-    errorPrefix: string,
-    targetDescription: string
-  ): void {
-    const isValid = this.templateEvaluator.validate(template, allowedVariables);
-    if (!isValid) {
-      throw new Error(
-        `Invalid ${errorPrefix} in "${recordTypeRelPath}" for ${targetDescription}: template "${template}" references unknown fields or is malformed.`
-      );
-    }
-  }
-
   async loadAll(): Promise<RecordType[]> {
     let validatedManifest: Static<typeof ManifestSchema>;
     try {
@@ -196,48 +186,14 @@ export class ManifestRegistryAdapter
         `Invalid RecordType schema in "${recordTypeRelPath}" at "${resolvedPath}"`
       );
 
-      const allowedVariables: string[] = [
-        ...Object.keys(SystemContextSchema.properties),
-      ];
-
-      for (const field of validatedRecordType.recordSchema.fields) {
-        allowedVariables.push(field.key);
-        if (field.options) {
-          allowedVariables.push(`${field.key}.${field.options.key}`);
-          allowedVariables.push(`${field.key}.${field.options.name}`);
-          const optionTuples = validatedRecordType.recordSchema.options?.[field.options.source] ?? [];
-          for (const tuple of optionTuples) {
-            for (const tupleKey of Object.keys(tuple)) {
-              allowedVariables.push(`${field.key}.${tupleKey}`);
-            }
-          }
-        }
-      }
-
-      if (validatedRecordType.recordSchema.calculatedFields) {
-        for (const calculatedField of validatedRecordType.recordSchema.calculatedFields) {
-          this.validateTemplate(
-            calculatedField.template,
-            allowedVariables,
-            recordTypeRelPath,
-            'calculated field template',
-            `field "${calculatedField.key}"`
-          );
-        }
-      }
-
-      if (validatedRecordType.recordSchema.identity) {
-        for (const [propKey, template] of Object.entries(validatedRecordType.recordSchema.identity)) {
-          if (typeof template === 'string') {
-            this.validateTemplate(
-              template,
-              allowedVariables,
-              recordTypeRelPath,
-              'identity template',
-              `property "${propKey}"`
-            );
-          }
-        }
+      const templateErrors = validateManifestTemplates(
+        validatedRecordType,
+        this.templateEvaluator
+      );
+      if (templateErrors.length > 0) {
+        throw new Error(
+          `Invalid template in "${recordTypeRelPath}": ${templateErrors.join(', ')}`
+        );
       }
 
       recordTypes.push(validatedRecordType);

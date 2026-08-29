@@ -540,4 +540,199 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
   }
 }
 
+/**
+ * Recursively flattens an object into dot-notation paths.
+ */
+function flattenObjectPaths(obj: unknown, prefix = ''): string[] {
+  const paths: string[] = [];
+  if (obj === null || obj === undefined) {
+    return paths;
+  }
+  if (typeof obj === 'object') {
+    if (Array.isArray(obj)) {
+      if (prefix) paths.push(prefix);
+      obj.forEach((item, index) => {
+        const itemPrefix = prefix ? `${prefix}.${index}` : `${index}`;
+        paths.push(itemPrefix);
+        paths.push(...flattenObjectPaths(item, itemPrefix));
+      });
+    } else {
+      if (prefix) paths.push(prefix);
+      for (const [key, value] of Object.entries(obj as { [key: string]: unknown })) {
+        const keyPrefix = prefix ? `${prefix}.${key}` : key;
+        paths.push(keyPrefix);
+        paths.push(...flattenObjectPaths(value, keyPrefix));
+      }
+    }
+  }
+  return paths;
+}
+
+/**
+ * Extracts any variables referencing the dynamic `Context` namespace from a template string.
+ */
+function extractContextVariables(template: string): string[] {
+  const matches = template.matchAll(/\{\{\{?\s*([a-zA-Z0-9_$.-]+)\s*\}?\}\}/g);
+  const vars: string[] = [];
+  for (const match of matches) {
+    const varName = match[1];
+    if (varName === 'Context' || varName.startsWith('Context.')) {
+      vars.push(varName);
+    }
+  }
+  return vars;
+}
+
+/**
+ * Traverses an arbitrary JSON structure and invokes a callback for every string template encountered.
+ */
+export function walkTemplates(
+  obj: unknown,
+  currentPath: string,
+  callback: (path: string, template: string) => void
+): void {
+  if (obj === null || obj === undefined) {
+    return;
+  }
+  if (typeof obj === 'string') {
+    callback(currentPath, obj);
+    return;
+  }
+  if (Array.isArray(obj)) {
+    obj.forEach((item, index) => {
+      walkTemplates(item, `${currentPath}[${index}]`, callback);
+    });
+    return;
+  }
+  if (typeof obj === 'object') {
+    for (const [key, value] of Object.entries(obj as { [key: string]: unknown })) {
+      const propPath = currentPath ? `${currentPath}.${key}` : key;
+      walkTemplates(value, propPath, callback);
+    }
+  }
+}
+
+/**
+ * Compiles the list of base variables available during record hydration and identity/calculatedField resolution.
+ */
+function getBaseVariables(manifest: RecordType): string[] {
+  const vars: string[] = [
+    ...Object.keys(SystemContextSchema.properties),
+  ];
+
+  for (const field of manifest.recordSchema.fields) {
+    vars.push(field.key);
+    if (field.options) {
+      vars.push(`${field.key}.${field.options.key}`);
+      vars.push(`${field.key}.${field.options.name}`);
+      const optionTuples = manifest.recordSchema.options?.[field.options.source] ?? [];
+      for (const tuple of optionTuples) {
+        for (const tupleKey of Object.keys(tuple)) {
+          vars.push(`${field.key}.${tupleKey}`);
+        }
+      }
+    }
+  }
+
+  return Array.from(new Set(vars));
+}
+
+/**
+ * Compiles the list of execution variables available during storage context and workflow activity evaluation.
+ */
+function getExecutionVariables(manifest: RecordType, baseVariables: string[]): string[] {
+  const vars: string[] = [
+    'Record.id',
+    'Record.idRecord',
+    'Record.idGroup',
+    'Record.type',
+  ];
+
+  if (manifest.recordSchema.identity) {
+    for (const propKey of Object.keys(manifest.recordSchema.identity)) {
+      vars.push(`Record.${propKey}`);
+    }
+  }
+
+  for (const baseVar of baseVariables) {
+    vars.push(`Record.data.${baseVar}`);
+  }
+
+  if (manifest.recordSchema.calculatedFields) {
+    for (const calcField of manifest.recordSchema.calculatedFields) {
+      vars.push(`Record.data.${calcField.key}`);
+    }
+  }
+
+  const recordSchemaPaths = flattenObjectPaths(manifest.recordSchema, 'RecordSchema');
+  vars.push(...recordSchemaPaths);
+
+  if (manifest.storageContextConfig) {
+    vars.push('StorageContext');
+    const storagePaths = flattenObjectPaths(manifest.storageContextConfig, 'StorageContext');
+    vars.push(...storagePaths);
+  }
+
+  vars.push('Context');
+
+  return Array.from(new Set(vars));
+}
+
+/**
+ * Pure domain function to statically validate all Handlebars templates within a RecordType manifest.
+ * Returns an array of formatted error strings using exact dot-notation paths.
+ */
+export function validateManifestTemplates(
+  manifest: RecordType,
+  evaluator: TemplateEvaluatorPort
+): string[] {
+  const errors: string[] = [];
+
+  const baseVariables = getBaseVariables(manifest);
+  const executionVariables = getExecutionVariables(manifest, baseVariables);
+
+  if (manifest.recordSchema.calculatedFields) {
+    manifest.recordSchema.calculatedFields.forEach((calcField, index) => {
+      const path = `recordSchema.calculatedFields[${index}].template`;
+      if (!evaluator.validate(calcField.template, baseVariables)) {
+        errors.push(`Invalid template at "${path}": references unknown fields or is malformed.`);
+      }
+    });
+  }
+
+  if (manifest.recordSchema.identity) {
+    for (const [propKey, template] of Object.entries(manifest.recordSchema.identity)) {
+      if (typeof template === 'string') {
+        const path = `recordSchema.identity.${propKey}`;
+        if (!evaluator.validate(template, baseVariables)) {
+          errors.push(`Invalid template at "${path}": references unknown fields or is malformed.`);
+        }
+      }
+    }
+  }
+
+  if (manifest.storageContextConfig) {
+    walkTemplates(manifest.storageContextConfig, 'storageContextConfig', (path, template) => {
+      const dynamicVars = extractContextVariables(template);
+      const allowed = dynamicVars.length > 0 ? [...executionVariables, ...dynamicVars] : executionVariables;
+      if (!evaluator.validate(template, allowed)) {
+        errors.push(`Invalid template at "${path}": references unknown fields or is malformed.`);
+      }
+    });
+  }
+
+  if (manifest.recordWorkflowConfig) {
+    walkTemplates(manifest.recordWorkflowConfig, 'recordWorkflowConfig', (path, template) => {
+      const dynamicVars = extractContextVariables(template);
+      const allowed = dynamicVars.length > 0 ? [...executionVariables, ...dynamicVars] : executionVariables;
+      if (!evaluator.validate(template, allowed)) {
+        errors.push(`Invalid template at "${path}": references unknown fields or is malformed.`);
+      }
+    });
+  }
+
+  return errors;
+}
+
+
 
