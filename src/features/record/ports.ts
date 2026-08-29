@@ -1,20 +1,42 @@
-import type { Activity, FormSchema, ProcessRecordResult, RecordType } from './domain';
+import type {
+  Activity,
+  ActivityOutput,
+  ExecutionContext,
+  FileLocator,
+  FormSchema,
+  ProcessRecordResult,
+  RecordType,
+} from './domain';
 
+export type {
+  FileLocator,
+  ActivityOutput,
+  ExecutionContext,
+  FormSchema,
+  ProcessRecordResult,
+  RecordType,
+};
 
 export interface ActivityHandler {
   canHandle(activity: Activity): boolean;
-  handle<TContext = unknown>(activity: Activity, context?: TContext): Promise<void> | void;
+  handle(
+    activity: Activity,
+    context?: ExecutionContext
+  ): Promise<ActivityOutput | void> | ActivityOutput | void;
 }
 
 export interface ActivityDispatcherPort {
-  dispatch<TContext = unknown>(activity: Activity, context?: TContext): Promise<void> | void;
+  dispatch(
+    activity: Activity,
+    context?: ExecutionContext
+  ): Promise<ActivityOutput | void> | ActivityOutput | void;
 }
 
 export interface RecordServicePort {
-  processRecord<TContext = unknown>(
+  processRecord(
     payload?: unknown,
     eventName?: string,
-    context?: TContext
+    context?: ExecutionContext
   ): Promise<ProcessRecordResult>;
 }
 

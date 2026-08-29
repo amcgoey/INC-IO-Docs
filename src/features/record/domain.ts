@@ -33,6 +33,41 @@ export const ActivityType = Type.Object({
 
 export type Activity = Static<typeof ActivityType>;
 
+export const FileLocatorType = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  parentName: Type.Optional(Type.String()),
+  mimeType: Type.Optional(Type.String()),
+  uri: Type.Optional(Type.String()),
+});
+
+export type FileLocator = Static<typeof FileLocatorType>;
+
+export const ActivityOutputType = Type.Object({
+  success: Type.Optional(Type.Boolean()),
+  error: Type.Optional(Type.String()),
+  recordDataPatch: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  contextVariables: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  files: Type.Optional(Type.Array(FileLocatorType)),
+});
+
+export type ActivityOutput = Static<typeof ActivityOutputType>;
+
+export const ExecutionContextSchema = Type.Object({
+  credentials: Type.Optional(
+    Type.Object({
+      oauthToken: Type.Optional(Type.String()),
+    })
+  ),
+  resources: Type.Optional(
+    Type.Object({
+      primaryTargetId: Type.Optional(Type.String()),
+    })
+  ),
+});
+
+export type ExecutionContext = Static<typeof ExecutionContextSchema>;
+
 export const RecordFieldOptionType = Type.Object({
   source: Type.String(),
   key: Type.String(),
@@ -151,7 +186,13 @@ export const FormSchemaType = Type.Object({
 export type FormSchema = Static<typeof FormSchemaType>;
 
 export type ProcessRecordResult =
-  | { success: true; data: Record; activities: Activity[] }
+  | {
+      success: true;
+      data: Record;
+      activities: Activity[];
+      outputs: ActivityOutput[];
+      contextVariables?: { [key: string]: unknown } | undefined;
+    }
   | { success: false; errors: string[] };
 
 /**
@@ -292,10 +333,10 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
     });
   }
 
-  async processRecord<TContext = unknown>(
+  async processRecord(
     payload?: unknown,
     eventName?: string,
-    context?: TContext
+    context?: ExecutionContext
   ): Promise<ProcessRecordResult> {
     if (!Value.Check(RecordModel, payload)) {
       const errors = formatValidationErrors(RecordModel, payload);
@@ -380,7 +421,7 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       }
     }
 
-    const enrichedRecord: Record = {
+    let enrichedRecord: Record = {
       ...record,
       ...identityUpdates,
       data: resolvedData,
@@ -409,6 +450,7 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
         success: true,
         data: enrichedRecord,
         activities: [],
+        outputs: [],
       };
     }
 
@@ -438,7 +480,9 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       ...(storageContext !== undefined ? { StorageContext: storageContext } : {}),
     };
 
+    const accumulatedContextVariables: { [key: string]: unknown } = {};
     const resolvedActivities: Activity[] = [];
+    const collectedOutputs: ActivityOutput[] = [];
     for (const activity of activities) {
       const resolvedPayload = (resolvePayloadTemplates(
         activity.payload,
@@ -451,19 +495,48 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
         payload: resolvedPayload,
       };
 
-      if (context !== undefined) {
-        await this.dispatcher.dispatch(resolvedActivity, context);
-      } else {
-        await this.dispatcher.dispatch(resolvedActivity);
-      }
+      const output = (context !== undefined
+        ? await this.dispatcher.dispatch(resolvedActivity, context)
+        : await this.dispatcher.dispatch(resolvedActivity)) as ActivityOutput | void;
+
       resolvedActivities.push(resolvedActivity);
+
+      if (output) {
+        collectedOutputs.push(output);
+        if (output.success === false) {
+          return {
+            success: false,
+            errors: [output.error ?? `Activity execution failed for ${activity.type}`],
+          };
+        }
+        if (output.recordDataPatch) {
+          enrichedRecord = {
+            ...enrichedRecord,
+            data: {
+              ...enrichedRecord.data,
+              ...output.recordDataPatch,
+            },
+          };
+          evaluationContext.Record = enrichedRecord;
+        }
+        if (output.contextVariables) {
+          Object.assign(evaluationContext, output.contextVariables);
+          Object.assign(accumulatedContextVariables, output.contextVariables);
+        }
+      }
     }
 
-    return {
+    const finalResult: ProcessRecordResult = {
       success: true,
       data: enrichedRecord,
       activities: resolvedActivities,
+      outputs: collectedOutputs,
     };
+    if (Object.keys(accumulatedContextVariables).length > 0) {
+      finalResult.contextVariables = accumulatedContextVariables;
+    }
+
+    return finalResult;
   }
 }
 

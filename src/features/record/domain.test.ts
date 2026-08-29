@@ -17,14 +17,19 @@ import {
   StorageContextConfigType,
   FormSchemaType,
   ActivityType,
+  ActivityOutputType,
+  FileLocatorType,
+  ExecutionContextSchema,
   formatValidationErrors,
   type Activity,
+  type ActivityOutput,
+  type FileLocator,
   type Record,
   type RecordType,
   type FormSchema,
   type StorageContextConfig,
 } from './domain';
-import type { ActivityDispatcherPort, ManifestRegistryPort, TemplateEvaluatorPort } from './ports';
+import type { ActivityDispatcherPort, ExecutionContext, ManifestRegistryPort, TemplateEvaluationContext, TemplateEvaluatorPort } from './ports';
 
 
 
@@ -44,6 +49,101 @@ describe('Record domain', () => {
 
   it('should export ActivityType schema', () => {
     expect(ActivityType).toBeDefined();
+  });
+
+  it('should export FileLocatorType schema and validate valid and invalid file locators', () => {
+    expect(FileLocatorType).toBeDefined();
+
+    const fullFileLocator: FileLocator = {
+      id: 'file-123',
+      name: 'Report.pdf',
+      parentName: 'DestinationFolder',
+      mimeType: 'application/pdf',
+      uri: 'https://drive.google.com/file/d/file-123/view',
+    };
+    expect(Value.Check(FileLocatorType, fullFileLocator)).toBe(true);
+
+    const minimalFileLocator: FileLocator = {
+      id: 'file-456',
+      name: 'Summary.docx',
+    };
+    expect(Value.Check(FileLocatorType, minimalFileLocator)).toBe(true);
+
+    const missingId = {
+      name: 'Summary.docx',
+    };
+    expect(Value.Check(FileLocatorType, missingId)).toBe(false);
+
+    const missingName = {
+      id: 'file-456',
+    };
+    expect(Value.Check(FileLocatorType, missingName)).toBe(false);
+
+    const invalidUriType = {
+      id: 'file-456',
+      name: 'Summary.docx',
+      uri: 12345,
+    };
+    expect(Value.Check(FileLocatorType, invalidUriType)).toBe(false);
+  });
+
+  it('should export ActivityOutputType schema and validate valid and invalid outputs', () => {
+    expect(ActivityOutputType).toBeDefined();
+    const validOutput: ActivityOutput = {
+      success: true,
+      recordDataPatch: { newField: 'value' },
+      contextVariables: { stepResult: 'success' },
+      files: [
+        {
+          id: 'file-1',
+          name: 'Doc.pdf',
+          parentName: 'FolderA',
+          mimeType: 'application/pdf',
+          uri: 'https://drive.google.com/file/d/file-1/view',
+        },
+      ],
+    };
+    expect(Value.Check(ActivityOutputType, validOutput)).toBe(true);
+
+    const emptyOutput: ActivityOutput = {};
+    expect(Value.Check(ActivityOutputType, emptyOutput)).toBe(true);
+
+    const invalidOutput = {
+      success: 'not-a-boolean',
+    };
+    expect(Value.Check(ActivityOutputType, invalidOutput)).toBe(false);
+
+    const invalidPatch = {
+      recordDataPatch: 'not-an-object',
+    };
+    expect(Value.Check(ActivityOutputType, invalidPatch)).toBe(false);
+
+    const invalidFiles = {
+      files: [{ id: 'file-1' }], // missing name
+    };
+    expect(Value.Check(ActivityOutputType, invalidFiles)).toBe(false);
+  });
+
+  it('should export ExecutionContextSchema and validate valid and invalid execution contexts', () => {
+    expect(ExecutionContextSchema).toBeDefined();
+    const validContext: ExecutionContext = {
+      credentials: { oauthToken: 'ya29.sample-token' },
+      resources: { primaryTargetId: 'file-123' },
+    };
+    expect(Value.Check(ExecutionContextSchema, validContext)).toBe(true);
+
+    const emptyContext: ExecutionContext = {};
+    expect(Value.Check(ExecutionContextSchema, emptyContext)).toBe(true);
+
+    const invalidCreds = {
+      credentials: 'invalid-string',
+    };
+    expect(Value.Check(ExecutionContextSchema, invalidCreds)).toBe(false);
+
+    const invalidResources = {
+      resources: { primaryTargetId: 12345 },
+    };
+    expect(Value.Check(ExecutionContextSchema, invalidResources)).toBe(false);
   });
 
   it('processRecord validates payload, dispatches Activity, and returns success result', async () => {
@@ -2596,13 +2696,7 @@ describe('Record domain', () => {
     });
   });
 
-  describe('Generic Execution Context (TContext) Propagation & Isolation', () => {
-    interface CustomExecutionContext {
-      oauthToken: string;
-      userId: string;
-      traceId: string;
-    }
-
+  describe('Execution Context (ExecutionContext) Propagation & Isolation', () => {
     const testRecordType: RecordType = {
       key: 'secureRecord',
       name: 'Secure Record',
@@ -2646,7 +2740,7 @@ describe('Record domain', () => {
       },
     };
 
-    it('forwards generic TContext to ActivityDispatcherPort.dispatch', async () => {
+    it('forwards ExecutionContext to ActivityDispatcherPort.dispatch', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -2684,13 +2778,16 @@ describe('Record domain', () => {
         data: { title: 'SecretDoc' },
       };
 
-      const executionContext: CustomExecutionContext = {
-        oauthToken: 'ya29.sensitive-oauth-token',
-        userId: 'user-12345',
-        traceId: 'trace-abc-xyz',
+      const executionContext: ExecutionContext = {
+        credentials: {
+          oauthToken: 'ya29.sensitive-oauth-token',
+        },
+        resources: {
+          primaryTargetId: 'user-12345',
+        },
       };
 
-      const result = await service.processRecord<CustomExecutionContext>(
+      const result = await service.processRecord(
         inputRecord,
         'onSubmit',
         executionContext
@@ -2761,7 +2858,7 @@ describe('Record domain', () => {
       });
     });
 
-    it('strictly isolates TemplateEvaluatorPort evaluation context from TContext', async () => {
+    it('strictly isolates TemplateEvaluatorPort evaluation context from ExecutionContext', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -2801,13 +2898,13 @@ describe('Record domain', () => {
         data: { title: 'SensitiveRecord' },
       };
 
-      const sensitiveContext: CustomExecutionContext = {
-        oauthToken: 'SUPER_SECRET_OAUTH_TOKEN_NEVER_EXPOSE',
-        userId: 'admin-user',
-        traceId: 'trace-999',
+      const sensitiveContext: ExecutionContext = {
+        credentials: {
+          oauthToken: 'SUPER_SECRET_OAUTH_TOKEN_NEVER_EXPOSE',
+        },
       };
 
-      await service.processRecord<CustomExecutionContext>(
+      await service.processRecord(
         inputRecord,
         'onSubmit',
         sensitiveContext
@@ -2816,11 +2913,464 @@ describe('Record domain', () => {
       // Verify that none of the evaluation contexts passed to mockEvaluator.evaluate contain sensitiveContext keys or values
       expect(capturedContexts.length).toBeGreaterThan(0);
       for (const evalCtx of capturedContexts) {
-        expect(evalCtx).not.toHaveProperty('oauthToken');
-        expect(evalCtx).not.toHaveProperty('userId');
-        expect(evalCtx).not.toHaveProperty('traceId');
+        expect(evalCtx).not.toHaveProperty('credentials');
+        expect(evalCtx).not.toHaveProperty('resources');
         expect(JSON.stringify(evalCtx)).not.toContain('SUPER_SECRET_OAUTH_TOKEN_NEVER_EXPOSE');
       }
+    });
+  });
+
+  describe('RecordService in-flight context merging', () => {
+    it('merges recordDataPatch and contextVariables from previous activity into subsequent activity payload evaluation', async () => {
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'doc-process',
+          name: 'Document Process',
+          recordSchema: {
+            fields: [
+              { key: 'title', name: 'Title', type: 'string', required: true },
+            ],
+          },
+          recordUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'MultiStepWorkflow',
+              },
+            },
+          },
+          recordWorkflowConfig: {
+            workflows: [
+              {
+                name: 'MultiStepWorkflow',
+                activitySequence: [
+                  {
+                    type: 'STEP_ONE',
+                    payload: { initial: '{{Record.data.title}}' },
+                  },
+                  {
+                    type: 'STEP_TWO',
+                    payload: {
+                      fromPatch: '{{Record.data.generatedFileId}}',
+                      fromContext: '{{stepOneStatus}}',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+
+      const capturedDispatches: Activity[] = [];
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity) => {
+          capturedDispatches.push(activity);
+          if (activity.type === 'STEP_ONE') {
+            return {
+              success: true,
+              recordDataPatch: { generatedFileId: 'file-xyz-987' },
+              contextVariables: { stepOneStatus: 'COMPLETED_SUCCESS' },
+            };
+          }
+          return { success: true };
+        }),
+      };
+
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template: string, ctx: TemplateEvaluationContext) => {
+          if (template === '{{Record.data.title}}') {
+            return (ctx.Record as Record)?.data?.title as string;
+          }
+          if (template === '{{Record.data.generatedFileId}}') {
+            return (ctx.Record as Record)?.data?.generatedFileId as string;
+          }
+          if (template === '{{stepOneStatus}}') {
+            return ctx.stepOneStatus as string;
+          }
+          return template;
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'doc-process',
+        data: { title: 'Initial Document' },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Final returned record data contains patched fields
+      expect(result.data.data).toEqual({
+        title: 'Initial Document',
+        generatedFileId: 'file-xyz-987',
+      });
+
+      // Step two received the resolved payload from in-flight merged context
+      expect(capturedDispatches).toHaveLength(2);
+      expect(capturedDispatches[0]).toEqual({
+        type: 'STEP_ONE',
+        payload: { initial: 'Initial Document' },
+      });
+      expect(capturedDispatches[1]).toEqual({
+        type: 'STEP_TWO',
+        payload: {
+          fromPatch: 'file-xyz-987',
+          fromContext: 'COMPLETED_SUCCESS',
+        },
+      });
+    });
+
+    it('accumulates patches across multiple chained activities', async () => {
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'multi-stage',
+          name: 'Multi Stage',
+          recordSchema: {
+            fields: [
+              { key: 'step0', name: 'Step 0', type: 'string', required: true },
+            ],
+          },
+          recordUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'ChainedWorkflow',
+              },
+            },
+          },
+          recordWorkflowConfig: {
+            workflows: [
+              {
+                name: 'ChainedWorkflow',
+                activitySequence: [
+                  {
+                    type: 'STAGE_A',
+                    payload: {},
+                  },
+                  {
+                    type: 'STAGE_B',
+                    payload: {},
+                  },
+                  {
+                    type: 'STAGE_C',
+                    payload: {},
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity) => {
+          if (activity.type === 'STAGE_A') {
+            return { recordDataPatch: { patchA: 'valA' } };
+          }
+          if (activity.type === 'STAGE_B') {
+            return { recordDataPatch: { patchB: 'valB' } };
+          }
+          return undefined;
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'multi-stage',
+        data: { step0: 'init' },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.data.data).toEqual({
+        step0: 'init',
+        patchA: 'valA',
+        patchB: 'valB',
+      });
+    });
+
+    it('propagates recordDataPatch from activity output to subsequent activity in sequence', async () => {
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'log-pipeline',
+          name: 'Log Pipeline',
+          recordSchema: {
+            fields: [
+              { key: 'inputMsg', name: 'Input Message', type: 'string', required: true },
+            ],
+          },
+          recordUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'LogWorkflow',
+              },
+            },
+          },
+          recordWorkflowConfig: {
+            workflows: [
+              {
+                name: 'LogWorkflow',
+                activitySequence: [
+                  {
+                    type: 'STEP_ONE',
+                    payload: {
+                      message: 'First step',
+                    },
+                  },
+                  {
+                    type: 'STEP_TWO',
+                    payload: {
+                      message: 'Second step using enriched state',
+                      receivedEnrichedState: '{{Record.data.enrichedState}}',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template: string, ctx: TemplateEvaluationContext) => {
+          if (template === '{{Record.data.enrichedState}}') {
+            return (ctx.Record as Record)?.data?.enrichedState as string;
+          }
+          return template;
+        }),
+      };
+
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation((activity: Activity) => {
+          if (activity.type === 'STEP_ONE') {
+            return {
+              success: true,
+              recordDataPatch: { enrichedState: 'state-123' },
+            };
+          }
+          return undefined;
+        }),
+      };
+      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'log-pipeline',
+        data: { inputMsg: 'Hello' },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.data.data).toEqual({
+        inputMsg: 'Hello',
+        enrichedState: 'state-123',
+      });
+
+      expect(result.activities).toHaveLength(2);
+      expect(result.activities[1].payload).toEqual({
+        message: 'Second step using enriched state',
+        receivedEnrichedState: 'state-123',
+      });
+    });
+
+    it('halts workflow execution and returns failure when activity returns success: false with error', async () => {
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'failing-doc',
+          name: 'Failing Document',
+          recordSchema: {
+            fields: [
+              { key: 'title', name: 'Title', type: 'string', required: true },
+            ],
+          },
+          recordUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'FailingWorkflow',
+              },
+            },
+          },
+          recordWorkflowConfig: {
+            workflows: [
+              {
+                name: 'FailingWorkflow',
+                activitySequence: [
+                  {
+                    type: 'STEP_FAIL',
+                    payload: {},
+                  },
+                  {
+                    type: 'STEP_NEVER_RUN',
+                    payload: {},
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+
+      const capturedActivities: string[] = [];
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity) => {
+          capturedActivities.push(activity.type);
+          if (activity.type === 'STEP_FAIL') {
+            return {
+              success: false,
+              error: 'Database connection dropped',
+            };
+          }
+          return { success: true };
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'failing-doc',
+        data: { title: 'Test Fail' },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+      expect(result.success).toBe(false);
+      if (result.success) return;
+
+      expect(result.errors).toEqual(['Database connection dropped']);
+      expect(capturedActivities).toEqual(['STEP_FAIL']);
+    });
+
+    it('collects activity outputs including FileLocators and exposes them in ProcessRecordResult.outputs', async () => {
+      const mockRecordTypes: RecordType[] = [
+        {
+          key: 'multi-step-doc',
+          name: 'Multi Step Document',
+          recordSchema: {
+            fields: [
+              { key: 'title', name: 'Title', type: 'string', required: true },
+            ],
+          },
+          recordUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'MultiStepWorkflow',
+              },
+            },
+          },
+          recordWorkflowConfig: {
+            workflows: [
+              {
+                name: 'MultiStepWorkflow',
+                activitySequence: [
+                  {
+                    type: 'STEP_1_FILE',
+                    payload: {},
+                  },
+                  {
+                    type: 'STEP_2_VOID',
+                    payload: {},
+                  },
+                  {
+                    type: 'STEP_3_FILE',
+                    payload: {},
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const customRegistry: ManifestRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      };
+
+      const file1: FileLocator = {
+        id: 'file-step-1',
+        name: 'Step1.pdf',
+        parentName: 'Folder1',
+        mimeType: 'application/pdf',
+        uri: 'https://drive.google.com/file/d/file-step-1/view',
+      };
+
+      const file3: FileLocator = {
+        id: 'file-step-3',
+        name: 'FinalStep3.pdf',
+        parentName: 'DestinationFolder',
+        mimeType: 'application/pdf',
+        uri: 'https://drive.google.com/file/d/file-step-3/view',
+      };
+
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity) => {
+          if (activity.type === 'STEP_1_FILE') {
+            return {
+              success: true,
+              files: [file1],
+            };
+          }
+          if (activity.type === 'STEP_2_VOID') {
+            return undefined; // void return
+          }
+          if (activity.type === 'STEP_3_FILE') {
+            return {
+              success: true,
+              files: [file3],
+            };
+          }
+        }),
+      };
+
+      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const inputRecord: Record = {
+        type: 'multi-step-doc',
+        data: { title: 'Test Multi Step' },
+      };
+
+      const result = await service.processRecord(inputRecord, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.outputs).toEqual([
+        {
+          success: true,
+          files: [file1],
+        },
+        {
+          success: true,
+          files: [file3],
+        },
+      ]);
     });
   });
 });

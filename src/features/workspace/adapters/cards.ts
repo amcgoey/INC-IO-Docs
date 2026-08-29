@@ -42,11 +42,25 @@ export function buildHomepageCard(options?: HomepageCardOptions) {
 }
 
 
-export function buildToastNotification(fileName: string, destinationFolder: string) {
+export interface ToastNotificationTarget {
+  name: string;
+  parentName?: string | undefined;
+}
+
+export function buildToastNotification(
+  targetOrName: ToastNotificationTarget | string,
+  destinationFolder?: string
+) {
+  const fileName = typeof targetOrName === 'string' ? targetOrName : targetOrName.name;
+  const folder =
+    typeof targetOrName === 'object' && targetOrName.parentName !== undefined
+      ? targetOrName.parentName
+      : destinationFolder ?? 'Unfiled';
+
   return {
     action: {
       notification: {
-        text: `Moved '${fileName}' to '${destinationFolder}'`,
+        text: `Moved '${fileName}' to '${folder}'`,
       },
     },
   };

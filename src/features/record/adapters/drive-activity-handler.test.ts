@@ -52,9 +52,9 @@ describe('DriveActivityHandler', () => {
         },
       };
 
-      const context = { userOAuthToken: 'ya29.mock-token' };
+      const context = { credentials: { oauthToken: 'ya29.mock-token' } };
 
-      await handler.handle(activity, context);
+      const output = await handler.handle(activity, context);
 
       expect(mockDriveService.getFile).toHaveBeenCalledWith('file-123', { auth: 'ya29.mock-token' });
       expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
@@ -69,28 +69,28 @@ describe('DriveActivityHandler', () => {
         { auth: 'ya29.mock-token' }
       );
 
-      expect(handler.getLastExecutionResult()).toEqual({
-        fileId: 'file-123',
-        fileName: 'Report.docx',
-        destinationFolder: 'Unfiled',
-      });
-
-      expect((context as Record<string, unknown>).lastExecutionResult).toEqual({
-        fileId: 'file-123',
-        fileName: 'Report.docx',
-        destinationFolder: 'Unfiled',
+      expect(output).toEqual({
+        success: true,
+        files: [
+          {
+            id: 'file-123',
+            name: 'Report.docx',
+            parentName: 'Unfiled',
+            uri: 'https://drive.google.com/file/d/file-123/view',
+          },
+        ],
       });
     });
 
-    it('extracts fileId from context selectedItems when not in payload', async () => {
+    it('extracts fileId from context resources primaryTargetId when not in payload', async () => {
       const activity: Activity = {
         type: 'MOVE_DRIVE_FILE',
         payload: {},
       };
 
       const context = {
-        userOAuthToken: 'ya29.token-abc',
-        selectedItems: [{ id: 'selected-file-789' }],
+        credentials: { oauthToken: 'ya29.token-abc' },
+        resources: { primaryTargetId: 'selected-file-789' },
       };
 
       await handler.handle(activity, context);
@@ -166,7 +166,7 @@ describe('DriveActivityHandler', () => {
         payload: { fileId: 'file-123' },
       };
 
-      await configHandler.handle(activity);
+      const output = await configHandler.handle(activity);
 
       expect(mockConfigProvider.getDriveConfig).toHaveBeenCalled();
       expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
@@ -174,7 +174,7 @@ describe('DriveActivityHandler', () => {
         'ManifestFolder',
         undefined
       );
-      expect(configHandler.getLastExecutionResult()?.destinationFolder).toBe('ManifestFolder');
+      expect(output.files?.[0]?.parentName).toBe('ManifestFolder');
     });
 
     it('prioritizes activity.payload.folderName over configProvider', async () => {
@@ -199,6 +199,40 @@ describe('DriveActivityHandler', () => {
         'folder-parent-xyz',
         'PayloadFolder',
         undefined
+      );
+    });
+
+    it('throws configuration error when configProvider.getDriveConfig fails', async () => {
+      const mockConfigProvider = {
+        getDriveConfig: vi.fn().mockRejectedValue(new Error('Config service unavailable')),
+      };
+
+      const configHandler = new DriveActivityHandler(mockDriveService, {
+        configProvider: mockConfigProvider,
+      });
+
+      const activity: Activity = {
+        type: 'MOVE_DRIVE_FILE',
+        payload: { fileId: 'file-123' },
+      };
+
+      await expect(configHandler.handle(activity)).rejects.toThrow(
+        /DriveActivityHandler failed to get drive config: Config service unavailable/
+      );
+    });
+
+    it('throws move file error when driveService operation fails', async () => {
+      (mockDriveService.getFile as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Google Drive API 404 Not Found')
+      );
+
+      const activity: Activity = {
+        type: 'MOVE_DRIVE_FILE',
+        payload: { fileId: 'file-123' },
+      };
+
+      await expect(handler.handle(activity)).rejects.toThrow(
+        /DriveActivityHandler failed to move file: Google Drive API 404 Not Found/
       );
     });
   });

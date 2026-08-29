@@ -1,12 +1,12 @@
-import type { HttpRequest, HttpResponse, HttpServer } from '../../../infrastructure/http';
-import type { RecordServicePort } from '../../record/ports';
 import type {
   AuthVerifierPort,
-  AuthVerificationResult,
   WorkspaceConfigProviderPort,
+  WorkspaceRecordRunnerPort,
+  WorkspaceFileLocator,
 } from '../ports';
 import {
   extractWorkspaceExecutionContext,
+  findLatestFileLocator,
   type WorkspaceExecutionContext,
 } from '../domain';
 import {
@@ -16,50 +16,37 @@ import {
   buildAuthorizationAction,
 } from './cards';
 
-export interface WorkspaceFeatureApiOptions {
-  authVerifier: AuthVerifierPort;
-  recordService?: RecordServicePort | undefined;
-  configProvider?: WorkspaceConfigProviderPort | undefined;
-  authorizationUrl?: string | undefined;
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
+
+export interface HttpRequest {
+  body?: unknown;
+  headers?: Record<string, string | string[] | undefined> | undefined;
+  query?: unknown;
+  params?: unknown;
 }
 
-async function authenticateRequest(
-  request: HttpRequest,
-  authVerifier: AuthVerifierPort
-): Promise<{ authResult: AuthVerificationResult; unauthorizedResponse?: HttpResponse }> {
-  try {
-    const authHeader = request.headers?.['authorization'] as string | undefined;
-    const authResult = await authVerifier.verifyToken(authHeader);
+export interface HttpResponse {
+  status: number;
+  body?: unknown;
+  headers?: Record<string, string>;
+}
 
-    if (!authResult.isValid) {
-      return {
-        authResult,
-        unauthorizedResponse: {
-          status: 401,
-          body: {
-            error: 'Unauthorized',
-            message: authResult.error ?? 'Invalid authentication token',
-          },
-        },
-      };
-    }
+export interface RouteDefinition {
+  method: HttpMethod;
+  url: string;
+  schema?: unknown;
+  handler: (request: HttpRequest) => Promise<HttpResponse> | HttpResponse;
+}
 
-    return { authResult };
-  } catch (error) {
-    return {
-      authResult: {
-        isValid: false,
-        error: error instanceof Error ? error.message : 'Authentication verification error',
-      },
-      unauthorizedResponse: {
-        status: 401,
-        body: {
-          error: 'Unauthorized',
-          message: error instanceof Error ? error.message : 'Authentication verification error',
-        },
-      },
-    };
-  }
+export interface HttpServer {
+  registerRoute(route: RouteDefinition): void;
+}
+
+export interface WorkspaceFeatureApiOptions {
+  authVerifier: AuthVerifierPort;
+  recordService?: WorkspaceRecordRunnerPort | undefined;
+  configProvider?: WorkspaceConfigProviderPort | undefined;
+  authorizationUrl?: string | undefined;
 }
 
 function withAuthentication(
@@ -67,11 +54,30 @@ function withAuthentication(
   handler: (request: HttpRequest) => Promise<HttpResponse>
 ): (request: HttpRequest) => Promise<HttpResponse> {
   return async (request: HttpRequest): Promise<HttpResponse> => {
-    const { unauthorizedResponse } = await authenticateRequest(request, authVerifier);
-    if (unauthorizedResponse) {
-      return unauthorizedResponse;
+    try {
+      const authHeader = request.headers?.['authorization'] as string | undefined;
+      const authResult = await authVerifier.verifyToken(authHeader);
+
+      if (!authResult.isValid) {
+        return {
+          status: 401,
+          body: {
+            error: 'Unauthorized',
+            message: authResult.error ?? 'Invalid authentication token',
+          },
+        };
+      }
+
+      return await handler(request);
+    } catch (error) {
+      return {
+        status: 500,
+        body: {
+          error: 'Internal Server Error',
+          message: error instanceof Error ? error.message : 'Authentication processing error',
+        },
+      };
     }
-    return handler(request);
   };
 }
 
@@ -143,6 +149,8 @@ export function registerWorkspaceFeatureRoutes(
         const selectedItem = context.selectedItems?.[0];
         const initialFileName = selectedItem?.title ?? 'selected file';
 
+        let latestFileLocator: WorkspaceFileLocator | undefined;
+
         if (recordService) {
           const bodyObj = (
             request.body && typeof request.body === 'object' ? request.body : {}
@@ -154,10 +162,15 @@ export function registerWorkspaceFeatureRoutes(
             },
           };
 
+          const executionContext = {
+            ...(context.userOAuthToken ? { credentials: { oauthToken: context.userOAuthToken } } : {}),
+            ...(selectedItem?.id ? { resources: { primaryTargetId: selectedItem.id } } : {}),
+          };
+
           const result = await recordService.processRecord(
             recordPayload,
             effectiveEventName,
-            context
+            executionContext
           );
           if (!result.success) {
             const errorMessage =
@@ -169,15 +182,18 @@ export function registerWorkspaceFeatureRoutes(
               body: buildErrorCard(errorMessage),
             };
           }
+
+          latestFileLocator = findLatestFileLocator(result.outputs);
         }
 
-        const executedResult = context.lastExecutionResult;
-        const finalFileName = executedResult?.fileName ?? initialFileName;
-        const destinationFolder = executedResult?.destinationFolder ?? 'Unfiled';
+        const notificationTarget = latestFileLocator ?? {
+          name: initialFileName,
+          parentName: 'Unfiled',
+        };
 
         return {
           status: 200,
-          body: buildToastNotification(finalFileName, destinationFolder),
+          body: buildToastNotification(notificationTarget),
         };
       } catch (error) {
         const errorMessage =

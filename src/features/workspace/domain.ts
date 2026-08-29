@@ -43,11 +43,22 @@ export const WorkspaceEventPayloadType = Type.Object({
 
 export type WorkspaceEventPayload = Static<typeof WorkspaceEventPayloadType>;
 
-export interface WorkspaceExecutionResult {
-  fileId?: string | undefined;
-  fileName: string;
-  destinationFolder: string;
-}
+export const WorkspaceRecordExecutionContextSchema = Type.Object({
+  credentials: Type.Optional(
+    Type.Object({
+      oauthToken: Type.Optional(Type.String()),
+    })
+  ),
+  resources: Type.Optional(
+    Type.Object({
+      primaryTargetId: Type.Optional(Type.String()),
+    })
+  ),
+});
+
+export type WorkspaceRecordExecutionContext = Static<
+  typeof WorkspaceRecordExecutionContextSchema
+>;
 
 export interface WorkspaceExecutionContext {
   userOAuthToken?: string | undefined;
@@ -57,19 +68,14 @@ export interface WorkspaceExecutionContext {
   traceId?: string | undefined;
   selectedItems?: WorkspaceDriveSelectedItem[] | undefined;
   rawEvent?: unknown;
-  lastExecutionResult?: WorkspaceExecutionResult | undefined;
 }
 
 export function extractWorkspaceExecutionContext(
   payload: unknown,
   traceId?: string
 ): WorkspaceExecutionContext {
-  let event: Partial<WorkspaceEventPayload> = {};
-  if (Value.Check(WorkspaceEventPayloadType, payload)) {
-    event = payload;
-  } else if (payload && typeof payload === 'object') {
-    event = payload as Partial<WorkspaceEventPayload>;
-  }
+  const event: Partial<WorkspaceEventPayload> =
+    Value.Check(WorkspaceEventPayloadType, payload) ? payload : {};
 
   const userOAuthToken =
     event.authorizationEventObject?.userOAuthToken ?? event.userOAuthToken;
@@ -83,4 +89,19 @@ export function extractWorkspaceExecutionContext(
     selectedItems: event.drive?.selectedItems,
     rawEvent: payload,
   };
+}
+
+export function findLatestFileLocator<TFile extends { name: string }>(
+  outputs?: { files?: TFile[] | undefined }[] | undefined
+): TFile | undefined {
+  if (!outputs || outputs.length === 0) {
+    return undefined;
+  }
+  for (let i = outputs.length - 1; i >= 0; i--) {
+    const output = outputs[i];
+    if (output.files && output.files.length > 0) {
+      return output.files[output.files.length - 1];
+    }
+  }
+  return undefined;
 }

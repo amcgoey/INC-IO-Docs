@@ -6,14 +6,27 @@ import {
   buildAuthorizationAction,
 } from './cards';
 
+function getCardTitle(
+  card: ReturnType<typeof buildHomepageCard> | ReturnType<typeof buildErrorCard>
+) {
+  return card.action.navigations[0].pushCard.header.title;
+}
+
+function getCardButton(card: ReturnType<typeof buildHomepageCard>) {
+  return card.action.navigations[0].pushCard.sections[0].widgets[0].buttonList.buttons[0];
+}
+
+function getCardText(card: ReturnType<typeof buildErrorCard>) {
+  return card.action.navigations[0].pushCard.sections[0].widgets[0].textParagraph.text;
+}
+
 describe('Workspace Cards Adapter', () => {
   describe('buildHomepageCard', () => {
     it('returns a card with a Move Selected File button', () => {
       const card = buildHomepageCard();
 
-      expect(card.action.navigations[0].pushCard.header.title).toBe('INC-IO Docs');
-      const button =
-        card.action.navigations[0].pushCard.sections[0].widgets[0].buttonList.buttons[0];
+      expect(getCardTitle(card)).toBe('INC-IO Docs');
+      const button = getCardButton(card);
       expect(button.text).toBe('Move Selected File');
       expect(button.onClick.action.actionMethodName).toBe('moveSelectedFile');
     });
@@ -24,9 +37,8 @@ describe('Workspace Cards Adapter', () => {
         actionButtonText: 'Custom Action',
       });
 
-      expect(card.action.navigations[0].pushCard.header.title).toBe('Custom Title');
-      const button =
-        card.action.navigations[0].pushCard.sections[0].widgets[0].buttonList.buttons[0];
+      expect(getCardTitle(card)).toBe('Custom Title');
+      const button = getCardButton(card);
       expect(button.text).toBe('Custom Action');
       expect(button.onClick.action.actionMethodName).toBe('moveSelectedFile');
     });
@@ -44,43 +56,46 @@ describe('Workspace Cards Adapter', () => {
         },
       });
     });
-  });
 
-  describe('buildErrorCard', () => {
-    it('returns an error card with error title and description', () => {
-      const errorCard = buildErrorCard('File not found in Google Drive', 'Drive Error');
-      expect(errorCard).toEqual({
+    it('returns a notification toast when provided a ToastNotificationTarget object', () => {
+      const toast = buildToastNotification({
+        name: 'Report.pdf',
+        parentName: 'FinalArchive',
+      });
+      expect(toast).toEqual({
         action: {
-          navigations: [
-            {
-              pushCard: {
-                header: {
-                  title: 'Drive Error',
-                },
-                sections: [
-                  {
-                    widgets: [
-                      {
-                        textParagraph: {
-                          text: 'File not found in Google Drive',
-                        },
-                      },
-                    ],
-                  },
-                ],
-              },
-            },
-          ],
           notification: {
-            text: 'File not found in Google Drive',
+            text: "Moved 'Report.pdf' to 'FinalArchive'",
           },
         },
       });
     });
 
+    it('falls back to Unfiled when ToastNotificationTarget parentName is undefined', () => {
+      const toast = buildToastNotification({
+        name: 'Report.pdf',
+      });
+      expect(toast).toEqual({
+        action: {
+          notification: {
+            text: "Moved 'Report.pdf' to 'Unfiled'",
+          },
+        },
+      });
+    });
+  });
+
+  describe('buildErrorCard', () => {
+    it('returns an error card with error title and description', () => {
+      const errorCard = buildErrorCard('File not found in Google Drive', 'Drive Error');
+      expect(getCardTitle(errorCard)).toBe('Drive Error');
+      expect(getCardText(errorCard)).toBe('File not found in Google Drive');
+      expect(errorCard.action.notification.text).toBe('File not found in Google Drive');
+    });
+
     it('defaults error card title to Error', () => {
       const errorCard = buildErrorCard('Something went wrong');
-      expect(errorCard.action.navigations[0].pushCard.header.title).toBe('Error');
+      expect(getCardTitle(errorCard)).toBe('Error');
     });
   });
 

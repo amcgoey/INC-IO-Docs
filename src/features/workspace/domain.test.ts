@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import { Value } from '@sinclair/typebox/value';
 import {
   extractWorkspaceExecutionContext,
+  findLatestFileLocator,
+  WorkspaceRecordExecutionContextSchema,
   type WorkspaceEventPayload,
+  type WorkspaceRecordExecutionContext,
 } from './domain';
 
 describe('Workspace Domain Helpers', () => {
@@ -66,6 +70,77 @@ describe('Workspace Domain Helpers', () => {
         selectedItems: undefined,
         rawEvent: null,
       });
+    });
+
+    it('returns default context when payload fails schema validation', () => {
+      const invalidPayload = {
+        authorizationEventObject: 'invalid-string-instead-of-object',
+      };
+      const context = extractWorkspaceExecutionContext(invalidPayload);
+      expect(context.userOAuthToken).toBeUndefined();
+      expect(context.rawEvent).toBe(invalidPayload);
+    });
+  });
+
+  describe('findLatestFileLocator', () => {
+    it('returns undefined when outputs array is empty or undefined', () => {
+      expect(findLatestFileLocator(undefined)).toBeUndefined();
+      expect(findLatestFileLocator([])).toBeUndefined();
+    });
+
+    it('returns the last file locator when multiple outputs and files exist', () => {
+      const outputs = [
+        {
+          files: [
+            { id: '1', name: 'File1.pdf' },
+            { id: '2', name: 'File2.pdf' },
+          ],
+        },
+        {
+          files: [],
+        },
+        {
+          files: [
+            { id: '3', name: 'File3.pdf', parentName: 'TargetFolder' },
+          ],
+        },
+      ];
+
+      expect(findLatestFileLocator(outputs)).toEqual({
+        id: '3',
+        name: 'File3.pdf',
+        parentName: 'TargetFolder',
+      });
+    });
+
+    it('returns undefined when none of the outputs have files', () => {
+      const outputs = [{ files: [] }, {}];
+      expect(findLatestFileLocator(outputs)).toBeUndefined();
+    });
+  });
+
+  describe('WorkspaceRecordExecutionContextSchema', () => {
+    it('validates valid and invalid WorkspaceRecordExecutionContext instances', () => {
+      expect(WorkspaceRecordExecutionContextSchema).toBeDefined();
+
+      const validContext: WorkspaceRecordExecutionContext = {
+        credentials: { oauthToken: 'ya29.valid-token' },
+        resources: { primaryTargetId: 'file-123' },
+      };
+      expect(Value.Check(WorkspaceRecordExecutionContextSchema, validContext)).toBe(true);
+
+      const emptyContext: WorkspaceRecordExecutionContext = {};
+      expect(Value.Check(WorkspaceRecordExecutionContextSchema, emptyContext)).toBe(true);
+
+      const invalidCredentials = {
+        credentials: 'invalid-string',
+      };
+      expect(Value.Check(WorkspaceRecordExecutionContextSchema, invalidCredentials)).toBe(false);
+
+      const invalidResources = {
+        resources: 12345,
+      };
+      expect(Value.Check(WorkspaceRecordExecutionContextSchema, invalidResources)).toBe(false);
     });
   });
 });

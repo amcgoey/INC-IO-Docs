@@ -96,6 +96,7 @@ describe('App integration tests', () => {
             payload: { status: 'submitted' },
           },
         ],
+        outputs: [],
       });
       expect(mockActivityEngine.dispatch).toHaveBeenCalledWith({
         type: 'LOG_RECORD',
@@ -123,6 +124,7 @@ describe('App integration tests', () => {
         success: true,
         data: validRecord,
         activities: [],
+        outputs: [],
       });
       expect(mockActivityEngine.dispatch).not.toHaveBeenCalled();
     });

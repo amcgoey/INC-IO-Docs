@@ -1,8 +1,15 @@
 import type { Activity } from '../domain';
-import type { ActivityDispatcherPort } from '../ports';
+import type { ActivityHandler, ExecutionContext } from '../ports';
 
-export class StructuredLogActivity implements ActivityDispatcherPort {
-  async dispatch<TContext = unknown>(activity: Activity, context?: TContext): Promise<void> {
+export class StructuredLogActivity implements ActivityHandler {
+  canHandle(activity: Activity): boolean {
+    return activity.type === 'LOG_RECORD' || activity.type === 'STRUCTURED_LOG';
+  }
+
+  handle(
+    activity: Activity,
+    context?: ExecutionContext
+  ): void {
     void context;
     console.log(JSON.stringify(activity.payload));
   }

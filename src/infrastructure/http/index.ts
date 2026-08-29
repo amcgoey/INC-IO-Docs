@@ -109,12 +109,26 @@ class FastifyHttpServer implements HttpServer {
   }
 
   public async start(port: number, host: string = '0.0.0.0'): Promise<string> {
-    const address = await this.app.listen({ port, host });
-    return address;
+    try {
+      const address = await this.app.listen({ port, host });
+      return address;
+    } catch (error) {
+      throw new Error(
+        `Failed to start HTTP server on ${host}:${port}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error }
+      );
+    }
   }
 
   public async stop(): Promise<void> {
-    await this.app.close();
+    try {
+      await this.app.close();
+    } catch (error) {
+      throw new Error(
+        `Failed to stop HTTP server: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error }
+      );
+    }
   }
 
   public async inject(options: InjectOptions): Promise<InjectResult> {
@@ -132,14 +146,21 @@ class FastifyHttpServer implements HttpServer {
       injectOpts.query = options.query as NonNullable<FastifyInjectOptions['query']>;
     }
 
-    const response = await this.app.inject(injectOpts);
-    return {
-      statusCode: response.statusCode,
-      payload: response.payload,
-      body: response.body,
-      headers: response.headers as Record<string, string | string[] | undefined>,
-      json: <T = unknown>() => response.json() as T,
-    };
+    try {
+      const response = await this.app.inject(injectOpts);
+      return {
+        statusCode: response.statusCode,
+        payload: response.payload,
+        body: response.body,
+        headers: response.headers as Record<string, string | string[] | undefined>,
+        json: <T = unknown>() => response.json() as T,
+      };
+    } catch (error) {
+      throw new Error(
+        `Failed to inject HTTP request: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error }
+      );
+    }
   }
 }
 
