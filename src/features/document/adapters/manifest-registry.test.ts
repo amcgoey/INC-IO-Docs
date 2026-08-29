@@ -538,7 +538,7 @@ describe('ManifestRegistryAdapter', () => {
               name: 'TestWorkflow',
               activitySequence: [
                 {
-                  type: 'LOG_RECORD',
+                  type: 'LOG_DOCUMENT',
                   payload: {
                     folder: '{{Document.data.title}}-{{InvalidField}}',
                   },

@@ -106,7 +106,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
           name: 'OutgoingCommWorkflow',
           activitySequence: [
             {
-              type: 'LOG_RECORD',
+              type: 'LOG_DOCUMENT',
               payload: {
                 targetPath: '{{StorageContext.folder}}\\\\{{Document.data.summary}}',
                 archivePath: '{{StorageContext.subfolder}}\\\\{{Document.data.testCalculatedField}}',
@@ -118,7 +118,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
           name: 'IncomingCommWorkflow',
           activitySequence: [
             {
-              type: 'LOG_RECORD',
+              type: 'LOG_DOCUMENT',
               payload: {
                 targetPath: '{{StorageContext.folder}}\\\\{{Document.data.summary}}',
                 archivePath: '{{StorageContext.subfolder}}\\\\{{Document.data.testCalculatedField}}',
@@ -130,7 +130,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
           name: 'DefaultCommWorkflow',
           activitySequence: [
             {
-              type: 'LOG_RECORD',
+              type: 'LOG_DOCUMENT',
               payload: {
                 targetPath: '{{StorageContext.folder}}\\\\{{Document.data.summary}}',
                 archivePath: '{{StorageContext.subfolder}}\\\\{{Document.data.testCalculatedField}}',
@@ -162,7 +162,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
   });
 
   it('routes and executes Document 1 (Client - AAA) with option enrichment, identities, calculated fields, and precise path resolution', async () => {
-    const record1: Document = {
+    const document1: Document = {
       type: 'communication-project',
       data: {
         contact: '_Client - AAA',
@@ -172,7 +172,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
       },
     };
 
-    const result = await documentService.processRecord(record1, 'onSubmit');
+    const result = await documentService.processDocument(document1, 'onSubmit');
 
     expect(result.success).toBe(true);
     if (!result.success) return;
@@ -202,7 +202,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     };
 
     const expectedActivity: Activity = {
-      type: 'LOG_RECORD',
+      type: 'LOG_DOCUMENT',
       payload: expectedPayload,
     };
 
@@ -211,7 +211,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
   });
 
   it('routes and executes Document 2 (Architect - BBB) with option enrichment, identities, calculated fields, and precise path resolution', async () => {
-    const record2: Document = {
+    const document2: Document = {
       type: 'communication-project',
       data: {
         contact: 'Architect - BBB',
@@ -221,7 +221,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
       },
     };
 
-    const result = await documentService.processRecord(record2, 'onSubmit');
+    const result = await documentService.processDocument(document2, 'onSubmit');
 
     expect(result.success).toBe(true);
     if (!result.success) return;
@@ -251,7 +251,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     };
 
     const expectedActivity: Activity = {
-      type: 'LOG_RECORD',
+      type: 'LOG_DOCUMENT',
       payload: expectedPayload,
     };
 

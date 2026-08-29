@@ -33,7 +33,7 @@ export interface ActivityDispatcherPort {
 }
 
 export interface DocumentServicePort {
-  processRecord(
+  processDocument(
     payload?: unknown,
     eventName?: string,
     context?: ExecutionContext

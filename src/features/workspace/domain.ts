@@ -45,7 +45,7 @@ export type WorkspaceEventPayload = Static<typeof WorkspaceEventPayloadType>;
 
 /**
  * WorkspaceDocumentExecutionContext represents the execution context contract required when the workspace
- * feature executes records via its driven port (WorkspaceDocumentRunnerPort).
+ * feature executes documents via its driven port (WorkspaceDocumentRunnerPort).
  *
  * NOTE ON CODE DUPLICATION:
  * This schema is intentionally defined independently within the `workspace` feature boundary and mirrors

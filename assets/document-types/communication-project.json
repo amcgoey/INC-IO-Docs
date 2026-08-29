@@ -69,7 +69,7 @@
         "name": "FileCommProject",
         "activitySequence": [
           {
-            "type": "LOG_RECORD",
+            "type": "LOG_DOCUMENT",
             "payload": {
               "status": "filed"
             }

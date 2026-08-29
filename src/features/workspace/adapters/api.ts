@@ -165,7 +165,7 @@ export function registerWorkspaceFeatureRoutes(
 
           const executionContext = createWorkspaceDocumentExecutionContext(context);
 
-          const result = await documentService.processRecord(
+          const result = await documentService.processDocument(
             documentPayload,
             effectiveEventName,
             executionContext

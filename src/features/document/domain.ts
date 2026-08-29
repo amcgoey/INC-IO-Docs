@@ -209,7 +209,7 @@ export type ProcessDocumentResult =
  * Maps property names in DocumentIdentitySchema to property names in the Document entity model.
  * DocumentIdentitySchema defines 'id', 'idDocument', and 'idGroup' which map directly to 'id', 'idDocument', and 'idGroup' on the Document entity.
  */
-const IDENTITY_SCHEMA_TO_RECORD_FIELD_MAPPING = {
+const IDENTITY_SCHEMA_TO_DOCUMENT_FIELD_MAPPING = {
   id: 'id',
   idDocument: 'idDocument',
   idGroup: 'idGroup',
@@ -343,7 +343,7 @@ export class DocumentService implements DocumentServicePort, SchemaQueryPort {
     });
   }
 
-  async processRecord(
+  async processDocument(
     payload?: unknown,
     eventName?: string,
     context?: ExecutionContext
@@ -420,8 +420,8 @@ export class DocumentService implements DocumentServicePort, SchemaQueryPort {
 
     const identityUpdates: Partial<Document> = {};
     if (documentType.documentSchema.identity) {
-      for (const [schemaKey, targetKey] of Object.entries(IDENTITY_SCHEMA_TO_RECORD_FIELD_MAPPING)) {
-        const template = documentType.documentSchema.identity[schemaKey as keyof typeof IDENTITY_SCHEMA_TO_RECORD_FIELD_MAPPING];
+      for (const [schemaKey, targetKey] of Object.entries(IDENTITY_SCHEMA_TO_DOCUMENT_FIELD_MAPPING)) {
+        const template = documentType.documentSchema.identity[schemaKey as keyof typeof IDENTITY_SCHEMA_TO_DOCUMENT_FIELD_MAPPING];
         if (typeof template === 'string') {
           identityUpdates[targetKey] = this.templateEvaluator.evaluate(
             template,
@@ -431,7 +431,7 @@ export class DocumentService implements DocumentServicePort, SchemaQueryPort {
       }
     }
 
-    let enrichedRecord: Document = {
+    let enrichedDocument: Document = {
       ...document,
       ...identityUpdates,
       data: resolvedData,
@@ -443,7 +443,7 @@ export class DocumentService implements DocumentServicePort, SchemaQueryPort {
       const uiEvent = documentType.documentUiConfig.events[eventName];
       if (uiEvent.rules && uiEvent.rules.length > 0) {
         for (const rule of uiEvent.rules) {
-          if (matchesRule(rule.matchFields, enrichedRecord)) {
+          if (matchesRule(rule.matchFields, enrichedDocument)) {
             selectedWorkflowName = rule.workflow;
             break;
           }
@@ -458,7 +458,7 @@ export class DocumentService implements DocumentServicePort, SchemaQueryPort {
     if (!selectedWorkflowName) {
       return {
         success: true,
-        data: enrichedRecord,
+        data: enrichedDocument,
         activities: [],
         outputs: [],
       };
@@ -480,12 +480,12 @@ export class DocumentService implements DocumentServicePort, SchemaQueryPort {
       storageContext = resolvePayloadTemplates(
         documentType.storageContextConfig,
         this.templateEvaluator,
-        { Document: enrichedRecord }
+        { Document: enrichedDocument }
       );
     }
 
     const evaluationContext: TemplateEvaluationContext = {
-      Document: enrichedRecord,
+      Document: enrichedDocument,
       documentSchema: documentType.documentSchema,
       ...(storageContext !== undefined ? { StorageContext: storageContext } : {}),
     };
@@ -520,14 +520,14 @@ export class DocumentService implements DocumentServicePort, SchemaQueryPort {
           };
         }
         if (output.documentDataPatch) {
-          enrichedRecord = {
-            ...enrichedRecord,
+          enrichedDocument = {
+            ...enrichedDocument,
             data: {
-              ...enrichedRecord.data,
+              ...enrichedDocument.data,
               ...output.documentDataPatch,
             },
           };
-          evaluationContext.Document = enrichedRecord;
+          evaluationContext.Document = enrichedDocument;
         }
         if (output.contextVariables) {
           Object.assign(evaluationContext, output.contextVariables);
@@ -538,7 +538,7 @@ export class DocumentService implements DocumentServicePort, SchemaQueryPort {
 
     const finalResult: ProcessDocumentResult = {
       success: true,
-      data: enrichedRecord,
+      data: enrichedDocument,
       activities: resolvedActivities,
       outputs: collectedOutputs,
     };

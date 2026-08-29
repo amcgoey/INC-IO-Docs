@@ -41,7 +41,7 @@ describe('App integration tests', () => {
               name: 'SubmitCommProject',
               activitySequence: [
                 {
-                  type: 'LOG_RECORD',
+                  type: 'LOG_DOCUMENT',
                   payload: { status: 'submitted' },
                 },
               ],
@@ -72,7 +72,7 @@ describe('App integration tests', () => {
 
   describe('Route endpoints', () => {
     it('POST /documents?eventName=onSubmit should return 200 and dispatch activity for valid Document payload', async () => {
-      const validRecord = {
+      const validDocument = {
         type: 'communication-project',
         data: {
           contact: 'Jane Doe',
@@ -82,30 +82,30 @@ describe('App integration tests', () => {
       const response = await app.server.inject({
         method: 'POST',
         url: '/documents?eventName=onSubmit',
-        payload: validRecord,
+        payload: validDocument,
       });
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
       expect(body).toEqual({
         success: true,
-        data: validRecord,
+        data: validDocument,
         activities: [
           {
-            type: 'LOG_RECORD',
+            type: 'LOG_DOCUMENT',
             payload: { status: 'submitted' },
           },
         ],
         outputs: [],
       });
       expect(mockActivityEngine.dispatch).toHaveBeenCalledWith({
-        type: 'LOG_RECORD',
+        type: 'LOG_DOCUMENT',
         payload: { status: 'submitted' },
       });
     });
 
     it('POST /documents without eventName should return 200 with empty activities and not dispatch', async () => {
-      const validRecord = {
+      const validDocument = {
         type: 'communication-project',
         data: {
           contact: 'Jane Doe',
@@ -115,14 +115,14 @@ describe('App integration tests', () => {
       const response = await app.server.inject({
         method: 'POST',
         url: '/documents',
-        payload: validRecord,
+        payload: validDocument,
       });
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
       expect(body).toEqual({
         success: true,
-        data: validRecord,
+        data: validDocument,
         activities: [],
         outputs: [],
       });
@@ -420,12 +420,12 @@ describe('App integration tests', () => {
     it('resolves manifest strictly from options.manifestPath', async () => {
       const manifestPath = path.join(tempDir, 'manifest.json');
       const documentTypePath = path.join(tempDir, 'custom-Document.json');
-      const customRecord = {
+      const customDocument = {
         key: 'custom-Document-key',
         name: 'Custom Document Name',
         documentSchema: { fields: [{ key: 'title', name: 'Title', type: 'string', required: true }] },
       };
-      await fs.writeFile(documentTypePath, JSON.stringify(customRecord));
+      await fs.writeFile(documentTypePath, JSON.stringify(customDocument));
       await fs.writeFile(manifestPath, JSON.stringify({ documentTypes: ['./custom-Document.json'] }));
 
       const appInstance = createApp({ manifestPath });
@@ -440,12 +440,12 @@ describe('App integration tests', () => {
     it('resolves manifest strictly from APP_MANIFEST_PATH environment variable', async () => {
       const manifestPath = path.join(tempDir, 'env-manifest.json');
       const documentTypePath = path.join(tempDir, 'env-Document.json');
-      const customRecord = {
+      const customDocument = {
         key: 'env-Document-key',
         name: 'Env Document Name',
         documentSchema: { fields: [{ key: 'code', name: 'Code', type: 'string', required: true }] },
       };
-      await fs.writeFile(documentTypePath, JSON.stringify(customRecord));
+      await fs.writeFile(documentTypePath, JSON.stringify(customDocument));
       await fs.writeFile(manifestPath, JSON.stringify({ documentTypes: ['./env-Document.json'] }));
 
       vi.stubEnv('APP_MANIFEST_PATH', manifestPath);
@@ -539,7 +539,7 @@ describe('App integration tests', () => {
         },
       };
 
-      const expectedRecord = {
+      const expectedDocument = {
         type: 'communication-project',
         id: expectedIdentityValue,
         idDocument: expectedIdentityValue,
@@ -556,10 +556,10 @@ describe('App integration tests', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
       expect(body.success).toBe(true);
-      expect(body.data).toEqual(expectedRecord);
+      expect(body.data).toEqual(expectedDocument);
       expect(body.activities).toEqual([
         {
-          type: 'LOG_RECORD',
+          type: 'LOG_DOCUMENT',
           payload: {
             status: 'filed',
           },
@@ -567,7 +567,7 @@ describe('App integration tests', () => {
       ]);
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'LOG_RECORD',
+        type: 'LOG_DOCUMENT',
         payload: {
           status: 'filed',
         },
@@ -654,7 +654,7 @@ describe('App integration tests', () => {
                 name: 'SubmitCombobox',
                 activitySequence: [
                   {
-                    type: 'LOG_RECORD',
+                    type: 'LOG_DOCUMENT',
                     payload: { status: 'combobox_handled' },
                   },
                 ],
@@ -696,7 +696,7 @@ describe('App integration tests', () => {
         name: 'NonStandardCategoryXYZ',
       });
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'LOG_RECORD',
+        type: 'LOG_DOCUMENT',
         payload: {
           status: 'combobox_handled',
         },
@@ -885,7 +885,7 @@ describe('App integration tests', () => {
     it('propagates workspace configuration from manifest to /workspace/homepage and /workspace/action', async () => {
       const manifestPath = path.join(tempDir, 'manifest.json');
       const documentTypePath = path.join(tempDir, 'custom-Document.json');
-      const customRecord = {
+      const customDocument = {
         key: 'configured-Document-type',
         name: 'Configured Document Type',
         documentSchema: { fields: [{ key: 'title', name: 'Title', type: 'string', required: true }] },
@@ -911,7 +911,7 @@ describe('App integration tests', () => {
         },
       };
 
-      await fs.writeFile(documentTypePath, JSON.stringify(customRecord));
+      await fs.writeFile(documentTypePath, JSON.stringify(customDocument));
       await fs.writeFile(
         manifestPath,
         JSON.stringify({

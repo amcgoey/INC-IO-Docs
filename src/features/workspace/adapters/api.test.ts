@@ -14,7 +14,7 @@ describe('Workspace Feature Routes', () => {
       verifyToken: vi.fn().mockResolvedValue({ isValid: true, payload: { email: 'user@example.com' } }),
     };
     mockDocumentService = {
-      processRecord: vi.fn().mockResolvedValue({
+      processDocument: vi.fn().mockResolvedValue({
         success: true,
         data: { type: 'test-document', data: {} },
         activities: [],
@@ -134,7 +134,7 @@ describe('Workspace Feature Routes', () => {
         },
       });
 
-      expect(mockDocumentService.processRecord).toHaveBeenCalledWith(
+      expect(mockDocumentService.processDocument).toHaveBeenCalledWith(
         {
           type: 'test-document',
           data: {
@@ -154,7 +154,7 @@ describe('Workspace Feature Routes', () => {
     });
 
     it('scans result.outputs backwards and renders toast notification using the last populated FileLocator', async () => {
-      (mockDocumentService.processRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (mockDocumentService.processDocument as ReturnType<typeof vi.fn>).mockResolvedValue({
         success: true,
         data: { type: 'test-document', data: {} },
         activities: [],
@@ -258,7 +258,7 @@ describe('Workspace Feature Routes', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(mockDocumentService.processRecord).toHaveBeenCalledWith(
+      expect(mockDocumentService.processDocument).toHaveBeenCalledWith(
         {
           type: 'custom-document-type',
           data: {
@@ -296,7 +296,7 @@ describe('Workspace Feature Routes', () => {
           },
         },
       });
-      expect(mockDocumentService.processRecord).not.toHaveBeenCalled();
+      expect(mockDocumentService.processDocument).not.toHaveBeenCalled();
     });
 
     it('returns 200 with custom authorizationUrl when configured and userOAuthToken is missing', async () => {
@@ -323,7 +323,7 @@ describe('Workspace Feature Routes', () => {
     });
 
     it('returns 200 with native Error Card when documentService fails validation', async () => {
-      (mockDocumentService.processRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (mockDocumentService.processDocument as ReturnType<typeof vi.fn>).mockResolvedValue({
         success: false,
         errors: ['Invalid document data: Field contact is required'],
       });
@@ -353,7 +353,7 @@ describe('Workspace Feature Routes', () => {
     });
 
     it('returns 200 with native Error Card when documentService or driven adapter throws an error', async () => {
-      (mockDocumentService.processRecord as ReturnType<typeof vi.fn>).mockRejectedValue(
+      (mockDocumentService.processDocument as ReturnType<typeof vi.fn>).mockRejectedValue(
         new Error('Google Drive API error in moveFile: 403 Forbidden')
       );
 
@@ -390,7 +390,7 @@ describe('Workspace Feature Routes', () => {
       });
 
       expect(response.statusCode).toBe(401);
-      expect(mockDocumentService.processRecord).not.toHaveBeenCalled();
+      expect(mockDocumentService.processDocument).not.toHaveBeenCalled();
     });
   });
 });

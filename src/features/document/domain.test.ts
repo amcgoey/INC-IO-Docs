@@ -148,7 +148,7 @@ describe('Document domain', () => {
     expect(Value.Check(ExecutionContextSchema, invalidResources)).toBe(false);
   });
 
-  it('processRecord validates payload, dispatches Activity, and returns success result', async () => {
+  it('processDocument validates payload, dispatches Activity, and returns success result', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn().mockResolvedValue(undefined),
     };
@@ -185,7 +185,7 @@ describe('Document domain', () => {
               name: 'SubmitSubmittalWorkflow',
               activitySequence: [
                 {
-                  type: 'LOG_RECORD',
+                  type: 'LOG_DOCUMENT',
                   payload: { document: { title: 'Foundation Plan' } },
                 },
               ],
@@ -200,7 +200,7 @@ describe('Document domain', () => {
     const service = new DocumentService(mockDispatcher, registryWithSubmittal, defaultEvaluator);
     await service.initialize();
 
-    const validRecord: Document = {
+    const validDocument: Document = {
       id: 'rec-123',
       type: 'submittal',
       data: {
@@ -208,25 +208,25 @@ describe('Document domain', () => {
       },
     };
 
-    const result = await service.processRecord(validRecord, 'onSubmit');
+    const result = await service.processDocument(validDocument, 'onSubmit');
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data).toEqual(validRecord);
+      expect(result.data).toEqual(validDocument);
       expect(result.activities).toEqual([
         {
-          type: 'LOG_RECORD',
+          type: 'LOG_DOCUMENT',
           payload: { document: { title: 'Foundation Plan' } },
         },
       ]);
     }
 
     expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-      type: 'LOG_RECORD',
+      type: 'LOG_DOCUMENT',
       payload: { document: { title: 'Foundation Plan' } },
     });
   });
 
-  it('processRecord returns failure when dynamic field validation fails against compiled schema', async () => {
+  it('processDocument returns failure when dynamic field validation fails against compiled schema', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
@@ -257,7 +257,7 @@ describe('Document domain', () => {
       data: {},
     };
 
-    const result = await service.processRecord(missingRequiredField);
+    const result = await service.processDocument(missingRequiredField);
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.errors.length).toBeGreaterThan(0);
@@ -265,19 +265,19 @@ describe('Document domain', () => {
     expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
   });
 
-  it('processRecord returns failure for unknown document type', async () => {
+  it('processDocument returns failure for unknown document type', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
     const service = new DocumentService(mockDispatcher, mockRegistry, defaultEvaluator);
     await service.initialize();
 
-    const unknownTypeRecord = {
+    const unknownTypeDocument = {
       type: 'unknown-type',
       data: { title: 'Test' },
     };
 
-    const result = await service.processRecord(unknownTypeRecord);
+    const result = await service.processDocument(unknownTypeDocument);
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.errors).toContain("Unknown document type: unknown-type");
@@ -315,18 +315,18 @@ describe('Document domain', () => {
     );
   });
 
-  it('processRecord returns failure and does not dispatch activity for invalid payload', async () => {
+  it('processDocument returns failure and does not dispatch activity for invalid payload', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
     const service = new DocumentService(mockDispatcher, mockRegistry, defaultEvaluator);
     await service.initialize();
 
-    const invalidRecord = {
+    const invalidDocument = {
       title: 123, // missing type and data
     };
 
-    const result = await service.processRecord(invalidRecord);
+    const result = await service.processDocument(invalidDocument);
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.errors.length).toBeGreaterThan(0);
@@ -334,18 +334,18 @@ describe('Document domain', () => {
     expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
   });
 
-  it('processRecord returns failure for undefined or null payload', async () => {
+  it('processDocument returns failure for undefined or null payload', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
     const service = new DocumentService(mockDispatcher, mockRegistry, defaultEvaluator);
     await service.initialize();
 
-    const resultUndefined = await service.processRecord(undefined);
+    const resultUndefined = await service.processDocument(undefined);
     expect(resultUndefined.success).toBe(false);
     expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
 
-    const resultNull = await service.processRecord(null);
+    const resultNull = await service.processDocument(null);
     expect(resultNull.success).toBe(false);
     expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
   });
@@ -782,14 +782,14 @@ describe('Document domain', () => {
   describe('formatValidationErrors', () => {
     it('returns empty array when there are no errors', () => {
       const Schema = DocumentModel;
-      const validRecord = { id: 'rec-1', type: 'submittal', data: { subject: 'Submittal 1' } };
-      expect(formatValidationErrors(Schema, validRecord)).toEqual([]);
+      const validDocument = { id: 'rec-1', type: 'submittal', data: { subject: 'Submittal 1' } };
+      expect(formatValidationErrors(Schema, validDocument)).toEqual([]);
     });
 
     it('returns formatted error string array with path and message for invalid value', () => {
       const Schema = DocumentModel;
-      const invalidRecord = { id: 123, type: 'submittal' }; // id not string, missing data
-      const formatted = formatValidationErrors(Schema, invalidRecord);
+      const invalidDocument = { id: 123, type: 'submittal' }; // id not string, missing data
+      const formatted = formatValidationErrors(Schema, invalidDocument);
       expect(formatted.some((e) => e.includes('/id:'))).toBe(true);
       expect(formatted.some((e) => e.includes('/data:'))).toBe(true);
     });
@@ -886,7 +886,7 @@ describe('Document domain', () => {
                 name: 'HandleCommWorkflow',
                 activitySequence: [
                   {
-                    type: 'LOG_RECORD',
+                    type: 'LOG_DOCUMENT',
                     payload: { status: 'calculated' },
                   },
                 ],
@@ -911,7 +911,7 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Alice',
@@ -919,7 +919,7 @@ describe('Document domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.data).toEqual({
@@ -929,14 +929,14 @@ describe('Document domain', () => {
         });
         expect(result.activities).toEqual([
           {
-            type: 'LOG_RECORD',
+            type: 'LOG_DOCUMENT',
             payload: { status: 'calculated' },
           },
         ]);
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'LOG_RECORD',
+        type: 'LOG_DOCUMENT',
         payload: { status: 'calculated' },
       });
     });
@@ -976,7 +976,7 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      await service.processRecord({
+      await service.processDocument({
         type: 'multi-calc',
         data: { base1: 'val1' },
       });
@@ -1024,7 +1024,7 @@ describe('Document domain', () => {
                 name: 'IdentityWorkflow',
                 activitySequence: [
                   {
-                    type: 'LOG_RECORD',
+                    type: 'LOG_DOCUMENT',
                     payload: { status: 'identified' },
                   },
                 ],
@@ -1052,7 +1052,7 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Alice',
@@ -1062,7 +1062,7 @@ describe('Document domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.id).toBe('Alice-260825-IN-Project discussion');
@@ -1076,14 +1076,14 @@ describe('Document domain', () => {
         });
         expect(result.activities).toEqual([
           {
-            type: 'LOG_RECORD',
+            type: 'LOG_DOCUMENT',
             payload: { status: 'identified' },
           },
         ]);
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'LOG_RECORD',
+        type: 'LOG_DOCUMENT',
         payload: { status: 'identified' },
       });
     });
@@ -1127,7 +1127,7 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      await service.processRecord({
+      await service.processDocument({
         type: 'calc-and-identity',
         data: { contact: 'Bob' },
       });
@@ -1184,14 +1184,14 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const validRecord: Document = {
+      const validDocument: Document = {
         type: 'comm-project',
         data: {
           direction: 'IN',
         },
       };
 
-      const result = await service.processRecord(validRecord);
+      const result = await service.processDocument(validDocument);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.data).toEqual({ direction: { key: 'IN', name: 'Incoming' } });
@@ -1237,14 +1237,14 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const invalidRecord = {
+      const invalidDocument = {
         type: 'comm-project',
         data: {
           direction: 'INVALID_DIR',
         },
       };
 
-      const result = await service.processRecord(invalidRecord);
+      const result = await service.processDocument(invalidDocument);
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.errors.length).toBeGreaterThan(0);
@@ -1291,37 +1291,37 @@ describe('Document domain', () => {
       await service.initialize();
 
       // Omitting optional lookup field
-      const emptyRecord: Document = {
+      const emptyDocument: Document = {
         type: 'comm-project',
         data: {},
       };
-      const emptyResult = await service.processRecord(emptyRecord);
+      const emptyResult = await service.processDocument(emptyDocument);
       expect(emptyResult.success).toBe(true);
       if (emptyResult.success) {
         expect(emptyResult.data.data).toEqual({});
       }
 
       // Providing valid option
-      const validRecord: Document = {
+      const validDocument: Document = {
         type: 'comm-project',
         data: {
           direction: 'OT',
         },
       };
-      const validResult = await service.processRecord(validRecord);
+      const validResult = await service.processDocument(validDocument);
       expect(validResult.success).toBe(true);
       if (validResult.success) {
         expect(validResult.data.data).toEqual({ direction: { key: 'OT', name: 'Outgoing' } });
       }
 
       // Providing invalid option
-      const invalidRecord = {
+      const invalidDocument = {
         type: 'comm-project',
         data: {
           direction: 'UNKNOWN',
         },
       };
-      const invalidResult = await service.processRecord(invalidRecord);
+      const invalidResult = await service.processDocument(invalidDocument);
       expect(invalidResult.success).toBe(false);
       if (!invalidResult.success) {
         expect(invalidResult.errors.some((err) => err.includes('/direction:'))).toBe(true);
@@ -1365,7 +1365,7 @@ describe('Document domain', () => {
           category: 'AnyValue',
         },
       };
-      const result = await service.processRecord(documentWithMissingSourceVal);
+      const result = await service.processDocument(documentWithMissingSourceVal);
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.errors.some((err) => err.includes('/category:'))).toBe(true);
@@ -1411,13 +1411,13 @@ describe('Document domain', () => {
       await service.initialize();
 
       // Accepts standard option from list and enriches to matched tuple
-      const optionRecord: Document = {
+      const optionDocument: Document = {
         type: 'comm-project',
         data: {
           direction: 'IN',
         },
       };
-      const optionResult = await service.processRecord(optionRecord);
+      const optionResult = await service.processDocument(optionDocument);
       expect(optionResult.success).toBe(true);
       if (optionResult.success) {
         expect(optionResult.data.data).toEqual({ direction: { key: 'IN', name: 'Incoming' } });
@@ -1425,13 +1425,13 @@ describe('Document domain', () => {
       }
 
       // Accepts arbitrary custom text string outside option list and synthesizes fallback tuple
-      const customRecord: Document = {
+      const customDocument: Document = {
         type: 'comm-project',
         data: {
           direction: 'Custom External Message',
         },
       };
-      const customResult = await service.processRecord(customRecord);
+      const customResult = await service.processDocument(customDocument);
       expect(customResult.success).toBe(true);
       if (customResult.success) {
         expect(customResult.data.data).toEqual({
@@ -1483,13 +1483,13 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const invalidTypeRecord = {
+      const invalidTypeDocument = {
         type: 'comm-project',
         data: {
           direction: 12345,
         },
       };
-      const result = await service.processRecord(invalidTypeRecord);
+      const result = await service.processDocument(invalidTypeDocument);
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.errors.some((err) => err.includes('/direction:'))).toBe(true);
@@ -1605,7 +1605,7 @@ describe('Document domain', () => {
                 name: 'SubmitWorkflow',
                 activitySequence: [
                   {
-                    type: 'LOG_RECORD',
+                    type: 'LOG_DOCUMENT',
                     payload: { status: 'submittal_filed' },
                   },
                 ],
@@ -1620,7 +1620,7 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         id: 'rec-sub-1',
         type: 'submittal',
         data: {
@@ -1629,7 +1629,7 @@ describe('Document domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.data).toEqual({
@@ -1645,14 +1645,14 @@ describe('Document domain', () => {
 
         expect(result.activities).toEqual([
           {
-            type: 'LOG_RECORD',
+            type: 'LOG_DOCUMENT',
             payload: { status: 'submittal_filed' },
           },
         ]);
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'LOG_RECORD',
+        type: 'LOG_DOCUMENT',
         payload: { status: 'submittal_filed' },
       });
     });
@@ -1695,14 +1695,14 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'vendor-document',
         data: {
           supplierType: 'Custom Acoustic Consultant',
         },
       };
 
-      const result = await service.processRecord(inputRecord);
+      const result = await service.processDocument(inputDocument);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.data).toEqual({
@@ -1804,7 +1804,7 @@ describe('Document domain', () => {
       await service.initialize();
 
       // Test with matched direction tuple and synthesized deliveryMethod fallback tuple
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Alice',
@@ -1814,7 +1814,7 @@ describe('Document domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord);
+      const result = await service.processDocument(inputDocument);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.id).toBe('Alice-260825-IN-Hand Carried Drone');
@@ -1852,7 +1852,7 @@ describe('Document domain', () => {
         name: 'ProcessSubmission',
         activitySequence: [
           {
-            type: 'LOG_RECORD',
+            type: 'LOG_DOCUMENT',
             payload: { key: 'value' },
           },
         ],
@@ -1967,7 +1967,7 @@ describe('Document domain', () => {
             name: 'IncomingWorkflow',
             activitySequence: [
               {
-                type: 'LOG_RECORD',
+                type: 'LOG_DOCUMENT',
                 payload: { step: 1, action: 'log_incoming' },
               },
               {
@@ -2026,7 +2026,7 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Jane Doe',
@@ -2036,19 +2036,19 @@ describe('Document domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.activities).toHaveLength(2);
         expect(result.activities).toEqual([
-          { type: 'LOG_RECORD', payload: { step: 1, action: 'log_incoming' } },
+          { type: 'LOG_DOCUMENT', payload: { step: 1, action: 'log_incoming' } },
           { type: 'NOTIFY_TEAM', payload: { step: 2, channel: 'inbound-docs' } },
         ]);
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
       expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(1, {
-        type: 'LOG_RECORD',
+        type: 'LOG_DOCUMENT',
         payload: { step: 1, action: 'log_incoming' },
       });
       expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(2, {
@@ -2067,7 +2067,7 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: '_Client - AAA',
@@ -2077,7 +2077,7 @@ describe('Document domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.activities).toEqual([
@@ -2101,7 +2101,7 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Other Contractor',
@@ -2111,7 +2111,7 @@ describe('Document domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.activities).toEqual([
@@ -2135,7 +2135,7 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Anyone',
@@ -2145,7 +2145,7 @@ describe('Document domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onNoMatchEvent');
+      const result = await service.processDocument(inputDocument, 'onNoMatchEvent');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.activities).toEqual([]);
@@ -2163,7 +2163,7 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Jane Doe',
@@ -2174,7 +2174,7 @@ describe('Document domain', () => {
       };
 
       // When eventName is undefined
-      const resultNoEvent = await service.processRecord(inputRecord);
+      const resultNoEvent = await service.processDocument(inputDocument);
       expect(resultNoEvent.success).toBe(true);
       if (resultNoEvent.success) {
         expect(resultNoEvent.activities).toEqual([]);
@@ -2182,7 +2182,7 @@ describe('Document domain', () => {
       expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
 
       // When eventName does not exist
-      const resultUnknownEvent = await service.processRecord(inputRecord, 'onNonExistentEvent');
+      const resultUnknownEvent = await service.processDocument(inputDocument, 'onNonExistentEvent');
       expect(resultUnknownEvent.success).toBe(true);
       if (resultUnknownEvent.success) {
         expect(resultUnknownEvent.activities).toEqual([]);
@@ -2200,7 +2200,7 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Jane Doe',
@@ -2210,7 +2210,7 @@ describe('Document domain', () => {
         },
       };
 
-      await expect(service.processRecord(inputRecord, 'onMissingWorkflowEvent')).rejects.toThrow(
+      await expect(service.processDocument(inputDocument, 'onMissingWorkflowEvent')).rejects.toThrow(
         /Workflow 'NonExistentWorkflow' not found in configuration for DocumentType 'comm-project'/
       );
       expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
@@ -2315,7 +2315,7 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Jane Doe',
@@ -2323,11 +2323,11 @@ describe('Document domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
 
       expect(result.success).toBe(true);
 
-      const expectedEnrichedRecord: Document = {
+      const expectedEnrichedDocument: Document = {
         type: 'comm-project',
         id: 'REC-Jane Doe',
         data: {
@@ -2356,7 +2356,7 @@ describe('Document domain', () => {
       };
 
       if (result.success) {
-        expect(result.data).toEqual(expectedEnrichedRecord);
+        expect(result.data).toEqual(expectedEnrichedDocument);
         expect(result.activities).toEqual([expectedActivity]);
       }
 
@@ -2367,7 +2367,7 @@ describe('Document domain', () => {
       expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
         '{{Document.data.contact}}',
         expect.objectContaining({
-          Document: expectedEnrichedRecord,
+          Document: expectedEnrichedDocument,
           documentSchema: documentTypeWithTemplates.documentSchema,
         })
       );
@@ -2384,7 +2384,7 @@ describe('Document domain', () => {
       expect(Value.Check(StorageContextConfigType, validConfig)).toBe(true);
     });
 
-    it('pre-evaluates storageContextConfig using { Document: enrichedRecord } and injects StorageContext into Activity evaluation context', async () => {
+    it('pre-evaluates storageContextConfig using { Document: enrichedDocument } and injects StorageContext into Activity evaluation context', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -2467,7 +2467,7 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: '_Client - AAA',
@@ -2477,11 +2477,11 @@ describe('Document domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
 
       expect(result.success).toBe(true);
 
-      const expectedEnrichedRecord: Document = {
+      const expectedEnrichedDocument: Document = {
         type: 'comm-project',
         data: {
           contact: '_Client - AAA',
@@ -2506,34 +2506,34 @@ describe('Document domain', () => {
       };
 
       if (result.success) {
-        expect(result.data).toEqual(expectedEnrichedRecord);
+        expect(result.data).toEqual(expectedEnrichedDocument);
         expect(result.activities).toEqual([expectedActivity]);
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith(expectedActivity);
 
-      // Verify that storageContextConfig was pre-evaluated with { Document: enrichedRecord }
+      // Verify that storageContextConfig was pre-evaluated with { Document: enrichedDocument }
       expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
         '1Admin/Communication/{{Document.data.contact}}',
-        { Document: expectedEnrichedRecord }
+        { Document: expectedEnrichedDocument }
       );
       expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
         'Archive/{{Document.data.direction}}',
-        { Document: expectedEnrichedRecord }
+        { Document: expectedEnrichedDocument }
       );
 
       // Verify that activity evaluation context received StorageContext
       expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
         '{{StorageContext.folder}}/{{Document.data.summary}}',
         expect.objectContaining({
-          Document: expectedEnrichedRecord,
+          Document: expectedEnrichedDocument,
           documentSchema: documentTypeWithStorageContext.documentSchema,
           StorageContext: expectedStorageContext,
         })
       );
     });
 
-    it('pre-evaluates nested structures in storageContextConfig recursively against { Document: enrichedRecord }', async () => {
+    it('pre-evaluates nested structures in storageContextConfig recursively against { Document: enrichedDocument }', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -2607,14 +2607,14 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'project',
         data: {
           code: 'PRJ-100',
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
 
       const expectedActivity: Activity = {
@@ -2681,12 +2681,12 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'simple',
         data: { name: 'Alice' },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
 
       expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
@@ -2700,7 +2700,7 @@ describe('Document domain', () => {
 
   describe('Execution Context (ExecutionContext) Propagation & Isolation', () => {
     const testDocumentType: DocumentType = {
-      key: 'secureRecord',
+      key: 'secureDocument',
       name: 'Secure Document',
       documentSchema: {
         fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
@@ -2775,8 +2775,8 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
-        type: 'secureRecord',
+      const inputDocument: Document = {
+        type: 'secureDocument',
         data: { title: 'SecretDoc' },
       };
 
@@ -2789,8 +2789,8 @@ describe('Document domain', () => {
         },
       };
 
-      const result = await service.processRecord(
-        inputRecord,
+      const result = await service.processDocument(
+        inputDocument,
         'onSubmit',
         executionContext
       );
@@ -2842,12 +2842,12 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
-        type: 'secureRecord',
+      const inputDocument: Document = {
+        type: 'secureDocument',
         data: { title: 'PublicDoc' },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
 
       expect(result.success).toBe(true);
       expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
@@ -2895,9 +2895,9 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
-        type: 'secureRecord',
-        data: { title: 'SensitiveRecord' },
+      const inputDocument: Document = {
+        type: 'secureDocument',
+        data: { title: 'SensitiveDocument' },
       };
 
       const sensitiveContext: ExecutionContext = {
@@ -2906,8 +2906,8 @@ describe('Document domain', () => {
         },
       };
 
-      await service.processRecord(
-        inputRecord,
+      await service.processDocument(
+        inputDocument,
         'onSubmit',
         sensitiveContext
       );
@@ -3001,12 +3001,12 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'doc-process',
         data: { title: 'Initial Document' },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
 
       expect(result.success).toBe(true);
       if (!result.success) return;
@@ -3092,12 +3092,12 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'multi-stage',
         data: { step0: 'init' },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (!result.success) return;
 
@@ -3178,12 +3178,12 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'log-pipeline',
         data: { inputMsg: 'Hello' },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (!result.success) return;
 
@@ -3257,12 +3257,12 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'failing-doc',
         data: { title: 'Test Fail' },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(false);
       if (result.success) return;
 
@@ -3354,12 +3354,12 @@ describe('Document domain', () => {
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const inputRecord: Document = {
+      const inputDocument: Document = {
         type: 'multi-step-doc',
         data: { title: 'Test Multi Step' },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (!result.success) return;
 
@@ -3498,7 +3498,7 @@ describe('Document domain', () => {
               name: 'OutgoingCommWorkflow',
               activitySequence: [
                 {
-                  type: 'LOG_RECORD',
+                  type: 'LOG_DOCUMENT',
                   payload: {
                     targetPath: '{{StorageContext.folder}}/{{Document.data.summary}}',
                     archivePath: '{{StorageContext.subfolder}}/{{Document.data.testCalculatedField}}',
@@ -3855,7 +3855,7 @@ describe('Document domain', () => {
                   payload: {
                     validId: '{{Document.id}}',
                     validType: '{{Document.type}}',
-                    invalidIdRecord: '{{Document.idDocument}}',
+                    invalidIdDocument: '{{Document.idDocument}}',
                     invalidIdGroup: '{{Document.idGroup}}',
                   },
                 },
@@ -3867,7 +3867,7 @@ describe('Document domain', () => {
 
       const errors = validateManifestTemplates(manifestWithScopeCreepVars, evaluator);
       expect(errors).toEqual([
-        'Invalid template at "documentWorkflowConfig.workflows[0].activitySequence[0].payload.invalidIdRecord": references unknown fields or is malformed.',
+        'Invalid template at "documentWorkflowConfig.workflows[0].activitySequence[0].payload.invalidIdDocument": references unknown fields or is malformed.',
         'Invalid template at "documentWorkflowConfig.workflows[0].activitySequence[0].payload.invalidIdGroup": references unknown fields or is malformed.',
       ]);
     });

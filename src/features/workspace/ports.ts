@@ -46,7 +46,7 @@ import type { WorkspaceDocumentExecutionContext } from './domain';
 export type { WorkspaceDocumentExecutionContext };
 
 export interface WorkspaceDocumentRunnerPort {
-  processRecord(
+  processDocument(
     payload?: unknown,
     eventName?: string,
     context?: WorkspaceDocumentExecutionContext

@@ -39,12 +39,12 @@ describe('Document Feature API driving adapter', () => {
     };
 
     const mockService: DocumentServicePort = {
-      processRecord: vi.fn().mockResolvedValue({
+      processDocument: vi.fn().mockResolvedValue({
         success: true,
         data: { id: 'rec-1', type: 'submittal', title: 'Structural Steel Spec' },
         activities: [
           {
-            type: 'LOG_RECORD',
+            type: 'LOG_DOCUMENT',
             payload: { document: { id: 'rec-1', type: 'submittal', title: 'Structural Steel Spec' } },
           },
         ],
@@ -60,8 +60,8 @@ describe('Document Feature API driving adapter', () => {
     const formsRoute = registeredRoutes.find(r => r.method === 'GET' && r.url === '/forms');
     expect(formsRoute).toBeDefined();
 
-    const recordsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/documents');
-    expect(recordsRoute).toBeDefined();
+    const documentsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/documents');
+    expect(documentsRoute).toBeDefined();
 
     // Test GET /forms
     const formsResponse = await formsRoute!.handler({});
@@ -75,18 +75,18 @@ describe('Document Feature API driving adapter', () => {
       type: 'submittal',
       title: 'Structural Steel Spec',
     };
-    const recordsResponse = await recordsRoute!.handler({
+    const documentsResponse = await documentsRoute!.handler({
       body: validPayload,
       query: { eventName: 'onSubmit' },
     });
-    expect(recordsResponse.status).toBe(200);
-    expect(mockService.processRecord).toHaveBeenCalledWith(validPayload, 'onSubmit');
-    expect(recordsResponse.body).toEqual({
+    expect(documentsResponse.status).toBe(200);
+    expect(mockService.processDocument).toHaveBeenCalledWith(validPayload, 'onSubmit');
+    expect(documentsResponse.body).toEqual({
       success: true,
       data: validPayload,
       activities: [
         {
-          type: 'LOG_RECORD',
+          type: 'LOG_DOCUMENT',
           payload: { document: validPayload },
         },
       ],
@@ -99,7 +99,7 @@ describe('Document Feature API driving adapter', () => {
     };
 
     const mockService: DocumentServicePort = {
-      processRecord: vi.fn().mockResolvedValue({
+      processDocument: vi.fn().mockResolvedValue({
         success: true,
         data: { id: 'rec-1', type: 'submittal', title: 'Structural Steel Spec' },
         activities: [],
@@ -110,14 +110,14 @@ describe('Document Feature API driving adapter', () => {
 
     registerDocumentFeatureRoutes(mockRouter, { service: mockService, schemaQuery: mockSchemaQuery });
 
-    const recordsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/documents');
-    expect(recordsRoute).toBeDefined();
+    const documentsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/documents');
+    expect(documentsRoute).toBeDefined();
 
     const validPayload = { id: 'rec-1', type: 'submittal', title: 'Structural Steel Spec' };
-    const response = await recordsRoute!.handler({ body: validPayload });
+    const response = await documentsRoute!.handler({ body: validPayload });
 
     expect(response.status).toBe(200);
-    expect(mockService.processRecord).toHaveBeenCalledWith(validPayload, undefined);
+    expect(mockService.processDocument).toHaveBeenCalledWith(validPayload, undefined);
   });
 
   it('POST /documents returns 400 when service returns failure', async () => {
@@ -126,7 +126,7 @@ describe('Document Feature API driving adapter', () => {
     };
 
     const mockService: DocumentServicePort = {
-      processRecord: vi.fn().mockResolvedValue({
+      processDocument: vi.fn().mockResolvedValue({
         success: false,
         errors: ['id: Expected string'],
       }),
@@ -136,14 +136,14 @@ describe('Document Feature API driving adapter', () => {
 
     registerDocumentFeatureRoutes(mockRouter, { service: mockService, schemaQuery: mockSchemaQuery });
 
-    const recordsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/documents');
-    expect(recordsRoute).toBeDefined();
+    const documentsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/documents');
+    expect(documentsRoute).toBeDefined();
 
     const invalidPayload = { title: 123 };
-    const response = await recordsRoute!.handler({ body: invalidPayload });
+    const response = await documentsRoute!.handler({ body: invalidPayload });
 
     expect(response.status).toBe(400);
-    expect(mockService.processRecord).toHaveBeenCalledWith(invalidPayload, undefined);
+    expect(mockService.processDocument).toHaveBeenCalledWith(invalidPayload, undefined);
     expect(response.body).toEqual({
       success: false,
       errors: ['id: Expected string'],
