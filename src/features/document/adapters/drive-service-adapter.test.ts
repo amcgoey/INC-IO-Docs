@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DriveServiceAdapter, type DriveClientPort } from './drive-service-adapter';
-import { DriveServiceError } from '../ports';
+import { DriveServiceError, AmbiguousPathSpecError } from '../ports';
 
 describe('DriveServiceAdapter', () => {
   const mockDriveClient: DriveClientPort = {
@@ -108,6 +108,22 @@ describe('DriveServiceAdapter', () => {
           webViewLink: 'https://drive/view',
         },
       ]);
+    });
+
+    it('translates GoogleDriveAmbiguousPathError to AmbiguousPathSpecError', async () => {
+      const ambiguousError = new Error('Query for parent folder returned 21 results, exceeding threshold cap of 20 matches.');
+      ambiguousError.name = 'GoogleDriveAmbiguousPathError';
+
+      (mockDriveClient.searchFiles as ReturnType<typeof vi.fn>).mockRejectedValue(ambiguousError);
+
+      const err = await adapter.searchFiles({
+        targetName: 'Target.pdf',
+        expectedParentPathNames: ['Invoices'],
+      }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(AmbiguousPathSpecError);
+      expect(err.name).toBe('AmbiguousPathSpecError');
+      expect(err.message).toMatch(/exceeding threshold cap of 20 matches/);
     });
 
     it('translates external errors to DriveServiceError', async () => {

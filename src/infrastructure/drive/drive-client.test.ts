@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { GoogleDriveClient, GoogleDriveApiError } from './drive-client';
+import { GoogleDriveClient, GoogleDriveApiError, GoogleDriveAmbiguousPathError } from './drive-client';
 import { google, type drive_v3 } from 'googleapis';
 
 describe('GoogleDriveClient', () => {
@@ -248,15 +248,250 @@ describe('GoogleDriveClient', () => {
       });
     });
 
-    it('throws error when non-empty expectedParentPathNames is provided (pending #75/#76)', async () => {
-      await expect(
-        client.searchFiles({
-          targetName: 'Document',
-          expectedParentPathNames: ['ParentFolder'],
-        })
-      ).rejects.toThrow(
-        /Parent path traversal is not yet implemented for searchFiles/
-      );
+    describe('single-level expectedParentPathNames', () => {
+      it('executes exact match parent query with pageSize 21 and trashed = false, then finds target in parent', async () => {
+        (mockDrive.files.list as ReturnType<typeof vi.fn>)
+          // 1. Parent folder query
+          .mockResolvedValueOnce({
+            data: {
+              files: [
+                { id: 'folder-p1', name: 'Invoices' },
+              ],
+            },
+          })
+          // 2. Target file query
+          .mockResolvedValueOnce({
+            data: {
+              files: [
+                {
+                  id: 'file-in-p1',
+                  name: 'Invoice_2026.xlsx',
+                  parents: ['folder-p1'],
+                  mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                  webViewLink: 'https://drive.google.com/file/d/file-in-p1/view',
+                },
+              ],
+            },
+          });
+
+        const results = await client.searchFiles({
+          targetName: 'Invoice',
+          expectedParentPathNames: ['Invoices'],
+        });
+
+        expect(results).toEqual([
+          {
+            id: 'file-in-p1',
+            name: 'Invoice_2026.xlsx',
+            parents: ['folder-p1'],
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            webViewLink: 'https://drive.google.com/file/d/file-in-p1/view',
+          },
+        ]);
+
+        expect(mockDrive.files.list).toHaveBeenCalledTimes(2);
+
+        // Parent query
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(1, {
+          q: "name = 'Invoices' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+          pageSize: 21,
+          fields: 'files(id, name)',
+          corpora: 'user',
+          spaces: 'drive',
+          includeItemsFromAllDrives: true,
+          supportsAllDrives: true,
+        });
+
+        // Target query
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(2, {
+          q: "name contains 'Invoice' and 'folder-p1' in parents and trashed = false",
+          fields: 'files(id, name, parents, mimeType, webViewLink)',
+          corpora: 'user',
+          spaces: 'drive',
+          includeItemsFromAllDrives: true,
+          supportsAllDrives: true,
+        });
+      });
+
+      it('enforces 20 match threshold: strictly throwing GoogleDriveAmbiguousPathError on 21 parent results', async () => {
+        const twentyOneFolders = Array.from({ length: 21 }, (_, i) => ({
+          id: `folder-${i + 1}`,
+          name: 'Duplicates',
+        }));
+
+        (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          data: {
+            files: twentyOneFolders,
+          },
+        });
+
+        const error = await client
+          .searchFiles({
+            targetName: 'Doc.pdf',
+            expectedParentPathNames: ['Duplicates'],
+          })
+          .catch((e) => e);
+
+        expect(error).toBeInstanceOf(GoogleDriveAmbiguousPathError);
+        expect(error.name).toBe('GoogleDriveAmbiguousPathError');
+        expect(error.message).toMatch(/AmbiguousPathSpecError: Query for parent folder 'Duplicates' returned 21 results, exceeding the threshold cap of 20 matches/);
+        expect(mockDrive.files.list).toHaveBeenCalledTimes(1);
+      });
+
+      it('succeeds and consolidates with OR when parent query returns exactly 20 matches', async () => {
+        const twentyFolders = Array.from({ length: 20 }, (_, i) => ({
+          id: `f-${i + 1}`,
+          name: 'Project',
+        }));
+
+        (mockDrive.files.list as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({
+            data: { files: twentyFolders },
+          })
+          .mockResolvedValueOnce({
+            data: {
+              files: [
+                {
+                  id: 'target-file-id',
+                  name: 'Target.pdf',
+                  parents: ['f-5'],
+                },
+              ],
+            },
+          });
+
+        const results = await client.searchFiles({
+          targetName: 'Target.pdf',
+          exactMatch: true,
+          expectedParentPathNames: ['Project'],
+        });
+
+        expect(results).toHaveLength(1);
+        expect(results[0].id).toBe('target-file-id');
+
+        const expectedParentOrClause = twentyFolders.map((f) => `'${f.id}' in parents`).join(' or ');
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(2, {
+          q: `name = 'Target.pdf' and (${expectedParentOrClause}) and trashed = false`,
+          fields: 'files(id, name, parents, mimeType, webViewLink)',
+          corpora: 'user',
+          spaces: 'drive',
+          includeItemsFromAllDrives: true,
+          supportsAllDrives: true,
+        });
+      });
+
+      it('returns empty array when 0 parent folders match without searching for target file', async () => {
+        (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          data: { files: [] },
+        });
+
+        const results = await client.searchFiles({
+          targetName: 'File.pdf',
+          expectedParentPathNames: ['NonExistentFolder'],
+        });
+
+        expect(results).toEqual([]);
+        expect(mockDrive.files.list).toHaveBeenCalledTimes(1);
+      });
+
+      it('escapes single quotes in parent folder name and target file name', async () => {
+        (mockDrive.files.list as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({
+            data: {
+              files: [{ id: 'p-quotes', name: "O'Connor's Folder" }],
+            },
+          })
+          .mockResolvedValueOnce({
+            data: {
+              files: [
+                { id: 'f-quotes', name: "O'Reilly's Summary.pdf", parents: ['p-quotes'] },
+              ],
+            },
+          });
+
+        const results = await client.searchFiles({
+          targetName: "O'Reilly's Summary.pdf",
+          exactMatch: true,
+          expectedParentPathNames: ["O'Connor's Folder"],
+        });
+
+        expect(results).toHaveLength(1);
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(1, expect.objectContaining({
+          q: "name = 'O\\'Connor\\'s Folder' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        }));
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(2, expect.objectContaining({
+          q: "name = 'O\\'Reilly\\'s Summary.pdf' and 'p-quotes' in parents and trashed = false",
+        }));
+      });
+
+      it('scopes single-level parent and target queries to sharedDriveId when provided', async () => {
+        (mockDrive.files.list as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({
+            data: {
+              files: [{ id: 'sd-parent-1', name: 'SharedFolder' }],
+            },
+          })
+          .mockResolvedValueOnce({
+            data: {
+              files: [{ id: 'sd-target-1', name: 'SharedTarget.docx', parents: ['sd-parent-1'] }],
+            },
+          });
+
+        await client.searchFiles({
+          targetName: 'SharedTarget.docx',
+          exactMatch: true,
+          expectedParentPathNames: ['SharedFolder'],
+          sharedDriveId: 'team-drive-123',
+        });
+
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(1, expect.objectContaining({
+          corpora: 'drive',
+          driveId: 'team-drive-123',
+          includeItemsFromAllDrives: true,
+          supportsAllDrives: true,
+        }));
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(2, expect.objectContaining({
+          corpora: 'drive',
+          driveId: 'team-drive-123',
+          includeItemsFromAllDrives: true,
+          supportsAllDrives: true,
+        }));
+      });
+
+      it('applies mimeTypes filter to target search within single parent', async () => {
+        (mockDrive.files.list as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({
+            data: {
+              files: [{ id: 'parent-id', name: 'Spreadsheets' }],
+            },
+          })
+          .mockResolvedValueOnce({
+            data: {
+              files: [{ id: 'sheet-id', name: 'Ledger', mimeType: 'application/vnd.google-apps.spreadsheet' }],
+            },
+          });
+
+        await client.searchFiles({
+          targetName: 'Ledger',
+          expectedParentPathNames: ['Spreadsheets'],
+          mimeTypes: ['application/vnd.google-apps.spreadsheet'],
+        });
+
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(2, expect.objectContaining({
+          q: "name contains 'Ledger' and 'parent-id' in parents and trashed = false and mimeType = 'application/vnd.google-apps.spreadsheet'",
+        }));
+      });
+
+      it('throws error when multi-level expectedParentPathNames (> 1) is provided (pending #76)', async () => {
+        await expect(
+          client.searchFiles({
+            targetName: 'Document',
+            expectedParentPathNames: ['Level1', 'Level2'],
+          })
+        ).rejects.toThrow(
+          /Multi-level parent path traversal \(> 1\) is not yet implemented for searchFiles/
+        );
+      });
     });
 
     it('executes global search when expectedParentPathNames is undefined', async () => {

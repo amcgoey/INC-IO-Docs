@@ -1,5 +1,6 @@
 import {
   DriveServiceError,
+  AmbiguousPathSpecError,
   type DriveFileResult,
   type DriveSearchQuery,
   type DriveServiceOptions,
@@ -64,6 +65,25 @@ export class DriveServiceAdapter implements DriveServicePort {
   private translateError(operation: string, error: unknown): never {
     if (error instanceof DriveServiceError) {
       throw error;
+    }
+
+    if (
+      (error instanceof Error &&
+        (error.name === 'GoogleDriveAmbiguousPathError' ||
+          error.name === 'AmbiguousPathSpecError')) ||
+      (typeof error === 'object' &&
+        error !== null &&
+        'name' in error &&
+        ((error as { name: unknown }).name === 'GoogleDriveAmbiguousPathError' ||
+          (error as { name: unknown }).name === 'AmbiguousPathSpecError'))
+    ) {
+      const baseMessage =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'object' && error !== null && 'message' in error
+            ? String((error as { message: unknown }).message)
+            : String(error);
+      throw new AmbiguousPathSpecError(baseMessage, { cause: error });
     }
 
     const statusCode =

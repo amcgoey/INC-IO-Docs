@@ -30,6 +30,16 @@ export class GoogleDriveApiError extends Error {
   }
 }
 
+export class GoogleDriveAmbiguousPathError extends GoogleDriveApiError {
+  constructor(
+    message: string,
+    options?: { cause?: unknown; statusCode?: number | undefined }
+  ) {
+    super(message, options);
+    this.name = 'GoogleDriveAmbiguousPathError';
+  }
+}
+
 export interface DriveRetryOptions {
   maxRetries?: number;
   initialDelayMs?: number;
@@ -122,7 +132,8 @@ export class GoogleDriveClient {
     if (
       error instanceof Error &&
       (error.message.startsWith('Failed to ') ||
-        error.message.startsWith('Parent path traversal is not yet implemented'))
+        error.message.startsWith('Parent path traversal is not yet implemented') ||
+        error.message.startsWith('Multi-level parent path traversal'))
     ) {
       throw error;
     }
@@ -307,20 +318,71 @@ export class GoogleDriveClient {
     query: DriveSearchParams,
     options?: DriveOperationOptions
   ): Promise<DriveFileMetadata[]> {
-    if (query.expectedParentPathNames && query.expectedParentPathNames.length > 0) {
+    if (query.expectedParentPathNames && query.expectedParentPathNames.length > 1) {
       throw new Error(
-        'Parent path traversal is not yet implemented for searchFiles. Only unanchored searches (empty expectedParentPathNames) are currently supported.'
+        'Multi-level parent path traversal (> 1) is not yet implemented for searchFiles. Only single-level parent path searches are currently supported.'
       );
     }
 
     const drive = this.getDrive(options?.auth);
     try {
+      let parentIds: string[] | undefined = undefined;
+
+      if (query.expectedParentPathNames && query.expectedParentPathNames.length === 1) {
+        const parentFolderName = query.expectedParentPathNames[0];
+        const escapedParent = parentFolderName.replace(/'/g, "\\'");
+        const parentQuery = `name = '${escapedParent}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+
+        const parentListParams: drive_v3.Params$Resource$Files$List = {
+          q: parentQuery,
+          pageSize: 21,
+          fields: 'files(id, name)',
+          includeItemsFromAllDrives: true,
+          supportsAllDrives: true,
+        };
+
+        if (query.sharedDriveId) {
+          parentListParams.corpora = 'drive';
+          parentListParams.driveId = query.sharedDriveId;
+        } else {
+          parentListParams.corpora = 'user';
+          parentListParams.spaces = 'drive';
+        }
+
+        const parentRes = await this.executeWithRetry(() => drive.files.list(parentListParams));
+        const parentFiles = parentRes.data.files ?? [];
+
+        if (parentFiles.length > 20) {
+          throw new GoogleDriveAmbiguousPathError(
+            `AmbiguousPathSpecError: Query for parent folder '${parentFolderName}' returned ${parentFiles.length} results, exceeding the threshold cap of 20 matches.`
+          );
+        }
+
+        parentIds = parentFiles
+          .map((f) => f.id)
+          .filter((id): id is string => Boolean(id));
+
+        if (parentIds.length === 0) {
+          return [];
+        }
+      }
+
       const escapedTarget = query.targetName.replace(/'/g, "\\'");
       const targetMatchClause = query.exactMatch
         ? `name = '${escapedTarget}'`
         : `name contains '${escapedTarget}'`;
 
-      const queryClauses = [targetMatchClause, 'trashed = false'];
+      const queryClauses = [targetMatchClause];
+
+      if (parentIds !== undefined && parentIds.length > 0) {
+        const parentsClause =
+          parentIds.length === 1
+            ? `'${parentIds[0]}' in parents`
+            : `(${parentIds.map((id) => `'${id}' in parents`).join(' or ')})`;
+        queryClauses.push(parentsClause);
+      }
+
+      queryClauses.push('trashed = false');
 
       if (query.mimeTypes && query.mimeTypes.length > 0) {
         const mimeClause =
