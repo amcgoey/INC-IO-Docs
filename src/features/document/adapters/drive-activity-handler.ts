@@ -70,12 +70,13 @@ export class DriveActivityHandler implements ActivityHandler {
       const movedFile = await this.driveService.moveFile(fileId, currentParentId, targetFolder.id, driveOptions);
 
       const mimeType = movedFile.mimeType ?? file.mimeType;
+      const uri = movedFile.webViewLink ?? file.webViewLink;
       const fileLocator: FileLocator = {
         id: movedFile.id,
         name: movedFile.name,
         parentName: targetFolder.name,
         ...(mimeType ? { mimeType } : {}),
-        uri: `https://drive.google.com/file/d/${movedFile.id}/view`,
+        ...(uri ? { uri } : {}),
       };
 
       return {

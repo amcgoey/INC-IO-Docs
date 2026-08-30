@@ -211,7 +211,7 @@ export class GoogleDriveClient {
       const res = await this.executeWithRetry(() =>
         drive.files.get({
           fileId,
-          fields: 'id, name, parents, mimeType',
+          fields: 'id, name, parents, mimeType, webViewLink',
           supportsAllDrives: true,
         })
       );
@@ -226,6 +226,7 @@ export class GoogleDriveClient {
         name,
         parents: res.data.parents ?? [],
         mimeType: res.data.mimeType ?? undefined,
+        webViewLink: res.data.webViewLink ?? undefined,
       };
     } catch (error) {
       this.wrapApiError('getFile', error);
@@ -245,7 +246,7 @@ export class GoogleDriveClient {
       const res = await this.executeWithRetry(() =>
         drive.files.list({
           q,
-          fields: 'files(id, name, parents, mimeType)',
+          fields: 'files(id, name, parents, mimeType, webViewLink)',
           spaces: 'drive',
           includeItemsFromAllDrives: true,
           supportsAllDrives: true,
@@ -259,6 +260,7 @@ export class GoogleDriveClient {
           name: existingFolder.name,
           parents: existingFolder.parents ?? [parentId],
           mimeType: existingFolder.mimeType ?? 'application/vnd.google-apps.folder',
+          webViewLink: existingFolder.webViewLink ?? undefined,
         };
       }
 
@@ -269,7 +271,7 @@ export class GoogleDriveClient {
             mimeType: 'application/vnd.google-apps.folder',
             parents: [parentId],
           },
-          fields: 'id, name, parents, mimeType',
+          fields: 'id, name, parents, mimeType, webViewLink',
           supportsAllDrives: true,
         })
       );
@@ -284,6 +286,7 @@ export class GoogleDriveClient {
         name,
         parents: createRes.data.parents ?? [parentId],
         mimeType: createRes.data.mimeType ?? 'application/vnd.google-apps.folder',
+        webViewLink: createRes.data.webViewLink ?? undefined,
       };
     } catch (error) {
       this.wrapApiError('findOrCreateFolder', error);
@@ -303,7 +306,7 @@ export class GoogleDriveClient {
           fileId,
           addParents: targetFolderId,
           removeParents: currentParentId,
-          fields: 'id, name, parents, mimeType',
+          fields: 'id, name, parents, mimeType, webViewLink',
           supportsAllDrives: true,
         })
       );
@@ -318,6 +321,7 @@ export class GoogleDriveClient {
         name,
         parents: res.data.parents ?? [targetFolderId],
         mimeType: res.data.mimeType ?? undefined,
+        webViewLink: res.data.webViewLink ?? undefined,
       };
     } catch (error) {
       this.wrapApiError('moveFile', error);

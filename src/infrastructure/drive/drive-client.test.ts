@@ -27,6 +27,7 @@ describe('GoogleDriveClient', () => {
           name: 'Project Plan.pdf',
           parents: ['parent-folder-abc'],
           mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/file-123/view',
         },
       });
 
@@ -37,10 +38,11 @@ describe('GoogleDriveClient', () => {
         name: 'Project Plan.pdf',
         parents: ['parent-folder-abc'],
         mimeType: 'application/pdf',
+        webViewLink: 'https://drive.google.com/file/d/file-123/view',
       });
       expect(mockDrive.files.get).toHaveBeenCalledWith({
         fileId: 'file-123',
-        fields: 'id, name, parents, mimeType',
+        fields: 'id, name, parents, mimeType, webViewLink',
         supportsAllDrives: true,
       });
     });
@@ -85,6 +87,7 @@ describe('GoogleDriveClient', () => {
         name: 'Secure.pdf',
         parents: ['p1'],
         mimeType: undefined,
+        webViewLink: undefined,
       });
       expect(driveSpy).toHaveBeenCalled();
       driveSpy.mockRestore();
@@ -101,6 +104,7 @@ describe('GoogleDriveClient', () => {
               name: '!TestMove',
               parents: ['parent-folder-abc'],
               mimeType: 'application/vnd.google-apps.folder',
+              webViewLink: 'https://drive.google.com/drive/folders/existing-folder-id',
             },
           ],
         },
@@ -113,6 +117,14 @@ describe('GoogleDriveClient', () => {
         name: '!TestMove',
         parents: ['parent-folder-abc'],
         mimeType: 'application/vnd.google-apps.folder',
+        webViewLink: 'https://drive.google.com/drive/folders/existing-folder-id',
+      });
+      expect(mockDrive.files.list).toHaveBeenCalledWith({
+        q: "'parent-folder-abc' in parents and name = '!TestMove' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        fields: 'files(id, name, parents, mimeType, webViewLink)',
+        spaces: 'drive',
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true,
       });
       expect(mockDrive.files.create).not.toHaveBeenCalled();
     });
@@ -128,6 +140,7 @@ describe('GoogleDriveClient', () => {
           name: '!TestMove',
           parents: ['parent-folder-abc'],
           mimeType: 'application/vnd.google-apps.folder',
+          webViewLink: 'https://drive.google.com/drive/folders/new-folder-id',
         },
       });
 
@@ -138,6 +151,7 @@ describe('GoogleDriveClient', () => {
         name: '!TestMove',
         parents: ['parent-folder-abc'],
         mimeType: 'application/vnd.google-apps.folder',
+        webViewLink: 'https://drive.google.com/drive/folders/new-folder-id',
       });
       expect(mockDrive.files.create).toHaveBeenCalledWith({
         requestBody: {
@@ -145,7 +159,7 @@ describe('GoogleDriveClient', () => {
           mimeType: 'application/vnd.google-apps.folder',
           parents: ['parent-folder-abc'],
         },
-        fields: 'id, name, parents, mimeType',
+        fields: 'id, name, parents, mimeType, webViewLink',
         supportsAllDrives: true,
       });
     });
@@ -176,6 +190,7 @@ describe('GoogleDriveClient', () => {
           id: 'file-123',
           name: 'Project Plan.pdf',
           parents: ['new-target-folder-id'],
+          webViewLink: 'https://drive.google.com/file/d/file-123/view',
         },
       });
 
@@ -186,13 +201,14 @@ describe('GoogleDriveClient', () => {
         name: 'Project Plan.pdf',
         parents: ['new-target-folder-id'],
         mimeType: undefined,
+        webViewLink: 'https://drive.google.com/file/d/file-123/view',
       });
 
       expect(mockDrive.files.update).toHaveBeenCalledWith({
         fileId: 'file-123',
         addParents: 'new-target-folder-id',
         removeParents: 'old-parent-id',
-        fields: 'id, name, parents, mimeType',
+        fields: 'id, name, parents, mimeType, webViewLink',
         supportsAllDrives: true,
       });
     });

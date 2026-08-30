@@ -85,12 +85,13 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
 
       // 1. Mock GET file metadata
       nock('https://www.googleapis.com')
-        .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType&supportsAllDrives=true`)
+        .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType%2C%20webViewLink&supportsAllDrives=true`)
         .reply(200, {
           id: fileId,
           name: fileName,
           parents: [currentParentId],
           mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
         });
 
       // 2. Mock list files to find existing !TestMove folder (simulate none found)
@@ -109,7 +110,7 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
 
       // 3. Mock create !TestMove folder
       nock('https://www.googleapis.com')
-        .post('/drive/v3/files?fields=id%2C%20name%2C%20parents%2C%20mimeType&supportsAllDrives=true', {
+        .post('/drive/v3/files?fields=id%2C%20name%2C%20parents%2C%20mimeType%2C%20webViewLink&supportsAllDrives=true', {
           name: '!TestMove',
           mimeType: 'application/vnd.google-apps.folder',
           parents: [currentParentId],
@@ -119,18 +120,20 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
           name: '!TestMove',
           parents: [currentParentId],
           mimeType: 'application/vnd.google-apps.folder',
+          webViewLink: `https://drive.google.com/drive/folders/${testMoveFolderId}`,
         });
 
       // 4. Mock move file (update with addParents & removeParents)
       nock('https://www.googleapis.com')
         .patch(
-          `/drive/v3/files/${fileId}?addParents=${testMoveFolderId}&removeParents=${currentParentId}&fields=id%2C%20name%2C%20parents%2C%20mimeType&supportsAllDrives=true`
+          `/drive/v3/files/${fileId}?addParents=${testMoveFolderId}&removeParents=${currentParentId}&fields=id%2C%20name%2C%20parents%2C%20mimeType%2C%20webViewLink&supportsAllDrives=true`
         )
         .reply(200, {
           id: fileId,
           name: fileName,
           parents: [testMoveFolderId],
           mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
         });
 
       // Synthetic Workspace Event Payload
@@ -187,11 +190,12 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
 
       // 1. Mock GET file metadata
       nock('https://www.googleapis.com')
-        .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType&supportsAllDrives=true`)
+        .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType%2C%20webViewLink&supportsAllDrives=true`)
         .reply(200, {
           id: fileId,
           name: fileName,
           parents: [currentParentId],
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
         });
 
       // 2. Mock list files returning existing !TestMove
@@ -204,6 +208,7 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
               id: existingFolderId,
               name: '!TestMove',
               parents: [currentParentId],
+              webViewLink: `https://drive.google.com/drive/folders/${existingFolderId}`,
             },
           ],
         });
@@ -211,12 +216,13 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
       // 3. Mock move file
       nock('https://www.googleapis.com')
         .patch(
-          `/drive/v3/files/${fileId}?addParents=${existingFolderId}&removeParents=${currentParentId}&fields=id%2C%20name%2C%20parents%2C%20mimeType&supportsAllDrives=true`
+          `/drive/v3/files/${fileId}?addParents=${existingFolderId}&removeParents=${currentParentId}&fields=id%2C%20name%2C%20parents%2C%20mimeType%2C%20webViewLink&supportsAllDrives=true`
         )
         .reply(200, {
           id: fileId,
           name: fileName,
           parents: [existingFolderId],
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
         });
 
       const syntheticPayload = {
@@ -304,7 +310,7 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
 
       // 1. First GET returns 429 Too Many Requests
       nock('https://www.googleapis.com')
-        .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType&supportsAllDrives=true`)
+        .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType%2C%20webViewLink&supportsAllDrives=true`)
         .reply(429, {
           error: {
             code: 429,
@@ -314,12 +320,13 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
 
       // 2. Second GET (retry) succeeds with 200
       nock('https://www.googleapis.com')
-        .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType&supportsAllDrives=true`)
+        .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType%2C%20webViewLink&supportsAllDrives=true`)
         .reply(200, {
           id: fileId,
           name: fileName,
           parents: [currentParentId],
           mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
         });
 
       // 3. List folders returns existing !TestMove folder
@@ -332,6 +339,7 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
               id: targetFolderId,
               name: '!TestMove',
               parents: [currentParentId],
+              webViewLink: `https://drive.google.com/drive/folders/${targetFolderId}`,
             },
           ],
         });
@@ -339,12 +347,13 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
       // 4. Move file succeeds
       nock('https://www.googleapis.com')
         .patch(
-          `/drive/v3/files/${fileId}?addParents=${targetFolderId}&removeParents=${currentParentId}&fields=id%2C%20name%2C%20parents%2C%20mimeType&supportsAllDrives=true`
+          `/drive/v3/files/${fileId}?addParents=${targetFolderId}&removeParents=${currentParentId}&fields=id%2C%20name%2C%20parents%2C%20mimeType%2C%20webViewLink&supportsAllDrives=true`
         )
         .reply(200, {
           id: fileId,
           name: fileName,
           parents: [targetFolderId],
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
         });
 
       const fastRetryApp = createApp({
@@ -398,7 +407,7 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
       const fileId = 'forbidden-file';
 
       nock('https://www.googleapis.com')
-        .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType&supportsAllDrives=true`)
+        .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType%2C%20webViewLink&supportsAllDrives=true`)
         .reply(403, {
           error: {
             code: 403,

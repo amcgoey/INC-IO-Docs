@@ -13,16 +13,19 @@ describe('DriveActivityHandler', () => {
         id: 'file-123',
         name: 'Report.docx',
         parents: ['folder-parent-xyz'],
+        webViewLink: 'https://drive.google.com/file/d/file-123/view',
       }),
       findOrCreateFolder: vi.fn().mockResolvedValue({
         id: 'testmove-folder-id',
         name: 'Unfiled',
         parents: ['folder-parent-xyz'],
+        webViewLink: 'https://drive.google.com/drive/folders/testmove-folder-id',
       }),
       moveFile: vi.fn().mockResolvedValue({
         id: 'file-123',
         name: 'Report.docx',
         parents: ['testmove-folder-id'],
+        webViewLink: 'https://drive.google.com/file/d/file-123/view',
       }),
       searchFiles: vi.fn().mockResolvedValue([]),
     };
@@ -126,6 +129,7 @@ describe('DriveActivityHandler', () => {
         id: 'root-file-123',
         name: 'RootDoc.pdf',
         parents: [],
+        webViewLink: 'https://drive.google.com/file/d/root-file-123/view',
       });
 
       const activity: Activity = {
@@ -143,7 +147,6 @@ describe('DriveActivityHandler', () => {
         undefined
       );
     });
-
 
     it('uses defaultFolderName from configProvider when activity payload omits folderName', async () => {
       const mockConfigProvider = {
@@ -201,6 +204,49 @@ describe('DriveActivityHandler', () => {
         'PayloadFolder',
         undefined
       );
+    });
+
+    it('falls back to getFile webViewLink if moveFile does not provide webViewLink', async () => {
+      (mockDriveService.getFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'file-fallback',
+        name: 'Fallback.pdf',
+        parents: ['folder-xyz'],
+        webViewLink: 'https://drive.google.com/file/d/file-fallback/view',
+      });
+      (mockDriveService.moveFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'file-fallback',
+        name: 'Fallback.pdf',
+        parents: ['testmove-folder-id'],
+      });
+
+      const activity: Activity = {
+        type: 'MOVE_DRIVE_FILE',
+        payload: { fileId: 'file-fallback' },
+      };
+
+      const output = await handler.handle(activity);
+      expect(output.files?.[0]?.uri).toBe('https://drive.google.com/file/d/file-fallback/view');
+    });
+
+    it('omits uri on fileLocator if webViewLink is absent on both movedFile and file', async () => {
+      (mockDriveService.getFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'file-no-link',
+        name: 'NoLink.pdf',
+        parents: ['folder-xyz'],
+      });
+      (mockDriveService.moveFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'file-no-link',
+        name: 'NoLink.pdf',
+        parents: ['testmove-folder-id'],
+      });
+
+      const activity: Activity = {
+        type: 'MOVE_DRIVE_FILE',
+        payload: { fileId: 'file-no-link' },
+      };
+
+      const output = await handler.handle(activity);
+      expect(output.files?.[0]?.uri).toBeUndefined();
     });
 
     it('throws configuration error when configProvider.getDriveConfig fails', async () => {
