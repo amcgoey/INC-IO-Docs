@@ -86,6 +86,7 @@ async function runE2E(): Promise<void> {
               name: 'E2E_Test_Document.pdf',
               parents: ['mock-testmove-folder-id'],
             }),
+            searchFiles: async () => [],
           },
         }),
   };

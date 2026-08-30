@@ -24,6 +24,7 @@ describe('DriveActivityHandler', () => {
         name: 'Report.docx',
         parents: ['testmove-folder-id'],
       }),
+      searchFiles: vi.fn().mockResolvedValue([]),
     };
 
     handler = new DriveActivityHandler(mockDriveService);

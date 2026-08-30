@@ -946,6 +946,7 @@ describe('App integration tests', () => {
           name: 'ImportantDocument.pdf',
           parents: ['custom-folder-id'],
         }),
+        searchFiles: vi.fn().mockResolvedValue([]),
       };
 
       const mockAuthVerifier = {

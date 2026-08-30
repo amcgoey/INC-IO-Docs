@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { GoogleDriveClient } from './drive-client';
 import { google, type drive_v3 } from 'googleapis';
+import { DriveServiceError } from '../../features/document/ports';
 
 describe('GoogleDriveClient', () => {
   let mockDrive: drive_v3.Drive;
@@ -205,6 +206,237 @@ describe('GoogleDriveClient', () => {
       await expect(client.moveFile('file-123', 'p1', 'p2')).rejects.toThrow(
         /Failed to move file 'file-123' to folder 'p2'/
       );
+    });
+  });
+
+  describe('searchFiles', () => {
+    it('executes global search with trashed = false and contains query when parents array is empty', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          files: [
+            {
+              id: 'file-global-1',
+              name: 'Invoice_123.pdf',
+              parents: ['folder-abc'],
+              mimeType: 'application/pdf',
+              webViewLink: 'https://drive.google.com/file/d/file-global-1/view',
+            },
+          ],
+        },
+      });
+
+      const results = await client.searchFiles({
+        targetName: 'Invoice',
+        expectedParentPathNames: [],
+      });
+
+      expect(results).toEqual([
+        {
+          id: 'file-global-1',
+          name: 'Invoice_123.pdf',
+          parents: ['folder-abc'],
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/file-global-1/view',
+        },
+      ]);
+      expect(mockDrive.files.list).toHaveBeenCalledWith({
+        q: "name contains 'Invoice' and trashed = false",
+        fields: 'files(id, name, parents, mimeType, webViewLink)',
+        corpora: 'user',
+        spaces: 'drive',
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true,
+      });
+    });
+
+    it('executes global search when expectedParentPathNames is undefined', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          files: [
+            {
+              id: 'f-1',
+              name: 'Document.docx',
+            },
+          ],
+        },
+      });
+
+      const results = await client.searchFiles({
+        targetName: 'Document',
+      });
+
+      expect(results).toEqual([
+        {
+          id: 'f-1',
+          name: 'Document.docx',
+          parents: undefined,
+          mimeType: undefined,
+          webViewLink: undefined,
+        },
+      ]);
+      expect(mockDrive.files.list).toHaveBeenCalledWith(
+        expect.objectContaining({
+          corpora: 'user',
+          spaces: 'drive',
+          q: "name contains 'Document' and trashed = false",
+        })
+      );
+    });
+
+    it('uses exact equality when exactMatch is true', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: { files: [] },
+      });
+
+      await client.searchFiles({
+        targetName: 'ExactName.pdf',
+        exactMatch: true,
+        expectedParentPathNames: [],
+      });
+
+      expect(mockDrive.files.list).toHaveBeenCalledWith(
+        expect.objectContaining({
+          q: "name = 'ExactName.pdf' and trashed = false",
+        })
+      );
+    });
+
+    it('escapes single quotes in targetName query', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: { files: [] },
+      });
+
+      await client.searchFiles({
+        targetName: "O'Connor's Receipt.pdf",
+        exactMatch: true,
+      });
+
+      expect(mockDrive.files.list).toHaveBeenCalledWith(
+        expect.objectContaining({
+          q: "name = 'O\\'Connor\\'s Receipt.pdf' and trashed = false",
+        })
+      );
+    });
+
+    it('scopes search to sharedDriveId when provided', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: { files: [] },
+      });
+
+      await client.searchFiles({
+        targetName: 'SharedDoc',
+        sharedDriveId: 'shared-drive-999',
+        expectedParentPathNames: [],
+      });
+
+      expect(mockDrive.files.list).toHaveBeenCalledWith(
+        expect.objectContaining({
+          corpora: 'drive',
+          driveId: 'shared-drive-999',
+          includeItemsFromAllDrives: true,
+          supportsAllDrives: true,
+        })
+      );
+    });
+
+    it('appends single mimeType filter clause', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: { files: [] },
+      });
+
+      await client.searchFiles({
+        targetName: 'Sheet',
+        mimeTypes: ['application/vnd.google-apps.spreadsheet'],
+        expectedParentPathNames: [],
+      });
+
+      expect(mockDrive.files.list).toHaveBeenCalledWith(
+        expect.objectContaining({
+          q: "name contains 'Sheet' and trashed = false and mimeType = 'application/vnd.google-apps.spreadsheet'",
+        })
+      );
+    });
+
+    it('appends multiple mimeType filter clauses joined with OR', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: { files: [] },
+      });
+
+      await client.searchFiles({
+        targetName: 'Doc',
+        mimeTypes: ['application/pdf', 'application/vnd.google-apps.document'],
+        expectedParentPathNames: [],
+      });
+
+      expect(mockDrive.files.list).toHaveBeenCalledWith(
+        expect.objectContaining({
+          q: "name contains 'Doc' and trashed = false and (mimeType = 'application/pdf' or mimeType = 'application/vnd.google-apps.document')",
+        })
+      );
+    });
+
+    it('maps 401 Unauthorized API errors to DriveServiceError', async () => {
+      const authError = {
+        status: 401,
+        message: 'Invalid Credentials',
+      };
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockRejectedValue(authError);
+
+      const err = await client.searchFiles({ targetName: 'Test' }).catch((e) => e);
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(/Google Drive API error in searchFiles: Invalid Credentials/);
+    });
+
+    it('maps 403 Forbidden API errors to DriveServiceError', async () => {
+      const forbiddenError = {
+        status: 403,
+        message: 'User Rate Limit Exceeded or Insufficient Permissions',
+      };
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockRejectedValue(forbiddenError);
+
+      const err = await client.searchFiles({ targetName: 'Test' }).catch((e) => e);
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(/Google Drive API error in searchFiles: User Rate Limit Exceeded or Insufficient Permissions/);
+    });
+
+    it('maps 500 Internal Server Error API errors to DriveServiceError', async () => {
+      const serverError = {
+        status: 500,
+        message: 'Backend Error',
+      };
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockRejectedValue(serverError);
+
+      const err = await client.searchFiles({ targetName: 'Test' }).catch((e) => e);
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(/Google Drive API error in searchFiles: Backend Error/);
+    });
+
+    it('retries searchFiles on 429 status code and succeeds on next attempt', async () => {
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      const retryClient = new GoogleDriveClient({
+        drive: mockDrive,
+        retryOptions: {
+          maxRetries: 2,
+          initialDelayMs: 50,
+          backoffFactor: 2,
+          sleep: sleepMock,
+        },
+      });
+
+      const rateLimitError = { status: 429, message: 'Too many requests' };
+      (mockDrive.files.list as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(rateLimitError)
+        .mockResolvedValueOnce({
+          data: {
+            files: [{ id: 'retry-file-id', name: 'FoundAfterRetry.pdf' }],
+          },
+        });
+
+      const results = await retryClient.searchFiles({ targetName: 'FoundAfterRetry' });
+      expect(results).toHaveLength(1);
+      expect(results[0].id).toBe('retry-file-id');
+      expect(mockDrive.files.list).toHaveBeenCalledTimes(2);
+      expect(sleepMock).toHaveBeenCalledWith(50);
     });
   });
 

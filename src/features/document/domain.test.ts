@@ -31,7 +31,17 @@ import {
   type FormSchema,
   type StorageContextConfig,
 } from './domain';
-import type { ActivityDispatcherPort, ExecutionContext, ManifestRegistryPort, TemplateEvaluationContext, TemplateEvaluatorPort } from './ports';
+import {
+  DriveServiceError,
+  AmbiguousPathSpecError,
+  AmbiguousFileError,
+  FileNotFoundError,
+  type ActivityDispatcherPort,
+  type ExecutionContext,
+  type ManifestRegistryPort,
+  type TemplateEvaluationContext,
+  type TemplateEvaluatorPort,
+} from './ports';
 
 
 
@@ -3872,7 +3882,45 @@ describe('Document domain', () => {
       ]);
     });
   });
+
+  describe('Drive Core Exceptions', () => {
+    it('DriveServiceError has correct name and inheritance', () => {
+      const error = new DriveServiceError('Drive error');
+      expect(error).toBeInstanceOf(Error);
+      expect(error).toBeInstanceOf(DriveServiceError);
+      expect(error.name).toBe('DriveServiceError');
+      expect(error.message).toBe('Drive error');
+    });
+
+    it('AmbiguousPathSpecError inherits from DriveServiceError', () => {
+      const error = new AmbiguousPathSpecError('Too many matches');
+      expect(error).toBeInstanceOf(Error);
+      expect(error).toBeInstanceOf(DriveServiceError);
+      expect(error).toBeInstanceOf(AmbiguousPathSpecError);
+      expect(error.name).toBe('AmbiguousPathSpecError');
+      expect(error.message).toBe('Too many matches');
+    });
+
+    it('AmbiguousFileError inherits from DriveServiceError', () => {
+      const error = new AmbiguousFileError('Multiple files found');
+      expect(error).toBeInstanceOf(Error);
+      expect(error).toBeInstanceOf(DriveServiceError);
+      expect(error).toBeInstanceOf(AmbiguousFileError);
+      expect(error.name).toBe('AmbiguousFileError');
+      expect(error.message).toBe('Multiple files found');
+    });
+
+    it('FileNotFoundError inherits from DriveServiceError', () => {
+      const error = new FileNotFoundError('File not found');
+      expect(error).toBeInstanceOf(Error);
+      expect(error).toBeInstanceOf(DriveServiceError);
+      expect(error).toBeInstanceOf(FileNotFoundError);
+      expect(error.name).toBe('FileNotFoundError');
+      expect(error.message).toBe('File not found');
+    });
+  });
 });
+
 
 
 

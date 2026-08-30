@@ -55,11 +55,48 @@ export interface TemplateEvaluatorPort {
   evaluate(template: string, context: TemplateEvaluationContext): string;
 }
 
+export class DriveServiceError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'DriveServiceError';
+  }
+}
+
+export class AmbiguousPathSpecError extends DriveServiceError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'AmbiguousPathSpecError';
+  }
+}
+
+export class AmbiguousFileError extends DriveServiceError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'AmbiguousFileError';
+  }
+}
+
+export class FileNotFoundError extends DriveServiceError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'FileNotFoundError';
+  }
+}
+
+export interface DriveSearchQuery {
+  targetName: string;
+  exactMatch?: boolean | undefined;
+  sharedDriveId?: string | undefined;
+  mimeTypes?: string[] | undefined;
+  expectedParentPathNames?: string[] | undefined;
+}
+
 export interface DriveFileResult {
   id: string;
   name: string;
   parents?: string[] | undefined;
   mimeType?: string | undefined;
+  webViewLink?: string | undefined;
 }
 
 export interface DriveConfiguration {
@@ -86,6 +123,10 @@ export interface DriveServicePort {
     targetFolderId: string,
     options?: DriveServiceOptions
   ): Promise<DriveFileResult>;
+  searchFiles(
+    query: DriveSearchQuery,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult[]>;
 }
 
 
