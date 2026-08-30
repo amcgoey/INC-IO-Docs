@@ -249,6 +249,17 @@ describe('GoogleDriveClient', () => {
       });
     });
 
+    it('throws error when non-empty expectedParentPathNames is provided (pending #75/#76)', async () => {
+      await expect(
+        client.searchFiles({
+          targetName: 'Document',
+          expectedParentPathNames: ['ParentFolder'],
+        })
+      ).rejects.toThrow(
+        /Parent path traversal is not yet implemented for searchFiles/
+      );
+    });
+
     it('executes global search when expectedParentPathNames is undefined', async () => {
       (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValue({
         data: {

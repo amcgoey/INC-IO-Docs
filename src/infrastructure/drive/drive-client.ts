@@ -77,10 +77,7 @@ export class GoogleDriveClient {
     if (options.drive) {
       this.defaultDrive = options.drive;
     } else if (typeof options.auth === 'string') {
-      const oauth2Client = new OAuth2Client();
-      oauth2Client.setCredentials({ access_token: options.auth });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.defaultDrive = google.drive({ version: 'v3', auth: oauth2Client as any });
+      this.defaultDrive = this.createDriveClientFromToken(options.auth);
     } else if (options.auth) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.defaultDrive = google.drive({ version: 'v3', auth: options.auth as any });
@@ -89,12 +86,33 @@ export class GoogleDriveClient {
     }
   }
 
-  private getDrive(auth?: string): drive_v3.Drive {
-    if (!auth) return this.defaultDrive;
+  private createDriveClientFromToken(token: string): drive_v3.Drive {
     const oauth2Client = new OAuth2Client();
-    oauth2Client.setCredentials({ access_token: auth });
+    oauth2Client.setCredentials({ access_token: token });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return google.drive({ version: 'v3', auth: oauth2Client as any });
+  }
+
+  private getDrive(auth?: string): drive_v3.Drive {
+    if (!auth) return this.defaultDrive;
+    return this.createDriveClientFromToken(auth);
+  }
+
+  private wrapApiError(methodName: string, error: unknown): never {
+    if (error instanceof DriveServiceError) {
+      throw error;
+    }
+    if (
+      error instanceof Error &&
+      (error.message.startsWith('Failed to ') ||
+        error.message.startsWith('Parent path traversal is not yet implemented'))
+    ) {
+      throw error;
+    }
+    throw new DriveServiceError(
+      `Google Drive API error in ${methodName}: ${formatErrorMessage(error)}`,
+      { cause: error }
+    );
   }
 
   private async executeWithRetry<T>(operation: () => Promise<T>): Promise<T> {
@@ -112,7 +130,6 @@ export class GoogleDriveClient {
     const sleep =
       this.retryOptions.sleep ??
       ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
-
 
     let attempt = 0;
     while (true) {
@@ -152,13 +169,7 @@ export class GoogleDriveClient {
         mimeType: res.data.mimeType ?? undefined,
       };
     } catch (error) {
-      if (error instanceof Error && error.message.includes('Failed to retrieve')) {
-        throw error;
-      }
-      throw new DriveServiceError(
-        `Google Drive API error in getFile: ${formatErrorMessage(error)}`,
-        { cause: error }
-      );
+      this.wrapApiError('getFile', error);
     }
   }
 
@@ -215,17 +226,7 @@ export class GoogleDriveClient {
         mimeType: createRes.data.mimeType ?? 'application/vnd.google-apps.folder',
       };
     } catch (error) {
-      if (
-        error instanceof Error &&
-        (error.message.includes('Failed to create') ||
-          error.message.includes('Google Drive API'))
-      ) {
-        throw error;
-      }
-      throw new DriveServiceError(
-        `Google Drive API error in findOrCreateFolder: ${formatErrorMessage(error)}`,
-        { cause: error }
-      );
+      this.wrapApiError('findOrCreateFolder', error);
     }
   }
 
@@ -258,13 +259,7 @@ export class GoogleDriveClient {
         mimeType: res.data.mimeType ?? undefined,
       };
     } catch (error) {
-      if (error instanceof Error && error.message.includes('Failed to move')) {
-        throw error;
-      }
-      throw new DriveServiceError(
-        `Google Drive API error in moveFile: ${formatErrorMessage(error)}`,
-        { cause: error }
-      );
+      this.wrapApiError('moveFile', error);
     }
   }
 
@@ -272,6 +267,12 @@ export class GoogleDriveClient {
     query: DriveSearchQuery,
     options?: DriveOperationOptions
   ): Promise<DriveFileMetadata[]> {
+    if (query.expectedParentPathNames && query.expectedParentPathNames.length > 0) {
+      throw new Error(
+        'Parent path traversal is not yet implemented for searchFiles. Only unanchored searches (empty expectedParentPathNames) are currently supported.'
+      );
+    }
+
     const drive = this.getDrive(options?.auth);
     try {
       const escapedTarget = query.targetName.replace(/'/g, "\\'");
@@ -321,13 +322,7 @@ export class GoogleDriveClient {
           webViewLink: file.webViewLink ?? undefined,
         }));
     } catch (error) {
-      if (error instanceof DriveServiceError) {
-        throw error;
-      }
-      throw new DriveServiceError(
-        `Google Drive API error in searchFiles: ${formatErrorMessage(error)}`,
-        { cause: error }
-      );
+      this.wrapApiError('searchFiles', error);
     }
   }
 }
