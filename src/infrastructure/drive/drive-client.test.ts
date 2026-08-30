@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { GoogleDriveClient } from './drive-client';
+import { GoogleDriveClient, GoogleDriveApiError } from './drive-client';
 import { google, type drive_v3 } from 'googleapis';
-import { DriveServiceError } from '../../features/document/ports';
 
 describe('GoogleDriveClient', () => {
   let mockDrive: drive_v3.Drive;
@@ -386,7 +385,7 @@ describe('GoogleDriveClient', () => {
       );
     });
 
-    it('maps 401 Unauthorized API errors to DriveServiceError', async () => {
+    it('maps 401 Unauthorized API errors to GoogleDriveApiError', async () => {
       const authError = {
         status: 401,
         message: 'Invalid Credentials',
@@ -394,11 +393,12 @@ describe('GoogleDriveClient', () => {
       (mockDrive.files.list as ReturnType<typeof vi.fn>).mockRejectedValue(authError);
 
       const err = await client.searchFiles({ targetName: 'Test' }).catch((e) => e);
-      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err).toBeInstanceOf(GoogleDriveApiError);
+      expect(err.statusCode).toBe(401);
       expect(err.message).toMatch(/Google Drive API error in searchFiles: Invalid Credentials/);
     });
 
-    it('maps 403 Forbidden API errors to DriveServiceError', async () => {
+    it('maps 403 Forbidden API errors to GoogleDriveApiError', async () => {
       const forbiddenError = {
         status: 403,
         message: 'User Rate Limit Exceeded or Insufficient Permissions',
@@ -406,11 +406,12 @@ describe('GoogleDriveClient', () => {
       (mockDrive.files.list as ReturnType<typeof vi.fn>).mockRejectedValue(forbiddenError);
 
       const err = await client.searchFiles({ targetName: 'Test' }).catch((e) => e);
-      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err).toBeInstanceOf(GoogleDriveApiError);
+      expect(err.statusCode).toBe(403);
       expect(err.message).toMatch(/Google Drive API error in searchFiles: User Rate Limit Exceeded or Insufficient Permissions/);
     });
 
-    it('maps 500 Internal Server Error API errors to DriveServiceError', async () => {
+    it('maps 500 Internal Server Error API errors to GoogleDriveApiError', async () => {
       const serverError = {
         status: 500,
         message: 'Backend Error',
@@ -418,7 +419,8 @@ describe('GoogleDriveClient', () => {
       (mockDrive.files.list as ReturnType<typeof vi.fn>).mockRejectedValue(serverError);
 
       const err = await client.searchFiles({ targetName: 'Test' }).catch((e) => e);
-      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err).toBeInstanceOf(GoogleDriveApiError);
+      expect(err.statusCode).toBe(500);
       expect(err.message).toMatch(/Google Drive API error in searchFiles: Backend Error/);
     });
 

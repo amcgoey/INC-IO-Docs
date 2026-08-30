@@ -4,6 +4,7 @@ import { registerDocumentFeatureRoutes } from '../features/document/adapters/api
 import { registerWorkspaceFeatureRoutes } from '../features/workspace/adapters/api';
 import { ActivityEngine } from '../features/document/adapters/activity-engine';
 import { DriveActivityHandler } from '../features/document/adapters/drive-activity-handler';
+import { DriveServiceAdapter } from '../features/document/adapters/drive-service-adapter';
 import { ManifestRegistryAdapter } from '../features/document/adapters/manifest-registry';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
@@ -64,7 +65,10 @@ export function createApp(options?: AppOptions): AppInstance {
       : undefined;
 
   const driveService: DriveServicePort =
-    options?.driveService ?? new GoogleDriveClient({ configProvider: driveConfigProvider });
+    options?.driveService ??
+    new DriveServiceAdapter(
+      new GoogleDriveClient({ configProvider: driveConfigProvider })
+    );
 
   const driveActivityHandler = new DriveActivityHandler(driveService, {
     configProvider: driveConfigProvider,

@@ -1,9 +1,5 @@
 import { google, type drive_v3 } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
-import {
-  DriveServiceError,
-  type DriveSearchQuery,
-} from '../../features/document/ports';
 
 export interface DriveFileMetadata {
   id: string;
@@ -11,6 +7,27 @@ export interface DriveFileMetadata {
   parents?: string[] | undefined;
   mimeType?: string | undefined;
   webViewLink?: string | undefined;
+}
+
+export interface DriveSearchParams {
+  targetName: string;
+  exactMatch?: boolean | undefined;
+  sharedDriveId?: string | undefined;
+  mimeTypes?: string[] | undefined;
+  expectedParentPathNames?: string[] | undefined;
+}
+
+export class GoogleDriveApiError extends Error {
+  readonly statusCode?: number | undefined;
+
+  constructor(
+    message: string,
+    options?: { cause?: unknown; statusCode?: number | undefined }
+  ) {
+    super(message, { cause: options?.cause });
+    this.name = 'GoogleDriveApiError';
+    this.statusCode = options?.statusCode;
+  }
 }
 
 export interface DriveRetryOptions {
@@ -99,7 +116,7 @@ export class GoogleDriveClient {
   }
 
   private wrapApiError(methodName: string, error: unknown): never {
-    if (error instanceof DriveServiceError) {
+    if (error instanceof GoogleDriveApiError) {
       throw error;
     }
     if (
@@ -109,9 +126,19 @@ export class GoogleDriveClient {
     ) {
       throw error;
     }
-    throw new DriveServiceError(
+    const statusCode =
+      typeof error === 'object' && error !== null
+        ? ((error as { status?: number; code?: number; response?: { status?: number } }).status ??
+          (error as { status?: number; code?: number; response?: { status?: number } }).response
+            ?.status ??
+          (typeof (error as { code?: unknown }).code === 'number'
+            ? (error as { code?: number }).code
+            : undefined))
+        : undefined;
+
+    throw new GoogleDriveApiError(
       `Google Drive API error in ${methodName}: ${formatErrorMessage(error)}`,
-      { cause: error }
+      { cause: error, statusCode }
     );
   }
 
@@ -264,7 +291,7 @@ export class GoogleDriveClient {
   }
 
   async searchFiles(
-    query: DriveSearchQuery,
+    query: DriveSearchParams,
     options?: DriveOperationOptions
   ): Promise<DriveFileMetadata[]> {
     if (query.expectedParentPathNames && query.expectedParentPathNames.length > 0) {
