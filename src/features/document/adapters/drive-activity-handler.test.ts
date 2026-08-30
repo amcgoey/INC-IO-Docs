@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DriveActivityHandler } from './drive-activity-handler';
-import type { DriveServicePort } from '../ports';
+import {
+  AmbiguousPathSpecError,
+  DriveServiceError,
+  type DriveServicePort,
+} from '../ports';
 import type { Activity } from '../domain';
 
 describe('DriveActivityHandler', () => {
@@ -38,6 +42,9 @@ describe('DriveActivityHandler', () => {
       expect(handler.canHandle({ type: 'MOVE_DRIVE_FILE', payload: {} })).toBe(true);
       expect(handler.canHandle({ type: 'MOVE_SELECTED_FILE', payload: {} })).toBe(true);
       expect(handler.canHandle({ type: 'DRIVE_MOVE_SELECTED_FILE', payload: {} })).toBe(true);
+      expect(handler.canHandle({ type: 'SEARCH_DRIVE_FILE', payload: {} })).toBe(true);
+      expect(handler.canHandle({ type: 'FIND_DRIVE_FILE', payload: {} })).toBe(true);
+      expect(handler.canHandle({ type: 'RESOLVE_DRIVE_FILE', payload: {} })).toBe(true);
     });
 
     it('returns false for unrelated activity types', () => {
@@ -281,6 +288,183 @@ describe('DriveActivityHandler', () => {
       await expect(handler.handle(activity)).rejects.toThrow(
         /DriveActivityHandler failed to move file: Google Drive API 404 Not Found/
       );
+    });
+
+    describe('searchFiles and path resolution', () => {
+      it('executes searchFiles with expectedParentPathNames array and returns single match', async () => {
+        (mockDriveService.searchFiles as ReturnType<typeof vi.fn>).mockResolvedValue([
+          {
+            id: 'found-file-456',
+            name: 'TargetDoc.pdf',
+            parents: ['folder-123'],
+            mimeType: 'application/pdf',
+            webViewLink: 'https://drive.google.com/file/d/found-file-456/view',
+          },
+        ]);
+
+        const activity: Activity = {
+          type: 'SEARCH_DRIVE_FILE',
+          payload: {
+            targetName: 'TargetDoc.pdf',
+            expectedParentPathNames: ['Clients', 'Acme Corp'],
+            exactMatch: true,
+            sharedDriveId: 'shared-drive-001',
+            mimeTypes: ['application/pdf'],
+          },
+        };
+
+        const context = { credentials: { oauthToken: 'ya29.search-token' } };
+        const output = await handler.handle(activity, context);
+
+        expect(mockDriveService.searchFiles).toHaveBeenCalledWith(
+          {
+            targetName: 'TargetDoc.pdf',
+            expectedParentPathNames: ['Clients', 'Acme Corp'],
+            exactMatch: true,
+            sharedDriveId: 'shared-drive-001',
+            mimeTypes: ['application/pdf'],
+          },
+          { auth: 'ya29.search-token' }
+        );
+
+        expect(output).toEqual({
+          success: true,
+          files: [
+            {
+              id: 'found-file-456',
+              name: 'TargetDoc.pdf',
+              parentName: 'folder-123',
+              mimeType: 'application/pdf',
+              uri: 'https://drive.google.com/file/d/found-file-456/view',
+            },
+          ],
+          documentDataPatch: {
+            fileId: 'found-file-456',
+            webViewLink: 'https://drive.google.com/file/d/found-file-456/view',
+          },
+          contextVariables: {
+            fileId: 'found-file-456',
+            webViewLink: 'https://drive.google.com/file/d/found-file-456/view',
+          },
+        });
+      });
+
+      it('parses targetPath string into expectedParentPathNames and targetName', async () => {
+        (mockDriveService.searchFiles as ReturnType<typeof vi.fn>).mockResolvedValue([
+          {
+            id: 'found-file-789',
+            name: 'Summary.xlsx',
+            parents: ['folder-456'],
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            webViewLink: 'https://drive.google.com/file/d/found-file-789/view',
+          },
+        ]);
+
+        const activity: Activity = {
+          type: 'RESOLVE_DRIVE_FILE',
+          payload: {
+            targetPath: '1Admin/Communication/ClientA/Summary.xlsx',
+          },
+        };
+
+        const output = await handler.handle(activity);
+
+        expect(mockDriveService.searchFiles).toHaveBeenCalledWith(
+          {
+            targetName: 'Summary.xlsx',
+            expectedParentPathNames: ['1Admin', 'Communication', 'ClientA'],
+            exactMatch: undefined,
+            sharedDriveId: undefined,
+            mimeTypes: undefined,
+          },
+          undefined
+        );
+
+        expect(output.success).toBe(true);
+        expect(output.files?.[0]?.id).toBe('found-file-789');
+      });
+
+      it('catches AmbiguousPathSpecError from searchFiles and returns success: false to UI layer', async () => {
+        (mockDriveService.searchFiles as ReturnType<typeof vi.fn>).mockRejectedValue(
+          new AmbiguousPathSpecError(
+            "AmbiguousPathSpecError: Query for parent folder 'Clients' returned 25 results, exceeding the threshold cap of 20 matches."
+          )
+        );
+
+        const activity: Activity = {
+          type: 'SEARCH_DRIVE_FILE',
+          payload: {
+            targetName: 'Budget.xlsx',
+            expectedParentPathNames: ['Clients'],
+          },
+        };
+
+        const output = await handler.handle(activity);
+
+        expect(output).toEqual({
+          success: false,
+          error:
+            "AmbiguousPathSpecError: Query for parent folder 'Clients' returned 25 results, exceeding the threshold cap of 20 matches.",
+        });
+      });
+
+      it('catches AmbiguousFileError when searchFiles returns multiple matches and returns success: false to UI layer', async () => {
+        (mockDriveService.searchFiles as ReturnType<typeof vi.fn>).mockResolvedValue([
+          { id: 'file-1', name: 'Duplicate.pdf' },
+          { id: 'file-2', name: 'Duplicate.pdf' },
+        ]);
+
+        const activity: Activity = {
+          type: 'FIND_DRIVE_FILE',
+          payload: {
+            targetName: 'Duplicate.pdf',
+          },
+        };
+
+        const output = await handler.handle(activity);
+
+        expect(output).toEqual({
+          success: false,
+          error:
+            "AmbiguousFileError: Query for target 'Duplicate.pdf' returned 2 matches and could not be uniquely resolved.",
+        });
+      });
+
+      it('catches FileNotFoundError when searchFiles returns 0 matches and returns success: false to UI layer', async () => {
+        (mockDriveService.searchFiles as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+        const activity: Activity = {
+          type: 'FIND_DRIVE_FILE',
+          payload: {
+            targetName: 'NonExistent.docx',
+            expectedParentPathNames: ['Archive'],
+          },
+        };
+
+        const output = await handler.handle(activity);
+
+        expect(output).toEqual({
+          success: false,
+          error: "FileNotFoundError: File not found for target 'NonExistent.docx'",
+        });
+      });
+
+      it('bubbles up infrastructure DriveServiceError (e.g. 403 Forbidden) across the seam', async () => {
+        const driveError = new DriveServiceError(
+          'Drive service error (403) in searchFiles: Google Drive API error in searchFiles: Forbidden'
+        );
+        (mockDriveService.searchFiles as ReturnType<typeof vi.fn>).mockRejectedValue(driveError);
+
+        const activity: Activity = {
+          type: 'SEARCH_DRIVE_FILE',
+          payload: {
+            targetName: 'ProtectedDoc.pdf',
+          },
+        };
+
+        await expect(handler.handle(activity)).rejects.toThrow(driveError);
+        await expect(handler.handle(activity)).rejects.toBeInstanceOf(DriveServiceError);
+      });
     });
   });
 });
