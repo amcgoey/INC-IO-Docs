@@ -65,14 +65,28 @@ export class DriveServiceAdapter implements DriveServicePort {
     if (error instanceof DriveServiceError) {
       throw error;
     }
-    const message =
+
+    const statusCode =
+      typeof error === 'object' && error !== null
+        ? ((error as { statusCode?: number; status?: number; code?: number }).statusCode ??
+          (error as { statusCode?: number; status?: number; code?: number }).status ??
+          (typeof (error as { code?: unknown }).code === 'number'
+            ? (error as { code?: number }).code
+            : undefined))
+        : undefined;
+
+    const baseMessage =
       error instanceof Error
         ? error.message
         : typeof error === 'object' && error !== null && 'message' in error
           ? String((error as { message: unknown }).message)
           : String(error);
 
-    throw new DriveServiceError(`Drive service error in ${operation}: ${message}`, {
+    const formattedMessage = statusCode
+      ? `Drive service error (${statusCode}) in ${operation}: ${baseMessage}`
+      : `Drive service error in ${operation}: ${baseMessage}`;
+
+    throw new DriveServiceError(formattedMessage, {
       cause: error,
     });
   }

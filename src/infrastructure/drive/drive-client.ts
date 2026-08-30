@@ -174,6 +174,16 @@ export class GoogleDriveClient {
     }
   }
 
+  private requireFileMetadata(
+    file: { id?: string | null; name?: string | null } | undefined,
+    errorMessage: string
+  ): { id: string; name: string } {
+    if (!file?.id || !file?.name) {
+      throw new Error(errorMessage);
+    }
+    return { id: file.id, name: file.name };
+  }
+
   async getFile(fileId: string, options?: DriveOperationOptions): Promise<DriveFileMetadata> {
     const drive = this.getDrive(options?.auth);
     try {
@@ -185,13 +195,14 @@ export class GoogleDriveClient {
         })
       );
 
-      if (!res.data.id || !res.data.name) {
-        throw new Error(`Failed to retrieve file metadata for fileId '${fileId}'`);
-      }
+      const { id, name } = this.requireFileMetadata(
+        res.data,
+        `Failed to retrieve file metadata for fileId '${fileId}'`
+      );
 
       return {
-        id: res.data.id,
-        name: res.data.name,
+        id,
+        name,
         parents: res.data.parents ?? [],
         mimeType: res.data.mimeType ?? undefined,
       };
@@ -242,13 +253,14 @@ export class GoogleDriveClient {
         })
       );
 
-      if (!createRes.data.id || !createRes.data.name) {
-        throw new Error(`Failed to create folder '${folderName}' in parent '${parentId}'`);
-      }
+      const { id, name } = this.requireFileMetadata(
+        createRes.data,
+        `Failed to create folder '${folderName}' in parent '${parentId}'`
+      );
 
       return {
-        id: createRes.data.id,
-        name: createRes.data.name,
+        id,
+        name,
         parents: createRes.data.parents ?? [parentId],
         mimeType: createRes.data.mimeType ?? 'application/vnd.google-apps.folder',
       };
@@ -275,13 +287,14 @@ export class GoogleDriveClient {
         })
       );
 
-      if (!res.data.id || !res.data.name) {
-        throw new Error(`Failed to move file '${fileId}' to folder '${targetFolderId}'`);
-      }
+      const { id, name } = this.requireFileMetadata(
+        res.data,
+        `Failed to move file '${fileId}' to folder '${targetFolderId}'`
+      );
 
       return {
-        id: res.data.id,
-        name: res.data.name,
+        id,
+        name,
         parents: res.data.parents ?? [targetFolderId],
         mimeType: res.data.mimeType ?? undefined,
       };

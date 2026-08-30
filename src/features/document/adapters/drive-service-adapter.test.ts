@@ -119,5 +119,38 @@ describe('DriveServiceAdapter', () => {
       expect(err).toBeInstanceOf(DriveServiceError);
       expect(err.message).toMatch(/Drive service error in searchFiles: Drive quota exceeded/);
     });
+
+    it('translates 401 Unauthorized API error to DriveServiceError with status code', async () => {
+      (mockDriveClient.searchFiles as ReturnType<typeof vi.fn>).mockRejectedValue({
+        statusCode: 401,
+        message: 'Invalid Credentials',
+      });
+
+      const err = await adapter.searchFiles({ targetName: 'Test' }).catch((e) => e);
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(/Drive service error \(401\) in searchFiles: Invalid Credentials/);
+    });
+
+    it('translates 403 Forbidden API error to DriveServiceError with status code', async () => {
+      (mockDriveClient.searchFiles as ReturnType<typeof vi.fn>).mockRejectedValue({
+        statusCode: 403,
+        message: 'Insufficient Permissions',
+      });
+
+      const err = await adapter.searchFiles({ targetName: 'Test' }).catch((e) => e);
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(/Drive service error \(403\) in searchFiles: Insufficient Permissions/);
+    });
+
+    it('translates 500 Internal Server Error to DriveServiceError with status code', async () => {
+      (mockDriveClient.searchFiles as ReturnType<typeof vi.fn>).mockRejectedValue({
+        statusCode: 500,
+        message: 'Backend Error',
+      });
+
+      const err = await adapter.searchFiles({ targetName: 'Test' }).catch((e) => e);
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(/Drive service error \(500\) in searchFiles: Backend Error/);
+    });
   });
 });
