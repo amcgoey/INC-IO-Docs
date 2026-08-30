@@ -59,6 +59,16 @@ function mapMetadataToResult(metadata: DriveClientFileMetadata): DriveFileResult
   };
 }
 
+function extractHttpStatusCode(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const err = error as { statusCode?: unknown; status?: unknown; code?: unknown; response?: { status?: unknown } };
+  if (typeof err.statusCode === 'number') return err.statusCode;
+  if (typeof err.status === 'number') return err.status;
+  if (err.response && typeof err.response.status === 'number') return err.response.status;
+  if (typeof err.code === 'number') return err.code;
+  return undefined;
+}
+
 export class DriveServiceAdapter implements DriveServicePort {
   constructor(private readonly driveClient: DriveClientPort) {}
 
@@ -86,14 +96,7 @@ export class DriveServiceAdapter implements DriveServicePort {
       throw new AmbiguousPathSpecError(baseMessage, { cause: error });
     }
 
-    const statusCode =
-      typeof error === 'object' && error !== null
-        ? ((error as { statusCode?: number; status?: number; code?: number }).statusCode ??
-          (error as { statusCode?: number; status?: number; code?: number }).status ??
-          (typeof (error as { code?: unknown }).code === 'number'
-            ? (error as { code?: number }).code
-            : undefined))
-        : undefined;
+    const statusCode = extractHttpStatusCode(error);
 
     const baseMessage =
       error instanceof Error

@@ -1,5 +1,6 @@
 import { google, type drive_v3 } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
+import { Type } from '@sinclair/typebox';
 
 export interface DriveFileMetadata {
   id: string;
@@ -8,6 +9,14 @@ export interface DriveFileMetadata {
   mimeType?: string | undefined;
   webViewLink?: string | undefined;
 }
+
+export const DriveFileMetadataSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  name: Type.String({ minLength: 1 }),
+  parents: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  webViewLink: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
 
 export interface DriveSearchParams {
   targetName: string;
@@ -66,15 +75,22 @@ export interface GoogleDriveClientOptions {
   configProvider?: DriveConfigProvider | undefined;
 }
 
+function extractHttpStatusCode(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const err = error as { statusCode?: unknown; status?: unknown; code?: unknown; response?: { status?: unknown } };
+  if (typeof err.statusCode === 'number') return err.statusCode;
+  if (typeof err.status === 'number') return err.status;
+  if (err.response && typeof err.response.status === 'number') return err.response.status;
+  if (typeof err.code === 'number') return err.code;
+  return undefined;
+}
+
 function isRateLimitError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
+  const status = extractHttpStatusCode(error);
+  if (status === 429) return true;
   const err = error as Record<string, unknown>;
-  if (err.status === 429 || err.code === 429 || err.code === '429') return true;
-  if (err.response && typeof err.response === 'object') {
-    const res = err.response as Record<string, unknown>;
-    if (res.status === 429) return true;
-  }
-  return false;
+  return err.code === '429';
 }
 
 function formatErrorMessage(error: unknown): string {
@@ -137,15 +153,7 @@ export class GoogleDriveClient {
     ) {
       throw error;
     }
-    const statusCode =
-      typeof error === 'object' && error !== null
-        ? ((error as { status?: number; code?: number; response?: { status?: number } }).status ??
-          (error as { status?: number; code?: number; response?: { status?: number } }).response
-            ?.status ??
-          (typeof (error as { code?: unknown }).code === 'number'
-            ? (error as { code?: number }).code
-            : undefined))
-        : undefined;
+    const statusCode = extractHttpStatusCode(error);
 
     throw new GoogleDriveApiError(
       `Google Drive API error in ${methodName}: ${formatErrorMessage(error)}`,
