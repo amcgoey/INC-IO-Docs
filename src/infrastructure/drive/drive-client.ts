@@ -151,9 +151,7 @@ export class GoogleDriveClient {
     }
     if (
       error instanceof Error &&
-      (error.message.startsWith('Failed to ') ||
-        error.message.startsWith('Parent path traversal is not yet implemented') ||
-        error.message.startsWith('Multi-level parent path traversal'))
+      error.message.startsWith('Failed to ')
     ) {
       throw error;
     }
@@ -330,53 +328,64 @@ export class GoogleDriveClient {
     query: DriveSearchParams,
     options?: DriveOperationOptions
   ): Promise<DriveFileMetadata[]> {
-    if (query.expectedParentPathNames && query.expectedParentPathNames.length > 1) {
-      throw new Error(
-        'Multi-level parent path traversal (> 1) is not yet implemented for searchFiles. Only single-level parent path searches are currently supported.'
-      );
-    }
-
     const drive = this.getDrive(options?.auth);
     try {
       let parentIds: string[] | undefined = undefined;
 
-      if (query.expectedParentPathNames && query.expectedParentPathNames.length === 1) {
-        const parentFolderName = query.expectedParentPathNames[0];
-        const escapedParent = escapeDriveQuery(parentFolderName);
-        const parentQuery = `name = '${escapedParent}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+      if (query.expectedParentPathNames && query.expectedParentPathNames.length > 0) {
+        let currentParentIds: string[] | undefined = undefined;
 
-        const parentListParams: drive_v3.Params$Resource$Files$List = {
-          q: parentQuery,
+        const baseParentListParams: drive_v3.Params$Resource$Files$List = {
           pageSize: 21,
           fields: 'files(id, name)',
           includeItemsFromAllDrives: true,
           supportsAllDrives: true,
+          ...(query.sharedDriveId
+            ? { corpora: 'drive', driveId: query.sharedDriveId }
+            : { corpora: 'user', spaces: 'drive' }),
         };
 
-        if (query.sharedDriveId) {
-          parentListParams.corpora = 'drive';
-          parentListParams.driveId = query.sharedDriveId;
-        } else {
-          parentListParams.corpora = 'user';
-          parentListParams.spaces = 'drive';
+        for (const parentFolderName of query.expectedParentPathNames) {
+          const escapedParent = escapeDriveQuery(parentFolderName);
+          const queryClauses = [`name = '${escapedParent}'`];
+
+          if (currentParentIds !== undefined && currentParentIds.length > 0) {
+            const parentsClause =
+              currentParentIds.length === 1
+                ? `'${currentParentIds[0]}' in parents`
+                : `(${currentParentIds.map((id) => `'${id}' in parents`).join(' or ')})`;
+            queryClauses.push(parentsClause);
+          }
+
+          queryClauses.push("mimeType = 'application/vnd.google-apps.folder'");
+          queryClauses.push('trashed = false');
+
+          const parentQuery = queryClauses.join(' and ');
+
+          const parentListParams: drive_v3.Params$Resource$Files$List = {
+            ...baseParentListParams,
+            q: parentQuery,
+          };
+
+          const parentRes = await this.executeWithRetry(() => drive.files.list(parentListParams));
+          const parentFiles = parentRes.data.files ?? [];
+
+          if (parentFiles.length > 20) {
+            throw new GoogleDriveAmbiguousPathError(
+              `AmbiguousPathSpecError: Query for parent folder '${parentFolderName}' returned ${parentFiles.length} results, exceeding the threshold cap of 20 matches.`
+            );
+          }
+
+          currentParentIds = parentFiles
+            .map((f) => f.id)
+            .filter((id): id is string => Boolean(id));
+
+          if (currentParentIds.length === 0) {
+            return [];
+          }
         }
 
-        const parentRes = await this.executeWithRetry(() => drive.files.list(parentListParams));
-        const parentFiles = parentRes.data.files ?? [];
-
-        if (parentFiles.length > 20) {
-          throw new GoogleDriveAmbiguousPathError(
-            `AmbiguousPathSpecError: Query for parent folder '${parentFolderName}' returned ${parentFiles.length} results, exceeding the threshold cap of 20 matches.`
-          );
-        }
-
-        parentIds = parentFiles
-          .map((f) => f.id)
-          .filter((id): id is string => Boolean(id));
-
-        if (parentIds.length === 0) {
-          return [];
-        }
+        parentIds = currentParentIds;
       }
 
       const escapedTarget = escapeDriveQuery(query.targetName);

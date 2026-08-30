@@ -481,16 +481,304 @@ describe('GoogleDriveClient', () => {
           q: "name contains 'Ledger' and 'parent-id' in parents and trashed = false and mimeType = 'application/vnd.google-apps.spreadsheet'",
         }));
       });
+    });
 
-      it('throws error when multi-level expectedParentPathNames (> 1) is provided (pending #76)', async () => {
-        await expect(
-          client.searchFiles({
-            targetName: 'Document',
-            expectedParentPathNames: ['Level1', 'Level2'],
+    describe('multi-level expectedParentPathNames', () => {
+      it('executes top-down traversal for 2-level path and finds target in deepest parent', async () => {
+        (mockDrive.files.list as ReturnType<typeof vi.fn>)
+          // 1. Level 0 query: "Acme Corp"
+          .mockResolvedValueOnce({
+            data: {
+              files: [{ id: 'acme-id', name: 'Acme Corp' }],
+            },
           })
-        ).rejects.toThrow(
-          /Multi-level parent path traversal \(> 1\) is not yet implemented for searchFiles/
+          // 2. Level 1 query: "Invoices" under "Acme Corp"
+          .mockResolvedValueOnce({
+            data: {
+              files: [{ id: 'inv-id', name: 'Invoices' }],
+            },
+          })
+          // 3. Target query: "Log_Sheet.xlsx" under "Invoices"
+          .mockResolvedValueOnce({
+            data: {
+              files: [
+                {
+                  id: 'file-target-1',
+                  name: 'Log_Sheet.xlsx',
+                  parents: ['inv-id'],
+                  mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                  webViewLink: 'https://drive.google.com/file/d/file-target-1/view',
+                },
+              ],
+            },
+          });
+
+        const results = await client.searchFiles({
+          targetName: 'Log_Sheet.xlsx',
+          exactMatch: true,
+          expectedParentPathNames: ['Acme Corp', 'Invoices'],
+        });
+
+        expect(results).toEqual([
+          {
+            id: 'file-target-1',
+            name: 'Log_Sheet.xlsx',
+            parents: ['inv-id'],
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            webViewLink: 'https://drive.google.com/file/d/file-target-1/view',
+          },
+        ]);
+
+        expect(mockDrive.files.list).toHaveBeenCalledTimes(3);
+
+        // Level 0: Global search for first parent folder
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(1, {
+          q: "name = 'Acme Corp' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+          pageSize: 21,
+          fields: 'files(id, name)',
+          corpora: 'user',
+          spaces: 'drive',
+          includeItemsFromAllDrives: true,
+          supportsAllDrives: true,
+        });
+
+        // Level 1: Scoped to acme-id
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(2, {
+          q: "name = 'Invoices' and 'acme-id' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+          pageSize: 21,
+          fields: 'files(id, name)',
+          corpora: 'user',
+          spaces: 'drive',
+          includeItemsFromAllDrives: true,
+          supportsAllDrives: true,
+        });
+
+        // Target: Scoped to inv-id
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(3, {
+          q: "name = 'Log_Sheet.xlsx' and 'inv-id' in parents and trashed = false",
+          fields: 'files(id, name, parents, mimeType, webViewLink)',
+          corpora: 'user',
+          spaces: 'drive',
+          includeItemsFromAllDrives: true,
+          supportsAllDrives: true,
+        });
+      });
+
+      it('consolidates multiple surviving parent IDs with OR at each level across 3-level path', async () => {
+        (mockDrive.files.list as ReturnType<typeof vi.fn>)
+          // Level 0: "Region" returns 2 folders
+          .mockResolvedValueOnce({
+            data: {
+              files: [
+                { id: 'region-1', name: 'Region' },
+                { id: 'region-2', name: 'Region' },
+              ],
+            },
+          })
+          // Level 1: "Offices" under (region-1 or region-2) returns 3 folders
+          .mockResolvedValueOnce({
+            data: {
+              files: [
+                { id: 'office-a', name: 'Offices' },
+                { id: 'office-b', name: 'Offices' },
+                { id: 'office-c', name: 'Offices' },
+              ],
+            },
+          })
+          // Level 2: "2026" under (office-a or office-b or office-c) returns 2 folders
+          .mockResolvedValueOnce({
+            data: {
+              files: [
+                { id: 'year-2026-1', name: '2026' },
+                { id: 'year-2026-2', name: '2026' },
+              ],
+            },
+          })
+          // Target: "Summary.pdf" under (year-2026-1 or year-2026-2)
+          .mockResolvedValueOnce({
+            data: {
+              files: [
+                {
+                  id: 'summary-doc-id',
+                  name: 'Summary.pdf',
+                  parents: ['year-2026-1'],
+                  mimeType: 'application/pdf',
+                  webViewLink: 'https://drive.google.com/file/d/summary-doc-id/view',
+                },
+              ],
+            },
+          });
+
+        const results = await client.searchFiles({
+          targetName: 'Summary.pdf',
+          exactMatch: true,
+          expectedParentPathNames: ['Region', 'Offices', '2026'],
+        });
+
+        expect(results).toHaveLength(1);
+        expect(results[0].id).toBe('summary-doc-id');
+        expect(mockDrive.files.list).toHaveBeenCalledTimes(4);
+
+        // Level 0
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(1, expect.objectContaining({
+          q: "name = 'Region' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+          pageSize: 21,
+        }));
+
+        // Level 1: Consolidated OR for 2 parents
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(2, expect.objectContaining({
+          q: "name = 'Offices' and ('region-1' in parents or 'region-2' in parents) and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+          pageSize: 21,
+        }));
+
+        // Level 2: Consolidated OR for 3 parents
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(3, expect.objectContaining({
+          q: "name = '2026' and ('office-a' in parents or 'office-b' in parents or 'office-c' in parents) and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+          pageSize: 21,
+        }));
+
+        // Target: Consolidated OR for 2 parents
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(4, expect.objectContaining({
+          q: "name = 'Summary.pdf' and ('year-2026-1' in parents or 'year-2026-2' in parents) and trashed = false",
+        }));
+      });
+
+      it('enforces 20-match threshold failure at intermediate depth level (level 2)', async () => {
+        const twentyOneOffices = Array.from({ length: 21 }, (_, i) => ({
+          id: `office-${i + 1}`,
+          name: 'Offices',
+        }));
+
+        (mockDrive.files.list as ReturnType<typeof vi.fn>)
+          // Level 0: 2 regions
+          .mockResolvedValueOnce({
+            data: {
+              files: [
+                { id: 'region-1', name: 'Region' },
+                { id: 'region-2', name: 'Region' },
+              ],
+            },
+          })
+          // Level 1: 21 offices -> exceeds cap
+          .mockResolvedValueOnce({
+            data: {
+              files: twentyOneOffices,
+            },
+          });
+
+        const error = await client
+          .searchFiles({
+            targetName: 'Doc.pdf',
+            expectedParentPathNames: ['Region', 'Offices', '2026'],
+          })
+          .catch((e) => e);
+
+        expect(error).toBeInstanceOf(GoogleDriveAmbiguousPathError);
+        expect(error.message).toMatch(
+          /AmbiguousPathSpecError: Query for parent folder 'Offices' returned 21 results, exceeding the threshold cap of 20 matches/
         );
+        // Should halt immediately and not query Level 2 or Target
+        expect(mockDrive.files.list).toHaveBeenCalledTimes(2);
+      });
+
+      it('returns empty array early if any intermediate level yields 0 folders', async () => {
+        (mockDrive.files.list as ReturnType<typeof vi.fn>)
+          // Level 0: 1 match
+          .mockResolvedValueOnce({
+            data: {
+              files: [{ id: 'dept-1', name: 'Finance' }],
+            },
+          })
+          // Level 1: 0 matches
+          .mockResolvedValueOnce({
+            data: {
+              files: [],
+            },
+          });
+
+        const results = await client.searchFiles({
+          targetName: 'Ledger.xlsx',
+          expectedParentPathNames: ['Finance', 'MissingSubFolder', '2026'],
+        });
+
+        expect(results).toEqual([]);
+        // Should not query Level 2 or target file
+        expect(mockDrive.files.list).toHaveBeenCalledTimes(2);
+      });
+
+      it('escapes single quotes at each level of multi-level path traversal', async () => {
+        (mockDrive.files.list as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({
+            data: {
+              files: [{ id: 'p1', name: "O'Connor's Org" }],
+            },
+          })
+          .mockResolvedValueOnce({
+            data: {
+              files: [{ id: 'p2', name: "Vendors' Files" }],
+            },
+          })
+          .mockResolvedValueOnce({
+            data: {
+              files: [
+                { id: 'f1', name: "Supplier's Bill.pdf", parents: ['p2'] },
+              ],
+            },
+          });
+
+        const results = await client.searchFiles({
+          targetName: "Supplier's Bill.pdf",
+          exactMatch: true,
+          expectedParentPathNames: ["O'Connor's Org", "Vendors' Files"],
+        });
+
+        expect(results).toHaveLength(1);
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(1, expect.objectContaining({
+          q: "name = 'O\\'Connor\\'s Org' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        }));
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(2, expect.objectContaining({
+          q: "name = 'Vendors\\' Files' and 'p1' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        }));
+        expect(mockDrive.files.list).toHaveBeenNthCalledWith(3, expect.objectContaining({
+          q: "name = 'Supplier\\'s Bill.pdf' and 'p2' in parents and trashed = false",
+        }));
+      });
+
+      it('propagates sharedDriveId across all levels in multi-level search', async () => {
+        (mockDrive.files.list as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({
+            data: {
+              files: [{ id: 'shared-p1', name: 'SharedRoot' }],
+            },
+          })
+          .mockResolvedValueOnce({
+            data: {
+              files: [{ id: 'shared-p2', name: 'SharedChild' }],
+            },
+          })
+          .mockResolvedValueOnce({
+            data: {
+              files: [
+                { id: 'shared-file', name: 'File.pdf', parents: ['shared-p2'] },
+              ],
+            },
+          });
+
+        await client.searchFiles({
+          targetName: 'File.pdf',
+          expectedParentPathNames: ['SharedRoot', 'SharedChild'],
+          sharedDriveId: 'shared-drive-xyz',
+        });
+
+        expect(mockDrive.files.list).toHaveBeenCalledTimes(3);
+        for (let i = 1; i <= 3; i++) {
+          expect(mockDrive.files.list).toHaveBeenNthCalledWith(i, expect.objectContaining({
+            corpora: 'drive',
+            driveId: 'shared-drive-xyz',
+            includeItemsFromAllDrives: true,
+            supportsAllDrives: true,
+          }));
+        }
       });
     });
 
