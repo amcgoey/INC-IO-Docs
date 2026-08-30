@@ -85,6 +85,10 @@ function extractHttpStatusCode(error: unknown): number | undefined {
   return undefined;
 }
 
+function escapeDriveQuery(str: string): string {
+  return str.replace(/'/g, "\\'");
+}
+
 function isRateLimitError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const status = extractHttpStatusCode(error);
@@ -237,7 +241,7 @@ export class GoogleDriveClient {
   ): Promise<DriveFileMetadata> {
     const drive = this.getDrive(options?.auth);
     try {
-      const escapedName = folderName.replace(/'/g, "\\'");
+      const escapedName = escapeDriveQuery(folderName);
       const q = `'${parentId}' in parents and name = '${escapedName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
 
       const res = await this.executeWithRetry(() =>
@@ -338,7 +342,7 @@ export class GoogleDriveClient {
 
       if (query.expectedParentPathNames && query.expectedParentPathNames.length === 1) {
         const parentFolderName = query.expectedParentPathNames[0];
-        const escapedParent = parentFolderName.replace(/'/g, "\\'");
+        const escapedParent = escapeDriveQuery(parentFolderName);
         const parentQuery = `name = '${escapedParent}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
 
         const parentListParams: drive_v3.Params$Resource$Files$List = {
@@ -375,7 +379,7 @@ export class GoogleDriveClient {
         }
       }
 
-      const escapedTarget = query.targetName.replace(/'/g, "\\'");
+      const escapedTarget = escapeDriveQuery(query.targetName);
       const targetMatchClause = query.exactMatch
         ? `name = '${escapedTarget}'`
         : `name contains '${escapedTarget}'`;

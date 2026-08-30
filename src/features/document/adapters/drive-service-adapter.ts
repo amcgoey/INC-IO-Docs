@@ -69,6 +69,19 @@ function extractHttpStatusCode(error: unknown): number | undefined {
   return undefined;
 }
 
+function extractErrorName(error: unknown): string | undefined {
+  if (error instanceof Error) return error.name;
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    typeof (error as { name: unknown }).name === 'string'
+  ) {
+    return (error as { name: string }).name;
+  }
+  return undefined;
+}
+
 export class DriveServiceAdapter implements DriveServicePort {
   constructor(private readonly driveClient: DriveClientPort) {}
 
@@ -77,15 +90,10 @@ export class DriveServiceAdapter implements DriveServicePort {
       throw error;
     }
 
+    const errorName = extractErrorName(error);
     if (
-      (error instanceof Error &&
-        (error.name === 'GoogleDriveAmbiguousPathError' ||
-          error.name === 'AmbiguousPathSpecError')) ||
-      (typeof error === 'object' &&
-        error !== null &&
-        'name' in error &&
-        ((error as { name: unknown }).name === 'GoogleDriveAmbiguousPathError' ||
-          (error as { name: unknown }).name === 'AmbiguousPathSpecError'))
+      errorName === 'GoogleDriveAmbiguousPathError' ||
+      errorName === 'AmbiguousPathSpecError'
     ) {
       const baseMessage =
         error instanceof Error
