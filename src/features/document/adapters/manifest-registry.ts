@@ -3,10 +3,10 @@ import * as path from 'node:path';
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import {
-  RecordTypeSchema,
+  DocumentTypeSchema,
   formatValidationErrors,
   validateManifestTemplates,
-  type RecordType,
+  type DocumentType,
 } from '../domain';
 import type {
   AppConfigurationProviderPort,
@@ -22,7 +22,7 @@ import type {
 export const WorkspaceConfigurationSchema = Type.Object({
   appTitle: Type.Optional(Type.String()),
   actionButtonText: Type.Optional(Type.String()),
-  defaultRecordType: Type.Optional(Type.String()),
+  defaultDocumentType: Type.Optional(Type.String()),
   defaultEventName: Type.Optional(Type.String()),
 });
 
@@ -41,7 +41,7 @@ export const AppConfigurationSchema = Type.Object({
 export type AppConfiguration = Static<typeof AppConfigurationSchema>;
 
 const ManifestSchema = Type.Object({
-  recordTypes: Type.Array(Type.String()),
+  documentTypes: Type.Array(Type.String()),
   configuration: Type.Optional(AppConfigurationSchema),
 });
 
@@ -150,7 +150,7 @@ export class ManifestRegistryAdapter
     return this.cachedConfiguration?.workspace;
   }
 
-  async loadAll(): Promise<RecordType[]> {
+  async loadAll(): Promise<DocumentType[]> {
     let validatedManifest: Static<typeof ManifestSchema>;
     try {
       validatedManifest = await this.loadManifest();
@@ -161,45 +161,45 @@ export class ManifestRegistryAdapter
       );
     }
     const manifestDir = path.dirname(this.manifestPath);
-    const recordTypes: RecordType[] = [];
+    const documentTypes: DocumentType[] = [];
 
-    for (const recordTypeRelPath of validatedManifest.recordTypes) {
-      const resolvedPath = path.resolve(manifestDir, recordTypeRelPath);
+    for (const documentTypeRelPath of validatedManifest.documentTypes) {
+      const resolvedPath = path.resolve(manifestDir, documentTypeRelPath);
       let fileContent: string;
       try {
         fileContent = await fs.readFile(resolvedPath, 'utf-8');
       } catch (err) {
         throw new Error(
-          `Failed to read RecordType file "${recordTypeRelPath}" at "${resolvedPath}": ${err instanceof Error ? err.message : String(err)}`,
+          `Failed to read DocumentType file "${documentTypeRelPath}" at "${resolvedPath}": ${err instanceof Error ? err.message : String(err)}`,
           { cause: err }
         );
       }
 
-      const rawRecordType = parseJson(
+      const rawDocumentType = parseJson(
         fileContent,
-        `RecordType file "${recordTypeRelPath}" at "${resolvedPath}"`
+        `DocumentType file "${documentTypeRelPath}" at "${resolvedPath}"`
       );
 
-      const validatedRecordType = validateAndCleanSchema(
-        RecordTypeSchema,
-        rawRecordType,
-        `Invalid RecordType schema in "${recordTypeRelPath}" at "${resolvedPath}"`
+      const validatedDocumentType = validateAndCleanSchema(
+        DocumentTypeSchema,
+        rawDocumentType,
+        `Invalid DocumentType schema in "${documentTypeRelPath}" at "${resolvedPath}"`
       );
 
       const templateErrors = validateManifestTemplates(
-        validatedRecordType,
+        validatedDocumentType,
         this.templateEvaluator
       );
       if (templateErrors.length > 0) {
         throw new Error(
-          `Invalid template in "${recordTypeRelPath}" from manifest "${this.manifestPath}": ${templateErrors.join(', ')}`
+          `Invalid template in "${documentTypeRelPath}" from manifest "${this.manifestPath}": ${templateErrors.join(', ')}`
         );
       }
 
-      recordTypes.push(validatedRecordType);
+      documentTypes.push(validatedDocumentType);
     }
 
-    return recordTypes;
+    return documentTypes;
   }
 }
 

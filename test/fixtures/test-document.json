@@ -1,7 +1,7 @@
 {
-  "key": "test-record",
-  "name": "Test Record",
-  "recordSchema": {
+  "key": "test-document",
+  "name": "Test Document",
+  "documentSchema": {
     "fields": [
       {
         "key": "title",
@@ -11,14 +11,14 @@
       }
     ]
   },
-  "recordUiConfig": {
+  "documentUiConfig": {
     "events": {
       "onSubmit": {
         "catchAllWorkflow": "SubmitTestWorkflow"
       }
     }
   },
-  "recordWorkflowConfig": {
+  "documentWorkflowConfig": {
     "workflows": [
       {
         "name": "SubmitTestWorkflow",
@@ -34,6 +34,6 @@
     ]
   },
   "storageContextConfig": {
-    "rootFolder": "TestRecords"
+    "rootFolder": "TestDocuments"
   }
 }

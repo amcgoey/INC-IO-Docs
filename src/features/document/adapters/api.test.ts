@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { registerRecordFeatureRoutes } from './api';
-import type { RecordServicePort, SchemaQueryPort } from '../ports';
+import { registerDocumentFeatureRoutes } from './api';
+import type { DocumentServicePort, SchemaQueryPort } from '../ports';
 import type { FormSchema } from '../domain';
 import type { HttpServer, RouteDefinition, RouteSchema } from '../../../infrastructure/http';
 
@@ -17,12 +17,12 @@ function createMockRouter() {
   return { router, registeredRoutes };
 }
 
-describe('Record Feature API driving adapter', () => {
+describe('Document Feature API driving adapter', () => {
   it('registers feature routes and handles requests', async () => {
     const mockForm: FormSchema = {
       key: 'test-form',
       name: 'Test Form',
-      recordSchema: {
+      documentSchema: {
         fields: [
           {
             key: 'Field1',
@@ -38,14 +38,14 @@ describe('Record Feature API driving adapter', () => {
       getForms: vi.fn().mockResolvedValue([mockForm]),
     };
 
-    const mockService: RecordServicePort = {
-      processRecord: vi.fn().mockResolvedValue({
+    const mockService: DocumentServicePort = {
+      processDocument: vi.fn().mockResolvedValue({
         success: true,
         data: { id: 'rec-1', type: 'submittal', title: 'Structural Steel Spec' },
         activities: [
           {
-            type: 'LOG_RECORD',
-            payload: { record: { id: 'rec-1', type: 'submittal', title: 'Structural Steel Spec' } },
+            type: 'LOG_DOCUMENT',
+            payload: { document: { id: 'rec-1', type: 'submittal', title: 'Structural Steel Spec' } },
           },
         ],
       }),
@@ -53,15 +53,15 @@ describe('Record Feature API driving adapter', () => {
 
     const { router: mockRouter, registeredRoutes } = createMockRouter();
 
-    registerRecordFeatureRoutes(mockRouter, { service: mockService, schemaQuery: mockSchemaQuery });
+    registerDocumentFeatureRoutes(mockRouter, { service: mockService, schemaQuery: mockSchemaQuery });
 
     expect(mockRouter.registerRoute).toHaveBeenCalledTimes(2);
     
     const formsRoute = registeredRoutes.find(r => r.method === 'GET' && r.url === '/forms');
     expect(formsRoute).toBeDefined();
 
-    const recordsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/records');
-    expect(recordsRoute).toBeDefined();
+    const documentsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/documents');
+    expect(documentsRoute).toBeDefined();
 
     // Test GET /forms
     const formsResponse = await formsRoute!.handler({});
@@ -69,37 +69,37 @@ describe('Record Feature API driving adapter', () => {
     expect(mockSchemaQuery.getForms).toHaveBeenCalled();
     expect(formsResponse.body).toEqual([mockForm]);
 
-    // Test POST /records success with eventName query parameter
+    // Test POST /documents success with eventName query parameter
     const validPayload = {
       id: 'rec-1',
       type: 'submittal',
       title: 'Structural Steel Spec',
     };
-    const recordsResponse = await recordsRoute!.handler({
+    const documentsResponse = await documentsRoute!.handler({
       body: validPayload,
       query: { eventName: 'onSubmit' },
     });
-    expect(recordsResponse.status).toBe(200);
-    expect(mockService.processRecord).toHaveBeenCalledWith(validPayload, 'onSubmit');
-    expect(recordsResponse.body).toEqual({
+    expect(documentsResponse.status).toBe(200);
+    expect(mockService.processDocument).toHaveBeenCalledWith(validPayload, 'onSubmit');
+    expect(documentsResponse.body).toEqual({
       success: true,
       data: validPayload,
       activities: [
         {
-          type: 'LOG_RECORD',
-          payload: { record: validPayload },
+          type: 'LOG_DOCUMENT',
+          payload: { document: validPayload },
         },
       ],
     });
   });
 
-  it('POST /records forwards undefined eventName when query parameter is omitted', async () => {
+  it('POST /documents forwards undefined eventName when query parameter is omitted', async () => {
     const mockSchemaQuery: SchemaQueryPort = {
       getForms: vi.fn().mockResolvedValue([]),
     };
 
-    const mockService: RecordServicePort = {
-      processRecord: vi.fn().mockResolvedValue({
+    const mockService: DocumentServicePort = {
+      processDocument: vi.fn().mockResolvedValue({
         success: true,
         data: { id: 'rec-1', type: 'submittal', title: 'Structural Steel Spec' },
         activities: [],
@@ -108,25 +108,25 @@ describe('Record Feature API driving adapter', () => {
 
     const { router: mockRouter, registeredRoutes } = createMockRouter();
 
-    registerRecordFeatureRoutes(mockRouter, { service: mockService, schemaQuery: mockSchemaQuery });
+    registerDocumentFeatureRoutes(mockRouter, { service: mockService, schemaQuery: mockSchemaQuery });
 
-    const recordsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/records');
-    expect(recordsRoute).toBeDefined();
+    const documentsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/documents');
+    expect(documentsRoute).toBeDefined();
 
     const validPayload = { id: 'rec-1', type: 'submittal', title: 'Structural Steel Spec' };
-    const response = await recordsRoute!.handler({ body: validPayload });
+    const response = await documentsRoute!.handler({ body: validPayload });
 
     expect(response.status).toBe(200);
-    expect(mockService.processRecord).toHaveBeenCalledWith(validPayload, undefined);
+    expect(mockService.processDocument).toHaveBeenCalledWith(validPayload, undefined);
   });
 
-  it('POST /records returns 400 when service returns failure', async () => {
+  it('POST /documents returns 400 when service returns failure', async () => {
     const mockSchemaQuery: SchemaQueryPort = {
       getForms: vi.fn().mockResolvedValue([]),
     };
 
-    const mockService: RecordServicePort = {
-      processRecord: vi.fn().mockResolvedValue({
+    const mockService: DocumentServicePort = {
+      processDocument: vi.fn().mockResolvedValue({
         success: false,
         errors: ['id: Expected string'],
       }),
@@ -134,16 +134,16 @@ describe('Record Feature API driving adapter', () => {
 
     const { router: mockRouter, registeredRoutes } = createMockRouter();
 
-    registerRecordFeatureRoutes(mockRouter, { service: mockService, schemaQuery: mockSchemaQuery });
+    registerDocumentFeatureRoutes(mockRouter, { service: mockService, schemaQuery: mockSchemaQuery });
 
-    const recordsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/records');
-    expect(recordsRoute).toBeDefined();
+    const documentsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/documents');
+    expect(documentsRoute).toBeDefined();
 
     const invalidPayload = { title: 123 };
-    const response = await recordsRoute!.handler({ body: invalidPayload });
+    const response = await documentsRoute!.handler({ body: invalidPayload });
 
     expect(response.status).toBe(400);
-    expect(mockService.processRecord).toHaveBeenCalledWith(invalidPayload, undefined);
+    expect(mockService.processDocument).toHaveBeenCalledWith(invalidPayload, undefined);
     expect(response.body).toEqual({
       success: false,
       errors: ['id: Expected string'],

@@ -37,7 +37,7 @@ describe('DriveActivityHandler', () => {
     });
 
     it('returns false for unrelated activity types', () => {
-      expect(handler.canHandle({ type: 'LOG_RECORD', payload: {} })).toBe(false);
+      expect(handler.canHandle({ type: 'LOG_DOCUMENT', payload: {} })).toBe(false);
       expect(handler.canHandle({ type: 'SEND_EMAIL', payload: {} })).toBe(false);
     });
   });

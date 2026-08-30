@@ -17,26 +17,26 @@ describe('ActivityEngine driven adapter', () => {
   it('logs activity to console when no handlers are configured', async () => {
     const engine = new ActivityEngine();
     const activity: Activity = {
-      type: 'LOG_RECORD',
-      payload: { record: { id: 'rec-1', type: 'submittal', title: 'Test' } },
+      type: 'LOG_DOCUMENT',
+      payload: { document: { id: 'rec-1', type: 'submittal', title: 'Test' } },
     };
 
     await engine.dispatch(activity);
 
-    expect(consoleSpy).toHaveBeenCalledWith('Executing activity: LOG_RECORD', activity.payload);
+    expect(consoleSpy).toHaveBeenCalledWith('Executing activity: LOG_DOCUMENT', activity.payload);
   });
 
   it('accepts execution context parameter during dispatch and logs to console when no handlers match', async () => {
     const engine = new ActivityEngine();
     const activity: Activity = {
-      type: 'LOG_RECORD',
-      payload: { record: { id: 'rec-1' } },
+      type: 'LOG_DOCUMENT',
+      payload: { document: { id: 'rec-1' } },
     };
     const context = { credentials: { oauthToken: 'secret-token-xyz' } };
 
     await engine.dispatch(activity, context);
 
-    expect(consoleSpy).toHaveBeenCalledWith('Executing activity: LOG_RECORD', activity.payload);
+    expect(consoleSpy).toHaveBeenCalledWith('Executing activity: LOG_DOCUMENT', activity.payload);
   });
 
   it('delegates activity dispatch to matching ActivityHandler', async () => {
@@ -128,7 +128,7 @@ describe('ActivityEngine driven adapter', () => {
   it('returns ActivityOutput emitted by matching handler', async () => {
     const expectedOutput = {
       success: true,
-      recordDataPatch: { updatedKey: 'new-val' },
+      documentDataPatch: { updatedKey: 'new-val' },
       contextVariables: { step1: 'done' },
     };
     const handler: ActivityHandler = {

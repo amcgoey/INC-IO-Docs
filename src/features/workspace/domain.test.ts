@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import {
-  createWorkspaceRecordExecutionContext,
+  createWorkspaceDocumentExecutionContext,
   extractWorkspaceExecutionContext,
   findLatestFileLocator,
-  WorkspaceRecordExecutionContextSchema,
+  WorkspaceDocumentExecutionContextSchema,
   type WorkspaceEventPayload,
   type WorkspaceExecutionContext,
-  type WorkspaceRecordExecutionContext,
+  type WorkspaceDocumentExecutionContext,
 } from './domain';
 
 describe('Workspace Domain Helpers', () => {
@@ -121,33 +121,33 @@ describe('Workspace Domain Helpers', () => {
     });
   });
 
-  describe('WorkspaceRecordExecutionContextSchema', () => {
-    it('validates valid and invalid WorkspaceRecordExecutionContext instances', () => {
-      expect(WorkspaceRecordExecutionContextSchema).toBeDefined();
+  describe('WorkspaceDocumentExecutionContextSchema', () => {
+    it('validates valid and invalid WorkspaceDocumentExecutionContext instances', () => {
+      expect(WorkspaceDocumentExecutionContextSchema).toBeDefined();
 
-      const validContext: WorkspaceRecordExecutionContext = {
+      const validContext: WorkspaceDocumentExecutionContext = {
         credentials: { oauthToken: 'ya29.valid-token' },
         resources: { primaryTargetId: 'file-123' },
       };
-      expect(Value.Check(WorkspaceRecordExecutionContextSchema, validContext)).toBe(true);
+      expect(Value.Check(WorkspaceDocumentExecutionContextSchema, validContext)).toBe(true);
 
-      const emptyContext: WorkspaceRecordExecutionContext = {};
-      expect(Value.Check(WorkspaceRecordExecutionContextSchema, emptyContext)).toBe(true);
+      const emptyContext: WorkspaceDocumentExecutionContext = {};
+      expect(Value.Check(WorkspaceDocumentExecutionContextSchema, emptyContext)).toBe(true);
 
       const invalidCredentials = {
         credentials: 'invalid-string',
       };
-      expect(Value.Check(WorkspaceRecordExecutionContextSchema, invalidCredentials)).toBe(false);
+      expect(Value.Check(WorkspaceDocumentExecutionContextSchema, invalidCredentials)).toBe(false);
 
       const invalidResources = {
         resources: 12345,
       };
-      expect(Value.Check(WorkspaceRecordExecutionContextSchema, invalidResources)).toBe(false);
+      expect(Value.Check(WorkspaceDocumentExecutionContextSchema, invalidResources)).toBe(false);
     });
   });
 
-  describe('createWorkspaceRecordExecutionContext', () => {
-    it('creates WorkspaceRecordExecutionContext with credentials and resources when present', () => {
+  describe('createWorkspaceDocumentExecutionContext', () => {
+    it('creates WorkspaceDocumentExecutionContext with credentials and resources when present', () => {
       const context: WorkspaceExecutionContext = {
         userOAuthToken: 'ya29.my-token',
         selectedItems: [
@@ -155,7 +155,7 @@ describe('Workspace Domain Helpers', () => {
         ],
       };
 
-      const result = createWorkspaceRecordExecutionContext(context);
+      const result = createWorkspaceDocumentExecutionContext(context);
       expect(result).toEqual({
         credentials: { oauthToken: 'ya29.my-token' },
         resources: { primaryTargetId: 'target-file-123' },
@@ -164,7 +164,7 @@ describe('Workspace Domain Helpers', () => {
 
     it('creates empty object when token and selected items are not present', () => {
       const context: WorkspaceExecutionContext = {};
-      const result = createWorkspaceRecordExecutionContext(context);
+      const result = createWorkspaceDocumentExecutionContext(context);
       expect(result).toEqual({});
     });
 
@@ -172,14 +172,14 @@ describe('Workspace Domain Helpers', () => {
       const tokenOnly: WorkspaceExecutionContext = {
         userOAuthToken: 'ya29.token-only',
       };
-      expect(createWorkspaceRecordExecutionContext(tokenOnly)).toEqual({
+      expect(createWorkspaceDocumentExecutionContext(tokenOnly)).toEqual({
         credentials: { oauthToken: 'ya29.token-only' },
       });
 
       const itemOnly: WorkspaceExecutionContext = {
         selectedItems: [{ id: 'item-only-456' }],
       };
-      expect(createWorkspaceRecordExecutionContext(itemOnly)).toEqual({
+      expect(createWorkspaceDocumentExecutionContext(itemOnly)).toEqual({
         resources: { primaryTargetId: 'item-only-456' },
       });
     });

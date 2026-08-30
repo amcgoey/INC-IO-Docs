@@ -11,7 +11,7 @@ export interface AuthVerifierPort {
 export interface WorkspaceConfiguration {
   appTitle?: string | undefined;
   actionButtonText?: string | undefined;
-  defaultRecordType?: string | undefined;
+  defaultDocumentType?: string | undefined;
   defaultEventName?: string | undefined;
 }
 
@@ -32,24 +32,24 @@ export interface WorkspaceActivityResult {
   error?: string | undefined;
   files?: WorkspaceFileLocator[] | undefined;
   contextVariables?: Record<string, unknown> | undefined;
-  recordDataPatch?: Record<string, unknown> | undefined;
+  documentDataPatch?: Record<string, unknown> | undefined;
 }
 
-export interface WorkspaceRecordProcessResult {
+export interface WorkspaceDocumentProcessResult {
   success: boolean;
   errors?: string[] | undefined;
   outputs?: WorkspaceActivityResult[] | undefined;
 }
 
-import type { WorkspaceRecordExecutionContext } from './domain';
+import type { WorkspaceDocumentExecutionContext } from './domain';
 
-export type { WorkspaceRecordExecutionContext };
+export type { WorkspaceDocumentExecutionContext };
 
-export interface WorkspaceRecordRunnerPort {
-  processRecord(
+export interface WorkspaceDocumentRunnerPort {
+  processDocument(
     payload?: unknown,
     eventName?: string,
-    context?: WorkspaceRecordExecutionContext
-  ): Promise<WorkspaceRecordProcessResult>;
+    context?: WorkspaceDocumentExecutionContext
+  ): Promise<WorkspaceDocumentProcessResult>;
 }
 

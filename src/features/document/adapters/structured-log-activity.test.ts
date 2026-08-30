@@ -7,7 +7,7 @@ describe('StructuredLogActivity driven adapter', () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const adapter = new StructuredLogActivity();
     const activity: Activity = {
-      type: 'LOG_RECORD',
+      type: 'LOG_DOCUMENT',
       payload: {
         targetPath: '1Admin\\Communication\\_Client - AAA\\260826 OT - ASR 06 Design Changes',
         archivePath: 'Archive\\OT\\260826',
@@ -24,7 +24,7 @@ describe('StructuredLogActivity driven adapter', () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const adapter = new StructuredLogActivity();
     const activity: Activity = {
-      type: 'LOG_RECORD',
+      type: 'LOG_DOCUMENT',
       payload: { test: 123 },
     };
     const context = { credentials: { oauthToken: 'sample-oauth-token' } };
@@ -35,9 +35,9 @@ describe('StructuredLogActivity driven adapter', () => {
     consoleSpy.mockRestore();
   });
 
-  it('canHandle returns true for LOG_RECORD and STRUCTURED_LOG, false for others', () => {
+  it('canHandle returns true for LOG_DOCUMENT and STRUCTURED_LOG, false for others', () => {
     const adapter = new StructuredLogActivity();
-    expect(adapter.canHandle({ type: 'LOG_RECORD', payload: {} })).toBe(true);
+    expect(adapter.canHandle({ type: 'LOG_DOCUMENT', payload: {} })).toBe(true);
     expect(adapter.canHandle({ type: 'STRUCTURED_LOG', payload: {} })).toBe(true);
     expect(adapter.canHandle({ type: 'OTHER_TYPE', payload: {} })).toBe(false);
   });
@@ -49,7 +49,7 @@ describe('StructuredLogActivity driven adapter', () => {
       type: 'STRUCTURED_LOG',
       payload: {
         message: 'Patching state',
-        recordDataPatch: { patchedField: 'patched-value' },
+        documentDataPatch: { patchedField: 'patched-value' },
         contextVariables: { customVar: 'custom-val' },
       },
     };

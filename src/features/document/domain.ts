@@ -3,7 +3,7 @@ import { Value } from '@sinclair/typebox/value';
 import type {
   ActivityDispatcherPort,
   ManifestRegistryPort,
-  RecordServicePort,
+  DocumentServicePort,
   SchemaQueryPort,
   TemplateEvaluationContext,
   TemplateEvaluatorPort,
@@ -13,18 +13,18 @@ export function formatValidationErrors<T extends TSchema>(schema: T, value: unkn
   return [...Value.Errors(schema, value)].map((e) => `${e.path}: ${e.message}`);
 }
 
-export const RecordModel = Type.Object({
+export const DocumentModel = Type.Object({
   // STUB: Pending Chunk 3
   id: Type.Optional(Type.String()),
   // STUB: Pending Chunk 3
-  idRecord: Type.Optional(Type.String()),
+  idDocument: Type.Optional(Type.String()),
   // STUB: Pending Chunk 3
   idGroup: Type.Optional(Type.String()),
   type: Type.String(),
   data: Type.Record(Type.String(), Type.Unknown()),
 });
 
-export type Record = Static<typeof RecordModel>;
+export type Document = Static<typeof DocumentModel>;
 
 export const ActivityType = Type.Object({
   type: Type.String(),
@@ -46,7 +46,7 @@ export type FileLocator = Static<typeof FileLocatorType>;
 export const ActivityOutputType = Type.Object({
   success: Type.Optional(Type.Boolean()),
   error: Type.Optional(Type.String()),
-  recordDataPatch: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  documentDataPatch: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   contextVariables: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   files: Type.Optional(Type.Array(FileLocatorType)),
 });
@@ -58,8 +58,8 @@ export type ActivityOutput = Static<typeof ActivityOutputType>;
  * passed into activity dispatching.
  *
  * NOTE ON CODE DUPLICATION:
- * This schema is intentionally defined independently within the `record` feature boundary and mirrors
- * `WorkspaceRecordExecutionContextSchema` in the `workspace` feature. In accordance with ADR 0001
+ * This schema is intentionally defined independently within the `document` feature boundary and mirrors
+ * `WorkspaceDocumentExecutionContextSchema` in the `workspace` feature. In accordance with ADR 0001
  * (Hybrid Hexagonal Architecture - Locality over Layering) and Hexagonal Architecture boundary rules,
  * feature slices are self-contained and must not share internal domain models across feature boundaries.
  */
@@ -78,16 +78,16 @@ export const ExecutionContextSchema = Type.Object({
 
 export type ExecutionContext = Static<typeof ExecutionContextSchema>;
 
-export const RecordFieldOptionType = Type.Object({
+export const DocumentFieldOptionType = Type.Object({
   source: Type.String(),
   key: Type.String(),
   name: Type.String(),
   allowUserInput: Type.Optional(Type.Boolean()),
 });
 
-export type RecordFieldOption = Static<typeof RecordFieldOptionType>;
+export type DocumentFieldOption = Static<typeof DocumentFieldOptionType>;
 
-export const RecordFieldType = Type.Object({
+export const DocumentFieldType = Type.Object({
   key: Type.String(),
   name: Type.String(),
   type: Type.String(),
@@ -95,25 +95,25 @@ export const RecordFieldType = Type.Object({
   required: Type.Optional(Type.Boolean()),
   defaultValue: Type.Optional(Type.String()),
   format: Type.Optional(Type.String()),
-  options: Type.Optional(RecordFieldOptionType),
+  options: Type.Optional(DocumentFieldOptionType),
 });
 
-export type RecordField = Static<typeof RecordFieldType>;
+export type DocumentField = Static<typeof DocumentFieldType>;
 
-export const RecordSchemaOptionTupleType = Type.Record(Type.String(), Type.Unknown());
+export const DocumentSchemaOptionTupleType = Type.Record(Type.String(), Type.Unknown());
 
-export type RecordSchemaOptionTuple = Static<typeof RecordSchemaOptionTupleType>;
+export type DocumentSchemaOptionTuple = Static<typeof DocumentSchemaOptionTupleType>;
 
-export const RecordIdentitySchemaType = Type.Object(
+export const DocumentIdentitySchemaType = Type.Object(
   {
     id: Type.Optional(Type.String()),
-    idRecord: Type.Optional(Type.String()),
+    idDocument: Type.Optional(Type.String()),
     idGroup: Type.Optional(Type.String()),
   },
   { additionalProperties: Type.String() }
 );
 
-export type RecordIdentitySchema = Static<typeof RecordIdentitySchemaType>;
+export type DocumentIdentitySchema = Static<typeof DocumentIdentitySchemaType>;
 
 export const CalculatedFieldType = Type.Object({
   key: Type.String(),
@@ -129,14 +129,14 @@ export const SystemContextSchema = Type.Object({
 
 export type SystemContext = Static<typeof SystemContextSchema>;
 
-export const RecordSchemaType = Type.Object({
-  fields: Type.Array(RecordFieldType),
+export const DocumentSchemaType = Type.Object({
+  fields: Type.Array(DocumentFieldType),
   calculatedFields: Type.Optional(Type.Array(CalculatedFieldType)),
-  identity: Type.Optional(RecordIdentitySchemaType),
-  options: Type.Optional(Type.Record(Type.String(), Type.Array(RecordSchemaOptionTupleType))),
+  identity: Type.Optional(DocumentIdentitySchemaType),
+  options: Type.Optional(Type.Record(Type.String(), Type.Array(DocumentSchemaOptionTupleType))),
 });
 
-export type RecordSchema = Static<typeof RecordSchemaType>;
+export type DocumentSchema = Static<typeof DocumentSchemaType>;
 
 export const UiEventRuleType = Type.Object({
   matchFields: Type.Optional(Type.Record(Type.String(), Type.String())),
@@ -152,11 +152,11 @@ export const UiEventType = Type.Object({
 
 export type UiEvent = Static<typeof UiEventType>;
 
-export const RecordUiConfigType = Type.Object({
+export const DocumentUiConfigType = Type.Object({
   events: Type.Optional(Type.Record(Type.String(), UiEventType)),
 });
 
-export type RecordUiConfig = Static<typeof RecordUiConfigType>;
+export type DocumentUiConfig = Static<typeof DocumentUiConfigType>;
 
 export const WorkflowType = Type.Object({
   name: Type.String(),
@@ -165,40 +165,40 @@ export const WorkflowType = Type.Object({
 
 export type Workflow = Static<typeof WorkflowType>;
 
-export const RecordWorkflowConfigType = Type.Object({
+export const DocumentWorkflowConfigType = Type.Object({
   workflows: Type.Array(WorkflowType),
 });
 
-export type RecordWorkflowConfig = Static<typeof RecordWorkflowConfigType>;
+export type DocumentWorkflowConfig = Static<typeof DocumentWorkflowConfigType>;
 
 export const StorageContextConfigType = Type.Record(Type.String(), Type.Unknown());
 
 export type StorageContextConfig = Static<typeof StorageContextConfigType>;
 
-export const RecordTypeSchema = Type.Object({
+export const DocumentTypeSchema = Type.Object({
   key: Type.String(),
   name: Type.String(),
-  recordSchema: RecordSchemaType,
-  recordUiConfig: Type.Optional(RecordUiConfigType),
-  recordWorkflowConfig: Type.Optional(RecordWorkflowConfigType),
+  documentSchema: DocumentSchemaType,
+  documentUiConfig: Type.Optional(DocumentUiConfigType),
+  documentWorkflowConfig: Type.Optional(DocumentWorkflowConfigType),
   storageContextConfig: Type.Optional(StorageContextConfigType),
 });
 
-export type RecordType = Static<typeof RecordTypeSchema>;
+export type DocumentType = Static<typeof DocumentTypeSchema>;
 
 export const FormSchemaType = Type.Object({
   key: Type.String(),
   name: Type.String(),
-  recordSchema: RecordSchemaType,
-  recordUiConfig: Type.Optional(RecordUiConfigType),
+  documentSchema: DocumentSchemaType,
+  documentUiConfig: Type.Optional(DocumentUiConfigType),
 });
 
 export type FormSchema = Static<typeof FormSchemaType>;
 
-export type ProcessRecordResult =
+export type ProcessDocumentResult =
   | {
       success: true;
-      data: Record;
+      data: Document;
       activities: Activity[];
       outputs: ActivityOutput[];
       contextVariables?: { [key: string]: unknown } | undefined;
@@ -206,21 +206,21 @@ export type ProcessRecordResult =
   | { success: false; errors: string[] };
 
 /**
- * Maps property names in RecordIdentitySchema to property names in the Record entity model.
- * RecordIdentitySchema defines 'id', 'idRecord', and 'idGroup' which map directly to 'id', 'idRecord', and 'idGroup' on the Record entity.
+ * Maps property names in DocumentIdentitySchema to property names in the Document entity model.
+ * DocumentIdentitySchema defines 'id', 'idDocument', and 'idGroup' which map directly to 'id', 'idDocument', and 'idGroup' on the Document entity.
  */
-const IDENTITY_SCHEMA_TO_RECORD_FIELD_MAPPING = {
+const IDENTITY_SCHEMA_TO_DOCUMENT_FIELD_MAPPING = {
   id: 'id',
-  idRecord: 'idRecord',
+  idDocument: 'idDocument',
   idGroup: 'idGroup',
 } as const;
 
-function compileFieldSchema(field: RecordField, recordSchema: RecordSchema, recordTypeKey: string): TSchema {
+function compileFieldSchema(field: DocumentField, documentSchema: DocumentSchema, documentTypeKey: string): TSchema {
   let fieldSchema: TSchema;
   if (field.type === 'string') {
     if (field.options && !field.options.allowUserInput) {
       const { source, key } = field.options;
-      const optionTuples = recordSchema.options?.[source] ?? [];
+      const optionTuples = documentSchema.options?.[source] ?? [];
       const uniqueKeys = Array.from(
         new Set(
           optionTuples
@@ -240,7 +240,7 @@ function compileFieldSchema(field: RecordField, recordSchema: RecordSchema, reco
       fieldSchema = Type.String();
     }
   } else {
-    throw new Error(`Unsupported field type '${field.type}' in RecordType '${recordTypeKey}'`);
+    throw new Error(`Unsupported field type '${field.type}' in DocumentType '${documentTypeKey}'`);
   }
 
   if (!field.required) {
@@ -250,15 +250,15 @@ function compileFieldSchema(field: RecordField, recordSchema: RecordSchema, reco
   return fieldSchema;
 }
 
-function matchesRule(matchFields: { [key: string]: string } | undefined, record: Record): boolean {
+function matchesRule(matchFields: { [key: string]: string } | undefined, document: Document): boolean {
   if (!matchFields || Object.keys(matchFields).length === 0) {
     return true;
   }
-  const recordData = record.data as { [key: string]: unknown };
-  const recordObj = record as unknown as { [key: string]: unknown };
+  const documentData = document.data as { [key: string]: unknown };
+  const documentObj = document as unknown as { [key: string]: unknown };
 
   for (const [key, expectedValue] of Object.entries(matchFields)) {
-    const rawValue = recordData[key] !== undefined ? recordData[key] : recordObj[key];
+    const rawValue = documentData[key] !== undefined ? documentData[key] : documentObj[key];
     if (rawValue === undefined || rawValue === null) {
       return false;
     }
@@ -304,8 +304,8 @@ function resolvePayloadTemplates(
   return value;
 }
 
-export class RecordService implements RecordServicePort, SchemaQueryPort {
-  private recordTypes: RecordType[] = [];
+export class DocumentService implements DocumentServicePort, SchemaQueryPort {
+  private documentTypes: DocumentType[] = [];
   private compiledSchemas = new Map<string, TSchema>();
 
   constructor(
@@ -315,74 +315,74 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
   ) {}
 
   async initialize(): Promise<void> {
-    this.recordTypes = await this.manifestRegistry.loadAll();
+    this.documentTypes = await this.manifestRegistry.loadAll();
     this.compiledSchemas.clear();
 
-    for (const recordType of this.recordTypes) {
+    for (const documentType of this.documentTypes) {
       const properties: { [key: string]: TSchema } = {};
-      for (const field of recordType.recordSchema.fields) {
-        properties[field.key] = compileFieldSchema(field, recordType.recordSchema, recordType.key);
+      for (const field of documentType.documentSchema.fields) {
+        properties[field.key] = compileFieldSchema(field, documentType.documentSchema, documentType.key);
       }
-      this.compiledSchemas.set(recordType.key, Type.Object(properties));
+      this.compiledSchemas.set(documentType.key, Type.Object(properties));
     }
   }
 
   async getForms(): Promise<FormSchema[]> {
-    return this.recordTypes.map((recordType) => {
+    return this.documentTypes.map((documentType) => {
       const formSchema: FormSchema = {
-        key: recordType.key,
-        name: recordType.name,
-        recordSchema: recordType.recordSchema,
+        key: documentType.key,
+        name: documentType.name,
+        documentSchema: documentType.documentSchema,
       };
 
-      if (recordType.recordUiConfig !== undefined) {
-        formSchema.recordUiConfig = recordType.recordUiConfig;
+      if (documentType.documentUiConfig !== undefined) {
+        formSchema.documentUiConfig = documentType.documentUiConfig;
       }
 
       return formSchema;
     });
   }
 
-  async processRecord(
+  async processDocument(
     payload?: unknown,
     eventName?: string,
     context?: ExecutionContext
-  ): Promise<ProcessRecordResult> {
-    if (!Value.Check(RecordModel, payload)) {
-      const errors = formatValidationErrors(RecordModel, payload);
+  ): Promise<ProcessDocumentResult> {
+    if (!Value.Check(DocumentModel, payload)) {
+      const errors = formatValidationErrors(DocumentModel, payload);
       return {
         success: false,
-        errors: errors.length > 0 ? errors : ['Invalid record payload'],
+        errors: errors.length > 0 ? errors : ['Invalid document payload'],
       };
     }
 
-    const record = payload;
-    const recordType = this.recordTypes.find((rt) => rt.key === record.type);
-    const schema = this.compiledSchemas.get(record.type);
-    if (!schema || !recordType) {
+    const document = payload;
+    const documentType = this.documentTypes.find((rt) => rt.key === document.type);
+    const schema = this.compiledSchemas.get(document.type);
+    if (!schema || !documentType) {
       return {
         success: false,
-        errors: [`Unknown record type: ${record.type}`],
+        errors: [`Unknown document type: ${document.type}`],
       };
     }
 
-    if (!Value.Check(schema, record.data)) {
-      const errors = formatValidationErrors(schema, record.data);
+    if (!Value.Check(schema, document.data)) {
+      const errors = formatValidationErrors(schema, document.data);
       return {
         success: false,
-        errors: errors.length > 0 ? errors : ['Invalid record data payload'],
+        errors: errors.length > 0 ? errors : ['Invalid document data payload'],
       };
     }
 
     // Anti-Corruption Layer: Context Enrichment & Fallback Tuple Synthesis
-    const rawData = record.data as { [key: string]: unknown };
+    const rawData = document.data as { [key: string]: unknown };
     const enrichedData: { [key: string]: unknown } = { ...rawData };
 
-    for (const field of recordType.recordSchema.fields) {
+    for (const field of documentType.documentSchema.fields) {
       if (field.options) {
         const rawValue = rawData[field.key];
         if (typeof rawValue === 'string') {
-          const optionTuples = recordType.recordSchema.options?.[field.options.source] ?? [];
+          const optionTuples = documentType.documentSchema.options?.[field.options.source] ?? [];
           const matchedTuple = optionTuples.find((tuple) => tuple[field.options!.key] === rawValue);
           if (matchedTuple) {
             enrichedData[field.key] = { ...matchedTuple };
@@ -404,9 +404,9 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
     };
 
     let resolvedData: { [key: string]: unknown } = { ...enrichedData };
-    if (recordType.recordSchema.calculatedFields) {
+    if (documentType.documentSchema.calculatedFields) {
       const calculatedValues: { [key: string]: unknown } = {};
-      for (const calculatedField of recordType.recordSchema.calculatedFields) {
+      for (const calculatedField of documentType.documentSchema.calculatedFields) {
         calculatedValues[calculatedField.key] = this.templateEvaluator.evaluate(
           calculatedField.template,
           basePayload
@@ -418,10 +418,10 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       };
     }
 
-    const identityUpdates: Partial<Record> = {};
-    if (recordType.recordSchema.identity) {
-      for (const [schemaKey, targetKey] of Object.entries(IDENTITY_SCHEMA_TO_RECORD_FIELD_MAPPING)) {
-        const template = recordType.recordSchema.identity[schemaKey as keyof typeof IDENTITY_SCHEMA_TO_RECORD_FIELD_MAPPING];
+    const identityUpdates: Partial<Document> = {};
+    if (documentType.documentSchema.identity) {
+      for (const [schemaKey, targetKey] of Object.entries(IDENTITY_SCHEMA_TO_DOCUMENT_FIELD_MAPPING)) {
+        const template = documentType.documentSchema.identity[schemaKey as keyof typeof IDENTITY_SCHEMA_TO_DOCUMENT_FIELD_MAPPING];
         if (typeof template === 'string') {
           identityUpdates[targetKey] = this.templateEvaluator.evaluate(
             template,
@@ -431,19 +431,19 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       }
     }
 
-    let enrichedRecord: Record = {
-      ...record,
+    let enrichedDocument: Document = {
+      ...document,
       ...identityUpdates,
       data: resolvedData,
     };
 
     let selectedWorkflowName: string | undefined;
 
-    if (eventName && recordType.recordUiConfig?.events?.[eventName]) {
-      const uiEvent = recordType.recordUiConfig.events[eventName];
+    if (eventName && documentType.documentUiConfig?.events?.[eventName]) {
+      const uiEvent = documentType.documentUiConfig.events[eventName];
       if (uiEvent.rules && uiEvent.rules.length > 0) {
         for (const rule of uiEvent.rules) {
-          if (matchesRule(rule.matchFields, enrichedRecord)) {
+          if (matchesRule(rule.matchFields, enrichedDocument)) {
             selectedWorkflowName = rule.workflow;
             break;
           }
@@ -458,35 +458,35 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
     if (!selectedWorkflowName) {
       return {
         success: true,
-        data: enrichedRecord,
+        data: enrichedDocument,
         activities: [],
         outputs: [],
       };
     }
 
-    const workflow = recordType.recordWorkflowConfig?.workflows.find(
+    const workflow = documentType.documentWorkflowConfig?.workflows.find(
       (w) => w.name === selectedWorkflowName
     );
 
     if (!workflow) {
       throw new Error(
-        `Workflow '${selectedWorkflowName}' not found in configuration for RecordType '${recordType.key}'`
+        `Workflow '${selectedWorkflowName}' not found in configuration for DocumentType '${documentType.key}'`
       );
     }
 
     const activities = workflow.activitySequence ?? [];
     let storageContext: unknown;
-    if (recordType.storageContextConfig !== undefined) {
+    if (documentType.storageContextConfig !== undefined) {
       storageContext = resolvePayloadTemplates(
-        recordType.storageContextConfig,
+        documentType.storageContextConfig,
         this.templateEvaluator,
-        { Record: enrichedRecord }
+        { Document: enrichedDocument }
       );
     }
 
     const evaluationContext: TemplateEvaluationContext = {
-      Record: enrichedRecord,
-      RecordSchema: recordType.recordSchema,
+      Document: enrichedDocument,
+      documentSchema: documentType.documentSchema,
       ...(storageContext !== undefined ? { StorageContext: storageContext } : {}),
     };
 
@@ -519,15 +519,15 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
             errors: [output.error ?? `Activity execution failed for ${activity.type}`],
           };
         }
-        if (output.recordDataPatch) {
-          enrichedRecord = {
-            ...enrichedRecord,
+        if (output.documentDataPatch) {
+          enrichedDocument = {
+            ...enrichedDocument,
             data: {
-              ...enrichedRecord.data,
-              ...output.recordDataPatch,
+              ...enrichedDocument.data,
+              ...output.documentDataPatch,
             },
           };
-          evaluationContext.Record = enrichedRecord;
+          evaluationContext.Document = enrichedDocument;
         }
         if (output.contextVariables) {
           Object.assign(evaluationContext, output.contextVariables);
@@ -536,9 +536,9 @@ export class RecordService implements RecordServicePort, SchemaQueryPort {
       }
     }
 
-    const finalResult: ProcessRecordResult = {
+    const finalResult: ProcessDocumentResult = {
       success: true,
-      data: enrichedRecord,
+      data: enrichedDocument,
       activities: resolvedActivities,
       outputs: collectedOutputs,
     };
@@ -608,14 +608,14 @@ export function walkTemplates(
 }
 
 /**
- * Compiles the list of base variables available during record hydration and identity/calculatedField resolution.
+ * Compiles the list of base variables available during document hydration and identity/calculatedField resolution.
  */
-function getBaseVariables(manifest: RecordType): string[] {
+function getBaseVariables(manifest: DocumentType): string[] {
   const vars: string[] = [
     ...Object.keys(SystemContextSchema.properties),
   ];
 
-  for (const field of manifest.recordSchema.fields) {
+  for (const field of manifest.documentSchema.fields) {
     vars.push(field.key);
     if (field.options) {
       if (field.options.key) {
@@ -624,7 +624,7 @@ function getBaseVariables(manifest: RecordType): string[] {
       if (field.options.name) {
         vars.push(`${field.key}.${field.options.name}`);
       }
-      const optionTuples = manifest.recordSchema.options?.[field.options.source] ?? [];
+      const optionTuples = manifest.documentSchema.options?.[field.options.source] ?? [];
       for (const tuple of optionTuples) {
         vars.push(...flattenObjectPaths(tuple, field.key));
       }
@@ -637,24 +637,24 @@ function getBaseVariables(manifest: RecordType): string[] {
 /**
  * Compiles the list of execution variables available during storage context and workflow activity evaluation.
  */
-function getExecutionVariables(manifest: RecordType, baseVariables: string[]): string[] {
+function getExecutionVariables(manifest: DocumentType, baseVariables: string[]): string[] {
   const vars: string[] = [
-    'Record.id',
-    'Record.type',
+    'Document.id',
+    'Document.type',
   ];
 
   for (const baseVar of baseVariables) {
-    vars.push(`Record.data.${baseVar}`);
+    vars.push(`Document.data.${baseVar}`);
   }
 
-  if (manifest.recordSchema.calculatedFields) {
-    for (const calcField of manifest.recordSchema.calculatedFields) {
-      vars.push(`Record.data.${calcField.key}`);
+  if (manifest.documentSchema.calculatedFields) {
+    for (const calcField of manifest.documentSchema.calculatedFields) {
+      vars.push(`Document.data.${calcField.key}`);
     }
   }
 
-  const recordSchemaPaths = flattenObjectPaths(manifest.recordSchema, 'RecordSchema');
-  vars.push(...recordSchemaPaths);
+  const documentSchemaPaths = flattenObjectPaths(manifest.documentSchema, 'documentSchema');
+  vars.push(...documentSchemaPaths);
 
   if (manifest.storageContextConfig) {
     vars.push('StorageContext');
@@ -668,11 +668,11 @@ function getExecutionVariables(manifest: RecordType, baseVariables: string[]): s
 }
 
 /**
- * Pure domain function to statically validate all Handlebars templates within a RecordType manifest.
+ * Pure domain function to statically validate all Handlebars templates within a DocumentType manifest.
  * Returns an array of formatted error strings using exact dot-notation paths.
  */
 export function validateManifestTemplates(
-  manifest: RecordType,
+  manifest: DocumentType,
   evaluator: TemplateEvaluatorPort
 ): string[] {
   const errors: string[] = [];
@@ -680,19 +680,19 @@ export function validateManifestTemplates(
   const baseVariables = getBaseVariables(manifest);
   const executionVariables = getExecutionVariables(manifest, baseVariables);
 
-  if (manifest.recordSchema.calculatedFields) {
-    manifest.recordSchema.calculatedFields.forEach((calcField, index) => {
-      const path = `recordSchema.calculatedFields[${index}].template`;
+  if (manifest.documentSchema.calculatedFields) {
+    manifest.documentSchema.calculatedFields.forEach((calcField, index) => {
+      const path = `documentSchema.calculatedFields[${index}].template`;
       if (!evaluator.validate(calcField.template, baseVariables)) {
         errors.push(`Invalid template at "${path}": references unknown fields or is malformed.`);
       }
     });
   }
 
-  if (manifest.recordSchema.identity) {
-    for (const [propKey, template] of Object.entries(manifest.recordSchema.identity)) {
+  if (manifest.documentSchema.identity) {
+    for (const [propKey, template] of Object.entries(manifest.documentSchema.identity)) {
       if (typeof template === 'string') {
-        const path = `recordSchema.identity.${propKey}`;
+        const path = `documentSchema.identity.${propKey}`;
         if (!evaluator.validate(template, baseVariables)) {
           errors.push(`Invalid template at "${path}": references unknown fields or is malformed.`);
         }
@@ -708,8 +708,8 @@ export function validateManifestTemplates(
     });
   }
 
-  if (manifest.recordWorkflowConfig) {
-    walkTemplates(manifest.recordWorkflowConfig, 'recordWorkflowConfig', (path, template) => {
+  if (manifest.documentWorkflowConfig) {
+    walkTemplates(manifest.documentWorkflowConfig, 'documentWorkflowConfig', (path, template) => {
       if (!evaluator.validate(template, executionVariables)) {
         errors.push(`Invalid template at "${path}": references unknown fields or is malformed.`);
       }

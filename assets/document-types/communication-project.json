@@ -1,7 +1,7 @@
 {
   "key": "communication-project",
   "name": "Communication Project",
-  "recordSchema": {
+  "documentSchema": {
     "fields": [
       {
         "key": "contact",
@@ -40,7 +40,7 @@
 
     "identity": {
       "id": "{{contact}}-{{date}}-{{direction.key}}-{{description}}",
-      "idRecord": "{{contact}}-{{date}}-{{direction.key}}-{{description}}",
+      "idDocument": "{{contact}}-{{date}}-{{direction.key}}-{{description}}",
       "idGroup": "{{contact}}"
     },
     "options": {
@@ -56,20 +56,20 @@
       ]
     }
   },
-  "recordUiConfig": {
+  "documentUiConfig": {
     "events": {
       "onSubmit": {
         "catchAllWorkflow": "FileCommProject"
       }
     }
   },
-  "recordWorkflowConfig": {
+  "documentWorkflowConfig": {
     "workflows": [
       {
         "name": "FileCommProject",
         "activitySequence": [
           {
-            "type": "LOG_RECORD",
+            "type": "LOG_DOCUMENT",
             "payload": {
               "status": "filed"
             }

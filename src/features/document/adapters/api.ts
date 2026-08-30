@@ -1,4 +1,4 @@
-import type { RecordServicePort, SchemaQueryPort } from '../ports';
+import type { DocumentServicePort, SchemaQueryPort } from '../ports';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
 
@@ -26,12 +26,12 @@ export interface HttpServer {
   registerRoute(route: RouteDefinition): void;
 }
 
-export interface RecordFeatureApiOptions {
-  service: RecordServicePort;
+export interface DocumentFeatureApiOptions {
+  service: DocumentServicePort;
   schemaQuery: SchemaQueryPort;
 }
 
-export function registerRecordFeatureRoutes(router: HttpServer, opts: RecordFeatureApiOptions): void {
+export function registerDocumentFeatureRoutes(router: HttpServer, opts: DocumentFeatureApiOptions): void {
   const { service, schemaQuery } = opts;
 
   router.registerRoute({
@@ -58,12 +58,12 @@ export function registerRecordFeatureRoutes(router: HttpServer, opts: RecordFeat
 
   router.registerRoute({
     method: 'POST',
-    url: '/records',
+    url: '/documents',
     handler: async (request) => {
       try {
         const query = request.query as Record<string, string | undefined> | undefined;
         const eventName = typeof query === 'object' && query !== null ? query.eventName : undefined;
-        const result = await service.processRecord(request.body, eventName);
+        const result = await service.processDocument(request.body, eventName);
         return {
           status: result.success ? 200 : 400,
           body: result,
@@ -73,7 +73,7 @@ export function registerRecordFeatureRoutes(router: HttpServer, opts: RecordFeat
           status: 500,
           body: {
             error: 'Internal Server Error',
-            message: error instanceof Error ? error.message : 'Failed to process record',
+            message: error instanceof Error ? error.message : 'Failed to process document',
           },
         };
       }

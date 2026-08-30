@@ -1,12 +1,12 @@
 {
-  "recordTypes": [
-    "./test-record.json"
+  "documentTypes": [
+    "./test-document.json"
   ],
   "configuration": {
     "workspace": {
       "appTitle": "INC-IO Docs",
       "actionButtonText": "Move Selected File",
-      "defaultRecordType": "test-record",
+      "defaultDocumentType": "test-document",
       "defaultEventName": "onSubmit"
     },
     "drive": {
@@ -16,4 +16,4 @@
       "backoffFactor": 2
     }
   }
-}
+}

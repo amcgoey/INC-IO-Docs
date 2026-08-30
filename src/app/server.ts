@@ -1,21 +1,21 @@
 import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import { createHttpServer, type HttpServer } from '../infrastructure/http';
-import { registerRecordFeatureRoutes } from '../features/record/adapters/api';
+import { registerDocumentFeatureRoutes } from '../features/document/adapters/api';
 import { registerWorkspaceFeatureRoutes } from '../features/workspace/adapters/api';
-import { ActivityEngine } from '../features/record/adapters/activity-engine';
-import { DriveActivityHandler } from '../features/record/adapters/drive-activity-handler';
-import { ManifestRegistryAdapter } from '../features/record/adapters/manifest-registry';
+import { ActivityEngine } from '../features/document/adapters/activity-engine';
+import { DriveActivityHandler } from '../features/document/adapters/drive-activity-handler';
+import { ManifestRegistryAdapter } from '../features/document/adapters/manifest-registry';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import { GoogleJwtVerifier } from '../infrastructure/workspace-addon/jwt-verifier';
-import { RecordService } from '../features/record/domain';
+import { DocumentService } from '../features/document/domain';
 import type {
   ActivityDispatcherPort,
   AppConfigurationProviderPort,
   DriveServicePort,
   ManifestRegistryPort,
   TemplateEvaluatorPort,
-} from '../features/record/ports';
+} from '../features/document/ports';
 import type { AuthVerifierPort, WorkspaceConfigProviderPort } from '../features/workspace/ports';
 
 TypeSystemPolicy.ExactOptionalPropertyTypes = true;
@@ -33,7 +33,7 @@ export interface AppOptions {
 
 export interface AppInstance {
   server: HttpServer;
-  recordService: RecordService;
+  documentService: DocumentService;
   initialize: () => Promise<void>;
   start: (port?: number, host?: string) => Promise<void>;
 }
@@ -70,14 +70,14 @@ export function createApp(options?: AppOptions): AppInstance {
     configProvider: driveConfigProvider,
   });
   const activityEngine = options?.activityEngine ?? new ActivityEngine([driveActivityHandler]);
-  const recordService = new RecordService(activityEngine, manifestRegistry, templateEvaluator);
+  const documentService = new DocumentService(activityEngine, manifestRegistry, templateEvaluator);
 
   const authVerifier: AuthVerifierPort = options?.authVerifier ?? new GoogleJwtVerifier();
 
-  registerRecordFeatureRoutes(server, { service: recordService, schemaQuery: recordService });
+  registerDocumentFeatureRoutes(server, { service: documentService, schemaQuery: documentService });
   registerWorkspaceFeatureRoutes(server, {
     authVerifier,
-    recordService,
+    documentService,
     configProvider: workspaceConfigProvider,
     authorizationUrl:
       options?.authorizationUrl ??
@@ -88,7 +88,7 @@ export function createApp(options?: AppOptions): AppInstance {
 
 
   const initialize = async () => {
-    await recordService.initialize();
+    await documentService.initialize();
   };
 
   const start = async (port = 8080, host = '0.0.0.0') => {
@@ -98,7 +98,7 @@ export function createApp(options?: AppOptions): AppInstance {
 
   return {
     server,
-    recordService,
+    documentService,
     initialize,
     start,
   };

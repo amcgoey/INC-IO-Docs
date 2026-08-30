@@ -1,19 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import {
-  RecordService,
-  RecordModel,
-  RecordTypeSchema,
-  RecordFieldOptionType,
-  RecordFieldType,
-  RecordSchemaType,
-  RecordSchemaOptionTupleType,
-  RecordIdentitySchemaType,
+  DocumentService,
+  DocumentModel,
+  DocumentTypeSchema,
+  DocumentFieldOptionType,
+  DocumentFieldType,
+  DocumentSchemaType,
+  DocumentSchemaOptionTupleType,
+  DocumentIdentitySchemaType,
   CalculatedFieldType,
   SystemContextSchema,
   UiEventRuleType,
   WorkflowType,
-  RecordWorkflowConfigType,
+  DocumentWorkflowConfigType,
   StorageContextConfigType,
   FormSchemaType,
   ActivityType,
@@ -26,8 +26,8 @@ import {
   type Activity,
   type ActivityOutput,
   type FileLocator,
-  type Record,
-  type RecordType,
+  type Document,
+  type DocumentType,
   type FormSchema,
   type StorageContextConfig,
 } from './domain';
@@ -35,7 +35,7 @@ import type { ActivityDispatcherPort, ExecutionContext, ManifestRegistryPort, Te
 
 
 
-describe('Record domain', () => {
+describe('Document domain', () => {
   const mockRegistry: ManifestRegistryPort = {
     loadAll: vi.fn().mockResolvedValue([]),
   };
@@ -45,8 +45,8 @@ describe('Record domain', () => {
     evaluate: vi.fn().mockImplementation((template: string) => template),
   };
 
-  it('should export RecordModel schema', () => {
-    expect(RecordModel).toBeDefined();
+  it('should export DocumentModel schema', () => {
+    expect(DocumentModel).toBeDefined();
   });
 
   it('should export ActivityType schema', () => {
@@ -93,7 +93,7 @@ describe('Record domain', () => {
     expect(ActivityOutputType).toBeDefined();
     const validOutput: ActivityOutput = {
       success: true,
-      recordDataPatch: { newField: 'value' },
+      documentDataPatch: { newField: 'value' },
       contextVariables: { stepResult: 'success' },
       files: [
         {
@@ -116,7 +116,7 @@ describe('Record domain', () => {
     expect(Value.Check(ActivityOutputType, invalidOutput)).toBe(false);
 
     const invalidPatch = {
-      recordDataPatch: 'not-an-object',
+      documentDataPatch: 'not-an-object',
     };
     expect(Value.Check(ActivityOutputType, invalidPatch)).toBe(false);
 
@@ -148,15 +148,15 @@ describe('Record domain', () => {
     expect(Value.Check(ExecutionContextSchema, invalidResources)).toBe(false);
   });
 
-  it('processRecord validates payload, dispatches Activity, and returns success result', async () => {
+  it('processDocument validates payload, dispatches Activity, and returns success result', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn().mockResolvedValue(undefined),
     };
-    const mockRecordTypes: RecordType[] = [
+    const mockDocumentTypes: DocumentType[] = [
       {
         key: 'submittal',
-        name: 'Submittal Record',
-        recordSchema: {
+        name: 'Submittal Document',
+        documentSchema: {
           fields: [
             {
               key: 'title',
@@ -172,21 +172,21 @@ describe('Record domain', () => {
             },
           ],
         },
-        recordUiConfig: {
+        documentUiConfig: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'SubmitSubmittalWorkflow',
             },
           },
         },
-        recordWorkflowConfig: {
+        documentWorkflowConfig: {
           workflows: [
             {
               name: 'SubmitSubmittalWorkflow',
               activitySequence: [
                 {
-                  type: 'LOG_RECORD',
-                  payload: { record: { title: 'Foundation Plan' } },
+                  type: 'LOG_DOCUMENT',
+                  payload: { document: { title: 'Foundation Plan' } },
                 },
               ],
             },
@@ -195,12 +195,12 @@ describe('Record domain', () => {
       },
     ];
     const registryWithSubmittal: ManifestRegistryPort = {
-      loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
     };
-    const service = new RecordService(mockDispatcher, registryWithSubmittal, defaultEvaluator);
+    const service = new DocumentService(mockDispatcher, registryWithSubmittal, defaultEvaluator);
     await service.initialize();
 
-    const validRecord: Record = {
+    const validDocument: Document = {
       id: 'rec-123',
       type: 'submittal',
       data: {
@@ -208,33 +208,33 @@ describe('Record domain', () => {
       },
     };
 
-    const result = await service.processRecord(validRecord, 'onSubmit');
+    const result = await service.processDocument(validDocument, 'onSubmit');
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data).toEqual(validRecord);
+      expect(result.data).toEqual(validDocument);
       expect(result.activities).toEqual([
         {
-          type: 'LOG_RECORD',
-          payload: { record: { title: 'Foundation Plan' } },
+          type: 'LOG_DOCUMENT',
+          payload: { document: { title: 'Foundation Plan' } },
         },
       ]);
     }
 
     expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-      type: 'LOG_RECORD',
-      payload: { record: { title: 'Foundation Plan' } },
+      type: 'LOG_DOCUMENT',
+      payload: { document: { title: 'Foundation Plan' } },
     });
   });
 
-  it('processRecord returns failure when dynamic field validation fails against compiled schema', async () => {
+  it('processDocument returns failure when dynamic field validation fails against compiled schema', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
-    const mockRecordTypes: RecordType[] = [
+    const mockDocumentTypes: DocumentType[] = [
       {
         key: 'submittal',
-        name: 'Submittal Record',
-        recordSchema: {
+        name: 'Submittal Document',
+        documentSchema: {
           fields: [
             {
               key: 'title',
@@ -247,9 +247,9 @@ describe('Record domain', () => {
       },
     ];
     const registryWithSubmittal: ManifestRegistryPort = {
-      loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
     };
-    const service = new RecordService(mockDispatcher, registryWithSubmittal, defaultEvaluator);
+    const service = new DocumentService(mockDispatcher, registryWithSubmittal, defaultEvaluator);
     await service.initialize();
 
     const missingRequiredField = {
@@ -257,7 +257,7 @@ describe('Record domain', () => {
       data: {},
     };
 
-    const result = await service.processRecord(missingRequiredField);
+    const result = await service.processDocument(missingRequiredField);
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.errors.length).toBeGreaterThan(0);
@@ -265,35 +265,35 @@ describe('Record domain', () => {
     expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
   });
 
-  it('processRecord returns failure for unknown record type', async () => {
+  it('processDocument returns failure for unknown document type', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
-    const service = new RecordService(mockDispatcher, mockRegistry, defaultEvaluator);
+    const service = new DocumentService(mockDispatcher, mockRegistry, defaultEvaluator);
     await service.initialize();
 
-    const unknownTypeRecord = {
+    const unknownTypeDocument = {
       type: 'unknown-type',
       data: { title: 'Test' },
     };
 
-    const result = await service.processRecord(unknownTypeRecord);
+    const result = await service.processDocument(unknownTypeDocument);
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.errors).toContain("Unknown record type: unknown-type");
+      expect(result.errors).toContain("Unknown document type: unknown-type");
     }
     expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
   });
 
-  it('initialize throws fast-fail error if a RecordType has an unsupported field type', async () => {
+  it('initialize throws fast-fail error if a DocumentType has an unsupported field type', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
-    const invalidRecordTypes: RecordType[] = [
+    const invalidDocumentTypes: DocumentType[] = [
       {
         key: 'invalid-type',
         name: 'Invalid Type',
-        recordSchema: {
+        documentSchema: {
           fields: [
             {
               key: 'invalidField',
@@ -306,27 +306,27 @@ describe('Record domain', () => {
       },
     ];
     const registryWithInvalid: ManifestRegistryPort = {
-      loadAll: vi.fn().mockResolvedValue(invalidRecordTypes),
+      loadAll: vi.fn().mockResolvedValue(invalidDocumentTypes),
     };
-    const service = new RecordService(mockDispatcher, registryWithInvalid, defaultEvaluator);
+    const service = new DocumentService(mockDispatcher, registryWithInvalid, defaultEvaluator);
 
     await expect(service.initialize()).rejects.toThrow(
       /Unsupported field type 'unknown'/
     );
   });
 
-  it('processRecord returns failure and does not dispatch activity for invalid payload', async () => {
+  it('processDocument returns failure and does not dispatch activity for invalid payload', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
-    const service = new RecordService(mockDispatcher, mockRegistry, defaultEvaluator);
+    const service = new DocumentService(mockDispatcher, mockRegistry, defaultEvaluator);
     await service.initialize();
 
-    const invalidRecord = {
+    const invalidDocument = {
       title: 123, // missing type and data
     };
 
-    const result = await service.processRecord(invalidRecord);
+    const result = await service.processDocument(invalidDocument);
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.errors.length).toBeGreaterThan(0);
@@ -334,28 +334,28 @@ describe('Record domain', () => {
     expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
   });
 
-  it('processRecord returns failure for undefined or null payload', async () => {
+  it('processDocument returns failure for undefined or null payload', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
-    const service = new RecordService(mockDispatcher, mockRegistry, defaultEvaluator);
+    const service = new DocumentService(mockDispatcher, mockRegistry, defaultEvaluator);
     await service.initialize();
 
-    const resultUndefined = await service.processRecord(undefined);
+    const resultUndefined = await service.processDocument(undefined);
     expect(resultUndefined.success).toBe(false);
     expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
 
-    const resultNull = await service.processRecord(null);
+    const resultNull = await service.processDocument(null);
     expect(resultNull.success).toBe(false);
     expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
   });
 
-  it('exports RecordTypeSchema and validates valid RecordType definitions', () => {
-    expect(RecordTypeSchema).toBeDefined();
-    const validRecordType: RecordType = {
+  it('exports DocumentTypeSchema and validates valid DocumentType definitions', () => {
+    expect(DocumentTypeSchema).toBeDefined();
+    const validDocumentType: DocumentType = {
       key: 'submittal',
-      name: 'Submittal Record',
-      recordSchema: {
+      name: 'Submittal Document',
+      documentSchema: {
         fields: [
           {
             key: 'title',
@@ -365,7 +365,7 @@ describe('Record domain', () => {
           },
         ],
       },
-      recordUiConfig: {
+      documentUiConfig: {
         events: {
           onSubmit: {
             catchAllWorkflow: 'SubmitSubmittal',
@@ -373,44 +373,44 @@ describe('Record domain', () => {
         },
       },
     };
-    expect(Value.Check(RecordTypeSchema, validRecordType)).toBe(true);
+    expect(Value.Check(DocumentTypeSchema, validDocumentType)).toBe(true);
   });
 
-  it('RecordFieldOptionType requires source, key, and name', () => {
+  it('DocumentFieldOptionType requires source, key, and name', () => {
     const validOption = {
       source: 'direction',
       key: 'key',
       name: 'name',
     };
-    expect(Value.Check(RecordFieldOptionType, validOption)).toBe(true);
+    expect(Value.Check(DocumentFieldOptionType, validOption)).toBe(true);
 
     const missingSource = {
       key: 'key',
       name: 'name',
     };
-    expect(Value.Check(RecordFieldOptionType, missingSource)).toBe(false);
+    expect(Value.Check(DocumentFieldOptionType, missingSource)).toBe(false);
 
     const missingKey = {
       source: 'direction',
       name: 'name',
     };
-    expect(Value.Check(RecordFieldOptionType, missingKey)).toBe(false);
+    expect(Value.Check(DocumentFieldOptionType, missingKey)).toBe(false);
 
     const missingName = {
       source: 'direction',
       key: 'key',
     };
-    expect(Value.Check(RecordFieldOptionType, missingName)).toBe(false);
+    expect(Value.Check(DocumentFieldOptionType, missingName)).toBe(false);
   });
 
-  it('RecordFieldOptionType accepts optional allowUserInput boolean', () => {
+  it('DocumentFieldOptionType accepts optional allowUserInput boolean', () => {
     const optionWithAllowUserInputTrue = {
       source: 'direction',
       key: 'key',
       name: 'name',
       allowUserInput: true,
     };
-    expect(Value.Check(RecordFieldOptionType, optionWithAllowUserInputTrue)).toBe(true);
+    expect(Value.Check(DocumentFieldOptionType, optionWithAllowUserInputTrue)).toBe(true);
 
     const optionWithAllowUserInputFalse = {
       source: 'direction',
@@ -418,7 +418,7 @@ describe('Record domain', () => {
       name: 'name',
       allowUserInput: false,
     };
-    expect(Value.Check(RecordFieldOptionType, optionWithAllowUserInputFalse)).toBe(true);
+    expect(Value.Check(DocumentFieldOptionType, optionWithAllowUserInputFalse)).toBe(true);
 
     const optionWithInvalidAllowUserInput = {
       source: 'direction',
@@ -426,14 +426,14 @@ describe('Record domain', () => {
       name: 'name',
       allowUserInput: 'true',
     };
-    expect(Value.Check(RecordFieldOptionType, optionWithInvalidAllowUserInput)).toBe(false);
+    expect(Value.Check(DocumentFieldOptionType, optionWithInvalidAllowUserInput)).toBe(false);
   });
 
-  it('RecordTypeSchema allows optional backend config stubs', () => {
-    const recordTypeWithBackendConfigs: RecordType = {
+  it('DocumentTypeSchema allows optional backend config stubs', () => {
+    const documentTypeWithBackendConfigs: DocumentType = {
       key: 'submittal',
-      name: 'Submittal Record',
-      recordSchema: {
+      name: 'Submittal Document',
+      documentSchema: {
         fields: [
           {
             key: 'title',
@@ -443,14 +443,14 @@ describe('Record domain', () => {
           },
         ],
       },
-      recordUiConfig: {
+      documentUiConfig: {
         events: {
           onSubmit: {
             catchAllWorkflow: 'SubmitSubmittal',
           },
         },
       },
-      recordWorkflowConfig: {
+      documentWorkflowConfig: {
         workflows: [{ name: 'SubmitSubmittal' }],
       },
       storageContextConfig: {
@@ -458,15 +458,15 @@ describe('Record domain', () => {
       },
     };
 
-    expect(Value.Check(RecordTypeSchema, recordTypeWithBackendConfigs)).toBe(true);
+    expect(Value.Check(DocumentTypeSchema, documentTypeWithBackendConfigs)).toBe(true);
   });
 
   it('FormSchemaType validates FormSchema definitions', () => {
     expect(FormSchemaType).toBeDefined();
     const validFormSchema: FormSchema = {
       key: 'submittal',
-      name: 'Submittal Record',
-      recordSchema: {
+      name: 'Submittal Document',
+      documentSchema: {
         fields: [
           {
             key: 'title',
@@ -476,7 +476,7 @@ describe('Record domain', () => {
           },
         ],
       },
-      recordUiConfig: {
+      documentUiConfig: {
         events: {
           onSubmit: {
             catchAllWorkflow: 'SubmitSubmittal',
@@ -487,15 +487,15 @@ describe('Record domain', () => {
     expect(Value.Check(FormSchemaType, validFormSchema)).toBe(true);
   });
 
-  it('RecordService.initialize caches RecordTypes from ManifestRegistryPort and getForms strips backend configs', async () => {
+  it('DocumentService.initialize caches DocumentTypes from ManifestRegistryPort and getForms strips backend configs', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
-    const mockRecordTypes: RecordType[] = [
+    const mockDocumentTypes: DocumentType[] = [
       {
         key: 'comm-proj',
         name: 'Communication Project',
-        recordSchema: {
+        documentSchema: {
           fields: [
             {
               key: 'subject',
@@ -505,14 +505,14 @@ describe('Record domain', () => {
             },
           ],
         },
-        recordUiConfig: {
+        documentUiConfig: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'HandleComm',
             },
           },
         },
-        recordWorkflowConfig: {
+        documentWorkflowConfig: {
           workflows: [{ name: 'HandleComm' }],
         },
         storageContextConfig: {
@@ -522,7 +522,7 @@ describe('Record domain', () => {
       {
         key: 'simple-proj',
         name: 'Simple Project',
-        recordSchema: {
+        documentSchema: {
           fields: [
             {
               key: 'name',
@@ -536,10 +536,10 @@ describe('Record domain', () => {
     ];
 
     const customRegistry: ManifestRegistryPort = {
-      loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+      loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
     };
 
-    const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+    const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
 
     // Before initialize, getForms returns empty list
     const initialForms = await service.getForms();
@@ -554,7 +554,7 @@ describe('Record domain', () => {
       {
         key: 'comm-proj',
         name: 'Communication Project',
-        recordSchema: {
+        documentSchema: {
           fields: [
             {
               key: 'subject',
@@ -564,7 +564,7 @@ describe('Record domain', () => {
             },
           ],
         },
-        recordUiConfig: {
+        documentUiConfig: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'HandleComm',
@@ -575,7 +575,7 @@ describe('Record domain', () => {
       {
         key: 'simple-proj',
         name: 'Simple Project',
-        recordSchema: {
+        documentSchema: {
           fields: [
             {
               key: 'name',
@@ -590,22 +590,22 @@ describe('Record domain', () => {
 
     for (const form of forms) {
       expect(Value.Check(FormSchemaType, form)).toBe(true);
-      expect(form).not.toHaveProperty('recordWorkflowConfig');
+      expect(form).not.toHaveProperty('documentWorkflowConfig');
       expect(form).not.toHaveProperty('storageContextConfig');
     }
   });
 
-  describe('RecordSchemaOptionTupleType and RecordSchemaType.options', () => {
-    it('validates RecordSchemaOptionTupleType as Record<string, unknown>', () => {
-      expect(RecordSchemaOptionTupleType).toBeDefined();
+  describe('DocumentSchemaOptionTupleType and DocumentSchemaType.options', () => {
+    it('validates DocumentSchemaOptionTupleType as Record<string, unknown>', () => {
+      expect(DocumentSchemaOptionTupleType).toBeDefined();
       const validTuple = { key: 'IN', name: 'Incoming', extra: 123 };
-      expect(Value.Check(RecordSchemaOptionTupleType, validTuple)).toBe(true);
+      expect(Value.Check(DocumentSchemaOptionTupleType, validTuple)).toBe(true);
 
       const invalidTuple = 'not-an-object';
-      expect(Value.Check(RecordSchemaOptionTupleType, invalidTuple)).toBe(false);
+      expect(Value.Check(DocumentSchemaOptionTupleType, invalidTuple)).toBe(false);
     });
 
-    it('validates RecordSchemaType.options as optional Record<string, RecordSchemaOptionTupleType[]>', () => {
+    it('validates DocumentSchemaType.options as optional Record<string, DocumentSchemaOptionTupleType[]>', () => {
       const validSchemaWithOptions = {
         fields: [{ key: 'f1', name: 'Field 1', type: 'string', required: true }],
         options: {
@@ -615,7 +615,7 @@ describe('Record domain', () => {
           ],
         },
       };
-      expect(Value.Check(RecordSchemaType, validSchemaWithOptions)).toBe(true);
+      expect(Value.Check(DocumentSchemaType, validSchemaWithOptions)).toBe(true);
 
       const invalidSchemaWithOptions = {
         fields: [{ key: 'f1', name: 'Field 1', type: 'string', required: true }],
@@ -623,52 +623,52 @@ describe('Record domain', () => {
           direction: 'invalid-not-array',
         },
       };
-      expect(Value.Check(RecordSchemaType, invalidSchemaWithOptions)).toBe(false);
+      expect(Value.Check(DocumentSchemaType, invalidSchemaWithOptions)).toBe(false);
     });
   });
 
-  describe('RecordIdentitySchemaType', () => {
-    it('validates id, idRecord, and idGroup keys with extensible string properties', () => {
-      expect(RecordIdentitySchemaType).toBeDefined();
+  describe('DocumentIdentitySchemaType', () => {
+    it('validates id, idDocument, and idGroup keys with extensible string properties', () => {
+      expect(DocumentIdentitySchemaType).toBeDefined();
 
       const validIdentity = {
         id: '{{key}}',
-        idRecord: '{{key}}-{{date}}',
+        idDocument: '{{key}}-{{date}}',
         idGroup: '{{contact}}',
         customProperty: 'custom-value',
       };
-      expect(Value.Check(RecordIdentitySchemaType, validIdentity)).toBe(true);
+      expect(Value.Check(DocumentIdentitySchemaType, validIdentity)).toBe(true);
 
       const validPartialIdentity = {
         id: '{{key}}',
       };
-      expect(Value.Check(RecordIdentitySchemaType, validPartialIdentity)).toBe(true);
+      expect(Value.Check(DocumentIdentitySchemaType, validPartialIdentity)).toBe(true);
 
       const emptyIdentity = {};
-      expect(Value.Check(RecordIdentitySchemaType, emptyIdentity)).toBe(true);
+      expect(Value.Check(DocumentIdentitySchemaType, emptyIdentity)).toBe(true);
 
       const invalidNonStringValue = {
         id: 123,
       };
-      expect(Value.Check(RecordIdentitySchemaType, invalidNonStringValue)).toBe(false);
+      expect(Value.Check(DocumentIdentitySchemaType, invalidNonStringValue)).toBe(false);
 
       const invalidNonStringExtensibleValue = {
         id: '{{key}}',
         customField: 999,
       };
-      expect(Value.Check(RecordIdentitySchemaType, invalidNonStringExtensibleValue)).toBe(false);
+      expect(Value.Check(DocumentIdentitySchemaType, invalidNonStringExtensibleValue)).toBe(false);
     });
 
-    it('validates RecordSchemaType.identity with RecordIdentitySchemaType', () => {
+    it('validates DocumentSchemaType.identity with DocumentIdentitySchemaType', () => {
       const schemaWithIdentity = {
         fields: [{ key: 'f1', name: 'Field 1', type: 'string', required: true }],
         identity: {
           id: '{{key}}',
-          idRecord: '{{key}}-{{date}}',
+          idDocument: '{{key}}-{{date}}',
           idGroup: '{{contact}}',
         },
       };
-      expect(Value.Check(RecordSchemaType, schemaWithIdentity)).toBe(true);
+      expect(Value.Check(DocumentSchemaType, schemaWithIdentity)).toBe(true);
 
       const schemaWithInvalidIdentity = {
         fields: [{ key: 'f1', name: 'Field 1', type: 'string', required: true }],
@@ -676,7 +676,7 @@ describe('Record domain', () => {
           id: 123,
         },
       };
-      expect(Value.Check(RecordSchemaType, schemaWithInvalidIdentity)).toBe(false);
+      expect(Value.Check(DocumentSchemaType, schemaWithInvalidIdentity)).toBe(false);
     });
   });
 
@@ -708,7 +708,7 @@ describe('Record domain', () => {
     });
   });
 
-  describe('RecordFieldType.defaultValue', () => {
+  describe('DocumentFieldType.defaultValue', () => {
     it('accepts optional defaultValue as string', () => {
       const fieldWithDefault = {
         key: 'status',
@@ -717,7 +717,7 @@ describe('Record domain', () => {
         required: false,
         defaultValue: 'Draft',
       };
-      expect(Value.Check(RecordFieldType, fieldWithDefault)).toBe(true);
+      expect(Value.Check(DocumentFieldType, fieldWithDefault)).toBe(true);
 
       const fieldWithoutDefault = {
         key: 'status',
@@ -725,7 +725,7 @@ describe('Record domain', () => {
         type: 'string',
         required: false,
       };
-      expect(Value.Check(RecordFieldType, fieldWithoutDefault)).toBe(true);
+      expect(Value.Check(DocumentFieldType, fieldWithoutDefault)).toBe(true);
     });
 
     it('rejects non-string defaultValue', () => {
@@ -736,18 +736,18 @@ describe('Record domain', () => {
         required: false,
         defaultValue: 123,
       };
-      expect(Value.Check(RecordFieldType, invalidField)).toBe(false);
+      expect(Value.Check(DocumentFieldType, invalidField)).toBe(false);
     });
   });
 
-  describe('RecordFieldType.required', () => {
+  describe('DocumentFieldType.required', () => {
     it('allows omitting required property and defaults to valid schema', () => {
       const fieldWithoutRequired = {
         key: 'description',
         name: 'Description',
         type: 'string',
       };
-      expect(Value.Check(RecordFieldType, fieldWithoutRequired)).toBe(true);
+      expect(Value.Check(DocumentFieldType, fieldWithoutRequired)).toBe(true);
     });
 
     it('accepts boolean required property when provided', () => {
@@ -757,7 +757,7 @@ describe('Record domain', () => {
         type: 'string',
         required: true,
       };
-      expect(Value.Check(RecordFieldType, fieldWithRequiredTrue)).toBe(true);
+      expect(Value.Check(DocumentFieldType, fieldWithRequiredTrue)).toBe(true);
 
       const fieldWithRequiredFalse = {
         key: 'notes',
@@ -765,7 +765,7 @@ describe('Record domain', () => {
         type: 'string',
         required: false,
       };
-      expect(Value.Check(RecordFieldType, fieldWithRequiredFalse)).toBe(true);
+      expect(Value.Check(DocumentFieldType, fieldWithRequiredFalse)).toBe(true);
     });
 
     it('rejects non-boolean required property', () => {
@@ -775,21 +775,21 @@ describe('Record domain', () => {
         type: 'string',
         required: 'yes',
       };
-      expect(Value.Check(RecordFieldType, fieldWithInvalidRequired)).toBe(false);
+      expect(Value.Check(DocumentFieldType, fieldWithInvalidRequired)).toBe(false);
     });
   });
 
   describe('formatValidationErrors', () => {
     it('returns empty array when there are no errors', () => {
-      const Schema = RecordModel;
-      const validRecord = { id: 'rec-1', type: 'submittal', data: { subject: 'Submittal 1' } };
-      expect(formatValidationErrors(Schema, validRecord)).toEqual([]);
+      const Schema = DocumentModel;
+      const validDocument = { id: 'rec-1', type: 'submittal', data: { subject: 'Submittal 1' } };
+      expect(formatValidationErrors(Schema, validDocument)).toEqual([]);
     });
 
     it('returns formatted error string array with path and message for invalid value', () => {
-      const Schema = RecordModel;
-      const invalidRecord = { id: 123, type: 'submittal' }; // id not string, missing data
-      const formatted = formatValidationErrors(Schema, invalidRecord);
+      const Schema = DocumentModel;
+      const invalidDocument = { id: 123, type: 'submittal' }; // id not string, missing data
+      const formatted = formatValidationErrors(Schema, invalidDocument);
       expect(formatted.some((e) => e.includes('/id:'))).toBe(true);
       expect(formatted.some((e) => e.includes('/data:'))).toBe(true);
     });
@@ -827,7 +827,7 @@ describe('Record domain', () => {
       expect(Value.Check(SystemContextSchema, {})).toBe(true);
     });
 
-    it('validates RecordSchemaType with optional calculatedFields', () => {
+    it('validates DocumentSchemaType with optional calculatedFields', () => {
       const schemaWithCalcFields = {
         fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
         calculatedFields: [
@@ -837,7 +837,7 @@ describe('Record domain', () => {
           },
         ],
       };
-      expect(Value.Check(RecordSchemaType, schemaWithCalcFields)).toBe(true);
+      expect(Value.Check(DocumentSchemaType, schemaWithCalcFields)).toBe(true);
 
       const schemaWithInvalidCalcFields = {
         fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
@@ -848,20 +848,20 @@ describe('Record domain', () => {
           },
         ],
       };
-      expect(Value.Check(RecordSchemaType, schemaWithInvalidCalcFields)).toBe(false);
+      expect(Value.Check(DocumentSchemaType, schemaWithInvalidCalcFields)).toBe(false);
     });
   });
 
-  describe('RecordService calculatedFields evaluation', () => {
-    it('evaluates calculatedFields against base payload and enriches record before dispatching activity', async () => {
+  describe('DocumentService calculatedFields evaluation', () => {
+    it('evaluates calculatedFields against base payload and enriches document before dispatching activity', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const mockRecordTypes: RecordType[] = [
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'comm-project',
           name: 'Communication Project',
-          recordSchema: {
+          documentSchema: {
             fields: [
               { key: 'contact', name: 'Contact', type: 'string', required: true },
               { key: 'date', name: 'Date', type: 'string', required: true },
@@ -873,20 +873,20 @@ describe('Record domain', () => {
               },
             ],
           },
-          recordUiConfig: {
+          documentUiConfig: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'HandleCommWorkflow',
               },
             },
           },
-          recordWorkflowConfig: {
+          documentWorkflowConfig: {
             workflows: [
               {
                 name: 'HandleCommWorkflow',
                 activitySequence: [
                   {
-                    type: 'LOG_RECORD',
+                    type: 'LOG_DOCUMENT',
                     payload: { status: 'calculated' },
                   },
                 ],
@@ -896,7 +896,7 @@ describe('Record domain', () => {
         },
       ];
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
       const mockEvaluator: TemplateEvaluatorPort = {
         validate: vi.fn().mockReturnValue(true),
@@ -908,10 +908,10 @@ describe('Record domain', () => {
         }),
       };
 
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Alice',
@@ -919,7 +919,7 @@ describe('Record domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.data).toEqual({
@@ -929,14 +929,14 @@ describe('Record domain', () => {
         });
         expect(result.activities).toEqual([
           {
-            type: 'LOG_RECORD',
+            type: 'LOG_DOCUMENT',
             payload: { status: 'calculated' },
           },
         ]);
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'LOG_RECORD',
+        type: 'LOG_DOCUMENT',
         payload: { status: 'calculated' },
       });
     });
@@ -945,11 +945,11 @@ describe('Record domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const mockRecordTypes: RecordType[] = [
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'multi-calc',
           name: 'Multi Calc',
-          recordSchema: {
+          documentSchema: {
             fields: [
               { key: 'base1', name: 'Base 1', type: 'string', required: true },
             ],
@@ -961,7 +961,7 @@ describe('Record domain', () => {
         },
       ];
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
 
       const evaluatedContexts: { [key: string]: unknown }[] = [];
@@ -973,10 +973,10 @@ describe('Record domain', () => {
         }),
       };
 
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      await service.processRecord({
+      await service.processDocument({
         type: 'multi-calc',
         data: { base1: 'val1' },
       });
@@ -989,16 +989,16 @@ describe('Record domain', () => {
     });
   });
 
-  describe('RecordService identity evaluation', () => {
-    it('evaluates identity templates (id, idRecord, idGroup) and populates record before activity dispatch', async () => {
+  describe('DocumentService identity evaluation', () => {
+    it('evaluates identity templates (id, idDocument, idGroup) and populates document before activity dispatch', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const mockRecordTypes: RecordType[] = [
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'comm-project',
           name: 'Communication Project',
-          recordSchema: {
+          documentSchema: {
             fields: [
               { key: 'contact', name: 'Contact', type: 'string', required: true },
               { key: 'date', name: 'Date', type: 'string', required: true },
@@ -1007,24 +1007,24 @@ describe('Record domain', () => {
             ],
             identity: {
               id: '{{contact}}-{{date}}-{{direction}}-{{description}}',
-              idRecord: '{{contact}}-{{date}}-{{direction}}-{{description}}',
+              idDocument: '{{contact}}-{{date}}-{{direction}}-{{description}}',
               idGroup: '{{contact}}',
             },
           },
-          recordUiConfig: {
+          documentUiConfig: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'IdentityWorkflow',
               },
             },
           },
-          recordWorkflowConfig: {
+          documentWorkflowConfig: {
             workflows: [
               {
                 name: 'IdentityWorkflow',
                 activitySequence: [
                   {
-                    type: 'LOG_RECORD',
+                    type: 'LOG_DOCUMENT',
                     payload: { status: 'identified' },
                   },
                 ],
@@ -1034,7 +1034,7 @@ describe('Record domain', () => {
         },
       ];
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
       const mockEvaluator: TemplateEvaluatorPort = {
         validate: vi.fn().mockReturnValue(true),
@@ -1049,10 +1049,10 @@ describe('Record domain', () => {
         }),
       };
 
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Alice',
@@ -1062,11 +1062,11 @@ describe('Record domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.id).toBe('Alice-260825-IN-Project discussion');
-        expect(result.data.idRecord).toBe('Alice-260825-IN-Project discussion');
+        expect(result.data.idDocument).toBe('Alice-260825-IN-Project discussion');
         expect(result.data.idGroup).toBe('Alice');
         expect(result.data.data).toEqual({
           contact: 'Alice',
@@ -1076,14 +1076,14 @@ describe('Record domain', () => {
         });
         expect(result.activities).toEqual([
           {
-            type: 'LOG_RECORD',
+            type: 'LOG_DOCUMENT',
             payload: { status: 'identified' },
           },
         ]);
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'LOG_RECORD',
+        type: 'LOG_DOCUMENT',
         payload: { status: 'identified' },
       });
     });
@@ -1092,11 +1092,11 @@ describe('Record domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const mockRecordTypes: RecordType[] = [
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'calc-and-identity',
           name: 'Calc and Identity',
-          recordSchema: {
+          documentSchema: {
             fields: [
               { key: 'contact', name: 'Contact', type: 'string', required: true },
             ],
@@ -1105,14 +1105,14 @@ describe('Record domain', () => {
             ],
             identity: {
               id: '{{contact}}-ID',
-              idRecord: '{{derivedField}}-RECORD',
+              idDocument: '{{derivedField}}-DOCUMENT',
               idGroup: '{{id}}-GROUP',
             },
           },
         },
       ];
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
 
       const evaluatedContexts: { template: string; ctx: { [key: string]: unknown } }[] = [];
@@ -1124,10 +1124,10 @@ describe('Record domain', () => {
         }),
       };
 
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      await service.processRecord({
+      await service.processDocument({
         type: 'calc-and-identity',
         data: { contact: 'Bob' },
       });
@@ -1140,22 +1140,22 @@ describe('Record domain', () => {
         expect(item.ctx).toEqual({ contact: 'Bob' });
         expect(item.ctx).not.toHaveProperty('derivedField');
         expect(item.ctx).not.toHaveProperty('id');
-        expect(item.ctx).not.toHaveProperty('idRecord');
+        expect(item.ctx).not.toHaveProperty('idDocument');
         expect(item.ctx).not.toHaveProperty('idGroup');
       }
     });
   });
 
-  describe('RecordService LookupFields validation', () => {
+  describe('DocumentService LookupFields validation', () => {
     it('accepts valid string inputs matching option tuple key for lookup fields', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const mockRecordTypes: RecordType[] = [
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'comm-project',
           name: 'Communication Project',
-          recordSchema: {
+          documentSchema: {
             fields: [
               {
                 key: 'direction',
@@ -1179,19 +1179,19 @@ describe('Record domain', () => {
         },
       ];
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
-      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const validRecord: Record = {
+      const validDocument: Document = {
         type: 'comm-project',
         data: {
           direction: 'IN',
         },
       };
 
-      const result = await service.processRecord(validRecord);
+      const result = await service.processDocument(validDocument);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.data).toEqual({ direction: { key: 'IN', name: 'Incoming' } });
@@ -1204,11 +1204,11 @@ describe('Record domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const mockRecordTypes: RecordType[] = [
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'comm-project',
           name: 'Communication Project',
-          recordSchema: {
+          documentSchema: {
             fields: [
               {
                 key: 'direction',
@@ -1232,19 +1232,19 @@ describe('Record domain', () => {
         },
       ];
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
-      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const invalidRecord = {
+      const invalidDocument = {
         type: 'comm-project',
         data: {
           direction: 'INVALID_DIR',
         },
       };
 
-      const result = await service.processRecord(invalidRecord);
+      const result = await service.processDocument(invalidDocument);
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.errors.length).toBeGreaterThan(0);
@@ -1257,11 +1257,11 @@ describe('Record domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const mockRecordTypes: RecordType[] = [
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'comm-project',
           name: 'Communication Project',
-          recordSchema: {
+          documentSchema: {
             fields: [
               {
                 key: 'direction',
@@ -1285,43 +1285,43 @@ describe('Record domain', () => {
         },
       ];
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
-      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
       // Omitting optional lookup field
-      const emptyRecord: Record = {
+      const emptyDocument: Document = {
         type: 'comm-project',
         data: {},
       };
-      const emptyResult = await service.processRecord(emptyRecord);
+      const emptyResult = await service.processDocument(emptyDocument);
       expect(emptyResult.success).toBe(true);
       if (emptyResult.success) {
         expect(emptyResult.data.data).toEqual({});
       }
 
       // Providing valid option
-      const validRecord: Record = {
+      const validDocument: Document = {
         type: 'comm-project',
         data: {
           direction: 'OT',
         },
       };
-      const validResult = await service.processRecord(validRecord);
+      const validResult = await service.processDocument(validDocument);
       expect(validResult.success).toBe(true);
       if (validResult.success) {
         expect(validResult.data.data).toEqual({ direction: { key: 'OT', name: 'Outgoing' } });
       }
 
       // Providing invalid option
-      const invalidRecord = {
+      const invalidDocument = {
         type: 'comm-project',
         data: {
           direction: 'UNKNOWN',
         },
       };
-      const invalidResult = await service.processRecord(invalidRecord);
+      const invalidResult = await service.processDocument(invalidDocument);
       expect(invalidResult.success).toBe(false);
       if (!invalidResult.success) {
         expect(invalidResult.errors.some((err) => err.includes('/direction:'))).toBe(true);
@@ -1332,11 +1332,11 @@ describe('Record domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const mockRecordTypes: RecordType[] = [
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'comm-project',
           name: 'Communication Project',
-          recordSchema: {
+          documentSchema: {
             fields: [
               {
                 key: 'category',
@@ -1354,18 +1354,18 @@ describe('Record domain', () => {
         },
       ];
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
-      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const recordWithMissingSourceVal = {
+      const documentWithMissingSourceVal = {
         type: 'comm-project',
         data: {
           category: 'AnyValue',
         },
       };
-      const result = await service.processRecord(recordWithMissingSourceVal);
+      const result = await service.processDocument(documentWithMissingSourceVal);
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.errors.some((err) => err.includes('/category:'))).toBe(true);
@@ -1376,11 +1376,11 @@ describe('Record domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const mockRecordTypes: RecordType[] = [
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'comm-project',
           name: 'Communication Project',
-          recordSchema: {
+          documentSchema: {
             fields: [
               {
                 key: 'direction',
@@ -1405,19 +1405,19 @@ describe('Record domain', () => {
         },
       ];
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
-      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
       // Accepts standard option from list and enriches to matched tuple
-      const optionRecord: Record = {
+      const optionDocument: Document = {
         type: 'comm-project',
         data: {
           direction: 'IN',
         },
       };
-      const optionResult = await service.processRecord(optionRecord);
+      const optionResult = await service.processDocument(optionDocument);
       expect(optionResult.success).toBe(true);
       if (optionResult.success) {
         expect(optionResult.data.data).toEqual({ direction: { key: 'IN', name: 'Incoming' } });
@@ -1425,13 +1425,13 @@ describe('Record domain', () => {
       }
 
       // Accepts arbitrary custom text string outside option list and synthesizes fallback tuple
-      const customRecord: Record = {
+      const customDocument: Document = {
         type: 'comm-project',
         data: {
           direction: 'Custom External Message',
         },
       };
-      const customResult = await service.processRecord(customRecord);
+      const customResult = await service.processDocument(customDocument);
       expect(customResult.success).toBe(true);
       if (customResult.success) {
         expect(customResult.data.data).toEqual({
@@ -1449,11 +1449,11 @@ describe('Record domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const mockRecordTypes: RecordType[] = [
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'comm-project',
           name: 'Communication Project',
-          recordSchema: {
+          documentSchema: {
             fields: [
               {
                 key: 'direction',
@@ -1478,18 +1478,18 @@ describe('Record domain', () => {
         },
       ];
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
-      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const invalidTypeRecord = {
+      const invalidTypeDocument = {
         type: 'comm-project',
         data: {
           direction: 12345,
         },
       };
-      const result = await service.processRecord(invalidTypeRecord);
+      const result = await service.processDocument(invalidTypeDocument);
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.errors.some((err) => err.includes('/direction:'))).toBe(true);
@@ -1501,11 +1501,11 @@ describe('Record domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn(),
       };
-      const mockRecordTypes: RecordType[] = [
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'comm-project',
           name: 'Communication Project',
-          recordSchema: {
+          documentSchema: {
             fields: [
               {
                 key: 'direction',
@@ -1538,15 +1538,15 @@ describe('Record domain', () => {
         },
       ];
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
-      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
       const forms = await service.getForms();
       expect(forms).toHaveLength(1);
-      expect(forms[0].recordSchema.fields[0].options?.allowUserInput).toBe(true);
-      expect(forms[0].recordSchema.fields[1].options?.allowUserInput).toBeUndefined();
+      expect(forms[0].documentSchema.fields[0].options?.allowUserInput).toBe(true);
+      expect(forms[0].documentSchema.fields[1].options?.allowUserInput).toBeUndefined();
       expect(Value.Check(FormSchemaType, forms[0])).toBe(true);
     });
 
@@ -1554,11 +1554,11 @@ describe('Record domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const mockRecordTypes: RecordType[] = [
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'submittal',
-          name: 'Submittal Record',
-          recordSchema: {
+          name: 'Submittal Document',
+          documentSchema: {
             fields: [
               { key: 'title', name: 'Title', type: 'string', required: true },
               {
@@ -1592,20 +1592,20 @@ describe('Record domain', () => {
               ],
             },
           },
-          recordUiConfig: {
+          documentUiConfig: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'SubmitWorkflow',
               },
             },
           },
-          recordWorkflowConfig: {
+          documentWorkflowConfig: {
             workflows: [
               {
                 name: 'SubmitWorkflow',
                 activitySequence: [
                   {
-                    type: 'LOG_RECORD',
+                    type: 'LOG_DOCUMENT',
                     payload: { status: 'submittal_filed' },
                   },
                 ],
@@ -1615,12 +1615,12 @@ describe('Record domain', () => {
         },
       ];
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
-      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         id: 'rec-sub-1',
         type: 'submittal',
         data: {
@@ -1629,7 +1629,7 @@ describe('Record domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.data).toEqual({
@@ -1645,14 +1645,14 @@ describe('Record domain', () => {
 
         expect(result.activities).toEqual([
           {
-            type: 'LOG_RECORD',
+            type: 'LOG_DOCUMENT',
             payload: { status: 'submittal_filed' },
           },
         ]);
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'LOG_RECORD',
+        type: 'LOG_DOCUMENT',
         payload: { status: 'submittal_filed' },
       });
     });
@@ -1661,11 +1661,11 @@ describe('Record domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const mockRecordTypes: RecordType[] = [
+      const mockDocumentTypes: DocumentType[] = [
         {
-          key: 'vendor-record',
-          name: 'Vendor Record',
-          recordSchema: {
+          key: 'vendor-document',
+          name: 'Vendor Document',
+          documentSchema: {
             fields: [
               {
                 key: 'supplierType',
@@ -1690,19 +1690,19 @@ describe('Record domain', () => {
         },
       ];
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
-      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
-        type: 'vendor-record',
+      const inputDocument: Document = {
+        type: 'vendor-document',
         data: {
           supplierType: 'Custom Acoustic Consultant',
         },
       };
 
-      const result = await service.processRecord(inputRecord);
+      const result = await service.processDocument(inputDocument);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.data).toEqual({
@@ -1718,11 +1718,11 @@ describe('Record domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const mockRecordTypes: RecordType[] = [
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'comm-project',
           name: 'Communication Project',
-          recordSchema: {
+          documentSchema: {
             fields: [
               { key: 'contact', name: 'Contact', type: 'string', required: true },
               { key: 'date', name: 'Date', type: 'string', required: true },
@@ -1758,7 +1758,7 @@ describe('Record domain', () => {
             ],
             identity: {
               id: '{{contact}}-{{date}}-{{direction.key}}-{{deliveryMethod.code}}',
-              idRecord: '{{contact}}-{{date}}-{{direction.key}}-{{deliveryMethod.code}}',
+              idDocument: '{{contact}}-{{date}}-{{direction.key}}-{{deliveryMethod.code}}',
               idGroup: '{{contact}}',
             },
             options: {
@@ -1775,7 +1775,7 @@ describe('Record domain', () => {
         },
       ];
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
 
       const evaluatedContexts: { template: string; ctx: { [key: string]: unknown } }[] = [];
@@ -1800,11 +1800,11 @@ describe('Record domain', () => {
         }),
       };
 
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       // Test with matched direction tuple and synthesized deliveryMethod fallback tuple
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Alice',
@@ -1814,11 +1814,11 @@ describe('Record domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord);
+      const result = await service.processDocument(inputDocument);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.id).toBe('Alice-260825-IN-Hand Carried Drone');
-        expect(result.data.idRecord).toBe('Alice-260825-IN-Hand Carried Drone');
+        expect(result.data.idDocument).toBe('Alice-260825-IN-Hand Carried Drone');
         expect(result.data.idGroup).toBe('Alice');
         expect(result.data.data).toEqual({
           contact: 'Alice',
@@ -1846,13 +1846,13 @@ describe('Record domain', () => {
     });
   });
 
-  describe('RecordWorkflowConfig and WorkflowType validation', () => {
+  describe('documentWorkflowConfig and WorkflowType validation', () => {
     it('validates WorkflowType with name and optional activitySequence', () => {
       const validWorkflow = {
         name: 'ProcessSubmission',
         activitySequence: [
           {
-            type: 'LOG_RECORD',
+            type: 'LOG_DOCUMENT',
             payload: { key: 'value' },
           },
         ],
@@ -1871,27 +1871,27 @@ describe('Record domain', () => {
       expect(Value.Check(WorkflowType, invalidWorkflow)).toBe(false);
     });
 
-    it('validates RecordWorkflowConfigType with workflows array', () => {
+    it('validates DocumentWorkflowConfigType with workflows array', () => {
       const validConfig = {
         workflows: [
           { name: 'Workflow1' },
           { name: 'Workflow2', activitySequence: [] },
         ],
       };
-      expect(Value.Check(RecordWorkflowConfigType, validConfig)).toBe(true);
+      expect(Value.Check(DocumentWorkflowConfigType, validConfig)).toBe(true);
 
       const invalidConfig = {
         workflows: 'not-an-array',
       };
-      expect(Value.Check(RecordWorkflowConfigType, invalidConfig)).toBe(false);
+      expect(Value.Check(DocumentWorkflowConfigType, invalidConfig)).toBe(false);
     });
   });
 
-  describe('RecordService Event Routing & Workflow Dispatch', () => {
-    const mockWorkflowRecordType: RecordType = {
+  describe('DocumentService Event Routing & Workflow Dispatch', () => {
+    const mockWorkflowDocumentType: DocumentType = {
       key: 'comm-project',
       name: 'Communication Project',
-      recordSchema: {
+      documentSchema: {
         fields: [
           { key: 'contact', name: 'Contact', type: 'string', required: true },
           { key: 'date', name: 'Date', type: 'string', required: true },
@@ -1916,7 +1916,7 @@ describe('Record domain', () => {
         ],
         identity: {
           id: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
-          idRecord: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
+          idDocument: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
           idGroup: '{{contact}}',
         },
         options: {
@@ -1926,7 +1926,7 @@ describe('Record domain', () => {
           ],
         },
       },
-      recordUiConfig: {
+      documentUiConfig: {
         events: {
           onSubmit: {
             rules: [
@@ -1961,13 +1961,13 @@ describe('Record domain', () => {
           },
         },
       },
-      recordWorkflowConfig: {
+      documentWorkflowConfig: {
         workflows: [
           {
             name: 'IncomingWorkflow',
             activitySequence: [
               {
-                type: 'LOG_RECORD',
+                type: 'LOG_DOCUMENT',
                 payload: { step: 1, action: 'log_incoming' },
               },
               {
@@ -2021,12 +2021,12 @@ describe('Record domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue([mockWorkflowRecordType]),
+        loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Jane Doe',
@@ -2036,19 +2036,19 @@ describe('Record domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.activities).toHaveLength(2);
         expect(result.activities).toEqual([
-          { type: 'LOG_RECORD', payload: { step: 1, action: 'log_incoming' } },
+          { type: 'LOG_DOCUMENT', payload: { step: 1, action: 'log_incoming' } },
           { type: 'NOTIFY_TEAM', payload: { step: 2, channel: 'inbound-docs' } },
         ]);
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
       expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(1, {
-        type: 'LOG_RECORD',
+        type: 'LOG_DOCUMENT',
         payload: { step: 1, action: 'log_incoming' },
       });
       expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(2, {
@@ -2062,12 +2062,12 @@ describe('Record domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue([mockWorkflowRecordType]),
+        loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: '_Client - AAA',
@@ -2077,7 +2077,7 @@ describe('Record domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.activities).toEqual([
@@ -2096,12 +2096,12 @@ describe('Record domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue([mockWorkflowRecordType]),
+        loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Other Contractor',
@@ -2111,7 +2111,7 @@ describe('Record domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.activities).toEqual([
@@ -2130,12 +2130,12 @@ describe('Record domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue([mockWorkflowRecordType]),
+        loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Anyone',
@@ -2145,7 +2145,7 @@ describe('Record domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onNoMatchEvent');
+      const result = await service.processDocument(inputDocument, 'onNoMatchEvent');
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.activities).toEqual([]);
@@ -2158,12 +2158,12 @@ describe('Record domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue([mockWorkflowRecordType]),
+        loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Jane Doe',
@@ -2174,7 +2174,7 @@ describe('Record domain', () => {
       };
 
       // When eventName is undefined
-      const resultNoEvent = await service.processRecord(inputRecord);
+      const resultNoEvent = await service.processDocument(inputDocument);
       expect(resultNoEvent.success).toBe(true);
       if (resultNoEvent.success) {
         expect(resultNoEvent.activities).toEqual([]);
@@ -2182,7 +2182,7 @@ describe('Record domain', () => {
       expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
 
       // When eventName does not exist
-      const resultUnknownEvent = await service.processRecord(inputRecord, 'onNonExistentEvent');
+      const resultUnknownEvent = await service.processDocument(inputDocument, 'onNonExistentEvent');
       expect(resultUnknownEvent.success).toBe(true);
       if (resultUnknownEvent.success) {
         expect(resultUnknownEvent.activities).toEqual([]);
@@ -2195,12 +2195,12 @@ describe('Record domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue([mockWorkflowRecordType]),
+        loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Jane Doe',
@@ -2210,23 +2210,23 @@ describe('Record domain', () => {
         },
       };
 
-      await expect(service.processRecord(inputRecord, 'onMissingWorkflowEvent')).rejects.toThrow(
-        /Workflow 'NonExistentWorkflow' not found in configuration for RecordType 'comm-project'/
+      await expect(service.processDocument(inputDocument, 'onMissingWorkflowEvent')).rejects.toThrow(
+        /Workflow 'NonExistentWorkflow' not found in configuration for DocumentType 'comm-project'/
       );
       expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
     });
   });
 
   describe('Activity payload Handlebars template resolution', () => {
-    it('evaluates activity payload template strings using TemplateEvaluatorPort with context { Record, RecordSchema } before dispatch', async () => {
+    it('evaluates activity payload template strings using TemplateEvaluatorPort with context { Document, documentSchema } before dispatch', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
 
-      const recordTypeWithTemplates: RecordType = {
+      const documentTypeWithTemplates: DocumentType = {
         key: 'comm-project',
         name: 'Communication Project',
-        recordSchema: {
+        documentSchema: {
           fields: [
             { key: 'contact', name: 'Contact Person', type: 'string', required: true },
             { key: 'subject', name: 'Subject', type: 'string', required: true },
@@ -2238,14 +2238,14 @@ describe('Record domain', () => {
             id: 'REC-{{contact}}',
           },
         },
-        recordUiConfig: {
+        documentUiConfig: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'DispatchActivityWorkflow',
             },
           },
         },
-        recordWorkflowConfig: {
+        documentWorkflowConfig: {
           workflows: [
             {
               name: 'DispatchActivityWorkflow',
@@ -2253,15 +2253,15 @@ describe('Record domain', () => {
                 {
                   type: 'NOTIFY_CLIENT',
                   payload: {
-                    recipient: '{{Record.data.contact}}',
-                    recordId: '{{Record.id}}',
-                    subject: '{{Record.data.fullSubject}}',
-                    schemaField: '{{RecordSchema.fields.[0].name}}',
+                    recipient: '{{Document.data.contact}}',
+                    documentId: '{{Document.id}}',
+                    subject: '{{Document.data.fullSubject}}',
+                    schemaField: '{{documentSchema.fields.[0].name}}',
                     staticNumber: 42,
                     staticBoolean: true,
                     nested: {
-                      message: 'Hello {{Record.data.contact}}',
-                      tags: ['tag-{{Record.data.contact}}', 'constant-tag'],
+                      message: 'Hello {{Document.data.contact}}',
+                      tags: ['tag-{{Document.data.contact}}', 'constant-tag'],
                     },
                   },
                 },
@@ -2272,7 +2272,7 @@ describe('Record domain', () => {
       };
 
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue([recordTypeWithTemplates]),
+        loadAll: vi.fn().mockResolvedValue([documentTypeWithTemplates]),
       };
 
       const mockEvaluator: TemplateEvaluatorPort = {
@@ -2284,38 +2284,38 @@ describe('Record domain', () => {
           if (template === 'REC-{{contact}}') {
             return `REC-${ctx.contact}`;
           }
-          if (template === '{{Record.data.contact}}') {
-            const record = ctx.Record as Record;
-            return record.data.contact as string;
+          if (template === '{{Document.data.contact}}') {
+            const document = ctx.Document as Document;
+            return document.data.contact as string;
           }
-          if (template === '{{Record.id}}') {
-            const record = ctx.Record as Record;
-            return record.id as string;
+          if (template === '{{Document.id}}') {
+            const document = ctx.Document as Document;
+            return document.id as string;
           }
-          if (template === '{{Record.data.fullSubject}}') {
-            const record = ctx.Record as Record;
-            return record.data.fullSubject as string;
+          if (template === '{{Document.data.fullSubject}}') {
+            const document = ctx.Document as Document;
+            return document.data.fullSubject as string;
           }
-          if (template === '{{RecordSchema.fields.[0].name}}') {
-            const schema = ctx.RecordSchema as RecordType['recordSchema'];
+          if (template === '{{documentSchema.fields.[0].name}}') {
+            const schema = ctx.documentSchema as DocumentType['documentSchema'];
             return schema.fields[0].name;
           }
-          if (template === 'Hello {{Record.data.contact}}') {
-            const record = ctx.Record as Record;
-            return `Hello ${record.data.contact}`;
+          if (template === 'Hello {{Document.data.contact}}') {
+            const document = ctx.Document as Document;
+            return `Hello ${document.data.contact}`;
           }
-          if (template === 'tag-{{Record.data.contact}}') {
-            const record = ctx.Record as Record;
-            return `tag-${record.data.contact}`;
+          if (template === 'tag-{{Document.data.contact}}') {
+            const document = ctx.Document as Document;
+            return `tag-${document.data.contact}`;
           }
           return template;
         }),
       };
 
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: 'Jane Doe',
@@ -2323,11 +2323,11 @@ describe('Record domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
 
       expect(result.success).toBe(true);
 
-      const expectedEnrichedRecord: Record = {
+      const expectedEnrichedDocument: Document = {
         type: 'comm-project',
         id: 'REC-Jane Doe',
         data: {
@@ -2339,7 +2339,7 @@ describe('Record domain', () => {
 
       const expectedResolvedPayload = {
         recipient: 'Jane Doe',
-        recordId: 'REC-Jane Doe',
+        documentId: 'REC-Jane Doe',
         subject: 'PROJ-Review Meeting',
         schemaField: 'Contact Person',
         staticNumber: 42,
@@ -2356,7 +2356,7 @@ describe('Record domain', () => {
       };
 
       if (result.success) {
-        expect(result.data).toEqual(expectedEnrichedRecord);
+        expect(result.data).toEqual(expectedEnrichedDocument);
         expect(result.activities).toEqual([expectedActivity]);
       }
 
@@ -2365,10 +2365,10 @@ describe('Record domain', () => {
 
       // Verify that mockEvaluator was called with the exact required context
       expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
-        '{{Record.data.contact}}',
+        '{{Document.data.contact}}',
         expect.objectContaining({
-          Record: expectedEnrichedRecord,
-          RecordSchema: recordTypeWithTemplates.recordSchema,
+          Document: expectedEnrichedDocument,
+          documentSchema: documentTypeWithTemplates.documentSchema,
         })
       );
     });
@@ -2378,21 +2378,21 @@ describe('Record domain', () => {
     it('exports StorageContextConfigType and validates config object', () => {
       expect(StorageContextConfigType).toBeDefined();
       const validConfig: StorageContextConfig = {
-        folder: '1Admin/Communication/{{Record.data.contact}}',
+        folder: '1Admin/Communication/{{Document.data.contact}}',
         root: 'Projects',
       };
       expect(Value.Check(StorageContextConfigType, validConfig)).toBe(true);
     });
 
-    it('pre-evaluates storageContextConfig using { Record: enrichedRecord } and injects StorageContext into Activity evaluation context', async () => {
+    it('pre-evaluates storageContextConfig using { Document: enrichedDocument } and injects StorageContext into Activity evaluation context', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
 
-      const recordTypeWithStorageContext: RecordType = {
+      const documentTypeWithStorageContext: DocumentType = {
         key: 'comm-project',
         name: 'Communication Project',
-        recordSchema: {
+        documentSchema: {
           fields: [
             { key: 'contact', name: 'Contact Person', type: 'string', required: true },
             { key: 'date', name: 'Date', type: 'string', required: true },
@@ -2403,7 +2403,7 @@ describe('Record domain', () => {
             { key: 'summary', template: '{{date}} {{direction}} - {{description}}' },
           ],
         },
-        recordUiConfig: {
+        documentUiConfig: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'StorageWorkflow',
@@ -2411,10 +2411,10 @@ describe('Record domain', () => {
           },
         },
         storageContextConfig: {
-          folder: '1Admin/Communication/{{Record.data.contact}}',
-          subfolder: 'Archive/{{Record.data.direction}}',
+          folder: '1Admin/Communication/{{Document.data.contact}}',
+          subfolder: 'Archive/{{Document.data.direction}}',
         },
-        recordWorkflowConfig: {
+        documentWorkflowConfig: {
           workflows: [
             {
               name: 'StorageWorkflow',
@@ -2422,8 +2422,8 @@ describe('Record domain', () => {
                 {
                   type: 'CREATE_FILE',
                   payload: {
-                    targetPath: '{{StorageContext.folder}}/{{Record.data.summary}}',
-                    archivePath: '{{StorageContext.subfolder}}/{{Record.data.date}}',
+                    targetPath: '{{StorageContext.folder}}/{{Document.data.summary}}',
+                    archivePath: '{{StorageContext.subfolder}}/{{Document.data.date}}',
                   },
                 },
               ],
@@ -2433,7 +2433,7 @@ describe('Record domain', () => {
       };
 
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue([recordTypeWithStorageContext]),
+        loadAll: vi.fn().mockResolvedValue([documentTypeWithStorageContext]),
       };
 
       const mockEvaluator: TemplateEvaluatorPort = {
@@ -2442,32 +2442,32 @@ describe('Record domain', () => {
           if (template === '{{date}} {{direction}} - {{description}}') {
             return `${ctx.date} ${ctx.direction} - ${ctx.description}`;
           }
-          if (template === '1Admin/Communication/{{Record.data.contact}}') {
-            const record = ctx.Record as Record;
-            return `1Admin/Communication/${record.data.contact}`;
+          if (template === '1Admin/Communication/{{Document.data.contact}}') {
+            const document = ctx.Document as Document;
+            return `1Admin/Communication/${document.data.contact}`;
           }
-          if (template === 'Archive/{{Record.data.direction}}') {
-            const record = ctx.Record as Record;
-            return `Archive/${record.data.direction}`;
+          if (template === 'Archive/{{Document.data.direction}}') {
+            const document = ctx.Document as Document;
+            return `Archive/${document.data.direction}`;
           }
-          if (template === '{{StorageContext.folder}}/{{Record.data.summary}}') {
+          if (template === '{{StorageContext.folder}}/{{Document.data.summary}}') {
             const storageContext = ctx.StorageContext as { folder: string; subfolder: string };
-            const record = ctx.Record as Record;
-            return `${storageContext.folder}/${record.data.summary}`;
+            const document = ctx.Document as Document;
+            return `${storageContext.folder}/${document.data.summary}`;
           }
-          if (template === '{{StorageContext.subfolder}}/{{Record.data.date}}') {
+          if (template === '{{StorageContext.subfolder}}/{{Document.data.date}}') {
             const storageContext = ctx.StorageContext as { folder: string; subfolder: string };
-            const record = ctx.Record as Record;
-            return `${storageContext.subfolder}/${record.data.date}`;
+            const document = ctx.Document as Document;
+            return `${storageContext.subfolder}/${document.data.date}`;
           }
           return template;
         }),
       };
 
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'comm-project',
         data: {
           contact: '_Client - AAA',
@@ -2477,11 +2477,11 @@ describe('Record domain', () => {
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
 
       expect(result.success).toBe(true);
 
-      const expectedEnrichedRecord: Record = {
+      const expectedEnrichedDocument: Document = {
         type: 'comm-project',
         data: {
           contact: '_Client - AAA',
@@ -2506,47 +2506,47 @@ describe('Record domain', () => {
       };
 
       if (result.success) {
-        expect(result.data).toEqual(expectedEnrichedRecord);
+        expect(result.data).toEqual(expectedEnrichedDocument);
         expect(result.activities).toEqual([expectedActivity]);
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith(expectedActivity);
 
-      // Verify that storageContextConfig was pre-evaluated with { Record: enrichedRecord }
+      // Verify that storageContextConfig was pre-evaluated with { Document: enrichedDocument }
       expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
-        '1Admin/Communication/{{Record.data.contact}}',
-        { Record: expectedEnrichedRecord }
+        '1Admin/Communication/{{Document.data.contact}}',
+        { Document: expectedEnrichedDocument }
       );
       expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
-        'Archive/{{Record.data.direction}}',
-        { Record: expectedEnrichedRecord }
+        'Archive/{{Document.data.direction}}',
+        { Document: expectedEnrichedDocument }
       );
 
       // Verify that activity evaluation context received StorageContext
       expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
-        '{{StorageContext.folder}}/{{Record.data.summary}}',
+        '{{StorageContext.folder}}/{{Document.data.summary}}',
         expect.objectContaining({
-          Record: expectedEnrichedRecord,
-          RecordSchema: recordTypeWithStorageContext.recordSchema,
+          Document: expectedEnrichedDocument,
+          documentSchema: documentTypeWithStorageContext.documentSchema,
           StorageContext: expectedStorageContext,
         })
       );
     });
 
-    it('pre-evaluates nested structures in storageContextConfig recursively against { Record: enrichedRecord }', async () => {
+    it('pre-evaluates nested structures in storageContextConfig recursively against { Document: enrichedDocument }', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
 
-      const recordTypeWithNestedStorage: RecordType = {
+      const documentTypeWithNestedStorage: DocumentType = {
         key: 'project',
         name: 'Project',
-        recordSchema: {
+        documentSchema: {
           fields: [
             { key: 'code', name: 'Code', type: 'string', required: true },
           ],
         },
-        recordUiConfig: {
+        documentUiConfig: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'NestedStorageWorkflow',
@@ -2555,11 +2555,11 @@ describe('Record domain', () => {
         },
         storageContextConfig: {
           paths: {
-            root: 'Projects/{{Record.data.code}}',
-            subfolders: ['Drawings/{{Record.data.code}}', 'Specs'],
+            root: 'Projects/{{Document.data.code}}',
+            subfolders: ['Drawings/{{Document.data.code}}', 'Specs'],
           },
         },
-        recordWorkflowConfig: {
+        documentWorkflowConfig: {
           workflows: [
             {
               name: 'NestedStorageWorkflow',
@@ -2578,19 +2578,19 @@ describe('Record domain', () => {
       };
 
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue([recordTypeWithNestedStorage]),
+        loadAll: vi.fn().mockResolvedValue([documentTypeWithNestedStorage]),
       };
 
       const mockEvaluator: TemplateEvaluatorPort = {
         validate: vi.fn().mockReturnValue(true),
         evaluate: vi.fn().mockImplementation((template: string, ctx: { [key: string]: unknown }) => {
-          if (template === 'Projects/{{Record.data.code}}') {
-            const record = ctx.Record as Record;
-            return `Projects/${record.data.code}`;
+          if (template === 'Projects/{{Document.data.code}}') {
+            const document = ctx.Document as Document;
+            return `Projects/${document.data.code}`;
           }
-          if (template === 'Drawings/{{Record.data.code}}') {
-            const record = ctx.Record as Record;
-            return `Drawings/${record.data.code}`;
+          if (template === 'Drawings/{{Document.data.code}}') {
+            const document = ctx.Document as Document;
+            return `Drawings/${document.data.code}`;
           }
           if (template === '{{StorageContext.paths.root}}') {
             const storage = ctx.StorageContext as { paths: { root: string; subfolders: string[] } };
@@ -2604,17 +2604,17 @@ describe('Record domain', () => {
         }),
       };
 
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'project',
         data: {
           code: 'PRJ-100',
         },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
 
       const expectedActivity: Activity = {
@@ -2633,20 +2633,20 @@ describe('Record domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
 
-      const recordTypeWithoutStorage: RecordType = {
+      const documentTypeWithoutStorage: DocumentType = {
         key: 'simple',
         name: 'Simple',
-        recordSchema: {
+        documentSchema: {
           fields: [{ key: 'name', name: 'Name', type: 'string', required: true }],
         },
-        recordUiConfig: {
+        documentUiConfig: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'SimpleWorkflow',
             },
           },
         },
-        recordWorkflowConfig: {
+        documentWorkflowConfig: {
           workflows: [
             {
               name: 'SimpleWorkflow',
@@ -2654,7 +2654,7 @@ describe('Record domain', () => {
                 {
                   type: 'NOTIFY',
                   payload: {
-                    name: '{{Record.data.name}}',
+                    name: '{{Document.data.name}}',
                   },
                 },
               ],
@@ -2664,33 +2664,33 @@ describe('Record domain', () => {
       };
 
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue([recordTypeWithoutStorage]),
+        loadAll: vi.fn().mockResolvedValue([documentTypeWithoutStorage]),
       };
 
       const mockEvaluator: TemplateEvaluatorPort = {
         validate: vi.fn().mockReturnValue(true),
         evaluate: vi.fn().mockImplementation((template: string, ctx: { [key: string]: unknown }) => {
-          if (template === '{{Record.data.name}}') {
-            const record = ctx.Record as Record;
-            return record.data.name as string;
+          if (template === '{{Document.data.name}}') {
+            const document = ctx.Document as Document;
+            return document.data.name as string;
           }
           return template;
         }),
       };
 
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'simple',
         data: { name: 'Alice' },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
 
       expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
-        '{{Record.data.name}}',
+        '{{Document.data.name}}',
         expect.not.objectContaining({
           StorageContext: expect.anything(),
         })
@@ -2699,10 +2699,10 @@ describe('Record domain', () => {
   });
 
   describe('Execution Context (ExecutionContext) Propagation & Isolation', () => {
-    const testRecordType: RecordType = {
-      key: 'secureRecord',
-      name: 'Secure Record',
-      recordSchema: {
+    const testDocumentType: DocumentType = {
+      key: 'secureDocument',
+      name: 'Secure Document',
+      documentSchema: {
         fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
         calculatedFields: [
           {
@@ -2714,7 +2714,7 @@ describe('Record domain', () => {
           id: 'ID-{{title}}',
         },
       },
-      recordUiConfig: {
+      documentUiConfig: {
         events: {
           onSubmit: {
             catchAllWorkflow: 'ExecuteSecureAction',
@@ -2722,9 +2722,9 @@ describe('Record domain', () => {
         },
       },
       storageContextConfig: {
-        folder: 'DynamicFolder-{{Record.data.title}}',
+        folder: 'DynamicFolder-{{Document.data.title}}',
       },
-      recordWorkflowConfig: {
+      documentWorkflowConfig: {
         workflows: [
           {
             name: 'ExecuteSecureAction',
@@ -2733,7 +2733,7 @@ describe('Record domain', () => {
                 type: 'MOVE_FILE',
                 payload: {
                   folder: '{{StorageContext.folder}}',
-                  fileTitle: '{{Record.data.title}}',
+                  fileTitle: '{{Document.data.title}}',
                 },
               },
             ],
@@ -2748,7 +2748,7 @@ describe('Record domain', () => {
       };
 
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue([testRecordType]),
+        loadAll: vi.fn().mockResolvedValue([testDocumentType]),
       };
 
       const mockEvaluator: TemplateEvaluatorPort = {
@@ -2756,27 +2756,27 @@ describe('Record domain', () => {
         evaluate: vi.fn().mockImplementation((template: string, ctx: { [key: string]: unknown }) => {
           if (template === 'PREFIX-{{title}}') return `PREFIX-${ctx.title}`;
           if (template === 'ID-{{title}}') return `ID-${ctx.title}`;
-          if (template === 'DynamicFolder-{{Record.data.title}}') {
-            const record = ctx.Record as Record;
-            return `DynamicFolder-${record.data.title}`;
+          if (template === 'DynamicFolder-{{Document.data.title}}') {
+            const document = ctx.Document as Document;
+            return `DynamicFolder-${document.data.title}`;
           }
           if (template === '{{StorageContext.folder}}') {
             const storageCtx = ctx.StorageContext as { folder: string };
             return storageCtx.folder;
           }
-          if (template === '{{Record.data.title}}') {
-            const record = ctx.Record as Record;
-            return record.data.title as string;
+          if (template === '{{Document.data.title}}') {
+            const document = ctx.Document as Document;
+            return document.data.title as string;
           }
           return template;
         }),
       };
 
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
-        type: 'secureRecord',
+      const inputDocument: Document = {
+        type: 'secureDocument',
         data: { title: 'SecretDoc' },
       };
 
@@ -2789,8 +2789,8 @@ describe('Record domain', () => {
         },
       };
 
-      const result = await service.processRecord(
-        inputRecord,
+      const result = await service.processDocument(
+        inputDocument,
         'onSubmit',
         executionContext
       );
@@ -2815,7 +2815,7 @@ describe('Record domain', () => {
       };
 
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue([testRecordType]),
+        loadAll: vi.fn().mockResolvedValue([testDocumentType]),
       };
 
       const mockEvaluator: TemplateEvaluatorPort = {
@@ -2823,31 +2823,31 @@ describe('Record domain', () => {
         evaluate: vi.fn().mockImplementation((template: string, ctx: { [key: string]: unknown }) => {
           if (template === 'PREFIX-{{title}}') return `PREFIX-${ctx.title}`;
           if (template === 'ID-{{title}}') return `ID-${ctx.title}`;
-          if (template === 'DynamicFolder-{{Record.data.title}}') {
-            const record = ctx.Record as Record;
-            return `DynamicFolder-${record.data.title}`;
+          if (template === 'DynamicFolder-{{Document.data.title}}') {
+            const document = ctx.Document as Document;
+            return `DynamicFolder-${document.data.title}`;
           }
           if (template === '{{StorageContext.folder}}') {
             const storageCtx = ctx.StorageContext as { folder: string };
             return storageCtx.folder;
           }
-          if (template === '{{Record.data.title}}') {
-            const record = ctx.Record as Record;
-            return record.data.title as string;
+          if (template === '{{Document.data.title}}') {
+            const document = ctx.Document as Document;
+            return document.data.title as string;
           }
           return template;
         }),
       };
 
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
-        type: 'secureRecord',
+      const inputDocument: Document = {
+        type: 'secureDocument',
         data: { title: 'PublicDoc' },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
 
       expect(result.success).toBe(true);
       expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
@@ -2866,7 +2866,7 @@ describe('Record domain', () => {
       };
 
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue([testRecordType]),
+        loadAll: vi.fn().mockResolvedValue([testDocumentType]),
       };
 
       const capturedContexts: Array<{ [key: string]: unknown }> = [];
@@ -2876,28 +2876,28 @@ describe('Record domain', () => {
           capturedContexts.push({ ...ctx });
           if (template === 'PREFIX-{{title}}') return `PREFIX-${ctx.title}`;
           if (template === 'ID-{{title}}') return `ID-${ctx.title}`;
-          if (template === 'DynamicFolder-{{Record.data.title}}') {
-            const record = ctx.Record as Record;
-            return `DynamicFolder-${record.data.title}`;
+          if (template === 'DynamicFolder-{{Document.data.title}}') {
+            const document = ctx.Document as Document;
+            return `DynamicFolder-${document.data.title}`;
           }
           if (template === '{{StorageContext.folder}}') {
             const storageCtx = ctx.StorageContext as { folder: string };
             return storageCtx?.folder ?? '';
           }
-          if (template === '{{Record.data.title}}') {
-            const record = ctx.Record as Record;
-            return (record?.data?.title as string) ?? '';
+          if (template === '{{Document.data.title}}') {
+            const document = ctx.Document as Document;
+            return (document?.data?.title as string) ?? '';
           }
           return template;
         }),
       };
 
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
-        type: 'secureRecord',
-        data: { title: 'SensitiveRecord' },
+      const inputDocument: Document = {
+        type: 'secureDocument',
+        data: { title: 'SensitiveDocument' },
       };
 
       const sensitiveContext: ExecutionContext = {
@@ -2906,8 +2906,8 @@ describe('Record domain', () => {
         },
       };
 
-      await service.processRecord(
-        inputRecord,
+      await service.processDocument(
+        inputDocument,
         'onSubmit',
         sensitiveContext
       );
@@ -2922,37 +2922,37 @@ describe('Record domain', () => {
     });
   });
 
-  describe('RecordService in-flight context merging', () => {
-    it('merges recordDataPatch and contextVariables from previous activity into subsequent activity payload evaluation', async () => {
-      const mockRecordTypes: RecordType[] = [
+  describe('DocumentService in-flight context merging', () => {
+    it('merges documentDataPatch and contextVariables from previous activity into subsequent activity payload evaluation', async () => {
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'doc-process',
           name: 'Document Process',
-          recordSchema: {
+          documentSchema: {
             fields: [
               { key: 'title', name: 'Title', type: 'string', required: true },
             ],
           },
-          recordUiConfig: {
+          documentUiConfig: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'MultiStepWorkflow',
               },
             },
           },
-          recordWorkflowConfig: {
+          documentWorkflowConfig: {
             workflows: [
               {
                 name: 'MultiStepWorkflow',
                 activitySequence: [
                   {
                     type: 'STEP_ONE',
-                    payload: { initial: '{{Record.data.title}}' },
+                    payload: { initial: '{{Document.data.title}}' },
                   },
                   {
                     type: 'STEP_TWO',
                     payload: {
-                      fromPatch: '{{Record.data.generatedFileId}}',
+                      fromPatch: '{{Document.data.generatedFileId}}',
                       fromContext: '{{stepOneStatus}}',
                     },
                   },
@@ -2964,7 +2964,7 @@ describe('Record domain', () => {
       ];
 
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
 
       const capturedDispatches: Activity[] = [];
@@ -2974,7 +2974,7 @@ describe('Record domain', () => {
           if (activity.type === 'STEP_ONE') {
             return {
               success: true,
-              recordDataPatch: { generatedFileId: 'file-xyz-987' },
+              documentDataPatch: { generatedFileId: 'file-xyz-987' },
               contextVariables: { stepOneStatus: 'COMPLETED_SUCCESS' },
             };
           }
@@ -2985,11 +2985,11 @@ describe('Record domain', () => {
       const mockEvaluator: TemplateEvaluatorPort = {
         validate: vi.fn().mockReturnValue(true),
         evaluate: vi.fn().mockImplementation((template: string, ctx: TemplateEvaluationContext) => {
-          if (template === '{{Record.data.title}}') {
-            return (ctx.Record as Record)?.data?.title as string;
+          if (template === '{{Document.data.title}}') {
+            return (ctx.Document as Document)?.data?.title as string;
           }
-          if (template === '{{Record.data.generatedFileId}}') {
-            return (ctx.Record as Record)?.data?.generatedFileId as string;
+          if (template === '{{Document.data.generatedFileId}}') {
+            return (ctx.Document as Document)?.data?.generatedFileId as string;
           }
           if (template === '{{stepOneStatus}}') {
             return ctx.stepOneStatus as string;
@@ -2998,20 +2998,20 @@ describe('Record domain', () => {
         }),
       };
 
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'doc-process',
         data: { title: 'Initial Document' },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
 
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      // Final returned record data contains patched fields
+      // Final returned document data contains patched fields
       expect(result.data.data).toEqual({
         title: 'Initial Document',
         generatedFileId: 'file-xyz-987',
@@ -3033,23 +3033,23 @@ describe('Record domain', () => {
     });
 
     it('accumulates patches across multiple chained activities', async () => {
-      const mockRecordTypes: RecordType[] = [
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'multi-stage',
           name: 'Multi Stage',
-          recordSchema: {
+          documentSchema: {
             fields: [
               { key: 'step0', name: 'Step 0', type: 'string', required: true },
             ],
           },
-          recordUiConfig: {
+          documentUiConfig: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'ChainedWorkflow',
               },
             },
           },
-          recordWorkflowConfig: {
+          documentWorkflowConfig: {
             workflows: [
               {
                 name: 'ChainedWorkflow',
@@ -3074,30 +3074,30 @@ describe('Record domain', () => {
       ];
 
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
 
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockImplementation(async (activity: Activity) => {
           if (activity.type === 'STAGE_A') {
-            return { recordDataPatch: { patchA: 'valA' } };
+            return { documentDataPatch: { patchA: 'valA' } };
           }
           if (activity.type === 'STAGE_B') {
-            return { recordDataPatch: { patchB: 'valB' } };
+            return { documentDataPatch: { patchB: 'valB' } };
           }
           return undefined;
         }),
       };
 
-      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'multi-stage',
         data: { step0: 'init' },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (!result.success) return;
 
@@ -3108,24 +3108,24 @@ describe('Record domain', () => {
       });
     });
 
-    it('propagates recordDataPatch from activity output to subsequent activity in sequence', async () => {
-      const mockRecordTypes: RecordType[] = [
+    it('propagates documentDataPatch from activity output to subsequent activity in sequence', async () => {
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'log-pipeline',
           name: 'Log Pipeline',
-          recordSchema: {
+          documentSchema: {
             fields: [
               { key: 'inputMsg', name: 'Input Message', type: 'string', required: true },
             ],
           },
-          recordUiConfig: {
+          documentUiConfig: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'LogWorkflow',
               },
             },
           },
-          recordWorkflowConfig: {
+          documentWorkflowConfig: {
             workflows: [
               {
                 name: 'LogWorkflow',
@@ -3140,7 +3140,7 @@ describe('Record domain', () => {
                     type: 'STEP_TWO',
                     payload: {
                       message: 'Second step using enriched state',
-                      receivedEnrichedState: '{{Record.data.enrichedState}}',
+                      receivedEnrichedState: '{{Document.data.enrichedState}}',
                     },
                   },
                 ],
@@ -3151,14 +3151,14 @@ describe('Record domain', () => {
       ];
 
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
 
       const mockEvaluator: TemplateEvaluatorPort = {
         validate: vi.fn().mockReturnValue(true),
         evaluate: vi.fn().mockImplementation((template: string, ctx: TemplateEvaluationContext) => {
-          if (template === '{{Record.data.enrichedState}}') {
-            return (ctx.Record as Record)?.data?.enrichedState as string;
+          if (template === '{{Document.data.enrichedState}}') {
+            return (ctx.Document as Document)?.data?.enrichedState as string;
           }
           return template;
         }),
@@ -3169,21 +3169,21 @@ describe('Record domain', () => {
           if (activity.type === 'STEP_ONE') {
             return {
               success: true,
-              recordDataPatch: { enrichedState: 'state-123' },
+              documentDataPatch: { enrichedState: 'state-123' },
             };
           }
           return undefined;
         }),
       };
-      const service = new RecordService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'log-pipeline',
         data: { inputMsg: 'Hello' },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (!result.success) return;
 
@@ -3200,23 +3200,23 @@ describe('Record domain', () => {
     });
 
     it('halts workflow execution and returns failure when activity returns success: false with error', async () => {
-      const mockRecordTypes: RecordType[] = [
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'failing-doc',
           name: 'Failing Document',
-          recordSchema: {
+          documentSchema: {
             fields: [
               { key: 'title', name: 'Title', type: 'string', required: true },
             ],
           },
-          recordUiConfig: {
+          documentUiConfig: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'FailingWorkflow',
               },
             },
           },
-          recordWorkflowConfig: {
+          documentWorkflowConfig: {
             workflows: [
               {
                 name: 'FailingWorkflow',
@@ -3237,7 +3237,7 @@ describe('Record domain', () => {
       ];
 
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
 
       const capturedActivities: string[] = [];
@@ -3254,15 +3254,15 @@ describe('Record domain', () => {
         }),
       };
 
-      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'failing-doc',
         data: { title: 'Test Fail' },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(false);
       if (result.success) return;
 
@@ -3270,24 +3270,24 @@ describe('Record domain', () => {
       expect(capturedActivities).toEqual(['STEP_FAIL']);
     });
 
-    it('collects activity outputs including FileLocators and exposes them in ProcessRecordResult.outputs', async () => {
-      const mockRecordTypes: RecordType[] = [
+    it('collects activity outputs including FileLocators and exposes them in ProcessDocumentResult.outputs', async () => {
+      const mockDocumentTypes: DocumentType[] = [
         {
           key: 'multi-step-doc',
           name: 'Multi Step Document',
-          recordSchema: {
+          documentSchema: {
             fields: [
               { key: 'title', name: 'Title', type: 'string', required: true },
             ],
           },
-          recordUiConfig: {
+          documentUiConfig: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'MultiStepWorkflow',
               },
             },
           },
-          recordWorkflowConfig: {
+          documentWorkflowConfig: {
             workflows: [
               {
                 name: 'MultiStepWorkflow',
@@ -3312,7 +3312,7 @@ describe('Record domain', () => {
       ];
 
       const customRegistry: ManifestRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue(mockRecordTypes),
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
 
       const file1: FileLocator = {
@@ -3351,15 +3351,15 @@ describe('Record domain', () => {
         }),
       };
 
-      const service = new RecordService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const inputRecord: Record = {
+      const inputDocument: Document = {
         type: 'multi-step-doc',
         data: { title: 'Test Multi Step' },
       };
 
-      const result = await service.processRecord(inputRecord, 'onSubmit');
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (!result.success) return;
 
@@ -3382,7 +3382,7 @@ describe('Record domain', () => {
       const testObj = {
         title: 'Simple Title',
         nested: {
-          path: '/path/{{Record.data.id}}',
+          path: '/path/{{Document.data.id}}',
           deep: {
             item: 'deep-val',
           },
@@ -3406,7 +3406,7 @@ describe('Record domain', () => {
 
       expect(visited).toEqual([
         { path: 'root.title', template: 'Simple Title' },
-        { path: 'root.nested.path', template: '/path/{{Record.data.id}}' },
+        { path: 'root.nested.path', template: '/path/{{Document.data.id}}' },
         { path: 'root.nested.deep.item', template: 'deep-val' },
         { path: 'root.list[0]', template: 'first-item' },
         { path: 'root.list[1].payload.target', template: 'target-{{val}}' },
@@ -3441,12 +3441,12 @@ describe('Record domain', () => {
       evaluate: vi.fn().mockImplementation((tpl: string) => tpl),
     });
 
-    it('returns empty error array for a completely valid RecordType manifest', () => {
+    it('returns empty error array for a completely valid DocumentType manifest', () => {
       const evaluator = createEvaluator();
-      const validManifest: RecordType = {
+      const validManifest: DocumentType = {
         key: 'communication-project',
         name: 'Communication Project',
-        recordSchema: {
+        documentSchema: {
           fields: [
             { key: 'contact', name: 'Contact', type: 'string', required: true },
             { key: 'date', name: 'Date', type: 'string', required: true },
@@ -3475,7 +3475,7 @@ describe('Record domain', () => {
           ],
           identity: {
             id: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
-            idRecord: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
+            idDocument: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
             idGroup: '{{contact}}',
           },
           options: {
@@ -3486,26 +3486,26 @@ describe('Record domain', () => {
           },
         },
         storageContextConfig: {
-          folder: '1Admin/Communication/{{Record.data.contact}}',
-          subfolder: 'Archive/{{Record.data.direction.key}}',
+          folder: '1Admin/Communication/{{Document.data.contact}}',
+          subfolder: 'Archive/{{Document.data.direction.key}}',
           deep: {
-            nestedFolder: 'Deep/{{Record.data.summary}}',
+            nestedFolder: 'Deep/{{Document.data.summary}}',
           },
         },
-        recordWorkflowConfig: {
+        documentWorkflowConfig: {
           workflows: [
             {
               name: 'OutgoingCommWorkflow',
               activitySequence: [
                 {
-                  type: 'LOG_RECORD',
+                  type: 'LOG_DOCUMENT',
                   payload: {
-                    targetPath: '{{StorageContext.folder}}/{{Record.data.summary}}',
-                    archivePath: '{{StorageContext.subfolder}}/{{Record.data.testCalculatedField}}',
+                    targetPath: '{{StorageContext.folder}}/{{Document.data.summary}}',
+                    archivePath: '{{StorageContext.subfolder}}/{{Document.data.testCalculatedField}}',
                     deepPath: '{{StorageContext.deep.nestedFolder}}',
-                    recordId: '{{Record.id}}',
-                    recordType: '{{Record.type}}',
-                    schemaIdentityId: '{{RecordSchema.identity.id}}',
+                    documentId: '{{Document.id}}',
+                    documentType: '{{Document.type}}',
+                    schemaIdentityId: '{{documentSchema.identity.id}}',
                   },
                 },
               ],
@@ -3520,10 +3520,10 @@ describe('Record domain', () => {
 
     it('expands option properties and option tuples in base and execution variables', () => {
       const evaluator = createEvaluator();
-      const manifest: RecordType = {
+      const manifest: DocumentType = {
         key: 'option-test',
         name: 'Option Test',
-        recordSchema: {
+        documentSchema: {
           fields: [
             {
               key: 'category',
@@ -3548,7 +3548,7 @@ describe('Record domain', () => {
             },
           ],
         },
-        recordWorkflowConfig: {
+        documentWorkflowConfig: {
           workflows: [
             {
               name: 'W1',
@@ -3556,10 +3556,10 @@ describe('Record domain', () => {
                 {
                   type: 'ACT_1',
                   payload: {
-                    code: '{{Record.data.category.code}}',
-                    label: '{{Record.data.category.label}}',
-                    customProp: '{{Record.data.category.customTupleProp}}',
-                    calc: '{{Record.data.fullLabel}}',
+                    code: '{{Document.data.category.code}}',
+                    label: '{{Document.data.category.label}}',
+                    customProp: '{{Document.data.category.customTupleProp}}',
+                    calc: '{{Document.data.fullLabel}}',
                   },
                 },
               ],
@@ -3574,10 +3574,10 @@ describe('Record domain', () => {
 
     it('recursively expands deeply nested option tuple properties in base variables', () => {
       const evaluator = createEvaluator();
-      const manifest: RecordType = {
+      const manifest: DocumentType = {
         key: 'nested-option-test',
         name: 'Nested Option Test',
-        recordSchema: {
+        documentSchema: {
           fields: [
             {
               key: 'department',
@@ -3611,7 +3611,7 @@ describe('Record domain', () => {
             },
           ],
         },
-        recordWorkflowConfig: {
+        documentWorkflowConfig: {
           workflows: [
             {
               name: 'W1',
@@ -3619,7 +3619,7 @@ describe('Record domain', () => {
                 {
                   type: 'ACT_1',
                   payload: {
-                    divTag: '{{Record.data.department.metadata.division.tag}}',
+                    divTag: '{{Document.data.department.metadata.division.tag}}',
                   },
                 },
               ],
@@ -3634,13 +3634,13 @@ describe('Record domain', () => {
 
     it('whitelists dynamic Context.* and Context variables in workflow activities', () => {
       const evaluator = createEvaluator();
-      const manifest: RecordType = {
+      const manifest: DocumentType = {
         key: 'context-test',
         name: 'Context Test',
-        recordSchema: {
+        documentSchema: {
           fields: [{ key: 'title', name: 'Title', type: 'string' }],
         },
-        recordWorkflowConfig: {
+        documentWorkflowConfig: {
           workflows: [
             {
               name: 'DynamicWorkflow',
@@ -3648,7 +3648,7 @@ describe('Record domain', () => {
                 {
                   type: 'CREATE_FOLDER',
                   payload: {
-                    name: '{{Record.data.title}}',
+                    name: '{{Document.data.title}}',
                   },
                 },
                 {
@@ -3657,7 +3657,7 @@ describe('Record domain', () => {
                     parentFolderId: '{{Context.generatedFolderId}}',
                     nestedOutput: '{{Context.stepResults.destinationPath}}',
                     fullContext: '{{Context}}',
-                    validRecordTitle: '{{Record.data.title}}',
+                    validDocumentTitle: '{{Document.data.title}}',
                   },
                 },
               ],
@@ -3672,10 +3672,10 @@ describe('Record domain', () => {
 
     it('returns exact error path for invalid calculatedFields templates', () => {
       const evaluator = createEvaluator();
-      const manifest: RecordType = {
+      const manifest: DocumentType = {
         key: 'bad-calc',
         name: 'Bad Calc',
-        recordSchema: {
+        documentSchema: {
           fields: [{ key: 'title', name: 'Title', type: 'string' }],
           calculatedFields: [
             {
@@ -3692,41 +3692,41 @@ describe('Record domain', () => {
 
       const errors = validateManifestTemplates(manifest, evaluator);
       expect(errors).toEqual([
-        'Invalid template at "recordSchema.calculatedFields[1].template": references unknown fields or is malformed.',
+        'Invalid template at "documentSchema.calculatedFields[1].template": references unknown fields or is malformed.',
       ]);
     });
 
     it('returns exact error path for invalid identity templates', () => {
       const evaluator = createEvaluator();
-      const manifest: RecordType = {
+      const manifest: DocumentType = {
         key: 'bad-identity',
         name: 'Bad Identity',
-        recordSchema: {
+        documentSchema: {
           fields: [{ key: 'contact', name: 'Contact', type: 'string' }],
           identity: {
             id: '{{contact}}',
-            idRecord: '{{contact}}-{{nonExistent}}',
+            idDocument: '{{contact}}-{{nonExistent}}',
           },
         },
       };
 
       const errors = validateManifestTemplates(manifest, evaluator);
       expect(errors).toEqual([
-        'Invalid template at "recordSchema.identity.idRecord": references unknown fields or is malformed.',
+        'Invalid template at "documentSchema.identity.idDocument": references unknown fields or is malformed.',
       ]);
     });
 
     it('returns exact error path for invalid storageContextConfig templates', () => {
       const evaluator = createEvaluator();
-      const manifest: RecordType = {
+      const manifest: DocumentType = {
         key: 'bad-storage',
         name: 'Bad Storage',
-        recordSchema: {
+        documentSchema: {
           fields: [{ key: 'folderName', name: 'Folder Name', type: 'string' }],
         },
         storageContextConfig: {
-          folder: '{{Record.data.folderName}}',
-          subfolder: '{{Record.data.invalidStorageVar}}',
+          folder: '{{Document.data.folderName}}',
+          subfolder: '{{Document.data.invalidStorageVar}}',
         },
       };
 
@@ -3738,13 +3738,13 @@ describe('Record domain', () => {
 
     it('returns exact error path for invalid workflow activity payload templates', () => {
       const evaluator = createEvaluator();
-      const manifest: RecordType = {
+      const manifest: DocumentType = {
         key: 'bad-workflow',
         name: 'Bad Workflow',
-        recordSchema: {
+        documentSchema: {
           fields: [{ key: 'title', name: 'Title', type: 'string' }],
         },
-        recordWorkflowConfig: {
+        documentWorkflowConfig: {
           workflows: [
             {
               name: 'W1',
@@ -3752,7 +3752,7 @@ describe('Record domain', () => {
                 {
                   type: 'ACT_1',
                   payload: {
-                    folder: '{{Record.data.unknownActivityVar}}',
+                    folder: '{{Document.data.unknownActivityVar}}',
                   },
                 },
               ],
@@ -3763,16 +3763,16 @@ describe('Record domain', () => {
 
       const errors = validateManifestTemplates(manifest, evaluator);
       expect(errors).toEqual([
-        'Invalid template at "recordWorkflowConfig.workflows[0].activitySequence[0].payload.folder": references unknown fields or is malformed.',
+        'Invalid template at "documentWorkflowConfig.workflows[0].activitySequence[0].payload.folder": references unknown fields or is malformed.',
       ]);
     });
 
     it('collects and returns multiple validation errors across different manifest sections', () => {
       const evaluator = createEvaluator();
-      const manifest: RecordType = {
+      const manifest: DocumentType = {
         key: 'multi-error',
         name: 'Multi Error',
-        recordSchema: {
+        documentSchema: {
           fields: [{ key: 'title', name: 'Title', type: 'string' }],
           calculatedFields: [
             { key: 'calc1', template: '{{missing1}}' },
@@ -3782,9 +3782,9 @@ describe('Record domain', () => {
           },
         },
         storageContextConfig: {
-          base: '{{Record.data.missing3}}',
+          base: '{{Document.data.missing3}}',
         },
-        recordWorkflowConfig: {
+        documentWorkflowConfig: {
           workflows: [
             {
               name: 'W1',
@@ -3792,7 +3792,7 @@ describe('Record domain', () => {
                 {
                   type: 'ACT_1',
                   payload: {
-                    badPayload: '{{Record.data.missing4}}',
+                    badPayload: '{{Document.data.missing4}}',
                   },
                 },
               ],
@@ -3803,10 +3803,10 @@ describe('Record domain', () => {
 
       const errors = validateManifestTemplates(manifest, evaluator);
       expect(errors).toEqual([
-        'Invalid template at "recordSchema.calculatedFields[0].template": references unknown fields or is malformed.',
-        'Invalid template at "recordSchema.identity.id": references unknown fields or is malformed.',
+        'Invalid template at "documentSchema.calculatedFields[0].template": references unknown fields or is malformed.',
+        'Invalid template at "documentSchema.identity.id": references unknown fields or is malformed.',
         'Invalid template at "storageContextConfig.base": references unknown fields or is malformed.',
-        'Invalid template at "recordWorkflowConfig.workflows[0].activitySequence[0].payload.badPayload": references unknown fields or is malformed.',
+        'Invalid template at "documentWorkflowConfig.workflows[0].activitySequence[0].payload.badPayload": references unknown fields or is malformed.',
       ]);
     });
 
@@ -3815,10 +3815,10 @@ describe('Record domain', () => {
         validate: vi.fn().mockReturnValue(false),
         evaluate: vi.fn(),
       };
-      const manifest: RecordType = {
+      const manifest: DocumentType = {
         key: 'malformed-template',
         name: 'Malformed Template',
-        recordSchema: {
+        documentSchema: {
           fields: [{ key: 'title', name: 'Title', type: 'string' }],
           calculatedFields: [
             { key: 'broken', template: '{{#if title}}malformed{{/if}}' },
@@ -3828,24 +3828,24 @@ describe('Record domain', () => {
 
       const errors = validateManifestTemplates(manifest, syntaxErrorEvaluator);
       expect(errors).toEqual([
-        'Invalid template at "recordSchema.calculatedFields[0].template": references unknown fields or is malformed.',
+        'Invalid template at "documentSchema.calculatedFields[0].template": references unknown fields or is malformed.',
       ]);
     });
 
-    it('strictly enforces Record.id and Record.type in execution variables, rejecting Record.idRecord and Record.idGroup', () => {
+    it('strictly enforces Document.id and Document.type in execution variables, rejecting Document.idDocument and Document.idGroup', () => {
       const evaluator = createEvaluator();
-      const manifestWithScopeCreepVars: RecordType = {
-        key: 'scope-creep-record',
-        name: 'Scope Creep Record',
-        recordSchema: {
+      const manifestWithScopeCreepVars: DocumentType = {
+        key: 'scope-creep-document',
+        name: 'Scope Creep Document',
+        documentSchema: {
           fields: [{ key: 'contact', name: 'Contact', type: 'string' }],
           identity: {
             id: 'ID-{{contact}}',
-            idRecord: 'REC-{{contact}}',
+            idDocument: 'REC-{{contact}}',
             idGroup: 'GRP-{{contact}}',
           },
         },
-        recordWorkflowConfig: {
+        documentWorkflowConfig: {
           workflows: [
             {
               name: 'W1',
@@ -3853,10 +3853,10 @@ describe('Record domain', () => {
                 {
                   type: 'ACT_1',
                   payload: {
-                    validId: '{{Record.id}}',
-                    validType: '{{Record.type}}',
-                    invalidIdRecord: '{{Record.idRecord}}',
-                    invalidIdGroup: '{{Record.idGroup}}',
+                    validId: '{{Document.id}}',
+                    validType: '{{Document.type}}',
+                    invalidIdDocument: '{{Document.idDocument}}',
+                    invalidIdGroup: '{{Document.idGroup}}',
                   },
                 },
               ],
@@ -3867,8 +3867,8 @@ describe('Record domain', () => {
 
       const errors = validateManifestTemplates(manifestWithScopeCreepVars, evaluator);
       expect(errors).toEqual([
-        'Invalid template at "recordWorkflowConfig.workflows[0].activitySequence[0].payload.invalidIdRecord": references unknown fields or is malformed.',
-        'Invalid template at "recordWorkflowConfig.workflows[0].activitySequence[0].payload.invalidIdGroup": references unknown fields or is malformed.',
+        'Invalid template at "documentWorkflowConfig.workflows[0].activitySequence[0].payload.invalidIdDocument": references unknown fields or is malformed.',
+        'Invalid template at "documentWorkflowConfig.workflows[0].activitySequence[0].payload.invalidIdGroup": references unknown fields or is malformed.',
       ]);
     });
   });

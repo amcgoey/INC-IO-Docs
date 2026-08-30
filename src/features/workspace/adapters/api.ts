@@ -1,11 +1,11 @@
 import type {
   AuthVerifierPort,
   WorkspaceConfigProviderPort,
-  WorkspaceRecordRunnerPort,
+  WorkspaceDocumentRunnerPort,
   WorkspaceFileLocator,
 } from '../ports';
 import {
-  createWorkspaceRecordExecutionContext,
+  createWorkspaceDocumentExecutionContext,
   extractWorkspaceExecutionContext,
   findLatestFileLocator,
   type WorkspaceExecutionContext,
@@ -45,7 +45,7 @@ export interface HttpServer {
 
 export interface WorkspaceFeatureApiOptions {
   authVerifier: AuthVerifierPort;
-  recordService?: WorkspaceRecordRunnerPort | undefined;
+  documentService?: WorkspaceDocumentRunnerPort | undefined;
   configProvider?: WorkspaceConfigProviderPort | undefined;
   authorizationUrl?: string | undefined;
 }
@@ -88,7 +88,7 @@ export function registerWorkspaceFeatureRoutes(
 ): void {
   const {
     authVerifier,
-    recordService,
+    documentService,
     configProvider,
     authorizationUrl,
   } = opts;
@@ -142,8 +142,8 @@ export function registerWorkspaceFeatureRoutes(
           ? await configProvider.getWorkspaceConfig()
           : undefined;
 
-        const effectiveRecordType =
-          wsConfig?.defaultRecordType ?? 'test-record';
+        const effectiveDocumentType =
+          wsConfig?.defaultDocumentType ?? 'test-document';
         const effectiveEventName =
           wsConfig?.defaultEventName ?? 'onSubmit';
 
@@ -152,21 +152,21 @@ export function registerWorkspaceFeatureRoutes(
 
         let latestFileLocator: WorkspaceFileLocator | undefined;
 
-        if (recordService) {
+        if (documentService) {
           const bodyObj = (
             request.body && typeof request.body === 'object' ? request.body : {}
           ) as Record<string, unknown>;
-          const recordPayload = bodyObj.record ?? {
-            type: effectiveRecordType,
+          const documentPayload = bodyObj.document ?? {
+            type: effectiveDocumentType,
             data: {
               title: initialFileName,
             },
           };
 
-          const executionContext = createWorkspaceRecordExecutionContext(context);
+          const executionContext = createWorkspaceDocumentExecutionContext(context);
 
-          const result = await recordService.processRecord(
-            recordPayload,
+          const result = await documentService.processDocument(
+            documentPayload,
             effectiveEventName,
             executionContext
           );
@@ -174,7 +174,7 @@ export function registerWorkspaceFeatureRoutes(
             const errorMessage =
               result.errors && result.errors.length > 0
                 ? result.errors.join('; ')
-                : 'Record processing failed';
+                : 'Document processing failed';
             return {
               status: 200,
               body: buildErrorCard(errorMessage),

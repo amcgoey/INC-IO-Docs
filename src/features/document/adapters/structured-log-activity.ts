@@ -3,7 +3,7 @@ import type { ActivityHandler, ExecutionContext } from '../ports';
 
 export class StructuredLogActivity implements ActivityHandler {
   canHandle(activity: Activity): boolean {
-    return activity.type === 'LOG_RECORD' || activity.type === 'STRUCTURED_LOG';
+    return activity.type === 'LOG_DOCUMENT' || activity.type === 'STRUCTURED_LOG';
   }
 
   handle(
