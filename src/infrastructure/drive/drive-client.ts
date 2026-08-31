@@ -26,6 +26,11 @@ export interface DriveSearchParams {
   expectedParentPathNames?: string[] | undefined;
 }
 
+export interface DriveDuplicateOptions {
+  newName?: string | undefined;
+  targetFolderId?: string | undefined;
+}
+
 export class GoogleDriveApiError extends Error {
   readonly statusCode?: number | undefined;
 
@@ -367,6 +372,57 @@ export class GoogleDriveClient {
       };
     } catch (error) {
       this.wrapApiError('rename', error);
+    }
+  }
+
+  async duplicate(
+    fileId: string,
+    duplicateOptions?: DriveDuplicateOptions,
+    options?: DriveOperationOptions
+  ): Promise<DriveFileMetadata> {
+    const drive = this.getDrive(options?.auth);
+    try {
+      let targetParents: string[] | undefined;
+      if (duplicateOptions?.targetFolderId) {
+        targetParents = [duplicateOptions.targetFolderId];
+      } else {
+        const sourceFile = await this.getFile(fileId, options);
+        if (sourceFile.parents && sourceFile.parents.length > 0) {
+          targetParents = sourceFile.parents;
+        }
+      }
+
+      const requestBody: drive_v3.Schema$File = {};
+      if (duplicateOptions?.newName) {
+        requestBody.name = duplicateOptions.newName;
+      }
+      if (targetParents && targetParents.length > 0) {
+        requestBody.parents = targetParents;
+      }
+
+      const res = await this.executeWithRetry(() =>
+        drive.files.copy({
+          fileId,
+          ...(Object.keys(requestBody).length > 0 ? { requestBody } : {}),
+          fields: 'id, name, parents, mimeType, webViewLink',
+          supportsAllDrives: true,
+        })
+      );
+
+      const { id, name } = this.requireFileMetadata(
+        res.data,
+        `Failed to duplicate file '${fileId}'`
+      );
+
+      return {
+        id,
+        name,
+        parents: res.data.parents ?? targetParents,
+        mimeType: res.data.mimeType ?? undefined,
+        webViewLink: res.data.webViewLink ?? undefined,
+      };
+    } catch (error) {
+      this.wrapApiError('duplicate', error);
     }
   }
 

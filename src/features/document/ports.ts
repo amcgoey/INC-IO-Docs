@@ -110,6 +110,11 @@ export interface AppConfigurationProviderPort {
   getDriveConfig(): Promise<DriveConfiguration | undefined>;
 }
 
+export interface DriveDuplicateOptions {
+  newName?: string | undefined;
+  targetFolderId?: string | undefined;
+}
+
 export interface DriveServiceOptions {
   auth?: string | undefined;
 }
@@ -125,6 +130,11 @@ export interface DriveServicePort {
   rename(
     fileId: string,
     newName: string,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult>;
+  duplicate(
+    fileId: string,
+    duplicateOptions?: DriveDuplicateOptions,
     options?: DriveServiceOptions
   ): Promise<DriveFileResult>;
   searchFiles(

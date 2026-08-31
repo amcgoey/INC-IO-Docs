@@ -13,6 +13,7 @@ describe('GoogleDriveClient', () => {
         list: vi.fn(),
         create: vi.fn(),
         update: vi.fn(),
+        copy: vi.fn(),
       },
     } as unknown as drive_v3.Drive;
 
@@ -408,6 +409,175 @@ describe('GoogleDriveClient', () => {
       await expect(client.rename('file-123', 'New Name.pdf')).rejects.toThrow(
         /Google Drive API error in rename: 403 Forbidden/
       );
+    });
+  });
+
+  describe('duplicate', () => {
+    it('duplicates file to specified targetFolderId with newName', async () => {
+      (mockDrive.files.copy as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'file-copy-123',
+          name: 'Copied Plan.pdf',
+          parents: ['target-folder-id'],
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/file-copy-123/view',
+        },
+      });
+
+      const copy = await client.duplicate('file-123', {
+        newName: 'Copied Plan.pdf',
+        targetFolderId: 'target-folder-id',
+      });
+
+      expect(copy).toEqual({
+        id: 'file-copy-123',
+        name: 'Copied Plan.pdf',
+        parents: ['target-folder-id'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://drive.google.com/file/d/file-copy-123/view',
+      });
+
+      expect(mockDrive.files.get).not.toHaveBeenCalled();
+      expect(mockDrive.files.copy).toHaveBeenCalledWith({
+        fileId: 'file-123',
+        requestBody: {
+          name: 'Copied Plan.pdf',
+          parents: ['target-folder-id'],
+        },
+        fields: 'id, name, parents, mimeType, webViewLink',
+        supportsAllDrives: true,
+      });
+    });
+
+    it('resolves source file parents when no targetFolderId is provided', async () => {
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'file-123',
+          name: 'Original Plan.pdf',
+          parents: ['original-parent-folder'],
+          mimeType: 'application/pdf',
+        },
+      });
+
+      (mockDrive.files.copy as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'file-copy-456',
+          name: 'Original Plan.pdf',
+          parents: ['original-parent-folder'],
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/file-copy-456/view',
+        },
+      });
+
+      const copy = await client.duplicate('file-123');
+
+      expect(copy).toEqual({
+        id: 'file-copy-456',
+        name: 'Original Plan.pdf',
+        parents: ['original-parent-folder'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://drive.google.com/file/d/file-copy-456/view',
+      });
+
+      expect(mockDrive.files.get).toHaveBeenCalledWith({
+        fileId: 'file-123',
+        fields: 'id, name, parents, mimeType, webViewLink',
+        supportsAllDrives: true,
+      });
+
+      expect(mockDrive.files.copy).toHaveBeenCalledWith({
+        fileId: 'file-123',
+        requestBody: {
+          parents: ['original-parent-folder'],
+        },
+        fields: 'id, name, parents, mimeType, webViewLink',
+        supportsAllDrives: true,
+      });
+    });
+
+    it('duplicates file with source file having no parents and no newName', async () => {
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'file-123',
+          name: 'Original Plan.pdf',
+          parents: [],
+        },
+      });
+
+      (mockDrive.files.copy as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'file-copy-789',
+          name: 'Original Plan.pdf',
+          parents: [],
+        },
+      });
+
+      const copy = await client.duplicate('file-123');
+
+      expect(copy).toEqual({
+        id: 'file-copy-789',
+        name: 'Original Plan.pdf',
+        parents: [],
+        mimeType: undefined,
+        webViewLink: undefined,
+      });
+
+      expect(mockDrive.files.copy).toHaveBeenCalledWith({
+        fileId: 'file-123',
+        requestBody: undefined,
+        fields: 'id, name, parents, mimeType, webViewLink',
+        supportsAllDrives: true,
+      });
+    });
+
+    it('accepts options with custom auth token and invokes drive client', async () => {
+      const customDriveMock = {
+        files: {
+          copy: vi.fn().mockResolvedValue({
+            data: {
+              id: 'file-copy-auth',
+              name: 'Auth Copy.pdf',
+              parents: ['target-p'],
+            },
+          }),
+        },
+      };
+      const driveSpy = vi.spyOn(google, 'drive').mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
+
+      const file = await client.duplicate(
+        'file-auth-123',
+        { targetFolderId: 'target-p', newName: 'Auth Copy.pdf' },
+        { auth: 'ya29.custom-token' }
+      );
+      expect(file).toEqual({
+        id: 'file-copy-auth',
+        name: 'Auth Copy.pdf',
+        parents: ['target-p'],
+        mimeType: undefined,
+        webViewLink: undefined,
+      });
+      expect(driveSpy).toHaveBeenCalled();
+      driveSpy.mockRestore();
+    });
+
+    it('throws error when copy response lacks file ID or name', async () => {
+      (mockDrive.files.copy as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {},
+      });
+
+      await expect(
+        client.duplicate('file-123', { targetFolderId: 'folder-1' })
+      ).rejects.toThrow(/Failed to duplicate file 'file-123'/);
+    });
+
+    it('throws GoogleDriveApiError if Drive API copy fails', async () => {
+      (mockDrive.files.copy as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('500 Internal Server Error')
+      );
+
+      await expect(
+        client.duplicate('file-123', { targetFolderId: 'folder-1' })
+      ).rejects.toThrow(/Google Drive API error in duplicate: 500 Internal Server Error/);
     });
   });
 

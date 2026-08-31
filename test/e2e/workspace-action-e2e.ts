@@ -91,6 +91,11 @@ async function runE2E(): Promise<void> {
               name: newName,
               parents: ['root'],
             }),
+            duplicate: async (fileId: string) => ({
+              id: `${fileId}-copy`,
+              name: 'E2E_Test_Document.pdf',
+              parents: ['root'],
+            }),
             searchFiles: async () => [],
           },
         }),

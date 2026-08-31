@@ -37,6 +37,12 @@ describe('DriveActivityHandler', () => {
         parents: ['folder-parent-xyz'],
         webViewLink: 'https://drive.google.com/file/d/file-123/view',
       }),
+      duplicate: vi.fn().mockResolvedValue({
+        id: 'file-copy-123',
+        name: 'Report.docx',
+        parents: ['folder-parent-xyz'],
+        webViewLink: 'https://drive.google.com/file/d/file-copy-123/view',
+      }),
       searchFiles: vi.fn().mockResolvedValue([]),
     };
 

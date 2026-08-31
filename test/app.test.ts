@@ -951,6 +951,11 @@ describe('App integration tests', () => {
           name: 'ImportantDocument.pdf',
           parents: ['custom-folder-id'],
         }),
+        duplicate: vi.fn().mockResolvedValue({
+          id: 'file-copy-123',
+          name: 'ImportantDocument.pdf',
+          parents: ['custom-folder-id'],
+        }),
         searchFiles: vi.fn().mockResolvedValue([]),
       };
 

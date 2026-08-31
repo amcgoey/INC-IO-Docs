@@ -1,6 +1,7 @@
 import {
   DriveServiceError,
   AmbiguousPathSpecError,
+  type DriveDuplicateOptions,
   type DriveFileResult,
   type DriveSearchQuery,
   type DriveServiceOptions,
@@ -21,6 +22,11 @@ export interface DriveClientSearchParams {
   sharedDriveId?: string | undefined;
   mimeTypes?: string[] | undefined;
   expectedParentPathNames?: string[] | undefined;
+}
+
+export interface DriveClientDuplicateOptions {
+  newName?: string | undefined;
+  targetFolderId?: string | undefined;
 }
 
 export interface DriveClientOperationOptions {
@@ -45,6 +51,11 @@ export interface DriveClientPort {
   rename(
     fileId: string,
     newName: string,
+    options?: DriveClientOperationOptions
+  ): Promise<DriveClientFileMetadata>;
+  duplicate(
+    fileId: string,
+    duplicateOptions?: DriveClientDuplicateOptions,
     options?: DriveClientOperationOptions
   ): Promise<DriveClientFileMetadata>;
   searchFiles(
@@ -186,6 +197,23 @@ export class DriveServiceAdapter implements DriveServicePort {
       return mapMetadataToResult(metadata);
     } catch (error) {
       this.translateError('rename', error);
+    }
+  }
+
+  async duplicate(
+    fileId: string,
+    duplicateOptions?: DriveDuplicateOptions,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult> {
+    try {
+      const metadata = await this.driveClient.duplicate(
+        fileId,
+        duplicateOptions,
+        options
+      );
+      return mapMetadataToResult(metadata);
+    } catch (error) {
+      this.translateError('duplicate', error);
     }
   }
 

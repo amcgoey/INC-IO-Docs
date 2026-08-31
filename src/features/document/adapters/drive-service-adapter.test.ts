@@ -8,6 +8,7 @@ describe('DriveServiceAdapter', () => {
     findOrCreateFolder: vi.fn(),
     move: vi.fn(),
     rename: vi.fn(),
+    duplicate: vi.fn(),
     searchFiles: vi.fn(),
   };
 
@@ -122,6 +123,45 @@ describe('DriveServiceAdapter', () => {
       const err = await adapter.rename('file-1', 'new-name.pdf').catch((e) => e);
       expect(err).toBeInstanceOf(DriveServiceError);
       expect(err.message).toMatch(/Drive service error in rename: Rename failed/);
+    });
+  });
+
+  describe('duplicate', () => {
+    it('returns mapped duplicated file result on success', async () => {
+      (mockDriveClient.duplicate as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'file-copy-1',
+        name: 'copied.pdf',
+        parents: ['folder-1'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link',
+      });
+
+      const res = await adapter.duplicate('file-1', {
+        newName: 'copied.pdf',
+        targetFolderId: 'folder-1',
+      });
+      expect(res).toEqual({
+        id: 'file-copy-1',
+        name: 'copied.pdf',
+        parents: ['folder-1'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link',
+      });
+      expect(mockDriveClient.duplicate).toHaveBeenCalledWith(
+        'file-1',
+        { newName: 'copied.pdf', targetFolderId: 'folder-1' },
+        undefined
+      );
+    });
+
+    it('translates external errors to DriveServiceError', async () => {
+      (mockDriveClient.duplicate as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Duplicate failed')
+      );
+
+      const err = await adapter.duplicate('file-1').catch((e) => e);
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(/Drive service error in duplicate: Duplicate failed/);
     });
   });
 
