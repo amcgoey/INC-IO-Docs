@@ -1,6 +1,7 @@
 import {
   DriveServiceError,
   AmbiguousPathSpecError,
+  type DriveContentSaveOptions,
   type DriveDuplicateOptions,
   type DriveFileResult,
   type DriveSearchQuery,
@@ -28,6 +29,21 @@ export interface DriveClientDuplicateOptions {
   newName?: string | undefined;
   targetFolderId?: string | undefined;
 }
+
+export interface DriveClientCreateOptions {
+  action: 'create';
+  targetFolderId: string;
+  name: string;
+  mimeType?: string | undefined;
+}
+
+export interface DriveClientUpdateOptions {
+  action: 'update';
+  fileId: string;
+  mimeType?: string | undefined;
+}
+
+export type DriveClientSaveOptions = DriveClientCreateOptions | DriveClientUpdateOptions;
 
 export interface DriveClientOperationOptions {
   auth?: string | undefined;
@@ -66,6 +82,11 @@ export interface DriveClientPort {
     fileId: string,
     options?: DriveClientOperationOptions
   ): Promise<Uint8Array>;
+  saveBuffer(
+    content: Uint8Array,
+    saveOptions: DriveClientSaveOptions,
+    options?: DriveClientOperationOptions
+  ): Promise<DriveClientFileMetadata>;
 }
 
 function mapMetadataToResult(metadata: DriveClientFileMetadata): DriveFileResult {
@@ -241,6 +262,23 @@ export class DriveServiceAdapter implements DriveServicePort {
       return await this.driveClient.downloadAsBuffer(fileId, options);
     } catch (error) {
       this.translateError('downloadAsBuffer', error);
+    }
+  }
+
+  async saveBuffer(
+    content: Uint8Array,
+    saveOptions: DriveContentSaveOptions,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult> {
+    try {
+      const metadata = await this.driveClient.saveBuffer(
+        content,
+        saveOptions,
+        options
+      );
+      return mapMetadataToResult(metadata);
+    } catch (error) {
+      this.translateError('saveBuffer', error);
     }
   }
 }

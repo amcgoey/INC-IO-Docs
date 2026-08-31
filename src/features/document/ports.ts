@@ -115,6 +115,21 @@ export interface DriveDuplicateOptions {
   targetFolderId?: string | undefined;
 }
 
+export interface DriveContentCreateOptions {
+  action: 'create';
+  targetFolderId: string;
+  name: string;
+  mimeType?: string | undefined;
+}
+
+export interface DriveContentUpdateOptions {
+  action: 'update';
+  fileId: string;
+  mimeType?: string | undefined;
+}
+
+export type DriveContentSaveOptions = DriveContentCreateOptions | DriveContentUpdateOptions;
+
 export interface DriveServiceOptions {
   auth?: string | undefined;
 }
@@ -145,6 +160,12 @@ export interface DriveServicePort {
     fileId: string,
     options?: DriveServiceOptions
   ): Promise<Uint8Array>;
+  saveBuffer(
+    content: Uint8Array,
+    saveOptions: DriveContentSaveOptions,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult>;
 }
+
 
 
