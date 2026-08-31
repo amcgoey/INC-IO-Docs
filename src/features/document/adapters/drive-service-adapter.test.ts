@@ -7,6 +7,7 @@ describe('DriveServiceAdapter', () => {
     getFile: vi.fn(),
     findOrCreateFolder: vi.fn(),
     move: vi.fn(),
+    rename: vi.fn(),
     searchFiles: vi.fn(),
   };
 
@@ -89,6 +90,38 @@ describe('DriveServiceAdapter', () => {
       const err = await adapter.move('file-1', 'target-folder').catch((e) => e);
       expect(err).toBeInstanceOf(DriveServiceError);
       expect(err.message).toMatch(/Drive service error in move: Move failed/);
+    });
+  });
+
+  describe('rename', () => {
+    it('returns mapped renamed file result on success', async () => {
+      (mockDriveClient.rename as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'file-1',
+        name: 'renamed.pdf',
+        parents: ['folder-1'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link',
+      });
+
+      const res = await adapter.rename('file-1', 'renamed.pdf');
+      expect(res).toEqual({
+        id: 'file-1',
+        name: 'renamed.pdf',
+        parents: ['folder-1'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link',
+      });
+      expect(mockDriveClient.rename).toHaveBeenCalledWith('file-1', 'renamed.pdf', undefined);
+    });
+
+    it('translates external errors to DriveServiceError', async () => {
+      (mockDriveClient.rename as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Rename failed')
+      );
+
+      const err = await adapter.rename('file-1', 'new-name.pdf').catch((e) => e);
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(/Drive service error in rename: Rename failed/);
     });
   });
 

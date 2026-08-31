@@ -122,6 +122,11 @@ export interface DriveServicePort {
     targetFolderId: string,
     options?: DriveServiceOptions
   ): Promise<DriveFileResult>;
+  rename(
+    fileId: string,
+    newName: string,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult>;
   searchFiles(
     query: DriveSearchQuery,
     options?: DriveServiceOptions

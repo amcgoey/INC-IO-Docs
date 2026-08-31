@@ -335,6 +335,41 @@ export class GoogleDriveClient {
     }
   }
 
+  async rename(
+    fileId: string,
+    newName: string,
+    options?: DriveOperationOptions
+  ): Promise<DriveFileMetadata> {
+    const drive = this.getDrive(options?.auth);
+    try {
+      const res = await this.executeWithRetry(() =>
+        drive.files.update({
+          fileId,
+          requestBody: {
+            name: newName,
+          },
+          fields: 'id, name, parents, mimeType, webViewLink',
+          supportsAllDrives: true,
+        })
+      );
+
+      const { id, name } = this.requireFileMetadata(
+        res.data,
+        `Failed to rename file '${fileId}' to '${newName}'`
+      );
+
+      return {
+        id,
+        name,
+        parents: res.data.parents ?? undefined,
+        mimeType: res.data.mimeType ?? undefined,
+        webViewLink: res.data.webViewLink ?? undefined,
+      };
+    } catch (error) {
+      this.wrapApiError('rename', error);
+    }
+  }
+
   async searchFiles(
     query: DriveSearchParams,
     options?: DriveOperationOptions

@@ -31,6 +31,12 @@ describe('DriveActivityHandler', () => {
         parents: ['testmove-folder-id'],
         webViewLink: 'https://drive.google.com/file/d/file-123/view',
       }),
+      rename: vi.fn().mockResolvedValue({
+        id: 'file-123',
+        name: 'Renamed.docx',
+        parents: ['folder-parent-xyz'],
+        webViewLink: 'https://drive.google.com/file/d/file-123/view',
+      }),
       searchFiles: vi.fn().mockResolvedValue([]),
     };
 

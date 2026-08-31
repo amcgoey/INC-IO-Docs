@@ -42,6 +42,11 @@ export interface DriveClientPort {
     targetFolderId: string,
     options?: DriveClientOperationOptions
   ): Promise<DriveClientFileMetadata>;
+  rename(
+    fileId: string,
+    newName: string,
+    options?: DriveClientOperationOptions
+  ): Promise<DriveClientFileMetadata>;
   searchFiles(
     params: DriveClientSearchParams,
     options?: DriveClientOperationOptions
@@ -164,6 +169,23 @@ export class DriveServiceAdapter implements DriveServicePort {
       return mapMetadataToResult(metadata);
     } catch (error) {
       this.translateError('move', error);
+    }
+  }
+
+  async rename(
+    fileId: string,
+    newName: string,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult> {
+    try {
+      const metadata = await this.driveClient.rename(
+        fileId,
+        newName,
+        options
+      );
+      return mapMetadataToResult(metadata);
+    } catch (error) {
+      this.translateError('rename', error);
     }
   }
 

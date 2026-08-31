@@ -332,6 +332,85 @@ describe('GoogleDriveClient', () => {
     });
   });
 
+  describe('rename', () => {
+    it('renames file and returns updated metadata', async () => {
+      (mockDrive.files.update as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'file-123',
+          name: 'Renamed Plan.pdf',
+          parents: ['parent-folder-abc'],
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/file-123/view',
+        },
+      });
+
+      const renamed = await client.rename('file-123', 'Renamed Plan.pdf');
+
+      expect(renamed).toEqual({
+        id: 'file-123',
+        name: 'Renamed Plan.pdf',
+        parents: ['parent-folder-abc'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://drive.google.com/file/d/file-123/view',
+      });
+
+      expect(mockDrive.files.update).toHaveBeenCalledWith({
+        fileId: 'file-123',
+        requestBody: {
+          name: 'Renamed Plan.pdf',
+        },
+        fields: 'id, name, parents, mimeType, webViewLink',
+        supportsAllDrives: true,
+      });
+    });
+
+    it('accepts options with custom auth token and invokes drive client', async () => {
+      const customDriveMock = {
+        files: {
+          update: vi.fn().mockResolvedValue({
+            data: {
+              id: 'file-auth-123',
+              name: 'New Name.pdf',
+              parents: ['p1'],
+            },
+          }),
+        },
+      };
+      const driveSpy = vi.spyOn(google, 'drive').mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
+
+      const file = await client.rename('file-auth-123', 'New Name.pdf', { auth: 'ya29.custom-token' });
+      expect(file).toEqual({
+        id: 'file-auth-123',
+        name: 'New Name.pdf',
+        parents: ['p1'],
+        mimeType: undefined,
+        webViewLink: undefined,
+      });
+      expect(driveSpy).toHaveBeenCalled();
+      driveSpy.mockRestore();
+    });
+
+    it('throws error when update response lacks file ID or name', async () => {
+      (mockDrive.files.update as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {},
+      });
+
+      await expect(client.rename('file-123', 'New Name.pdf')).rejects.toThrow(
+        /Failed to rename file 'file-123' to 'New Name.pdf'/
+      );
+    });
+
+    it('throws GoogleDriveApiError if Drive API update fails', async () => {
+      (mockDrive.files.update as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('403 Forbidden')
+      );
+
+      await expect(client.rename('file-123', 'New Name.pdf')).rejects.toThrow(
+        /Google Drive API error in rename: 403 Forbidden/
+      );
+    });
+  });
+
   describe('searchFiles', () => {
     it('executes global search with trashed = false and contains query when parents array is empty', async () => {
       (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValue({
