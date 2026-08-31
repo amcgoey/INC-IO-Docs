@@ -958,6 +958,8 @@ describe('App integration tests', () => {
         }),
         searchFiles: vi.fn().mockResolvedValue([]),
         downloadAsBuffer: vi.fn(),
+        saveBuffer: vi.fn(),
+        uploadStream: vi.fn(),
       };
 
       const mockAuthVerifier = {

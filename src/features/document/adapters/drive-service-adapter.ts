@@ -87,6 +87,11 @@ export interface DriveClientPort {
     saveOptions: DriveClientSaveOptions,
     options?: DriveClientOperationOptions
   ): Promise<DriveClientFileMetadata>;
+  uploadStream(
+    stream: ReadableStream<Uint8Array>,
+    saveOptions: DriveClientSaveOptions,
+    options?: DriveClientOperationOptions
+  ): Promise<DriveClientFileMetadata>;
 }
 
 function mapMetadataToResult(metadata: DriveClientFileMetadata): DriveFileResult {
@@ -279,6 +284,23 @@ export class DriveServiceAdapter implements DriveServicePort {
       return mapMetadataToResult(metadata);
     } catch (error) {
       this.translateError('saveBuffer', error);
+    }
+  }
+
+  async uploadStream(
+    stream: ReadableStream<Uint8Array>,
+    saveOptions: DriveContentSaveOptions,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult> {
+    try {
+      const metadata = await this.driveClient.uploadStream(
+        stream,
+        saveOptions,
+        options
+      );
+      return mapMetadataToResult(metadata);
+    } catch (error) {
+      this.translateError('uploadStream', error);
     }
   }
 }

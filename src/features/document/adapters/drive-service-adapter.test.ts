@@ -12,6 +12,7 @@ describe('DriveServiceAdapter', () => {
     searchFiles: vi.fn(),
     downloadAsBuffer: vi.fn(),
     saveBuffer: vi.fn(),
+    uploadStream: vi.fn(),
   };
 
   const adapter = new DriveServiceAdapter(mockDriveClient);
@@ -408,6 +409,139 @@ describe('DriveServiceAdapter', () => {
         expect(err).toBeInstanceOf(DriveServiceError);
         expect(err.message).toMatch(
           new RegExp(`Drive service error \\(${expectedStatus}\\) in saveBuffer: ${message}`)
+        );
+      }
+    );
+  });
+
+  describe('uploadStream', () => {
+    const createMockStream = () =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        },
+      });
+
+    it('returns mapped file result on successful create', async () => {
+      const stream = createMockStream();
+      (mockDriveClient.uploadStream as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'new-stream-id',
+        name: 'Streamed.pdf',
+        parents: ['folder-123'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link/streamed',
+      });
+
+      const res = await adapter.uploadStream(
+        stream,
+        {
+          action: 'create',
+          name: 'Streamed.pdf',
+          targetFolderId: 'folder-123',
+          mimeType: 'application/pdf',
+        },
+        { auth: 'token-abc' }
+      );
+
+      expect(res).toEqual({
+        id: 'new-stream-id',
+        name: 'Streamed.pdf',
+        parents: ['folder-123'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link/streamed',
+      });
+      expect(mockDriveClient.uploadStream).toHaveBeenCalledWith(
+        stream,
+        {
+          action: 'create',
+          name: 'Streamed.pdf',
+          targetFolderId: 'folder-123',
+          mimeType: 'application/pdf',
+        },
+        { auth: 'token-abc' }
+      );
+    });
+
+    it('returns mapped file result on successful update', async () => {
+      const stream = createMockStream();
+      (mockDriveClient.uploadStream as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'existing-stream-id',
+        name: 'UpdatedStream.pdf',
+        parents: ['folder-123'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link/updated-stream',
+      });
+
+      const res = await adapter.uploadStream(stream, {
+        action: 'update',
+        fileId: 'existing-stream-id',
+        mimeType: 'application/pdf',
+      });
+
+      expect(res).toEqual({
+        id: 'existing-stream-id',
+        name: 'UpdatedStream.pdf',
+        parents: ['folder-123'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link/updated-stream',
+      });
+      expect(mockDriveClient.uploadStream).toHaveBeenCalledWith(
+        stream,
+        {
+          action: 'update',
+          fileId: 'existing-stream-id',
+          mimeType: 'application/pdf',
+        },
+        undefined
+      );
+    });
+
+    it('translates external errors to DriveServiceError', async () => {
+      const stream = createMockStream();
+      (mockDriveClient.uploadStream as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Network error during stream upload')
+      );
+
+      const err = await adapter
+        .uploadStream(stream, {
+          action: 'create',
+          name: 'Streamed.pdf',
+          targetFolderId: 'folder-123',
+        })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(
+        /Drive service error in uploadStream: Network error during stream upload/
+      );
+    });
+
+    it.each([
+      { statusCode: 401, message: 'Invalid Credentials', expectedStatus: 401 },
+      { statusCode: 403, message: 'Insufficient Permissions', expectedStatus: 403 },
+      { statusCode: 404, message: 'Folder not found', expectedStatus: 404 },
+      { statusCode: 500, message: 'Backend Error', expectedStatus: 500 },
+    ])(
+      'translates $statusCode API error to DriveServiceError with status code',
+      async ({ statusCode, message, expectedStatus }) => {
+        const stream = createMockStream();
+        (mockDriveClient.uploadStream as ReturnType<typeof vi.fn>).mockRejectedValue({
+          statusCode,
+          message,
+        });
+
+        const err = await adapter
+          .uploadStream(stream, {
+            action: 'create',
+            name: 'Streamed.pdf',
+            targetFolderId: 'folder-123',
+          })
+          .catch((e) => e);
+
+        expect(err).toBeInstanceOf(DriveServiceError);
+        expect(err.message).toMatch(
+          new RegExp(`Drive service error \\(${expectedStatus}\\) in uploadStream: ${message}`)
         );
       }
     );

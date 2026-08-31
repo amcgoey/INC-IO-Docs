@@ -165,6 +165,11 @@ export interface DriveServicePort {
     saveOptions: DriveContentSaveOptions,
     options?: DriveServiceOptions
   ): Promise<DriveFileResult>;
+  uploadStream(
+    stream: ReadableStream<Uint8Array>,
+    saveOptions: DriveContentSaveOptions,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult>;
 }
 
 

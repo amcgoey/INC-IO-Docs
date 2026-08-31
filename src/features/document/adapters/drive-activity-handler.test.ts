@@ -45,6 +45,8 @@ describe('DriveActivityHandler', () => {
       }),
       searchFiles: vi.fn().mockResolvedValue([]),
       downloadAsBuffer: vi.fn(),
+      saveBuffer: vi.fn(),
+      uploadStream: vi.fn(),
     };
 
     handler = new DriveActivityHandler(mockDriveService);

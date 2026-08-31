@@ -706,6 +706,83 @@ export class GoogleDriveClient {
       this.wrapApiError('saveBuffer', error);
     }
   }
+
+  async uploadStream(
+    stream: ReadableStream<Uint8Array>,
+    saveOptions: DriveContentSaveOptions,
+    options?: DriveOperationOptions
+  ): Promise<DriveFileMetadata> {
+    const drive = this.getDrive(options?.auth);
+    const mediaBody = Readable.fromWeb(stream as Parameters<typeof Readable.fromWeb>[0]);
+
+    try {
+      if (saveOptions.action === 'create') {
+        const requestBody: drive_v3.Schema$File = {
+          name: saveOptions.name,
+          parents: [saveOptions.targetFolderId],
+          ...(saveOptions.mimeType !== undefined ? { mimeType: saveOptions.mimeType } : {}),
+        };
+
+        const res = await this.executeWithRetry(() =>
+          drive.files.create({
+            requestBody,
+            media: {
+              ...(saveOptions.mimeType !== undefined ? { mimeType: saveOptions.mimeType } : {}),
+              body: mediaBody,
+            },
+            fields: 'id, name, parents, mimeType, webViewLink',
+            supportsAllDrives: true,
+          })
+        );
+
+        const { id, name } = this.requireFileMetadata(
+          res.data,
+          `Failed to upload stream for file '${saveOptions.name}' in parent '${saveOptions.targetFolderId}'`
+        );
+
+        return {
+          id,
+          name,
+          parents: res.data.parents ?? [saveOptions.targetFolderId],
+          mimeType: res.data.mimeType ?? saveOptions.mimeType ?? undefined,
+          webViewLink: res.data.webViewLink ?? undefined,
+        };
+      } else {
+        const requestBody: drive_v3.Schema$File | undefined =
+          saveOptions.mimeType !== undefined
+            ? { mimeType: saveOptions.mimeType }
+            : undefined;
+
+        const res = await this.executeWithRetry(() =>
+          drive.files.update({
+            fileId: saveOptions.fileId,
+            ...(requestBody ? { requestBody } : {}),
+            media: {
+              ...(saveOptions.mimeType !== undefined ? { mimeType: saveOptions.mimeType } : {}),
+              body: mediaBody,
+            },
+            fields: 'id, name, parents, mimeType, webViewLink',
+            supportsAllDrives: true,
+          })
+        );
+
+        const { id, name } = this.requireFileMetadata(
+          res.data,
+          `Failed to update file '${saveOptions.fileId}' with uploaded stream`
+        );
+
+        return {
+          id,
+          name,
+          parents: res.data.parents ?? undefined,
+          mimeType: res.data.mimeType ?? saveOptions.mimeType ?? undefined,
+          webViewLink: res.data.webViewLink ?? undefined,
+        };
+      }
+    } catch (error) {
+      this.wrapApiError('uploadStream', error);
+    }
+  }
 }
 
 

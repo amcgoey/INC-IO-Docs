@@ -98,6 +98,16 @@ async function runE2E(): Promise<void> {
             }),
             searchFiles: async () => [],
             downloadAsBuffer: async () => new Uint8Array(),
+            saveBuffer: async () => ({
+              id: 'mock-saved-file-id',
+              name: 'E2E_Test_Document.pdf',
+              parents: ['root'],
+            }),
+            uploadStream: async () => ({
+              id: 'mock-stream-file-id',
+              name: 'E2E_Test_Document.pdf',
+              parents: ['root'],
+            }),
           },
         }),
   };

@@ -1970,6 +1970,286 @@ describe('GoogleDriveClient', () => {
       ).rejects.toThrow(/Google Drive API error in saveBuffer: Internal Server Error/);
     });
   });
+
+  describe('uploadStream', () => {
+    const createSampleStream = () =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.enqueue(new Uint8Array([4, 5]));
+          controller.close();
+        },
+      });
+
+    describe('create action', () => {
+      it('routes to drive.files.create with dual mimeType, metadata and media stream', async () => {
+        (mockDrive.files.create as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          data: {
+            id: 'created-stream-id',
+            name: 'StreamedDocument.pdf',
+            parents: ['folder-target-123'],
+            mimeType: 'application/pdf',
+            webViewLink: 'https://drive.google.com/file/d/created-stream-id/view',
+          },
+        });
+
+        const stream = createSampleStream();
+        const result = await client.uploadStream(stream, {
+          action: 'create',
+          name: 'StreamedDocument.pdf',
+          targetFolderId: 'folder-target-123',
+          mimeType: 'application/pdf',
+        });
+
+        expect(result).toEqual({
+          id: 'created-stream-id',
+          name: 'StreamedDocument.pdf',
+          parents: ['folder-target-123'],
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/created-stream-id/view',
+        });
+
+        expect(mockDrive.files.create).toHaveBeenCalledTimes(1);
+        const createArgs = (mockDrive.files.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+        expect(createArgs.requestBody).toEqual({
+          name: 'StreamedDocument.pdf',
+          parents: ['folder-target-123'],
+          mimeType: 'application/pdf',
+        });
+        expect(createArgs.media.mimeType).toBe('application/pdf');
+        expect(createArgs.fields).toBe('id, name, parents, mimeType, webViewLink');
+        expect(createArgs.supportsAllDrives).toBe(true);
+
+        // Verify stream content is passed through efficiently
+        const chunks: Buffer[] = [];
+        for await (const chunk of createArgs.media.body) {
+          chunks.push(chunk);
+        }
+        expect(Buffer.concat(chunks)).toEqual(Buffer.from([1, 2, 3, 4, 5]));
+      });
+
+      it('creates file without mimeType when mimeType is omitted', async () => {
+        (mockDrive.files.create as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          data: {
+            id: 'created-bin-stream-id',
+            name: 'stream.bin',
+            parents: ['folder-123'],
+          },
+        });
+
+        const stream = createSampleStream();
+        const result = await client.uploadStream(stream, {
+          action: 'create',
+          name: 'stream.bin',
+          targetFolderId: 'folder-123',
+        });
+
+        expect(result).toEqual({
+          id: 'created-bin-stream-id',
+          name: 'stream.bin',
+          parents: ['folder-123'],
+          mimeType: undefined,
+          webViewLink: undefined,
+        });
+
+        const createArgs = (mockDrive.files.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+        expect(createArgs.requestBody).toEqual({
+          name: 'stream.bin',
+          parents: ['folder-123'],
+        });
+        expect(createArgs.media.mimeType).toBeUndefined();
+      });
+    });
+
+    describe('update action', () => {
+      it('routes to drive.files.update with dual mimeType, fileId and media stream', async () => {
+        (mockDrive.files.update as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          data: {
+            id: 'existing-stream-file-id',
+            name: 'UpdatedStream.pdf',
+            parents: ['parent-folder'],
+            mimeType: 'application/pdf',
+            webViewLink: 'https://drive.google.com/file/d/existing-stream-file-id/view',
+          },
+        });
+
+        const stream = createSampleStream();
+        const result = await client.uploadStream(stream, {
+          action: 'update',
+          fileId: 'existing-stream-file-id',
+          mimeType: 'application/pdf',
+        });
+
+        expect(result).toEqual({
+          id: 'existing-stream-file-id',
+          name: 'UpdatedStream.pdf',
+          parents: ['parent-folder'],
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/existing-stream-file-id/view',
+        });
+
+        expect(mockDrive.files.update).toHaveBeenCalledTimes(1);
+        const updateArgs = (mockDrive.files.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+        expect(updateArgs.fileId).toBe('existing-stream-file-id');
+        expect(updateArgs.requestBody).toEqual({
+          mimeType: 'application/pdf',
+        });
+        expect(updateArgs.media.mimeType).toBe('application/pdf');
+        expect(updateArgs.fields).toBe('id, name, parents, mimeType, webViewLink');
+        expect(updateArgs.supportsAllDrives).toBe(true);
+
+        // Verify stream content
+        const chunks: Buffer[] = [];
+        for await (const chunk of updateArgs.media.body) {
+          chunks.push(chunk);
+        }
+        expect(Buffer.concat(chunks)).toEqual(Buffer.from([1, 2, 3, 4, 5]));
+      });
+
+      it('updates file without mimeType when mimeType is omitted', async () => {
+        (mockDrive.files.update as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          data: {
+            id: 'existing-stream-file-id',
+            name: 'UpdatedStream.bin',
+          },
+        });
+
+        const stream = createSampleStream();
+        const result = await client.uploadStream(stream, {
+          action: 'update',
+          fileId: 'existing-stream-file-id',
+        });
+
+        expect(result).toEqual({
+          id: 'existing-stream-file-id',
+          name: 'UpdatedStream.bin',
+          parents: undefined,
+          mimeType: undefined,
+          webViewLink: undefined,
+        });
+
+        const updateArgs = (mockDrive.files.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+        expect(updateArgs.fileId).toBe('existing-stream-file-id');
+        expect(updateArgs.requestBody).toBeUndefined();
+        expect(updateArgs.media.mimeType).toBeUndefined();
+      });
+    });
+
+    it('accepts options with custom auth token and invokes custom drive client', async () => {
+      const customDriveMock = {
+        files: {
+          create: vi.fn().mockResolvedValueOnce({
+            data: {
+              id: 'custom-auth-stream-file',
+              name: 'AuthStreamFile.pdf',
+              parents: ['target-f'],
+              mimeType: 'application/pdf',
+            },
+          }),
+        },
+      };
+      const driveSpy = vi
+        .spyOn(google, 'drive')
+        .mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
+
+      const stream = createSampleStream();
+      const result = await client.uploadStream(
+        stream,
+        {
+          action: 'create',
+          name: 'AuthStreamFile.pdf',
+          targetFolderId: 'target-f',
+          mimeType: 'application/pdf',
+        },
+        { auth: 'ya29.custom-token' }
+      );
+
+      expect(result.id).toBe('custom-auth-stream-file');
+      expect(driveSpy).toHaveBeenCalled();
+      expect(customDriveMock.files.create).toHaveBeenCalled();
+      driveSpy.mockRestore();
+    });
+
+    it('retries on rate limit (429) error during stream create or update', async () => {
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      const retryClient = new GoogleDriveClient({
+        drive: mockDrive,
+        retryOptions: {
+          maxRetries: 2,
+          initialDelayMs: 10,
+          backoffFactor: 2,
+          sleep: sleepMock,
+        },
+      });
+
+      (mockDrive.files.create as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce({ status: 429 })
+        .mockResolvedValueOnce({
+          data: {
+            id: 'retry-stream-file-id',
+            name: 'RetryStream.pdf',
+            parents: ['folder-1'],
+          },
+        });
+
+      const stream = createSampleStream();
+      const result = await retryClient.uploadStream(stream, {
+        action: 'create',
+        name: 'RetryStream.pdf',
+        targetFolderId: 'folder-1',
+      });
+
+      expect(result.id).toBe('retry-stream-file-id');
+      expect(mockDrive.files.create).toHaveBeenCalledTimes(2);
+      expect(sleepMock).toHaveBeenCalledTimes(1);
+      expect(sleepMock).toHaveBeenCalledWith(10);
+    });
+
+    it('throws error when create response lacks file ID or name', async () => {
+      (mockDrive.files.create as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: {},
+      });
+
+      const stream = createSampleStream();
+      await expect(
+        client.uploadStream(stream, {
+          action: 'create',
+          name: 'StreamDoc.pdf',
+          targetFolderId: 'folder-1',
+        })
+      ).rejects.toThrow(/Failed to upload stream for file 'StreamDoc.pdf' in parent 'folder-1'/);
+    });
+
+    it('throws error when update response lacks file ID or name', async () => {
+      (mockDrive.files.update as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: {},
+      });
+
+      const stream = createSampleStream();
+      await expect(
+        client.uploadStream(stream, {
+          action: 'update',
+          fileId: 'file-123',
+        })
+      ).rejects.toThrow(/Failed to update file 'file-123' with uploaded stream/);
+    });
+
+    it('wraps API errors into GoogleDriveApiError during uploadStream', async () => {
+      (mockDrive.files.create as ReturnType<typeof vi.fn>).mockRejectedValueOnce({
+        status: 500,
+        message: 'Internal Server Error',
+      });
+
+      const stream = createSampleStream();
+      await expect(
+        client.uploadStream(stream, {
+          action: 'create',
+          name: 'StreamDoc.pdf',
+          targetFolderId: 'folder-1',
+        })
+      ).rejects.toThrow(/Google Drive API error in uploadStream: Internal Server Error/);
+    });
+  });
 });
 
 
