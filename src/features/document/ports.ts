@@ -141,6 +141,10 @@ export interface DriveServicePort {
     query: DriveSearchQuery,
     options?: DriveServiceOptions
   ): Promise<DriveFileResult[]>;
+  downloadAsBuffer(
+    fileId: string,
+    options?: DriveServiceOptions
+  ): Promise<Uint8Array>;
 }
 
 

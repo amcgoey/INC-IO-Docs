@@ -97,6 +97,7 @@ async function runE2E(): Promise<void> {
               parents: ['root'],
             }),
             searchFiles: async () => [],
+            downloadAsBuffer: async () => new Uint8Array(),
           },
         }),
   };

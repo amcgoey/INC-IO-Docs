@@ -957,6 +957,7 @@ describe('App integration tests', () => {
           parents: ['custom-folder-id'],
         }),
         searchFiles: vi.fn().mockResolvedValue([]),
+        downloadAsBuffer: vi.fn(),
       };
 
       const mockAuthVerifier = {

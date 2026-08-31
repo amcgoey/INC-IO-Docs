@@ -44,6 +44,7 @@ describe('DriveActivityHandler', () => {
         webViewLink: 'https://drive.google.com/file/d/file-copy-123/view',
       }),
       searchFiles: vi.fn().mockResolvedValue([]),
+      downloadAsBuffer: vi.fn(),
     };
 
     handler = new DriveActivityHandler(mockDriveService);

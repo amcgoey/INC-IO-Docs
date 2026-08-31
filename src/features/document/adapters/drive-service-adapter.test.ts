@@ -10,6 +10,7 @@ describe('DriveServiceAdapter', () => {
     rename: vi.fn(),
     duplicate: vi.fn(),
     searchFiles: vi.fn(),
+    downloadAsBuffer: vi.fn(),
   };
 
   const adapter = new DriveServiceAdapter(mockDriveClient);
@@ -235,6 +236,54 @@ describe('DriveServiceAdapter', () => {
         expect(err).toBeInstanceOf(DriveServiceError);
         expect(err.message).toMatch(
           new RegExp(`Drive service error \\(${expectedStatus}\\) in searchFiles: ${message}`)
+        );
+      }
+    );
+  });
+
+  describe('downloadAsBuffer', () => {
+    it('returns Uint8Array buffer on success', async () => {
+      const mockBuffer = new Uint8Array([1, 2, 3, 4]);
+      (mockDriveClient.downloadAsBuffer as ReturnType<typeof vi.fn>).mockResolvedValue(
+        mockBuffer
+      );
+
+      const res = await adapter.downloadAsBuffer('file-123', { auth: 'token-abc' });
+      expect(res).toBe(mockBuffer);
+      expect(mockDriveClient.downloadAsBuffer).toHaveBeenCalledWith('file-123', {
+        auth: 'token-abc',
+      });
+    });
+
+    it('translates external errors to DriveServiceError', async () => {
+      (mockDriveClient.downloadAsBuffer as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Failed to download file content')
+      );
+
+      const err = await adapter.downloadAsBuffer('file-123').catch((e) => e);
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(
+        /Drive service error in downloadAsBuffer: Failed to download file content/
+      );
+    });
+
+    it.each([
+      { statusCode: 401, message: 'Invalid Credentials', expectedStatus: 401 },
+      { statusCode: 403, message: 'Insufficient Permissions', expectedStatus: 403 },
+      { statusCode: 404, message: 'File not found', expectedStatus: 404 },
+      { statusCode: 500, message: 'Backend Error', expectedStatus: 500 },
+    ])(
+      'translates $statusCode API error to DriveServiceError with status code',
+      async ({ statusCode, message, expectedStatus }) => {
+        (mockDriveClient.downloadAsBuffer as ReturnType<typeof vi.fn>).mockRejectedValue({
+          statusCode,
+          message,
+        });
+
+        const err = await adapter.downloadAsBuffer('file-123').catch((e) => e);
+        expect(err).toBeInstanceOf(DriveServiceError);
+        expect(err.message).toMatch(
+          new RegExp(`Drive service error \\(${expectedStatus}\\) in downloadAsBuffer: ${message}`)
         );
       }
     );

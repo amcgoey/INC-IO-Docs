@@ -117,6 +117,30 @@ function formatErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function isGoogleWorkspaceDocument(mimeType?: string): boolean {
+  return (
+    typeof mimeType === 'string' &&
+    mimeType.startsWith('application/vnd.google-apps.') &&
+    mimeType !== 'application/vnd.google-apps.folder'
+  );
+}
+
+function toUint8Array(data: unknown): Uint8Array {
+  if (ArrayBuffer.isView(data)) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  }
+  if (data instanceof ArrayBuffer) {
+    return new Uint8Array(data);
+  }
+  if (typeof data === 'string') {
+    return new TextEncoder().encode(data);
+  }
+  if (!data) {
+    return new Uint8Array();
+  }
+  throw new Error('Unexpected response data format for download');
+}
+
 export class GoogleDriveClient {
   private readonly defaultDrive: drive_v3.Drive;
   private readonly retryOptions: DriveRetryOptions;
@@ -548,6 +572,43 @@ export class GoogleDriveClient {
         }));
     } catch (error) {
       this.wrapApiError('searchFiles', error);
+    }
+  }
+
+  async downloadAsBuffer(
+    fileId: string,
+    options?: DriveOperationOptions
+  ): Promise<Uint8Array> {
+    const drive = this.getDrive(options?.auth);
+    try {
+      const file = await this.getFile(fileId, options);
+
+      if (isGoogleWorkspaceDocument(file.mimeType)) {
+        const res = await this.executeWithRetry(() =>
+          drive.files.export(
+            {
+              fileId,
+              mimeType: 'application/pdf',
+            },
+            { responseType: 'arraybuffer' }
+          )
+        );
+        return toUint8Array(res.data);
+      } else {
+        const res = await this.executeWithRetry(() =>
+          drive.files.get(
+            {
+              fileId,
+              alt: 'media',
+              supportsAllDrives: true,
+            },
+            { responseType: 'arraybuffer' }
+          )
+        );
+        return toUint8Array(res.data);
+      }
+    } catch (error) {
+      this.wrapApiError('downloadAsBuffer', error);
     }
   }
 }

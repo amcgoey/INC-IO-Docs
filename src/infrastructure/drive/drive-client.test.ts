@@ -14,6 +14,7 @@ describe('GoogleDriveClient', () => {
         create: vi.fn(),
         update: vi.fn(),
         copy: vi.fn(),
+        export: vi.fn(),
       },
     } as unknown as drive_v3.Drive;
 
@@ -1515,6 +1516,194 @@ describe('GoogleDriveClient', () => {
       expect(mockConfigProvider.getDriveConfig).toHaveBeenCalled();
       expect(mockDrive.files.get).toHaveBeenCalledTimes(2);
       expect(sleepMock).toHaveBeenCalledWith(250);
+    });
+  });
+
+  describe('downloadAsBuffer', () => {
+    it('downloads standard binary file via alt: media and returns Uint8Array', async () => {
+      (mockDrive.files.get as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          data: {
+            id: 'file-pdf-1',
+            name: 'sample.pdf',
+            mimeType: 'application/pdf',
+          },
+        })
+        .mockResolvedValueOnce({
+          data: new Uint8Array([10, 20, 30]).buffer, // ArrayBuffer
+        });
+
+      const buffer = await client.downloadAsBuffer('file-pdf-1');
+
+      expect(buffer).toBeInstanceOf(Uint8Array);
+      expect(Array.from(buffer)).toEqual([10, 20, 30]);
+
+      expect(mockDrive.files.get).toHaveBeenNthCalledWith(1, {
+        fileId: 'file-pdf-1',
+        fields: 'id, name, parents, mimeType, webViewLink',
+        supportsAllDrives: true,
+      });
+      expect(mockDrive.files.get).toHaveBeenNthCalledWith(
+        2,
+        {
+          fileId: 'file-pdf-1',
+          alt: 'media',
+          supportsAllDrives: true,
+        },
+        { responseType: 'arraybuffer' }
+      );
+      expect(mockDrive.files.export).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { mimeType: 'application/vnd.google-apps.document', name: 'Doc' },
+      { mimeType: 'application/vnd.google-apps.spreadsheet', name: 'Sheet' },
+      { mimeType: 'application/vnd.google-apps.presentation', name: 'Slides' },
+      { mimeType: 'application/vnd.google-apps.drawing', name: 'Drawing' },
+    ])(
+      'exports Google Workspace document ($mimeType) as application/pdf and returns Uint8Array',
+      async ({ mimeType, name }) => {
+        (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          data: {
+            id: 'gdoc-1',
+            name,
+            mimeType,
+          },
+        });
+
+        (mockDrive.files.export as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          data: new Uint8Array([100, 101, 102]),
+        });
+
+        const buffer = await client.downloadAsBuffer('gdoc-1');
+
+        expect(buffer).toBeInstanceOf(Uint8Array);
+        expect(Array.from(buffer)).toEqual([100, 101, 102]);
+
+        expect(mockDrive.files.export).toHaveBeenCalledWith(
+          {
+            fileId: 'gdoc-1',
+            mimeType: 'application/pdf',
+          },
+          { responseType: 'arraybuffer' }
+        );
+      }
+    );
+
+    it('handles Buffer and Uint8Array and string response data formats', async () => {
+      (mockDrive.files.get as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          data: {
+            id: 'file-buf',
+            name: 'sample.txt',
+            mimeType: 'text/plain',
+          },
+        })
+        .mockResolvedValueOnce({
+          data: Buffer.from('hello world'),
+        });
+
+      const buffer = await client.downloadAsBuffer('file-buf');
+      expect(buffer).toBeInstanceOf(Uint8Array);
+      expect(new TextDecoder().decode(buffer)).toBe('hello world');
+    });
+
+    it('accepts options with custom auth token and invokes custom drive client', async () => {
+      const customDriveMock = {
+        files: {
+          get: vi
+            .fn()
+            .mockResolvedValueOnce({
+              data: {
+                id: 'file-auth-1',
+                name: 'SecureDoc',
+                mimeType: 'application/vnd.google-apps.document',
+              },
+            }),
+          export: vi.fn().mockResolvedValueOnce({
+            data: new Uint8Array([1, 2, 3]),
+          }),
+        },
+      };
+      const driveSpy = vi
+        .spyOn(google, 'drive')
+        .mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
+
+      const buffer = await client.downloadAsBuffer('file-auth-1', {
+        auth: 'ya29.custom-token',
+      });
+      expect(Array.from(buffer)).toEqual([1, 2, 3]);
+      expect(driveSpy).toHaveBeenCalled();
+      expect(customDriveMock.files.export).toHaveBeenCalledWith(
+        {
+          fileId: 'file-auth-1',
+          mimeType: 'application/pdf',
+        },
+        { responseType: 'arraybuffer' }
+      );
+      driveSpy.mockRestore();
+    });
+
+    it('retries on rate limit (429) error during export or get', async () => {
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      const retryClient = new GoogleDriveClient({
+        drive: mockDrive,
+        retryOptions: {
+          maxRetries: 2,
+          initialDelayMs: 10,
+          backoffFactor: 2,
+          sleep: sleepMock,
+        },
+      });
+
+      (mockDrive.files.get as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          data: {
+            id: 'file-retry',
+            name: 'file.bin',
+            mimeType: 'application/octet-stream',
+          },
+        })
+        .mockRejectedValueOnce({ status: 429 })
+        .mockResolvedValueOnce({
+          data: new Uint8Array([5, 6, 7]),
+        });
+
+      const buffer = await retryClient.downloadAsBuffer('file-retry');
+      expect(Array.from(buffer)).toEqual([5, 6, 7]);
+      expect(mockDrive.files.get).toHaveBeenCalledTimes(3);
+      expect(sleepMock).toHaveBeenCalledTimes(1);
+      expect(sleepMock).toHaveBeenCalledWith(10);
+    });
+
+    it('wraps API errors into GoogleDriveApiError during download or export', async () => {
+      (mockDrive.files.get as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          data: {
+            id: 'file-err',
+            name: 'file.pdf',
+            mimeType: 'application/pdf',
+          },
+        })
+        .mockRejectedValueOnce({
+          status: 500,
+          message: 'Internal Server Error',
+        });
+
+      await expect(client.downloadAsBuffer('file-err')).rejects.toThrow(
+        /Google Drive API error in downloadAsBuffer: Internal Server Error/
+      );
+    });
+
+    it('propagates getFile error when file metadata retrieval fails', async () => {
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockRejectedValueOnce({
+        status: 404,
+        message: 'File not found',
+      });
+
+      await expect(client.downloadAsBuffer('non-existent')).rejects.toThrow(
+        /Google Drive API error in getFile: File not found/
+      );
     });
   });
 });

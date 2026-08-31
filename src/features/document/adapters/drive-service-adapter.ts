@@ -62,6 +62,10 @@ export interface DriveClientPort {
     params: DriveClientSearchParams,
     options?: DriveClientOperationOptions
   ): Promise<DriveClientFileMetadata[]>;
+  downloadAsBuffer(
+    fileId: string,
+    options?: DriveClientOperationOptions
+  ): Promise<Uint8Array>;
 }
 
 function mapMetadataToResult(metadata: DriveClientFileMetadata): DriveFileResult {
@@ -226,6 +230,17 @@ export class DriveServiceAdapter implements DriveServicePort {
       return results.map(mapMetadataToResult);
     } catch (error) {
       this.translateError('searchFiles', error);
+    }
+  }
+
+  async downloadAsBuffer(
+    fileId: string,
+    options?: DriveServiceOptions
+  ): Promise<Uint8Array> {
+    try {
+      return await this.driveClient.downloadAsBuffer(fileId, options);
+    } catch (error) {
+      this.translateError('downloadAsBuffer', error);
     }
   }
 }
