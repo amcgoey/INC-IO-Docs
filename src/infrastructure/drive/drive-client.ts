@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import { google, type drive_v3 } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import { Type } from '@sinclair/typebox';
@@ -25,6 +26,27 @@ export interface DriveSearchParams {
   mimeTypes?: string[] | undefined;
   expectedParentPathNames?: string[] | undefined;
 }
+
+export interface DriveDuplicateOptions {
+  newName?: string | undefined;
+  targetFolderId?: string | undefined;
+}
+
+export interface DriveContentCreateOptions {
+  action: 'create';
+  targetFolderId: string;
+  name: string;
+  mimeType?: string | undefined;
+}
+
+export interface DriveContentUpdateOptions {
+  action: 'update';
+  fileId: string;
+  mimeType?: string | undefined;
+}
+
+export type DriveContentSaveOptions = DriveContentCreateOptions | DriveContentUpdateOptions;
+
 
 export class GoogleDriveApiError extends Error {
   readonly statusCode?: number | undefined;
@@ -110,6 +132,30 @@ function formatErrorMessage(error: unknown): string {
     return (error as { message: string }).message;
   }
   return String(error);
+}
+
+function isGoogleWorkspaceDocument(mimeType?: string): boolean {
+  return (
+    typeof mimeType === 'string' &&
+    mimeType.startsWith('application/vnd.google-apps.') &&
+    mimeType !== 'application/vnd.google-apps.folder'
+  );
+}
+
+function toUint8Array(data: unknown): Uint8Array {
+  if (ArrayBuffer.isView(data)) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  }
+  if (data instanceof ArrayBuffer) {
+    return new Uint8Array(data);
+  }
+  if (typeof data === 'string') {
+    return new TextEncoder().encode(data);
+  }
+  if (!data) {
+    return new Uint8Array();
+  }
+  throw new Error('Unexpected response data format for download');
 }
 
 export class GoogleDriveClient {
@@ -293,19 +339,26 @@ export class GoogleDriveClient {
     }
   }
 
-  async moveFile(
+  async move(
     fileId: string,
-    currentParentId: string,
     targetFolderId: string,
     options?: DriveOperationOptions
   ): Promise<DriveFileMetadata> {
     const drive = this.getDrive(options?.auth);
     try {
+      const file = await this.getFile(fileId, options);
+      const currentParents = file.parents ?? [];
+      const removeParentsList = currentParents.filter(
+        (parentId) => parentId !== targetFolderId
+      );
+      const removeParents =
+        removeParentsList.length > 0 ? removeParentsList.join(',') : undefined;
+
       const res = await this.executeWithRetry(() =>
         drive.files.update({
           fileId,
           addParents: targetFolderId,
-          removeParents: currentParentId,
+          ...(removeParents ? { removeParents } : {}),
           fields: 'id, name, parents, mimeType, webViewLink',
           supportsAllDrives: true,
         })
@@ -324,7 +377,93 @@ export class GoogleDriveClient {
         webViewLink: res.data.webViewLink ?? undefined,
       };
     } catch (error) {
-      this.wrapApiError('moveFile', error);
+      this.wrapApiError('move', error);
+    }
+  }
+
+  async rename(
+    fileId: string,
+    newName: string,
+    options?: DriveOperationOptions
+  ): Promise<DriveFileMetadata> {
+    const drive = this.getDrive(options?.auth);
+    try {
+      const res = await this.executeWithRetry(() =>
+        drive.files.update({
+          fileId,
+          requestBody: {
+            name: newName,
+          },
+          fields: 'id, name, parents, mimeType, webViewLink',
+          supportsAllDrives: true,
+        })
+      );
+
+      const { id, name } = this.requireFileMetadata(
+        res.data,
+        `Failed to rename file '${fileId}' to '${newName}'`
+      );
+
+      return {
+        id,
+        name,
+        parents: res.data.parents ?? undefined,
+        mimeType: res.data.mimeType ?? undefined,
+        webViewLink: res.data.webViewLink ?? undefined,
+      };
+    } catch (error) {
+      this.wrapApiError('rename', error);
+    }
+  }
+
+  async duplicate(
+    fileId: string,
+    duplicateOptions?: DriveDuplicateOptions,
+    options?: DriveOperationOptions
+  ): Promise<DriveFileMetadata> {
+    const drive = this.getDrive(options?.auth);
+    try {
+      let targetParents: string[] | undefined;
+      if (duplicateOptions?.targetFolderId) {
+        targetParents = [duplicateOptions.targetFolderId];
+      } else {
+        const sourceFile = await this.getFile(fileId, options);
+        if (sourceFile.parents && sourceFile.parents.length > 0) {
+          targetParents = sourceFile.parents;
+        }
+      }
+
+      const requestBody: drive_v3.Schema$File = {};
+      if (duplicateOptions?.newName) {
+        requestBody.name = duplicateOptions.newName;
+      }
+      if (targetParents && targetParents.length > 0) {
+        requestBody.parents = targetParents;
+      }
+
+      const res = await this.executeWithRetry(() =>
+        drive.files.copy({
+          fileId,
+          ...(Object.keys(requestBody).length > 0 ? { requestBody } : {}),
+          fields: 'id, name, parents, mimeType, webViewLink',
+          supportsAllDrives: true,
+        })
+      );
+
+      const { id, name } = this.requireFileMetadata(
+        res.data,
+        `Failed to duplicate file '${fileId}'`
+      );
+
+      return {
+        id,
+        name,
+        parents: res.data.parents ?? targetParents,
+        mimeType: res.data.mimeType ?? undefined,
+        webViewLink: res.data.webViewLink ?? undefined,
+      };
+    } catch (error) {
+      this.wrapApiError('duplicate', error);
     }
   }
 
@@ -450,6 +589,198 @@ export class GoogleDriveClient {
         }));
     } catch (error) {
       this.wrapApiError('searchFiles', error);
+    }
+  }
+
+  async downloadAsBuffer(
+    fileId: string,
+    options?: DriveOperationOptions
+  ): Promise<Uint8Array> {
+    const drive = this.getDrive(options?.auth);
+    try {
+      const file = await this.getFile(fileId, options);
+
+      if (isGoogleWorkspaceDocument(file.mimeType)) {
+        const res = await this.executeWithRetry(() =>
+          drive.files.export(
+            {
+              fileId,
+              mimeType: 'application/pdf',
+            },
+            { responseType: 'arraybuffer' }
+          )
+        );
+        return toUint8Array(res.data);
+      } else {
+        const res = await this.executeWithRetry(() =>
+          drive.files.get(
+            {
+              fileId,
+              alt: 'media',
+              supportsAllDrives: true,
+            },
+            { responseType: 'arraybuffer' }
+          )
+        );
+        return toUint8Array(res.data);
+      }
+    } catch (error) {
+      this.wrapApiError('downloadAsBuffer', error);
+    }
+  }
+
+  async saveBuffer(
+    content: Uint8Array,
+    saveOptions: DriveContentSaveOptions,
+    options?: DriveOperationOptions
+  ): Promise<DriveFileMetadata> {
+    const drive = this.getDrive(options?.auth);
+    const createMediaBody = () =>
+      Readable.from(Buffer.from(content.buffer, content.byteOffset, content.byteLength));
+
+    try {
+      if (saveOptions.action === 'create') {
+        const requestBody: drive_v3.Schema$File = {
+          name: saveOptions.name,
+          parents: [saveOptions.targetFolderId],
+          ...(saveOptions.mimeType !== undefined ? { mimeType: saveOptions.mimeType } : {}),
+        };
+
+        const res = await this.executeWithRetry(() =>
+          drive.files.create({
+            requestBody,
+            media: {
+              ...(saveOptions.mimeType !== undefined ? { mimeType: saveOptions.mimeType } : {}),
+              body: createMediaBody(),
+            },
+            fields: 'id, name, parents, mimeType, webViewLink',
+            supportsAllDrives: true,
+          })
+        );
+
+        const { id, name } = this.requireFileMetadata(
+          res.data,
+          `Failed to save file '${saveOptions.name}' in parent '${saveOptions.targetFolderId}'`
+        );
+
+        return {
+          id,
+          name,
+          parents: res.data.parents ?? [saveOptions.targetFolderId],
+          mimeType: res.data.mimeType ?? saveOptions.mimeType ?? undefined,
+          webViewLink: res.data.webViewLink ?? undefined,
+        };
+      } else {
+        const requestBody: drive_v3.Schema$File | undefined =
+          saveOptions.mimeType !== undefined
+            ? { mimeType: saveOptions.mimeType }
+            : undefined;
+
+        const res = await this.executeWithRetry(() =>
+          drive.files.update({
+            fileId: saveOptions.fileId,
+            ...(requestBody ? { requestBody } : {}),
+            media: {
+              ...(saveOptions.mimeType !== undefined ? { mimeType: saveOptions.mimeType } : {}),
+              body: createMediaBody(),
+            },
+            fields: 'id, name, parents, mimeType, webViewLink',
+            supportsAllDrives: true,
+          })
+        );
+
+        const { id, name } = this.requireFileMetadata(
+          res.data,
+          `Failed to update file '${saveOptions.fileId}' with saved buffer`
+        );
+
+        return {
+          id,
+          name,
+          parents: res.data.parents ?? undefined,
+          mimeType: res.data.mimeType ?? saveOptions.mimeType ?? undefined,
+          webViewLink: res.data.webViewLink ?? undefined,
+        };
+      }
+    } catch (error) {
+      this.wrapApiError('saveBuffer', error);
+    }
+  }
+
+  async uploadStream(
+    stream: ReadableStream<Uint8Array>,
+    saveOptions: DriveContentSaveOptions,
+    options?: DriveOperationOptions
+  ): Promise<DriveFileMetadata> {
+    const drive = this.getDrive(options?.auth);
+    const mediaBody = Readable.fromWeb(stream as Parameters<typeof Readable.fromWeb>[0]);
+
+    try {
+      if (saveOptions.action === 'create') {
+        const requestBody: drive_v3.Schema$File = {
+          name: saveOptions.name,
+          parents: [saveOptions.targetFolderId],
+          ...(saveOptions.mimeType !== undefined ? { mimeType: saveOptions.mimeType } : {}),
+        };
+
+        const res = await this.executeWithRetry(() =>
+          drive.files.create({
+            requestBody,
+            media: {
+              ...(saveOptions.mimeType !== undefined ? { mimeType: saveOptions.mimeType } : {}),
+              body: mediaBody,
+            },
+            fields: 'id, name, parents, mimeType, webViewLink',
+            supportsAllDrives: true,
+          })
+        );
+
+        const { id, name } = this.requireFileMetadata(
+          res.data,
+          `Failed to upload stream for file '${saveOptions.name}' in parent '${saveOptions.targetFolderId}'`
+        );
+
+        return {
+          id,
+          name,
+          parents: res.data.parents ?? [saveOptions.targetFolderId],
+          mimeType: res.data.mimeType ?? saveOptions.mimeType ?? undefined,
+          webViewLink: res.data.webViewLink ?? undefined,
+        };
+      } else {
+        const requestBody: drive_v3.Schema$File | undefined =
+          saveOptions.mimeType !== undefined
+            ? { mimeType: saveOptions.mimeType }
+            : undefined;
+
+        const res = await this.executeWithRetry(() =>
+          drive.files.update({
+            fileId: saveOptions.fileId,
+            ...(requestBody ? { requestBody } : {}),
+            media: {
+              ...(saveOptions.mimeType !== undefined ? { mimeType: saveOptions.mimeType } : {}),
+              body: mediaBody,
+            },
+            fields: 'id, name, parents, mimeType, webViewLink',
+            supportsAllDrives: true,
+          })
+        );
+
+        const { id, name } = this.requireFileMetadata(
+          res.data,
+          `Failed to update file '${saveOptions.fileId}' with uploaded stream`
+        );
+
+        return {
+          id,
+          name,
+          parents: res.data.parents ?? undefined,
+          mimeType: res.data.mimeType ?? saveOptions.mimeType ?? undefined,
+          webViewLink: res.data.webViewLink ?? undefined,
+        };
+      }
+    } catch (error) {
+      this.wrapApiError('uploadStream', error);
     }
   }
 }

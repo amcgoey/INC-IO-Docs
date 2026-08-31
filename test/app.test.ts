@@ -941,12 +941,25 @@ describe('App integration tests', () => {
           name: '!CustomDestination',
           parents: ['folder-parent-1'],
         }),
-        moveFile: vi.fn().mockResolvedValue({
+        move: vi.fn().mockResolvedValue({
           id: 'file-123',
           name: 'ImportantDocument.pdf',
           parents: ['custom-folder-id'],
         }),
+        rename: vi.fn().mockResolvedValue({
+          id: 'file-123',
+          name: 'ImportantDocument.pdf',
+          parents: ['custom-folder-id'],
+        }),
+        duplicate: vi.fn().mockResolvedValue({
+          id: 'file-copy-123',
+          name: 'ImportantDocument.pdf',
+          parents: ['custom-folder-id'],
+        }),
         searchFiles: vi.fn().mockResolvedValue([]),
+        downloadAsBuffer: vi.fn(),
+        saveBuffer: vi.fn(),
+        uploadStream: vi.fn(),
       };
 
       const mockAuthVerifier = {

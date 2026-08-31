@@ -1,6 +1,8 @@
 import {
   DriveServiceError,
   AmbiguousPathSpecError,
+  type DriveContentSaveOptions,
+  type DriveDuplicateOptions,
   type DriveFileResult,
   type DriveSearchQuery,
   type DriveServiceOptions,
@@ -23,6 +25,26 @@ export interface DriveClientSearchParams {
   expectedParentPathNames?: string[] | undefined;
 }
 
+export interface DriveClientDuplicateOptions {
+  newName?: string | undefined;
+  targetFolderId?: string | undefined;
+}
+
+export interface DriveClientCreateOptions {
+  action: 'create';
+  targetFolderId: string;
+  name: string;
+  mimeType?: string | undefined;
+}
+
+export interface DriveClientUpdateOptions {
+  action: 'update';
+  fileId: string;
+  mimeType?: string | undefined;
+}
+
+export type DriveClientSaveOptions = DriveClientCreateOptions | DriveClientUpdateOptions;
+
 export interface DriveClientOperationOptions {
   auth?: string | undefined;
 }
@@ -37,16 +59,39 @@ export interface DriveClientPort {
     folderName: string,
     options?: DriveClientOperationOptions
   ): Promise<DriveClientFileMetadata>;
-  moveFile(
+  move(
     fileId: string,
-    currentParentId: string,
     targetFolderId: string,
+    options?: DriveClientOperationOptions
+  ): Promise<DriveClientFileMetadata>;
+  rename(
+    fileId: string,
+    newName: string,
+    options?: DriveClientOperationOptions
+  ): Promise<DriveClientFileMetadata>;
+  duplicate(
+    fileId: string,
+    duplicateOptions?: DriveClientDuplicateOptions,
     options?: DriveClientOperationOptions
   ): Promise<DriveClientFileMetadata>;
   searchFiles(
     params: DriveClientSearchParams,
     options?: DriveClientOperationOptions
   ): Promise<DriveClientFileMetadata[]>;
+  downloadAsBuffer(
+    fileId: string,
+    options?: DriveClientOperationOptions
+  ): Promise<Uint8Array>;
+  saveBuffer(
+    content: Uint8Array,
+    saveOptions: DriveClientSaveOptions,
+    options?: DriveClientOperationOptions
+  ): Promise<DriveClientFileMetadata>;
+  uploadStream(
+    stream: ReadableStream<Uint8Array>,
+    saveOptions: DriveClientSaveOptions,
+    options?: DriveClientOperationOptions
+  ): Promise<DriveClientFileMetadata>;
 }
 
 function mapMetadataToResult(metadata: DriveClientFileMetadata): DriveFileResult {
@@ -151,22 +196,54 @@ export class DriveServiceAdapter implements DriveServicePort {
     }
   }
 
-  async moveFile(
+  async move(
     fileId: string,
-    currentParentId: string,
     targetFolderId: string,
     options?: DriveServiceOptions
   ): Promise<DriveFileResult> {
     try {
-      const metadata = await this.driveClient.moveFile(
+      const metadata = await this.driveClient.move(
         fileId,
-        currentParentId,
         targetFolderId,
         options
       );
       return mapMetadataToResult(metadata);
     } catch (error) {
-      this.translateError('moveFile', error);
+      this.translateError('move', error);
+    }
+  }
+
+  async rename(
+    fileId: string,
+    newName: string,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult> {
+    try {
+      const metadata = await this.driveClient.rename(
+        fileId,
+        newName,
+        options
+      );
+      return mapMetadataToResult(metadata);
+    } catch (error) {
+      this.translateError('rename', error);
+    }
+  }
+
+  async duplicate(
+    fileId: string,
+    duplicateOptions?: DriveDuplicateOptions,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult> {
+    try {
+      const metadata = await this.driveClient.duplicate(
+        fileId,
+        duplicateOptions,
+        options
+      );
+      return mapMetadataToResult(metadata);
+    } catch (error) {
+      this.translateError('duplicate', error);
     }
   }
 
@@ -179,6 +256,51 @@ export class DriveServiceAdapter implements DriveServicePort {
       return results.map(mapMetadataToResult);
     } catch (error) {
       this.translateError('searchFiles', error);
+    }
+  }
+
+  async downloadAsBuffer(
+    fileId: string,
+    options?: DriveServiceOptions
+  ): Promise<Uint8Array> {
+    try {
+      return await this.driveClient.downloadAsBuffer(fileId, options);
+    } catch (error) {
+      this.translateError('downloadAsBuffer', error);
+    }
+  }
+
+  async saveBuffer(
+    content: Uint8Array,
+    saveOptions: DriveContentSaveOptions,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult> {
+    try {
+      const metadata = await this.driveClient.saveBuffer(
+        content,
+        saveOptions,
+        options
+      );
+      return mapMetadataToResult(metadata);
+    } catch (error) {
+      this.translateError('saveBuffer', error);
+    }
+  }
+
+  async uploadStream(
+    stream: ReadableStream<Uint8Array>,
+    saveOptions: DriveContentSaveOptions,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult> {
+    try {
+      const metadata = await this.driveClient.uploadStream(
+        stream,
+        saveOptions,
+        options
+      );
+      return mapMetadataToResult(metadata);
+    } catch (error) {
+      this.translateError('uploadStream', error);
     }
   }
 }

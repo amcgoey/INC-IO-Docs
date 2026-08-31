@@ -6,8 +6,13 @@ describe('DriveServiceAdapter', () => {
   const mockDriveClient: DriveClientPort = {
     getFile: vi.fn(),
     findOrCreateFolder: vi.fn(),
-    moveFile: vi.fn(),
+    move: vi.fn(),
+    rename: vi.fn(),
+    duplicate: vi.fn(),
     searchFiles: vi.fn(),
+    downloadAsBuffer: vi.fn(),
+    saveBuffer: vi.fn(),
+    uploadStream: vi.fn(),
   };
 
   const adapter = new DriveServiceAdapter(mockDriveClient);
@@ -63,15 +68,15 @@ describe('DriveServiceAdapter', () => {
     });
   });
 
-  describe('moveFile', () => {
+  describe('move', () => {
     it('returns mapped moved file result on success', async () => {
-      (mockDriveClient.moveFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (mockDriveClient.move as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: 'file-1',
         name: 'moved.pdf',
         parents: ['target-folder'],
       });
 
-      const res = await adapter.moveFile('file-1', 'old-parent', 'target-folder');
+      const res = await adapter.move('file-1', 'target-folder');
       expect(res).toEqual({
         id: 'file-1',
         name: 'moved.pdf',
@@ -79,6 +84,87 @@ describe('DriveServiceAdapter', () => {
         mimeType: undefined,
         webViewLink: undefined,
       });
+    });
+
+    it('translates external errors to DriveServiceError', async () => {
+      (mockDriveClient.move as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Move failed')
+      );
+
+      const err = await adapter.move('file-1', 'target-folder').catch((e) => e);
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(/Drive service error in move: Move failed/);
+    });
+  });
+
+  describe('rename', () => {
+    it('returns mapped renamed file result on success', async () => {
+      (mockDriveClient.rename as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'file-1',
+        name: 'renamed.pdf',
+        parents: ['folder-1'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link',
+      });
+
+      const res = await adapter.rename('file-1', 'renamed.pdf');
+      expect(res).toEqual({
+        id: 'file-1',
+        name: 'renamed.pdf',
+        parents: ['folder-1'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link',
+      });
+      expect(mockDriveClient.rename).toHaveBeenCalledWith('file-1', 'renamed.pdf', undefined);
+    });
+
+    it('translates external errors to DriveServiceError', async () => {
+      (mockDriveClient.rename as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Rename failed')
+      );
+
+      const err = await adapter.rename('file-1', 'new-name.pdf').catch((e) => e);
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(/Drive service error in rename: Rename failed/);
+    });
+  });
+
+  describe('duplicate', () => {
+    it('returns mapped duplicated file result on success', async () => {
+      (mockDriveClient.duplicate as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'file-copy-1',
+        name: 'copied.pdf',
+        parents: ['folder-1'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link',
+      });
+
+      const res = await adapter.duplicate('file-1', {
+        newName: 'copied.pdf',
+        targetFolderId: 'folder-1',
+      });
+      expect(res).toEqual({
+        id: 'file-copy-1',
+        name: 'copied.pdf',
+        parents: ['folder-1'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link',
+      });
+      expect(mockDriveClient.duplicate).toHaveBeenCalledWith(
+        'file-1',
+        { newName: 'copied.pdf', targetFolderId: 'folder-1' },
+        undefined
+      );
+    });
+
+    it('translates external errors to DriveServiceError', async () => {
+      (mockDriveClient.duplicate as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Duplicate failed')
+      );
+
+      const err = await adapter.duplicate('file-1').catch((e) => e);
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(/Drive service error in duplicate: Duplicate failed/);
     });
   });
 
@@ -156,4 +242,309 @@ describe('DriveServiceAdapter', () => {
       }
     );
   });
+
+  describe('downloadAsBuffer', () => {
+    it('returns Uint8Array buffer on success', async () => {
+      const mockBuffer = new Uint8Array([1, 2, 3, 4]);
+      (mockDriveClient.downloadAsBuffer as ReturnType<typeof vi.fn>).mockResolvedValue(
+        mockBuffer
+      );
+
+      const res = await adapter.downloadAsBuffer('file-123', { auth: 'token-abc' });
+      expect(res).toBe(mockBuffer);
+      expect(mockDriveClient.downloadAsBuffer).toHaveBeenCalledWith('file-123', {
+        auth: 'token-abc',
+      });
+    });
+
+    it('translates external errors to DriveServiceError', async () => {
+      (mockDriveClient.downloadAsBuffer as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Failed to download file content')
+      );
+
+      const err = await adapter.downloadAsBuffer('file-123').catch((e) => e);
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(
+        /Drive service error in downloadAsBuffer: Failed to download file content/
+      );
+    });
+
+    it.each([
+      { statusCode: 401, message: 'Invalid Credentials', expectedStatus: 401 },
+      { statusCode: 403, message: 'Insufficient Permissions', expectedStatus: 403 },
+      { statusCode: 404, message: 'File not found', expectedStatus: 404 },
+      { statusCode: 500, message: 'Backend Error', expectedStatus: 500 },
+    ])(
+      'translates $statusCode API error to DriveServiceError with status code',
+      async ({ statusCode, message, expectedStatus }) => {
+        (mockDriveClient.downloadAsBuffer as ReturnType<typeof vi.fn>).mockRejectedValue({
+          statusCode,
+          message,
+        });
+
+        const err = await adapter.downloadAsBuffer('file-123').catch((e) => e);
+        expect(err).toBeInstanceOf(DriveServiceError);
+        expect(err.message).toMatch(
+          new RegExp(`Drive service error \\(${expectedStatus}\\) in downloadAsBuffer: ${message}`)
+        );
+      }
+    );
+  });
+
+  describe('saveBuffer', () => {
+    const sampleContent = new Uint8Array([10, 20, 30]);
+
+    it('returns mapped file result on successful create', async () => {
+      (mockDriveClient.saveBuffer as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'new-file-id',
+        name: 'Saved.pdf',
+        parents: ['folder-123'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link/saved',
+      });
+
+      const res = await adapter.saveBuffer(
+        sampleContent,
+        {
+          action: 'create',
+          name: 'Saved.pdf',
+          targetFolderId: 'folder-123',
+          mimeType: 'application/pdf',
+        },
+        { auth: 'token-abc' }
+      );
+
+      expect(res).toEqual({
+        id: 'new-file-id',
+        name: 'Saved.pdf',
+        parents: ['folder-123'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link/saved',
+      });
+      expect(mockDriveClient.saveBuffer).toHaveBeenCalledWith(
+        sampleContent,
+        {
+          action: 'create',
+          name: 'Saved.pdf',
+          targetFolderId: 'folder-123',
+          mimeType: 'application/pdf',
+        },
+        { auth: 'token-abc' }
+      );
+    });
+
+    it('returns mapped file result on successful update', async () => {
+      (mockDriveClient.saveBuffer as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'existing-id',
+        name: 'Updated.pdf',
+        parents: ['folder-123'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link/updated',
+      });
+
+      const res = await adapter.saveBuffer(sampleContent, {
+        action: 'update',
+        fileId: 'existing-id',
+        mimeType: 'application/pdf',
+      });
+
+      expect(res).toEqual({
+        id: 'existing-id',
+        name: 'Updated.pdf',
+        parents: ['folder-123'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link/updated',
+      });
+      expect(mockDriveClient.saveBuffer).toHaveBeenCalledWith(
+        sampleContent,
+        {
+          action: 'update',
+          fileId: 'existing-id',
+          mimeType: 'application/pdf',
+        },
+        undefined
+      );
+    });
+
+    it('translates external errors to DriveServiceError', async () => {
+      (mockDriveClient.saveBuffer as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Network error during save')
+      );
+
+      const err = await adapter
+        .saveBuffer(sampleContent, {
+          action: 'create',
+          name: 'Saved.pdf',
+          targetFolderId: 'folder-123',
+        })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(
+        /Drive service error in saveBuffer: Network error during save/
+      );
+    });
+
+    it.each([
+      { statusCode: 401, message: 'Invalid Credentials', expectedStatus: 401 },
+      { statusCode: 403, message: 'Insufficient Permissions', expectedStatus: 403 },
+      { statusCode: 404, message: 'Folder not found', expectedStatus: 404 },
+      { statusCode: 500, message: 'Backend Error', expectedStatus: 500 },
+    ])(
+      'translates $statusCode API error to DriveServiceError with status code',
+      async ({ statusCode, message, expectedStatus }) => {
+        (mockDriveClient.saveBuffer as ReturnType<typeof vi.fn>).mockRejectedValue({
+          statusCode,
+          message,
+        });
+
+        const err = await adapter
+          .saveBuffer(sampleContent, {
+            action: 'create',
+            name: 'Saved.pdf',
+            targetFolderId: 'folder-123',
+          })
+          .catch((e) => e);
+
+        expect(err).toBeInstanceOf(DriveServiceError);
+        expect(err.message).toMatch(
+          new RegExp(`Drive service error \\(${expectedStatus}\\) in saveBuffer: ${message}`)
+        );
+      }
+    );
+  });
+
+  describe('uploadStream', () => {
+    const createMockStream = () =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        },
+      });
+
+    it('returns mapped file result on successful create', async () => {
+      const stream = createMockStream();
+      (mockDriveClient.uploadStream as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'new-stream-id',
+        name: 'Streamed.pdf',
+        parents: ['folder-123'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link/streamed',
+      });
+
+      const res = await adapter.uploadStream(
+        stream,
+        {
+          action: 'create',
+          name: 'Streamed.pdf',
+          targetFolderId: 'folder-123',
+          mimeType: 'application/pdf',
+        },
+        { auth: 'token-abc' }
+      );
+
+      expect(res).toEqual({
+        id: 'new-stream-id',
+        name: 'Streamed.pdf',
+        parents: ['folder-123'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link/streamed',
+      });
+      expect(mockDriveClient.uploadStream).toHaveBeenCalledWith(
+        stream,
+        {
+          action: 'create',
+          name: 'Streamed.pdf',
+          targetFolderId: 'folder-123',
+          mimeType: 'application/pdf',
+        },
+        { auth: 'token-abc' }
+      );
+    });
+
+    it('returns mapped file result on successful update', async () => {
+      const stream = createMockStream();
+      (mockDriveClient.uploadStream as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'existing-stream-id',
+        name: 'UpdatedStream.pdf',
+        parents: ['folder-123'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link/updated-stream',
+      });
+
+      const res = await adapter.uploadStream(stream, {
+        action: 'update',
+        fileId: 'existing-stream-id',
+        mimeType: 'application/pdf',
+      });
+
+      expect(res).toEqual({
+        id: 'existing-stream-id',
+        name: 'UpdatedStream.pdf',
+        parents: ['folder-123'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link/updated-stream',
+      });
+      expect(mockDriveClient.uploadStream).toHaveBeenCalledWith(
+        stream,
+        {
+          action: 'update',
+          fileId: 'existing-stream-id',
+          mimeType: 'application/pdf',
+        },
+        undefined
+      );
+    });
+
+    it('translates external errors to DriveServiceError', async () => {
+      const stream = createMockStream();
+      (mockDriveClient.uploadStream as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Network error during stream upload')
+      );
+
+      const err = await adapter
+        .uploadStream(stream, {
+          action: 'create',
+          name: 'Streamed.pdf',
+          targetFolderId: 'folder-123',
+        })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(
+        /Drive service error in uploadStream: Network error during stream upload/
+      );
+    });
+
+    it.each([
+      { statusCode: 401, message: 'Invalid Credentials', expectedStatus: 401 },
+      { statusCode: 403, message: 'Insufficient Permissions', expectedStatus: 403 },
+      { statusCode: 404, message: 'Folder not found', expectedStatus: 404 },
+      { statusCode: 500, message: 'Backend Error', expectedStatus: 500 },
+    ])(
+      'translates $statusCode API error to DriveServiceError with status code',
+      async ({ statusCode, message, expectedStatus }) => {
+        const stream = createMockStream();
+        (mockDriveClient.uploadStream as ReturnType<typeof vi.fn>).mockRejectedValue({
+          statusCode,
+          message,
+        });
+
+        const err = await adapter
+          .uploadStream(stream, {
+            action: 'create',
+            name: 'Streamed.pdf',
+            targetFolderId: 'folder-123',
+          })
+          .catch((e) => e);
+
+        expect(err).toBeInstanceOf(DriveServiceError);
+        expect(err.message).toMatch(
+          new RegExp(`Drive service error \\(${expectedStatus}\\) in uploadStream: ${message}`)
+        );
+      }
+    );
+  });
 });
+

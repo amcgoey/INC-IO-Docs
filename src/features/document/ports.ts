@@ -110,6 +110,26 @@ export interface AppConfigurationProviderPort {
   getDriveConfig(): Promise<DriveConfiguration | undefined>;
 }
 
+export interface DriveDuplicateOptions {
+  newName?: string | undefined;
+  targetFolderId?: string | undefined;
+}
+
+export interface DriveContentCreateOptions {
+  action: 'create';
+  targetFolderId: string;
+  name: string;
+  mimeType?: string | undefined;
+}
+
+export interface DriveContentUpdateOptions {
+  action: 'update';
+  fileId: string;
+  mimeType?: string | undefined;
+}
+
+export type DriveContentSaveOptions = DriveContentCreateOptions | DriveContentUpdateOptions;
+
 export interface DriveServiceOptions {
   auth?: string | undefined;
 }
@@ -117,16 +137,40 @@ export interface DriveServiceOptions {
 export interface DriveServicePort {
   getFile(fileId: string, options?: DriveServiceOptions): Promise<DriveFileResult>;
   findOrCreateFolder(parentId: string, folderName: string, options?: DriveServiceOptions): Promise<DriveFileResult>;
-  moveFile(
+  move(
     fileId: string,
-    currentParentId: string,
     targetFolderId: string,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult>;
+  rename(
+    fileId: string,
+    newName: string,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult>;
+  duplicate(
+    fileId: string,
+    duplicateOptions?: DriveDuplicateOptions,
     options?: DriveServiceOptions
   ): Promise<DriveFileResult>;
   searchFiles(
     query: DriveSearchQuery,
     options?: DriveServiceOptions
   ): Promise<DriveFileResult[]>;
+  downloadAsBuffer(
+    fileId: string,
+    options?: DriveServiceOptions
+  ): Promise<Uint8Array>;
+  saveBuffer(
+    content: Uint8Array,
+    saveOptions: DriveContentSaveOptions,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult>;
+  uploadStream(
+    stream: ReadableStream<Uint8Array>,
+    saveOptions: DriveContentSaveOptions,
+    options?: DriveServiceOptions
+  ): Promise<DriveFileResult>;
 }
+
 
 

@@ -81,12 +81,33 @@ async function runE2E(): Promise<void> {
               name: '!TestMove',
               parents: ['root'],
             }),
-            moveFile: async (fileId: string) => ({
+            move: async (fileId: string) => ({
               id: fileId,
               name: 'E2E_Test_Document.pdf',
               parents: ['mock-testmove-folder-id'],
             }),
+            rename: async (fileId: string, newName: string) => ({
+              id: fileId,
+              name: newName,
+              parents: ['root'],
+            }),
+            duplicate: async (fileId: string) => ({
+              id: `${fileId}-copy`,
+              name: 'E2E_Test_Document.pdf',
+              parents: ['root'],
+            }),
             searchFiles: async () => [],
+            downloadAsBuffer: async () => new Uint8Array(),
+            saveBuffer: async () => ({
+              id: 'mock-saved-file-id',
+              name: 'E2E_Test_Document.pdf',
+              parents: ['root'],
+            }),
+            uploadStream: async () => ({
+              id: 'mock-stream-file-id',
+              name: 'E2E_Test_Document.pdf',
+              parents: ['root'],
+            }),
           },
         }),
   };

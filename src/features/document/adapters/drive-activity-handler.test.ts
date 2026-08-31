@@ -25,13 +25,28 @@ describe('DriveActivityHandler', () => {
         parents: ['folder-parent-xyz'],
         webViewLink: 'https://drive.google.com/drive/folders/testmove-folder-id',
       }),
-      moveFile: vi.fn().mockResolvedValue({
+      move: vi.fn().mockResolvedValue({
         id: 'file-123',
         name: 'Report.docx',
         parents: ['testmove-folder-id'],
         webViewLink: 'https://drive.google.com/file/d/file-123/view',
       }),
+      rename: vi.fn().mockResolvedValue({
+        id: 'file-123',
+        name: 'Renamed.docx',
+        parents: ['folder-parent-xyz'],
+        webViewLink: 'https://drive.google.com/file/d/file-123/view',
+      }),
+      duplicate: vi.fn().mockResolvedValue({
+        id: 'file-copy-123',
+        name: 'Report.docx',
+        parents: ['folder-parent-xyz'],
+        webViewLink: 'https://drive.google.com/file/d/file-copy-123/view',
+      }),
       searchFiles: vi.fn().mockResolvedValue([]),
+      downloadAsBuffer: vi.fn(),
+      saveBuffer: vi.fn(),
+      uploadStream: vi.fn(),
     };
 
     handler = new DriveActivityHandler(mockDriveService);
@@ -73,9 +88,8 @@ describe('DriveActivityHandler', () => {
         'Unfiled',
         { auth: 'ya29.mock-token' }
       );
-      expect(mockDriveService.moveFile).toHaveBeenCalledWith(
+      expect(mockDriveService.move).toHaveBeenCalledWith(
         'file-123',
-        'folder-parent-xyz',
         'testmove-folder-id',
         { auth: 'ya29.mock-token' }
       );
@@ -112,9 +126,8 @@ describe('DriveActivityHandler', () => {
         'Unfiled',
         { auth: 'ya29.token-abc' }
       );
-      expect(mockDriveService.moveFile).toHaveBeenCalledWith(
+      expect(mockDriveService.move).toHaveBeenCalledWith(
         'selected-file-789',
-        'folder-parent-xyz',
         'testmove-folder-id',
         { auth: 'ya29.token-abc' }
       );
@@ -147,9 +160,8 @@ describe('DriveActivityHandler', () => {
       await handler.handle(activity);
 
       expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith('root', 'Unfiled', undefined);
-      expect(mockDriveService.moveFile).toHaveBeenCalledWith(
+      expect(mockDriveService.move).toHaveBeenCalledWith(
         'root-file-123',
-        'root',
         'testmove-folder-id',
         undefined
       );
@@ -213,14 +225,14 @@ describe('DriveActivityHandler', () => {
       );
     });
 
-    it('falls back to getFile webViewLink if moveFile does not provide webViewLink', async () => {
+    it('falls back to getFile webViewLink if move does not provide webViewLink', async () => {
       (mockDriveService.getFile as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: 'file-fallback',
         name: 'Fallback.pdf',
         parents: ['folder-xyz'],
         webViewLink: 'https://drive.google.com/file/d/file-fallback/view',
       });
-      (mockDriveService.moveFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (mockDriveService.move as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: 'file-fallback',
         name: 'Fallback.pdf',
         parents: ['testmove-folder-id'],
@@ -241,7 +253,7 @@ describe('DriveActivityHandler', () => {
         name: 'NoLink.pdf',
         parents: ['folder-xyz'],
       });
-      (mockDriveService.moveFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (mockDriveService.move as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: 'file-no-link',
         name: 'NoLink.pdf',
         parents: ['testmove-folder-id'],
