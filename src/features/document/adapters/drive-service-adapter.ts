@@ -37,9 +37,8 @@ export interface DriveClientPort {
     folderName: string,
     options?: DriveClientOperationOptions
   ): Promise<DriveClientFileMetadata>;
-  moveFile(
+  move(
     fileId: string,
-    currentParentId: string,
     targetFolderId: string,
     options?: DriveClientOperationOptions
   ): Promise<DriveClientFileMetadata>;
@@ -151,22 +150,20 @@ export class DriveServiceAdapter implements DriveServicePort {
     }
   }
 
-  async moveFile(
+  async move(
     fileId: string,
-    currentParentId: string,
     targetFolderId: string,
     options?: DriveServiceOptions
   ): Promise<DriveFileResult> {
     try {
-      const metadata = await this.driveClient.moveFile(
+      const metadata = await this.driveClient.move(
         fileId,
-        currentParentId,
         targetFolderId,
         options
       );
       return mapMetadataToResult(metadata);
     } catch (error) {
-      this.translateError('moveFile', error);
+      this.translateError('move', error);
     }
   }
 

@@ -941,7 +941,7 @@ describe('App integration tests', () => {
           name: '!CustomDestination',
           parents: ['folder-parent-1'],
         }),
-        moveFile: vi.fn().mockResolvedValue({
+        move: vi.fn().mockResolvedValue({
           id: 'file-123',
           name: 'ImportantDocument.pdf',
           parents: ['custom-folder-id'],

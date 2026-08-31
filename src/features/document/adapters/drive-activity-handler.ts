@@ -266,7 +266,7 @@ export class DriveActivityHandler implements ActivityHandler {
       const file = await this.driveService.getFile(fileId, driveOptions);
       const currentParentId = file.parents?.[0] ?? 'root';
       const targetFolder = await this.driveService.findOrCreateFolder(currentParentId, folderName, driveOptions);
-      const movedFile = await this.driveService.moveFile(fileId, currentParentId, targetFolder.id, driveOptions);
+      const movedFile = await this.driveService.move(fileId, targetFolder.id, driveOptions);
 
       const mimeType = movedFile.mimeType ?? file.mimeType;
       const uri = movedFile.webViewLink ?? file.webViewLink;

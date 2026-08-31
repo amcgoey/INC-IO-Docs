@@ -6,7 +6,7 @@ describe('DriveServiceAdapter', () => {
   const mockDriveClient: DriveClientPort = {
     getFile: vi.fn(),
     findOrCreateFolder: vi.fn(),
-    moveFile: vi.fn(),
+    move: vi.fn(),
     searchFiles: vi.fn(),
   };
 
@@ -63,15 +63,15 @@ describe('DriveServiceAdapter', () => {
     });
   });
 
-  describe('moveFile', () => {
+  describe('move', () => {
     it('returns mapped moved file result on success', async () => {
-      (mockDriveClient.moveFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (mockDriveClient.move as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: 'file-1',
         name: 'moved.pdf',
         parents: ['target-folder'],
       });
 
-      const res = await adapter.moveFile('file-1', 'old-parent', 'target-folder');
+      const res = await adapter.move('file-1', 'target-folder');
       expect(res).toEqual({
         id: 'file-1',
         name: 'moved.pdf',
@@ -79,6 +79,16 @@ describe('DriveServiceAdapter', () => {
         mimeType: undefined,
         webViewLink: undefined,
       });
+    });
+
+    it('translates external errors to DriveServiceError', async () => {
+      (mockDriveClient.move as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Move failed')
+      );
+
+      const err = await adapter.move('file-1', 'target-folder').catch((e) => e);
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(/Drive service error in move: Move failed/);
     });
   });
 

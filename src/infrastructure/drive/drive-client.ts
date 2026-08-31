@@ -293,19 +293,26 @@ export class GoogleDriveClient {
     }
   }
 
-  async moveFile(
+  async move(
     fileId: string,
-    currentParentId: string,
     targetFolderId: string,
     options?: DriveOperationOptions
   ): Promise<DriveFileMetadata> {
     const drive = this.getDrive(options?.auth);
     try {
+      const file = await this.getFile(fileId, options);
+      const currentParents = file.parents ?? [];
+      const removeParentsList = currentParents.filter(
+        (parentId) => parentId !== targetFolderId
+      );
+      const removeParents =
+        removeParentsList.length > 0 ? removeParentsList.join(',') : undefined;
+
       const res = await this.executeWithRetry(() =>
         drive.files.update({
           fileId,
           addParents: targetFolderId,
-          removeParents: currentParentId,
+          ...(removeParents ? { removeParents } : {}),
           fields: 'id, name, parents, mimeType, webViewLink',
           supportsAllDrives: true,
         })
@@ -324,7 +331,7 @@ export class GoogleDriveClient {
         webViewLink: res.data.webViewLink ?? undefined,
       };
     } catch (error) {
-      this.wrapApiError('moveFile', error);
+      this.wrapApiError('move', error);
     }
   }
 

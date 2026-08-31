@@ -183,8 +183,16 @@ describe('GoogleDriveClient', () => {
     });
   });
 
-  describe('moveFile', () => {
-    it('moves file from current parent to target folder', async () => {
+  describe('move', () => {
+    it('moves file from single parent to target folder', async () => {
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'file-123',
+          name: 'Project Plan.pdf',
+          parents: ['old-parent-id'],
+        },
+      });
+
       (mockDrive.files.update as ReturnType<typeof vi.fn>).mockResolvedValue({
         data: {
           id: 'file-123',
@@ -194,7 +202,7 @@ describe('GoogleDriveClient', () => {
         },
       });
 
-      const moved = await client.moveFile('file-123', 'old-parent-id', 'new-target-folder-id');
+      const moved = await client.move('file-123', 'new-target-folder-id');
 
       expect(moved).toEqual({
         id: 'file-123',
@@ -202,6 +210,12 @@ describe('GoogleDriveClient', () => {
         parents: ['new-target-folder-id'],
         mimeType: undefined,
         webViewLink: 'https://drive.google.com/file/d/file-123/view',
+      });
+
+      expect(mockDrive.files.get).toHaveBeenCalledWith({
+        fileId: 'file-123',
+        fields: 'id, name, parents, mimeType, webViewLink',
+        supportsAllDrives: true,
       });
 
       expect(mockDrive.files.update).toHaveBeenCalledWith({
@@ -213,12 +227,106 @@ describe('GoogleDriveClient', () => {
       });
     });
 
+    it('moves file with multiple parents by stripping all old parents', async () => {
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'file-123',
+          name: 'Project Plan.pdf',
+          parents: ['parent-1', 'parent-2'],
+        },
+      });
+
+      (mockDrive.files.update as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'file-123',
+          name: 'Project Plan.pdf',
+          parents: ['new-target-folder-id'],
+        },
+      });
+
+      const moved = await client.move('file-123', 'new-target-folder-id');
+
+      expect(moved.parents).toEqual(['new-target-folder-id']);
+      expect(mockDrive.files.update).toHaveBeenCalledWith({
+        fileId: 'file-123',
+        addParents: 'new-target-folder-id',
+        removeParents: 'parent-1,parent-2',
+        fields: 'id, name, parents, mimeType, webViewLink',
+        supportsAllDrives: true,
+      });
+    });
+
+    it('moves file without removeParents when file has no existing parents', async () => {
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'file-123',
+          name: 'Project Plan.pdf',
+          parents: [],
+        },
+      });
+
+      (mockDrive.files.update as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'file-123',
+          name: 'Project Plan.pdf',
+          parents: ['new-target-folder-id'],
+        },
+      });
+
+      const moved = await client.move('file-123', 'new-target-folder-id');
+
+      expect(moved.parents).toEqual(['new-target-folder-id']);
+      expect(mockDrive.files.update).toHaveBeenCalledWith({
+        fileId: 'file-123',
+        addParents: 'new-target-folder-id',
+        fields: 'id, name, parents, mimeType, webViewLink',
+        supportsAllDrives: true,
+      });
+    });
+
+    it('filters out targetFolderId from removeParents when targetFolderId is already in parents list', async () => {
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'file-123',
+          name: 'Project Plan.pdf',
+          parents: ['old-parent-id', 'new-target-folder-id'],
+        },
+      });
+
+      (mockDrive.files.update as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'file-123',
+          name: 'Project Plan.pdf',
+          parents: ['new-target-folder-id'],
+        },
+      });
+
+      const moved = await client.move('file-123', 'new-target-folder-id');
+
+      expect(moved.parents).toEqual(['new-target-folder-id']);
+      expect(mockDrive.files.update).toHaveBeenCalledWith({
+        fileId: 'file-123',
+        addParents: 'new-target-folder-id',
+        removeParents: 'old-parent-id',
+        fields: 'id, name, parents, mimeType, webViewLink',
+        supportsAllDrives: true,
+      });
+    });
+
     it('throws error when update response lacks file ID or name', async () => {
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'file-123',
+          name: 'Project Plan.pdf',
+          parents: ['p1'],
+        },
+      });
+
       (mockDrive.files.update as ReturnType<typeof vi.fn>).mockResolvedValue({
         data: {},
       });
 
-      await expect(client.moveFile('file-123', 'p1', 'p2')).rejects.toThrow(
+      await expect(client.move('file-123', 'p2')).rejects.toThrow(
         /Failed to move file 'file-123' to folder 'p2'/
       );
     });
@@ -1078,6 +1186,14 @@ describe('GoogleDriveClient', () => {
         },
       });
 
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'f1',
+          name: 'Doc.pdf',
+          parents: ['p1'],
+        },
+      });
+
       const rateLimitError = {
         response: { status: 429 },
         message: 'User rate limit exceeded',
@@ -1085,8 +1201,8 @@ describe('GoogleDriveClient', () => {
 
       (mockDrive.files.update as ReturnType<typeof vi.fn>).mockRejectedValue(rateLimitError);
 
-      await expect(retryClient.moveFile('f1', 'p1', 'p2')).rejects.toThrow(
-        /Google Drive API error in moveFile/
+      await expect(retryClient.move('f1', 'p2')).rejects.toThrow(
+        /Google Drive API error in move/
       );
       expect(mockDrive.files.update).toHaveBeenCalledTimes(3); // Initial + 2 retries
       expect(sleepMock).toHaveBeenCalledTimes(2);

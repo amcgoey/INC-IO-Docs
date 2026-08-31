@@ -83,9 +83,10 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
       const currentParentId = 'client-root-folder-001';
       const testMoveFolderId = 'test-move-subfolder-888';
 
-      // 1. Mock GET file metadata
+      // 1. Mock GET file metadata (called by DriveActivityHandler and GoogleDriveClient.move)
       nock('https://www.googleapis.com')
         .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType%2C%20webViewLink&supportsAllDrives=true`)
+        .times(2)
         .reply(200, {
           id: fileId,
           name: fileName,
@@ -188,9 +189,10 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
       const currentParentId = 'folder-p1';
       const existingFolderId = 'folder-testmove-already-present';
 
-      // 1. Mock GET file metadata
+      // 1. Mock GET file metadata (called by DriveActivityHandler and GoogleDriveClient.move)
       nock('https://www.googleapis.com')
         .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType%2C%20webViewLink&supportsAllDrives=true`)
+        .times(2)
         .reply(200, {
           id: fileId,
           name: fileName,
@@ -318,7 +320,18 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
           },
         });
 
-      // 2. Second GET (retry) succeeds with 200
+      // 2. Second GET (retry for DriveActivityHandler) succeeds with 200
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType%2C%20webViewLink&supportsAllDrives=true`)
+        .reply(200, {
+          id: fileId,
+          name: fileName,
+          parents: [currentParentId],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        });
+
+      // 3. Third GET (for GoogleDriveClient.move) succeeds with 200
       nock('https://www.googleapis.com')
         .get(`/drive/v3/files/${fileId}?fields=id%2C%20name%2C%20parents%2C%20mimeType%2C%20webViewLink&supportsAllDrives=true`)
         .reply(200, {

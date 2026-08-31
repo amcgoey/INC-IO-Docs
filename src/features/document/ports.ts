@@ -117,9 +117,8 @@ export interface DriveServiceOptions {
 export interface DriveServicePort {
   getFile(fileId: string, options?: DriveServiceOptions): Promise<DriveFileResult>;
   findOrCreateFolder(parentId: string, folderName: string, options?: DriveServiceOptions): Promise<DriveFileResult>;
-  moveFile(
+  move(
     fileId: string,
-    currentParentId: string,
     targetFolderId: string,
     options?: DriveServiceOptions
   ): Promise<DriveFileResult>;

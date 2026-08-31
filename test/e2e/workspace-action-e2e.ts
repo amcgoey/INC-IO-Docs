@@ -81,7 +81,7 @@ async function runE2E(): Promise<void> {
               name: '!TestMove',
               parents: ['root'],
             }),
-            moveFile: async (fileId: string) => ({
+            move: async (fileId: string) => ({
               id: fileId,
               name: 'E2E_Test_Document.pdf',
               parents: ['mock-testmove-folder-id'],
