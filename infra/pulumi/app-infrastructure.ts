@@ -121,6 +121,18 @@ export class AppInfrastructure extends pulumi.ComponentResource {
               ports: {
                 containerPort: port,
               },
+              resources: {
+                limits: {
+                  memory: "4Gi",
+                  cpu: "2",
+                },
+              },
+              envs: [
+                {
+                  name: "NODE_OPTIONS",
+                  value: "--max-old-space-size=3584",
+                },
+              ],
             },
           ],
         },
