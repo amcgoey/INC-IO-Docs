@@ -174,4 +174,103 @@ describe('PdfProcessor', () => {
       expect(mergedDoc.getPageCount()).toBe(4);
     });
   });
+
+  describe('extractFormData', () => {
+    it('throws PdfCorruptedError when given malformed or invalid buffer', async () => {
+      const invalidBuffer = new Uint8Array([0, 1, 2, 3, 4, 5]);
+      await expect(processor.extractFormData(invalidBuffer)).rejects.toThrow(
+        PdfCorruptedError
+      );
+    });
+
+    it('throws PdfEncryptionError when given an encrypted PDF', async () => {
+      const loadSpy = vi.spyOn(PDFDocument, 'load').mockRejectedValueOnce(
+        new Error('Input document is encrypted')
+      );
+
+      const buffer = new Uint8Array([37, 80, 68, 70]); // %PDF
+      await expect(processor.extractFormData(buffer)).rejects.toThrow(
+        PdfEncryptionError
+      );
+
+      loadSpy.mockRestore();
+    });
+
+    it('returns an empty record when the PDF contains no form fields', async () => {
+      const plainPdf = await createSamplePdf(2);
+      const data = await processor.extractFormData(plainPdf);
+
+      expect(data).toEqual({});
+    });
+
+    it('extracts text fields, check boxes, radio groups, dropdowns, and option lists with raw keys', async () => {
+      const doc = await PDFDocument.create();
+      const page = doc.addPage([400, 600]);
+      const form = doc.getForm();
+
+      const textField = form.createTextField('raw.user.name');
+      textField.setText('Alice Smith');
+      textField.addToPage(page, { x: 50, y: 500, width: 200, height: 30 });
+
+      const emptyTextField = form.createTextField('raw.user.notes');
+      emptyTextField.addToPage(page, { x: 50, y: 450, width: 200, height: 30 });
+
+      const checkedBox = form.createCheckBox('raw.agreement.terms');
+      checkedBox.check();
+      checkedBox.addToPage(page, { x: 50, y: 400, width: 20, height: 20 });
+
+      const uncheckedBox = form.createCheckBox('raw.agreement.marketing');
+      uncheckedBox.addToPage(page, { x: 50, y: 360, width: 20, height: 20 });
+
+      const radioGroup = form.createRadioGroup('raw.contact.channel');
+      radioGroup.addOptionToPage('Email', page, { x: 50, y: 320, width: 20, height: 20 });
+      radioGroup.addOptionToPage('Phone', page, { x: 100, y: 320, width: 20, height: 20 });
+      radioGroup.select('Email');
+
+      const unselectedRadio = form.createRadioGroup('raw.priority.level');
+      unselectedRadio.addOptionToPage('Low', page, { x: 50, y: 280, width: 20, height: 20 });
+      unselectedRadio.addOptionToPage('High', page, { x: 100, y: 280, width: 20, height: 20 });
+
+      const dropdown = form.createDropdown('raw.location.country');
+      dropdown.setOptions(['US', 'CA', 'GB']);
+      dropdown.select('CA');
+      dropdown.addToPage(page, { x: 50, y: 240, width: 100, height: 20 });
+
+      const optionList = form.createOptionList('raw.roles.assigned');
+      optionList.setOptions(['Admin', 'Reviewer', 'Editor']);
+      optionList.select('Editor');
+      optionList.addToPage(page, { x: 50, y: 180, width: 100, height: 50 });
+
+      const pdfBytes = await doc.save();
+      const extracted = await processor.extractFormData(pdfBytes);
+
+      expect(extracted).toEqual({
+        'raw.user.name': 'Alice Smith',
+        'raw.user.notes': undefined,
+        'raw.agreement.terms': true,
+        'raw.agreement.marketing': false,
+        'raw.contact.channel': 'Email',
+        'raw.priority.level': undefined,
+        'raw.location.country': ['CA'],
+        'raw.roles.assigned': ['Editor'],
+      });
+    });
+
+    it('does not alter or perform domain mapping on raw keys', async () => {
+      const doc = await PDFDocument.create();
+      const page = doc.addPage([300, 300]);
+      const form = doc.getForm();
+
+      const field1 = form.createTextField('COMPLEX_Field__Name[0].SubField');
+      field1.setText('TestValue');
+      field1.addToPage(page, { x: 50, y: 200, width: 100, height: 20 });
+
+      const pdfBytes = await doc.save();
+      const extracted = await processor.extractFormData(pdfBytes);
+
+      expect(Object.keys(extracted)).toEqual(['COMPLEX_Field__Name[0].SubField']);
+      expect(extracted['COMPLEX_Field__Name[0].SubField']).toBe('TestValue');
+    });
+  });
 });
+

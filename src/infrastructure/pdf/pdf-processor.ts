@@ -1,4 +1,12 @@
-import { PDFDocument, EncryptedPDFError } from 'pdf-lib';
+import {
+  PDFDocument,
+  EncryptedPDFError,
+  PDFTextField,
+  PDFCheckBox,
+  PDFRadioGroup,
+  PDFDropdown,
+  PDFOptionList,
+} from 'pdf-lib';
 import {
   PdfCorruptedError,
   PdfEncryptionError,
@@ -148,4 +156,75 @@ export class PdfProcessor {
       );
     }
   }
+
+  /**
+   * Extracts interactive form field data (AcroForm widgets) from a source PDF buffer.
+   *
+   * @remarks
+   * **Domain Mapping:**
+   * This method extracts raw internal field keys mapped to their respective values.
+   * Mapping raw keys to domain models is strictly out of scope for the processor and
+   * is the responsibility of higher-level domain services.
+   *
+   * **Field Types Supported:**
+   * - Text fields (`PDFTextField`): returns `string` or `undefined` if empty.
+   * - Checkboxes (`PDFCheckBox`): returns `boolean` (`true` if checked, `false` otherwise).
+   * - Radio groups (`PDFRadioGroup`): returns selected option `string` or `undefined` if none selected.
+   * - Dropdowns (`PDFDropdown`): returns selected options `string[]`.
+   * - Option lists (`PDFOptionList`): returns selected options `string[]`.
+   * - Other field types: returns `undefined`.
+   *
+   * **Error Handling:**
+   * - Throws {@link PdfCorruptedError} if the input buffer is malformed or invalid.
+   * - Throws {@link PdfEncryptionError} if the PDF document is encrypted or password-protected.
+   *
+   * @param buffer - The raw binary `Uint8Array` of the source PDF.
+   * @returns A promise that resolves to a map of raw field names to their values.
+   */
+  async extractFormData(
+    buffer: Uint8Array
+  ): Promise<Record<string, string | boolean | string[] | undefined>> {
+    try {
+      const srcDoc = await this.loadPdfDocument(buffer);
+      const form = srcDoc.getForm();
+      const fields = form.getFields();
+
+      const data: Record<string, string | boolean | string[] | undefined> = {};
+
+      for (const field of fields) {
+        const name = field.getName();
+        if (field instanceof PDFTextField) {
+          data[name] = field.getText();
+        } else if (field instanceof PDFCheckBox) {
+          data[name] = field.isChecked();
+        } else if (field instanceof PDFRadioGroup) {
+          data[name] = field.getSelected();
+        } else if (
+          field instanceof PDFDropdown ||
+          field instanceof PDFOptionList
+        ) {
+          data[name] = field.getSelected();
+        } else {
+          data[name] = undefined;
+        }
+      }
+
+      return data;
+    } catch (error: unknown) {
+      if (
+        error instanceof PdfProcessorError ||
+        error instanceof TypeError ||
+        error instanceof RangeError
+      ) {
+        throw error;
+      }
+      throw new PdfCorruptedError(
+        `Failed to extract form data: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error }
+      );
+    }
+  }
 }
+
