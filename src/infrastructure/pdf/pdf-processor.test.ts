@@ -89,6 +89,14 @@ describe('PdfProcessor', () => {
       expect(extractedDoc.getPageCount()).toBe(2);
     });
 
+    it('throws PdfOutOfBoundsError when page list is empty', async () => {
+      const pdfBuffer = await createSamplePdf(2);
+
+      await expect(processor.extractPages(pdfBuffer, [])).rejects.toThrow(
+        PdfOutOfBoundsError
+      );
+    });
+
     it('handles extracting all pages', async () => {
       const pdfBuffer = await createSamplePdf(2);
 
@@ -100,6 +108,12 @@ describe('PdfProcessor', () => {
   });
 
   describe('mergeDocuments', () => {
+    it('throws PdfCorruptedError when buffer array is empty', async () => {
+      await expect(processor.mergeDocuments([])).rejects.toThrow(
+        PdfCorruptedError
+      );
+    });
+
     it('throws PdfCorruptedError when any input buffer is corrupted or invalid', async () => {
       const validBuffer = await createSamplePdf(2);
       const invalidBuffer = new Uint8Array([0, 1, 2, 3, 4, 5]);
@@ -158,14 +172,6 @@ describe('PdfProcessor', () => {
       const mergedDoc = await PDFDocument.load(merged);
 
       expect(mergedDoc.getPageCount()).toBe(4);
-    });
-
-    it('handles empty array of buffers by returning a valid PDF buffer', async () => {
-      const merged = await processor.mergeDocuments([]);
-      expect(merged).toBeInstanceOf(Uint8Array);
-
-      const mergedDoc = await PDFDocument.load(merged);
-      expect(mergedDoc).toBeDefined();
     });
   });
 });

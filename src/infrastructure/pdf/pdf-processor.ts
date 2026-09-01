@@ -48,7 +48,7 @@ export class PdfProcessor {
    * - `pages: [3, 1]` extracts the third and first pages in that exact sequence.
    *
    * **Error Handling:**
-   * - Throws {@link PdfOutOfBoundsError} if any page number is `<= 0`, non-integer, or exceeds the document's total page count.
+   * - Throws {@link PdfOutOfBoundsError} if `pages` is empty, or any page number is `<= 0`, non-integer, or exceeds the document's total page count.
    * - Throws {@link PdfCorruptedError} if the input buffer is malformed or invalid.
    * - Throws {@link PdfEncryptionError} if the PDF document is encrypted or password-protected.
    *
@@ -57,6 +57,12 @@ export class PdfProcessor {
    * @returns A promise that resolves to a `Uint8Array` containing the newly formed PDF.
    */
   async extractPages(buffer: Uint8Array, pages: number[]): Promise<Uint8Array> {
+    if (pages.length === 0) {
+      throw new PdfOutOfBoundsError(
+        'At least one page must be specified for extraction'
+      );
+    }
+
     try {
       const srcDoc = await this.loadPdfDocument(buffer);
       const totalPages = srcDoc.getPageCount();
@@ -71,19 +77,19 @@ export class PdfProcessor {
       }
 
       const targetDoc = await PDFDocument.create();
-
-      if (pages.length > 0) {
-        // Convert 1-indexed page numbers to 0-indexed indices for pdf-lib
-        const pageIndices = pages.map((p) => p - 1);
-        const copiedPages = await targetDoc.copyPages(srcDoc, pageIndices);
-        for (const copiedPage of copiedPages) {
-          targetDoc.addPage(copiedPage);
-        }
+      const pageIndices = pages.map((p) => p - 1);
+      const copiedPages = await targetDoc.copyPages(srcDoc, pageIndices);
+      for (const copiedPage of copiedPages) {
+        targetDoc.addPage(copiedPage);
       }
 
       return await targetDoc.save();
     } catch (error: unknown) {
-      if (error instanceof PdfProcessorError) {
+      if (
+        error instanceof PdfProcessorError ||
+        error instanceof TypeError ||
+        error instanceof RangeError
+      ) {
         throw error;
       }
       throw new PdfCorruptedError(
@@ -100,13 +106,19 @@ export class PdfProcessor {
    *
    * @remarks
    * **Error Handling:**
-   * - Throws {@link PdfCorruptedError} if any input buffer is malformed or invalid.
+   * - Throws {@link PdfCorruptedError} if `buffers` is empty or if any input buffer is malformed or invalid.
    * - Throws {@link PdfEncryptionError} if any PDF document is encrypted or password-protected.
    *
    * @param buffers - An array of raw binary `Uint8Array` PDF buffers to concatenate.
    * @returns A promise that resolves to a `Uint8Array` containing the combined PDF.
    */
   async mergeDocuments(buffers: Uint8Array[]): Promise<Uint8Array> {
+    if (buffers.length === 0) {
+      throw new PdfCorruptedError(
+        'Cannot merge an empty array of PDF buffers: at least one PDF buffer is required'
+      );
+    }
+
     try {
       const targetDoc = await PDFDocument.create();
 
@@ -121,7 +133,11 @@ export class PdfProcessor {
 
       return await targetDoc.save();
     } catch (error: unknown) {
-      if (error instanceof PdfProcessorError) {
+      if (
+        error instanceof PdfProcessorError ||
+        error instanceof TypeError ||
+        error instanceof RangeError
+      ) {
         throw error;
       }
       throw new PdfCorruptedError(
