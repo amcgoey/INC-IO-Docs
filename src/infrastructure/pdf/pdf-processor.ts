@@ -94,4 +94,42 @@ export class PdfProcessor {
       );
     }
   }
+
+  /**
+   * Merges multiple PDF documents into a single PDF document in the sequence provided.
+   *
+   * @remarks
+   * **Error Handling:**
+   * - Throws {@link PdfCorruptedError} if any input buffer is malformed or invalid.
+   * - Throws {@link PdfEncryptionError} if any PDF document is encrypted or password-protected.
+   *
+   * @param buffers - An array of raw binary `Uint8Array` PDF buffers to concatenate.
+   * @returns A promise that resolves to a `Uint8Array` containing the combined PDF.
+   */
+  async mergeDocuments(buffers: Uint8Array[]): Promise<Uint8Array> {
+    try {
+      const targetDoc = await PDFDocument.create();
+
+      for (const buffer of buffers) {
+        const srcDoc = await this.loadPdfDocument(buffer);
+        const pageIndices = srcDoc.getPageIndices();
+        const copiedPages = await targetDoc.copyPages(srcDoc, pageIndices);
+        for (const copiedPage of copiedPages) {
+          targetDoc.addPage(copiedPage);
+        }
+      }
+
+      return await targetDoc.save();
+    } catch (error: unknown) {
+      if (error instanceof PdfProcessorError) {
+        throw error;
+      }
+      throw new PdfCorruptedError(
+        `Failed to merge documents: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error }
+      );
+    }
+  }
 }

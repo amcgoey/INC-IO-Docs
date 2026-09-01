@@ -98,4 +98,74 @@ describe('PdfProcessor', () => {
       expect(extractedDoc.getPageCount()).toBe(2);
     });
   });
+
+  describe('mergeDocuments', () => {
+    it('throws PdfCorruptedError when any input buffer is corrupted or invalid', async () => {
+      const validBuffer = await createSamplePdf(2);
+      const invalidBuffer = new Uint8Array([0, 1, 2, 3, 4, 5]);
+
+      await expect(
+        processor.mergeDocuments([validBuffer, invalidBuffer])
+      ).rejects.toThrow(PdfCorruptedError);
+    });
+
+    it('throws PdfEncryptionError when any input document is encrypted', async () => {
+      const loadSpy = vi.spyOn(PDFDocument, 'load').mockRejectedValueOnce(
+        new Error('Input document is encrypted')
+      );
+
+      const validBuffer = await createSamplePdf(2);
+      const encryptedBuffer = new Uint8Array([37, 80, 68, 70]); // %PDF
+
+      await expect(
+        processor.mergeDocuments([encryptedBuffer, validBuffer])
+      ).rejects.toThrow(PdfEncryptionError);
+
+      loadSpy.mockRestore();
+    });
+
+    it('throws PdfEncryptionError when a subsequent document in the array is encrypted', async () => {
+      const validDoc = await createSamplePdf(1);
+      const encryptedBuffer = new Uint8Array([37, 80, 68, 70]);
+
+      const originalLoad = PDFDocument.load.bind(PDFDocument);
+      const loadSpy = vi.spyOn(PDFDocument, 'load');
+      loadSpy.mockImplementationOnce((buffer, options) => originalLoad(buffer, options));
+      loadSpy.mockRejectedValueOnce(new Error('Input document is encrypted'));
+
+      await expect(
+        processor.mergeDocuments([validDoc, encryptedBuffer])
+      ).rejects.toThrow(PdfEncryptionError);
+
+      loadSpy.mockRestore();
+    });
+
+    it('merges multiple PDF documents in sequence into a single PDF', async () => {
+      const doc1 = await createSamplePdf(2);
+      const doc2 = await createSamplePdf(3);
+      const doc3 = await createSamplePdf(1);
+
+      const merged = await processor.mergeDocuments([doc1, doc2, doc3]);
+      const mergedDoc = await PDFDocument.load(merged);
+
+      expect(mergedDoc.getPageCount()).toBe(6);
+    });
+
+    it('merges a single PDF document returning a valid combined PDF', async () => {
+      const doc = await createSamplePdf(4);
+
+      const merged = await processor.mergeDocuments([doc]);
+      const mergedDoc = await PDFDocument.load(merged);
+
+      expect(mergedDoc.getPageCount()).toBe(4);
+    });
+
+    it('handles empty array of buffers by returning a valid PDF buffer', async () => {
+      const merged = await processor.mergeDocuments([]);
+      expect(merged).toBeInstanceOf(Uint8Array);
+
+      const mergedDoc = await PDFDocument.load(merged);
+      expect(mergedDoc).toBeDefined();
+    });
+  });
 });
