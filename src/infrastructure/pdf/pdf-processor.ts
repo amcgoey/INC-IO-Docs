@@ -6,6 +6,7 @@ import {
   PDFRadioGroup,
   PDFDropdown,
   PDFOptionList,
+  StandardFonts,
 } from 'pdf-lib';
 import {
   PdfCorruptedError,
@@ -220,6 +221,110 @@ export class PdfProcessor {
       }
       throw new PdfCorruptedError(
         `Failed to extract form data: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error }
+      );
+    }
+  }
+
+  /**
+   * Populates interactive form fields (AcroForm widgets) from a provided data map
+   * without flattening the document, preserving interactivity and future markup workflows.
+   * Uses standard font fallback (Helvetica) for fields missing embedded fonts.
+   *
+   * @remarks
+   * **Interactivity & Workflows:**
+   * This method strictly avoids flattening the document (`form.flatten()` is NOT called),
+   * ensuring that all form fields remain editable and interactive AcroForm widgets.
+   *
+   * **Font Fallback:**
+   * Standard Helvetica is embedded and provided to `updateFieldAppearances` so that any
+   * field missing an embedded font renders properly.
+   *
+   * **Field Types Supported:**
+   * - Text fields (`PDFTextField`): sets text value (string or string representation).
+   * - Checkboxes (`PDFCheckBox`): checks if truthy / true, unchecks if falsy / false.
+   * - Radio groups (`PDFRadioGroup`): selects the specified option string.
+   * - Dropdowns (`PDFDropdown`): selects the specified string or array of strings.
+   * - Option lists (`PDFOptionList`): selects the specified string or array of strings.
+   *
+   * **Error Handling:**
+   * - Throws {@link PdfCorruptedError} if the input buffer is malformed or invalid.
+   * - Throws {@link PdfEncryptionError} if the PDF document is encrypted or password-protected.
+   *
+   * @param buffer - The raw binary `Uint8Array` of the source PDF.
+   * @param formData - A map of field names to values to populate into the form.
+   * @returns A promise that resolves to a `Uint8Array` containing the updated interactive PDF.
+   */
+  async processFormSubmission(
+    buffer: Uint8Array,
+    formData: Record<string, string | boolean | string[] | undefined | null>
+  ): Promise<Uint8Array> {
+    try {
+      const srcDoc = await this.loadPdfDocument(buffer);
+      const form = srcDoc.getForm();
+
+      for (const [name, value] of Object.entries(formData)) {
+        if (value === undefined || value === null) {
+          continue;
+        }
+
+        const field = form.getFieldMaybe(name);
+        if (!field) {
+          continue;
+        }
+
+        if (field instanceof PDFTextField) {
+          field.setText(typeof value === 'string' ? value : String(value));
+        } else if (field instanceof PDFCheckBox) {
+          if (typeof value === 'boolean') {
+            if (value) {
+              field.check();
+            } else {
+              field.uncheck();
+            }
+          } else if (typeof value === 'string') {
+            if (['true', 'yes', '1'].includes(value.toLowerCase())) {
+              field.check();
+            } else {
+              field.uncheck();
+            }
+          } else if (typeof value === 'number') {
+            if (value !== 0) {
+              field.check();
+            } else {
+              field.uncheck();
+            }
+          }
+        } else if (field instanceof PDFRadioGroup) {
+          if (typeof value === 'string') {
+            field.select(value);
+          }
+        } else if (
+          field instanceof PDFDropdown ||
+          field instanceof PDFOptionList
+        ) {
+          if (typeof value === 'string' || Array.isArray(value)) {
+            field.select(value);
+          }
+        }
+      }
+
+      const fallbackFont = await srcDoc.embedFont(StandardFonts.Helvetica);
+      form.updateFieldAppearances(fallbackFont);
+
+      return await srcDoc.save();
+    } catch (error: unknown) {
+      if (
+        error instanceof PdfProcessorError ||
+        error instanceof TypeError ||
+        error instanceof RangeError
+      ) {
+        throw error;
+      }
+      throw new PdfCorruptedError(
+        `Failed to process form submission: ${
           error instanceof Error ? error.message : String(error)
         }`,
         { cause: error }
