@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { PdfProcessor } from './pdf-processor';
 import {
   PdfCorruptedError,
@@ -472,6 +472,128 @@ describe('PdfProcessor', () => {
         'check.two': false,
         'check.three': true,
       });
+    });
+  });
+
+  describe('extractTextFromPages', () => {
+    it('throws PdfCorruptedError when given malformed or invalid buffer', async () => {
+      const invalidBuffer = new Uint8Array([0, 1, 2, 3, 4, 5]);
+      await expect(
+        processor.extractTextFromPages(invalidBuffer, [1])
+      ).rejects.toThrow(PdfCorruptedError);
+    });
+
+    it('throws PdfEncryptionError when given an encrypted PDF', async () => {
+      const loadSpy = vi.spyOn(PDFDocument, 'load').mockRejectedValueOnce(
+        new Error('Input document is encrypted')
+      );
+
+      const buffer = new Uint8Array([37, 80, 68, 70]); // %PDF
+      await expect(
+        processor.extractTextFromPages(buffer, [1])
+      ).rejects.toThrow(PdfEncryptionError);
+
+      loadSpy.mockRestore();
+    });
+
+    it('throws PdfOutOfBoundsError when requesting page number 0 or negative', async () => {
+      const pdfBuffer = await createSamplePdf(3);
+
+      await expect(
+        processor.extractTextFromPages(pdfBuffer, [0])
+      ).rejects.toThrow(PdfOutOfBoundsError);
+      await expect(
+        processor.extractTextFromPages(pdfBuffer, [-1])
+      ).rejects.toThrow(PdfOutOfBoundsError);
+    });
+
+    it('throws PdfOutOfBoundsError when requesting non-integer page number', async () => {
+      const pdfBuffer = await createSamplePdf(3);
+
+      await expect(
+        processor.extractTextFromPages(pdfBuffer, [1.5])
+      ).rejects.toThrow(PdfOutOfBoundsError);
+    });
+
+    it('throws PdfOutOfBoundsError when requesting page beyond document length', async () => {
+      const pdfBuffer = await createSamplePdf(3);
+
+      await expect(
+        processor.extractTextFromPages(pdfBuffer, [4])
+      ).rejects.toThrow(PdfOutOfBoundsError);
+      await expect(
+        processor.extractTextFromPages(pdfBuffer, [1, 5])
+      ).rejects.toThrow(PdfOutOfBoundsError);
+    });
+
+    it('throws PdfOutOfBoundsError when page list is empty', async () => {
+      const pdfBuffer = await createSamplePdf(2);
+
+      await expect(
+        processor.extractTextFromPages(pdfBuffer, [])
+      ).rejects.toThrow(PdfOutOfBoundsError);
+    });
+
+    it('extracts text from a single page (1-indexed)', async () => {
+      const pdfBuffer = await createSamplePdf(3);
+
+      const text = await processor.extractTextFromPages(pdfBuffer, [2]);
+      expect(text).toBe('Page 2');
+    });
+
+    it('extracts and joins text across multiple pages in the requested sequence', async () => {
+      const doc = await PDFDocument.create();
+      const font = await doc.embedFont(StandardFonts.Helvetica);
+      const p1 = doc.addPage([400, 400]);
+      p1.drawText('First Page Paragraph', { x: 50, y: 350, font, size: 12 });
+      const p2 = doc.addPage([400, 400]);
+      p2.drawText('Second Page Paragraph', { x: 50, y: 350, font, size: 12 });
+      const p3 = doc.addPage([400, 400]);
+      p3.drawText('Third Page Paragraph', { x: 50, y: 350, font, size: 12 });
+      const pdfBytes = await doc.save();
+
+      const text = await processor.extractTextFromPages(pdfBytes, [3, 1]);
+      expect(text).toBe('Third Page Paragraph\nFirst Page Paragraph');
+    });
+
+    it('returns an empty string when the extracted page contains no text', async () => {
+      const doc = await PDFDocument.create();
+      doc.addPage([200, 200]); // Blank page
+      const pdfBytes = await doc.save();
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toBe('');
+    });
+
+    it('strictly does not extract interactive AcroForm widget values (static stream only)', async () => {
+      const doc = await PDFDocument.create();
+      const font = await doc.embedFont(StandardFonts.Helvetica);
+      const page = doc.addPage([400, 400]);
+      page.drawText('Static Document Header', { x: 50, y: 350, font, size: 12 });
+
+      const form = doc.getForm();
+      const textField = form.createTextField('user.interactive');
+      textField.setText('Unflattened Form Input');
+      textField.addToPage(page, { x: 50, y: 150, width: 150, height: 20 });
+
+      const pdfBytes = await doc.save();
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Static Document Header');
+      expect(text).not.toContain('Unflattened Form Input');
+    });
+
+    it('translates unpdf parsing failures into PdfCorruptedError', async () => {
+      const validBuffer = await createSamplePdf(1);
+      const extractPagesSpy = vi
+        .spyOn(processor, 'extractPages')
+        .mockResolvedValueOnce(new Uint8Array([1, 2, 3]));
+
+      await expect(
+        processor.extractTextFromPages(validBuffer, [1])
+      ).rejects.toThrow(PdfCorruptedError);
+
+      extractPagesSpy.mockRestore();
     });
   });
 });

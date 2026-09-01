@@ -8,6 +8,7 @@ import {
   PDFOptionList,
   StandardFonts,
 } from 'pdf-lib';
+import { extractText } from 'unpdf';
 import {
   PdfCorruptedError,
   PdfEncryptionError,
@@ -326,5 +327,57 @@ export class PdfProcessor {
       );
     }
   }
+
+  /**
+   * Extracts text content from specific pages of a source PDF buffer.
+   *
+   * @remarks
+   * **Page Indexing Convention:**
+   * This method uses **1-indexed** page numbers (matching `extractPages`).
+   *
+   * **Hybrid Technology Stack:**
+   * Internally isolates the requested page subset using `pdf-lib` via `extractPages`,
+   * then passes the smaller buffer to `unpdf` (`pdf.js`) to parse and return the raw string text.
+   * Parsing runs synchronously on the main thread (disabling the Web Worker) with minimal overhead
+   * because only the isolated page subset is parsed.
+   *
+   * **AcroForm Isolation:**
+   * This method extracts static text content streams and strictly does not parse
+   * interactive AcroForm widget values.
+   *
+   * **Error Handling:**
+   * - Throws {@link PdfOutOfBoundsError} if `pages` is empty, or any page number is `<= 0`, non-integer, or exceeds document bounds.
+   * - Throws {@link PdfCorruptedError} if the input buffer is malformed or invalid.
+   * - Throws {@link PdfEncryptionError} if the PDF document is encrypted or password-protected.
+   *
+   * @param buffer - The raw binary `Uint8Array` of the source PDF.
+   * @param pages - An array of 1-indexed page numbers to extract text from (e.g. `[1, 2]`).
+   * @returns A promise that resolves to the extracted text string.
+   */
+  async extractTextFromPages(
+    buffer: Uint8Array,
+    pages: number[]
+  ): Promise<string> {
+    try {
+      const subsetBuffer = await this.extractPages(buffer, pages);
+      const { text } = await extractText(subsetBuffer, { mergePages: true });
+      return text;
+    } catch (error: unknown) {
+      if (
+        error instanceof PdfProcessorError ||
+        error instanceof TypeError ||
+        error instanceof RangeError
+      ) {
+        throw error;
+      }
+      throw new PdfCorruptedError(
+        `Failed to extract text from PDF pages: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error }
+      );
+    }
+  }
 }
+
 
