@@ -259,7 +259,7 @@ export class PdfProcessor {
    */
   async processFormSubmission(
     buffer: Uint8Array,
-    formData: Record<string, string | boolean | string[] | undefined | null>
+    formData: Record<string, string | number | boolean | string[] | undefined | null>
   ): Promise<Uint8Array> {
     try {
       const srcDoc = await this.loadPdfDocument(buffer);
@@ -278,24 +278,19 @@ export class PdfProcessor {
         if (field instanceof PDFTextField) {
           field.setText(typeof value === 'string' ? value : String(value));
         } else if (field instanceof PDFCheckBox) {
+          let shouldCheck = false;
           if (typeof value === 'boolean') {
-            if (value) {
-              field.check();
-            } else {
-              field.uncheck();
-            }
+            shouldCheck = value;
           } else if (typeof value === 'string') {
-            if (['true', 'yes', '1'].includes(value.toLowerCase())) {
-              field.check();
-            } else {
-              field.uncheck();
-            }
+            shouldCheck = ['true', 'yes', '1'].includes(value.toLowerCase());
           } else if (typeof value === 'number') {
-            if (value !== 0) {
-              field.check();
-            } else {
-              field.uncheck();
-            }
+            shouldCheck = value !== 0;
+          }
+
+          if (shouldCheck) {
+            field.check();
+          } else {
+            field.uncheck();
           }
         } else if (field instanceof PDFRadioGroup) {
           if (typeof value === 'string') {

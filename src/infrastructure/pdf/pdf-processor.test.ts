@@ -438,6 +438,41 @@ describe('PdfProcessor', () => {
         'test.field': 'Original Value',
       });
     });
+
+    it('populates numbers and handles string/number boolean coercion for checkboxes and text fields', async () => {
+      const doc = await PDFDocument.create();
+      const page = doc.addPage([300, 300]);
+      const form = doc.getForm();
+
+      const ageField = form.createTextField('user.age');
+      ageField.addToPage(page, { x: 50, y: 200, width: 100, height: 20 });
+
+      const check1 = form.createCheckBox('check.one');
+      check1.addToPage(page, { x: 50, y: 150, width: 20, height: 20 });
+
+      const check2 = form.createCheckBox('check.two');
+      check2.check();
+      check2.addToPage(page, { x: 50, y: 120, width: 20, height: 20 });
+
+      const check3 = form.createCheckBox('check.three');
+      check3.addToPage(page, { x: 50, y: 90, width: 20, height: 20 });
+
+      const originalBytes = await doc.save();
+      const filledBytes = await processor.processFormSubmission(originalBytes, {
+        'user.age': 42,
+        'check.one': 'yes',
+        'check.two': 0,
+        'check.three': 1,
+      });
+
+      const extracted = await processor.extractFormData(filledBytes);
+      expect(extracted).toEqual({
+        'user.age': '42',
+        'check.one': true,
+        'check.two': false,
+        'check.three': true,
+      });
+    });
   });
 });
 
