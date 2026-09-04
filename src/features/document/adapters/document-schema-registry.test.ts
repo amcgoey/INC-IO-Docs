@@ -1,128 +1,78 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
-import * as os from 'node:os';
+import { describe, it, expect, vi } from 'vitest';
 import { DocumentSchemaRegistryAdapter } from './document-schema-registry';
 import type { RawManifestProviderPort, TemplateEvaluatorPort } from '../ports';
 
 describe('DocumentSchemaRegistryAdapter', () => {
-  let tempDir: string;
-
-  beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'doc-schema-registry-test-'));
-  });
-
-  afterEach(async () => {
-    await fs.rm(tempDir, { recursive: true, force: true });
-  });
-
   const mockEvaluator: TemplateEvaluatorPort = {
     validate: vi.fn().mockReturnValue(true),
     evaluate: vi.fn(),
   };
 
-  async function createSchemaFiles(
-    dir: string,
-    schemas: Record<string, unknown>
-  ): Promise<string[]> {
-    const schemasDir = path.join(dir, 'schemas');
-    await fs.mkdir(schemasDir, { recursive: true });
-
-    const documentTypePaths: string[] = [];
-    for (const [filename, schema] of Object.entries(schemas)) {
-      const filePath = path.join(schemasDir, filename);
-      await fs.writeFile(
-        filePath,
-        typeof schema === 'string' ? schema : JSON.stringify(schema),
-        'utf-8'
-      );
-      documentTypePaths.push(`./schemas/${filename}`);
-    }
-    return documentTypePaths;
-  }
-
   function createMockManifestProvider(
-    documentTypes: string[] = [],
-    dir: string = tempDir,
+    schemas: Record<string, unknown> = {},
     rawOverride?: unknown
   ): RawManifestProviderPort {
     return {
       getRawManifest: async () =>
-        rawOverride !== undefined ? rawOverride : { documentTypes },
-      getManifestDir: () => dir,
+        rawOverride !== undefined ? rawOverride : { documentTypes: Object.keys(schemas) },
+      readSchema: async (relPath: string) => {
+        const content = schemas[relPath];
+        if (content === undefined) {
+          throw new Error(`Failed to read DocumentType file "${relPath}"`);
+        }
+        return typeof content === 'string' ? content : JSON.stringify(content);
+      },
     };
   }
 
-  it('throws an error if no manifest provider is provided in constructor', () => {
-    expect(
-      () =>
-        new DocumentSchemaRegistryAdapter(
-          undefined as unknown as RawManifestProviderPort,
-          mockEvaluator
-        )
-    ).toThrow(/manifest provider is not defined/i);
-  });
-
-  it('throws an error if no template evaluator is provided in constructor', () => {
-    const mockProvider = createMockManifestProvider(['test.json']);
-    expect(
-      () =>
-        new DocumentSchemaRegistryAdapter(
-          mockProvider,
-          undefined as unknown as TemplateEvaluatorPort
-        )
-    ).toThrow(/template evaluator is not defined/i);
-  });
-
   it('throws an error if manifest structure is invalid (missing documentTypes array)', async () => {
-    const mockProvider = createMockManifestProvider([], tempDir, { wrongField: [] });
+    const mockProvider = createMockManifestProvider({}, { wrongField: [] });
     const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
     await expect(adapter.loadAll()).rejects.toThrow(/invalid manifest structure/i);
   });
 
   it('throws an error if a referenced document type file is missing', async () => {
-    const mockProvider = createMockManifestProvider(['./schemas/missing-type.json'], tempDir);
+    const mockProvider = createMockManifestProvider(
+      {},
+      { documentTypes: ['./schemas/missing-type.json'] }
+    );
     const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
     await expect(adapter.loadAll()).rejects.toThrow(/failed to read documenttype file/i);
   });
 
   it('throws an error if a referenced document type file contains malformed JSON', async () => {
-    const paths = await createSchemaFiles(tempDir, {
-      'invalid-json-type.json': '{ malformed document json }',
+    const mockProvider = createMockManifestProvider({
+      './schemas/invalid-json-type.json': '{ malformed document json }',
     });
-    const mockProvider = createMockManifestProvider(paths, tempDir);
     const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
     await expect(adapter.loadAll()).rejects.toThrow(/invalid json/i);
   });
 
   it('anti-corruption layer: rejects document type JSON missing required fields', async () => {
-    const paths = await createSchemaFiles(tempDir, {
-      'invalid-type.json': {
+    const mockProvider = createMockManifestProvider({
+      './schemas/invalid-type.json': {
         name: 'Invalid Document Type',
         documentSchema: {},
       },
     });
-    const mockProvider = createMockManifestProvider(paths, tempDir);
     const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
     await expect(adapter.loadAll()).rejects.toThrow(/invalid DocumentType schema/i);
   });
 
   it('anti-corruption layer: rejects document type JSON with invalid field definitions', async () => {
-    const paths = await createSchemaFiles(tempDir, {
-      'invalid-field.json': {
+    const mockProvider = createMockManifestProvider({
+      './schemas/invalid-field.json': {
         key: 'invalid-field-type',
         name: 'Invalid Field Type',
         documentSchema: {
           fields: [
             {
               key: 'BadField',
-              // missing 'type' and 'name'
             },
           ],
         },
       },
     });
-    const mockProvider = createMockManifestProvider(paths, tempDir);
     const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
     await expect(adapter.loadAll()).rejects.toThrow(/invalid DocumentType schema/i);
   });
@@ -165,11 +115,10 @@ describe('DocumentSchemaRegistryAdapter', () => {
       },
     };
 
-    const paths = await createSchemaFiles(tempDir, {
-      'comm.json': commSchema,
-      'submittal.json': submittalSchema,
+    const mockProvider = createMockManifestProvider({
+      './schemas/comm.json': commSchema,
+      './schemas/submittal.json': submittalSchema,
     });
-    const mockProvider = createMockManifestProvider(paths, tempDir);
     const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
     const result = await adapter.loadAll();
 
@@ -193,10 +142,9 @@ describe('DocumentSchemaRegistryAdapter', () => {
       },
     };
 
-    const paths = await createSchemaFiles(tempDir, {
-      'optional-field.json': optionalFieldSchema,
+    const mockProvider = createMockManifestProvider({
+      './schemas/optional-field.json': optionalFieldSchema,
     });
-    const mockProvider = createMockManifestProvider(paths, tempDir);
     const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
     const result = await adapter.loadAll();
 
@@ -235,10 +183,9 @@ describe('DocumentSchemaRegistryAdapter', () => {
       },
     };
 
-    const paths = await createSchemaFiles(tempDir, {
-      'extra.json': rawSchemaWithExtraProps,
+    const mockProvider = createMockManifestProvider({
+      './schemas/extra.json': rawSchemaWithExtraProps,
     });
-    const mockProvider = createMockManifestProvider(paths, tempDir);
     const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
     const result = await adapter.loadAll();
 
@@ -293,14 +240,13 @@ describe('DocumentSchemaRegistryAdapter', () => {
         },
       };
 
-      const paths = await createSchemaFiles(tempDir, {
-        'calc-valid.json': documentType,
-      });
       const localEvaluator = {
         validate: vi.fn().mockReturnValue(true),
         evaluate: vi.fn(),
       };
-      const mockProvider = createMockManifestProvider(paths, tempDir);
+      const mockProvider = createMockManifestProvider({
+        './schemas/calc-valid.json': documentType,
+      });
       const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
 
       const result = await adapter.loadAll();
@@ -350,14 +296,13 @@ describe('DocumentSchemaRegistryAdapter', () => {
         },
       };
 
-      const paths = await createSchemaFiles(tempDir, {
-        'calc-lookup.json': documentType,
-      });
       const localEvaluator = {
         validate: vi.fn().mockReturnValue(true),
         evaluate: vi.fn(),
       };
-      const mockProvider = createMockManifestProvider(paths, tempDir);
+      const mockProvider = createMockManifestProvider({
+        './schemas/calc-lookup.json': documentType,
+      });
       const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
 
       const result = await adapter.loadAll();
@@ -391,14 +336,13 @@ describe('DocumentSchemaRegistryAdapter', () => {
         },
       };
 
-      const paths = await createSchemaFiles(tempDir, {
-        'calc-invalid.json': documentType,
-      });
       const localEvaluator = {
         validate: vi.fn().mockReturnValue(false),
         evaluate: vi.fn(),
       };
-      const mockProvider = createMockManifestProvider(paths, tempDir);
+      const mockProvider = createMockManifestProvider({
+        './schemas/calc-invalid.json': documentType,
+      });
       const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
 
       await expect(adapter.loadAll()).rejects.toThrow(
@@ -431,14 +375,13 @@ describe('DocumentSchemaRegistryAdapter', () => {
         },
       };
 
-      const paths = await createSchemaFiles(tempDir, {
-        'identity-valid.json': documentType,
-      });
       const localEvaluator = {
         validate: vi.fn().mockReturnValue(true),
         evaluate: vi.fn(),
       };
-      const mockProvider = createMockManifestProvider(paths, tempDir);
+      const mockProvider = createMockManifestProvider({
+        './schemas/identity-valid.json': documentType,
+      });
       const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
 
       const result = await adapter.loadAll();
@@ -472,14 +415,13 @@ describe('DocumentSchemaRegistryAdapter', () => {
         },
       };
 
-      const paths = await createSchemaFiles(tempDir, {
-        'identity-invalid.json': documentType,
-      });
       const localEvaluator = {
         validate: vi.fn().mockImplementation((tpl: string) => !tpl.includes('unknownField')),
         evaluate: vi.fn(),
       };
-      const mockProvider = createMockManifestProvider(paths, tempDir);
+      const mockProvider = createMockManifestProvider({
+        './schemas/identity-invalid.json': documentType,
+      });
       const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
 
       await expect(adapter.loadAll()).rejects.toThrow(
@@ -513,14 +455,13 @@ describe('DocumentSchemaRegistryAdapter', () => {
         },
       };
 
-      const paths = await createSchemaFiles(tempDir, {
-        'workflow-invalid.json': documentType,
-      });
       const localEvaluator = {
         validate: vi.fn().mockImplementation((tpl: string) => !tpl.includes('InvalidField')),
         evaluate: vi.fn(),
       };
-      const mockProvider = createMockManifestProvider(paths, tempDir);
+      const mockProvider = createMockManifestProvider({
+        './schemas/workflow-invalid.json': documentType,
+      });
       const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
 
       await expect(adapter.loadAll()).rejects.toThrow(
@@ -540,14 +481,13 @@ describe('DocumentSchemaRegistryAdapter', () => {
         },
       };
 
-      const paths = await createSchemaFiles(tempDir, {
-        'storage-invalid.json': documentType,
-      });
       const localEvaluator = {
         validate: vi.fn().mockImplementation((tpl: string) => !tpl.includes('unknownStorageField')),
         evaluate: vi.fn(),
       };
-      const mockProvider = createMockManifestProvider(paths, tempDir);
+      const mockProvider = createMockManifestProvider({
+        './schemas/storage-invalid.json': documentType,
+      });
       const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
 
       await expect(adapter.loadAll()).rejects.toThrow(

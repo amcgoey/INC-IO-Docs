@@ -1,7 +1,12 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { Type, type Static, type TSchema } from '@sinclair/typebox';
-import { Value } from '@sinclair/typebox/value';
+import { Type, type Static } from '@sinclair/typebox';
+import type {
+  AppConfigurationProviderPort,
+  RawManifestProviderPort,
+} from '../../features/document/ports';
+import type { WorkspaceConfigProviderPort } from '../../features/workspace/ports';
+import { parseJson, validateAndCleanSchema } from '../validation/json-schema';
 
 export const WorkspaceConfigurationSchema = Type.Object({
   appTitle: Type.Optional(Type.String()),
@@ -44,45 +49,15 @@ export interface AppManifestProviderOptions {
   manifestPath: string;
 }
 
-function parseJson(content: string, contextDescription: string): unknown {
-  try {
-    return JSON.parse(content);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Invalid JSON in ${contextDescription}: ${message}`, { cause: err });
-  }
-}
-
-function formatValidationErrors<T extends TSchema>(schema: T, value: unknown): string[] {
-  return [...Value.Errors(schema, value)].map((e) => `${e.path}: ${e.message}`);
-}
-
-function validateAndCleanSchema<T extends TSchema>(
-  schema: T,
-  value: unknown,
-  errorMessage: string
-): Static<T> {
-  const cloned = structuredClone(value);
-  const cleaned = Value.Clean(schema, cloned);
-  if (!Value.Check(schema, cleaned)) {
-    const errors = formatValidationErrors(schema, cleaned).join(', ');
-    throw new Error(`${errorMessage}: ${errors}`);
-  }
-  return cleaned as Static<T>;
-}
-
-export class AppManifestProvider {
+export class AppManifestProvider
+  implements AppConfigurationProviderPort, WorkspaceConfigProviderPort, RawManifestProviderPort
+{
   private readonly manifestPath: string;
   private cachedConfiguration: AppConfiguration | undefined = undefined;
   private cachedRawManifest: unknown = undefined;
   private isManifestLoaded = false;
 
-  constructor(options?: AppManifestProviderOptions) {
-    if (!options?.manifestPath) {
-      throw new Error(
-        'Manifest path is not defined. Please provide options.manifestPath.'
-      );
-    }
+  constructor(options: AppManifestProviderOptions) {
     this.manifestPath = options.manifestPath;
   }
 
@@ -152,7 +127,16 @@ export class AppManifestProvider {
     return this.cachedRawManifest;
   }
 
-  getManifestDir(): string {
-    return path.dirname(this.manifestPath);
+  async readSchema(relPath: string): Promise<string> {
+    const manifestDir = path.dirname(this.manifestPath);
+    const resolvedPath = path.resolve(manifestDir, relPath);
+    try {
+      return await fs.readFile(resolvedPath, 'utf-8');
+    } catch (err) {
+      throw new Error(
+        `Failed to read DocumentType file "${relPath}" at "${resolvedPath}": ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err }
+      );
+    }
   }
 }

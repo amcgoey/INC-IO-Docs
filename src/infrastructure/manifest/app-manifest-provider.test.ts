@@ -15,15 +15,6 @@ describe('AppManifestProvider', () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  it('throws an error if no manifest path is provided in constructor', () => {
-    expect(() => new AppManifestProvider({} as unknown as { manifestPath: string })).toThrow(
-      /manifest path is not defined/i
-    );
-    expect(() => new AppManifestProvider({ manifestPath: '' })).toThrow(
-      /manifest path is not defined/i
-    );
-  });
-
   it('throws an error if manifest file does not exist', async () => {
     const nonExistentPath = path.join(tempDir, 'missing-manifest.json');
     const provider = new AppManifestProvider({ manifestPath: nonExistentPath });
@@ -46,11 +37,25 @@ describe('AppManifestProvider', () => {
     await expect(provider.getRawManifest()).rejects.toThrow(/invalid manifest/i);
   });
 
-  describe('getManifestDir', () => {
-    it('returns directory of manifestPath', () => {
+  describe('readSchema', () => {
+    it('reads schema file relative to manifest directory', async () => {
       const manifestPath = path.join(tempDir, 'sub', 'manifest.json');
+      const schemaRelPath = './schemas/test.json';
+      const schemaFullPath = path.join(tempDir, 'sub', 'schemas', 'test.json');
+      await fs.mkdir(path.join(tempDir, 'sub', 'schemas'), { recursive: true });
+      await fs.writeFile(schemaFullPath, '{"key": "test"}', 'utf-8');
+
       const provider = new AppManifestProvider({ manifestPath });
-      expect(provider.getManifestDir()).toBe(path.join(tempDir, 'sub'));
+      const content = await provider.readSchema(schemaRelPath);
+      expect(content).toBe('{"key": "test"}');
+    });
+
+    it('throws error if schema file cannot be read', async () => {
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      const provider = new AppManifestProvider({ manifestPath });
+      await expect(provider.readSchema('./missing.json')).rejects.toThrow(
+        /failed to read documenttype file/i
+      );
     });
   });
 
