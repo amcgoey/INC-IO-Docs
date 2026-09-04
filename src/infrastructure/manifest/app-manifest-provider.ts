@@ -64,7 +64,10 @@ export class AppManifestProvider {
         { cause: err }
       );
     }
-    const manifestData = parseJson(manifestContent, `manifest file at "${this.manifestPath}"`);
+    const manifestData = parseJson(manifestContent, {
+      filePath: this.manifestPath,
+      description: 'manifest file',
+    });
 
     const validatedManifest = validateAndCleanSchema(
       ManifestSchema,
@@ -120,16 +123,21 @@ export class AppManifestProvider {
     return this.cachedRawManifest;
   }
 
-  async readSchema(relPath: string): Promise<string> {
+  async readParsedSchema(relPath: string): Promise<unknown> {
     const manifestDir = path.dirname(this.manifestPath);
     const resolvedPath = path.resolve(manifestDir, relPath);
+    let content: string;
     try {
-      return await fs.readFile(resolvedPath, 'utf-8');
+      content = await fs.readFile(resolvedPath, 'utf-8');
     } catch (err) {
       throw new Error(
         `Failed to read DocumentType file "${relPath}" at "${resolvedPath}": ${err instanceof Error ? err.message : String(err)}`,
         { cause: err }
       );
     }
+    return parseJson(content, {
+      filePath: resolvedPath,
+      description: `DocumentType file "${relPath}"`,
+    });
   }
 }

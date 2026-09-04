@@ -1,12 +1,25 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DocumentSchemaRegistryAdapter } from './document-schema-registry';
 import type { RawManifestProviderPort, TemplateEvaluatorPort } from '../ports';
 
 describe('DocumentSchemaRegistryAdapter', () => {
-  const mockEvaluator: TemplateEvaluatorPort = {
-    validate: vi.fn().mockReturnValue(true),
-    evaluate: vi.fn(),
-  };
+  let mockEvaluator: TemplateEvaluatorPort;
+
+  function createMockEvaluator(
+    validateImpl: boolean | ((template: string, allowedVariables: string[]) => boolean) = true
+  ): TemplateEvaluatorPort {
+    return {
+      validate:
+        typeof validateImpl === 'function'
+          ? vi.fn().mockImplementation(validateImpl)
+          : vi.fn().mockReturnValue(validateImpl),
+      evaluate: vi.fn(),
+    };
+  }
+
+  beforeEach(() => {
+    mockEvaluator = createMockEvaluator(true);
+  });
 
   function createMockManifestProvider(
     schemas: Record<string, unknown> = {},
@@ -15,12 +28,22 @@ describe('DocumentSchemaRegistryAdapter', () => {
     return {
       getRawManifest: async () =>
         rawOverride !== undefined ? rawOverride : { documentTypes: Object.keys(schemas) },
-      readSchema: async (relPath: string) => {
+      readParsedSchema: async (relPath: string) => {
         const content = schemas[relPath];
         if (content === undefined) {
           throw new Error(`Failed to read DocumentType file "${relPath}"`);
         }
-        return typeof content === 'string' ? content : JSON.stringify(content);
+        if (typeof content === 'string') {
+          try {
+            return JSON.parse(content);
+          } catch (err) {
+            throw new Error(
+              `Invalid JSON in DocumentType file "${relPath}": ${err instanceof Error ? err.message : String(err)}`,
+              { cause: err }
+            );
+          }
+        }
+        return content;
       },
     };
   }
@@ -240,14 +263,10 @@ describe('DocumentSchemaRegistryAdapter', () => {
         },
       };
 
-      const localEvaluator = {
-        validate: vi.fn().mockReturnValue(true),
-        evaluate: vi.fn(),
-      };
       const mockProvider = createMockManifestProvider({
         './schemas/calc-valid.json': documentType,
       });
-      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
 
       const result = await adapter.loadAll();
       expect(result).toHaveLength(1);
@@ -257,7 +276,7 @@ describe('DocumentSchemaRegistryAdapter', () => {
           template: '{{Category}}-{{Title}}',
         },
       ]);
-      expect(localEvaluator.validate).toHaveBeenCalledWith(
+      expect(mockEvaluator.validate).toHaveBeenCalledWith(
         '{{Category}}-{{Title}}',
         expect.arrayContaining(['Title', 'Category'])
       );
@@ -296,18 +315,14 @@ describe('DocumentSchemaRegistryAdapter', () => {
         },
       };
 
-      const localEvaluator = {
-        validate: vi.fn().mockReturnValue(true),
-        evaluate: vi.fn(),
-      };
       const mockProvider = createMockManifestProvider({
         './schemas/calc-lookup.json': documentType,
       });
-      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
 
       const result = await adapter.loadAll();
       expect(result).toHaveLength(1);
-      expect(localEvaluator.validate).toHaveBeenCalledWith(
+      expect(mockEvaluator.validate).toHaveBeenCalledWith(
         '{{Direction.Name}}-{{Direction.Key}}-{{Title}}',
         expect.arrayContaining([
           'Title',
@@ -336,19 +351,16 @@ describe('DocumentSchemaRegistryAdapter', () => {
         },
       };
 
-      const localEvaluator = {
-        validate: vi.fn().mockReturnValue(false),
-        evaluate: vi.fn(),
-      };
+      const evaluator = createMockEvaluator(false);
       const mockProvider = createMockManifestProvider({
         './schemas/calc-invalid.json': documentType,
       });
-      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, evaluator);
 
       await expect(adapter.loadAll()).rejects.toThrow(
         /Invalid template in "\.\/schemas\/calc-invalid\.json": Invalid template at "documentSchema\.calculatedFields\[0\]\.template": references unknown fields or is malformed\./
       );
-      expect(localEvaluator.validate).toHaveBeenCalledWith(
+      expect(evaluator.validate).toHaveBeenCalledWith(
         '{{Title}}-{{DoesNotExist}}',
         expect.arrayContaining(['Title'])
       );
@@ -375,14 +387,10 @@ describe('DocumentSchemaRegistryAdapter', () => {
         },
       };
 
-      const localEvaluator = {
-        validate: vi.fn().mockReturnValue(true),
-        evaluate: vi.fn(),
-      };
       const mockProvider = createMockManifestProvider({
         './schemas/identity-valid.json': documentType,
       });
-      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
 
       const result = await adapter.loadAll();
       expect(result).toHaveLength(1);
@@ -391,11 +399,11 @@ describe('DocumentSchemaRegistryAdapter', () => {
         idDocument: '{{contact}}-{{date}}-{{direction}}-{{description}}',
         idGroup: '{{contact}}',
       });
-      expect(localEvaluator.validate).toHaveBeenCalledWith(
+      expect(mockEvaluator.validate).toHaveBeenCalledWith(
         '{{contact}}-{{date}}-{{direction}}-{{description}}',
         expect.arrayContaining(['contact', 'date', 'direction', 'description'])
       );
-      expect(localEvaluator.validate).toHaveBeenCalledWith(
+      expect(mockEvaluator.validate).toHaveBeenCalledWith(
         '{{contact}}',
         expect.arrayContaining(['contact', 'date', 'direction', 'description'])
       );
@@ -415,14 +423,11 @@ describe('DocumentSchemaRegistryAdapter', () => {
         },
       };
 
-      const localEvaluator = {
-        validate: vi.fn().mockImplementation((tpl: string) => !tpl.includes('unknownField')),
-        evaluate: vi.fn(),
-      };
+      const evaluator = createMockEvaluator((tpl: string) => !tpl.includes('unknownField'));
       const mockProvider = createMockManifestProvider({
         './schemas/identity-invalid.json': documentType,
       });
-      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, evaluator);
 
       await expect(adapter.loadAll()).rejects.toThrow(
         /Invalid template in "\.\/schemas\/identity-invalid\.json": Invalid template at "documentSchema\.identity\.id": references unknown fields or is malformed\./
@@ -455,14 +460,11 @@ describe('DocumentSchemaRegistryAdapter', () => {
         },
       };
 
-      const localEvaluator = {
-        validate: vi.fn().mockImplementation((tpl: string) => !tpl.includes('InvalidField')),
-        evaluate: vi.fn(),
-      };
+      const evaluator = createMockEvaluator((tpl: string) => !tpl.includes('InvalidField'));
       const mockProvider = createMockManifestProvider({
         './schemas/workflow-invalid.json': documentType,
       });
-      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, evaluator);
 
       await expect(adapter.loadAll()).rejects.toThrow(
         /Invalid template in "\.\/schemas\/workflow-invalid\.json": Invalid template at "documentWorkflowConfig\.workflows\[0\]\.activitySequence\[0\]\.payload\.folder": references unknown fields or is malformed\./
@@ -481,14 +483,11 @@ describe('DocumentSchemaRegistryAdapter', () => {
         },
       };
 
-      const localEvaluator = {
-        validate: vi.fn().mockImplementation((tpl: string) => !tpl.includes('unknownStorageField')),
-        evaluate: vi.fn(),
-      };
+      const evaluator = createMockEvaluator((tpl: string) => !tpl.includes('unknownStorageField'));
       const mockProvider = createMockManifestProvider({
         './schemas/storage-invalid.json': documentType,
       });
-      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, evaluator);
 
       await expect(adapter.loadAll()).rejects.toThrow(
         /Invalid template in "\.\/schemas\/storage-invalid\.json": Invalid template at "storageContextConfig\.targetFolder": references unknown fields or is malformed\./

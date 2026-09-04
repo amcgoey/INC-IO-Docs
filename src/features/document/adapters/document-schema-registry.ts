@@ -1,3 +1,4 @@
+import { Value } from '@sinclair/typebox/value';
 import {
   DocumentTypeSchema,
   validateManifestTemplates,
@@ -8,10 +9,6 @@ import type {
   RawManifestProviderPort,
   TemplateEvaluatorPort,
 } from '../ports';
-import {
-  parseJson,
-  validateAndCleanSchema,
-} from '../../../infrastructure/validation/json-schema';
 
 export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort {
   constructor(
@@ -37,18 +34,20 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
     const documentTypes: DocumentType[] = [];
 
     for (const documentTypeRelPath of raw.documentTypes) {
-      const fileContent = await this.manifestProvider.readSchema(documentTypeRelPath);
+      const rawDocumentType = await this.manifestProvider.readParsedSchema(documentTypeRelPath);
 
-      const rawDocumentType = parseJson(
-        fileContent,
-        `DocumentType file "${documentTypeRelPath}"`
-      );
+      const cloned = structuredClone(rawDocumentType);
+      const cleaned = Value.Clean(DocumentTypeSchema, cloned);
+      if (!Value.Check(DocumentTypeSchema, cleaned)) {
+        const errors = [...Value.Errors(DocumentTypeSchema, cleaned)]
+          .map((e) => `${e.path}: ${e.message}`)
+          .join(', ');
+        throw new Error(
+          `Invalid DocumentType schema in "${documentTypeRelPath}": ${errors}`
+        );
+      }
 
-      const validatedDocumentType = validateAndCleanSchema(
-        DocumentTypeSchema,
-        rawDocumentType,
-        `Invalid DocumentType schema in "${documentTypeRelPath}"`
-      );
+      const validatedDocumentType = cleaned as DocumentType;
 
       const templateErrors = validateManifestTemplates(
         validatedDocumentType,
@@ -66,3 +65,4 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
     return documentTypes;
   }
 }
+

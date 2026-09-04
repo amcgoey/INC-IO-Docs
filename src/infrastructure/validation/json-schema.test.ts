@@ -9,14 +9,23 @@ import {
 describe('json-schema utilities', () => {
   describe('parseJson', () => {
     it('parses valid JSON string', () => {
-      const result = parseJson('{"name": "test", "count": 42}', 'test payload');
+      const result = parseJson('{"name": "test", "count": 42}', { description: 'test payload' });
       expect(result).toEqual({ name: 'test', count: 42 });
     });
 
     it('throws error with context description on invalid JSON', () => {
-      expect(() => parseJson('{ invalid json }', 'test config')).toThrow(
+      expect(() => parseJson('{ invalid json }', { description: 'test config' })).toThrow(
         /Invalid JSON in test config:/i
       );
+    });
+
+    it('throws error with structured context including filePath on invalid JSON', () => {
+      expect(() =>
+        parseJson('{ invalid json }', {
+          filePath: '/path/file.json',
+          description: 'config file',
+        })
+      ).toThrow(/Invalid JSON in config file at "\/path\/file\.json":/i);
     });
   });
 

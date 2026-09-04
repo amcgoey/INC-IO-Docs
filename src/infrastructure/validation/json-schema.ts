@@ -1,12 +1,27 @@
 import { Value } from '@sinclair/typebox/value';
 import type { Static, TSchema } from '@sinclair/typebox';
 
-export function parseJson(content: string, contextDescription: string): unknown {
+export interface JsonParseContext {
+  filePath?: string;
+  description?: string;
+}
+
+export function parseJson(content: string, context: JsonParseContext): unknown {
   try {
     return JSON.parse(content);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Invalid JSON in ${contextDescription}: ${message}`, { cause: err });
+    let contextDesc: string;
+    if (context.description && context.filePath) {
+      contextDesc = `${context.description} at "${context.filePath}"`;
+    } else if (context.filePath) {
+      contextDesc = `file at "${context.filePath}"`;
+    } else if (context.description) {
+      contextDesc = context.description;
+    } else {
+      contextDesc = 'content';
+    }
+    throw new Error(`Invalid JSON in ${contextDesc}: ${message}`, { cause: err });
   }
 }
 

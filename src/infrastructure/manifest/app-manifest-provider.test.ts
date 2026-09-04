@@ -37,8 +37,8 @@ describe('AppManifestProvider', () => {
     await expect(provider.getRawManifest()).rejects.toThrow(/invalid manifest/i);
   });
 
-  describe('readSchema', () => {
-    it('reads schema file relative to manifest directory', async () => {
+  describe('readParsedSchema', () => {
+    it('reads and parses schema file relative to manifest directory', async () => {
       const manifestPath = path.join(tempDir, 'sub', 'manifest.json');
       const schemaRelPath = './schemas/test.json';
       const schemaFullPath = path.join(tempDir, 'sub', 'schemas', 'test.json');
@@ -46,15 +46,28 @@ describe('AppManifestProvider', () => {
       await fs.writeFile(schemaFullPath, '{"key": "test"}', 'utf-8');
 
       const provider = new AppManifestProvider({ manifestPath });
-      const content = await provider.readSchema(schemaRelPath);
-      expect(content).toBe('{"key": "test"}');
+      const content = await provider.readParsedSchema(schemaRelPath);
+      expect(content).toEqual({ key: 'test' });
     });
 
     it('throws error if schema file cannot be read', async () => {
       const manifestPath = path.join(tempDir, 'manifest.json');
       const provider = new AppManifestProvider({ manifestPath });
-      await expect(provider.readSchema('./missing.json')).rejects.toThrow(
+      await expect(provider.readParsedSchema('./missing.json')).rejects.toThrow(
         /failed to read documenttype file/i
+      );
+    });
+
+    it('throws error if schema file contains malformed JSON', async () => {
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      const schemaRelPath = './schemas/invalid.json';
+      const schemaFullPath = path.join(tempDir, 'schemas', 'invalid.json');
+      await fs.mkdir(path.join(tempDir, 'schemas'), { recursive: true });
+      await fs.writeFile(schemaFullPath, '{ not valid json }', 'utf-8');
+
+      const provider = new AppManifestProvider({ manifestPath });
+      await expect(provider.readParsedSchema(schemaRelPath)).rejects.toThrow(
+        /invalid json/i
       );
     });
   });
