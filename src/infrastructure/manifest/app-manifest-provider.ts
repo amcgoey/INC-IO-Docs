@@ -1,11 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { Type, type Static } from '@sinclair/typebox';
-import type {
-  AppConfigurationProviderPort,
-  RawManifestProviderPort,
-} from '../../features/document/ports';
-import type { WorkspaceConfigProviderPort } from '../../features/workspace/ports';
 import { parseJson, validateAndCleanSchema } from '../validation/json-schema';
 
 export const WorkspaceConfigurationSchema = Type.Object({
@@ -49,9 +44,7 @@ export interface AppManifestProviderOptions {
   manifestPath: string;
 }
 
-export class AppManifestProvider
-  implements AppConfigurationProviderPort, WorkspaceConfigProviderPort, RawManifestProviderPort
-{
+export class AppManifestProvider {
   private readonly manifestPath: string;
   private cachedConfiguration: AppConfiguration | undefined = undefined;
   private cachedRawManifest: unknown = undefined;
