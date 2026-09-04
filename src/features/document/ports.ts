@@ -44,8 +44,13 @@ export interface SchemaQueryPort {
   getForms(): Promise<FormSchema[]> | FormSchema[];
 }
 
-export interface ManifestRegistryPort {
+export interface DocumentSchemaRegistryPort {
   loadAll(): Promise<DocumentType[]>;
+}
+
+export interface RawManifestProviderPort {
+  getRawManifest(): Promise<unknown>;
+  getManifestDir(): string;
 }
 
 export type TemplateEvaluationContext = { [key: string]: unknown };

@@ -2,22 +2,6 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import {
-  DocumentTypeSchema,
-  formatValidationErrors,
-  validateManifestTemplates,
-  type DocumentType,
-} from '../domain';
-import type {
-  AppConfigurationProviderPort,
-  DriveConfiguration,
-  ManifestRegistryPort,
-  TemplateEvaluatorPort,
-} from '../ports';
-import type {
-  WorkspaceConfigProviderPort,
-  WorkspaceConfiguration,
-} from '../../workspace/ports';
 
 export const WorkspaceConfigurationSchema = Type.Object({
   appTitle: Type.Optional(Type.String()),
@@ -33,21 +17,31 @@ export const DriveConfigurationSchema = Type.Object({
   backoffFactor: Type.Optional(Type.Number()),
 });
 
+export const SheetsConfigurationSchema = Type.Object({
+  spreadsheetId: Type.Optional(Type.String()),
+});
+
+export type WorkspaceConfiguration = Static<typeof WorkspaceConfigurationSchema>;
+export type DriveConfiguration = Static<typeof DriveConfigurationSchema>;
+export type SheetsConfiguration = Static<typeof SheetsConfigurationSchema>;
+
 export const AppConfigurationSchema = Type.Object({
   workspace: Type.Optional(WorkspaceConfigurationSchema),
   drive: Type.Optional(DriveConfigurationSchema),
+  sheets: Type.Optional(SheetsConfigurationSchema),
 });
 
 export type AppConfiguration = Static<typeof AppConfigurationSchema>;
 
-const ManifestSchema = Type.Object({
+export const ManifestSchema = Type.Object({
   documentTypes: Type.Array(Type.String()),
   configuration: Type.Optional(AppConfigurationSchema),
 });
 
-export interface ManifestRegistryAdapterOptions {
+export type Manifest = Static<typeof ManifestSchema>;
+
+export interface AppManifestProviderOptions {
   manifestPath: string;
-  templateEvaluator: TemplateEvaluatorPort;
 }
 
 function parseJson(content: string, contextDescription: string): unknown {
@@ -57,6 +51,10 @@ function parseJson(content: string, contextDescription: string): unknown {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`Invalid JSON in ${contextDescription}: ${message}`, { cause: err });
   }
+}
+
+function formatValidationErrors<T extends TSchema>(schema: T, value: unknown): string[] {
+  return [...Value.Errors(schema, value)].map((e) => `${e.path}: ${e.message}`);
 }
 
 function validateAndCleanSchema<T extends TSchema>(
@@ -73,30 +71,19 @@ function validateAndCleanSchema<T extends TSchema>(
   return cleaned as Static<T>;
 }
 
-export class ManifestRegistryAdapter
-  implements
-    ManifestRegistryPort,
-    AppConfigurationProviderPort,
-    WorkspaceConfigProviderPort
-{
+export class AppManifestProvider {
   private readonly manifestPath: string;
-  private readonly templateEvaluator: TemplateEvaluatorPort;
   private cachedConfiguration: AppConfiguration | undefined = undefined;
+  private cachedRawManifest: unknown = undefined;
   private isManifestLoaded = false;
 
-  constructor(options?: ManifestRegistryAdapterOptions) {
+  constructor(options?: AppManifestProviderOptions) {
     if (!options?.manifestPath) {
       throw new Error(
         'Manifest path is not defined. Please provide options.manifestPath.'
       );
     }
-    if (!options?.templateEvaluator) {
-      throw new Error(
-        'Template evaluator is not defined. Please provide options.templateEvaluator.'
-      );
-    }
     this.manifestPath = options.manifestPath;
-    this.templateEvaluator = options.templateEvaluator;
   }
 
   private async loadManifest(): Promise<Static<typeof ManifestSchema>> {
@@ -118,6 +105,7 @@ export class ManifestRegistryAdapter
     );
 
     this.cachedConfiguration = validatedManifest.configuration;
+    this.cachedRawManifest = manifestData;
     this.isManifestLoaded = true;
     return validatedManifest;
   }
@@ -150,56 +138,21 @@ export class ManifestRegistryAdapter
     return this.cachedConfiguration?.workspace;
   }
 
-  async loadAll(): Promise<DocumentType[]> {
-    let validatedManifest: Static<typeof ManifestSchema>;
-    try {
-      validatedManifest = await this.loadManifest();
-    } catch (err) {
-      throw new Error(
-        `Failed to load manifest in loadAll: ${err instanceof Error ? err.message : String(err)}`,
-        { cause: err }
-      );
-    }
-    const manifestDir = path.dirname(this.manifestPath);
-    const documentTypes: DocumentType[] = [];
-
-    for (const documentTypeRelPath of validatedManifest.documentTypes) {
-      const resolvedPath = path.resolve(manifestDir, documentTypeRelPath);
-      let fileContent: string;
+  async getRawManifest(): Promise<unknown> {
+    if (!this.isManifestLoaded) {
       try {
-        fileContent = await fs.readFile(resolvedPath, 'utf-8');
+        await this.loadManifest();
       } catch (err) {
         throw new Error(
-          `Failed to read DocumentType file "${documentTypeRelPath}" at "${resolvedPath}": ${err instanceof Error ? err.message : String(err)}`,
+          `Failed to load raw manifest: ${err instanceof Error ? err.message : String(err)}`,
           { cause: err }
         );
       }
-
-      const rawDocumentType = parseJson(
-        fileContent,
-        `DocumentType file "${documentTypeRelPath}" at "${resolvedPath}"`
-      );
-
-      const validatedDocumentType = validateAndCleanSchema(
-        DocumentTypeSchema,
-        rawDocumentType,
-        `Invalid DocumentType schema in "${documentTypeRelPath}" at "${resolvedPath}"`
-      );
-
-      const templateErrors = validateManifestTemplates(
-        validatedDocumentType,
-        this.templateEvaluator
-      );
-      if (templateErrors.length > 0) {
-        throw new Error(
-          `Invalid template in "${documentTypeRelPath}" from manifest "${this.manifestPath}": ${templateErrors.join(', ')}`
-        );
-      }
-
-      documentTypes.push(validatedDocumentType);
     }
+    return this.cachedRawManifest;
+  }
 
-    return documentTypes;
+  getManifestDir(): string {
+    return path.dirname(this.manifestPath);
   }
 }
-

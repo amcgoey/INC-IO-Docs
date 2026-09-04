@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { ManifestRegistryAdapter } from '../../src/features/document/adapters/manifest-registry';
+import { DocumentSchemaRegistryAdapter } from '../../src/features/document/adapters/document-schema-registry';
+import { AppManifestProvider } from '../../src/infrastructure/manifest/app-manifest-provider';
 import { HandlebarsAdapter } from '../../src/infrastructure/template-engine/handlebars-adapter';
 import {
   DocumentTypeSchema,
@@ -12,10 +13,11 @@ import { Value } from '@sinclair/typebox/value';
 describe('DocumentType JSON files schema validation', () => {
   it('should validate all DocumentType JSON files referenced by manifest.json against Typebox schemas', async () => {
     const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
-    const adapter = new ManifestRegistryAdapter({
-      manifestPath,
-      templateEvaluator: new HandlebarsAdapter(),
-    });
+    const manifestProvider = new AppManifestProvider({ manifestPath });
+    const adapter = new DocumentSchemaRegistryAdapter(
+      manifestProvider,
+      new HandlebarsAdapter()
+    );
     const documentTypes = await adapter.loadAll();
 
     expect(documentTypes.length).toBeGreaterThan(0);

@@ -38,7 +38,7 @@ import {
   FileNotFoundError,
   type ActivityDispatcherPort,
   type ExecutionContext,
-  type ManifestRegistryPort,
+  type DocumentSchemaRegistryPort,
   type TemplateEvaluationContext,
   type TemplateEvaluatorPort,
 } from './ports';
@@ -46,7 +46,7 @@ import {
 
 
 describe('Document domain', () => {
-  const mockRegistry: ManifestRegistryPort = {
+  const mockRegistry: DocumentSchemaRegistryPort = {
     loadAll: vi.fn().mockResolvedValue([]),
   };
 
@@ -204,7 +204,7 @@ describe('Document domain', () => {
         },
       },
     ];
-    const registryWithSubmittal: ManifestRegistryPort = {
+    const registryWithSubmittal: DocumentSchemaRegistryPort = {
       loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
     };
     const service = new DocumentService(mockDispatcher, registryWithSubmittal, defaultEvaluator);
@@ -256,7 +256,7 @@ describe('Document domain', () => {
         },
       },
     ];
-    const registryWithSubmittal: ManifestRegistryPort = {
+    const registryWithSubmittal: DocumentSchemaRegistryPort = {
       loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
     };
     const service = new DocumentService(mockDispatcher, registryWithSubmittal, defaultEvaluator);
@@ -315,7 +315,7 @@ describe('Document domain', () => {
         },
       },
     ];
-    const registryWithInvalid: ManifestRegistryPort = {
+    const registryWithInvalid: DocumentSchemaRegistryPort = {
       loadAll: vi.fn().mockResolvedValue(invalidDocumentTypes),
     };
     const service = new DocumentService(mockDispatcher, registryWithInvalid, defaultEvaluator);
@@ -497,7 +497,7 @@ describe('Document domain', () => {
     expect(Value.Check(FormSchemaType, validFormSchema)).toBe(true);
   });
 
-  it('DocumentService.initialize caches DocumentTypes from ManifestRegistryPort and getForms strips backend configs', async () => {
+  it('DocumentService.initialize caches DocumentTypes from DocumentSchemaRegistryPort and getForms strips backend configs', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
@@ -545,7 +545,7 @@ describe('Document domain', () => {
       },
     ];
 
-    const customRegistry: ManifestRegistryPort = {
+    const customRegistry: DocumentSchemaRegistryPort = {
       loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
     };
 
@@ -905,7 +905,7 @@ describe('Document domain', () => {
           },
         },
       ];
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
       const mockEvaluator: TemplateEvaluatorPort = {
@@ -970,7 +970,7 @@ describe('Document domain', () => {
           },
         },
       ];
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
 
@@ -1043,7 +1043,7 @@ describe('Document domain', () => {
           },
         },
       ];
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
       const mockEvaluator: TemplateEvaluatorPort = {
@@ -1121,7 +1121,7 @@ describe('Document domain', () => {
           },
         },
       ];
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
 
@@ -1188,7 +1188,7 @@ describe('Document domain', () => {
           },
         },
       ];
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
@@ -1241,7 +1241,7 @@ describe('Document domain', () => {
           },
         },
       ];
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
@@ -1294,7 +1294,7 @@ describe('Document domain', () => {
           },
         },
       ];
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
@@ -1363,7 +1363,7 @@ describe('Document domain', () => {
           },
         },
       ];
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
@@ -1414,7 +1414,7 @@ describe('Document domain', () => {
           },
         },
       ];
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
@@ -1487,7 +1487,7 @@ describe('Document domain', () => {
           },
         },
       ];
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
@@ -1547,7 +1547,7 @@ describe('Document domain', () => {
           },
         },
       ];
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
@@ -1624,7 +1624,7 @@ describe('Document domain', () => {
           },
         },
       ];
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
@@ -1699,7 +1699,7 @@ describe('Document domain', () => {
           },
         },
       ];
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
       const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
@@ -1784,7 +1784,7 @@ describe('Document domain', () => {
           },
         },
       ];
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
 
@@ -2030,7 +2030,7 @@ describe('Document domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
@@ -2071,7 +2071,7 @@ describe('Document domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
@@ -2105,7 +2105,7 @@ describe('Document domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
@@ -2139,7 +2139,7 @@ describe('Document domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
@@ -2167,7 +2167,7 @@ describe('Document domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
@@ -2204,7 +2204,7 @@ describe('Document domain', () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
       const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
@@ -2281,7 +2281,7 @@ describe('Document domain', () => {
         },
       };
 
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([documentTypeWithTemplates]),
       };
 
@@ -2442,7 +2442,7 @@ describe('Document domain', () => {
         },
       };
 
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([documentTypeWithStorageContext]),
       };
 
@@ -2587,7 +2587,7 @@ describe('Document domain', () => {
         },
       };
 
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([documentTypeWithNestedStorage]),
       };
 
@@ -2673,7 +2673,7 @@ describe('Document domain', () => {
         },
       };
 
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([documentTypeWithoutStorage]),
       };
 
@@ -2757,7 +2757,7 @@ describe('Document domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
 
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([testDocumentType]),
       };
 
@@ -2824,7 +2824,7 @@ describe('Document domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
 
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([testDocumentType]),
       };
 
@@ -2875,7 +2875,7 @@ describe('Document domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
 
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([testDocumentType]),
       };
 
@@ -2973,7 +2973,7 @@ describe('Document domain', () => {
         },
       ];
 
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
 
@@ -3083,7 +3083,7 @@ describe('Document domain', () => {
         },
       ];
 
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
 
@@ -3160,7 +3160,7 @@ describe('Document domain', () => {
         },
       ];
 
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
 
@@ -3246,7 +3246,7 @@ describe('Document domain', () => {
         },
       ];
 
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
 
@@ -3321,7 +3321,7 @@ describe('Document domain', () => {
         },
       ];
 
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
       };
 

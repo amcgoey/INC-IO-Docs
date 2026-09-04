@@ -3,7 +3,7 @@ import { DocumentService, type DocumentType, type Document, type Activity } from
 import { HandlebarsAdapter } from '../src/infrastructure/template-engine/handlebars-adapter';
 import { StructuredLogActivity } from '../src/features/document/adapters/structured-log-activity';
 import { ActivityEngine } from '../src/features/document/adapters/activity-engine';
-import type { ManifestRegistryPort } from '../src/features/document/ports';
+import type { DocumentSchemaRegistryPort } from '../src/features/document/ports';
 
 describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
   let documentService: DocumentService;
@@ -145,7 +145,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
   beforeEach(async () => {
     consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    const mockRegistry: ManifestRegistryPort = {
+    const mockRegistry: DocumentSchemaRegistryPort = {
       loadAll: vi.fn().mockResolvedValue([communicationProjectDocumentType]),
     };
 

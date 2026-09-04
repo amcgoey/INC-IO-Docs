@@ -4,12 +4,12 @@ import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { createApp, type AppInstance } from '../src/app/server';
-import type { ManifestRegistryPort, ActivityDispatcherPort } from '../src/features/document/ports';
+import type { DocumentSchemaRegistryPort, ActivityDispatcherPort } from '../src/features/document/ports';
 import { FormSchemaType, type DocumentType } from '../src/features/document/domain';
 
 describe('App integration tests', () => {
   let app: AppInstance;
-  let mockManifestRegistry: ManifestRegistryPort;
+  let mockManifestRegistry: DocumentSchemaRegistryPort;
   let mockActivityEngine: ActivityDispatcherPort;
   let mockDocumentTypes: DocumentType[];
 
@@ -185,7 +185,7 @@ describe('App integration tests', () => {
       expect(mockActivityEngine.dispatch).not.toHaveBeenCalled();
     });
 
-    it('GET /forms should return 200 with FormSchema list mapped from ManifestRegistryPort without backend configs', async () => {
+    it('GET /forms should return 200 with FormSchema list mapped from DocumentSchemaRegistryPort without backend configs', async () => {
       const response = await app.server.inject({
         method: 'GET',
         url: '/forms',
@@ -265,7 +265,7 @@ describe('App integration tests', () => {
     });
 
     function createAppWithFailingRegistry(error: Error) {
-      const failingRegistry: ManifestRegistryPort = {
+      const failingRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockRejectedValue(error),
       };
       return createApp({ manifestRegistry: failingRegistry });
@@ -288,7 +288,7 @@ describe('App integration tests', () => {
       );
     });
 
-    it('fails fast on app initialization when ManifestRegistryPort throws an error', async () => {
+    it('fails fast on app initialization when DocumentSchemaRegistryPort throws an error', async () => {
       const failingApp = createAppWithFailingRegistry(
         new Error('Manifest file not found or corrupted')
       );
@@ -296,7 +296,7 @@ describe('App integration tests', () => {
       await expect(failingApp.initialize()).rejects.toThrow('Manifest file not found or corrupted');
     });
 
-    it('fails fast on app initialization when ManifestRegistryPort rejects with schema validation error', async () => {
+    it('fails fast on app initialization when DocumentSchemaRegistryPort rejects with schema validation error', async () => {
       const failingApp = createAppWithFailingRegistry(
         new Error('Invalid DocumentType schema in "./schemas/invalid.json": /DocumentSchema/fields: Expected array')
       );
@@ -395,7 +395,7 @@ describe('App integration tests', () => {
           },
         },
       ];
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(unsupportedDocumentTypes),
       };
       const failingApp = createApp({ manifestRegistry: customRegistry });
@@ -664,7 +664,7 @@ describe('App integration tests', () => {
         },
       ];
 
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(customDocumentTypes),
       };
 
@@ -815,7 +815,7 @@ describe('App integration tests', () => {
         },
       ];
 
-      const customRegistry: ManifestRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(customDocumentTypes),
       };
 

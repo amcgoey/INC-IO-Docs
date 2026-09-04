@@ -2,7 +2,7 @@ import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import type {
   ActivityDispatcherPort,
-  ManifestRegistryPort,
+  DocumentSchemaRegistryPort,
   DocumentServicePort,
   SchemaQueryPort,
   TemplateEvaluationContext,
@@ -310,12 +310,12 @@ export class DocumentService implements DocumentServicePort, SchemaQueryPort {
 
   constructor(
     private readonly dispatcher: ActivityDispatcherPort,
-    private readonly manifestRegistry: ManifestRegistryPort,
+    private readonly documentSchemaRegistry: DocumentSchemaRegistryPort,
     private readonly templateEvaluator: TemplateEvaluatorPort,
   ) {}
 
   async initialize(): Promise<void> {
-    this.documentTypes = await this.manifestRegistry.loadAll();
+    this.documentTypes = await this.documentSchemaRegistry.loadAll();
     this.compiledSchemas.clear();
 
     for (const documentType of this.documentTypes) {

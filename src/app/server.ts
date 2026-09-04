@@ -5,7 +5,8 @@ import { registerWorkspaceFeatureRoutes } from '../features/workspace/adapters/a
 import { ActivityEngine } from '../features/document/adapters/activity-engine';
 import { DriveActivityHandler } from '../features/document/adapters/drive-activity-handler';
 import { DriveServiceAdapter } from '../features/document/adapters/drive-service-adapter';
-import { ManifestRegistryAdapter } from '../features/document/adapters/manifest-registry';
+import { DocumentSchemaRegistryAdapter } from '../features/document/adapters/document-schema-registry';
+import { AppManifestProvider } from '../infrastructure/manifest/app-manifest-provider';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import { GoogleJwtVerifier } from '../infrastructure/workspace-addon/jwt-verifier';
@@ -14,7 +15,7 @@ import type {
   ActivityDispatcherPort,
   AppConfigurationProviderPort,
   DriveServicePort,
-  ManifestRegistryPort,
+  DocumentSchemaRegistryPort,
   TemplateEvaluatorPort,
 } from '../features/document/ports';
 import type { AuthVerifierPort, WorkspaceConfigProviderPort } from '../features/workspace/ports';
@@ -22,7 +23,8 @@ import type { AuthVerifierPort, WorkspaceConfigProviderPort } from '../features/
 TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 
 export interface AppOptions {
-  manifestRegistry?: ManifestRegistryPort | undefined;
+  documentSchemaRegistry?: DocumentSchemaRegistryPort | undefined;
+  manifestRegistry?: DocumentSchemaRegistryPort | undefined;
   manifestPath?: string | undefined;
   activityEngine?: ActivityDispatcherPort | undefined;
   templateEvaluator?: TemplateEvaluatorPort | undefined;
@@ -42,27 +44,32 @@ export interface AppInstance {
 export function createApp(options?: AppOptions): AppInstance {
   const server = createHttpServer(options?.logger !== undefined ? { logger: options.logger } : {});
   const templateEvaluator = options?.templateEvaluator ?? new HandlebarsAdapter();
+  const documentSchemaRegistryOption = options?.documentSchemaRegistry ?? options?.manifestRegistry;
 
-  let manifestRegistry = options?.manifestRegistry;
-  if (!manifestRegistry) {
-    const manifestPath = options?.manifestPath ?? process.env.APP_MANIFEST_PATH;
-    if (!manifestPath) {
-      throw new Error(
-        'Manifest path is not defined. Please provide options.manifestPath or set the APP_MANIFEST_PATH environment variable.'
-      );
-    }
-    manifestRegistry = new ManifestRegistryAdapter({ manifestPath, templateEvaluator });
+  const manifestPath = options?.manifestPath ?? process.env.APP_MANIFEST_PATH;
+  if (!documentSchemaRegistryOption && !manifestPath) {
+    throw new Error(
+      'Manifest path is not defined. Please provide options.manifestPath or set the APP_MANIFEST_PATH environment variable.'
+    );
   }
 
-  const driveConfigProvider =
-    manifestRegistry && 'getDriveConfig' in manifestRegistry
-      ? (manifestRegistry as AppConfigurationProviderPort)
-      : undefined;
+  const appManifestProvider = manifestPath ? new AppManifestProvider({ manifestPath }) : undefined;
 
-  const workspaceConfigProvider =
-    manifestRegistry && 'getWorkspaceConfig' in manifestRegistry
-      ? (manifestRegistry as WorkspaceConfigProviderPort)
-      : undefined;
+  const documentSchemaRegistry: DocumentSchemaRegistryPort =
+    documentSchemaRegistryOption ??
+    new DocumentSchemaRegistryAdapter(appManifestProvider!, templateEvaluator);
+
+  const driveConfigProvider: AppConfigurationProviderPort | undefined =
+    appManifestProvider ??
+    (documentSchemaRegistryOption && 'getDriveConfig' in documentSchemaRegistryOption
+      ? (documentSchemaRegistryOption as AppConfigurationProviderPort)
+      : undefined);
+
+  const workspaceConfigProvider: WorkspaceConfigProviderPort | undefined =
+    appManifestProvider ??
+    (documentSchemaRegistryOption && 'getWorkspaceConfig' in documentSchemaRegistryOption
+      ? (documentSchemaRegistryOption as WorkspaceConfigProviderPort)
+      : undefined);
 
   const driveService: DriveServicePort =
     options?.driveService ??
@@ -74,7 +81,7 @@ export function createApp(options?: AppOptions): AppInstance {
     configProvider: driveConfigProvider,
   });
   const activityEngine = options?.activityEngine ?? new ActivityEngine([driveActivityHandler]);
-  const documentService = new DocumentService(activityEngine, manifestRegistry, templateEvaluator);
+  const documentService = new DocumentService(activityEngine, documentSchemaRegistry, templateEvaluator);
 
   const authVerifier: AuthVerifierPort = options?.authVerifier ?? new GoogleJwtVerifier();
 

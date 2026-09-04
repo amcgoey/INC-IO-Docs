@@ -2,143 +2,132 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { ManifestRegistryAdapter } from './manifest-registry';
+import { DocumentSchemaRegistryAdapter } from './document-schema-registry';
+import type { RawManifestProviderPort, TemplateEvaluatorPort } from '../ports';
 
-describe('ManifestRegistryAdapter', () => {
+describe('DocumentSchemaRegistryAdapter', () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'manifest-test-'));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'doc-schema-registry-test-'));
   });
 
   afterEach(async () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  async function createManifestFixture(
+  const mockEvaluator: TemplateEvaluatorPort = {
+    validate: vi.fn().mockReturnValue(true),
+    evaluate: vi.fn(),
+  };
+
+  async function createSchemaFiles(
     dir: string,
-    schemas: Record<string, unknown>,
-    manifestOverrides?: Record<string, unknown>
-  ): Promise<string> {
+    schemas: Record<string, unknown>
+  ): Promise<string[]> {
     const schemasDir = path.join(dir, 'schemas');
     await fs.mkdir(schemasDir, { recursive: true });
 
     const documentTypePaths: string[] = [];
     for (const [filename, schema] of Object.entries(schemas)) {
       const filePath = path.join(schemasDir, filename);
-      await fs.writeFile(filePath, typeof schema === 'string' ? schema : JSON.stringify(schema), 'utf-8');
+      await fs.writeFile(
+        filePath,
+        typeof schema === 'string' ? schema : JSON.stringify(schema),
+        'utf-8'
+      );
       documentTypePaths.push(`./schemas/${filename}`);
     }
-
-    const manifestPath = path.join(dir, 'manifest.json');
-    const manifestContent = manifestOverrides ?? { documentTypes: documentTypePaths };
-    await fs.writeFile(
-      manifestPath,
-      typeof manifestContent === 'string' ? manifestContent : JSON.stringify(manifestContent),
-      'utf-8'
-    );
-    return manifestPath;
+    return documentTypePaths;
   }
 
-  const mockEvaluator = {
-    validate: vi.fn().mockReturnValue(true),
-    evaluate: vi.fn(),
-  };
+  function createMockManifestProvider(
+    documentTypes: string[] = [],
+    dir: string = tempDir,
+    rawOverride?: unknown
+  ): RawManifestProviderPort {
+    return {
+      getRawManifest: async () =>
+        rawOverride !== undefined ? rawOverride : { documentTypes },
+      getManifestDir: () => dir,
+    };
+  }
 
-  it('throws an error if no manifest path is provided in constructor', () => {
-    expect(() => new ManifestRegistryAdapter({} as unknown as { manifestPath: string; templateEvaluator: typeof mockEvaluator })).toThrow(/manifest path is not defined/i);
-    expect(() => new ManifestRegistryAdapter({ manifestPath: '', templateEvaluator: mockEvaluator })).toThrow(/manifest path is not defined/i);
+  it('throws an error if no manifest provider is provided in constructor', () => {
+    expect(
+      () =>
+        new DocumentSchemaRegistryAdapter(
+          undefined as unknown as RawManifestProviderPort,
+          mockEvaluator
+        )
+    ).toThrow(/manifest provider is not defined/i);
   });
 
   it('throws an error if no template evaluator is provided in constructor', () => {
-    expect(() => new ManifestRegistryAdapter({ manifestPath: 'manifest.json' } as unknown as { manifestPath: string; templateEvaluator: typeof mockEvaluator })).toThrow(/template evaluator is not defined/i);
-  });
-
-  it('throws an error if manifest file does not exist', async () => {
-    const nonExistentPath = path.join(tempDir, 'missing-manifest.json');
-    const adapter = new ManifestRegistryAdapter({ manifestPath: nonExistentPath, templateEvaluator: mockEvaluator });
-    await expect(adapter.loadAll()).rejects.toThrow();
-  });
-
-  it('throws an error if manifest file contains malformed JSON', async () => {
-    const manifestPath = path.join(tempDir, 'manifest.json');
-    await fs.writeFile(manifestPath, '{ malformed json: true }', 'utf-8');
-
-    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
-    await expect(adapter.loadAll()).rejects.toThrow(/invalid json/i);
+    const mockProvider = createMockManifestProvider(['test.json']);
+    expect(
+      () =>
+        new DocumentSchemaRegistryAdapter(
+          mockProvider,
+          undefined as unknown as TemplateEvaluatorPort
+        )
+    ).toThrow(/template evaluator is not defined/i);
   });
 
   it('throws an error if manifest structure is invalid (missing documentTypes array)', async () => {
-    const manifestPath = path.join(tempDir, 'manifest.json');
-    await fs.writeFile(manifestPath, JSON.stringify({ wrongField: [] }), 'utf-8');
-
-    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
-    await expect(adapter.loadAll()).rejects.toThrow(/invalid manifest/i);
+    const mockProvider = createMockManifestProvider([], tempDir, { wrongField: [] });
+    const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
+    await expect(adapter.loadAll()).rejects.toThrow(/invalid manifest structure/i);
   });
 
   it('throws an error if a referenced document type file is missing', async () => {
-    const manifestPath = path.join(tempDir, 'manifest.json');
-    await fs.writeFile(
-      manifestPath,
-      JSON.stringify({ documentTypes: ['./missing-type.json'] }),
-      'utf-8'
-    );
-
-    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
-    await expect(adapter.loadAll()).rejects.toThrow();
+    const mockProvider = createMockManifestProvider(['./schemas/missing-type.json'], tempDir);
+    const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
+    await expect(adapter.loadAll()).rejects.toThrow(/failed to read documenttype file/i);
   });
 
   it('throws an error if a referenced document type file contains malformed JSON', async () => {
-    const manifestPath = await createManifestFixture(
-      tempDir,
-      { 'invalid-json-type.json': '{ malformed document json }' }
-    );
-
-    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
+    const paths = await createSchemaFiles(tempDir, {
+      'invalid-json-type.json': '{ malformed document json }',
+    });
+    const mockProvider = createMockManifestProvider(paths, tempDir);
+    const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
     await expect(adapter.loadAll()).rejects.toThrow(/invalid json/i);
   });
 
   it('anti-corruption layer: rejects document type JSON missing required fields', async () => {
-    // Missing 'key' and 'fields'
-    const manifestPath = await createManifestFixture(
-      tempDir,
-      {
-        'invalid-type.json': {
-          name: 'Invalid Document Type',
-          documentSchema: {},
-        },
-      }
-    );
-
-    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
+    const paths = await createSchemaFiles(tempDir, {
+      'invalid-type.json': {
+        name: 'Invalid Document Type',
+        documentSchema: {},
+      },
+    });
+    const mockProvider = createMockManifestProvider(paths, tempDir);
+    const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
     await expect(adapter.loadAll()).rejects.toThrow(/invalid DocumentType schema/i);
   });
 
   it('anti-corruption layer: rejects document type JSON with invalid field definitions', async () => {
-    // Field is missing 'type' and 'name'
-    const manifestPath = await createManifestFixture(
-      tempDir,
-      {
-        'invalid-field.json': {
-          key: 'invalid-field-type',
-          name: 'Invalid Field Type',
-          documentSchema: {
-            fields: [
-              {
-                key: 'BadField',
-                // missing 'type' and 'name'
-              },
-            ],
-          },
+    const paths = await createSchemaFiles(tempDir, {
+      'invalid-field.json': {
+        key: 'invalid-field-type',
+        name: 'Invalid Field Type',
+        documentSchema: {
+          fields: [
+            {
+              key: 'BadField',
+              // missing 'type' and 'name'
+            },
+          ],
         },
-      }
-    );
-
-    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
+      },
+    });
+    const mockProvider = createMockManifestProvider(paths, tempDir);
+    const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
     await expect(adapter.loadAll()).rejects.toThrow(/invalid DocumentType schema/i);
   });
 
-  it('loads and returns validated DocumentType objects for valid manifest and schema files', async () => {
+  it('loads and returns validated DocumentType objects for valid schema files', async () => {
     const commSchema = {
       key: 'comm-project',
       name: 'Communication Project',
@@ -176,12 +165,12 @@ describe('ManifestRegistryAdapter', () => {
       },
     };
 
-    const manifestPath = await createManifestFixture(tempDir, {
+    const paths = await createSchemaFiles(tempDir, {
       'comm.json': commSchema,
       'submittal.json': submittalSchema,
     });
-
-    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
+    const mockProvider = createMockManifestProvider(paths, tempDir);
+    const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
     const result = await adapter.loadAll();
 
     expect(result).toHaveLength(2);
@@ -204,11 +193,11 @@ describe('ManifestRegistryAdapter', () => {
       },
     };
 
-    const manifestPath = await createManifestFixture(tempDir, {
+    const paths = await createSchemaFiles(tempDir, {
       'optional-field.json': optionalFieldSchema,
     });
-
-    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
+    const mockProvider = createMockManifestProvider(paths, tempDir);
+    const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
     const result = await adapter.loadAll();
 
     expect(result).toHaveLength(1);
@@ -246,16 +235,11 @@ describe('ManifestRegistryAdapter', () => {
       },
     };
 
-    const manifestPath = await createManifestFixture(
-      tempDir,
-      { 'extra.json': rawSchemaWithExtraProps },
-      {
-        documentTypes: ['./schemas/extra.json'],
-        extraManifestProp: 'remove-me',
-      }
-    );
-
-    const adapter = new ManifestRegistryAdapter({ manifestPath, templateEvaluator: mockEvaluator });
+    const paths = await createSchemaFiles(tempDir, {
+      'extra.json': rawSchemaWithExtraProps,
+    });
+    const mockProvider = createMockManifestProvider(paths, tempDir);
+    const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
     const result = await adapter.loadAll();
 
     expect(result).toHaveLength(1);
@@ -309,19 +293,15 @@ describe('ManifestRegistryAdapter', () => {
         },
       };
 
-      const manifestPath = await createManifestFixture(tempDir, {
+      const paths = await createSchemaFiles(tempDir, {
         'calc-valid.json': documentType,
       });
-
-      const mockEvaluator = {
+      const localEvaluator = {
         validate: vi.fn().mockReturnValue(true),
         evaluate: vi.fn(),
       };
-
-      const adapter = new ManifestRegistryAdapter({
-        manifestPath,
-        templateEvaluator: mockEvaluator,
-      });
+      const mockProvider = createMockManifestProvider(paths, tempDir);
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
 
       const result = await adapter.loadAll();
       expect(result).toHaveLength(1);
@@ -331,7 +311,7 @@ describe('ManifestRegistryAdapter', () => {
           template: '{{Category}}-{{Title}}',
         },
       ]);
-      expect(mockEvaluator.validate).toHaveBeenCalledWith(
+      expect(localEvaluator.validate).toHaveBeenCalledWith(
         '{{Category}}-{{Title}}',
         expect.arrayContaining(['Title', 'Category'])
       );
@@ -370,23 +350,19 @@ describe('ManifestRegistryAdapter', () => {
         },
       };
 
-      const manifestPath = await createManifestFixture(tempDir, {
+      const paths = await createSchemaFiles(tempDir, {
         'calc-lookup.json': documentType,
       });
-
-      const mockEvaluator = {
+      const localEvaluator = {
         validate: vi.fn().mockReturnValue(true),
         evaluate: vi.fn(),
       };
-
-      const adapter = new ManifestRegistryAdapter({
-        manifestPath,
-        templateEvaluator: mockEvaluator,
-      });
+      const mockProvider = createMockManifestProvider(paths, tempDir);
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
 
       const result = await adapter.loadAll();
       expect(result).toHaveLength(1);
-      expect(mockEvaluator.validate).toHaveBeenCalledWith(
+      expect(localEvaluator.validate).toHaveBeenCalledWith(
         '{{Direction.Name}}-{{Direction.Key}}-{{Title}}',
         expect.arrayContaining([
           'Title',
@@ -398,7 +374,7 @@ describe('ManifestRegistryAdapter', () => {
       );
     });
 
-    it('throws explicit fatal domain error if a calculatedFields template references a missing field (e.g. {{DoesNotExist}})', async () => {
+    it('throws explicit fatal domain error if a calculatedFields template references a missing field', async () => {
       const documentType = {
         key: 'calc-invalid',
         name: 'Calc Invalid',
@@ -415,24 +391,20 @@ describe('ManifestRegistryAdapter', () => {
         },
       };
 
-      const manifestPath = await createManifestFixture(tempDir, {
+      const paths = await createSchemaFiles(tempDir, {
         'calc-invalid.json': documentType,
       });
-
-      const mockEvaluator = {
+      const localEvaluator = {
         validate: vi.fn().mockReturnValue(false),
         evaluate: vi.fn(),
       };
-
-      const adapter = new ManifestRegistryAdapter({
-        manifestPath,
-        templateEvaluator: mockEvaluator,
-      });
+      const mockProvider = createMockManifestProvider(paths, tempDir);
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid template in "\.\/schemas\/calc-invalid\.json" from manifest ".*": Invalid template at "documentSchema\.calculatedFields\[0\]\.template": references unknown fields or is malformed\./
+        /Invalid template in "\.\/schemas\/calc-invalid\.json": Invalid template at "documentSchema\.calculatedFields\[0\]\.template": references unknown fields or is malformed\./
       );
-      expect(mockEvaluator.validate).toHaveBeenCalledWith(
+      expect(localEvaluator.validate).toHaveBeenCalledWith(
         '{{Title}}-{{DoesNotExist}}',
         expect.arrayContaining(['Title'])
       );
@@ -459,19 +431,15 @@ describe('ManifestRegistryAdapter', () => {
         },
       };
 
-      const manifestPath = await createManifestFixture(tempDir, {
+      const paths = await createSchemaFiles(tempDir, {
         'identity-valid.json': documentType,
       });
-
-      const mockEvaluator = {
+      const localEvaluator = {
         validate: vi.fn().mockReturnValue(true),
         evaluate: vi.fn(),
       };
-
-      const adapter = new ManifestRegistryAdapter({
-        manifestPath,
-        templateEvaluator: mockEvaluator,
-      });
+      const mockProvider = createMockManifestProvider(paths, tempDir);
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
 
       const result = await adapter.loadAll();
       expect(result).toHaveLength(1);
@@ -480,11 +448,11 @@ describe('ManifestRegistryAdapter', () => {
         idDocument: '{{contact}}-{{date}}-{{direction}}-{{description}}',
         idGroup: '{{contact}}',
       });
-      expect(mockEvaluator.validate).toHaveBeenCalledWith(
+      expect(localEvaluator.validate).toHaveBeenCalledWith(
         '{{contact}}-{{date}}-{{direction}}-{{description}}',
         expect.arrayContaining(['contact', 'date', 'direction', 'description'])
       );
-      expect(mockEvaluator.validate).toHaveBeenCalledWith(
+      expect(localEvaluator.validate).toHaveBeenCalledWith(
         '{{contact}}',
         expect.arrayContaining(['contact', 'date', 'direction', 'description'])
       );
@@ -504,22 +472,18 @@ describe('ManifestRegistryAdapter', () => {
         },
       };
 
-      const manifestPath = await createManifestFixture(tempDir, {
+      const paths = await createSchemaFiles(tempDir, {
         'identity-invalid.json': documentType,
       });
-
-      const mockEvaluator = {
+      const localEvaluator = {
         validate: vi.fn().mockImplementation((tpl: string) => !tpl.includes('unknownField')),
         evaluate: vi.fn(),
       };
-
-      const adapter = new ManifestRegistryAdapter({
-        manifestPath,
-        templateEvaluator: mockEvaluator,
-      });
+      const mockProvider = createMockManifestProvider(paths, tempDir);
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid template in "\.\/schemas\/identity-invalid\.json" from manifest ".*": Invalid template at "documentSchema\.identity\.id": references unknown fields or is malformed\./
+        /Invalid template in "\.\/schemas\/identity-invalid\.json": Invalid template at "documentSchema\.identity\.id": references unknown fields or is malformed\./
       );
     });
   });
@@ -549,22 +513,18 @@ describe('ManifestRegistryAdapter', () => {
         },
       };
 
-      const manifestPath = await createManifestFixture(tempDir, {
+      const paths = await createSchemaFiles(tempDir, {
         'workflow-invalid.json': documentType,
       });
-
-      const mockEvaluator = {
+      const localEvaluator = {
         validate: vi.fn().mockImplementation((tpl: string) => !tpl.includes('InvalidField')),
         evaluate: vi.fn(),
       };
-
-      const adapter = new ManifestRegistryAdapter({
-        manifestPath,
-        templateEvaluator: mockEvaluator,
-      });
+      const mockProvider = createMockManifestProvider(paths, tempDir);
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid template in "\.\/schemas\/workflow-invalid\.json" from manifest ".*": Invalid template at "documentWorkflowConfig\.workflows\[0\]\.activitySequence\[0\]\.payload\.folder": references unknown fields or is malformed\./
+        /Invalid template in "\.\/schemas\/workflow-invalid\.json": Invalid template at "documentWorkflowConfig\.workflows\[0\]\.activitySequence\[0\]\.payload\.folder": references unknown fields or is malformed\./
       );
     });
 
@@ -580,146 +540,19 @@ describe('ManifestRegistryAdapter', () => {
         },
       };
 
-      const manifestPath = await createManifestFixture(tempDir, {
+      const paths = await createSchemaFiles(tempDir, {
         'storage-invalid.json': documentType,
       });
-
-      const mockEvaluator = {
+      const localEvaluator = {
         validate: vi.fn().mockImplementation((tpl: string) => !tpl.includes('unknownStorageField')),
         evaluate: vi.fn(),
       };
-
-      const adapter = new ManifestRegistryAdapter({
-        manifestPath,
-        templateEvaluator: mockEvaluator,
-      });
+      const mockProvider = createMockManifestProvider(paths, tempDir);
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, localEvaluator);
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid template in "\.\/schemas\/storage-invalid\.json" from manifest ".*": Invalid template at "storageContextConfig\.targetFolder": references unknown fields or is malformed\./
+        /Invalid template in "\.\/schemas\/storage-invalid\.json": Invalid template at "storageContextConfig\.targetFolder": references unknown fields or is malformed\./
       );
-    });
-  });
-
-  describe('Configuration Provider', () => {
-    it('loads and returns drive and workspace configuration when defined in manifest', async () => {
-      const manifestPath = await createManifestFixture(
-        tempDir,
-        {},
-        {
-          documentTypes: [],
-          configuration: {
-            workspace: {
-              appTitle: 'Custom Docs App',
-              actionButtonText: 'Submit Document',
-              defaultDocumentType: 'custom-type',
-              defaultEventName: 'onCustomSubmit',
-            },
-            drive: {
-              defaultFolderName: 'SpecialFolder',
-              maxRetries: 5,
-              initialDelayMs: 2000,
-              backoffFactor: 3,
-            },
-          },
-        }
-      );
-
-      const adapter = new ManifestRegistryAdapter({
-        manifestPath,
-        templateEvaluator: mockEvaluator,
-      });
-
-      const driveConfig = await adapter.getDriveConfig();
-      expect(driveConfig).toEqual({
-        defaultFolderName: 'SpecialFolder',
-        maxRetries: 5,
-        initialDelayMs: 2000,
-        backoffFactor: 3,
-      });
-
-      const wsConfig = await adapter.getWorkspaceConfig();
-      expect(wsConfig).toEqual({
-        appTitle: 'Custom Docs App',
-        actionButtonText: 'Submit Document',
-        defaultDocumentType: 'custom-type',
-        defaultEventName: 'onCustomSubmit',
-      });
-    });
-
-    it('returns undefined for drive/workspace configs when configuration block is absent in manifest', async () => {
-      const manifestPath = await createManifestFixture(
-        tempDir,
-        {},
-        { documentTypes: [] }
-      );
-
-      const adapter = new ManifestRegistryAdapter({
-        manifestPath,
-        templateEvaluator: mockEvaluator,
-      });
-
-      const driveConfig = await adapter.getDriveConfig();
-      expect(driveConfig).toBeUndefined();
-
-      const wsConfig = await adapter.getWorkspaceConfig();
-      expect(wsConfig).toBeUndefined();
-    });
-
-    it('caches configuration so subsequent calls do not re-read from disk', async () => {
-      const manifestPath = await createManifestFixture(
-        tempDir,
-        {},
-        {
-          documentTypes: [],
-          configuration: {
-            workspace: { appTitle: 'Initial Title' },
-          },
-        }
-      );
-
-      const adapter = new ManifestRegistryAdapter({
-        manifestPath,
-        templateEvaluator: mockEvaluator,
-      });
-
-      const wsConfig1 = await adapter.getWorkspaceConfig();
-      expect(wsConfig1?.appTitle).toBe('Initial Title');
-
-      // Mutate file on disk to verify cache is used
-      await fs.writeFile(
-        manifestPath,
-        JSON.stringify({
-          documentTypes: [],
-          configuration: { workspace: { appTitle: 'Mutated Title' } },
-        }),
-        'utf-8'
-      );
-
-      const wsConfig2 = await adapter.getWorkspaceConfig();
-      expect(wsConfig2?.appTitle).toBe('Initial Title');
-    });
-
-    it('throws error when manifest contains invalid configuration types', async () => {
-      const manifestPath = await createManifestFixture(
-        tempDir,
-        {},
-        {
-          documentTypes: [],
-          configuration: {
-            drive: {
-              maxRetries: 'five', // invalid type
-            },
-          },
-        }
-      );
-
-      const adapter = new ManifestRegistryAdapter({
-        manifestPath,
-        templateEvaluator: mockEvaluator,
-      });
-
-      await expect(adapter.getDriveConfig()).rejects.toThrow(/invalid manifest/i);
     });
   });
 });
-
