@@ -1,7 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { OAuth2Client } from 'google-auth-library';
-import { createApp } from '../../src/app/server';
+import { createApp, type AppOptions } from '../../src/app/server';
+import { AppManifestProvider } from '../../src/infrastructure/manifest/app-manifest-provider';
 
 function loadEnvFile(): void {
   const envPath = path.resolve(process.cwd(), '.env');
@@ -57,9 +58,10 @@ async function runE2E(): Promise<void> {
 
   const manifestPath =
     process.env.APP_MANIFEST_PATH ?? path.resolve(process.cwd(), 'test/fixtures/manifest.json');
+  const manifestProvider = new AppManifestProvider({ manifestPath });
 
-  const appOptions = {
-    manifestPath,
+  const appOptions: AppOptions = {
+    manifestProvider,
     logger: false,
     authVerifier: {
       verifyToken: async () => ({

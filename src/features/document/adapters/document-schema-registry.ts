@@ -17,34 +17,24 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
   ) {}
 
   async loadAll(): Promise<DocumentType[]> {
-    let manifestObject: unknown;
-    try {
-      manifestObject = await this.manifestProvider.getRawManifest();
-    } catch (err) {
-      throw new Error(
-        `Failed to load raw manifest in loadAll: ${err instanceof Error ? err.message : String(err)}`,
-        { cause: err }
-      );
-    }
-    const raw = manifestObject as { documentTypes?: string[] };
-    if (!raw || !Array.isArray(raw.documentTypes)) {
-      throw new Error('Invalid manifest structure: documentTypes must be an array.');
-    }
-
+    const rawSchemas = await this.manifestProvider.loadAllParsedSchemas();
     const documentTypes: DocumentType[] = [];
 
-    for (const documentTypeRelPath of raw.documentTypes) {
-      const rawDocumentType = await this.manifestProvider.readParsedSchema(documentTypeRelPath);
-
+    for (const rawDocumentType of rawSchemas) {
       const cloned = structuredClone(rawDocumentType);
       const cleaned = Value.Clean(DocumentTypeSchema, cloned);
       if (!Value.Check(DocumentTypeSchema, cleaned)) {
         const errors = [...Value.Errors(DocumentTypeSchema, cleaned)]
           .map((e) => `${e.path}: ${e.message}`)
           .join(', ');
-        throw new Error(
-          `Invalid DocumentType schema in "${documentTypeRelPath}": ${errors}`
-        );
+        const key =
+          typeof rawDocumentType === 'object' &&
+          rawDocumentType !== null &&
+          'key' in rawDocumentType &&
+          typeof (rawDocumentType as { key: unknown }).key === 'string'
+            ? ` "${(rawDocumentType as { key: string }).key}"`
+            : '';
+        throw new Error(`Invalid DocumentType schema${key}: ${errors}`);
       }
 
       const validatedDocumentType = cleaned as DocumentType;
@@ -55,7 +45,7 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
       );
       if (templateErrors.length > 0) {
         throw new Error(
-          `Invalid template in "${documentTypeRelPath}": ${templateErrors.join(', ')}`
+          `Invalid template in "${validatedDocumentType.key}": ${templateErrors.join(', ')}`
         );
       }
 

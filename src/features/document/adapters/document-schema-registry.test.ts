@@ -22,53 +22,20 @@ describe('DocumentSchemaRegistryAdapter', () => {
   });
 
   function createMockManifestProvider(
-    schemas: Record<string, unknown> = {},
-    rawOverride?: unknown
+    schemas: unknown[] | Record<string, unknown> = []
   ): RawManifestProviderPort {
+    const list = Array.isArray(schemas) ? schemas : Object.values(schemas);
     return {
-      getRawManifest: async () =>
-        rawOverride !== undefined ? rawOverride : { documentTypes: Object.keys(schemas) },
-      readParsedSchema: async (relPath: string) => {
-        const content = schemas[relPath];
-        if (content === undefined) {
-          throw new Error(`Failed to read DocumentType file "${relPath}"`);
-        }
-        if (typeof content === 'string') {
-          try {
-            return JSON.parse(content);
-          } catch (err) {
-            throw new Error(
-              `Invalid JSON in DocumentType file "${relPath}": ${err instanceof Error ? err.message : String(err)}`,
-              { cause: err }
-            );
-          }
-        }
-        return content;
-      },
+      loadAllParsedSchemas: async () => list,
     };
   }
 
-  it('throws an error if manifest structure is invalid (missing documentTypes array)', async () => {
-    const mockProvider = createMockManifestProvider({}, { wrongField: [] });
-    const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
-    await expect(adapter.loadAll()).rejects.toThrow(/invalid manifest structure/i);
-  });
-
-  it('throws an error if a referenced document type file is missing', async () => {
-    const mockProvider = createMockManifestProvider(
-      {},
-      { documentTypes: ['./schemas/missing-type.json'] }
-    );
+  it('propagates error when loadAllParsedSchemas rejects', async () => {
+    const mockProvider: RawManifestProviderPort = {
+      loadAllParsedSchemas: vi.fn().mockRejectedValue(new Error('Failed to read DocumentType file')),
+    };
     const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
     await expect(adapter.loadAll()).rejects.toThrow(/failed to read documenttype file/i);
-  });
-
-  it('throws an error if a referenced document type file contains malformed JSON', async () => {
-    const mockProvider = createMockManifestProvider({
-      './schemas/invalid-json-type.json': '{ malformed document json }',
-    });
-    const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
-    await expect(adapter.loadAll()).rejects.toThrow(/invalid json/i);
   });
 
   it('anti-corruption layer: rejects document type JSON missing required fields', async () => {
@@ -358,7 +325,7 @@ describe('DocumentSchemaRegistryAdapter', () => {
       const adapter = new DocumentSchemaRegistryAdapter(mockProvider, evaluator);
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid template in "\.\/schemas\/calc-invalid\.json": Invalid template at "documentSchema\.calculatedFields\[0\]\.template": references unknown fields or is malformed\./
+        /Invalid template in "calc-invalid": Invalid template at "documentSchema\.calculatedFields\[0\]\.template": references unknown fields or is malformed\./
       );
       expect(evaluator.validate).toHaveBeenCalledWith(
         '{{Title}}-{{DoesNotExist}}',
@@ -430,7 +397,7 @@ describe('DocumentSchemaRegistryAdapter', () => {
       const adapter = new DocumentSchemaRegistryAdapter(mockProvider, evaluator);
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid template in "\.\/schemas\/identity-invalid\.json": Invalid template at "documentSchema\.identity\.id": references unknown fields or is malformed\./
+        /Invalid template in "identity-invalid": Invalid template at "documentSchema\.identity\.id": references unknown fields or is malformed\./
       );
     });
   });
@@ -467,7 +434,7 @@ describe('DocumentSchemaRegistryAdapter', () => {
       const adapter = new DocumentSchemaRegistryAdapter(mockProvider, evaluator);
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid template in "\.\/schemas\/workflow-invalid\.json": Invalid template at "documentWorkflowConfig\.workflows\[0\]\.activitySequence\[0\]\.payload\.folder": references unknown fields or is malformed\./
+        /Invalid template in "workflow-invalid": Invalid template at "documentWorkflowConfig\.workflows\[0\]\.activitySequence\[0\]\.payload\.folder": references unknown fields or is malformed\./
       );
     });
 
@@ -490,7 +457,7 @@ describe('DocumentSchemaRegistryAdapter', () => {
       const adapter = new DocumentSchemaRegistryAdapter(mockProvider, evaluator);
 
       await expect(adapter.loadAll()).rejects.toThrow(
-        /Invalid template in "\.\/schemas\/storage-invalid\.json": Invalid template at "storageContextConfig\.targetFolder": references unknown fields or is malformed\./
+        /Invalid template in "storage-invalid": Invalid template at "storageContextConfig\.targetFolder": references unknown fields or is malformed\./
       );
     });
   });

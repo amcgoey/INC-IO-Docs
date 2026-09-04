@@ -23,9 +23,9 @@ import type { AuthVerifierPort, WorkspaceConfigProviderPort } from '../features/
 TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 
 export interface AppOptions {
-  documentSchemaRegistry?: DocumentSchemaRegistryPort | undefined;
-  manifestRegistry?: DocumentSchemaRegistryPort | undefined;
+  manifestProvider?: AppManifestProvider | undefined;
   manifestPath?: string | undefined;
+  documentSchemaRegistry?: DocumentSchemaRegistryPort | undefined;
   activityEngine?: ActivityDispatcherPort | undefined;
   templateEvaluator?: TemplateEvaluatorPort | undefined;
   authVerifier?: AuthVerifierPort | undefined;
@@ -44,32 +44,26 @@ export interface AppInstance {
 export function createApp(options?: AppOptions): AppInstance {
   const server = createHttpServer(options?.logger !== undefined ? { logger: options.logger } : {});
   const templateEvaluator = options?.templateEvaluator ?? new HandlebarsAdapter();
-  const documentSchemaRegistryOption = options?.documentSchemaRegistry ?? options?.manifestRegistry;
 
-  const manifestPath = options?.manifestPath ?? process.env.APP_MANIFEST_PATH;
-  if (!documentSchemaRegistryOption && !manifestPath) {
-    throw new Error(
-      'Manifest path is not defined. Please provide options.manifestPath or set the APP_MANIFEST_PATH environment variable.'
-    );
+  let manifestProvider = options?.manifestProvider;
+  if (!manifestProvider) {
+    const manifestPath = options?.manifestPath ?? process.env.APP_MANIFEST_PATH;
+    if (!options?.documentSchemaRegistry && !manifestPath) {
+      throw new Error(
+        'Manifest path is not defined. Please provide options.manifestPath or set the APP_MANIFEST_PATH environment variable.'
+      );
+    }
+    if (manifestPath) {
+      manifestProvider = new AppManifestProvider({ manifestPath });
+    }
   }
 
-  const appManifestProvider = manifestPath ? new AppManifestProvider({ manifestPath }) : undefined;
-
   const documentSchemaRegistry: DocumentSchemaRegistryPort =
-    documentSchemaRegistryOption ??
-    new DocumentSchemaRegistryAdapter(appManifestProvider!, templateEvaluator);
+    options?.documentSchemaRegistry ??
+    new DocumentSchemaRegistryAdapter(manifestProvider!, templateEvaluator);
 
-  const driveConfigProvider: AppConfigurationProviderPort | undefined =
-    appManifestProvider ??
-    (documentSchemaRegistryOption && 'getDriveConfig' in documentSchemaRegistryOption
-      ? (documentSchemaRegistryOption as AppConfigurationProviderPort)
-      : undefined);
-
-  const workspaceConfigProvider: WorkspaceConfigProviderPort | undefined =
-    appManifestProvider ??
-    (documentSchemaRegistryOption && 'getWorkspaceConfig' in documentSchemaRegistryOption
-      ? (documentSchemaRegistryOption as WorkspaceConfigProviderPort)
-      : undefined);
+  const driveConfigProvider: AppConfigurationProviderPort | undefined = manifestProvider;
+  const workspaceConfigProvider: WorkspaceConfigProviderPort | undefined = manifestProvider;
 
   const driveService: DriveServicePort =
     options?.driveService ??

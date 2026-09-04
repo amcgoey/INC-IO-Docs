@@ -63,7 +63,7 @@ describe('App integration tests', () => {
     };
 
     app = createApp({
-      manifestRegistry: mockManifestRegistry,
+      documentSchemaRegistry: mockManifestRegistry,
       activityEngine: mockActivityEngine,
     });
 
@@ -268,10 +268,10 @@ describe('App integration tests', () => {
       const failingRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockRejectedValue(error),
       };
-      return createApp({ manifestRegistry: failingRegistry });
+      return createApp({ documentSchemaRegistry: failingRegistry });
     }
 
-    it('fails fast on createApp when neither options.manifestPath nor APP_MANIFEST_PATH is set and no manifestRegistry is provided', () => {
+    it('fails fast on createApp when neither options.manifestPath nor APP_MANIFEST_PATH is set and no documentSchemaRegistry is provided', () => {
       delete process.env.APP_MANIFEST_PATH;
       expect(() => createApp()).toThrow(
         /Manifest path is not defined. Please provide options.manifestPath or set the APP_MANIFEST_PATH environment variable./
@@ -398,7 +398,7 @@ describe('App integration tests', () => {
       const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(unsupportedDocumentTypes),
       };
-      const failingApp = createApp({ manifestRegistry: customRegistry });
+      const failingApp = createApp({ documentSchemaRegistry: customRegistry });
 
       await expect(failingApp.initialize()).rejects.toThrow(/Unsupported field type 'unknown'/);
     });
@@ -669,7 +669,7 @@ describe('App integration tests', () => {
       };
 
       const customApp = createApp({
-        manifestRegistry: customRegistry,
+        documentSchemaRegistry: customRegistry,
         activityEngine: mockDispatcher,
       });
 
@@ -820,7 +820,7 @@ describe('App integration tests', () => {
       };
 
       const appInstance = createApp({
-        manifestRegistry: customRegistry,
+        documentSchemaRegistry: customRegistry,
         activityEngine: mockDispatcher,
       });
 

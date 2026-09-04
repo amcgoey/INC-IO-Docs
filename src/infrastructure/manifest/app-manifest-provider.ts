@@ -41,20 +41,30 @@ export const ManifestSchema = Type.Object({
 export type Manifest = Static<typeof ManifestSchema>;
 
 export interface AppManifestProviderOptions {
-  manifestPath: string;
+  manifestPath?: string;
 }
 
 export class AppManifestProvider {
   private readonly manifestPath: string;
   private cachedConfiguration: AppConfiguration | undefined = undefined;
   private cachedRawManifest: unknown = undefined;
+  private cachedValidatedManifest: Manifest | undefined = undefined;
   private isManifestLoaded = false;
 
-  constructor(options: AppManifestProviderOptions) {
-    this.manifestPath = options.manifestPath;
+  constructor(options?: AppManifestProviderOptions) {
+    const manifestPath = options?.manifestPath ?? process.env.APP_MANIFEST_PATH;
+    if (!manifestPath) {
+      throw new Error(
+        'Manifest path is not defined. Please provide options.manifestPath or set the APP_MANIFEST_PATH environment variable.'
+      );
+    }
+    this.manifestPath = manifestPath;
   }
 
   private async loadManifest(): Promise<Static<typeof ManifestSchema>> {
+    if (this.isManifestLoaded && this.cachedValidatedManifest) {
+      return this.cachedValidatedManifest;
+    }
     let manifestContent: string;
     try {
       manifestContent = await fs.readFile(this.manifestPath, 'utf-8');
@@ -77,6 +87,7 @@ export class AppManifestProvider {
 
     this.cachedConfiguration = validatedManifest.configuration;
     this.cachedRawManifest = manifestData;
+    this.cachedValidatedManifest = validatedManifest;
     this.isManifestLoaded = true;
     return validatedManifest;
   }
@@ -139,5 +150,14 @@ export class AppManifestProvider {
       filePath: resolvedPath,
       description: `DocumentType file "${relPath}"`,
     });
+  }
+
+  async loadAllParsedSchemas(): Promise<unknown[]> {
+    const validatedManifest = await this.loadManifest();
+    const schemas: unknown[] = [];
+    for (const relPath of validatedManifest.documentTypes) {
+      schemas.push(await this.readParsedSchema(relPath));
+    }
+    return schemas;
   }
 }

@@ -4,6 +4,7 @@ import nock from 'nock';
 import { createApp, type AppInstance } from '../src/app/server';
 import type { AuthVerifierPort, AuthVerificationResult } from '../src/features/workspace/ports';
 import { GoogleDriveClient } from '../src/infrastructure/drive/drive-client';
+import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 
 describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
   let app: AppInstance;
@@ -26,8 +27,9 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
     };
 
     const manifestPath = path.resolve(__dirname, 'fixtures/manifest.json');
+    const manifestProvider = new AppManifestProvider({ manifestPath });
     app = createApp({
-      manifestPath,
+      manifestProvider,
       authVerifier: mockAuthVerifier,
     });
 
@@ -369,10 +371,14 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
           webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
         });
 
-      const fastRetryApp = createApp({
+      const manifestProvider = new AppManifestProvider({
         manifestPath: path.resolve(__dirname, 'fixtures/manifest.json'),
+      });
+      const fastRetryApp = createApp({
+        manifestProvider,
         authVerifier: mockAuthVerifier,
         driveService: new GoogleDriveClient({
+          configProvider: manifestProvider,
           retryOptions: {
             maxRetries: 3,
             initialDelayMs: 10,
