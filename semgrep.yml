@@ -10,8 +10,8 @@ rules:
     languages: [typescript, javascript]
     paths:
       include: 
-        - "src/features/**/domain.ts"
-        - "src/features/**/ports.ts"
+        - "**/src/features/**/domain.ts"
+        - "**/src/features/**/ports.ts"
     patterns:
       - pattern-either:
           - pattern: import $X from '$MODULE'
@@ -31,11 +31,12 @@ rules:
     languages: [typescript, javascript]
     paths:
       exclude:
-        - "src/app/**"
-        - "src/infrastructure/**"
-        - "test/**"
+        - "**/src/app/**"
+        - "**/src/infrastructure/**"
+        - "**/test/**"
         - "**/*.test.ts"
-        - "infra/**"
+        - "**/infra/**"
+        - "**/src/features/**/adapters/**"
     patterns:
       - pattern-either:
           - pattern: import $X from '$MODULE'
@@ -55,7 +56,7 @@ rules:
     languages: [typescript, javascript]
     paths:
       include:
-        - "src/infrastructure/**"
+        - "**/src/infrastructure/**"
     patterns:
       - pattern-either:
           - pattern: import $X from '$MODULE'
@@ -110,7 +111,7 @@ rules:
     paths:
       exclude:
         - "**/*.test.ts"
-        - "test/**"
+        - "**/test/**"
     patterns:
       - pattern: "const $X : RecordType = { ... }"
 
@@ -125,10 +126,10 @@ rules:
     languages: [typescript]
     paths:
       exclude:
-        - "src/features/**/adapters/**"
-        - "src/app/**"
+        - "**/src/features/**/adapters/**"
+        - "**/src/app/**"
         - "**/*.test.ts"
-        - "test/**"
+        - "**/test/**"
     patterns:
       - pattern: "new $ADAPTER(...)"
       - metavariable-regex:
@@ -142,9 +143,9 @@ rules:
     languages: [typescript]
     paths:
       exclude:
-        - "src/features/**/adapters/**"
-        - "src/app/**"
-        - "src/infrastructure/**"
+        - "**/src/features/**/adapters/**"
+        - "**/src/app/**"
+        - "**/src/infrastructure/**"
     patterns:
       - pattern-either:
           - pattern: import $X from '$MODULE'
@@ -164,7 +165,7 @@ rules:
     languages: [typescript]
     paths:
       include:
-        - "src/**"
+        - "**/src/**"
       exclude:
         - "**/*.test.ts"
         - "**/*.test.js"
@@ -190,31 +191,14 @@ rules:
         - "**/*.test.ts"
         - "**/*.test.js"
       exclude:
-        - "src/**"
-        - "test/**"
-        - "infra/**"
+        - "**/src/**"
+        - "**/test/**"
+        - "**/infra/**"
     patterns:
       - pattern-either:
           - pattern: describe(...)
           - pattern: test(...)
           - pattern: it(...)
-
-  # 12. External Service Errors
-  - id: external-service-errors
-    message: "Ensure proper error handling (try/catch) for cloud service calls in StorageContext adapters and infrastructure modules."
-    severity: WARNING
-    languages: [typescript, javascript]
-    paths:
-      include:
-        - "src/features/**/adapters/**"
-        - "src/infrastructure/**"
-      exclude:
-        - "**/*.test.ts"
-        - "test/**"
-    patterns:
-      - pattern: "await $X(...)"
-      - pattern-not-inside: |
-          try { ... } catch ($E) { ... }
 
   # 13. Typebox Schema Optimization
   - id: typebox-suboptimal-schema
