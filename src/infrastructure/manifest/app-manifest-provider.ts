@@ -151,13 +151,4 @@ export class AppManifestProvider {
       description: `DocumentType file "${relPath}"`,
     });
   }
-
-  async loadAllParsedSchemas(): Promise<unknown[]> {
-    const validatedManifest = await this.loadManifest();
-    const schemas: unknown[] = [];
-    for (const relPath of validatedManifest.documentTypes) {
-      schemas.push(await this.readParsedSchema(relPath));
-    }
-    return schemas;
-  }
 }

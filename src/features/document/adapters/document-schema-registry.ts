@@ -1,3 +1,4 @@
+import { Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import {
   DocumentTypeSchema,
@@ -10,6 +11,14 @@ import type {
   TemplateEvaluatorPort,
 } from '../ports';
 
+const RawDocumentKeySchema = Type.Object({
+  key: Type.Optional(Type.String()),
+});
+
+function extractKey(raw: unknown): string {
+  return Value.Check(RawDocumentKeySchema, raw) && raw.key ? ` "${raw.key}"` : '';
+}
+
 export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort {
   constructor(
     private readonly manifestProvider: RawManifestProviderPort,
@@ -17,23 +26,20 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
   ) {}
 
   async loadAll(): Promise<DocumentType[]> {
-    const rawSchemas = await this.manifestProvider.loadAllParsedSchemas();
+    const rawManifest = (await this.manifestProvider.getRawManifest()) as {
+      documentTypes?: string[];
+    };
     const documentTypes: DocumentType[] = [];
 
-    for (const rawDocumentType of rawSchemas) {
+    for (const relPath of rawManifest?.documentTypes ?? []) {
+      const rawDocumentType = await this.manifestProvider.readParsedSchema(relPath);
       const cloned = structuredClone(rawDocumentType);
       const cleaned = Value.Clean(DocumentTypeSchema, cloned);
       if (!Value.Check(DocumentTypeSchema, cleaned)) {
         const errors = [...Value.Errors(DocumentTypeSchema, cleaned)]
           .map((e) => `${e.path}: ${e.message}`)
           .join(', ');
-        const key =
-          typeof rawDocumentType === 'object' &&
-          rawDocumentType !== null &&
-          'key' in rawDocumentType &&
-          typeof (rawDocumentType as { key: unknown }).key === 'string'
-            ? ` "${(rawDocumentType as { key: string }).key}"`
-            : '';
+        const key = extractKey(rawDocumentType);
         throw new Error(`Invalid DocumentType schema${key}: ${errors}`);
       }
 

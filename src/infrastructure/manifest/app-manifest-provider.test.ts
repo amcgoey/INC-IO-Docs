@@ -110,52 +110,6 @@ describe('AppManifestProvider', () => {
     });
   });
 
-  describe('loadAllParsedSchemas', () => {
-    it('loads and returns all parsed schemas referenced in documentTypes', async () => {
-      const schema1 = { key: 'type-1', name: 'Type 1' };
-      const schema2 = { key: 'type-2', name: 'Type 2' };
-      await fs.writeFile(path.join(tempDir, 'type1.json'), JSON.stringify(schema1));
-      await fs.writeFile(path.join(tempDir, 'type2.json'), JSON.stringify(schema2));
-      const manifestPath = path.join(tempDir, 'manifest.json');
-      await fs.writeFile(
-        manifestPath,
-        JSON.stringify({ documentTypes: ['./type1.json', './type2.json'] })
-      );
-
-      const provider = new AppManifestProvider({ manifestPath });
-      const schemas = await provider.loadAllParsedSchemas();
-      expect(schemas).toEqual([schema1, schema2]);
-    });
-
-    it('throws error if a referenced document type file is missing', async () => {
-      const manifestPath = path.join(tempDir, 'manifest.json');
-      await fs.writeFile(
-        manifestPath,
-        JSON.stringify({ documentTypes: ['./missing-type.json'] })
-      );
-
-      const provider = new AppManifestProvider({ manifestPath });
-      await expect(provider.loadAllParsedSchemas()).rejects.toThrow(
-        /failed to read documenttype file/i
-      );
-    });
-
-    it('throws error if a referenced document type file contains malformed JSON', async () => {
-      const manifestPath = path.join(tempDir, 'manifest.json');
-      const invalidPath = path.join(tempDir, 'invalid.json');
-      await fs.writeFile(invalidPath, '{ malformed');
-      await fs.writeFile(
-        manifestPath,
-        JSON.stringify({ documentTypes: ['./invalid.json'] })
-      );
-
-      const provider = new AppManifestProvider({ manifestPath });
-      await expect(provider.loadAllParsedSchemas()).rejects.toThrow(
-        /invalid json/i
-      );
-    });
-  });
-
   describe('getRawManifest', () => {
     it('returns raw parsed manifest object and caches it', async () => {
       const manifestPath = path.join(tempDir, 'manifest.json');

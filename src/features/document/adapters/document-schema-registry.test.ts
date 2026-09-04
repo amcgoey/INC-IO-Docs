@@ -24,18 +24,51 @@ describe('DocumentSchemaRegistryAdapter', () => {
   function createMockManifestProvider(
     schemas: unknown[] | Record<string, unknown> = []
   ): RawManifestProviderPort {
-    const list = Array.isArray(schemas) ? schemas : Object.values(schemas);
+    const entries: [string, unknown][] = Array.isArray(schemas)
+      ? schemas.map((s, i) => [`./schemas/type-${i}.json`, s])
+      : Object.entries(schemas);
+    const paths = entries.map(([relPath]) => relPath);
+    const schemaMap = new Map(entries);
+
     return {
-      loadAllParsedSchemas: async () => list,
+      getRawManifest: async () => ({ documentTypes: paths }),
+      readParsedSchema: async (relPath: string) => {
+        const schema = schemaMap.get(relPath);
+        if (schema === undefined) {
+          throw new Error(`Failed to read DocumentType file "${relPath}"`);
+        }
+        return schema;
+      },
     };
   }
 
-  it('propagates error when loadAllParsedSchemas rejects', async () => {
+  it('propagates error when getRawManifest rejects', async () => {
     const mockProvider: RawManifestProviderPort = {
-      loadAllParsedSchemas: vi.fn().mockRejectedValue(new Error('Failed to read DocumentType file')),
+      getRawManifest: vi.fn().mockRejectedValue(new Error('Failed to load raw manifest')),
+      readParsedSchema: vi.fn(),
+    };
+    const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
+    await expect(adapter.loadAll()).rejects.toThrow(/failed to load raw manifest/i);
+  });
+
+  it('propagates error when readParsedSchema rejects', async () => {
+    const mockProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./schemas/missing-type.json'] }),
+      readParsedSchema: vi.fn().mockRejectedValue(new Error('Failed to read DocumentType file')),
     };
     const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
     await expect(adapter.loadAll()).rejects.toThrow(/failed to read documenttype file/i);
+  });
+
+  it('returns empty array when documentTypes is empty or undefined', async () => {
+    const mockProvider: RawManifestProviderPort = {
+      getRawManifest: async () => ({}),
+      readParsedSchema: vi.fn(),
+    };
+    const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
+    const result = await adapter.loadAll();
+    expect(result).toEqual([]);
+    expect(mockProvider.readParsedSchema).not.toHaveBeenCalled();
   });
 
   it('anti-corruption layer: rejects document type JSON missing required fields', async () => {

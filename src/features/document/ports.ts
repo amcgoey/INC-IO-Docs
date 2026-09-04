@@ -49,7 +49,8 @@ export interface DocumentSchemaRegistryPort {
 }
 
 export interface RawManifestProviderPort {
-  loadAllParsedSchemas(): Promise<unknown[]>;
+  getRawManifest(): Promise<unknown>;
+  readParsedSchema(relPath: string): Promise<unknown>;
 }
 
 export type TemplateEvaluationContext = { [key: string]: unknown };
