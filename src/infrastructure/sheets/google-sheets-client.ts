@@ -18,7 +18,11 @@ import {
   GoogleSheetsApiError,
   GoogleSheetsColumnNotFoundError,
   GoogleSheetsNamedRangeNotFoundError,
+  GoogleSheetsRangeMisalignedError,
 } from './errors';
+import { KeyedAsyncLock } from './keyed-lock';
+
+
 
 function extractHttpStatusCode(error: unknown): number | undefined {
   if (!error || typeof error !== 'object') return undefined;
@@ -403,12 +407,27 @@ function buildExistingGroupInsertionRequests(params: {
   const { sheetId, dataStartRowIndex } = ctx;
 
   const requests: sheets_v4.Schema$Request[] = [];
-  let indexShift = 0;
 
-  // 1. Heal internal blank rows trapped inside this group (if any)
+  // 1. Determine internal insertion position according to sort order
+  let internalInsertRelIndex = targetGroup.endIndex + 1;
+  for (const rowIndex of targetGroup.rowIndices) {
+    const row = dataValues[rowIndex];
+    const rowSortVal = row ? row[sortTarget.columnIndex] : null;
+    if (compareCellValues(sortTarget.value, rowSortVal) > 0) {
+      internalInsertRelIndex = rowIndex;
+      break;
+    }
+  }
+
+  // 2. Heal internal blank rows trapped inside this group (if any)
   // Delete contiguous ranges of internal blank indices in descending order so earlier indices remain valid
+  let totalInternalBlanks = 0;
+  let internalBlanksAboveInsert = 0;
   if (targetGroup.internalBlankIndices && targetGroup.internalBlankIndices.length > 0) {
     const blanks = [...targetGroup.internalBlankIndices].sort((a, b) => a - b);
+    totalInternalBlanks = blanks.length;
+    internalBlanksAboveInsert = blanks.filter((bIdx) => bIdx < internalInsertRelIndex).length;
+
     const ranges: { start: number; count: number }[] = [];
     let curRange: { start: number; count: number } | null = null;
     for (const bIdx of blanks) {
@@ -431,19 +450,6 @@ function buildExistingGroupInsertionRequests(params: {
       const absDeleteStart = dataStartRowIndex + r.start;
       requests.push(makeDeleteRowsRequest(sheetId, absDeleteStart, r.count));
     }
-    // Net index shift resulting from deleting all internal blank rows
-    indexShift -= blanks.length;
-  }
-
-  // 2. Determine internal insertion position according to sort order
-  let internalInsertRelIndex = targetGroup.endIndex + 1;
-  for (const rowIndex of targetGroup.rowIndices) {
-    const row = dataValues[rowIndex];
-    const rowSortVal = row ? row[sortTarget.columnIndex] : null;
-    if (compareCellValues(sortTarget.value, rowSortVal) > 0) {
-      internalInsertRelIndex = rowIndex;
-      break;
-    }
   }
 
   const targetGroupIdx = groups.indexOf(targetGroup);
@@ -451,29 +457,34 @@ function buildExistingGroupInsertionRequests(params: {
   const nextGroup = targetGroupIdx < groups.length - 1 ? groups[targetGroupIdx + 1] : undefined;
 
   // 3. Heal padding above target group
+  let paddingAboveShift = 0;
   if (prevGroup) {
     const blankRowsAbove = targetGroup.startIndex - prevGroup.endIndex - 1;
     if (blankRowsAbove === 0) {
       const absIndex = dataStartRowIndex + targetGroup.startIndex;
       requests.push(makeInsertRowRequest(sheetId, absIndex, 1));
-      indexShift += 1;
+      paddingAboveShift += 1;
     } else if (blankRowsAbove > 1) {
       const excessAbove = blankRowsAbove - 1;
       const absDeleteStart = dataStartRowIndex + prevGroup.endIndex + 2;
       requests.push(makeDeleteRowsRequest(sheetId, absDeleteStart, excessAbove));
-      indexShift -= excessAbove;
+      paddingAboveShift -= excessAbove;
     }
   }
 
   // 4. Insert data row and update cells
-  const absDataRowIndex = dataStartRowIndex + internalInsertRelIndex + indexShift;
+  // The row insertion index shifts ONLY for internal blanks deleted before this point, plus any padding shift above
+  const absDataRowIndex =
+    dataStartRowIndex + internalInsertRelIndex - internalBlanksAboveInsert + paddingAboveShift;
   requests.push(makeInsertRowRequest(sheetId, absDataRowIndex, 1));
   requests.push(makeUpdateCellsRequest(ctx, absDataRowIndex));
 
   // 5. Heal padding below target group
   if (nextGroup) {
     const blankRowsBelow = nextGroup.startIndex - targetGroup.endIndex - 1;
-    const effectiveGroupEndIndex = targetGroup.endIndex + indexShift + 1;
+    // Account for all internal blank deletions in target group, padding above, plus 1 for the new data row
+    const effectiveGroupEndIndex =
+      targetGroup.endIndex - totalInternalBlanks + paddingAboveShift + 1;
     if (blankRowsBelow === 0) {
       const absIndex = dataStartRowIndex + effectiveGroupEndIndex + 1;
       requests.push(makeInsertRowRequest(sheetId, absIndex, 1));
@@ -565,6 +576,8 @@ export class GoogleSheetsClient implements SheetsClient {
   private readonly sheetsApi: sheets_v4.Sheets;
   private readonly retryOptions: SheetsRetryOptions;
   private readonly configProvider?: SheetsConfigProvider | undefined;
+  private readonly lock = new KeyedAsyncLock();
+
 
   constructor(optionsOrSheets: GoogleSheetsClientOptions | sheets_v4.Sheets = {}) {
     if ('spreadsheets' in optionsOrSheets) {
@@ -750,6 +763,17 @@ export class GoogleSheetsClient implements SheetsClient {
       );
     }
 
+    const headerStartCol = headerRange.gridRange.startColumnIndex ?? 0;
+    const headerEndCol = headerRange.gridRange.endColumnIndex;
+    const dataStartCol = dataRange.gridRange.startColumnIndex ?? 0;
+    const dataEndCol = dataRange.gridRange.endColumnIndex;
+
+    if (headerStartCol !== dataStartCol || headerEndCol !== dataEndCol) {
+      throw new GoogleSheetsRangeMisalignedError(
+        `Headers range "${target.headerRangeName}" (columns ${headerStartCol}-${headerEndCol ?? 'end'}) and Data range "${target.dataRangeName}" (columns ${dataStartCol}-${dataEndCol ?? 'end'}) must align on the column axis on sheet "${target.sheetName}".`
+      );
+    }
+
     return {
       sheetId: dataSheetId,
       headerRange,
@@ -866,57 +890,59 @@ export class GoogleSheetsClient implements SheetsClient {
   }
 
   async insertIntoGroupedList(request: InsertGroupedRowRequest): Promise<void> {
-    const { sheetId, headerRange, dataRange } = await this.resolveTargetNamedRanges(request.target);
+    return await this.lock.acquire(request.target.spreadsheetId, async () => {
+      const { sheetId, headerRange, dataRange } = await this.resolveTargetNamedRanges(request.target);
 
-    const { headerRow, columnIndexMap } = await this.readHeaderRowAndIndexMap(request.target);
+      const { headerRow, columnIndexMap } = await this.readHeaderRowAndIndexMap(request.target);
 
-    const groupColIndex = requireColumnIndex(
-      columnIndexMap,
-      request.groupConfig.columnName,
-      'groupConfig',
-      request.target
-    );
+      const groupColIndex = requireColumnIndex(
+        columnIndexMap,
+        request.groupConfig.columnName,
+        'groupConfig',
+        request.target
+      );
 
-    const sortColIndex = requireColumnIndex(
-      columnIndexMap,
-      request.sortConfig.columnName,
-      'sortConfig',
-      request.target
-    );
+      const sortColIndex = requireColumnIndex(
+        columnIndexMap,
+        request.sortConfig.columnName,
+        'sortConfig',
+        request.target
+      );
 
-    const dataValues = await this.readUnformattedValues(
-      request.target.spreadsheetId,
-      request.target.sheetName,
-      request.target.dataRangeName
-    );
+      const dataValues = await this.readUnformattedValues(
+        request.target.spreadsheetId,
+        request.target.sheetName,
+        request.target.dataRangeName
+      );
 
-    const mappedRow = mapRowRecordToRow(request.rowData, headerRow, headerRow.length);
+      const mappedRow = mapRowRecordToRow(request.rowData, headerRow, headerRow.length);
 
-    const startColumnIndex = headerRange.gridRange.startColumnIndex ?? 0;
-    const endColumnIndex = startColumnIndex + mappedRow.length;
-    const dataStartRowIndex = dataRange.gridRange.startRowIndex ?? 0;
+      const startColumnIndex = headerRange.gridRange.startColumnIndex ?? 0;
+      const endColumnIndex = startColumnIndex + mappedRow.length;
+      const dataStartRowIndex = dataRange.gridRange.startRowIndex ?? 0;
 
-    const requests = buildGroupedInsertionRequests({
-      sheetId,
-      dataValues,
-      groupTarget: { columnIndex: groupColIndex, value: request.groupConfig.value },
-      sortTarget: { columnIndex: sortColIndex, value: request.sortConfig.value },
-      dataStartRowIndex,
-      mappedRow,
-      startColumnIndex,
-      endColumnIndex,
+      const requests = buildGroupedInsertionRequests({
+        sheetId,
+        dataValues,
+        groupTarget: { columnIndex: groupColIndex, value: request.groupConfig.value },
+        sortTarget: { columnIndex: sortColIndex, value: request.sortConfig.value },
+        dataStartRowIndex,
+        mappedRow,
+        startColumnIndex,
+        endColumnIndex,
+      });
+
+      const batchUpdateRequest: sheets_v4.Schema$BatchUpdateSpreadsheetRequest = {
+        requests,
+      };
+
+      await this.executeWithRetry(() =>
+        this.sheetsApi.spreadsheets.batchUpdate({
+          spreadsheetId: request.target.spreadsheetId,
+          requestBody: batchUpdateRequest,
+        })
+      );
     });
-
-    const batchUpdateRequest: sheets_v4.Schema$BatchUpdateSpreadsheetRequest = {
-      requests,
-    };
-
-    await this.executeWithRetry(() =>
-      this.sheetsApi.spreadsheets.batchUpdate({
-        spreadsheetId: request.target.spreadsheetId,
-        requestBody: batchUpdateRequest,
-      })
-    );
   }
 
   async findRowsByValue(request: FindRowsRequest): Promise<RowRecord[]> {

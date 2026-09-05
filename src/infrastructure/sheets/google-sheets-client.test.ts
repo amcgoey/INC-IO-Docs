@@ -12,7 +12,9 @@ import {
   GoogleSheetsApiError,
   GoogleSheetsColumnNotFoundError,
   GoogleSheetsNamedRangeNotFoundError,
+  GoogleSheetsRangeMisalignedError,
 } from './errors';
+
 import type { CellValue, SheetsConfigProvider } from './types';
 
 describe('GoogleSheetsClient', () => {
@@ -73,8 +75,8 @@ describe('GoogleSheetsClient', () => {
           sheetId: 101,
           startRowIndex: 5,
           endRowIndex: 20,
-          startColumnIndex: 1,
-          endColumnIndex: 6,
+          startColumnIndex: 0,
+          endColumnIndex: 4,
         },
       },
       {
@@ -773,7 +775,103 @@ describe('GoogleSheetsClient', () => {
       ).rejects.toThrow(GoogleSheetsNamedRangeNotFoundError);
     });
 
+    it('throws GoogleSheetsRangeMisalignedError if Headers and Data start at different columns', async () => {
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({
+        data: {
+          ...defaultSpreadsheetMetadata,
+          namedRanges: [
+            {
+              namedRangeId: 'nr-1',
+              name: 'Headers',
+              range: {
+                sheetId: 0,
+                startRowIndex: 0,
+                endRowIndex: 1,
+                startColumnIndex: 0,
+                endColumnIndex: 3,
+              },
+            },
+            {
+              namedRangeId: 'nr-2',
+              name: 'Data',
+              range: {
+                sheetId: 0,
+                startRowIndex: 1,
+                endRowIndex: 10,
+                startColumnIndex: 1, // Starts at column 1 instead of 0!
+                endColumnIndex: 3,
+              },
+            },
+          ],
+        },
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await expect(
+        client.insertIntoGroupedList({
+          target: {
+            spreadsheetId: 'sheet-abc-123',
+            sheetName: 'Sheet1',
+            headerRangeName: 'Headers',
+            dataRangeName: 'Data',
+          },
+          rowData: { ID: '1' },
+          groupConfig: { columnName: 'ID', value: '1' },
+          sortConfig: { columnName: 'ID', value: '1' },
+        })
+      ).rejects.toThrow(GoogleSheetsRangeMisalignedError);
+    });
+
+    it('throws GoogleSheetsRangeMisalignedError if Headers and Data end at different columns', async () => {
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({
+        data: {
+          ...defaultSpreadsheetMetadata,
+          namedRanges: [
+            {
+              namedRangeId: 'nr-1',
+              name: 'Headers',
+              range: {
+                sheetId: 0,
+                startRowIndex: 0,
+                endRowIndex: 1,
+                startColumnIndex: 0,
+                endColumnIndex: 4,
+              },
+            },
+            {
+              namedRangeId: 'nr-2',
+              name: 'Data',
+              range: {
+                sheetId: 0,
+                startRowIndex: 1,
+                endRowIndex: 10,
+                startColumnIndex: 0,
+                endColumnIndex: 2, // Ends at column 2 instead of 4!
+              },
+            },
+          ],
+        },
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await expect(
+        client.findRowsByValue({
+          target: {
+            spreadsheetId: 'sheet-abc-123',
+            sheetName: 'Sheet1',
+            headerRangeName: 'Headers',
+            dataRangeName: 'Data',
+          },
+          columnName: 'ID',
+          value: '1',
+        })
+      ).rejects.toThrow(GoogleSheetsRangeMisalignedError);
+    });
+
     it('resolves the correct sheet-scoped named range when multiple sheets have the same range name', async () => {
+
       mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({
         data: {
           ...defaultSpreadsheetMetadata,
@@ -2345,5 +2443,214 @@ describe('GoogleSheetsClient', () => {
         },
       });
     });
+
+    it('heals internal blank rows when new row is inserted before the internal blank row', async () => {
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['A', 100, 'GroupA_1'], // rel 0 (abs 1)
+          [null, null, null],     // rel 1 (abs 2) - accidental blank row inside Group A!
+          ['A', 80, 'GroupA_2'],  // rel 2 (abs 3)
+          [null, null, null],     // rel 3 (abs 4) - valid 1-row separator
+          ['B', 50, 'GroupB_1'],  // rel 4 (abs 5)
+        ]
+      );
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      // Score 120 belongs at the top of Group A (before rel 0, so rel 0, abs 1)
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'A', Score: 120, Name: 'GroupA_0' },
+        groupConfig: { columnName: 'Group', value: 'A' },
+        sortConfig: { columnName: 'Score', value: 120 },
+      });
+
+      // 1. Delete accidental internal blank row at abs 2 (rel 1)
+      // 2. Insert new row at top of Group A: abs 1 (rel 0) - NOT shifted by the blank deleted below it!
+      // 3. Write data row at abs 1
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-abc-123',
+        requestBody: {
+          requests: [
+            {
+              deleteDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 2,
+                  endIndex: 3,
+                },
+              },
+            },
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 1,
+                  endIndex: 2,
+                },
+                inheritFromBefore: true,
+              },
+            },
+            {
+              updateCells: {
+                range: {
+                  sheetId: 0,
+                  startRowIndex: 1,
+                  endRowIndex: 2,
+                  startColumnIndex: 0,
+                  endColumnIndex: 3,
+                },
+                rows: valuesToRowData([['A', 120, 'GroupA_0']]),
+                fields: 'userEnteredValue',
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    it('heals multiple internal blanks correctly when inserting between existing rows', async () => {
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['A', 100, 'GroupA_1'], // rel 0 (abs 1)
+          [null, null, null],     // rel 1 (abs 2) - accidental blank 1
+          ['A', 80, 'GroupA_2'],  // rel 2 (abs 3)
+          [null, null, null],     // rel 3 (abs 4) - accidental blank 2
+          ['A', 60, 'GroupA_3'],  // rel 4 (abs 5)
+          [null, null, null],     // rel 5 (abs 6) - valid 1-row separator
+          ['B', 50, 'GroupB_1'],  // rel 6 (abs 7)
+        ]
+      );
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      // Score 70 belongs between 80 and 60 (before rel 4, with 2 blanks above rel 4)
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'A', Score: 70, Name: 'GroupA_new' },
+        groupConfig: { columnName: 'Group', value: 'A' },
+        sortConfig: { columnName: 'Score', value: 70 },
+      });
+
+      // 1. Delete accidental internal blanks at abs 4 and abs 2 (in descending order)
+      // 2. Insert new row at abs 1 + 4 - 2 (both blanks above) = abs 3
+      // 3. Write data row at abs 3
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-abc-123',
+        requestBody: {
+          requests: [
+            {
+              deleteDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 4,
+                  endIndex: 5,
+                },
+              },
+            },
+            {
+              deleteDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 2,
+                  endIndex: 3,
+                },
+              },
+            },
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 3,
+                  endIndex: 4,
+                },
+                inheritFromBefore: true,
+              },
+            },
+            {
+              updateCells: {
+                range: {
+                  sheetId: 0,
+                  startRowIndex: 3,
+                  endRowIndex: 4,
+                  startColumnIndex: 0,
+                  endColumnIndex: 3,
+                },
+                rows: valuesToRowData([['A', 70, 'GroupA_new']]),
+                fields: 'userEnteredValue',
+              },
+            },
+          ],
+        },
+      });
+    });
+  });
+
+  describe('Concurrency & Keyed Serialization', () => {
+    it('serializes concurrent insertIntoGroupedList calls for the same spreadsheet', async () => {
+      mockHeadersAndData([['Group', 'Score']], []);
+
+      let activeCalls = 0;
+      let maxConcurrentCalls = 0;
+
+      mockSheetsApi.spreadsheets.batchUpdate.mockImplementation(async () => {
+        activeCalls++;
+        maxConcurrentCalls = Math.max(maxConcurrentCalls, activeCalls);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        activeCalls--;
+        return { data: {} };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      const op1 = client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'concurrent-sheet-1',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'A', Score: 10 },
+        groupConfig: { columnName: 'Group', value: 'A' },
+        sortConfig: { columnName: 'Score', value: 10 },
+      });
+
+      const op2 = client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'concurrent-sheet-1',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'A', Score: 20 },
+        groupConfig: { columnName: 'Group', value: 'A' },
+        sortConfig: { columnName: 'Score', value: 20 },
+      });
+
+      await Promise.all([op1, op2]);
+
+      expect(maxConcurrentCalls).toBe(1);
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledTimes(2);
+    });
   });
 });
+
+
+
