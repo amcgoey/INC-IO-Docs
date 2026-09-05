@@ -11,7 +11,7 @@ When the user invokes this skill (e.g., `/evaluate [subject]`), execute this wor
 The root agent manages the context and delegation; it does not perform the evaluation.
 
 1. **Resolve**: Identify the exact subject (file, artifact, or chat text). If ambiguous, ask the user to clarify. Do not guess.
-2. **Dispatch**: Spawn a `research` subagent using the `pro` model. Pass it the explicitly resolved material and instruct it to run the **Audit**.
+2. **Dispatch**: Spawn a subagent using the `pro` model. Pass it the explicitly resolved material and instruct it to run the **Audit**.
 
 ## 2. Subagent: Audit
 

@@ -12,7 +12,7 @@ The root agent does NOT perform the audit. Its job is to set up the orchestrator
 
 1. **Resolve Target**: Identify the exact target (e.g., `implementation_plan.md`, an artifact, or a GitHub issue).
 2. **Locate Transcript**: Determine the absolute path to the current conversation's transcript file (`<appDataDir>\brain\<conversation-id>\.system_generated\logs\transcript.jsonl`).
-3. **Dispatch**: Spawn a single `research` subagent (Model: `pro`) with the role `Senior Auditor`. Pass it the target, the transcript file path, and instruct it to execute the **Senior Auditor Protocol**.
+3. **Dispatch**: Spawn a single subagent (Model: `pro`) with the role `Senior Auditor`. Pass it the target, the transcript file path, and instruct it to execute the **Senior Auditor Protocol**.
 4. **Handoff**: Wait for the Senior Auditor to message you back, then immediately prompt the user with the questions it flags.
 
 ## 2. Senior Auditor Protocol
@@ -20,7 +20,7 @@ The root agent does NOT perform the audit. Its job is to set up the orchestrator
 As the Senior Auditor, you are the orchestrator. You do not perform the audits yourself. Do NOT read or parse the `transcript.jsonl` file yourself; your only responsibility with the transcript is to pass its file path to the Traceability Auditor.
 
 ### Step A: Spawn the Audit Team
-Use the `invoke_subagent` tool to spawn the following 4 `research` subagents concurrently (all Model: `pro`). Pass the target material to all of them.
+Use the `invoke_subagent` tool to spawn the following 4 subagents concurrently (all Model: `pro`). Pass the target material to all of them.
 
 1. **Role: Traceability Auditor**
    - **Prompt**: Use your file tools to read the provided `transcript.jsonl` file. Compare the conversation history against the target plan. Find dropped context, missing details, or ignored user instructions. Report back all deviations.

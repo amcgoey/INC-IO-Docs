@@ -11,7 +11,7 @@ When the user invokes `/cross-check [source of truth] against [derivative]`, exe
 The root agent manages the context and delegation; it does not perform the cross-check itself.
 
 1. **Resolve Targets**: Identify the exact location of both the **Source of Truth** (the primary, authoritative material) and the **Derivative** (the secondary material generated from it). These could be files, artifacts, issue URLs, or chat text. If ambiguous, explicitly ask the user to clarify. Do not guess.
-2. **Dispatch**: Spawn a single `research` subagent using the `pro` model. Pass it the explicitly resolved material for both the Source of Truth and the Derivative, and instruct it to execute the **Fidelity Audit**.
+2. **Dispatch**: Spawn a single subagent using the `pro` model. Pass it the explicitly resolved material for both the Source of Truth and the Derivative, and instruct it to execute the **Fidelity Audit**.
 
 ## 2. Subagent: Fidelity Audit
 
