@@ -178,7 +178,40 @@ describe('AppManifestProvider', () => {
       });
     });
 
-    it('returns undefined for drive/workspace configs when configuration block is absent in manifest', async () => {
+    it('loads and returns sheets configuration when defined in manifest', async () => {
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({
+          documentTypes: [],
+          configuration: {
+            sheets: {
+              spreadsheetId: 'sheet-456',
+              defaultHeaderRangeName: 'MyHeaders',
+              defaultDataRangeName: 'MyData',
+              maxRetries: 4,
+              initialDelayMs: 500,
+              backoffFactor: 2,
+            },
+          },
+        }),
+        'utf-8'
+      );
+
+      const provider = new AppManifestProvider({ manifestPath });
+
+      const sheetsConfig = await provider.getSheetsConfig();
+      expect(sheetsConfig).toEqual({
+        spreadsheetId: 'sheet-456',
+        defaultHeaderRangeName: 'MyHeaders',
+        defaultDataRangeName: 'MyData',
+        maxRetries: 4,
+        initialDelayMs: 500,
+        backoffFactor: 2,
+      });
+    });
+
+    it('returns undefined for drive/workspace/sheets configs when configuration block is absent in manifest', async () => {
       const manifestPath = path.join(tempDir, 'manifest.json');
       await fs.writeFile(manifestPath, JSON.stringify({ documentTypes: [] }), 'utf-8');
 
@@ -189,6 +222,9 @@ describe('AppManifestProvider', () => {
 
       const wsConfig = await provider.getWorkspaceConfig();
       expect(wsConfig).toBeUndefined();
+
+      const sheetsConfig = await provider.getSheetsConfig();
+      expect(sheetsConfig).toBeUndefined();
     });
 
     it('caches configuration so subsequent calls do not re-read from disk', async () => {

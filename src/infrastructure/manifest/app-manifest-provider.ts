@@ -19,6 +19,11 @@ export const DriveConfigurationSchema = Type.Object({
 
 export const SheetsConfigurationSchema = Type.Object({
   spreadsheetId: Type.Optional(Type.String()),
+  defaultHeaderRangeName: Type.Optional(Type.String({ default: 'Headers' })),
+  defaultDataRangeName: Type.Optional(Type.String({ default: 'Data' })),
+  maxRetries: Type.Optional(Type.Number()),
+  initialDelayMs: Type.Optional(Type.Number()),
+  backoffFactor: Type.Optional(Type.Number()),
 });
 
 export type WorkspaceConfiguration = Static<typeof WorkspaceConfigurationSchema>;
@@ -118,6 +123,20 @@ export class AppManifestProvider {
       }
     }
     return this.cachedConfiguration?.workspace;
+  }
+
+  async getSheetsConfig(): Promise<SheetsConfiguration | undefined> {
+    if (!this.isManifestLoaded) {
+      try {
+        await this.loadManifest();
+      } catch (err) {
+        throw new Error(
+          `Failed to load sheets config from manifest: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err }
+        );
+      }
+    }
+    return this.cachedConfiguration?.sheets;
   }
 
   async getRawManifest(): Promise<unknown> {
