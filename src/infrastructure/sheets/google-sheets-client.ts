@@ -14,6 +14,7 @@ import type {
 } from './types';
 import {
   GoogleSheetsApiError,
+  GoogleSheetsColumnNotFoundError,
   GoogleSheetsNamedRangeNotFoundError,
 } from './errors';
 
@@ -314,7 +315,64 @@ export class GoogleSheetsClient implements SheetsClient {
   }
 
   async findRowsByValue(request: FindRowsRequest): Promise<RowRecord[]> {
-    void request;
-    throw new Error('Method findRowsByValue not yet implemented. Blocked by Issue #98.');
+    const headerValues = await this.readNamedRange({
+      spreadsheetId: request.target.spreadsheetId,
+      sheetName: request.target.sheetName,
+      rangeName: request.target.headerRangeName,
+    });
+
+    const headerRow = headerValues[0] ?? [];
+    const columnIndexMap = new Map<string, number>();
+
+    headerRow.forEach((header, index) => {
+      if (header !== null && header !== undefined) {
+        const colName = String(header).trim();
+        if (colName && !columnIndexMap.has(colName)) {
+          columnIndexMap.set(colName, index);
+        }
+      }
+    });
+
+    let targetIndex = columnIndexMap.get(request.columnName.trim());
+    if (targetIndex === undefined) {
+      const lower = request.columnName.trim().toLowerCase();
+      for (const [colName, idx] of columnIndexMap.entries()) {
+        if (colName.toLowerCase() === lower) {
+          targetIndex = idx;
+          break;
+        }
+      }
+    }
+
+    if (targetIndex === undefined) {
+      const available = Array.from(columnIndexMap.keys());
+      const availableMsg = available.length > 0 ? available.join(', ') : 'none';
+      throw new GoogleSheetsColumnNotFoundError(
+        `Column "${request.columnName}" not found in headers range "${request.target.headerRangeName}" on sheet "${request.target.sheetName}". Available headers: ${availableMsg}`
+      );
+    }
+
+    const dataValues = await this.readNamedRange({
+      spreadsheetId: request.target.spreadsheetId,
+      sheetName: request.target.sheetName,
+      rangeName: request.target.dataRangeName,
+    });
+
+    const matchingRecords: RowRecord[] = [];
+
+    for (const row of dataValues) {
+      const cellValue = row[targetIndex] !== undefined ? row[targetIndex] : null;
+
+      if (cellValue === request.value) {
+        const record: RowRecord = {};
+        for (const [colName, idx] of columnIndexMap.entries()) {
+          const val = row[idx];
+          record[colName] = val !== undefined ? val : null;
+        }
+        matchingRecords.push(record);
+      }
+    }
+
+    return matchingRecords;
   }
 }

@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import {
   GoogleSheetsClient,
+  GoogleSheetsColumnNotFoundError,
   GoogleSheetsNamedRangeNotFoundError,
 } from '../../src/infrastructure/sheets';
 
 const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_TEST_SPREADSHEET_ID;
 const SHEET_NAME = process.env.GOOGLE_SHEETS_TEST_SHEET_NAME ?? 'Sheet1';
 const TEST_RANGE_NAME = process.env.GOOGLE_SHEETS_TEST_RANGE_NAME ?? 'Data';
+const TEST_HEADER_RANGE_NAME = process.env.GOOGLE_SHEETS_TEST_HEADER_RANGE_NAME ?? 'Headers';
 
 describe.skipIf(!SPREADSHEET_ID)('Live Google Sheets Integration Tests', () => {
   let client: GoogleSheetsClient;
@@ -88,5 +90,56 @@ describe.skipIf(!SPREADSHEET_ID)('Live Google Sheets Integration Tests', () => {
     expect(after[0][0]).toBe(`InsertedEntry_${timestamp}`);
     expect(after[0][1]).toBe(99);
     expect(after[0][2]).toBe(false);
+  });
+
+  it('searches rows by column value in a live spreadsheet', async () => {
+    const timestamp = Date.now();
+    const entryValue = `SearchEntry_${timestamp}`;
+    const newRow = [[entryValue, 123, true]];
+
+    await client.writeNamedRange({
+      spreadsheetId: SPREADSHEET_ID!,
+      sheetName: SHEET_NAME,
+      rangeName: TEST_RANGE_NAME,
+      values: newRow,
+      insertRows: true,
+    });
+
+    const headers = await client.readNamedRange({
+      spreadsheetId: SPREADSHEET_ID!,
+      sheetName: SHEET_NAME,
+      rangeName: TEST_HEADER_RANGE_NAME,
+    });
+
+    const firstColumnHeader = String(headers[0]?.[0] ?? 'ID');
+
+    const matchingRows = await client.findRowsByValue({
+      target: {
+        spreadsheetId: SPREADSHEET_ID!,
+        sheetName: SHEET_NAME,
+        headerRangeName: TEST_HEADER_RANGE_NAME,
+        dataRangeName: TEST_RANGE_NAME,
+      },
+      columnName: firstColumnHeader,
+      value: entryValue,
+    });
+
+    expect(matchingRows.length).toBeGreaterThanOrEqual(1);
+    expect(matchingRows[0][firstColumnHeader]).toBe(entryValue);
+  });
+
+  it('throws GoogleSheetsColumnNotFoundError for non-existent column name on live sheet', async () => {
+    await expect(
+      client.findRowsByValue({
+        target: {
+          spreadsheetId: SPREADSHEET_ID!,
+          sheetName: SHEET_NAME,
+          headerRangeName: TEST_HEADER_RANGE_NAME,
+          dataRangeName: TEST_RANGE_NAME,
+        },
+        columnName: 'NonExistentColumn_XYZ_123',
+        value: 'anything',
+      })
+    ).rejects.toThrow(GoogleSheetsColumnNotFoundError);
   });
 });

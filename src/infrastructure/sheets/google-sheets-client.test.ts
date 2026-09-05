@@ -9,6 +9,7 @@ import {
 } from './google-sheets-client';
 import {
   GoogleSheetsApiError,
+  GoogleSheetsColumnNotFoundError,
   GoogleSheetsNamedRangeNotFoundError,
 } from './errors';
 import type { SheetsConfigProvider } from './types';
@@ -593,7 +594,288 @@ describe('GoogleSheetsClient', () => {
       ).rejects.toThrow(/Method insertIntoGroupedList not yet implemented\. Blocked by Issue #99\./);
     });
 
-    it('findRowsByValue throws descriptive error indicating blocked by #98', async () => {
+  describe('findRowsByValue', () => {
+    it('fetches headers and data, filters matching rows, and returns converted RowRecords', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('Headers')) {
+          return {
+            data: {
+              values: [['ID', 'Name', 'Score', 'Active']],
+            },
+          };
+        }
+        if (range.includes('Data')) {
+          return {
+            data: {
+              values: [
+                ['1', 'Alice', 95.5, true],
+                ['2', 'Bob', 82.0, false],
+                ['3', 'Alice', 99.0, false],
+              ],
+            },
+          };
+        }
+        return { data: { values: [] } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      const results = await client.findRowsByValue({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        columnName: 'Name',
+        value: 'Alice',
+      });
+
+      expect(results).toEqual([
+        { ID: '1', Name: 'Alice', Score: 95.5, Active: true },
+        { ID: '3', Name: 'Alice', Score: 99.0, Active: false },
+      ]);
+
+      expect(mockSheetsApi.spreadsheets.values.get).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-abc-123',
+        range: "'Sheet1'!Headers",
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
+
+      expect(mockSheetsApi.spreadsheets.values.get).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-abc-123',
+        range: "'Sheet1'!Data",
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
+    });
+
+    it('isolates caller from physical column order and maps missing/trailing cells to null', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('Headers')) {
+          return {
+            data: {
+              values: [['Active', 'ID', 'Role', 'Name']],
+            },
+          };
+        }
+        if (range.includes('Data')) {
+          return {
+            data: {
+              values: [
+                [true, '10'], // Role and Name are omitted/short row
+              ],
+            },
+          };
+        }
+        return { data: { values: [] } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      const results = await client.findRowsByValue({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        columnName: 'ID',
+        value: '10',
+      });
+
+      expect(results).toEqual([
+        { Active: true, ID: '10', Role: null, Name: null },
+      ]);
+    });
+
+    it('returns empty array when no rows match the search value', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('Headers')) {
+          return {
+            data: {
+              values: [['ID', 'Name']],
+            },
+          };
+        }
+        if (range.includes('Data')) {
+          return {
+            data: {
+              values: [
+                ['1', 'Alice'],
+                ['2', 'Bob'],
+              ],
+            },
+          };
+        }
+        return { data: { values: [] } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      const results = await client.findRowsByValue({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        columnName: 'Name',
+        value: 'Charlie',
+      });
+
+      expect(results).toEqual([]);
+    });
+
+    it('returns empty array when data range is empty', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('Headers')) {
+          return {
+            data: {
+              values: [['ID', 'Name']],
+            },
+          };
+        }
+        return { data: { values: undefined } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      const results = await client.findRowsByValue({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        columnName: 'Name',
+        value: 'Alice',
+      });
+
+      expect(results).toEqual([]);
+    });
+
+    it('handles numeric, boolean, and null search values accurately', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('Headers')) {
+          return {
+            data: {
+              values: [['ID', 'Score', 'Active', 'Notes']],
+            },
+          };
+        }
+        if (range.includes('Data')) {
+          return {
+            data: {
+              values: [
+                ['1', 95.5, true, 'Great'],
+                ['2', 80, false, null],
+                ['3', 0, false], // Notes omitted
+              ],
+            },
+          };
+        }
+        return { data: { values: [] } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      // Search by numeric
+      const scoreResults = await client.findRowsByValue({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        columnName: 'Score',
+        value: 95.5,
+      });
+      expect(scoreResults).toEqual([
+        { ID: '1', Score: 95.5, Active: true, Notes: 'Great' },
+      ]);
+
+      // Search by boolean
+      const activeResults = await client.findRowsByValue({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        columnName: 'Active',
+        value: false,
+      });
+      expect(activeResults).toEqual([
+        { ID: '2', Score: 80, Active: false, Notes: null },
+        { ID: '3', Score: 0, Active: false, Notes: null },
+      ]);
+
+      // Search by null
+      const nullResults = await client.findRowsByValue({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        columnName: 'Notes',
+        value: null,
+      });
+      expect(nullResults).toEqual([
+        { ID: '2', Score: 80, Active: false, Notes: null },
+        { ID: '3', Score: 0, Active: false, Notes: null },
+      ]);
+    });
+
+    it('matches column names case-insensitively', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('Headers')) {
+          return {
+            data: {
+              values: [['UserID', 'EmailAddress']],
+            },
+          };
+        }
+        if (range.includes('Data')) {
+          return {
+            data: {
+              values: [['u-1', 'test@example.com']],
+            },
+          };
+        }
+        return { data: { values: [] } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      const results = await client.findRowsByValue({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        columnName: 'emailaddress',
+        value: 'test@example.com',
+      });
+
+      expect(results).toEqual([
+        { UserID: 'u-1', EmailAddress: 'test@example.com' },
+      ]);
+    });
+
+    it('throws GoogleSheetsColumnNotFoundError with descriptive error when column name is not found in headers', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('Headers')) {
+          return {
+            data: {
+              values: [['ID', 'Name', 'Score']],
+            },
+          };
+        }
+        return { data: { values: [] } };
+      });
+
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
       await expect(
@@ -604,10 +886,41 @@ describe('GoogleSheetsClient', () => {
             headerRangeName: 'Headers',
             dataRangeName: 'Data',
           },
-          columnName: 'ID',
-          value: '10',
+          columnName: 'NonExistentColumn',
+          value: 'test',
         })
-      ).rejects.toThrow(/Method findRowsByValue not yet implemented\. Blocked by Issue #98\./);
+      ).rejects.toThrow(GoogleSheetsColumnNotFoundError);
+
+      await expect(
+        client.findRowsByValue({
+          target: {
+            spreadsheetId: 'sheet-abc-123',
+            sheetName: 'Sheet1',
+            headerRangeName: 'Headers',
+            dataRangeName: 'Data',
+          },
+          columnName: 'NonExistentColumn',
+          value: 'test',
+        })
+      ).rejects.toThrow(/Column "NonExistentColumn" not found/);
     });
+
+    it('throws GoogleSheetsNamedRangeNotFoundError when headers or data range is not found', async () => {
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await expect(
+        client.findRowsByValue({
+          target: {
+            spreadsheetId: 'sheet-abc-123',
+            sheetName: 'Sheet1',
+            headerRangeName: 'MissingHeaderRange',
+            dataRangeName: 'Data',
+          },
+          columnName: 'ID',
+          value: '1',
+        })
+      ).rejects.toThrow(GoogleSheetsNamedRangeNotFoundError);
+    });
+  });
   });
 });

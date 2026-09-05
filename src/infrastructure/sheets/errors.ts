@@ -20,3 +20,14 @@ export class GoogleSheetsNamedRangeNotFoundError extends GoogleSheetsApiError {
     this.name = 'GoogleSheetsNamedRangeNotFoundError';
   }
 }
+
+export class GoogleSheetsColumnNotFoundError extends GoogleSheetsApiError {
+  constructor(
+    message: string,
+    options?: { cause?: unknown; statusCode?: number | undefined }
+  ) {
+    super(message, options);
+    this.name = 'GoogleSheetsColumnNotFoundError';
+  }
+}
+
