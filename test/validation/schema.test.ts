@@ -9,6 +9,11 @@ import {
   formatValidationErrors,
 } from '../../src/features/document/domain';
 import { Value } from '@sinclair/typebox/value';
+import {
+  DocumentSpaceService,
+  DocumentSpaceTypeSchema,
+} from '../../src/features/document-space/domain';
+import type { DocumentSpaceManifestRegistryPort } from '../../src/features/document-space/ports';
 
 describe('DocumentType JSON files schema validation', () => {
   it('should validate all DocumentType JSON files referenced by manifest.json against Typebox schemas', async () => {
@@ -84,6 +89,25 @@ describe('DocumentType JSON files schema validation', () => {
       expect(formSchema).not.toHaveProperty('storageContextConfig');
     }
   });
+
+  it('should validate and load DocumentSpaceTypes defined in manifest.json via DocumentSpaceManifestRegistryPort', async () => {
+    const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
+    const manifestProvider: DocumentSpaceManifestRegistryPort = new AppManifestProvider({ manifestPath });
+    const service = new DocumentSpaceService(manifestProvider);
+    await service.initialize();
+
+    const spaceTypes = await manifestProvider.getDocumentSpaceTypes();
+    expect(spaceTypes.length).toBeGreaterThan(0);
+
+    for (const spaceType of spaceTypes) {
+      expect(Value.Check(DocumentSpaceTypeSchema, spaceType)).toBe(true);
+      expect(service.hasType(spaceType.id)).toBe(true);
+      const retrieved = service.getType(spaceType.id);
+      expect(retrieved).toEqual(spaceType);
+      expect(retrieved.storageConfig.fetchMethod).toBe('shared_drives');
+    }
+  });
 });
+
 
 
