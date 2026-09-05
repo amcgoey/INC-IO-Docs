@@ -19,5 +19,20 @@
       "defaultHeaderRangeName": "Headers",
       "defaultDataRangeName": "Data"
     }
-  }
+  },
+  "DocumentSpaceTypes": [
+    {
+      "id": "project",
+      "displayName": "Project",
+      "allowedDocumentTypes": [
+        "communication-project"
+      ],
+      "storageConfig": {
+        "provider": "google_drive",
+        "fetchMethod": "shared_drives",
+        "paginationLimit": 500
+      }
+    }
+  ]
 }
+

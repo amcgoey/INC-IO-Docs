@@ -275,4 +275,89 @@ describe('AppManifestProvider', () => {
       await expect(provider.getDriveConfig()).rejects.toThrow(/invalid manifest/i);
     });
   });
+
+  describe('getDocumentSpaceTypes', () => {
+    it('returns empty array if DocumentSpaceTypes is not configured', async () => {
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({
+          documentTypes: ['./schemas/doc.json'],
+        }),
+        'utf-8'
+      );
+
+      const provider = new AppManifestProvider({ manifestPath });
+      const spaceTypes = await provider.getDocumentSpaceTypes();
+      expect(spaceTypes).toEqual([]);
+    });
+
+    it('returns parsed and validated DocumentSpaceTypes when present', async () => {
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      const expectedSpaces = [
+        {
+          id: 'project',
+          displayName: 'Project Space',
+          allowedDocumentTypes: ['communication-project'],
+          storageConfig: {
+            provider: 'google_drive',
+            fetchMethod: 'shared_drives',
+            paginationLimit: 500,
+          },
+        },
+        {
+          id: 'proposal',
+          displayName: 'Proposal Space',
+          allowedDocumentTypes: ['proposal-doc'],
+          storageConfig: {
+            provider: 'google_drive',
+            fetchMethod: 'folders',
+            parentFolderId: 'folder-123',
+            sharedDriveId: 'drive-456',
+            paginationLimit: 250,
+          },
+        },
+      ];
+
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({
+          documentTypes: [],
+          DocumentSpaceTypes: expectedSpaces,
+        }),
+        'utf-8'
+      );
+
+      const provider = new AppManifestProvider({ manifestPath });
+      const spaceTypes = await provider.getDocumentSpaceTypes();
+      expect(spaceTypes).toEqual(expectedSpaces);
+    });
+
+    it('throws error when DocumentSpaceTypes contains invalid structure', async () => {
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({
+          documentTypes: [],
+          DocumentSpaceTypes: [
+            {
+              id: 'project',
+              // missing displayName and allowedDocumentTypes
+              storageConfig: {
+                provider: 'google_drive',
+                fetchMethod: 'invalid_method',
+              },
+            },
+          ],
+        }),
+        'utf-8'
+      );
+
+      const provider = new AppManifestProvider({ manifestPath });
+      await expect(provider.getDocumentSpaceTypes()).rejects.toThrow(/invalid manifest/i);
+    });
+  });
 });
+
+
+
