@@ -145,11 +145,20 @@ export interface GroupedColumnTarget {
   value: CellValue;
 }
 
-interface SheetGroup {
+interface SheetInsertionContext {
+  sheetId: number;
+  dataStartRowIndex: number;
+  rowDataCells: sheets_v4.Schema$RowData[];
+  startColumnIndex: number;
+  endColumnIndex: number;
+}
+
+export interface SheetGroup {
   groupValue: CellValue;
   startIndex: number;
   endIndex: number;
   rowIndices: number[];
+  internalBlankIndices?: number[];
 }
 
 export function extractSheetGroups(
@@ -161,40 +170,45 @@ export function extractSheetGroups(
     return groups;
   }
 
+  let currentGroup: SheetGroup | null = null;
+  const pendingBlankIndices: number[] = [];
+
   for (let i = 0; i < dataValues.length; i++) {
     const row = dataValues[i];
     const groupVal = row ? row[groupColIndex] : null;
 
     if (isCellEmpty(groupVal)) {
+      if (currentGroup) {
+        pendingBlankIndices.push(i);
+      }
       continue;
     }
 
-    const existingGroup = groups.find(
-      (g) => compareCellValues(g.groupValue, groupVal) === 0
-    );
-
-    if (existingGroup) {
-      existingGroup.endIndex = i;
-      existingGroup.rowIndices.push(i);
+    if (currentGroup && compareCellValues(currentGroup.groupValue, groupVal) === 0) {
+      // Same group continued after potential blank rows
+      if (pendingBlankIndices.length > 0) {
+        if (!currentGroup.internalBlankIndices) {
+          currentGroup.internalBlankIndices = [];
+        }
+        currentGroup.internalBlankIndices.push(...pendingBlankIndices);
+        pendingBlankIndices.length = 0;
+      }
+      currentGroup.endIndex = i;
+      currentGroup.rowIndices.push(i);
     } else {
-      groups.push({
+      // New group encountered
+      pendingBlankIndices.length = 0;
+      currentGroup = {
         groupValue: groupVal,
         startIndex: i,
         endIndex: i,
         rowIndices: [i],
-      });
+      };
+      groups.push(currentGroup);
     }
   }
 
   return groups;
-}
-
-interface SheetInsertionContext {
-  sheetId: number;
-  dataStartRowIndex: number;
-  rowDataCells: sheets_v4.Schema$RowData[];
-  startColumnIndex: number;
-  endColumnIndex: number;
 }
 
 function makeInsertRowRequest(
@@ -251,6 +265,63 @@ function makeUpdateCellsRequest(
   };
 }
 
+/**
+ * Builds requests for inserting a new group between existing groups or at edge boundaries,
+ * healing missing or excess blank rows to maintain exactly 1 blank row separation.
+ */
+function buildBoundaryInsertionRequests(params: {
+  ctx: SheetInsertionContext;
+  currentBlankCount: number;
+  blankStartRelIndex: number;
+  targetBlanks: 1 | 2;
+  dataRowOffsetFromBlankStart: number;
+  insertAtEndIfZeroBlanks?: boolean;
+  singleBlankInsertRelIndex?: number;
+}): sheets_v4.Schema$Request[] {
+  const {
+    ctx,
+    currentBlankCount,
+    blankStartRelIndex,
+    targetBlanks,
+    dataRowOffsetFromBlankStart,
+    insertAtEndIfZeroBlanks,
+    singleBlankInsertRelIndex,
+  } = params;
+  const { sheetId, dataStartRowIndex } = ctx;
+  const requests: sheets_v4.Schema$Request[] = [];
+
+  if (currentBlankCount === 0) {
+    // 0 blanks present: need to insert data row + targetBlanks blank rows
+    const rowsToInsert = targetBlanks + 1;
+    const absInsertIndex = dataStartRowIndex + blankStartRelIndex;
+    requests.push(makeInsertRowRequest(sheetId, absInsertIndex, rowsToInsert));
+    // If inserting between groups or at bottom, data row is padded with a blank
+    const updateRowOffset = insertAtEndIfZeroBlanks ? 1 : 0;
+    requests.push(makeUpdateCellsRequest(ctx, absInsertIndex + updateRowOffset));
+  } else if (currentBlankCount < targetBlanks) {
+    // Need 1 more blank row (e.g. 1 blank present between 2 groups, needs 2 blanks total)
+    const relIndex = singleBlankInsertRelIndex ?? blankStartRelIndex;
+    const absInsertIndex = dataStartRowIndex + relIndex;
+    requests.push(makeInsertRowRequest(sheetId, absInsertIndex, 2));
+    requests.push(makeUpdateCellsRequest(ctx, absInsertIndex));
+  } else if (currentBlankCount === targetBlanks) {
+    // Exact blank count: insert 1 data row at designated offset
+    const absDataIndex = dataStartRowIndex + blankStartRelIndex + dataRowOffsetFromBlankStart;
+    requests.push(makeInsertRowRequest(sheetId, absDataIndex, 1));
+    requests.push(makeUpdateCellsRequest(ctx, absDataIndex));
+  } else {
+    // Excess blanks: delete excess, insert 1 data row
+    const excess = currentBlankCount - targetBlanks;
+    const absDeleteStart = dataStartRowIndex + blankStartRelIndex + targetBlanks;
+    requests.push(makeDeleteRowsRequest(sheetId, absDeleteStart, excess));
+    const absDataIndex = dataStartRowIndex + blankStartRelIndex + dataRowOffsetFromBlankStart;
+    requests.push(makeInsertRowRequest(sheetId, absDataIndex, 1));
+    requests.push(makeUpdateCellsRequest(ctx, absDataIndex));
+  }
+
+  return requests;
+}
+
 function buildNewGroupInsertionRequests(params: {
   ctx: SheetInsertionContext;
   dataValues: CellValue[][];
@@ -284,78 +355,41 @@ function buildNewGroupInsertionRequests(params: {
     ];
   }
 
-  const requests: sheets_v4.Schema$Request[] = [];
-
   if (prevGroup && nextGroup) {
-    const currentBlankCount = nextGroup.startIndex - prevGroup.endIndex - 1;
-    const blankStartRel = prevGroup.endIndex + 1;
-
-    if (currentBlankCount === 0) {
-      const absIndex = dataStartRowIndex + nextGroup.startIndex;
-      requests.push(makeInsertRowRequest(sheetId, absIndex, 3));
-      requests.push(makeUpdateCellsRequest(ctx, absIndex + 1));
-    } else if (currentBlankCount === 1) {
-      const absIndex = dataStartRowIndex + nextGroup.startIndex;
-      requests.push(makeInsertRowRequest(sheetId, absIndex, 2));
-      requests.push(makeUpdateCellsRequest(ctx, absIndex));
-    } else if (currentBlankCount === 2) {
-      const absIndex = dataStartRowIndex + blankStartRel + 1;
-      requests.push(makeInsertRowRequest(sheetId, absIndex, 1));
-      requests.push(makeUpdateCellsRequest(ctx, absIndex));
-    } else {
-      const excess = currentBlankCount - 2;
-      const absDeleteStart = dataStartRowIndex + blankStartRel + 2;
-      requests.push(makeDeleteRowsRequest(sheetId, absDeleteStart, excess));
-      const absIndex = dataStartRowIndex + blankStartRel + 1;
-      requests.push(makeInsertRowRequest(sheetId, absIndex, 1));
-      requests.push(makeUpdateCellsRequest(ctx, absIndex));
-    }
-    return requests;
+    return buildBoundaryInsertionRequests({
+      ctx,
+      currentBlankCount: nextGroup.startIndex - prevGroup.endIndex - 1,
+      blankStartRelIndex: prevGroup.endIndex + 1,
+      targetBlanks: 2,
+      dataRowOffsetFromBlankStart: 1,
+      insertAtEndIfZeroBlanks: true,
+      singleBlankInsertRelIndex: nextGroup.startIndex,
+    });
   }
 
   if (nextGroup && !prevGroup) {
-    const currentBlankCount = nextGroup.startIndex;
-
-    if (currentBlankCount === 0) {
-      const absIndex = dataStartRowIndex;
-      requests.push(makeInsertRowRequest(sheetId, absIndex, 2));
-      requests.push(makeUpdateCellsRequest(ctx, absIndex));
-    } else if (currentBlankCount === 1) {
-      const absIndex = dataStartRowIndex;
-      requests.push(makeInsertRowRequest(sheetId, absIndex, 1));
-      requests.push(makeUpdateCellsRequest(ctx, absIndex));
-    } else {
-      const excess = currentBlankCount - 1;
-      const absDeleteStart = dataStartRowIndex + 1;
-      requests.push(makeDeleteRowsRequest(sheetId, absDeleteStart, excess));
-      const absIndex = dataStartRowIndex;
-      requests.push(makeInsertRowRequest(sheetId, absIndex, 1));
-      requests.push(makeUpdateCellsRequest(ctx, absIndex));
-    }
-    return requests;
+    return buildBoundaryInsertionRequests({
+      ctx,
+      currentBlankCount: nextGroup.startIndex,
+      blankStartRelIndex: 0,
+      targetBlanks: 1,
+      dataRowOffsetFromBlankStart: 0,
+      insertAtEndIfZeroBlanks: false,
+    });
   }
 
   const safePrevGroup = prevGroup as SheetGroup;
   const blankStartRel = safePrevGroup.endIndex + 1;
   const currentBlankCount = dataValues.length - blankStartRel;
 
-  if (currentBlankCount === 0) {
-    const absIndex = dataStartRowIndex + dataValues.length;
-    requests.push(makeInsertRowRequest(sheetId, absIndex, 2));
-    requests.push(makeUpdateCellsRequest(ctx, absIndex + 1));
-  } else if (currentBlankCount === 1) {
-    const absIndex = dataStartRowIndex + blankStartRel + 1;
-    requests.push(makeInsertRowRequest(sheetId, absIndex, 1));
-    requests.push(makeUpdateCellsRequest(ctx, absIndex));
-  } else {
-    const excess = currentBlankCount - 1;
-    const absDeleteStart = dataStartRowIndex + blankStartRel + 1;
-    requests.push(makeDeleteRowsRequest(sheetId, absDeleteStart, excess));
-    const absIndex = dataStartRowIndex + blankStartRel + 1;
-    requests.push(makeInsertRowRequest(sheetId, absIndex, 1));
-    requests.push(makeUpdateCellsRequest(ctx, absIndex));
-  }
-  return requests;
+  return buildBoundaryInsertionRequests({
+    ctx,
+    currentBlankCount,
+    blankStartRelIndex: blankStartRel,
+    targetBlanks: 1,
+    dataRowOffsetFromBlankStart: 1,
+    insertAtEndIfZeroBlanks: true,
+  });
 }
 
 function buildExistingGroupInsertionRequests(params: {
@@ -368,6 +402,40 @@ function buildExistingGroupInsertionRequests(params: {
   const { ctx, dataValues, groups, targetGroup, sortTarget } = params;
   const { sheetId, dataStartRowIndex } = ctx;
 
+  const requests: sheets_v4.Schema$Request[] = [];
+  let indexShift = 0;
+
+  // 1. Heal internal blank rows trapped inside this group (if any)
+  // Delete contiguous ranges of internal blank indices in descending order so earlier indices remain valid
+  if (targetGroup.internalBlankIndices && targetGroup.internalBlankIndices.length > 0) {
+    const blanks = [...targetGroup.internalBlankIndices].sort((a, b) => a - b);
+    const ranges: { start: number; count: number }[] = [];
+    let curRange: { start: number; count: number } | null = null;
+    for (const bIdx of blanks) {
+      if (!curRange) {
+        curRange = { start: bIdx, count: 1 };
+      } else if (bIdx === curRange.start + curRange.count) {
+        curRange.count++;
+      } else {
+        ranges.push(curRange);
+        curRange = { start: bIdx, count: 1 };
+      }
+    }
+    if (curRange) {
+      ranges.push(curRange);
+    }
+
+    // Process delete requests in descending order of index
+    for (let i = ranges.length - 1; i >= 0; i--) {
+      const r = ranges[i];
+      const absDeleteStart = dataStartRowIndex + r.start;
+      requests.push(makeDeleteRowsRequest(sheetId, absDeleteStart, r.count));
+    }
+    // Net index shift resulting from deleting all internal blank rows
+    indexShift -= blanks.length;
+  }
+
+  // 2. Determine internal insertion position according to sort order
   let internalInsertRelIndex = targetGroup.endIndex + 1;
   for (const rowIndex of targetGroup.rowIndices) {
     const row = dataValues[rowIndex];
@@ -382,9 +450,7 @@ function buildExistingGroupInsertionRequests(params: {
   const prevGroup = targetGroupIdx > 0 ? groups[targetGroupIdx - 1] : undefined;
   const nextGroup = targetGroupIdx < groups.length - 1 ? groups[targetGroupIdx + 1] : undefined;
 
-  const requests: sheets_v4.Schema$Request[] = [];
-  let indexShift = 0;
-
+  // 3. Heal padding above target group
   if (prevGroup) {
     const blankRowsAbove = targetGroup.startIndex - prevGroup.endIndex - 1;
     if (blankRowsAbove === 0) {
@@ -399,10 +465,12 @@ function buildExistingGroupInsertionRequests(params: {
     }
   }
 
+  // 4. Insert data row and update cells
   const absDataRowIndex = dataStartRowIndex + internalInsertRelIndex + indexShift;
   requests.push(makeInsertRowRequest(sheetId, absDataRowIndex, 1));
   requests.push(makeUpdateCellsRequest(ctx, absDataRowIndex));
 
+  // 5. Heal padding below target group
   if (nextGroup) {
     const blankRowsBelow = nextGroup.startIndex - targetGroup.endIndex - 1;
     const effectiveGroupEndIndex = targetGroup.endIndex + indexShift + 1;
@@ -419,7 +487,7 @@ function buildExistingGroupInsertionRequests(params: {
   return requests;
 }
 
-export function buildGroupedInsertionRequests(params: {
+export interface GroupedInsertionParams {
   sheetId: number;
   dataValues: CellValue[][];
   groupTarget: GroupedColumnTarget;
@@ -428,7 +496,11 @@ export function buildGroupedInsertionRequests(params: {
   mappedRow: CellValue[];
   startColumnIndex: number;
   endColumnIndex: number;
-}): sheets_v4.Schema$Request[] {
+}
+
+export function buildGroupedInsertionRequests(
+  params: GroupedInsertionParams
+): sheets_v4.Schema$Request[] {
   const {
     sheetId,
     dataValues,

@@ -366,5 +366,76 @@ describe.skipIf(!SPREADSHEET_ID)('Live Google Sheets Integration Tests', () => {
     const blankRow = dataRows[groupALast + 1];
     expect(blankRow[0] === null || blankRow[0] === undefined || blankRow[0] === '').toBe(true);
   });
+
+  it('heals internal blank rows mistakenly placed inside a single group in a live spreadsheet', async () => {
+    const headers = await client.readNamedRange({
+      spreadsheetId: SPREADSHEET_ID!,
+      sheetName: SHEET_NAME,
+      rangeName: TEST_HEADER_RANGE_NAME,
+    });
+
+    const headerRow = headers[0] ?? [];
+    const firstCol = String(headerRow[0] ?? 'ID');
+    const secondCol = String(headerRow[1] ?? headerRow[0] ?? 'Score');
+
+    const timestamp = Date.now();
+    const group = `IntraHeal_${timestamp}`;
+
+    // Write a group with an accidental blank row trapped in the middle
+    const messyRows = [
+      [group, 100],
+      ['', ''],
+      [group, 40],
+    ];
+
+    await client.writeNamedRange({
+      spreadsheetId: SPREADSHEET_ID!,
+      sheetName: SHEET_NAME,
+      rangeName: TEST_RANGE_NAME,
+      values: messyRows,
+      insertRows: true,
+    });
+
+    // Insert into the group
+    await client.insertIntoGroupedList({
+      target: {
+        spreadsheetId: SPREADSHEET_ID!,
+        sheetName: SHEET_NAME,
+        headerRangeName: TEST_HEADER_RANGE_NAME,
+        dataRangeName: TEST_RANGE_NAME,
+      },
+      rowData: {
+        [firstCol]: group,
+        [secondCol]: 70,
+      },
+      groupConfig: {
+        columnName: firstCol,
+        value: group,
+      },
+      sortConfig: {
+        columnName: secondCol,
+        value: 70,
+      },
+    });
+
+    // Verify the internal blank row was deleted and all 3 rows of this group are contiguous
+    const dataRows = await client.readNamedRange({
+      spreadsheetId: SPREADSHEET_ID!,
+      sheetName: SHEET_NAME,
+      rangeName: TEST_RANGE_NAME,
+    });
+
+    const groupIndices: number[] = [];
+    dataRows.forEach((row, idx) => {
+      if (row[0] === group) {
+        groupIndices.push(idx);
+      }
+    });
+
+    expect(groupIndices.length).toBe(3);
+    // Rows must be strictly contiguous: indices[1] === indices[0] + 1, indices[2] === indices[1] + 1
+    expect(groupIndices[1]).toBe(groupIndices[0] + 1);
+    expect(groupIndices[2]).toBe(groupIndices[1] + 1);
+  });
 });
 

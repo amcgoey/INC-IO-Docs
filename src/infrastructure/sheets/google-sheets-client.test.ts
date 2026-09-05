@@ -860,19 +860,38 @@ describe('GoogleSheetsClient', () => {
         sortConfig: { columnName: 'Score', value: 70 },
       });
 
+      // Now with Issue 100 blank row healing:
+      // 1. Accidental internal blank row at rel 1 (abs 2) is deleted
+      // 2. Row inserting before ('A', 50) is inserted at abs 2 (was rel 2 - 1 delete = rel 1, abs 1 + 1 = 2)
       expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           requestBody: {
-            requests: expect.arrayContaining([
+            requests: [
               expect.objectContaining({
-                insertDimension: expect.objectContaining({
+                deleteDimension: expect.objectContaining({
                   range: expect.objectContaining({
-                    startIndex: 3, // 1 + 2 (before the 3rd row in data)
-                    endIndex: 4,
+                    startIndex: 2,
+                    endIndex: 3,
                   }),
                 }),
               }),
-            ]),
+              expect.objectContaining({
+                insertDimension: expect.objectContaining({
+                  range: expect.objectContaining({
+                    startIndex: 2,
+                    endIndex: 3,
+                  }),
+                }),
+              }),
+              expect.objectContaining({
+                updateCells: expect.objectContaining({
+                  range: expect.objectContaining({
+                    startRowIndex: 2,
+                    endRowIndex: 3,
+                  }),
+                }),
+              }),
+            ],
           },
         })
       );
@@ -2248,6 +2267,78 @@ describe('GoogleSheetsClient', () => {
                   startIndex: 6,
                   endIndex: 7,
                 },
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    it('heals internal blank rows accidentally trapped inside a single group', async () => {
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['A', 100, 'GroupA_1'], // rel 0 (abs 1)
+          [null, null, null],     // rel 1 (abs 2) - accidental blank row inside Group A!
+          ['A', 80, 'GroupA_2'],  // rel 2 (abs 3)
+          [null, null, null],     // rel 3 (abs 4) - valid 1-row separator
+          ['B', 50, 'GroupB_1'],  // rel 4 (abs 5)
+        ]
+      );
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'A', Score: 60, Name: 'GroupA_3' },
+        groupConfig: { columnName: 'Group', value: 'A' },
+        sortConfig: { columnName: 'Score', value: 60 },
+      });
+
+      // 1. Delete accidental internal blank row at abs 2 (rel 1)
+      // 2. Insert new row for Group A (Score 60 belongs at the end of Group A, originally rel 3, shifted by -1 internal blank delete -> rel 2, so abs 1 + 2 = 3)
+      // 3. Write data row at abs 3
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-abc-123',
+        requestBody: {
+          requests: [
+            {
+              deleteDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 2,
+                  endIndex: 3,
+                },
+              },
+            },
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 3,
+                  endIndex: 4,
+                },
+                inheritFromBefore: true,
+              },
+            },
+            {
+              updateCells: {
+                range: {
+                  sheetId: 0,
+                  startRowIndex: 3,
+                  endRowIndex: 4,
+                  startColumnIndex: 0,
+                  endColumnIndex: 3,
+                },
+                rows: valuesToRowData([['A', 60, 'GroupA_3']]),
+                fields: 'userEnteredValue',
               },
             },
           ],
