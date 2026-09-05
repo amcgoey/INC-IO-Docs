@@ -1061,7 +1061,7 @@ describe('GoogleSheetsClient', () => {
                 insertDimension: expect.objectContaining({
                   range: expect.objectContaining({
                     startIndex: 1, // data startRowIndex (1) + relative index (0)
-                    endIndex: 2,
+                    endIndex: 3, // inserts 2 rows: data row C + 1 blank row separating C from B
                   }),
                 }),
               }),
@@ -1114,7 +1114,7 @@ describe('GoogleSheetsClient', () => {
                 insertDimension: expect.objectContaining({
                   range: expect.objectContaining({
                     startIndex: 4, // data startRowIndex (1) + relative index (3)
-                    endIndex: 5,
+                    endIndex: 6, // inserts 2 rows: data row M + 1 blank row separating M from A
                   }),
                 }),
               }),
@@ -1165,15 +1165,15 @@ describe('GoogleSheetsClient', () => {
                 insertDimension: expect.objectContaining({
                   range: expect.objectContaining({
                     startIndex: 3, // 1 + 2
-                    endIndex: 4,
+                    endIndex: 5, // inserts 2 rows: 1 blank row separating from M + data row A
                   }),
                 }),
               }),
               expect.objectContaining({
                 updateCells: expect.objectContaining({
                   range: expect.objectContaining({
-                    startRowIndex: 3,
-                    endRowIndex: 4,
+                    startRowIndex: 4,
+                    endRowIndex: 5,
                   }),
                   rows: valuesToRowData([['A', 10, 'LastGroupRow']]),
                 }),
@@ -1572,6 +1572,687 @@ describe('GoogleSheetsClient', () => {
           value: '1',
         })
       ).rejects.toThrow(GoogleSheetsNamedRangeNotFoundError);
+    });
+  });
+
+  describe('insertIntoGroupedList - Blank Row Padding & Healing (Issue 100)', () => {
+    it('heals under-padding when inserting a new group between groups with 0 blank rows (inserts 3 rows: blank, data, blank)', async () => {
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['Z', 100, 'FirstGroup'],
+          ['Z', 90, 'FirstGroup2'],
+          ['A', 80, 'SecondGroup'], // 0 blank rows between Z and A
+        ]
+      );
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data', // startRowIndex: 1
+        },
+        rowData: { Group: 'M', Score: 60, Name: 'MiddleGroupRow' },
+        groupConfig: { columnName: 'Group', value: 'M' },
+        sortConfig: { columnName: 'Score', value: 60 },
+      });
+
+      // At nextGroup.startIndex (2), inserts 3 rows [blank, data, blank] at absolute index 3 (1 + 2)
+      // data row is written at absolute index 4 (1 + 2 + 1)
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-abc-123',
+        requestBody: {
+          requests: [
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 3,
+                  endIndex: 6,
+                },
+                inheritFromBefore: true,
+              },
+            },
+            {
+              updateCells: {
+                range: {
+                  sheetId: 0,
+                  startRowIndex: 4,
+                  endRowIndex: 5,
+                  startColumnIndex: 0,
+                  endColumnIndex: 3,
+                },
+                rows: valuesToRowData([['M', 60, 'MiddleGroupRow']]),
+                fields: 'userEnteredValue',
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    it('maintains padding when inserting a new group between groups with 1 blank row (inserts 2 rows: data, blank)', async () => {
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['Z', 100, 'FirstGroup'],
+          ['Z', 90, 'FirstGroup2'],
+          [null, null, null], // 1 blank row
+          ['A', 80, 'SecondGroup'],
+        ]
+      );
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'M', Score: 60, Name: 'MiddleGroupRow' },
+        groupConfig: { columnName: 'Group', value: 'M' },
+        sortConfig: { columnName: 'Score', value: 60 },
+      });
+
+      // At nextGroup.startIndex (3), inserts 2 rows [data, blank] at absolute index 4 (1 + 3)
+      // data row is written at absolute index 4
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-abc-123',
+        requestBody: {
+          requests: [
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 4,
+                  endIndex: 6,
+                },
+                inheritFromBefore: true,
+              },
+            },
+            {
+              updateCells: {
+                range: {
+                  sheetId: 0,
+                  startRowIndex: 4,
+                  endRowIndex: 5,
+                  startColumnIndex: 0,
+                  endColumnIndex: 3,
+                },
+                rows: valuesToRowData([['M', 60, 'MiddleGroupRow']]),
+                fields: 'userEnteredValue',
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    it('maintains padding when inserting a new group between groups with 2 blank rows (inserts 1 row between blanks)', async () => {
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['Z', 100, 'FirstGroup'],
+          ['Z', 90, 'FirstGroup2'],
+          [null, null, null], // blank 1
+          [null, null, null], // blank 2
+          ['A', 80, 'SecondGroup'],
+        ]
+      );
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'M', Score: 60, Name: 'MiddleGroupRow' },
+        groupConfig: { columnName: 'Group', value: 'M' },
+        sortConfig: { columnName: 'Score', value: 60 },
+      });
+
+      // 2 blanks already exist at rel 2 and 3. Inserts 1 row at rel 3 (abs 4) between them.
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-abc-123',
+        requestBody: {
+          requests: [
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 4,
+                  endIndex: 5,
+                },
+                inheritFromBefore: true,
+              },
+            },
+            {
+              updateCells: {
+                range: {
+                  sheetId: 0,
+                  startRowIndex: 4,
+                  endRowIndex: 5,
+                  startColumnIndex: 0,
+                  endColumnIndex: 3,
+                },
+                rows: valuesToRowData([['M', 60, 'MiddleGroupRow']]),
+                fields: 'userEnteredValue',
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    it('heals over-padding when inserting a new group between groups with multiple (3+) blank rows (deletes excess blank rows)', async () => {
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['Z', 100, 'FirstGroup'],
+          ['Z', 90, 'FirstGroup2'],
+          [null, null, null], // blank 1 (rel 2)
+          [null, null, null], // blank 2 (rel 3)
+          [null, null, null], // blank 3 (rel 4, excess 1)
+          [null, null, null], // blank 4 (rel 5, excess 2)
+          ['A', 80, 'SecondGroup'], // rel 6
+        ]
+      );
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'M', Score: 60, Name: 'MiddleGroupRow' },
+        groupConfig: { columnName: 'Group', value: 'M' },
+        sortConfig: { columnName: 'Score', value: 60 },
+      });
+
+      // 4 blanks exist. Deletes 2 excess blanks from rel 4 (abs 5) to rel 6 (abs 7).
+      // Then inserts 1 data row at rel 3 (abs 4) between the remaining 2 blanks.
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-abc-123',
+        requestBody: {
+          requests: [
+            {
+              deleteDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 5,
+                  endIndex: 7,
+                },
+              },
+            },
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 4,
+                  endIndex: 5,
+                },
+                inheritFromBefore: true,
+              },
+            },
+            {
+              updateCells: {
+                range: {
+                  sheetId: 0,
+                  startRowIndex: 4,
+                  endRowIndex: 5,
+                  startColumnIndex: 0,
+                  endColumnIndex: 3,
+                },
+                rows: valuesToRowData([['M', 60, 'MiddleGroupRow']]),
+                fields: 'userEnteredValue',
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    it('heals over-padding when inserting a new group before first group with multiple blank rows (deletes excess blank rows)', async () => {
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          [null, null, null], // rel 0
+          [null, null, null], // rel 1 (excess 1)
+          [null, null, null], // rel 2 (excess 2)
+          ['B', 100, 'ExistingGroupB'], // rel 3
+        ]
+      );
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'C', Score: 50, Name: 'GroupC_Row' },
+        groupConfig: { columnName: 'Group', value: 'C' },
+        sortConfig: { columnName: 'Score', value: 50 },
+      });
+
+      // 3 blanks before B. Deletes 2 excess blanks from rel 1 (abs 2) to rel 3 (abs 4).
+      // Then inserts 1 row at rel 0 (abs 1) before the remaining blank row.
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-abc-123',
+        requestBody: {
+          requests: [
+            {
+              deleteDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 2,
+                  endIndex: 4,
+                },
+              },
+            },
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 1,
+                  endIndex: 2,
+                },
+                inheritFromBefore: true,
+              },
+            },
+            {
+              updateCells: {
+                range: {
+                  sheetId: 0,
+                  startRowIndex: 1,
+                  endRowIndex: 2,
+                  startColumnIndex: 0,
+                  endColumnIndex: 3,
+                },
+                rows: valuesToRowData([['C', 50, 'GroupC_Row']]),
+                fields: 'userEnteredValue',
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    it('maintains padding when inserting a new group before first group with exactly 1 blank row (inserts 1 row)', async () => {
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          [null, null, null], // rel 0 (1 blank row)
+          ['B', 100, 'ExistingGroupB'], // rel 1
+        ]
+      );
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'C', Score: 50, Name: 'GroupC_Row' },
+        groupConfig: { columnName: 'Group', value: 'C' },
+        sortConfig: { columnName: 'Score', value: 50 },
+      });
+
+      // 1 blank row exists at rel 0. Inserts 1 row at rel 0 (abs 1) before the blank row.
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-abc-123',
+        requestBody: {
+          requests: [
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 1,
+                  endIndex: 2,
+                },
+                inheritFromBefore: true,
+              },
+            },
+            {
+              updateCells: {
+                range: {
+                  sheetId: 0,
+                  startRowIndex: 1,
+                  endRowIndex: 2,
+                  startColumnIndex: 0,
+                  endColumnIndex: 3,
+                },
+                rows: valuesToRowData([['C', 50, 'GroupC_Row']]),
+                fields: 'userEnteredValue',
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    it('maintains padding when inserting a new group after last group with exactly 1 blank row (inserts 1 row)', async () => {
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['Z', 100, 'FirstGroup'],
+          ['M', 50, 'SecondGroup'], // rel 1
+          [null, null, null], // rel 2 (1 blank row)
+        ]
+      );
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'A', Score: 10, Name: 'LastGroupRow' },
+        groupConfig: { columnName: 'Group', value: 'A' },
+        sortConfig: { columnName: 'Score', value: 10 },
+      });
+
+      // 1 blank row exists after M at rel 2. Inserts 1 row at rel 3 (abs 4) after the blank row.
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-abc-123',
+        requestBody: {
+          requests: [
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 4,
+                  endIndex: 5,
+                },
+                inheritFromBefore: true,
+              },
+            },
+            {
+              updateCells: {
+                range: {
+                  sheetId: 0,
+                  startRowIndex: 4,
+                  endRowIndex: 5,
+                  startColumnIndex: 0,
+                  endColumnIndex: 3,
+                },
+                rows: valuesToRowData([['A', 10, 'LastGroupRow']]),
+                fields: 'userEnteredValue',
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    it('heals over-padding when inserting a new group after last group with multiple blank rows (deletes excess blank rows)', async () => {
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['Z', 100, 'FirstGroup'],
+          ['M', 50, 'SecondGroup'], // rel 1
+          [null, null, null], // rel 2
+          [null, null, null], // rel 3 (excess 1)
+          [null, null, null], // rel 4 (excess 2)
+        ]
+      );
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'A', Score: 10, Name: 'LastGroupRow' },
+        groupConfig: { columnName: 'Group', value: 'A' },
+        sortConfig: { columnName: 'Score', value: 10 },
+      });
+
+      // 3 blanks after M. Deletes 2 excess blanks from rel 3 (abs 4) to rel 5 (abs 6).
+      // Then inserts 1 row at rel 3 (abs 4).
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-abc-123',
+        requestBody: {
+          requests: [
+            {
+              deleteDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 4,
+                  endIndex: 6,
+                },
+              },
+            },
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 4,
+                  endIndex: 5,
+                },
+                inheritFromBefore: true,
+              },
+            },
+            {
+              updateCells: {
+                range: {
+                  sheetId: 0,
+                  startRowIndex: 4,
+                  endRowIndex: 5,
+                  startColumnIndex: 0,
+                  endColumnIndex: 3,
+                },
+                rows: valuesToRowData([['A', 10, 'LastGroupRow']]),
+                fields: 'userEnteredValue',
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    it('heals under-padding around an existing group (inserts blank rows above and below)', async () => {
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['Z', 100, 'GroupZ_1'], // rel 0
+          ['A', 80, 'GroupA_Top'], // rel 1 (0 blanks from Z)
+          ['A', 50, 'GroupA_Bottom'], // rel 2
+          ['B', 70, 'GroupB_1'], // rel 3 (0 blanks from A)
+        ]
+      );
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      // Insert score 65 into Group A (between Top and Bottom at rel 2)
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'A', Score: 65, Name: 'GroupA_Middle' },
+        groupConfig: { columnName: 'Group', value: 'A' },
+        sortConfig: { columnName: 'Score', value: 65 },
+      });
+
+      // 1. Above: 0 blanks -> inserts 1 blank at Group A start (rel 1, abs 2)
+      // 2. Data row: rel 2 inside A + 1 indexShift = rel 3 (abs 4) -> inserts data row at abs 4
+      // 3. Write data row at abs 4
+      // 4. Below: 0 blanks -> inserts 1 blank below Group A at effectiveEndIndex + 1 (2 + 1 + 1 + 1 = 5, abs 6)
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-abc-123',
+        requestBody: {
+          requests: [
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 2,
+                  endIndex: 3,
+                },
+                inheritFromBefore: true,
+              },
+            },
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 4,
+                  endIndex: 5,
+                },
+                inheritFromBefore: true,
+              },
+            },
+            {
+              updateCells: {
+                range: {
+                  sheetId: 0,
+                  startRowIndex: 4,
+                  endRowIndex: 5,
+                  startColumnIndex: 0,
+                  endColumnIndex: 3,
+                },
+                rows: valuesToRowData([['A', 65, 'GroupA_Middle']]),
+                fields: 'userEnteredValue',
+              },
+            },
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 6,
+                  endIndex: 7,
+                },
+                inheritFromBefore: true,
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    it('heals over-padding around an existing group (deletes excess blank rows above and below)', async () => {
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['Z', 100, 'GroupZ_1'], // rel 0
+          [null, null, null], // rel 1
+          [null, null, null], // rel 2 (excess above 1)
+          [null, null, null], // rel 3 (excess above 2)
+          ['A', 80, 'GroupA_1'], // rel 4
+          [null, null, null], // rel 5
+          [null, null, null], // rel 6 (excess below 1)
+          ['B', 70, 'GroupB_1'], // rel 7
+        ]
+      );
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'A', Score: 50, Name: 'GroupA_2' },
+        groupConfig: { columnName: 'Group', value: 'A' },
+        sortConfig: { columnName: 'Score', value: 50 },
+      });
+
+      // 1. Above: 3 blanks -> deletes 2 excess blanks from rel 2 (abs 3) to rel 4 (abs 5)
+      // 2. Data row: rel 5 inside A - 2 indexShift = rel 3 (abs 4) -> inserts data row at abs 4
+      // 3. Write data row at abs 4
+      // 4. Below: 2 blanks -> deletes 1 excess blank below Group A
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-abc-123',
+        requestBody: {
+          requests: [
+            {
+              deleteDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 3,
+                  endIndex: 5,
+                },
+              },
+            },
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 4,
+                  endIndex: 5,
+                },
+                inheritFromBefore: true,
+              },
+            },
+            {
+              updateCells: {
+                range: {
+                  sheetId: 0,
+                  startRowIndex: 4,
+                  endRowIndex: 5,
+                  startColumnIndex: 0,
+                  endColumnIndex: 3,
+                },
+                rows: valuesToRowData([['A', 50, 'GroupA_2']]),
+                fields: 'userEnteredValue',
+              },
+            },
+            {
+              deleteDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 6,
+                  endIndex: 7,
+                },
+              },
+            },
+          ],
+        },
+      });
     });
   });
 });

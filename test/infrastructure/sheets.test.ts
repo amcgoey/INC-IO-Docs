@@ -193,5 +193,96 @@ describe.skipIf(!SPREADSHEET_ID)('Live Google Sheets Integration Tests', () => {
     expect(rows.length).toBeGreaterThanOrEqual(1);
     expect(rows[0][firstCol]).toBe(groupVal);
   });
+
+  it('maintains exact 1-row blank padding separating distinct groups in a live spreadsheet', async () => {
+    const headers = await client.readNamedRange({
+      spreadsheetId: SPREADSHEET_ID!,
+      sheetName: SHEET_NAME,
+      rangeName: TEST_HEADER_RANGE_NAME,
+    });
+
+    const headerRow = headers[0] ?? [];
+    const firstCol = String(headerRow[0] ?? 'ID');
+    const secondCol = String(headerRow[1] ?? headerRow[0] ?? 'Score');
+
+    const timestamp = Date.now();
+    const group1 = `GroupZ_${timestamp}`;
+    const group2 = `GroupA_${timestamp}`;
+
+    // Insert into Group 1 (descending higher)
+    await client.insertIntoGroupedList({
+      target: {
+        spreadsheetId: SPREADSHEET_ID!,
+        sheetName: SHEET_NAME,
+        headerRangeName: TEST_HEADER_RANGE_NAME,
+        dataRangeName: TEST_RANGE_NAME,
+      },
+      rowData: {
+        [firstCol]: group1,
+        [secondCol]: 100,
+      },
+      groupConfig: {
+        columnName: firstCol,
+        value: group1,
+      },
+      sortConfig: {
+        columnName: secondCol,
+        value: 100,
+      },
+    });
+
+    // Insert into Group 2 (descending lower)
+    await client.insertIntoGroupedList({
+      target: {
+        spreadsheetId: SPREADSHEET_ID!,
+        sheetName: SHEET_NAME,
+        headerRangeName: TEST_HEADER_RANGE_NAME,
+        dataRangeName: TEST_RANGE_NAME,
+      },
+      rowData: {
+        [firstCol]: group2,
+        [secondCol]: 50,
+      },
+      groupConfig: {
+        columnName: firstCol,
+        value: group2,
+      },
+      sortConfig: {
+        columnName: secondCol,
+        value: 50,
+      },
+    });
+
+    const dataRows = await client.readNamedRange({
+      spreadsheetId: SPREADSHEET_ID!,
+      sheetName: SHEET_NAME,
+      rangeName: TEST_RANGE_NAME,
+    });
+
+    // Locate the rows for group1 and group2
+    const group1Indices: number[] = [];
+    const group2Indices: number[] = [];
+    dataRows.forEach((row, idx) => {
+      const val = row[0];
+      if (val === group1) group1Indices.push(idx);
+      if (val === group2) group2Indices.push(idx);
+    });
+
+    expect(group1Indices.length).toBeGreaterThanOrEqual(1);
+    expect(group2Indices.length).toBeGreaterThanOrEqual(1);
+
+    const group1LastRow = Math.max(...group1Indices);
+    const group2FirstRow = Math.min(...group2Indices);
+
+    // Group 1 precedes Group 2 with descending order
+    expect(group2FirstRow).toBeGreaterThan(group1LastRow);
+
+    // Exactly 1 blank row must separate group1 and group2
+    const rowsBetween = group2FirstRow - group1LastRow - 1;
+    expect(rowsBetween).toBe(1);
+
+    const separatorRow = dataRows[group1LastRow + 1];
+    expect(separatorRow[0] === null || separatorRow[0] === undefined || separatorRow[0] === '').toBe(true);
+  });
 });
 

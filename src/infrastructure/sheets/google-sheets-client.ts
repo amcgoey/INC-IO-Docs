@@ -152,20 +152,18 @@ interface SheetGroup {
   rowIndices: number[];
 }
 
-export function calculateGroupedInsertionIndex(
+export function extractSheetGroups(
   dataValues: CellValue[][],
-  groupTarget: GroupedColumnTarget,
-  sortTarget: GroupedColumnTarget
-): number {
-  if (!dataValues || dataValues.length === 0) {
-    return 0;
-  }
-
+  groupColIndex: number
+): SheetGroup[] {
   const groups: SheetGroup[] = [];
+  if (!dataValues || dataValues.length === 0) {
+    return groups;
+  }
 
   for (let i = 0; i < dataValues.length; i++) {
     const row = dataValues[i];
-    const groupVal = row ? row[groupTarget.columnIndex] : null;
+    const groupVal = row ? row[groupColIndex] : null;
 
     if (isCellEmpty(groupVal)) {
       continue;
@@ -188,32 +186,594 @@ export function calculateGroupedInsertionIndex(
     }
   }
 
-  if (groups.length === 0) {
-    return 0;
+  return groups;
+}
+
+function buildNewGroupInsertionRequests(params: {
+  sheetId: number;
+  dataValues: CellValue[][];
+  groups: SheetGroup[];
+  groupTarget: GroupedColumnTarget;
+  dataStartRowIndex: number;
+  rowDataCells: sheets_v4.Schema$RowData[];
+  startColumnIndex: number;
+  endColumnIndex: number;
+}): sheets_v4.Schema$Request[] {
+  const {
+    sheetId,
+    dataValues,
+    groups,
+    groupTarget,
+    dataStartRowIndex,
+    rowDataCells,
+    startColumnIndex,
+    endColumnIndex,
+  } = params;
+
+  let nextGroup: SheetGroup | undefined;
+  let prevGroup: SheetGroup | undefined;
+
+  const nextGroupIdx = groups.findIndex(
+    (g) => compareCellValues(groupTarget.value, g.groupValue) > 0
+  );
+
+  if (nextGroupIdx !== -1) {
+    nextGroup = groups[nextGroupIdx];
+    if (nextGroupIdx > 0) {
+      prevGroup = groups[nextGroupIdx - 1];
+    }
+  } else if (groups.length > 0) {
+    prevGroup = groups[groups.length - 1];
   }
 
+  if (!prevGroup && !nextGroup) {
+    const absInsertIndex = dataStartRowIndex;
+    return [
+      {
+        insertDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: absInsertIndex,
+            endIndex: absInsertIndex + 1,
+          },
+          inheritFromBefore: absInsertIndex > 0,
+        },
+      },
+      {
+        updateCells: {
+          range: {
+            sheetId,
+            startRowIndex: absInsertIndex,
+            endRowIndex: absInsertIndex + 1,
+            startColumnIndex,
+            endColumnIndex,
+          },
+          rows: rowDataCells,
+          fields: 'userEnteredValue',
+        },
+      },
+    ];
+  }
+
+  if (prevGroup && nextGroup) {
+    const currentBlankCount = nextGroup.startIndex - prevGroup.endIndex - 1;
+    const blankStartRel = prevGroup.endIndex + 1;
+    const requests: sheets_v4.Schema$Request[] = [];
+
+    if (currentBlankCount === 0) {
+      const absIndex = dataStartRowIndex + nextGroup.startIndex;
+      requests.push({
+        insertDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: absIndex,
+            endIndex: absIndex + 3,
+          },
+          inheritFromBefore: absIndex > 0,
+        },
+      });
+      const writeRowIndex = absIndex + 1;
+      requests.push({
+        updateCells: {
+          range: {
+            sheetId,
+            startRowIndex: writeRowIndex,
+            endRowIndex: writeRowIndex + 1,
+            startColumnIndex,
+            endColumnIndex,
+          },
+          rows: rowDataCells,
+          fields: 'userEnteredValue',
+        },
+      });
+    } else if (currentBlankCount === 1) {
+      const absIndex = dataStartRowIndex + nextGroup.startIndex;
+      requests.push({
+        insertDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: absIndex,
+            endIndex: absIndex + 2,
+          },
+          inheritFromBefore: absIndex > 0,
+        },
+      });
+      const writeRowIndex = absIndex;
+      requests.push({
+        updateCells: {
+          range: {
+            sheetId,
+            startRowIndex: writeRowIndex,
+            endRowIndex: writeRowIndex + 1,
+            startColumnIndex,
+            endColumnIndex,
+          },
+          rows: rowDataCells,
+          fields: 'userEnteredValue',
+        },
+      });
+    } else if (currentBlankCount === 2) {
+      const absIndex = dataStartRowIndex + blankStartRel + 1;
+      requests.push({
+        insertDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: absIndex,
+            endIndex: absIndex + 1,
+          },
+          inheritFromBefore: absIndex > 0,
+        },
+      });
+      requests.push({
+        updateCells: {
+          range: {
+            sheetId,
+            startRowIndex: absIndex,
+            endRowIndex: absIndex + 1,
+            startColumnIndex,
+            endColumnIndex,
+          },
+          rows: rowDataCells,
+          fields: 'userEnteredValue',
+        },
+      });
+    } else {
+      const excess = currentBlankCount - 2;
+      const absDeleteStart = dataStartRowIndex + blankStartRel + 2;
+      const absDeleteEnd = absDeleteStart + excess;
+      requests.push({
+        deleteDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: absDeleteStart,
+            endIndex: absDeleteEnd,
+          },
+        },
+      });
+      const absIndex = dataStartRowIndex + blankStartRel + 1;
+      requests.push({
+        insertDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: absIndex,
+            endIndex: absIndex + 1,
+          },
+          inheritFromBefore: absIndex > 0,
+        },
+      });
+      requests.push({
+        updateCells: {
+          range: {
+            sheetId,
+            startRowIndex: absIndex,
+            endRowIndex: absIndex + 1,
+            startColumnIndex,
+            endColumnIndex,
+          },
+          rows: rowDataCells,
+          fields: 'userEnteredValue',
+        },
+      });
+    }
+    return requests;
+  }
+
+  if (nextGroup && !prevGroup) {
+    const currentBlankCount = nextGroup.startIndex;
+    const requests: sheets_v4.Schema$Request[] = [];
+
+    if (currentBlankCount === 0) {
+      const absIndex = dataStartRowIndex;
+      requests.push({
+        insertDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: absIndex,
+            endIndex: absIndex + 2,
+          },
+          inheritFromBefore: absIndex > 0,
+        },
+      });
+      requests.push({
+        updateCells: {
+          range: {
+            sheetId,
+            startRowIndex: absIndex,
+            endRowIndex: absIndex + 1,
+            startColumnIndex,
+            endColumnIndex,
+          },
+          rows: rowDataCells,
+          fields: 'userEnteredValue',
+        },
+      });
+    } else if (currentBlankCount === 1) {
+      const absIndex = dataStartRowIndex;
+      requests.push({
+        insertDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: absIndex,
+            endIndex: absIndex + 1,
+          },
+          inheritFromBefore: absIndex > 0,
+        },
+      });
+      requests.push({
+        updateCells: {
+          range: {
+            sheetId,
+            startRowIndex: absIndex,
+            endRowIndex: absIndex + 1,
+            startColumnIndex,
+            endColumnIndex,
+          },
+          rows: rowDataCells,
+          fields: 'userEnteredValue',
+        },
+      });
+    } else {
+      const excess = currentBlankCount - 1;
+      const absDeleteStart = dataStartRowIndex + 1;
+      const absDeleteEnd = absDeleteStart + excess;
+      requests.push({
+        deleteDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: absDeleteStart,
+            endIndex: absDeleteEnd,
+          },
+        },
+      });
+      const absIndex = dataStartRowIndex;
+      requests.push({
+        insertDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: absIndex,
+            endIndex: absIndex + 1,
+          },
+          inheritFromBefore: absIndex > 0,
+        },
+      });
+      requests.push({
+        updateCells: {
+          range: {
+            sheetId,
+            startRowIndex: absIndex,
+            endRowIndex: absIndex + 1,
+            startColumnIndex,
+            endColumnIndex,
+          },
+          rows: rowDataCells,
+          fields: 'userEnteredValue',
+        },
+      });
+    }
+    return requests;
+  }
+
+  // prevGroup && !nextGroup
+  const safePrevGroup = prevGroup as SheetGroup;
+  const blankStartRel = safePrevGroup.endIndex + 1;
+  const currentBlankCount = dataValues.length - blankStartRel;
+  const requests: sheets_v4.Schema$Request[] = [];
+
+  if (currentBlankCount === 0) {
+    const absIndex = dataStartRowIndex + dataValues.length;
+    requests.push({
+      insertDimension: {
+        range: {
+          sheetId,
+          dimension: 'ROWS',
+          startIndex: absIndex,
+          endIndex: absIndex + 2,
+        },
+        inheritFromBefore: absIndex > 0,
+      },
+    });
+    const writeRowIndex = absIndex + 1;
+    requests.push({
+      updateCells: {
+        range: {
+          sheetId,
+          startRowIndex: writeRowIndex,
+          endRowIndex: writeRowIndex + 1,
+          startColumnIndex,
+          endColumnIndex,
+        },
+        rows: rowDataCells,
+        fields: 'userEnteredValue',
+      },
+    });
+  } else if (currentBlankCount === 1) {
+    const absIndex = dataStartRowIndex + blankStartRel + 1;
+    requests.push({
+      insertDimension: {
+        range: {
+          sheetId,
+          dimension: 'ROWS',
+          startIndex: absIndex,
+          endIndex: absIndex + 1,
+        },
+        inheritFromBefore: absIndex > 0,
+      },
+    });
+    requests.push({
+      updateCells: {
+        range: {
+          sheetId,
+          startRowIndex: absIndex,
+          endRowIndex: absIndex + 1,
+          startColumnIndex,
+          endColumnIndex,
+        },
+        rows: rowDataCells,
+        fields: 'userEnteredValue',
+      },
+    });
+  } else {
+    const excess = currentBlankCount - 1;
+    const absDeleteStart = dataStartRowIndex + blankStartRel + 1;
+    const absDeleteEnd = absDeleteStart + excess;
+    requests.push({
+      deleteDimension: {
+        range: {
+          sheetId,
+          dimension: 'ROWS',
+          startIndex: absDeleteStart,
+          endIndex: absDeleteEnd,
+        },
+      },
+    });
+    const absIndex = dataStartRowIndex + blankStartRel + 1;
+    requests.push({
+      insertDimension: {
+        range: {
+          sheetId,
+          dimension: 'ROWS',
+          startIndex: absIndex,
+          endIndex: absIndex + 1,
+        },
+        inheritFromBefore: absIndex > 0,
+      },
+    });
+    requests.push({
+      updateCells: {
+        range: {
+          sheetId,
+          startRowIndex: absIndex,
+          endRowIndex: absIndex + 1,
+          startColumnIndex,
+          endColumnIndex,
+        },
+        rows: rowDataCells,
+        fields: 'userEnteredValue',
+      },
+    });
+  }
+  return requests;
+}
+
+function buildExistingGroupInsertionRequests(params: {
+  sheetId: number;
+  dataValues: CellValue[][];
+  groups: SheetGroup[];
+  targetGroup: SheetGroup;
+  sortTarget: GroupedColumnTarget;
+  dataStartRowIndex: number;
+  rowDataCells: sheets_v4.Schema$RowData[];
+  startColumnIndex: number;
+  endColumnIndex: number;
+}): sheets_v4.Schema$Request[] {
+  const {
+    sheetId,
+    dataValues,
+    groups,
+    targetGroup,
+    sortTarget,
+    dataStartRowIndex,
+    rowDataCells,
+    startColumnIndex,
+    endColumnIndex,
+  } = params;
+
+  let internalInsertRelIndex = targetGroup.endIndex + 1;
+  for (const rowIndex of targetGroup.rowIndices) {
+    const row = dataValues[rowIndex];
+    const rowSortVal = row ? row[sortTarget.columnIndex] : null;
+    if (compareCellValues(sortTarget.value, rowSortVal) > 0) {
+      internalInsertRelIndex = rowIndex;
+      break;
+    }
+  }
+
+  const targetGroupIdx = groups.indexOf(targetGroup);
+  const prevGroup = targetGroupIdx > 0 ? groups[targetGroupIdx - 1] : undefined;
+  const nextGroup = targetGroupIdx < groups.length - 1 ? groups[targetGroupIdx + 1] : undefined;
+
+  const requests: sheets_v4.Schema$Request[] = [];
+  let indexShift = 0;
+
+  if (prevGroup) {
+    const blankRowsAbove = targetGroup.startIndex - prevGroup.endIndex - 1;
+    if (blankRowsAbove === 0) {
+      const absIndex = dataStartRowIndex + targetGroup.startIndex;
+      requests.push({
+        insertDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: absIndex,
+            endIndex: absIndex + 1,
+          },
+          inheritFromBefore: absIndex > 0,
+        },
+      });
+      indexShift += 1;
+    } else if (blankRowsAbove > 1) {
+      const excessAbove = blankRowsAbove - 1;
+      const absDeleteStart = dataStartRowIndex + prevGroup.endIndex + 2;
+      const absDeleteEnd = absDeleteStart + excessAbove;
+      requests.push({
+        deleteDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: absDeleteStart,
+            endIndex: absDeleteEnd,
+          },
+        },
+      });
+      indexShift -= excessAbove;
+    }
+  }
+
+  const absDataRowIndex = dataStartRowIndex + internalInsertRelIndex + indexShift;
+  requests.push({
+    insertDimension: {
+      range: {
+        sheetId,
+        dimension: 'ROWS',
+        startIndex: absDataRowIndex,
+        endIndex: absDataRowIndex + 1,
+      },
+      inheritFromBefore: absDataRowIndex > 0,
+    },
+  });
+
+  requests.push({
+    updateCells: {
+      range: {
+        sheetId,
+        startRowIndex: absDataRowIndex,
+        endRowIndex: absDataRowIndex + 1,
+        startColumnIndex,
+        endColumnIndex,
+      },
+      rows: rowDataCells,
+      fields: 'userEnteredValue',
+    },
+  });
+
+  if (nextGroup) {
+    const blankRowsBelow = nextGroup.startIndex - targetGroup.endIndex - 1;
+    const effectiveGroupEndIndex = targetGroup.endIndex + indexShift + 1;
+    if (blankRowsBelow === 0) {
+      const absIndex = dataStartRowIndex + effectiveGroupEndIndex + 1;
+      requests.push({
+        insertDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: absIndex,
+            endIndex: absIndex + 1,
+          },
+          inheritFromBefore: absIndex > 0,
+        },
+      });
+    } else if (blankRowsBelow > 1) {
+      const excessBelow = blankRowsBelow - 1;
+      const absDeleteStart = dataStartRowIndex + effectiveGroupEndIndex + 2;
+      const absDeleteEnd = absDeleteStart + excessBelow;
+      requests.push({
+        deleteDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: absDeleteStart,
+            endIndex: absDeleteEnd,
+          },
+        },
+      });
+    }
+  }
+
+  return requests;
+}
+
+export function buildGroupedInsertionRequests(params: {
+  sheetId: number;
+  dataValues: CellValue[][];
+  groupTarget: GroupedColumnTarget;
+  sortTarget: GroupedColumnTarget;
+  dataStartRowIndex: number;
+  mappedRow: CellValue[];
+  startColumnIndex: number;
+  endColumnIndex: number;
+}): sheets_v4.Schema$Request[] {
+  const {
+    sheetId,
+    dataValues,
+    groupTarget,
+    sortTarget,
+    dataStartRowIndex,
+    mappedRow,
+    startColumnIndex,
+    endColumnIndex,
+  } = params;
+
+  const groups = extractSheetGroups(dataValues, groupTarget.columnIndex);
   const targetGroup = groups.find(
     (g) => compareCellValues(g.groupValue, groupTarget.value) === 0
   );
 
-  if (targetGroup) {
-    for (const rowIndex of targetGroup.rowIndices) {
-      const row = dataValues[rowIndex];
-      const rowSortVal = row ? row[sortTarget.columnIndex] : null;
-      if (compareCellValues(sortTarget.value, rowSortVal) > 0) {
-        return rowIndex;
-      }
-    }
-    return targetGroup.endIndex + 1;
+  const rowDataCells = valuesToRowData([mappedRow]);
+
+  if (!targetGroup) {
+    return buildNewGroupInsertionRequests({
+      sheetId,
+      dataValues,
+      groups,
+      groupTarget,
+      dataStartRowIndex,
+      rowDataCells,
+      startColumnIndex,
+      endColumnIndex,
+    });
   }
 
-  for (const existingGroup of groups) {
-    if (compareCellValues(groupTarget.value, existingGroup.groupValue) > 0) {
-      return existingGroup.startIndex;
-    }
-  }
-
-  return groups[groups.length - 1].endIndex + 1;
+  return buildExistingGroupInsertionRequests({
+    sheetId,
+    dataValues,
+    groups,
+    targetGroup,
+    sortTarget,
+    dataStartRowIndex,
+    rowDataCells,
+    startColumnIndex,
+    endColumnIndex,
+  });
 }
 
 function requireColumnIndex(
@@ -563,47 +1123,25 @@ export class GoogleSheetsClient implements SheetsClient {
       request.target.dataRangeName
     );
 
-    const relativeInsertionIndex = calculateGroupedInsertionIndex(
-      dataValues,
-      { columnIndex: groupColIndex, value: request.groupConfig.value },
-      { columnIndex: sortColIndex, value: request.sortConfig.value }
-    );
-
-    const dataStartRowIndex = dataRange.gridRange.startRowIndex ?? 0;
-    const absoluteRowIndex = dataStartRowIndex + relativeInsertionIndex;
-
     const mappedRow = mapRowRecordToRow(request.rowData, headerRow, headerRow.length);
 
     const startColumnIndex = headerRange.gridRange.startColumnIndex ?? 0;
     const endColumnIndex = startColumnIndex + mappedRow.length;
+    const dataStartRowIndex = dataRange.gridRange.startRowIndex ?? 0;
+
+    const requests = buildGroupedInsertionRequests({
+      sheetId,
+      dataValues,
+      groupTarget: { columnIndex: groupColIndex, value: request.groupConfig.value },
+      sortTarget: { columnIndex: sortColIndex, value: request.sortConfig.value },
+      dataStartRowIndex,
+      mappedRow,
+      startColumnIndex,
+      endColumnIndex,
+    });
 
     const batchUpdateRequest: sheets_v4.Schema$BatchUpdateSpreadsheetRequest = {
-      requests: [
-        {
-          insertDimension: {
-            range: {
-              sheetId,
-              dimension: 'ROWS',
-              startIndex: absoluteRowIndex,
-              endIndex: absoluteRowIndex + 1,
-            },
-            inheritFromBefore: absoluteRowIndex > 0,
-          },
-        },
-        {
-          updateCells: {
-            range: {
-              sheetId,
-              startRowIndex: absoluteRowIndex,
-              endRowIndex: absoluteRowIndex + 1,
-              startColumnIndex,
-              endColumnIndex,
-            },
-            rows: valuesToRowData([mappedRow]),
-            fields: 'userEnteredValue',
-          },
-        },
-      ],
+      requests,
     };
 
     await this.executeWithRetry(() =>
