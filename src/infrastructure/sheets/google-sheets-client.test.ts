@@ -7,7 +7,9 @@ import {
   cellValueToCellData,
   valuesToRowData,
   compareCellValues,
+  buildColumnIndexMap,
 } from './google-sheets-client';
+
 import {
   GoogleSheetsApiError,
   GoogleSheetsColumnNotFoundError,
@@ -139,7 +141,19 @@ describe('GoogleSheetsClient', () => {
     });
   });
 
+  describe('buildColumnIndexMap', () => {
+    it('maps column headers to indices and ignores empty/null headers', () => {
+      const map = buildColumnIndexMap(['ID', null, 'Name', '', 'Score', 'ID']);
+      expect(map.get('ID')).toBe(0); // first occurrence preserved
+      expect(map.get('Name')).toBe(2);
+      expect(map.get('Score')).toBe(4);
+      expect(map.has('')).toBe(false);
+      expect(map.size).toBe(3);
+    });
+  });
+
   describe('cellValueToCellData & valuesToRowData', () => {
+
     it('maps null and undefined to empty object', () => {
       expect(cellValueToCellData(null)).toEqual({});
       // @ts-expect-error test undefined input
@@ -2649,8 +2663,59 @@ describe('GoogleSheetsClient', () => {
       expect(maxConcurrentCalls).toBe(1);
       expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledTimes(2);
     });
+
+    it('serializes concurrent writeNamedRange and insertIntoGroupedList calls for the same spreadsheet', async () => {
+      mockHeadersAndData([['Group', 'Score']], []);
+
+      const callOrder: string[] = [];
+
+      mockSheetsApi.spreadsheets.values.update.mockImplementation(async () => {
+        callOrder.push('writeNamedRange:start');
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        callOrder.push('writeNamedRange:end');
+        return { data: {} };
+      });
+
+      mockSheetsApi.spreadsheets.batchUpdate.mockImplementation(async () => {
+        callOrder.push('insertIntoGroupedList:start');
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        callOrder.push('insertIntoGroupedList:end');
+        return { data: {} };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      const opWrite = client.writeNamedRange({
+        spreadsheetId: 'concurrent-sheet-2',
+        sheetName: 'Sheet1',
+        rangeName: 'Data',
+        values: [['NewRow']],
+      });
+
+      const opInsert = client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'concurrent-sheet-2',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'A', Score: 10 },
+        groupConfig: { columnName: 'Group', value: 'A' },
+        sortConfig: { columnName: 'Score', value: 10 },
+      });
+
+      await Promise.all([opWrite, opInsert]);
+
+      expect(callOrder).toEqual([
+        'writeNamedRange:start',
+        'writeNamedRange:end',
+        'insertIntoGroupedList:start',
+        'insertIntoGroupedList:end',
+      ]);
+    });
   });
 });
+
 
 
 

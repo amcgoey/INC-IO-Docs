@@ -554,22 +554,37 @@ export function buildGroupedInsertionRequests(
   });
 }
 
+export function buildColumnIndexMap(headerRow: CellValue[]): Map<string, number> {
+  const columnIndexMap = new Map<string, number>();
+  headerRow.forEach((header, index) => {
+    if (header !== null && header !== undefined) {
+      const colName = String(header);
+      if (colName && !columnIndexMap.has(colName)) {
+        columnIndexMap.set(colName, index);
+      }
+    }
+  });
+  return columnIndexMap;
+}
+
 function requireColumnIndex(
   columnIndexMap: Map<string, number>,
   columnName: string,
-  roleDescription: string,
+  roleDescription: string | undefined,
   context: { headerRangeName: string; sheetName: string }
 ): number {
   const index = columnIndexMap.get(columnName);
   if (index === undefined) {
     const available = Array.from(columnIndexMap.keys());
     const availableMsg = available.length > 0 ? available.join(', ') : 'none';
+    const roleMsg = roleDescription ? ` (${roleDescription})` : '';
     throw new GoogleSheetsColumnNotFoundError(
-      `Column "${columnName}" (${roleDescription}) not found in headers range "${context.headerRangeName}" on sheet "${context.sheetName}". Available headers: ${availableMsg}`
+      `Column "${columnName}"${roleMsg} not found in headers range "${context.headerRangeName}" on sheet "${context.sheetName}". Available headers: ${availableMsg}`
     );
   }
   return index;
 }
+
 
 
 export class GoogleSheetsClient implements SheetsClient {
@@ -808,18 +823,7 @@ export class GoogleSheetsClient implements SheetsClient {
       target.headerRangeName
     );
     const headerRow = headerValues[0] ?? [];
-
-    const columnIndexMap = new Map<string, number>();
-    headerRow.forEach((header, index) => {
-      if (header !== null && header !== undefined) {
-        const colName = String(header);
-        if (colName && !columnIndexMap.has(colName)) {
-          columnIndexMap.set(colName, index);
-        }
-      }
-    });
-
-    return { headerRow, columnIndexMap };
+    return { headerRow, columnIndexMap: buildColumnIndexMap(headerRow) };
   }
 
   async readNamedRange(request: ReadNamedRangeRequest): Promise<CellValue[][]> {
@@ -828,65 +832,67 @@ export class GoogleSheetsClient implements SheetsClient {
   }
 
   async writeNamedRange(request: WriteNamedRangeRequest): Promise<void> {
-    const { sheetId, gridRange } = await this.resolveNamedRange(request);
+    return await this.lock.acquire(request.spreadsheetId, async () => {
+      const { sheetId, gridRange } = await this.resolveNamedRange(request);
 
-    if (request.insertRows) {
-      const rowCount = request.values.length;
-      if (rowCount === 0) {
-        return;
+      if (request.insertRows) {
+        const rowCount = request.values.length;
+        if (rowCount === 0) {
+          return;
+        }
+
+        const startRowIndex = gridRange.startRowIndex ?? 0;
+        const startColumnIndex = gridRange.startColumnIndex ?? 0;
+        const maxColumns = Math.max(...request.values.map((r) => r.length), 1);
+        const endColumnIndex = gridRange.endColumnIndex ?? startColumnIndex + maxColumns;
+
+        await this.executeWithRetry(() =>
+          this.sheetsApi.spreadsheets.batchUpdate({
+            spreadsheetId: request.spreadsheetId,
+            requestBody: {
+              requests: [
+                {
+                  insertDimension: {
+                    range: {
+                      sheetId,
+                      dimension: 'ROWS',
+                      startIndex: startRowIndex,
+                      endIndex: startRowIndex + rowCount,
+                    },
+                    inheritFromBefore: startRowIndex > 0,
+                  },
+                },
+                {
+                  updateCells: {
+                    range: {
+                      sheetId,
+                      startRowIndex,
+                      endRowIndex: startRowIndex + rowCount,
+                      startColumnIndex,
+                      endColumnIndex,
+                    },
+                    rows: valuesToRowData(request.values),
+                    fields: 'userEnteredValue',
+                  },
+                },
+              ],
+            },
+          })
+        );
+      } else {
+        const scopedRange = formatScopedRange(request.sheetName, request.rangeName);
+        await this.executeWithRetry(() =>
+          this.sheetsApi.spreadsheets.values.update({
+            spreadsheetId: request.spreadsheetId,
+            range: scopedRange,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: {
+              values: request.values,
+            },
+          })
+        );
       }
-
-      const startRowIndex = gridRange.startRowIndex ?? 0;
-      const startColumnIndex = gridRange.startColumnIndex ?? 0;
-      const maxColumns = Math.max(...request.values.map((r) => r.length), 1);
-      const endColumnIndex = gridRange.endColumnIndex ?? startColumnIndex + maxColumns;
-
-      await this.executeWithRetry(() =>
-        this.sheetsApi.spreadsheets.batchUpdate({
-          spreadsheetId: request.spreadsheetId,
-          requestBody: {
-            requests: [
-              {
-                insertDimension: {
-                  range: {
-                    sheetId,
-                    dimension: 'ROWS',
-                    startIndex: startRowIndex,
-                    endIndex: startRowIndex + rowCount,
-                  },
-                  inheritFromBefore: startRowIndex > 0,
-                },
-              },
-              {
-                updateCells: {
-                  range: {
-                    sheetId,
-                    startRowIndex,
-                    endRowIndex: startRowIndex + rowCount,
-                    startColumnIndex,
-                    endColumnIndex,
-                  },
-                  rows: valuesToRowData(request.values),
-                  fields: 'userEnteredValue',
-                },
-              },
-            ],
-          },
-        })
-      );
-    } else {
-      const scopedRange = formatScopedRange(request.sheetName, request.rangeName);
-      await this.executeWithRetry(() =>
-        this.sheetsApi.spreadsheets.values.update({
-          spreadsheetId: request.spreadsheetId,
-          range: scopedRange,
-          valueInputOption: 'USER_ENTERED',
-          requestBody: {
-            values: request.values,
-          },
-        })
-      );
-    }
+    });
   }
 
   async insertIntoGroupedList(request: InsertGroupedRowRequest): Promise<void> {
@@ -950,15 +956,13 @@ export class GoogleSheetsClient implements SheetsClient {
 
     const { columnIndexMap } = await this.readHeaderRowAndIndexMap(request.target);
 
-    const targetIndex = columnIndexMap.get(request.columnName);
+    const targetIndex = requireColumnIndex(
+      columnIndexMap,
+      request.columnName,
+      undefined,
+      request.target
+    );
 
-    if (targetIndex === undefined) {
-      const available = Array.from(columnIndexMap.keys());
-      const availableMsg = available.length > 0 ? available.join(', ') : 'none';
-      throw new GoogleSheetsColumnNotFoundError(
-        `Column "${request.columnName}" not found in headers range "${request.target.headerRangeName}" on sheet "${request.target.sheetName}". Available headers: ${availableMsg}`
-      );
-    }
 
     const dataValues = await this.readUnformattedValues(
       request.target.spreadsheetId,
