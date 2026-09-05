@@ -284,5 +284,87 @@ describe.skipIf(!SPREADSHEET_ID)('Live Google Sheets Integration Tests', () => {
     const separatorRow = dataRows[group1LastRow + 1];
     expect(separatorRow[0] === null || separatorRow[0] === undefined || separatorRow[0] === '').toBe(true);
   });
+
+  it('heals manual formatting mistakes in a live spreadsheet by removing excess blank rows and enforcing 1-row padding', async () => {
+    const headers = await client.readNamedRange({
+      spreadsheetId: SPREADSHEET_ID!,
+      sheetName: SHEET_NAME,
+      rangeName: TEST_HEADER_RANGE_NAME,
+    });
+
+    const headerRow = headers[0] ?? [];
+    const firstCol = String(headerRow[0] ?? 'ID');
+    const secondCol = String(headerRow[1] ?? headerRow[0] ?? 'Score');
+
+    const timestamp = Date.now();
+    const groupA = `HealA_${timestamp}`;
+    const groupB = `HealB_${timestamp}`;
+
+    // Step 1: Write raw rows with manual formatting mistakes:
+    // groupA row, followed by 3 blank rows (over-padded), followed by groupB row
+    const messyRows = [
+      [groupA, 100],
+      ['', ''],
+      ['', ''],
+      ['', ''],
+      [groupB, 20],
+    ];
+
+    await client.writeNamedRange({
+      spreadsheetId: SPREADSHEET_ID!,
+      sheetName: SHEET_NAME,
+      rangeName: TEST_RANGE_NAME,
+      values: messyRows,
+      insertRows: true,
+    });
+
+    // Step 2: Insert into groupB, which should trigger healing of the padding above it
+    await client.insertIntoGroupedList({
+      target: {
+        spreadsheetId: SPREADSHEET_ID!,
+        sheetName: SHEET_NAME,
+        headerRangeName: TEST_HEADER_RANGE_NAME,
+        dataRangeName: TEST_RANGE_NAME,
+      },
+      rowData: {
+        [firstCol]: groupB,
+        [secondCol]: 25,
+      },
+      groupConfig: {
+        columnName: firstCol,
+        value: groupB,
+      },
+      sortConfig: {
+        columnName: secondCol,
+        value: 25,
+      },
+    });
+
+    // Step 3: Verify the sheet now has exactly 1 blank row separating groupA and groupB
+    const dataRows = await client.readNamedRange({
+      spreadsheetId: SPREADSHEET_ID!,
+      sheetName: SHEET_NAME,
+      rangeName: TEST_RANGE_NAME,
+    });
+
+    const groupAIndices: number[] = [];
+    const groupBIndices: number[] = [];
+    dataRows.forEach((row, idx) => {
+      const val = row[0];
+      if (val === groupA) groupAIndices.push(idx);
+      if (val === groupB) groupBIndices.push(idx);
+    });
+
+    expect(groupAIndices.length).toBe(1);
+    expect(groupBIndices.length).toBe(2);
+
+    const groupALast = groupAIndices[0];
+    const groupBFirst = Math.min(...groupBIndices);
+
+    // After healing, exactly 1 blank row should separate groupA and groupB
+    expect(groupBFirst - groupALast - 1).toBe(1);
+    const blankRow = dataRows[groupALast + 1];
+    expect(blankRow[0] === null || blankRow[0] === undefined || blankRow[0] === '').toBe(true);
+  });
 });
 
