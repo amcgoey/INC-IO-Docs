@@ -11,6 +11,7 @@ import type {
   SheetsClient,
   SheetsConfigProvider,
   SheetsRetryOptions,
+  SheetTargetConfig,
   WriteNamedRangeRequest,
 } from './types';
 import {
@@ -108,18 +109,6 @@ export function compareCellValues(a: CellValue | undefined, b: CellValue | undef
     return 1;
   }
   if (typeA !== 'number' && typeB === 'number') {
-    return -1;
-  }
-
-  if (typeA === 'boolean' && typeB === 'boolean') {
-    if (a === b) return 0;
-    return a ? 1 : -1;
-  }
-
-  if (typeA === 'boolean' && typeB !== 'boolean') {
-    return 1;
-  }
-  if (typeA !== 'boolean' && typeB === 'boolean') {
     return -1;
   }
 
@@ -361,28 +350,24 @@ export class GoogleSheetsClient implements SheetsClient {
     const targetRangeLower = target.rangeName.toLowerCase();
     const scopedRangeNameLower = `${target.sheetName}!${target.rangeName}`.toLowerCase();
 
-    const matchedNamedRange = (spreadsheet.namedRanges ?? []).find((namedRange) => {
-      const name = (namedRange.name ?? '').toLowerCase();
-      const sheetId = namedRange.range?.sheetId;
-      const isSheetMatch = sheetId === targetSheetId;
-      const isWorkbookLevel = sheetId === undefined || sheetId === null;
-
-      return (
-        (name === targetRangeLower && (isSheetMatch || isWorkbookLevel)) ||
-        name === scopedRangeNameLower
-      );
-    });
+    const namedRanges = spreadsheet.namedRanges ?? [];
+    const matchedNamedRange =
+      namedRanges.find((namedRange) => {
+        const name = (namedRange.name ?? '').toLowerCase();
+        const sheetId = namedRange.range?.sheetId;
+        const nameMatches = name === targetRangeLower || name === scopedRangeNameLower;
+        return nameMatches && sheetId === targetSheetId;
+      }) ??
+      namedRanges.find((namedRange) => {
+        const name = (namedRange.name ?? '').toLowerCase();
+        const sheetId = namedRange.range?.sheetId;
+        const nameMatches = name === targetRangeLower || name === scopedRangeNameLower;
+        return nameMatches && (sheetId === undefined || sheetId === null);
+      });
 
     if (!matchedNamedRange || !matchedNamedRange.range) {
       throw new GoogleSheetsNamedRangeNotFoundError(
         `Named range "${target.rangeName}" not found on sheet "${target.sheetName}" in spreadsheet "${target.spreadsheetId}".`
-      );
-    }
-
-    const resolvedSheetId = matchedNamedRange.range.sheetId ?? targetSheetId;
-    if (resolvedSheetId !== targetSheetId) {
-      throw new GoogleSheetsApiError(
-        `Named range "${target.rangeName}" is on sheetId ${resolvedSheetId}, but was expected on sheet "${target.sheetName}" (sheetId ${targetSheetId}).`
       );
     }
 
@@ -403,6 +388,41 @@ export class GoogleSheetsClient implements SheetsClient {
   }> {
     const spreadsheet = await this.getSpreadsheetMetadata(target.spreadsheetId);
     return this.findNamedRange(spreadsheet, target);
+  }
+
+  private async resolveTargetNamedRanges(target: SheetTargetConfig): Promise<{
+    sheetId: number;
+    headerRange: { namedRange: sheets_v4.Schema$NamedRange; gridRange: sheets_v4.Schema$GridRange };
+    dataRange: { namedRange: sheets_v4.Schema$NamedRange; gridRange: sheets_v4.Schema$GridRange };
+  }> {
+    const spreadsheet = await this.getSpreadsheetMetadata(target.spreadsheetId);
+
+    const headerRange = this.findNamedRange(spreadsheet, {
+      spreadsheetId: target.spreadsheetId,
+      sheetName: target.sheetName,
+      rangeName: target.headerRangeName,
+    });
+
+    const dataRange = this.findNamedRange(spreadsheet, {
+      spreadsheetId: target.spreadsheetId,
+      sheetName: target.sheetName,
+      rangeName: target.dataRangeName,
+    });
+
+    const headerSheetId = headerRange.gridRange.sheetId ?? headerRange.sheetId;
+    const dataSheetId = dataRange.gridRange.sheetId ?? dataRange.sheetId;
+
+    if (headerSheetId !== dataSheetId) {
+      throw new GoogleSheetsApiError(
+        `Headers range "${target.headerRangeName}" (sheetId ${headerSheetId}) and Data range "${target.dataRangeName}" (sheetId ${dataSheetId}) must belong to the same sheet "${target.sheetName}".`
+      );
+    }
+
+    return {
+      sheetId: dataSheetId,
+      headerRange,
+      dataRange,
+    };
   }
 
   private async readUnformattedValues(
@@ -490,27 +510,7 @@ export class GoogleSheetsClient implements SheetsClient {
   }
 
   async insertIntoGroupedList(request: InsertGroupedRowRequest): Promise<void> {
-    const spreadsheet = await this.getSpreadsheetMetadata(request.target.spreadsheetId);
-
-    const headerRangeInfo = this.findNamedRange(spreadsheet, {
-      spreadsheetId: request.target.spreadsheetId,
-      sheetName: request.target.sheetName,
-      rangeName: request.target.headerRangeName,
-    });
-
-    const dataRangeInfo = this.findNamedRange(spreadsheet, {
-      spreadsheetId: request.target.spreadsheetId,
-      sheetName: request.target.sheetName,
-      rangeName: request.target.dataRangeName,
-    });
-
-    if (headerRangeInfo.sheetId !== dataRangeInfo.sheetId) {
-      throw new GoogleSheetsApiError(
-        `Headers range "${request.target.headerRangeName}" (sheetId ${headerRangeInfo.sheetId}) and Data range "${request.target.dataRangeName}" (sheetId ${dataRangeInfo.sheetId}) must belong to the same sheet "${request.target.sheetName}".`
-      );
-    }
-
-    const sheetId = dataRangeInfo.sheetId;
+    const { sheetId, headerRange, dataRange } = await this.resolveTargetNamedRanges(request.target);
 
     const headerValues = await this.readUnformattedValues(
       request.target.spreadsheetId,
@@ -555,12 +555,12 @@ export class GoogleSheetsClient implements SheetsClient {
       { columnIndex: sortColIndex, value: request.sortConfig.value }
     );
 
-    const dataStartRowIndex = dataRangeInfo.gridRange.startRowIndex ?? 0;
+    const dataStartRowIndex = dataRange.gridRange.startRowIndex ?? 0;
     const absoluteRowIndex = dataStartRowIndex + relativeInsertionIndex;
 
     const mappedRow = mapRowRecordToRow(request.rowData, headerRow, headerRow.length);
 
-    const startColumnIndex = headerRangeInfo.gridRange.startColumnIndex ?? 0;
+    const startColumnIndex = headerRange.gridRange.startColumnIndex ?? 0;
     const endColumnIndex = startColumnIndex + mappedRow.length;
 
     const batchUpdateRequest: sheets_v4.Schema$BatchUpdateSpreadsheetRequest = {
@@ -601,11 +601,13 @@ export class GoogleSheetsClient implements SheetsClient {
   }
 
   async findRowsByValue(request: FindRowsRequest): Promise<RowRecord[]> {
-    const headerValues = await this.readNamedRange({
-      spreadsheetId: request.target.spreadsheetId,
-      sheetName: request.target.sheetName,
-      rangeName: request.target.headerRangeName,
-    });
+    await this.resolveTargetNamedRanges(request.target);
+
+    const headerValues = await this.readUnformattedValues(
+      request.target.spreadsheetId,
+      request.target.sheetName,
+      request.target.headerRangeName
+    );
 
     const headerRow = headerValues[0] ?? [];
     const columnIndexMap = new Map<string, number>();
@@ -629,11 +631,11 @@ export class GoogleSheetsClient implements SheetsClient {
       );
     }
 
-    const dataValues = await this.readNamedRange({
-      spreadsheetId: request.target.spreadsheetId,
-      sheetName: request.target.sheetName,
-      rangeName: request.target.dataRangeName,
-    });
+    const dataValues = await this.readUnformattedValues(
+      request.target.spreadsheetId,
+      request.target.sheetName,
+      request.target.dataRangeName
+    );
 
     const matchingRecords: RowRecord[] = [];
 

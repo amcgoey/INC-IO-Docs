@@ -111,6 +111,18 @@ describe('GoogleSheetsClient', () => {
     };
   });
 
+  const mockHeadersAndData = (headers: CellValue[][], data: CellValue[][] = []) => {
+    mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+      if (range.includes('Headers') || range.includes('Header')) {
+        return { data: { values: headers } };
+      }
+      if (range.includes('Data') || range.includes('Entries')) {
+        return { data: { values: data } };
+      }
+      return { data: { values: [] } };
+    });
+  };
+
   describe('formatScopedRange', () => {
     it('wraps sheet name in single quotes and appends range name', () => {
       expect(formatScopedRange('Sheet1', 'Headers')).toBe("'Sheet1'!Headers");
@@ -613,14 +625,6 @@ describe('GoogleSheetsClient', () => {
       expect(compareCellValues(undefined, null)).toBe(0);
     });
 
-    it('sorts booleans (booleans before strings, true before false)', () => {
-      expect(compareCellValues(true, false)).toBeGreaterThan(0);
-      expect(compareCellValues(false, true)).toBeLessThan(0);
-      expect(compareCellValues(true, true)).toBe(0);
-      expect(compareCellValues(true, 'true')).toBeGreaterThan(0);
-      expect(compareCellValues(10, true)).toBeGreaterThan(0);
-    });
-
     it('sorts an array descending matching all rules combined', () => {
       const input: CellValue[] = [null, 'banana', 10, '', 'Apple', 100, 2, 'zebra', null];
       const sorted = [...input].sort((a, b) => compareCellValues(b, a));
@@ -725,7 +729,7 @@ describe('GoogleSheetsClient', () => {
       ).rejects.toThrow(GoogleSheetsApiError);
     });
 
-    it('throws GoogleSheetsApiError if a named range is on a different sheet than target sheet', async () => {
+    it('throws GoogleSheetsNamedRangeNotFoundError if a named range is on a different sheet than target sheet', async () => {
       mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({
         data: {
           ...defaultSpreadsheetMetadata,
@@ -766,27 +770,80 @@ describe('GoogleSheetsClient', () => {
           groupConfig: { columnName: 'ID', value: '1' },
           sortConfig: { columnName: 'ID', value: '1' },
         })
-      ).rejects.toThrow(/Named range "Data" is on sheetId 101, but was expected on sheet "Sheet1"|must belong to the same sheet/);
+      ).rejects.toThrow(GoogleSheetsNamedRangeNotFoundError);
+    });
+
+    it('resolves the correct sheet-scoped named range when multiple sheets have the same range name', async () => {
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({
+        data: {
+          ...defaultSpreadsheetMetadata,
+          namedRanges: [
+            {
+              namedRangeId: 'nr-headers-datalog',
+              name: 'Headers',
+              range: { sheetId: 101, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 2 },
+            },
+            {
+              namedRangeId: 'nr-headers-sheet1',
+              name: 'Headers',
+              range: { sheetId: 0, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 2 },
+            },
+            {
+              namedRangeId: 'nr-data-datalog',
+              name: 'Data',
+              range: { sheetId: 101, startRowIndex: 1, endRowIndex: 20, startColumnIndex: 0, endColumnIndex: 2 },
+            },
+            {
+              namedRangeId: 'nr-data-sheet1',
+              name: 'Data',
+              range: { sheetId: 0, startRowIndex: 1, endRowIndex: 20, startColumnIndex: 0, endColumnIndex: 2 },
+            },
+          ],
+        },
+      });
+
+      mockHeadersAndData([['Group', 'Score']], []);
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1', // Targets sheetId 0
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'G1', Score: 100 },
+        groupConfig: { columnName: 'Group', value: 'G1' },
+        sortConfig: { columnName: 'Score', value: 100 },
+      });
+
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestBody: {
+            requests: expect.arrayContaining([
+              expect.objectContaining({
+                insertDimension: expect.objectContaining({
+                  range: expect.objectContaining({
+                    sheetId: 0, // Must resolve to Sheet1 (0), not DataLog (101)
+                  }),
+                }),
+              }),
+            ]),
+          },
+        })
+      );
     });
 
     it('handles internal blank rows within an existing group without fragmenting the group', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('Headers')) {
-          return { data: { values: [['Group', 'Score', 'Name']] } };
-        }
-        if (range.includes('Data')) {
-          return {
-            data: {
-              values: [
-                ['A', 100, 'Top'],
-                [null, null, null], // Accidental internal blank row
-                ['A', 50, 'Bottom'],
-              ],
-            },
-          };
-        }
-        return { data: { values: [] } };
-      });
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['A', 100, 'Top'],
+          [null, null, null], // Accidental internal blank row
+          ['A', 50, 'Bottom'],
+        ]
+      );
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -822,22 +879,13 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('inserts into an existing group in descending sort order (at top of group)', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('Headers')) {
-          return { data: { values: [['Group', 'Score', 'Name']] } };
-        }
-        if (range.includes('Data')) {
-          return {
-            data: {
-              values: [
-                ['A', 80, 'Alice'],
-                ['A', 50, 'Bob'],
-              ],
-            },
-          };
-        }
-        return { data: { values: [] } };
-      });
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['A', 80, 'Alice'],
+          ['A', 50, 'Bob'],
+        ]
+      );
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -888,22 +936,13 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('inserts into an existing group in middle of group', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('Headers')) {
-          return { data: { values: [['Group', 'Score', 'Name']] } };
-        }
-        if (range.includes('Data')) {
-          return {
-            data: {
-              values: [
-                ['A', 100, 'Top'],
-                ['A', 50, 'Bottom'],
-              ],
-            },
-          };
-        }
-        return { data: { values: [] } };
-      });
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['A', 100, 'Top'],
+          ['A', 50, 'Bottom'],
+        ]
+      );
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -947,22 +986,13 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('inserts at bottom of existing group when sort value is lowest or equal', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('Headers')) {
-          return { data: { values: [['Group', 'Score', 'Name']] } };
-        }
-        if (range.includes('Data')) {
-          return {
-            data: {
-              values: [
-                ['A', 100, 'Top'],
-                ['A', 50, 'Bottom'],
-              ],
-            },
-          };
-        }
-        return { data: { values: [] } };
-      });
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['A', 100, 'Top'],
+          ['A', 50, 'Bottom'],
+        ]
+      );
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -1006,21 +1036,7 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('determines position in descending order when group does not exist (before first group)', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('Headers')) {
-          return { data: { values: [['Group', 'Score', 'Name']] } };
-        }
-        if (range.includes('Data')) {
-          return {
-            data: {
-              values: [
-                ['B', 100, 'ExistingGroupB'],
-              ],
-            },
-          };
-        }
-        return { data: { values: [] } };
-      });
+      mockHeadersAndData([['Group', 'Score', 'Name']], [['B', 100, 'ExistingGroupB']]);
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -1065,24 +1081,15 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('determines position in descending order when group does not exist (between existing groups)', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('Headers')) {
-          return { data: { values: [['Group', 'Score', 'Name']] } };
-        }
-        if (range.includes('Data')) {
-          return {
-            data: {
-              values: [
-                ['Z', 100, 'FirstGroup'],
-                ['Z', 90, 'FirstGroup2'],
-                [null, null, null], // Blank row separator
-                ['A', 80, 'SecondGroup'],
-              ],
-            },
-          };
-        }
-        return { data: { values: [] } };
-      });
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['Z', 100, 'FirstGroup'],
+          ['Z', 90, 'FirstGroup2'],
+          [null, null, null], // Blank row separator
+          ['A', 80, 'SecondGroup'],
+        ]
+      );
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -1127,22 +1134,13 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('determines position in descending order when group does not exist (after last group)', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('Headers')) {
-          return { data: { values: [['Group', 'Score', 'Name']] } };
-        }
-        if (range.includes('Data')) {
-          return {
-            data: {
-              values: [
-                ['Z', 100, 'FirstGroup'],
-                ['M', 50, 'SecondGroup'],
-              ],
-            },
-          };
-        }
-        return { data: { values: [] } };
-      });
+      mockHeadersAndData(
+        [['Group', 'Score', 'Name']],
+        [
+          ['Z', 100, 'FirstGroup'],
+          ['M', 50, 'SecondGroup'],
+        ]
+      );
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -1187,12 +1185,7 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('inserts at index 0 when data range is empty', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('Headers')) {
-          return { data: { values: [['Group', 'Score']] } };
-        }
-        return { data: { values: undefined } };
-      });
+      mockHeadersAndData([['Group', 'Score']], []);
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -1227,12 +1220,7 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('correctly maps RowRecord: ignores extra keys and fills missing headers with null', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('Headers')) {
-          return { data: { values: [['ID', 'Name', 'Notes', 'Active', 'Score']] } };
-        }
-        return { data: { values: [] } };
-      });
+      mockHeadersAndData([['ID', 'Name', 'Notes', 'Active', 'Score']], []);
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -1271,12 +1259,7 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('sets inheritFromBefore: false when inserting at sheet row 0', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('TopHeader')) {
-          return { data: { values: [['Group', 'Val']] } };
-        }
-        return { data: { values: [] } };
-      });
+      mockHeadersAndData([['Group', 'Val']], []);
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -1309,12 +1292,7 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('resolves sheet-scoped named range (e.g. DataLog!LogEntries)', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('TopHeader')) {
-          return { data: { values: [['Group', 'Score']] } };
-        }
-        return { data: { values: [] } };
-      });
+      mockHeadersAndData([['Group', 'Score']], []);
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -1352,27 +1330,14 @@ describe('GoogleSheetsClient', () => {
 
   describe('findRowsByValue', () => {
     it('fetches headers and data, filters matching rows, and returns converted RowRecords', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('Headers')) {
-          return {
-            data: {
-              values: [['ID', 'Name', 'Score', 'Active']],
-            },
-          };
-        }
-        if (range.includes('Data')) {
-          return {
-            data: {
-              values: [
-                ['1', 'Alice', 95.5, true],
-                ['2', 'Bob', 82.0, false],
-                ['3', 'Alice', 99.0, false],
-              ],
-            },
-          };
-        }
-        return { data: { values: [] } };
-      });
+      mockHeadersAndData(
+        [['ID', 'Name', 'Score', 'Active']],
+        [
+          ['1', 'Alice', 95.5, true],
+          ['2', 'Bob', 82.0, false],
+          ['3', 'Alice', 99.0, false],
+        ]
+      );
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -1406,25 +1371,7 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('isolates caller from physical column order and maps missing/trailing cells to null', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('Headers')) {
-          return {
-            data: {
-              values: [['Active', 'ID', 'Role', 'Name']],
-            },
-          };
-        }
-        if (range.includes('Data')) {
-          return {
-            data: {
-              values: [
-                [true, '10'], // Role and Name are omitted/short row
-              ],
-            },
-          };
-        }
-        return { data: { values: [] } };
-      });
+      mockHeadersAndData([['Active', 'ID', 'Role', 'Name']], [[true, '10']]);
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -1445,26 +1392,7 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('returns empty array when no rows match the search value', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('Headers')) {
-          return {
-            data: {
-              values: [['ID', 'Name']],
-            },
-          };
-        }
-        if (range.includes('Data')) {
-          return {
-            data: {
-              values: [
-                ['1', 'Alice'],
-                ['2', 'Bob'],
-              ],
-            },
-          };
-        }
-        return { data: { values: [] } };
-      });
+      mockHeadersAndData([['ID', 'Name']], [['1', 'Alice'], ['2', 'Bob']]);
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -1483,16 +1411,7 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('returns empty array when data range is empty', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('Headers')) {
-          return {
-            data: {
-              values: [['ID', 'Name']],
-            },
-          };
-        }
-        return { data: { values: undefined } };
-      });
+      mockHeadersAndData([['ID', 'Name']], []);
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -1511,27 +1430,14 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('handles numeric, boolean, and null search values accurately', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('Headers')) {
-          return {
-            data: {
-              values: [['ID', 'Score', 'Active', 'Notes']],
-            },
-          };
-        }
-        if (range.includes('Data')) {
-          return {
-            data: {
-              values: [
-                ['1', 95.5, true, 'Great'],
-                ['2', 80, false, null],
-                ['3', 0, false], // Notes omitted
-              ],
-            },
-          };
-        }
-        return { data: { values: [] } };
-      });
+      mockHeadersAndData(
+        [['ID', 'Score', 'Active', 'Notes']],
+        [
+          ['1', 95.5, true, 'Great'],
+          ['2', 80, false, null],
+          ['3', 0, false], // Notes omitted
+        ]
+      );
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -1584,23 +1490,7 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('requires exact column name match and throws if casing differs', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('Headers')) {
-          return {
-            data: {
-              values: [['UserID', 'EmailAddress']],
-            },
-          };
-        }
-        if (range.includes('Data')) {
-          return {
-            data: {
-              values: [['u-1', 'test@example.com']],
-            },
-          };
-        }
-        return { data: { values: [] } };
-      });
+      mockHeadersAndData([['UserID', 'EmailAddress']], [['u-1', 'test@example.com']]);
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
@@ -1636,16 +1526,7 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('throws GoogleSheetsColumnNotFoundError with descriptive error when column name is not found in headers', async () => {
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
-        if (range.includes('Headers')) {
-          return {
-            data: {
-              values: [['ID', 'Name', 'Score']],
-            },
-          };
-        }
-        return { data: { values: [] } };
-      });
+      mockHeadersAndData([['ID', 'Name', 'Score']], []);
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
