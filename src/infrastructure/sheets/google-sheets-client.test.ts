@@ -725,6 +725,102 @@ describe('GoogleSheetsClient', () => {
       ).rejects.toThrow(GoogleSheetsApiError);
     });
 
+    it('throws GoogleSheetsApiError if a named range is on a different sheet than target sheet', async () => {
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({
+        data: {
+          ...defaultSpreadsheetMetadata,
+          namedRanges: [
+            {
+              namedRangeId: 'nr-1',
+              name: 'Headers',
+              range: {
+                sheetId: 0,
+                startRowIndex: 0,
+                endRowIndex: 1,
+              },
+            },
+            {
+              namedRangeId: 'nr-2',
+              name: 'Sheet1!Data', // Name matches scoped pattern, but physical cells reside on sheetId 101
+              range: {
+                sheetId: 101,
+                startRowIndex: 1,
+                endRowIndex: 10,
+              },
+            },
+          ],
+        },
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await expect(
+        client.insertIntoGroupedList({
+          target: {
+            spreadsheetId: 'sheet-abc-123',
+            sheetName: 'Sheet1',
+            headerRangeName: 'Headers',
+            dataRangeName: 'Data',
+          },
+          rowData: { ID: '1' },
+          groupConfig: { columnName: 'ID', value: '1' },
+          sortConfig: { columnName: 'ID', value: '1' },
+        })
+      ).rejects.toThrow(/Named range "Data" is on sheetId 101, but was expected on sheet "Sheet1"|must belong to the same sheet/);
+    });
+
+    it('handles internal blank rows within an existing group without fragmenting the group', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('Headers')) {
+          return { data: { values: [['Group', 'Score', 'Name']] } };
+        }
+        if (range.includes('Data')) {
+          return {
+            data: {
+              values: [
+                ['A', 100, 'Top'],
+                [null, null, null], // Accidental internal blank row
+                ['A', 50, 'Bottom'],
+              ],
+            },
+          };
+        }
+        return { data: { values: [] } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      // Score 70 should insert before row index 2 ('A', 50)
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'A', Score: 70, Name: 'Middle' },
+        groupConfig: { columnName: 'Group', value: 'A' },
+        sortConfig: { columnName: 'Score', value: 70 },
+      });
+
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestBody: {
+            requests: expect.arrayContaining([
+              expect.objectContaining({
+                insertDimension: expect.objectContaining({
+                  range: expect.objectContaining({
+                    startIndex: 3, // 1 + 2 (before the 3rd row in data)
+                    endIndex: 4,
+                  }),
+                }),
+              }),
+            ]),
+          },
+        })
+      );
+    });
+
     it('inserts into an existing group in descending sort order (at top of group)', async () => {
       mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
         if (range.includes('Headers')) {

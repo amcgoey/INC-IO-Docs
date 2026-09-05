@@ -173,28 +173,29 @@ export function calculateGroupedInsertionIndex(
   }
 
   const groups: SheetGroup[] = [];
-  let currentGroup: SheetGroup | null = null;
 
   for (let i = 0; i < dataValues.length; i++) {
     const row = dataValues[i];
     const groupVal = row ? row[groupTarget.columnIndex] : null;
 
     if (isCellEmpty(groupVal)) {
-      currentGroup = null;
       continue;
     }
 
-    if (currentGroup && compareCellValues(groupVal, currentGroup.groupValue) === 0) {
-      currentGroup.endIndex = i;
-      currentGroup.rowIndices.push(i);
+    const existingGroup = groups.find(
+      (g) => compareCellValues(g.groupValue, groupVal) === 0
+    );
+
+    if (existingGroup) {
+      existingGroup.endIndex = i;
+      existingGroup.rowIndices.push(i);
     } else {
-      currentGroup = {
+      groups.push({
         groupValue: groupVal,
         startIndex: i,
         endIndex: i,
         rowIndices: [i],
-      };
-      groups.push(currentGroup);
+      });
     }
   }
 
@@ -230,15 +231,14 @@ function requireColumnIndex(
   columnIndexMap: Map<string, number>,
   columnName: string,
   roleDescription: string,
-  headerRangeName: string,
-  sheetName: string
+  context: { headerRangeName: string; sheetName: string }
 ): number {
   const index = columnIndexMap.get(columnName);
   if (index === undefined) {
     const available = Array.from(columnIndexMap.keys());
     const availableMsg = available.length > 0 ? available.join(', ') : 'none';
     throw new GoogleSheetsColumnNotFoundError(
-      `Column "${columnName}" (${roleDescription}) not found in headers range "${headerRangeName}" on sheet "${sheetName}". Available headers: ${availableMsg}`
+      `Column "${columnName}" (${roleDescription}) not found in headers range "${context.headerRangeName}" on sheet "${context.sheetName}". Available headers: ${availableMsg}`
     );
   }
   return index;
@@ -379,10 +379,20 @@ export class GoogleSheetsClient implements SheetsClient {
       );
     }
 
+    const resolvedSheetId = matchedNamedRange.range.sheetId ?? targetSheetId;
+    if (resolvedSheetId !== targetSheetId) {
+      throw new GoogleSheetsApiError(
+        `Named range "${target.rangeName}" is on sheetId ${resolvedSheetId}, but was expected on sheet "${target.sheetName}" (sheetId ${targetSheetId}).`
+      );
+    }
+
     return {
       sheetId: targetSheetId,
       namedRange: matchedNamedRange,
-      gridRange: matchedNamedRange.range,
+      gridRange: {
+        ...matchedNamedRange.range,
+        sheetId: targetSheetId,
+      },
     };
   }
 
@@ -395,19 +405,26 @@ export class GoogleSheetsClient implements SheetsClient {
     return this.findNamedRange(spreadsheet, target);
   }
 
-  async readNamedRange(request: ReadNamedRangeRequest): Promise<CellValue[][]> {
-    await this.resolveNamedRange(request);
-
-    const scopedRange = formatScopedRange(request.sheetName, request.rangeName);
+  private async readUnformattedValues(
+    spreadsheetId: string,
+    sheetName: string,
+    rangeName: string
+  ): Promise<CellValue[][]> {
+    const scopedRange = formatScopedRange(sheetName, rangeName);
     const response = await this.executeWithRetry(() =>
       this.sheetsApi.spreadsheets.values.get({
-        spreadsheetId: request.spreadsheetId,
+        spreadsheetId,
         range: scopedRange,
         valueRenderOption: 'UNFORMATTED_VALUE',
       })
     );
 
     return (response.data.values as CellValue[][]) ?? [];
+  }
+
+  async readNamedRange(request: ReadNamedRangeRequest): Promise<CellValue[][]> {
+    await this.resolveNamedRange(request);
+    return this.readUnformattedValues(request.spreadsheetId, request.sheetName, request.rangeName);
   }
 
   async writeNamedRange(request: WriteNamedRangeRequest): Promise<void> {
@@ -487,17 +504,19 @@ export class GoogleSheetsClient implements SheetsClient {
       rangeName: request.target.dataRangeName,
     });
 
-    const sheetId = headerRangeInfo.sheetId;
+    if (headerRangeInfo.sheetId !== dataRangeInfo.sheetId) {
+      throw new GoogleSheetsApiError(
+        `Headers range "${request.target.headerRangeName}" (sheetId ${headerRangeInfo.sheetId}) and Data range "${request.target.dataRangeName}" (sheetId ${dataRangeInfo.sheetId}) must belong to the same sheet "${request.target.sheetName}".`
+      );
+    }
 
-    const scopedHeaderRange = formatScopedRange(request.target.sheetName, request.target.headerRangeName);
-    const headerResponse = await this.executeWithRetry(() =>
-      this.sheetsApi.spreadsheets.values.get({
-        spreadsheetId: request.target.spreadsheetId,
-        range: scopedHeaderRange,
-        valueRenderOption: 'UNFORMATTED_VALUE',
-      })
+    const sheetId = dataRangeInfo.sheetId;
+
+    const headerValues = await this.readUnformattedValues(
+      request.target.spreadsheetId,
+      request.target.sheetName,
+      request.target.headerRangeName
     );
-    const headerValues = (headerResponse.data.values as CellValue[][]) ?? [];
     const headerRow = headerValues[0] ?? [];
 
     const columnIndexMap = new Map<string, number>();
@@ -514,27 +533,21 @@ export class GoogleSheetsClient implements SheetsClient {
       columnIndexMap,
       request.groupConfig.columnName,
       'groupConfig',
-      request.target.headerRangeName,
-      request.target.sheetName
+      request.target
     );
 
     const sortColIndex = requireColumnIndex(
       columnIndexMap,
       request.sortConfig.columnName,
       'sortConfig',
-      request.target.headerRangeName,
-      request.target.sheetName
+      request.target
     );
 
-    const scopedDataRange = formatScopedRange(request.target.sheetName, request.target.dataRangeName);
-    const dataResponse = await this.executeWithRetry(() =>
-      this.sheetsApi.spreadsheets.values.get({
-        spreadsheetId: request.target.spreadsheetId,
-        range: scopedDataRange,
-        valueRenderOption: 'UNFORMATTED_VALUE',
-      })
+    const dataValues = await this.readUnformattedValues(
+      request.target.spreadsheetId,
+      request.target.sheetName,
+      request.target.dataRangeName
     );
-    const dataValues = (dataResponse.data.values as CellValue[][]) ?? [];
 
     const relativeInsertionIndex = calculateGroupedInsertionIndex(
       dataValues,
