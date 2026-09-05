@@ -351,21 +351,26 @@ export class GoogleSheetsClient implements SheetsClient {
     const scopedRangeNameLower = `${target.sheetName}!${target.rangeName}`.toLowerCase();
 
     const namedRanges = spreadsheet.namedRanges ?? [];
-    const matchedNamedRange =
-      namedRanges.find((namedRange) => {
-        const name = (namedRange.name ?? '').toLowerCase();
-        const sheetId = namedRange.range?.sheetId;
-        const nameMatches = name === targetRangeLower || name === scopedRangeNameLower;
-        return nameMatches && sheetId === targetSheetId;
-      }) ??
-      namedRanges.find((namedRange) => {
-        const name = (namedRange.name ?? '').toLowerCase();
-        const sheetId = namedRange.range?.sheetId;
-        const nameMatches = name === targetRangeLower || name === scopedRangeNameLower;
-        return nameMatches && (sheetId === undefined || sheetId === null);
-      });
+    let matchedNamedRange: sheets_v4.Schema$NamedRange | undefined;
+    let fallbackWorkbookRange: sheets_v4.Schema$NamedRange | undefined;
 
-    if (!matchedNamedRange || !matchedNamedRange.range) {
+    for (const nr of namedRanges) {
+      const name = (nr.name ?? '').toLowerCase();
+      if (name === targetRangeLower || name === scopedRangeNameLower) {
+        const sheetId = nr.range?.sheetId;
+        if (sheetId === targetSheetId) {
+          matchedNamedRange = nr;
+          break;
+        }
+        if ((sheetId === undefined || sheetId === null) && !fallbackWorkbookRange) {
+          fallbackWorkbookRange = nr;
+        }
+      }
+    }
+
+    const resolvedRange = matchedNamedRange ?? fallbackWorkbookRange;
+
+    if (!resolvedRange || !resolvedRange.range) {
       throw new GoogleSheetsNamedRangeNotFoundError(
         `Named range "${target.rangeName}" not found on sheet "${target.sheetName}" in spreadsheet "${target.spreadsheetId}".`
       );
@@ -373,9 +378,9 @@ export class GoogleSheetsClient implements SheetsClient {
 
     return {
       sheetId: targetSheetId,
-      namedRange: matchedNamedRange,
+      namedRange: resolvedRange,
       gridRange: {
-        ...matchedNamedRange.range,
+        ...resolvedRange.range,
         sheetId: targetSheetId,
       },
     };
@@ -440,6 +445,30 @@ export class GoogleSheetsClient implements SheetsClient {
     );
 
     return (response.data.values as CellValue[][]) ?? [];
+  }
+
+  private async readHeaderRowAndIndexMap(target: SheetTargetConfig): Promise<{
+    headerRow: CellValue[];
+    columnIndexMap: Map<string, number>;
+  }> {
+    const headerValues = await this.readUnformattedValues(
+      target.spreadsheetId,
+      target.sheetName,
+      target.headerRangeName
+    );
+    const headerRow = headerValues[0] ?? [];
+
+    const columnIndexMap = new Map<string, number>();
+    headerRow.forEach((header, index) => {
+      if (header !== null && header !== undefined) {
+        const colName = String(header);
+        if (colName && !columnIndexMap.has(colName)) {
+          columnIndexMap.set(colName, index);
+        }
+      }
+    });
+
+    return { headerRow, columnIndexMap };
   }
 
   async readNamedRange(request: ReadNamedRangeRequest): Promise<CellValue[][]> {
@@ -512,22 +541,7 @@ export class GoogleSheetsClient implements SheetsClient {
   async insertIntoGroupedList(request: InsertGroupedRowRequest): Promise<void> {
     const { sheetId, headerRange, dataRange } = await this.resolveTargetNamedRanges(request.target);
 
-    const headerValues = await this.readUnformattedValues(
-      request.target.spreadsheetId,
-      request.target.sheetName,
-      request.target.headerRangeName
-    );
-    const headerRow = headerValues[0] ?? [];
-
-    const columnIndexMap = new Map<string, number>();
-    headerRow.forEach((header, index) => {
-      if (header !== null && header !== undefined) {
-        const colName = String(header);
-        if (colName && !columnIndexMap.has(colName)) {
-          columnIndexMap.set(colName, index);
-        }
-      }
-    });
+    const { headerRow, columnIndexMap } = await this.readHeaderRowAndIndexMap(request.target);
 
     const groupColIndex = requireColumnIndex(
       columnIndexMap,
@@ -603,23 +617,7 @@ export class GoogleSheetsClient implements SheetsClient {
   async findRowsByValue(request: FindRowsRequest): Promise<RowRecord[]> {
     await this.resolveTargetNamedRanges(request.target);
 
-    const headerValues = await this.readUnformattedValues(
-      request.target.spreadsheetId,
-      request.target.sheetName,
-      request.target.headerRangeName
-    );
-
-    const headerRow = headerValues[0] ?? [];
-    const columnIndexMap = new Map<string, number>();
-
-    headerRow.forEach((header, index) => {
-      if (header !== null && header !== undefined) {
-        const colName = String(header);
-        if (colName && !columnIndexMap.has(colName)) {
-          columnIndexMap.set(colName, index);
-        }
-      }
-    });
+    const { columnIndexMap } = await this.readHeaderRowAndIndexMap(request.target);
 
     const targetIndex = columnIndexMap.get(request.columnName);
 
