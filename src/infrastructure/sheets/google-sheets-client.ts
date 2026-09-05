@@ -5,6 +5,7 @@ import type {
   FindRowsRequest,
   GoogleSheetsClientOptions,
   InsertGroupedRowRequest,
+  NamedRangeTarget,
   ReadNamedRangeRequest,
   RowRecord,
   SheetsClient,
@@ -166,54 +167,48 @@ export class GoogleSheetsClient implements SheetsClient {
     }
   }
 
-  private async resolveNamedRange(
-    spreadsheetId: string,
-    sheetName: string,
-    rangeName: string
-  ): Promise<{
+  private async resolveNamedRange(target: NamedRangeTarget): Promise<{
     sheetId: number;
     namedRange: sheets_v4.Schema$NamedRange;
     gridRange: sheets_v4.Schema$GridRange;
   }> {
     const spreadsheet = await this.executeWithRetry(async () => {
       const response = await this.sheetsApi.spreadsheets.get({
-        spreadsheetId,
+        spreadsheetId: target.spreadsheetId,
         fields: 'sheets(properties(sheetId,title)),namedRanges',
       });
       return response.data;
     });
 
     const targetSheet = (spreadsheet.sheets ?? []).find(
-      (s) => s.properties?.title?.toLowerCase() === sheetName.toLowerCase()
+      (sheet) => sheet.properties?.title?.toLowerCase() === target.sheetName.toLowerCase()
     );
 
     if (!targetSheet || targetSheet.properties?.sheetId === undefined || targetSheet.properties.sheetId === null) {
       throw new GoogleSheetsApiError(
-        `Sheet "${sheetName}" not found in spreadsheet "${spreadsheetId}".`
+        `Sheet "${target.sheetName}" not found in spreadsheet "${target.spreadsheetId}".`
       );
     }
 
     const targetSheetId = targetSheet.properties.sheetId;
+    const targetRangeLower = target.rangeName.toLowerCase();
+    const scopedRangeNameLower = `${target.sheetName}!${target.rangeName}`.toLowerCase();
 
-    const matchedNamedRange = (spreadsheet.namedRanges ?? []).find((nr) => {
-      const name = nr.name ?? '';
-      const sheetMatches = nr.range?.sheetId === targetSheetId;
+    const matchedNamedRange = (spreadsheet.namedRanges ?? []).find((namedRange) => {
+      const name = (namedRange.name ?? '').toLowerCase();
+      const sheetId = namedRange.range?.sheetId;
+      const isSheetMatch = sheetId === targetSheetId;
+      const isWorkbookLevel = sheetId === undefined || sheetId === null;
 
-      if (name.toLowerCase() === rangeName.toLowerCase() && sheetMatches) {
-        return true;
-      }
-      if (name.toLowerCase() === `${sheetName}!${rangeName}`.toLowerCase()) {
-        return true;
-      }
-      if (name.toLowerCase() === rangeName.toLowerCase() && (nr.range?.sheetId === undefined || nr.range?.sheetId === null)) {
-        return true;
-      }
-      return false;
+      return (
+        (name === targetRangeLower && (isSheetMatch || isWorkbookLevel)) ||
+        name === scopedRangeNameLower
+      );
     });
 
     if (!matchedNamedRange || !matchedNamedRange.range) {
       throw new GoogleSheetsNamedRangeNotFoundError(
-        `Named range "${rangeName}" not found on sheet "${sheetName}" in spreadsheet "${spreadsheetId}".`
+        `Named range "${target.rangeName}" not found on sheet "${target.sheetName}" in spreadsheet "${target.spreadsheetId}".`
       );
     }
 
@@ -225,11 +220,7 @@ export class GoogleSheetsClient implements SheetsClient {
   }
 
   async readNamedRange(request: ReadNamedRangeRequest): Promise<CellValue[][]> {
-    await this.resolveNamedRange(
-      request.spreadsheetId,
-      request.sheetName,
-      request.rangeName
-    );
+    await this.resolveNamedRange(request);
 
     const scopedRange = formatScopedRange(request.sheetName, request.rangeName);
     const response = await this.executeWithRetry(() =>
@@ -244,11 +235,7 @@ export class GoogleSheetsClient implements SheetsClient {
   }
 
   async writeNamedRange(request: WriteNamedRangeRequest): Promise<void> {
-    const { sheetId, gridRange } = await this.resolveNamedRange(
-      request.spreadsheetId,
-      request.sheetName,
-      request.rangeName
-    );
+    const { sheetId, gridRange } = await this.resolveNamedRange(request);
 
     if (request.insertRows) {
       const rowCount = request.values.length;
@@ -326,7 +313,7 @@ export class GoogleSheetsClient implements SheetsClient {
 
     headerRow.forEach((header, index) => {
       if (header !== null && header !== undefined) {
-        const colName = String(header).trim();
+        const colName = String(header);
         if (colName && !columnIndexMap.has(colName)) {
           columnIndexMap.set(colName, index);
         }

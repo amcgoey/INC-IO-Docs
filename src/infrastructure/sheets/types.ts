@@ -1,50 +1,65 @@
 import type { OAuth2Client } from 'google-auth-library';
 import type { sheets_v4 } from 'googleapis';
+import { Type, type Static } from '@sinclair/typebox';
 
-export type CellValue = string | number | boolean | null;
-export type RowRecord = Record<string, CellValue>;
+export const CellValueSchema = Type.Union([
+  Type.String(),
+  Type.Number(),
+  Type.Boolean(),
+  Type.Null(),
+]);
+export type CellValue = Static<typeof CellValueSchema>;
 
-export interface SheetTargetConfig {
-  spreadsheetId: string;
-  sheetName: string;       // Scopes the named ranges to a specific tab
-  headerRangeName: string; // The range containing column headers
-  dataRangeName: string;   // The range containing the actual data (must start/end with blank rows)
-}
+export const RowRecordSchema = Type.Record(Type.String(), CellValueSchema);
+export type RowRecord = Static<typeof RowRecordSchema>;
 
-export interface InsertGroupedRowRequest {
-  target: SheetTargetConfig;
-  rowData: RowRecord;
+export const NamedRangeTargetSchema = Type.Object({
+  spreadsheetId: Type.String({ minLength: 1 }),
+  sheetName: Type.String({ minLength: 1 }),
+  rangeName: Type.String({ minLength: 1 }),
+});
+export type NamedRangeTarget = Static<typeof NamedRangeTargetSchema>;
 
-  groupConfig: {
-    columnName: string; // The header name identifying the group
-    value: CellValue;   // The group identifier
-  };
+export const SheetTargetConfigSchema = Type.Object({
+  spreadsheetId: Type.String({ minLength: 1 }),
+  sheetName: Type.String({ minLength: 1 }),
+  headerRangeName: Type.String({ minLength: 1 }),
+  dataRangeName: Type.String({ minLength: 1 }),
+});
+export type SheetTargetConfig = Static<typeof SheetTargetConfigSchema>;
 
-  sortConfig: {
-    columnName: string; // The header name identifying the sort order
-    value: CellValue;   // The sort identifier
-  };
-}
+export const InsertGroupedRowRequestSchema = Type.Object({
+  target: SheetTargetConfigSchema,
+  rowData: RowRecordSchema,
+  groupConfig: Type.Object({
+    columnName: Type.String({ minLength: 1 }),
+    value: CellValueSchema,
+  }),
+  sortConfig: Type.Object({
+    columnName: Type.String({ minLength: 1 }),
+    value: CellValueSchema,
+  }),
+});
+export type InsertGroupedRowRequest = Static<typeof InsertGroupedRowRequestSchema>;
 
-export interface FindRowsRequest {
-  target: SheetTargetConfig;
-  columnName: string;
-  value: CellValue;
-}
+export const FindRowsRequestSchema = Type.Object({
+  target: SheetTargetConfigSchema,
+  columnName: Type.String({ minLength: 1 }),
+  value: CellValueSchema,
+});
+export type FindRowsRequest = Static<typeof FindRowsRequestSchema>;
 
-export interface ReadNamedRangeRequest {
-  spreadsheetId: string;
-  sheetName: string;
-  rangeName: string;
-}
+export const ReadNamedRangeRequestSchema = NamedRangeTargetSchema;
+export type ReadNamedRangeRequest = Static<typeof ReadNamedRangeRequestSchema>;
 
-export interface WriteNamedRangeRequest {
-  spreadsheetId: string;
-  sheetName: string;
-  rangeName: string;
-  values: CellValue[][]; // 2D array for direct grid writes
-  insertRows?: boolean;  // If true, inserts physical rows instead of just overwriting
-}
+export const WriteNamedRangeRequestSchema = Type.Intersect([
+  NamedRangeTargetSchema,
+  Type.Object({
+    values: Type.Array(Type.Array(CellValueSchema)),
+    insertRows: Type.Optional(Type.Boolean()),
+  }),
+]);
+export type WriteNamedRangeRequest = Static<typeof WriteNamedRangeRequestSchema>;
 
 export interface SheetsRetryOptions {
   maxRetries?: number;
