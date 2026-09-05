@@ -116,9 +116,7 @@ describe('AppManifestProvider', () => {
       const rawData = {
         documentTypes: ['./schemas/test.json'],
         configuration: {
-          sheets: {
-            spreadsheetId: 'sheet-123',
-          },
+          sheets: {},
         },
       };
       await fs.writeFile(manifestPath, JSON.stringify(rawData), 'utf-8');
@@ -186,7 +184,6 @@ describe('AppManifestProvider', () => {
           documentTypes: [],
           configuration: {
             sheets: {
-              spreadsheetId: 'sheet-456',
               defaultHeaderRangeName: 'MyHeaders',
               defaultDataRangeName: 'MyData',
               maxRetries: 4,
@@ -202,7 +199,6 @@ describe('AppManifestProvider', () => {
 
       const sheetsConfig = await provider.getSheetsConfig();
       expect(sheetsConfig).toEqual({
-        spreadsheetId: 'sheet-456',
         defaultHeaderRangeName: 'MyHeaders',
         defaultDataRangeName: 'MyData',
         maxRetries: 4,

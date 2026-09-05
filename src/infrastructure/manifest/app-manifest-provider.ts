@@ -18,7 +18,6 @@ export const DriveConfigurationSchema = Type.Object({
 });
 
 export const SheetsConfigurationSchema = Type.Object({
-  spreadsheetId: Type.Optional(Type.String()),
   defaultHeaderRangeName: Type.Optional(Type.String({ default: 'Headers' })),
   defaultDataRangeName: Type.Optional(Type.String({ default: 'Data' })),
   maxRetries: Type.Optional(Type.Number()),
