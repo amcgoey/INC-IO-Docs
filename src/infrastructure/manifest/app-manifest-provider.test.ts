@@ -333,22 +333,13 @@ describe('AppManifestProvider', () => {
       expect(spaceTypes).toEqual(expectedSpaces);
     });
 
-    it('throws error when DocumentSpaceTypes contains invalid structure', async () => {
+    it('throws error when DocumentSpaceTypes is not an array of objects', async () => {
       const manifestPath = path.join(tempDir, 'manifest.json');
       await fs.writeFile(
         manifestPath,
         JSON.stringify({
           documentTypes: [],
-          DocumentSpaceTypes: [
-            {
-              id: 'project',
-              // missing displayName and allowedDocumentTypes
-              storageConfig: {
-                provider: 'google_drive',
-                fetchMethod: 'invalid_method',
-              },
-            },
-          ],
+          DocumentSpaceTypes: 'not-an-array',
         }),
         'utf-8'
       );
@@ -358,6 +349,7 @@ describe('AppManifestProvider', () => {
     });
   });
 });
+
 
 
 

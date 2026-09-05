@@ -37,36 +37,10 @@ export const AppConfigurationSchema = Type.Object({
 
 export type AppConfiguration = Static<typeof AppConfigurationSchema>;
 
-export const StorageContextConfigSchema = Type.Union([
-  Type.Object({
-    provider: Type.String({ minLength: 1 }),
-    fetchMethod: Type.Literal('shared_drives'),
-    paginationLimit: Type.Optional(Type.Number({ default: 500 })),
-  }),
-  Type.Object({
-    provider: Type.String({ minLength: 1 }),
-    fetchMethod: Type.Literal('folders'),
-    parentFolderId: Type.Optional(Type.String()),
-    sharedDriveId: Type.Optional(Type.String()),
-    paginationLimit: Type.Optional(Type.Number({ default: 500 })),
-  }),
-]);
-
-export type StorageContextConfig = Static<typeof StorageContextConfigSchema>;
-
-export const DocumentSpaceTypeConfigSchema = Type.Object({
-  id: Type.String({ minLength: 1 }),
-  displayName: Type.String({ minLength: 1 }),
-  allowedDocumentTypes: Type.Array(Type.String()),
-  storageConfig: StorageContextConfigSchema,
-});
-
-export type DocumentSpaceTypeConfig = Static<typeof DocumentSpaceTypeConfigSchema>;
-
 export const ManifestSchema = Type.Object({
   documentTypes: Type.Array(Type.String()),
   configuration: Type.Optional(AppConfigurationSchema),
-  DocumentSpaceTypes: Type.Optional(Type.Array(DocumentSpaceTypeConfigSchema)),
+  DocumentSpaceTypes: Type.Optional(Type.Array(Type.Record(Type.String(), Type.Unknown()))),
 });
 
 export type Manifest = Static<typeof ManifestSchema>;
@@ -197,7 +171,7 @@ export class AppManifestProvider {
     });
   }
 
-  async getDocumentSpaceTypes(): Promise<DocumentSpaceTypeConfig[]> {
+  async getDocumentSpaceTypes(): Promise<Record<string, unknown>[]> {
     if (!this.isManifestLoaded) {
       try {
         await this.loadManifest();
@@ -211,5 +185,6 @@ export class AppManifestProvider {
     return this.cachedValidatedManifest?.DocumentSpaceTypes ?? [];
   }
 }
+
 
 

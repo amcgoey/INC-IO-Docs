@@ -6,3 +6,8 @@ export interface DocumentSpaceManifestRegistryPort {
   getDocumentSpaceTypes(): Promise<DocumentSpaceType[]>;
 }
 
+export interface RawManifestProviderPort {
+  getRawManifest(): Promise<unknown>;
+}
+
+

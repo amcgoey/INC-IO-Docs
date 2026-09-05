@@ -13,6 +13,7 @@ import {
   DocumentSpaceService,
   DocumentSpaceTypeSchema,
 } from '../../src/features/document-space/domain';
+import { DocumentSpaceManifestRegistryAdapter } from '../../src/features/document-space/adapters/document-space-manifest-registry';
 import type { DocumentSpaceManifestRegistryPort } from '../../src/features/document-space/ports';
 
 describe('DocumentType JSON files schema validation', () => {
@@ -90,13 +91,15 @@ describe('DocumentType JSON files schema validation', () => {
     }
   });
 
-  it('should validate and load DocumentSpaceTypes defined in manifest.json via DocumentSpaceManifestRegistryPort', async () => {
+  it('should validate and load DocumentSpaceTypes defined in manifest.json via DocumentSpaceManifestRegistryAdapter', async () => {
     const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
-    const manifestProvider: DocumentSpaceManifestRegistryPort = new AppManifestProvider({ manifestPath });
-    const service = new DocumentSpaceService(manifestProvider);
+    const manifestProvider = new AppManifestProvider({ manifestPath });
+    const adapter: DocumentSpaceManifestRegistryPort =
+      new DocumentSpaceManifestRegistryAdapter(manifestProvider);
+    const service = new DocumentSpaceService(adapter);
     await service.initialize();
 
-    const spaceTypes = await manifestProvider.getDocumentSpaceTypes();
+    const spaceTypes = await adapter.getDocumentSpaceTypes();
     expect(spaceTypes.length).toBeGreaterThan(0);
 
     for (const spaceType of spaceTypes) {
@@ -108,6 +111,7 @@ describe('DocumentType JSON files schema validation', () => {
     }
   });
 });
+
 
 
 
