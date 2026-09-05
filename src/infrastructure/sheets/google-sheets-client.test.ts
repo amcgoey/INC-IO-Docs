@@ -827,7 +827,7 @@ describe('GoogleSheetsClient', () => {
       ]);
     });
 
-    it('matches column names case-insensitively', async () => {
+    it('requires exact column name match and throws if casing differs', async () => {
       mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
         if (range.includes('Headers')) {
           return {
@@ -848,6 +848,7 @@ describe('GoogleSheetsClient', () => {
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
+      // Exact match succeeds
       const results = await client.findRowsByValue({
         target: {
           spreadsheetId: 'sheet-abc-123',
@@ -855,13 +856,27 @@ describe('GoogleSheetsClient', () => {
           headerRangeName: 'Headers',
           dataRangeName: 'Data',
         },
-        columnName: 'emailaddress',
+        columnName: 'EmailAddress',
         value: 'test@example.com',
       });
 
       expect(results).toEqual([
         { UserID: 'u-1', EmailAddress: 'test@example.com' },
       ]);
+
+      // Casing mismatch fails with GoogleSheetsColumnNotFoundError
+      await expect(
+        client.findRowsByValue({
+          target: {
+            spreadsheetId: 'sheet-abc-123',
+            sheetName: 'Sheet1',
+            headerRangeName: 'Headers',
+            dataRangeName: 'Data',
+          },
+          columnName: 'emailaddress',
+          value: 'test@example.com',
+        })
+      ).rejects.toThrow(GoogleSheetsColumnNotFoundError);
     });
 
     it('throws GoogleSheetsColumnNotFoundError with descriptive error when column name is not found in headers', async () => {

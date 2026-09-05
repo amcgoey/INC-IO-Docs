@@ -333,16 +333,7 @@ export class GoogleSheetsClient implements SheetsClient {
       }
     });
 
-    let targetIndex = columnIndexMap.get(request.columnName.trim());
-    if (targetIndex === undefined) {
-      const lower = request.columnName.trim().toLowerCase();
-      for (const [colName, idx] of columnIndexMap.entries()) {
-        if (colName.toLowerCase() === lower) {
-          targetIndex = idx;
-          break;
-        }
-      }
-    }
+    const targetIndex = columnIndexMap.get(request.columnName);
 
     if (targetIndex === undefined) {
       const available = Array.from(columnIndexMap.keys());
