@@ -6,13 +6,14 @@ import {
   formatScopedRange,
   cellValueToCellData,
   valuesToRowData,
+  compareCellValues,
 } from './google-sheets-client';
 import {
   GoogleSheetsApiError,
   GoogleSheetsColumnNotFoundError,
   GoogleSheetsNamedRangeNotFoundError,
 } from './errors';
-import type { SheetsConfigProvider } from './types';
+import type { CellValue, SheetsConfigProvider } from './types';
 
 describe('GoogleSheetsClient', () => {
   let mockSheetsApi: {
@@ -575,8 +576,63 @@ describe('GoogleSheetsClient', () => {
     });
   });
 
-  describe('Downstream Stubs', () => {
-    it('insertIntoGroupedList throws descriptive error indicating blocked by #99', async () => {
+  describe('compareCellValues', () => {
+    it('sorts numbers in numerical order', () => {
+      expect(compareCellValues(100, 20)).toBeGreaterThan(0);
+      expect(compareCellValues(20, 100)).toBeLessThan(0);
+      expect(compareCellValues(42, 42)).toBe(0);
+      expect(compareCellValues(-10, 5)).toBeLessThan(0);
+      expect(compareCellValues(0, -1)).toBeGreaterThan(0);
+    });
+
+    it('sorts numbers before strings', () => {
+      expect(compareCellValues(10, 'apple')).toBeGreaterThan(0);
+      expect(compareCellValues('apple', 10)).toBeLessThan(0);
+      expect(compareCellValues(0, '0')).toBeGreaterThan(0);
+      expect(compareCellValues(-99, 'zebra')).toBeGreaterThan(0);
+    });
+
+    it('sorts strings case-insensitively', () => {
+      expect(compareCellValues('Alpha', 'alpha')).toBe(0);
+      expect(compareCellValues('zebra', 'Apple')).toBeGreaterThan(0);
+      expect(compareCellValues('Apple', 'zebra')).toBeLessThan(0);
+      expect(compareCellValues('beta', 'beta')).toBe(0);
+    });
+
+    it('sorts nulls and empty strings to bottom', () => {
+      expect(compareCellValues('test', null)).toBeGreaterThan(0);
+      expect(compareCellValues(10, null)).toBeGreaterThan(0);
+      expect(compareCellValues('test', '')).toBeGreaterThan(0);
+      expect(compareCellValues(10, '')).toBeGreaterThan(0);
+      expect(compareCellValues(null, 'test')).toBeLessThan(0);
+      expect(compareCellValues('', 10)).toBeLessThan(0);
+      expect(compareCellValues(null, null)).toBe(0);
+      expect(compareCellValues('', '')).toBe(0);
+      expect(compareCellValues(null, '')).toBe(0);
+      expect(compareCellValues('', null)).toBe(0);
+      expect(compareCellValues(undefined, null)).toBe(0);
+    });
+
+    it('sorts booleans (booleans before strings, true before false)', () => {
+      expect(compareCellValues(true, false)).toBeGreaterThan(0);
+      expect(compareCellValues(false, true)).toBeLessThan(0);
+      expect(compareCellValues(true, true)).toBe(0);
+      expect(compareCellValues(true, 'true')).toBeGreaterThan(0);
+      expect(compareCellValues(10, true)).toBeGreaterThan(0);
+    });
+
+    it('sorts an array descending matching all rules combined', () => {
+      const input: CellValue[] = [null, 'banana', 10, '', 'Apple', 100, 2, 'zebra', null];
+      const sorted = [...input].sort((a, b) => compareCellValues(b, a));
+      expect(sorted).toEqual([100, 10, 2, 'zebra', 'banana', 'Apple', null, '', null]);
+    });
+  });
+
+  describe('insertIntoGroupedList', () => {
+    it('throws GoogleSheetsColumnNotFoundError if groupConfig.columnName is not in headers', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
+        data: { values: [['ID', 'Score', 'Status']] },
+      });
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
 
       await expect(
@@ -587,12 +643,616 @@ describe('GoogleSheetsClient', () => {
             headerRangeName: 'Headers',
             dataRangeName: 'Data',
           },
-          rowData: { ID: '10' },
-          groupConfig: { columnName: 'ID', value: '10' },
-          sortConfig: { columnName: 'ID', value: '10' },
+          rowData: { ID: '1', Score: 100 },
+          groupConfig: { columnName: 'NonExistentGroup', value: 'GrpA' },
+          sortConfig: { columnName: 'Score', value: 100 },
         })
-      ).rejects.toThrow(/Method insertIntoGroupedList not yet implemented\. Blocked by Issue #99\./);
+      ).rejects.toThrow(GoogleSheetsColumnNotFoundError);
     });
+
+    it('throws GoogleSheetsColumnNotFoundError if sortConfig.columnName is not in headers', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
+        data: { values: [['ID', 'Group', 'Status']] },
+      });
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await expect(
+        client.insertIntoGroupedList({
+          target: {
+            spreadsheetId: 'sheet-abc-123',
+            sheetName: 'Sheet1',
+            headerRangeName: 'Headers',
+            dataRangeName: 'Data',
+          },
+          rowData: { ID: '1', Group: 'GrpA' },
+          groupConfig: { columnName: 'Group', value: 'GrpA' },
+          sortConfig: { columnName: 'MissingSortColumn', value: 100 },
+        })
+      ).rejects.toThrow(GoogleSheetsColumnNotFoundError);
+    });
+
+    it('throws GoogleSheetsNamedRangeNotFoundError if headerRangeName does not exist', async () => {
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await expect(
+        client.insertIntoGroupedList({
+          target: {
+            spreadsheetId: 'sheet-abc-123',
+            sheetName: 'Sheet1',
+            headerRangeName: 'UnknownHeaders',
+            dataRangeName: 'Data',
+          },
+          rowData: { ID: '1' },
+          groupConfig: { columnName: 'ID', value: '1' },
+          sortConfig: { columnName: 'ID', value: '1' },
+        })
+      ).rejects.toThrow(GoogleSheetsNamedRangeNotFoundError);
+    });
+
+    it('throws GoogleSheetsNamedRangeNotFoundError if dataRangeName does not exist', async () => {
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await expect(
+        client.insertIntoGroupedList({
+          target: {
+            spreadsheetId: 'sheet-abc-123',
+            sheetName: 'Sheet1',
+            headerRangeName: 'Headers',
+            dataRangeName: 'UnknownData',
+          },
+          rowData: { ID: '1' },
+          groupConfig: { columnName: 'ID', value: '1' },
+          sortConfig: { columnName: 'ID', value: '1' },
+        })
+      ).rejects.toThrow(GoogleSheetsNamedRangeNotFoundError);
+    });
+
+    it('throws GoogleSheetsApiError if sheet is not found', async () => {
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await expect(
+        client.insertIntoGroupedList({
+          target: {
+            spreadsheetId: 'sheet-abc-123',
+            sheetName: 'MissingSheet',
+            headerRangeName: 'Headers',
+            dataRangeName: 'Data',
+          },
+          rowData: { ID: '1' },
+          groupConfig: { columnName: 'ID', value: '1' },
+          sortConfig: { columnName: 'ID', value: '1' },
+        })
+      ).rejects.toThrow(GoogleSheetsApiError);
+    });
+
+    it('inserts into an existing group in descending sort order (at top of group)', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('Headers')) {
+          return { data: { values: [['Group', 'Score', 'Name']] } };
+        }
+        if (range.includes('Data')) {
+          return {
+            data: {
+              values: [
+                ['A', 80, 'Alice'],
+                ['A', 50, 'Bob'],
+              ],
+            },
+          };
+        }
+        return { data: { values: [] } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data', // Data startRowIndex is 1
+        },
+        rowData: { Group: 'A', Score: 95, Name: 'Charlie' },
+        groupConfig: { columnName: 'Group', value: 'A' },
+        sortConfig: { columnName: 'Score', value: 95 },
+      });
+
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-abc-123',
+        requestBody: {
+          requests: [
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex: 1, // data startRowIndex (1) + relative index (0)
+                  endIndex: 2,
+                },
+                inheritFromBefore: true,
+              },
+            },
+            {
+              updateCells: {
+                range: {
+                  sheetId: 0,
+                  startRowIndex: 1,
+                  endRowIndex: 2,
+                  startColumnIndex: 0,
+                  endColumnIndex: 3,
+                },
+                rows: valuesToRowData([['A', 95, 'Charlie']]),
+                fields: 'userEnteredValue',
+              },
+            },
+          ],
+        },
+      });
+      expect(mockSheetsApi.spreadsheets.values.update).not.toHaveBeenCalled();
+    });
+
+    it('inserts into an existing group in middle of group', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('Headers')) {
+          return { data: { values: [['Group', 'Score', 'Name']] } };
+        }
+        if (range.includes('Data')) {
+          return {
+            data: {
+              values: [
+                ['A', 100, 'Top'],
+                ['A', 50, 'Bottom'],
+              ],
+            },
+          };
+        }
+        return { data: { values: [] } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'A', Score: 75, Name: 'Middle' },
+        groupConfig: { columnName: 'Group', value: 'A' },
+        sortConfig: { columnName: 'Score', value: 75 },
+      });
+
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestBody: {
+            requests: [
+              expect.objectContaining({
+                insertDimension: expect.objectContaining({
+                  range: expect.objectContaining({
+                    startIndex: 2, // data startRowIndex (1) + relative index (1)
+                    endIndex: 3,
+                  }),
+                }),
+              }),
+              expect.objectContaining({
+                updateCells: expect.objectContaining({
+                  range: expect.objectContaining({
+                    startRowIndex: 2,
+                    endRowIndex: 3,
+                  }),
+                  rows: valuesToRowData([['A', 75, 'Middle']]),
+                }),
+              }),
+            ],
+          },
+        })
+      );
+    });
+
+    it('inserts at bottom of existing group when sort value is lowest or equal', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('Headers')) {
+          return { data: { values: [['Group', 'Score', 'Name']] } };
+        }
+        if (range.includes('Data')) {
+          return {
+            data: {
+              values: [
+                ['A', 100, 'Top'],
+                ['A', 50, 'Bottom'],
+              ],
+            },
+          };
+        }
+        return { data: { values: [] } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'A', Score: 50, Name: 'EqualBottom' },
+        groupConfig: { columnName: 'Group', value: 'A' },
+        sortConfig: { columnName: 'Score', value: 50 },
+      });
+
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestBody: {
+            requests: [
+              expect.objectContaining({
+                insertDimension: expect.objectContaining({
+                  range: expect.objectContaining({
+                    startIndex: 3, // data startRowIndex (1) + relative index (2)
+                    endIndex: 4,
+                  }),
+                }),
+              }),
+              expect.objectContaining({
+                updateCells: expect.objectContaining({
+                  range: expect.objectContaining({
+                    startRowIndex: 3,
+                    endRowIndex: 4,
+                  }),
+                  rows: valuesToRowData([['A', 50, 'EqualBottom']]),
+                }),
+              }),
+            ],
+          },
+        })
+      );
+    });
+
+    it('determines position in descending order when group does not exist (before first group)', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('Headers')) {
+          return { data: { values: [['Group', 'Score', 'Name']] } };
+        }
+        if (range.includes('Data')) {
+          return {
+            data: {
+              values: [
+                ['B', 100, 'ExistingGroupB'],
+              ],
+            },
+          };
+        }
+        return { data: { values: [] } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      // 'C' > 'B' in descending order, so group 'C' must be inserted before group 'B'
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'C', Score: 50, Name: 'GroupC_Row' },
+        groupConfig: { columnName: 'Group', value: 'C' },
+        sortConfig: { columnName: 'Score', value: 50 },
+      });
+
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestBody: {
+            requests: [
+              expect.objectContaining({
+                insertDimension: expect.objectContaining({
+                  range: expect.objectContaining({
+                    startIndex: 1, // data startRowIndex (1) + relative index (0)
+                    endIndex: 2,
+                  }),
+                }),
+              }),
+              expect.objectContaining({
+                updateCells: expect.objectContaining({
+                  range: expect.objectContaining({
+                    startRowIndex: 1,
+                    endRowIndex: 2,
+                  }),
+                  rows: valuesToRowData([['C', 50, 'GroupC_Row']]),
+                }),
+              }),
+            ],
+          },
+        })
+      );
+    });
+
+    it('determines position in descending order when group does not exist (between existing groups)', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('Headers')) {
+          return { data: { values: [['Group', 'Score', 'Name']] } };
+        }
+        if (range.includes('Data')) {
+          return {
+            data: {
+              values: [
+                ['Z', 100, 'FirstGroup'],
+                ['Z', 90, 'FirstGroup2'],
+                [null, null, null], // Blank row separator
+                ['A', 80, 'SecondGroup'],
+              ],
+            },
+          };
+        }
+        return { data: { values: [] } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      // 'M' is between 'Z' and 'A' (Z > M > A). Should insert at start of group 'A' (relative index 3).
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'M', Score: 60, Name: 'MiddleGroupRow' },
+        groupConfig: { columnName: 'Group', value: 'M' },
+        sortConfig: { columnName: 'Score', value: 60 },
+      });
+
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestBody: {
+            requests: [
+              expect.objectContaining({
+                insertDimension: expect.objectContaining({
+                  range: expect.objectContaining({
+                    startIndex: 4, // data startRowIndex (1) + relative index (3)
+                    endIndex: 5,
+                  }),
+                }),
+              }),
+              expect.objectContaining({
+                updateCells: expect.objectContaining({
+                  range: expect.objectContaining({
+                    startRowIndex: 4,
+                    endRowIndex: 5,
+                  }),
+                  rows: valuesToRowData([['M', 60, 'MiddleGroupRow']]),
+                }),
+              }),
+            ],
+          },
+        })
+      );
+    });
+
+    it('determines position in descending order when group does not exist (after last group)', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('Headers')) {
+          return { data: { values: [['Group', 'Score', 'Name']] } };
+        }
+        if (range.includes('Data')) {
+          return {
+            data: {
+              values: [
+                ['Z', 100, 'FirstGroup'],
+                ['M', 50, 'SecondGroup'],
+              ],
+            },
+          };
+        }
+        return { data: { values: [] } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      // 'A' is smaller than 'Z' and 'M'. Should insert after 'M' (relative index 2).
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'A', Score: 10, Name: 'LastGroupRow' },
+        groupConfig: { columnName: 'Group', value: 'A' },
+        sortConfig: { columnName: 'Score', value: 10 },
+      });
+
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestBody: {
+            requests: [
+              expect.objectContaining({
+                insertDimension: expect.objectContaining({
+                  range: expect.objectContaining({
+                    startIndex: 3, // 1 + 2
+                    endIndex: 4,
+                  }),
+                }),
+              }),
+              expect.objectContaining({
+                updateCells: expect.objectContaining({
+                  range: expect.objectContaining({
+                    startRowIndex: 3,
+                    endRowIndex: 4,
+                  }),
+                  rows: valuesToRowData([['A', 10, 'LastGroupRow']]),
+                }),
+              }),
+            ],
+          },
+        })
+      );
+    });
+
+    it('inserts at index 0 when data range is empty', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('Headers')) {
+          return { data: { values: [['Group', 'Score']] } };
+        }
+        return { data: { values: undefined } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: { Group: 'First', Score: 100 },
+        groupConfig: { columnName: 'Group', value: 'First' },
+        sortConfig: { columnName: 'Score', value: 100 },
+      });
+
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestBody: {
+            requests: expect.arrayContaining([
+              expect.objectContaining({
+                insertDimension: expect.objectContaining({
+                  range: expect.objectContaining({
+                    startIndex: 1, // startRowIndex 1 + 0
+                    endIndex: 2,
+                  }),
+                }),
+              }),
+            ]),
+          },
+        })
+      );
+    });
+
+    it('correctly maps RowRecord: ignores extra keys and fills missing headers with null', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('Headers')) {
+          return { data: { values: [['ID', 'Name', 'Notes', 'Active', 'Score']] } };
+        }
+        return { data: { values: [] } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          headerRangeName: 'Headers',
+          dataRangeName: 'Data',
+        },
+        rowData: {
+          ID: '123',
+          Name: 'Bob',
+          UnmappedExtraField1: 'ignored',
+          UnmappedExtraField2: 999,
+          // Notes and Active omitted
+          Score: 0,
+        },
+        groupConfig: { columnName: 'ID', value: '123' },
+        sortConfig: { columnName: 'Score', value: 0 },
+      });
+
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestBody: {
+            requests: expect.arrayContaining([
+              expect.objectContaining({
+                updateCells: expect.objectContaining({
+                  rows: valuesToRowData([['123', 'Bob', null, null, 0]]),
+                }),
+              }),
+            ]),
+          },
+        })
+      );
+    });
+
+    it('sets inheritFromBefore: false when inserting at sheet row 0', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('TopHeader')) {
+          return { data: { values: [['Group', 'Val']] } };
+        }
+        return { data: { values: [] } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      // TopHeader starts at row 0. 'Z_New' sorts before existing row 'Group', placing it at row 0
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'DataLog',
+          headerRangeName: 'TopHeader',
+          dataRangeName: 'TopHeader',
+        },
+        rowData: { Group: 'Z_New', Val: 10 },
+        groupConfig: { columnName: 'Group', value: 'Z_New' },
+        sortConfig: { columnName: 'Val', value: 10 },
+      });
+
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestBody: {
+            requests: expect.arrayContaining([
+              expect.objectContaining({
+                insertDimension: expect.objectContaining({
+                  inheritFromBefore: false,
+                }),
+              }),
+            ]),
+          },
+        })
+      );
+    });
+
+    it('resolves sheet-scoped named range (e.g. DataLog!LogEntries)', async () => {
+      mockSheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.includes('TopHeader')) {
+          return { data: { values: [['Group', 'Score']] } };
+        }
+        return { data: { values: [] } };
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'DataLog',
+          headerRangeName: 'TopHeader',
+          dataRangeName: 'LogEntries', // nr-3: DataLog!LogEntries, startRowIndex: 5
+        },
+        rowData: { Group: 'G1', Score: 10 },
+        groupConfig: { columnName: 'Group', value: 'G1' },
+        sortConfig: { columnName: 'Score', value: 10 },
+      });
+
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestBody: {
+            requests: expect.arrayContaining([
+              expect.objectContaining({
+                insertDimension: expect.objectContaining({
+                  range: expect.objectContaining({
+                    sheetId: 101,
+                    startIndex: 5,
+                    endIndex: 6,
+                  }),
+                }),
+              }),
+            ]),
+          },
+        })
+      );
+    });
+  });
 
   describe('findRowsByValue', () => {
     it('fetches headers and data, filters matching rows, and returns converted RowRecords', async () => {
@@ -936,6 +1596,5 @@ describe('GoogleSheetsClient', () => {
         })
       ).rejects.toThrow(GoogleSheetsNamedRangeNotFoundError);
     });
-  });
   });
 });

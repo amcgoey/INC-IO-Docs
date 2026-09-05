@@ -83,6 +83,168 @@ export function valuesToRowData(values: CellValue[][]): sheets_v4.Schema$RowData
   }));
 }
 
+export function isCellEmpty(value: CellValue | undefined): boolean {
+  return value === null || value === undefined || value === '';
+}
+
+export function compareCellValues(a: CellValue | undefined, b: CellValue | undefined): number {
+  const aEmpty = isCellEmpty(a);
+  const bEmpty = isCellEmpty(b);
+
+  if (aEmpty && bEmpty) return 0;
+  if (aEmpty) return -1;
+  if (bEmpty) return 1;
+
+  const typeA = typeof a;
+  const typeB = typeof b;
+
+  if (typeA === 'number' && typeB === 'number') {
+    if ((a as number) < (b as number)) return -1;
+    if ((a as number) > (b as number)) return 1;
+    return 0;
+  }
+
+  if (typeA === 'number' && typeB !== 'number') {
+    return 1;
+  }
+  if (typeA !== 'number' && typeB === 'number') {
+    return -1;
+  }
+
+  if (typeA === 'boolean' && typeB === 'boolean') {
+    if (a === b) return 0;
+    return a ? 1 : -1;
+  }
+
+  if (typeA === 'boolean' && typeB !== 'boolean') {
+    return 1;
+  }
+  if (typeA !== 'boolean' && typeB === 'boolean') {
+    return -1;
+  }
+
+  const strA = String(a).toLowerCase();
+  const strB = String(b).toLowerCase();
+  if (strA < strB) return -1;
+  if (strA > strB) return 1;
+  return 0;
+}
+
+export function mapRowRecordToRow(
+  rowData: RowRecord,
+  headerRow: CellValue[],
+  totalColumns: number
+): CellValue[] {
+  const result: CellValue[] = [];
+  for (let c = 0; c < totalColumns; c++) {
+    const headerName =
+      c < headerRow.length && headerRow[c] !== null && headerRow[c] !== undefined
+        ? String(headerRow[c])
+        : '';
+    if (headerName && Object.prototype.hasOwnProperty.call(rowData, headerName)) {
+      const val = rowData[headerName];
+      result.push(val !== undefined ? val : null);
+    } else {
+      result.push(null);
+    }
+  }
+  return result;
+}
+
+export interface GroupedColumnTarget {
+  columnIndex: number;
+  value: CellValue;
+}
+
+interface SheetGroup {
+  groupValue: CellValue;
+  startIndex: number;
+  endIndex: number;
+  rowIndices: number[];
+}
+
+export function calculateGroupedInsertionIndex(
+  dataValues: CellValue[][],
+  groupTarget: GroupedColumnTarget,
+  sortTarget: GroupedColumnTarget
+): number {
+  if (!dataValues || dataValues.length === 0) {
+    return 0;
+  }
+
+  const groups: SheetGroup[] = [];
+  let currentGroup: SheetGroup | null = null;
+
+  for (let i = 0; i < dataValues.length; i++) {
+    const row = dataValues[i];
+    const groupVal = row ? row[groupTarget.columnIndex] : null;
+
+    if (isCellEmpty(groupVal)) {
+      currentGroup = null;
+      continue;
+    }
+
+    if (currentGroup && compareCellValues(groupVal, currentGroup.groupValue) === 0) {
+      currentGroup.endIndex = i;
+      currentGroup.rowIndices.push(i);
+    } else {
+      currentGroup = {
+        groupValue: groupVal,
+        startIndex: i,
+        endIndex: i,
+        rowIndices: [i],
+      };
+      groups.push(currentGroup);
+    }
+  }
+
+  if (groups.length === 0) {
+    return 0;
+  }
+
+  const targetGroup = groups.find(
+    (g) => compareCellValues(g.groupValue, groupTarget.value) === 0
+  );
+
+  if (targetGroup) {
+    for (const rowIndex of targetGroup.rowIndices) {
+      const row = dataValues[rowIndex];
+      const rowSortVal = row ? row[sortTarget.columnIndex] : null;
+      if (compareCellValues(sortTarget.value, rowSortVal) > 0) {
+        return rowIndex;
+      }
+    }
+    return targetGroup.endIndex + 1;
+  }
+
+  for (const existingGroup of groups) {
+    if (compareCellValues(groupTarget.value, existingGroup.groupValue) > 0) {
+      return existingGroup.startIndex;
+    }
+  }
+
+  return groups[groups.length - 1].endIndex + 1;
+}
+
+function requireColumnIndex(
+  columnIndexMap: Map<string, number>,
+  columnName: string,
+  roleDescription: string,
+  headerRangeName: string,
+  sheetName: string
+): number {
+  const index = columnIndexMap.get(columnName);
+  if (index === undefined) {
+    const available = Array.from(columnIndexMap.keys());
+    const availableMsg = available.length > 0 ? available.join(', ') : 'none';
+    throw new GoogleSheetsColumnNotFoundError(
+      `Column "${columnName}" (${roleDescription}) not found in headers range "${headerRangeName}" on sheet "${sheetName}". Available headers: ${availableMsg}`
+    );
+  }
+  return index;
+}
+
+
 export class GoogleSheetsClient implements SheetsClient {
   private readonly sheetsApi: sheets_v4.Sheets;
   private readonly retryOptions: SheetsRetryOptions;
@@ -167,19 +329,24 @@ export class GoogleSheetsClient implements SheetsClient {
     }
   }
 
-  private async resolveNamedRange(target: NamedRangeTarget): Promise<{
-    sheetId: number;
-    namedRange: sheets_v4.Schema$NamedRange;
-    gridRange: sheets_v4.Schema$GridRange;
-  }> {
-    const spreadsheet = await this.executeWithRetry(async () => {
+  private async getSpreadsheetMetadata(spreadsheetId: string): Promise<sheets_v4.Schema$Spreadsheet> {
+    return await this.executeWithRetry(async () => {
       const response = await this.sheetsApi.spreadsheets.get({
-        spreadsheetId: target.spreadsheetId,
+        spreadsheetId,
         fields: 'sheets(properties(sheetId,title)),namedRanges',
       });
       return response.data;
     });
+  }
 
+  private findNamedRange(
+    spreadsheet: sheets_v4.Schema$Spreadsheet,
+    target: NamedRangeTarget
+  ): {
+    sheetId: number;
+    namedRange: sheets_v4.Schema$NamedRange;
+    gridRange: sheets_v4.Schema$GridRange;
+  } {
     const targetSheet = (spreadsheet.sheets ?? []).find(
       (sheet) => sheet.properties?.title?.toLowerCase() === target.sheetName.toLowerCase()
     );
@@ -217,6 +384,15 @@ export class GoogleSheetsClient implements SheetsClient {
       namedRange: matchedNamedRange,
       gridRange: matchedNamedRange.range,
     };
+  }
+
+  private async resolveNamedRange(target: NamedRangeTarget): Promise<{
+    sheetId: number;
+    namedRange: sheets_v4.Schema$NamedRange;
+    gridRange: sheets_v4.Schema$GridRange;
+  }> {
+    const spreadsheet = await this.getSpreadsheetMetadata(target.spreadsheetId);
+    return this.findNamedRange(spreadsheet, target);
   }
 
   async readNamedRange(request: ReadNamedRangeRequest): Promise<CellValue[][]> {
@@ -297,8 +473,118 @@ export class GoogleSheetsClient implements SheetsClient {
   }
 
   async insertIntoGroupedList(request: InsertGroupedRowRequest): Promise<void> {
-    void request;
-    throw new Error('Method insertIntoGroupedList not yet implemented. Blocked by Issue #99.');
+    const spreadsheet = await this.getSpreadsheetMetadata(request.target.spreadsheetId);
+
+    const headerRangeInfo = this.findNamedRange(spreadsheet, {
+      spreadsheetId: request.target.spreadsheetId,
+      sheetName: request.target.sheetName,
+      rangeName: request.target.headerRangeName,
+    });
+
+    const dataRangeInfo = this.findNamedRange(spreadsheet, {
+      spreadsheetId: request.target.spreadsheetId,
+      sheetName: request.target.sheetName,
+      rangeName: request.target.dataRangeName,
+    });
+
+    const sheetId = headerRangeInfo.sheetId;
+
+    const scopedHeaderRange = formatScopedRange(request.target.sheetName, request.target.headerRangeName);
+    const headerResponse = await this.executeWithRetry(() =>
+      this.sheetsApi.spreadsheets.values.get({
+        spreadsheetId: request.target.spreadsheetId,
+        range: scopedHeaderRange,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      })
+    );
+    const headerValues = (headerResponse.data.values as CellValue[][]) ?? [];
+    const headerRow = headerValues[0] ?? [];
+
+    const columnIndexMap = new Map<string, number>();
+    headerRow.forEach((header, index) => {
+      if (header !== null && header !== undefined) {
+        const colName = String(header);
+        if (colName && !columnIndexMap.has(colName)) {
+          columnIndexMap.set(colName, index);
+        }
+      }
+    });
+
+    const groupColIndex = requireColumnIndex(
+      columnIndexMap,
+      request.groupConfig.columnName,
+      'groupConfig',
+      request.target.headerRangeName,
+      request.target.sheetName
+    );
+
+    const sortColIndex = requireColumnIndex(
+      columnIndexMap,
+      request.sortConfig.columnName,
+      'sortConfig',
+      request.target.headerRangeName,
+      request.target.sheetName
+    );
+
+    const scopedDataRange = formatScopedRange(request.target.sheetName, request.target.dataRangeName);
+    const dataResponse = await this.executeWithRetry(() =>
+      this.sheetsApi.spreadsheets.values.get({
+        spreadsheetId: request.target.spreadsheetId,
+        range: scopedDataRange,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      })
+    );
+    const dataValues = (dataResponse.data.values as CellValue[][]) ?? [];
+
+    const relativeInsertionIndex = calculateGroupedInsertionIndex(
+      dataValues,
+      { columnIndex: groupColIndex, value: request.groupConfig.value },
+      { columnIndex: sortColIndex, value: request.sortConfig.value }
+    );
+
+    const dataStartRowIndex = dataRangeInfo.gridRange.startRowIndex ?? 0;
+    const absoluteRowIndex = dataStartRowIndex + relativeInsertionIndex;
+
+    const mappedRow = mapRowRecordToRow(request.rowData, headerRow, headerRow.length);
+
+    const startColumnIndex = headerRangeInfo.gridRange.startColumnIndex ?? 0;
+    const endColumnIndex = startColumnIndex + mappedRow.length;
+
+    const batchUpdateRequest: sheets_v4.Schema$BatchUpdateSpreadsheetRequest = {
+      requests: [
+        {
+          insertDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: absoluteRowIndex,
+              endIndex: absoluteRowIndex + 1,
+            },
+            inheritFromBefore: absoluteRowIndex > 0,
+          },
+        },
+        {
+          updateCells: {
+            range: {
+              sheetId,
+              startRowIndex: absoluteRowIndex,
+              endRowIndex: absoluteRowIndex + 1,
+              startColumnIndex,
+              endColumnIndex,
+            },
+            rows: valuesToRowData([mappedRow]),
+            fields: 'userEnteredValue',
+          },
+        },
+      ],
+    };
+
+    await this.executeWithRetry(() =>
+      this.sheetsApi.spreadsheets.batchUpdate({
+        spreadsheetId: request.target.spreadsheetId,
+        requestBody: batchUpdateRequest,
+      })
+    );
   }
 
   async findRowsByValue(request: FindRowsRequest): Promise<RowRecord[]> {

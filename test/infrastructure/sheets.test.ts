@@ -142,4 +142,56 @@ describe.skipIf(!SPREADSHEET_ID)('Live Google Sheets Integration Tests', () => {
       })
     ).rejects.toThrow(GoogleSheetsColumnNotFoundError);
   });
+
+  it('inserts a row into a grouped list in a live spreadsheet', async () => {
+    const headers = await client.readNamedRange({
+      spreadsheetId: SPREADSHEET_ID!,
+      sheetName: SHEET_NAME,
+      rangeName: TEST_HEADER_RANGE_NAME,
+    });
+
+    const headerRow = headers[0] ?? [];
+    const firstCol = String(headerRow[0] ?? 'ID');
+    const secondCol = String(headerRow[1] ?? headerRow[0] ?? 'Score');
+
+    const timestamp = Date.now();
+    const groupVal = `Group_${timestamp}`;
+    const sortVal = timestamp;
+
+    await client.insertIntoGroupedList({
+      target: {
+        spreadsheetId: SPREADSHEET_ID!,
+        sheetName: SHEET_NAME,
+        headerRangeName: TEST_HEADER_RANGE_NAME,
+        dataRangeName: TEST_RANGE_NAME,
+      },
+      rowData: {
+        [firstCol]: groupVal,
+        [secondCol]: sortVal,
+      },
+      groupConfig: {
+        columnName: firstCol,
+        value: groupVal,
+      },
+      sortConfig: {
+        columnName: secondCol,
+        value: sortVal,
+      },
+    });
+
+    const rows = await client.findRowsByValue({
+      target: {
+        spreadsheetId: SPREADSHEET_ID!,
+        sheetName: SHEET_NAME,
+        headerRangeName: TEST_HEADER_RANGE_NAME,
+        dataRangeName: TEST_RANGE_NAME,
+      },
+      columnName: firstCol,
+      value: groupVal,
+    });
+
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    expect(rows[0][firstCol]).toBe(groupVal);
+  });
 });
+
