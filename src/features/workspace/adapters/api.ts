@@ -3,7 +3,7 @@ import type {
   WorkspaceConfigProviderPort,
   WorkspaceDocumentRunnerPort,
 } from '../ports';
-import type { DocumentSelectionContext, WorkspaceUiBuilderPort } from './ui-builder';
+import type { DocumentSelectionState, WorkspaceUiBuilderPort } from './ui-builder';
 import {
   extractWorkspaceExecutionContext,
   type WorkspaceExecutionContext,
@@ -93,8 +93,8 @@ export function registerWorkspaceFeatureRoutes(
   ) => {
     const wsConfig = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
 
-    let spaceTypes: DocumentSelectionContext['spaceTypes'] = [];
-    let documentTypes: DocumentSelectionContext['documentTypes'] = [];
+    let spaceTypes: DocumentSelectionState['spaceTypes'] = [];
+    let documentTypes: DocumentSelectionState['documentTypes'] = [];
     let spaces: string[] = [];
 
     const defaultSpaceType = wsConfig?.defaultDocumentSpaceType ?? 'projects';
@@ -137,7 +137,7 @@ export function registerWorkspaceFeatureRoutes(
       }));
     }
 
-    const selectionContext: DocumentSelectionContext = {
+    const selectionContext: DocumentSelectionState = {
       spaceTypes,
       spaces,
       documentTypes,

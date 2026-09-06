@@ -3,7 +3,6 @@ import { describe, it, expect } from 'vitest';
 import { AppManifestProvider } from '../../src/infrastructure/manifest/app-manifest-provider';
 import { DocumentSpaceManifestRegistryAdapter } from '../../src/features/document-space/adapters/document-space-manifest-registry';
 import { DocumentSpaceService } from '../../src/features/document-space/domain';
-import { validateDocumentSpaceTypes } from '../../src/features/document-space/validation';
 import { GoogleDriveStorageAdapter } from '../../src/features/document-space/adapters/google-drive-storage-adapter';
 import { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
 
@@ -24,7 +23,7 @@ describe('DocumentSpaceTypes E2E Validation', () => {
     const service = new DocumentSpaceService(registry, storageAdapter);
     await service.initialize();
     
-    const errors = await validateDocumentSpaceTypes(service);
+    const errors = await service.validateEndToEnd();
     
     // We expect no validation errors (all space types resolve successfully)
     expect(errors).toEqual([]);

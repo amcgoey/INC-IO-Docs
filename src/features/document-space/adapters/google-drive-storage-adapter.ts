@@ -8,6 +8,9 @@ import {
   type StorageLocation,
 } from '../domain';
 import type { DocumentSpaceStoragePort } from '../ports';
+import { DriveNameResolver } from './drive-name-resolver';
+
+export { DriveNameResolver };
 
 export const SharedDrivesStorageConfigSchema = Type.Object({
   provider: Type.Literal('google_drive'),
@@ -103,7 +106,14 @@ async function fetchWithPagination(
 }
 
 export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
-  constructor(private readonly driveClient: DriveStorageClientPort) {}
+  private readonly nameResolver: DriveNameResolver;
+
+  constructor(
+    private readonly driveClient: DriveStorageClientPort,
+    nameResolver?: DriveNameResolver
+  ) {
+    this.nameResolver = nameResolver ?? new DriveNameResolver(driveClient);
+  }
 
   async fetchSpaces(
     config: StorageContextConfig,
@@ -145,45 +155,17 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
 
       let resolvedSharedDriveId = typedConfig.sharedDriveId;
       if (!resolvedSharedDriveId && typedConfig.sharedDriveName) {
-        let drivePageToken: string | undefined;
-        let found = false;
-        do {
-          const res = await this.driveClient.listSharedDrives({
-            pageSize: 100,
-            pageToken: drivePageToken,
-          });
-          const drive = res.drives.find(d => d.name === typedConfig.sharedDriveName);
-          if (drive) {
-            resolvedSharedDriveId = drive.id;
-            found = true;
-            break;
-          }
-          drivePageToken = res.nextPageToken;
-        } while (drivePageToken);
-
-        if (!found) {
-          throw new Error(`Shared drive not found with name: ${typedConfig.sharedDriveName}`);
-        }
+        resolvedSharedDriveId = await this.nameResolver.resolveSharedDriveId(
+          typedConfig.sharedDriveName
+        );
       }
 
       let resolvedParentFolderId = typedConfig.parentFolderId;
       if (!resolvedParentFolderId && typedConfig.parentFolderName) {
-        if (!this.driveClient.searchFiles) {
-          throw new Error('driveClient.searchFiles is not implemented on the provided DriveStorageClientPort');
-        }
-        const files = await this.driveClient.searchFiles({
-          targetName: typedConfig.parentFolderName,
-          exactMatch: true,
-          sharedDriveId: resolvedSharedDriveId,
-          mimeTypes: ['application/vnd.google-apps.folder'],
-        });
-        if (files.length === 0) {
-          throw new Error(`Parent folder not found with name: ${typedConfig.parentFolderName}`);
-        }
-        if (files.length > 1) {
-          throw new Error(`Multiple parent folders found with name: ${typedConfig.parentFolderName}`);
-        }
-        resolvedParentFolderId = files[0].id;
+        resolvedParentFolderId = await this.nameResolver.resolveParentFolderId(
+          typedConfig.parentFolderName,
+          resolvedSharedDriveId
+        );
       }
 
       return fetchWithPagination(limit, typeId, async (pageSize, pageToken) => {

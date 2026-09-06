@@ -257,6 +257,47 @@ describe('GoogleDriveStorageAdapter', () => {
       });
       expect(spaces).toHaveLength(2);
     });
+
+    it('resolves sharedDriveName and parentFolderName via DriveNameResolver', async () => {
+      mockDriveClient.searchFiles = vi.fn().mockResolvedValueOnce([
+        { id: 'resolved-folder-id', name: 'My Folder' },
+      ]);
+      vi.mocked(mockDriveClient.listSharedDrives).mockResolvedValueOnce({
+        drives: [{ id: 'resolved-drive-id', name: 'My Drive' }],
+      });
+      vi.mocked(mockDriveClient.listFolders).mockResolvedValueOnce({
+        folders: [{ id: 'folder-1', name: 'Folder 1' }],
+      });
+
+      const spaces = await adapter.fetchSpaces(
+        {
+          provider: 'google_drive',
+          fetchMethod: 'folders',
+          sharedDriveName: 'My Drive',
+          parentFolderName: 'My Folder',
+        },
+        'proposal'
+      );
+
+      expect(mockDriveClient.listSharedDrives).toHaveBeenCalledWith({
+        pageSize: 100,
+        pageToken: undefined,
+      });
+      expect(mockDriveClient.searchFiles).toHaveBeenCalledWith({
+        targetName: 'My Folder',
+        exactMatch: true,
+        sharedDriveId: 'resolved-drive-id',
+        mimeTypes: ['application/vnd.google-apps.folder'],
+      });
+      expect(mockDriveClient.listFolders).toHaveBeenCalledWith({
+        parentFolderId: 'resolved-folder-id',
+        sharedDriveId: 'resolved-drive-id',
+        pageSize: 100,
+        pageToken: undefined,
+      });
+      expect(spaces).toHaveLength(1);
+      expect(spaces[0].id).toBe('folder-1');
+    });
   });
 
   describe('error handling and schema validation', () => {

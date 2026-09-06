@@ -1,26 +1,28 @@
 import type { WorkspaceDriveSelectedItem } from '../domain';
 import type { WorkspaceConfiguration } from '../ports';
 import type {
-  DocumentSelectionContext,
+  DocumentSelectionState,
   UiActionResponse,
   WorkspaceUiBuilderPort,
 } from './ui-builder';
+
+export interface DriveDocumentProcessCardOptions {
+  selectionContext?: DocumentSelectionState;
+  statusMessage?: string;
+}
 
 export function buildDriveDocumentProcessCard(
   selectedItems: WorkspaceDriveSelectedItem[] | undefined,
   config: WorkspaceConfiguration | undefined,
   uiBuilder: WorkspaceUiBuilderPort,
-  options?: {
-    selectionContext?: DocumentSelectionContext;
-    statusMessage?: string;
-  }
+  options?: DriveDocumentProcessCardOptions
 ): UiActionResponse {
   const header = uiBuilder.buildTitleBlock({
     title: config?.appTitle ?? 'INC-IO Engine',
     subtitle: 'Process Document',
   });
 
-  const selectionContext = options?.selectionContext ?? {
+  const selectionContext: DocumentSelectionState = options?.selectionContext ?? {
     spaceTypes: [],
     spaces: [],
     documentTypes: [],

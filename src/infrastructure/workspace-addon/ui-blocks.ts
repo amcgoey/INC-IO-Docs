@@ -218,14 +218,16 @@ export interface DocumentSelectionItem {
   selected?: boolean;
 }
 
-export interface DocumentSelectionContext {
+export interface DocumentSelectionState {
   spaceTypes: DocumentSelectionItem[];
   spaces: string[];
   documentTypes: DocumentSelectionItem[];
 }
 
+export type DocumentSelectionContext = DocumentSelectionState;
+
 export function buildDocumentTypeSelectionBlock(options: {
-  selectionContext: DocumentSelectionContext;
+  selectionContext: DocumentSelectionState;
   onSpaceTypeChangeAction: string;
 }): CardSection {
   const widgets: CardWidget[] = [];

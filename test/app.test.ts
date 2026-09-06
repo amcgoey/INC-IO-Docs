@@ -1042,6 +1042,9 @@ describe('App integration tests', () => {
         getType: vi.fn(),
         hasType: vi.fn().mockReturnValue(true),
         getCollection: vi.fn().mockRejectedValue(new Error('Drive API network error')),
+        validateEndToEnd: vi.fn().mockResolvedValue([
+          'DocumentSpaceType "unreachable-space" failed end-to-end validation: Drive API network error',
+        ]),
       } as unknown as AppInstance['documentSpaceService'];
     });
 

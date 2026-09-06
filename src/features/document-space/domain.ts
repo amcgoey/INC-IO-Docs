@@ -95,4 +95,22 @@ export class DocumentSpaceService {
       spaces,
     };
   }
+
+  async validateEndToEnd(): Promise<string[]> {
+    const errors: string[] = [];
+    const allTypes = this.getAllTypes();
+
+    for (const spaceType of allTypes) {
+      try {
+        await this.getCollection(spaceType.id);
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        errors.push(
+          `DocumentSpaceType "${spaceType.id}" failed end-to-end validation: ${errorMessage}`
+        );
+      }
+    }
+
+    return errors;
+  }
 }

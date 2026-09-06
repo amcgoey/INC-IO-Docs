@@ -348,6 +348,85 @@ describe('DocumentSpaceService', () => {
       );
     });
   });
+
+  describe('validateEndToEnd', () => {
+    it('returns no errors when all space types can successfully fetch their spaces', async () => {
+      const mockRegistry: DocumentSpaceManifestRegistryPort = {
+        getDocumentSpaceTypes: vi.fn().mockResolvedValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            allowedDocumentTypes: ['project-doc'],
+            storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+          },
+          {
+            id: 'proposals',
+            displayName: 'Proposals',
+            allowedDocumentTypes: ['proposal-doc'],
+            storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+          },
+        ]),
+      };
+      const mockStorage: DocumentSpaceStoragePort = {
+        fetchSpaces: vi.fn().mockResolvedValue([]),
+        resolveStorageLocation: vi.fn(),
+      };
+
+      const service = new DocumentSpaceService(mockRegistry, mockStorage);
+      await service.initialize();
+
+      const errors = await service.validateEndToEnd();
+
+      expect(errors).toEqual([]);
+      expect(mockStorage.fetchSpaces).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns formatted errors when one or more space types fail to fetch spaces', async () => {
+      const mockRegistry: DocumentSpaceManifestRegistryPort = {
+        getDocumentSpaceTypes: vi.fn().mockResolvedValue([
+          {
+            id: 'valid-space',
+            displayName: 'Valid',
+            allowedDocumentTypes: ['doc'],
+            storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+          },
+          {
+            id: 'broken-space',
+            displayName: 'Broken',
+            allowedDocumentTypes: ['doc'],
+            storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+          },
+          {
+            id: 'another-broken',
+            displayName: 'Another Broken',
+            allowedDocumentTypes: ['doc'],
+            storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+          },
+        ]),
+      };
+      const mockStorage: DocumentSpaceStoragePort = {
+        fetchSpaces: vi.fn().mockImplementation(async (_config, typeId: string) => {
+          if (typeId === 'broken-space') {
+            throw new Error('Network timeout');
+          }
+          if (typeId === 'another-broken') {
+            throw 'Unknown string error';
+          }
+          return [];
+        }),
+        resolveStorageLocation: vi.fn(),
+      };
+
+      const service = new DocumentSpaceService(mockRegistry, mockStorage);
+      await service.initialize();
+
+      const errors = await service.validateEndToEnd();
+
+      expect(errors).toHaveLength(2);
+      expect(errors[0]).toBe('DocumentSpaceType "broken-space" failed end-to-end validation: Network timeout');
+      expect(errors[1]).toBe('DocumentSpaceType "another-broken" failed end-to-end validation: Unknown string error');
+    });
+  });
 });
 
 
