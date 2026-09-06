@@ -13,7 +13,7 @@ describe('buildDriveDocumentProcessCard', () => {
       buildStatusMessageBlock: vi.fn().mockReturnValue(null),
       buildDocumentTypeSelectionBlock: vi.fn().mockReturnValue({ header: 'Document Type', widgets: [] }),
       buildCard: vi.fn().mockReturnValue(mockCard),
-      buildNavigationAction: vi.fn().mockReturnValue({ renderActions: { action: { navigations: [{ pushCard: mockCard }] } } }),
+      buildNavigationAction: vi.fn().mockReturnValue({ action: { navigations: [{ pushCard: mockCard }] } }),
       buildErrorCard: vi.fn(),
     };
 
@@ -37,7 +37,7 @@ describe('buildDriveDocumentProcessCard', () => {
       [{ header: 'Document Type', widgets: [] }]
     );
     expect(mockUiBuilder.buildNavigationAction).toHaveBeenCalledWith(mockCard);
-    expect(result).toEqual({ renderActions: { action: { navigations: [{ pushCard: mockCard }] } } });
+    expect(result).toEqual({ action: { navigations: [{ pushCard: mockCard }] } });
   });
 
   it('builds card with status message when provided in options', () => {
@@ -53,7 +53,7 @@ describe('buildDriveDocumentProcessCard', () => {
       buildStatusMessageBlock: vi.fn().mockReturnValue({ widgets: [{ textParagraph: { text: 'Processing selected items...' } }] }),
       buildDocumentTypeSelectionBlock: vi.fn().mockReturnValue({ header: 'Document Type', widgets: [] }),
       buildCard: vi.fn().mockReturnValue(mockCard),
-      buildNavigationAction: vi.fn().mockReturnValue({ renderActions: { action: { navigations: [{ pushCard: mockCard }] } } }),
+      buildNavigationAction: vi.fn().mockReturnValue({ action: { navigations: [{ pushCard: mockCard }] } }),
       buildErrorCard: vi.fn(),
     };
 
@@ -81,6 +81,6 @@ describe('buildDriveDocumentProcessCard', () => {
         { header: 'Document Type', widgets: [] }
       ]
     );
-    expect(result).toEqual({ renderActions: { action: { navigations: [{ pushCard: mockCard }] } } });
+    expect(result).toEqual({ action: { navigations: [{ pushCard: mockCard }] } });
   });
 });

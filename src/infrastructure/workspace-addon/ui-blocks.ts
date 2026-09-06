@@ -146,9 +146,7 @@ export const CardActionSchema = Type.Object({
 export type CardAction = Static<typeof CardActionSchema>;
 
 export const CardActionResponseSchema = Type.Object({
-  renderActions: Type.Object({
-    action: CardActionSchema,
-  }),
+  action: CardActionSchema,
 });
 
 export type CardActionResponse = Static<typeof CardActionResponseSchema>;
@@ -272,14 +270,12 @@ export function buildDocumentTypeSelectionBlock(options: {
 
 export function buildNavigationAction(card: Card): CardActionResponse {
   return {
-    renderActions: {
-      action: {
-        navigations: [
-          {
-            pushCard: card,
-          },
-        ],
-      },
+    action: {
+      navigations: [
+        {
+          pushCard: card,
+        },
+      ],
     },
   };
 }
@@ -290,16 +286,14 @@ export function buildErrorCard(errorMessage: string, title = 'Error'): CardActio
   // messageBlock is guaranteed non-null when isOnlySection is true
   const card = buildCard(header, [messageBlock]);
   return {
-    renderActions: {
-      action: {
-        navigations: [
-          {
-            pushCard: card,
-          },
-        ],
-        notification: {
-          text: errorMessage,
+    action: {
+      navigations: [
+        {
+          pushCard: card,
         },
+      ],
+      notification: {
+        text: errorMessage,
       },
     },
   };
