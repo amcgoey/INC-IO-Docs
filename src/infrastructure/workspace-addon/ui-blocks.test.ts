@@ -5,6 +5,7 @@ import {
   buildCard,
   buildNavigationAction,
   buildErrorCard,
+  buildDocumentTypeSelectionBlock,
 } from './ui-blocks';
 
 describe('Workspace Add-on UI Blocks', () => {
@@ -175,4 +176,81 @@ describe('Workspace Add-on UI Blocks', () => {
       expect(pushCard.header.title).toBe('Connection Error');
     });
   });
+
+  describe('buildDocumentTypeSelectionBlock', () => {
+    it('populates widgets when spaceTypes, spaces, and documentTypes are provided', () => {
+      const block = buildDocumentTypeSelectionBlock({
+        selectionContext: {
+          spaceTypes: [{ text: 'Invoices', value: 'invoices', selected: true }],
+          spaces: ['Finance Space', 'Ops Space'],
+          documentTypes: [{ text: 'Standard Invoice', value: 'std-inv' }],
+        },
+        onSpaceTypeChangeAction: 'https://example.com/onSpaceTypeChange',
+      });
+
+      expect(block.header).toBe('Document Type');
+      expect(block.widgets).toHaveLength(3);
+
+      expect(block.widgets[0]).toEqual({
+        selectionInput: {
+          name: 'SelectDocumentSpaceType',
+          label: 'Document Space Type',
+          type: 'DROPDOWN',
+          items: [{ text: 'Invoices', value: 'invoices', selected: true }],
+          onChangeAction: {
+            function: 'https://example.com/onSpaceTypeChange',
+            loadIndicator: 'SPINNER',
+          },
+        },
+      });
+
+      expect(block.widgets[1]).toEqual({
+        textInput: {
+          name: 'SelectDocumentSpace',
+          label: 'Document Space',
+          initialSuggestions: {
+            items: [{ text: 'Finance Space' }, { text: 'Ops Space' }],
+          },
+        },
+      });
+
+      expect(block.widgets[2]).toEqual({
+        selectionInput: {
+          name: 'SelectDocumentType',
+          label: 'Document Type',
+          type: 'DROPDOWN',
+          items: [{ text: 'Standard Invoice', value: 'std-inv' }],
+        },
+      });
+    });
+
+    it('provides fallbacks for empty spaceTypes, documentTypes, and omits initialSuggestions for empty spaces', () => {
+      const block = buildDocumentTypeSelectionBlock({
+        selectionContext: {
+          spaceTypes: [],
+          spaces: [],
+          documentTypes: [],
+        },
+        onSpaceTypeChangeAction: 'https://example.com/onSpaceTypeChange',
+      });
+
+      expect(block.header).toBe('Document Type');
+      expect(block.widgets).toHaveLength(3);
+
+      // spaceTypes fallback
+      expect(block.widgets[0]?.selectionInput?.items).toEqual([
+        { text: 'No space types available', value: '' },
+      ]);
+
+      // spaces has no initialSuggestions
+      expect(block.widgets[1]?.textInput?.name).toBe('SelectDocumentSpace');
+      expect(block.widgets[1]?.textInput?.initialSuggestions).toBeUndefined();
+
+      // documentTypes fallback
+      expect(block.widgets[2]?.selectionInput?.items).toEqual([
+        { text: 'No document types available', value: '' },
+      ]);
+    });
+  });
 });
+

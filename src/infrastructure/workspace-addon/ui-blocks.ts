@@ -230,12 +230,17 @@ export function buildDocumentTypeSelectionBlock(options: {
 }): CardSection {
   const widgets: CardWidget[] = [];
 
+  const spaceTypes =
+    options.selectionContext.spaceTypes.length > 0
+      ? options.selectionContext.spaceTypes
+      : [{ text: 'No space types available', value: '' }];
+
   widgets.push({
     selectionInput: {
       name: 'SelectDocumentSpaceType',
       label: 'Document Space Type',
       type: 'DROPDOWN',
-      items: options.selectionContext.spaceTypes,
+      items: spaceTypes,
       onChangeAction: {
         function: options.onSpaceTypeChangeAction,
         loadIndicator: 'SPINNER',
@@ -243,22 +248,32 @@ export function buildDocumentTypeSelectionBlock(options: {
     },
   });
 
+  const spaceTextInput: TextInput = {
+    name: 'SelectDocumentSpace',
+    label: 'Document Space',
+  };
+
+  if (options.selectionContext.spaces.length > 0) {
+    spaceTextInput.initialSuggestions = {
+      items: options.selectionContext.spaces.map((space) => ({ text: space })),
+    };
+  }
+
   widgets.push({
-    textInput: {
-      name: 'SelectDocumentSpace',
-      label: 'Document Space',
-      initialSuggestions: {
-        items: options.selectionContext.spaces.map((space) => ({ text: space })),
-      },
-    },
+    textInput: spaceTextInput,
   });
+
+  const documentTypes =
+    options.selectionContext.documentTypes.length > 0
+      ? options.selectionContext.documentTypes
+      : [{ text: 'No document types available', value: '' }];
 
   widgets.push({
     selectionInput: {
       name: 'SelectDocumentType',
       label: 'Document Type',
       type: 'DROPDOWN',
-      items: options.selectionContext.documentTypes,
+      items: documentTypes,
     },
   });
 
