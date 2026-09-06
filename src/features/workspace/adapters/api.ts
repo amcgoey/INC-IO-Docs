@@ -114,4 +114,34 @@ export function registerWorkspaceFeatureRoutes(
       }
     }),
   });
+
+  router.registerRoute({
+    method: 'POST',
+    url: '/workspace/homepage',
+    handler: withAuthentication(authVerifier, async (request) => {
+      try {
+        const traceHeader = request.headers?.['x-cloud-trace-context'] as string | undefined;
+        const context: WorkspaceExecutionContext = extractWorkspaceExecutionContext(
+          request.body,
+          traceHeader
+        );
+
+        const wsConfig = configProvider
+          ? await configProvider.getWorkspaceConfig()
+          : undefined;
+
+        return {
+          status: 200,
+          body: buildDriveDocumentProcessCard(context.selectedItems, wsConfig, uiBuilder),
+        };
+      } catch (error) {
+        return {
+          status: 200,
+          body: uiBuilder.buildErrorCard(
+            error instanceof Error ? error.message : 'Unknown error in /workspace/homepage'
+          ),
+        };
+      }
+    }),
+  });
 }

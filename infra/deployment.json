@@ -17,7 +17,7 @@
         "runFunction": "https://example.ngrok-free.app/workspace/homepage"
       },
       "onItemsSelectedTrigger": {
-        "runFunction": "https://example.ngrok-free.app/workspace/homepage"
+        "runFunction": "https://example.ngrok-free.app/workspace/drive-items-selected"
       }
     }
   }
