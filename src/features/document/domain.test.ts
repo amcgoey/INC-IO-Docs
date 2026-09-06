@@ -1185,15 +1185,10 @@ describe('Document domain', () => {
       const customRegistry = createCustomRegistry(mockDocumentTypes);
       const evaluator: TemplateEvaluatorPort = {
         validate: vi.fn().mockReturnValue(true),
-        evaluate: vi.fn().mockImplementation((template, ctx) => {
-          const doc = ctx.Document as { space?: { abstractStorageId?: string; name?: string } };
-          if (template === '{{Document.space.abstractStorageId}}') {
-            return doc?.space?.abstractStorageId ?? '';
-          }
-          if (template === '{{Document.space.name}}') {
-            return doc?.space?.name ?? '';
-          }
-          return template;
+        evaluate: vi.fn().mockImplementation((template: string, ctx: TemplateEvaluationContext) => {
+          return template.replace(/\{\{([^}]+)\}\}/g, (_, path) => {
+            return path.split('.').reduce((acc: any, part: string) => acc?.[part], ctx) ?? '';
+          });
         }),
       };
 
