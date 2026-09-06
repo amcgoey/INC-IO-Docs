@@ -53,3 +53,12 @@ export interface WorkspaceDocumentRunnerPort {
   ): Promise<WorkspaceDocumentProcessResult>;
 }
 
+export interface WorkspaceUiBuilderPort {
+  buildCard(header: Record<string, unknown>, sections: (Record<string, unknown> | null)[]): Record<string, unknown>;
+  buildTitleBlock(options: { title: string; subtitle?: string; imageUrl?: string; imageType?: 'SQUARE' | 'CIRCLE' }): Record<string, unknown>;
+  buildStatusMessageBlock(message?: string, isOnlySection?: boolean): Record<string, unknown> | null;
+  buildNavigationAction(card: Record<string, unknown>): Record<string, unknown>;
+  buildErrorCard(errorMessage: string, title?: string): Record<string, unknown>;
+  buildAuthorizationAction(authorizationUrl?: string): Record<string, unknown>;
+}
+

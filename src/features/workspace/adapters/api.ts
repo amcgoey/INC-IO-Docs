@@ -2,20 +2,13 @@ import type {
   AuthVerifierPort,
   WorkspaceConfigProviderPort,
   WorkspaceDocumentRunnerPort,
-  WorkspaceFileLocator,
+  WorkspaceUiBuilderPort,
 } from '../ports';
 import {
-  createWorkspaceDocumentExecutionContext,
   extractWorkspaceExecutionContext,
-  findLatestFileLocator,
   type WorkspaceExecutionContext,
 } from '../domain';
-import {
-  buildHomepageCard,
-  buildToastNotification,
-  buildErrorCard,
-  buildAuthorizationAction,
-} from './cards';
+import { buildDriveDocumentProcessCard } from './drive-document-process-card';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
 
@@ -45,6 +38,7 @@ export interface HttpServer {
 
 export interface WorkspaceFeatureApiOptions {
   authVerifier: AuthVerifierPort;
+  uiBuilder: WorkspaceUiBuilderPort;
   documentService?: WorkspaceDocumentRunnerPort | undefined;
   configProvider?: WorkspaceConfigProviderPort | undefined;
   authorizationUrl?: string | undefined;
@@ -88,41 +82,14 @@ export function registerWorkspaceFeatureRoutes(
 ): void {
   const {
     authVerifier,
-    documentService,
+    uiBuilder,
     configProvider,
     authorizationUrl,
   } = opts;
 
   router.registerRoute({
     method: 'POST',
-    url: '/workspace/homepage',
-    handler: withAuthentication(authVerifier, async () => {
-      try {
-        const wsConfig = configProvider
-          ? await configProvider.getWorkspaceConfig()
-          : undefined;
-
-        return {
-          status: 200,
-          body: buildHomepageCard({
-            appTitle: wsConfig?.appTitle,
-            actionButtonText: wsConfig?.actionButtonText,
-          }),
-        };
-      } catch (error) {
-        return {
-          status: 200,
-          body: buildErrorCard(
-            error instanceof Error ? error.message : 'Unknown error in /workspace/homepage'
-          ),
-        };
-      }
-    }),
-  });
-
-  router.registerRoute({
-    method: 'POST',
-    url: '/workspace/action',
+    url: '/workspace/drive-items-selected',
     handler: withAuthentication(authVerifier, async (request) => {
       try {
         const traceHeader = request.headers?.['x-cloud-trace-context'] as string | undefined;
@@ -134,7 +101,7 @@ export function registerWorkspaceFeatureRoutes(
         if (!context.userOAuthToken) {
           return {
             status: 200,
-            body: buildAuthorizationAction(authorizationUrl),
+            body: uiBuilder.buildAuthorizationAction(authorizationUrl),
           };
         }
 
@@ -142,67 +109,18 @@ export function registerWorkspaceFeatureRoutes(
           ? await configProvider.getWorkspaceConfig()
           : undefined;
 
-        const effectiveDocumentType =
-          wsConfig?.defaultDocumentType ?? 'test-document';
-        const effectiveEventName =
-          wsConfig?.defaultEventName ?? 'onSubmit';
-
-        const selectedItem = context.selectedItems?.[0];
-        const initialFileName = selectedItem?.title ?? 'selected file';
-
-        let latestFileLocator: WorkspaceFileLocator | undefined;
-
-        if (documentService) {
-          const bodyObj = (
-            request.body && typeof request.body === 'object' ? request.body : {}
-          ) as Record<string, unknown>;
-          const documentPayload = bodyObj.document ?? {
-            type: effectiveDocumentType,
-            data: {
-              title: initialFileName,
-            },
-          };
-
-          const executionContext = createWorkspaceDocumentExecutionContext(context);
-
-          const result = await documentService.processDocument(
-            documentPayload,
-            effectiveEventName,
-            executionContext
-          );
-          if (!result.success) {
-            const errorMessage =
-              result.errors && result.errors.length > 0
-                ? result.errors.join('; ')
-                : 'Document processing failed';
-            return {
-              status: 200,
-              body: buildErrorCard(errorMessage),
-            };
-          }
-
-          latestFileLocator = findLatestFileLocator(result.outputs);
-        }
-
-        const notificationTarget = latestFileLocator ?? {
-          name: initialFileName,
-          parentName: 'Unfiled',
-        };
-
         return {
           status: 200,
-          body: buildToastNotification(notificationTarget),
+          body: buildDriveDocumentProcessCard(context.selectedItems, wsConfig, uiBuilder),
         };
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Unknown error in /workspace/action';
         return {
           status: 200,
-          body: buildErrorCard(errorMessage),
+          body: uiBuilder.buildErrorCard(
+            error instanceof Error ? error.message : 'Unknown error in /workspace/drive-items-selected'
+          ),
         };
       }
     }),
   });
 }
-
-

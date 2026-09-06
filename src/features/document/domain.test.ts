@@ -1187,7 +1187,7 @@ describe('Document domain', () => {
         validate: vi.fn().mockReturnValue(true),
         evaluate: vi.fn().mockImplementation((template: string, ctx: TemplateEvaluationContext) => {
           return template.replace(/\{\{([^}]+)\}\}/g, (_, path) => {
-            return path.split('.').reduce((acc: any, part: string) => acc?.[part], ctx) ?? '';
+            return path.split('.').reduce((acc: Record<string, unknown> | unknown, part: string) => (acc as Record<string, unknown>)?.[part], ctx) ?? '';
           });
         }),
       };

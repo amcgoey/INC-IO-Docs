@@ -40,7 +40,82 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
     nock.cleanAll();
   });
 
-  describe('Driving Adapter: POST /workspace/homepage', () => {
+  describe('Driving Adapter: POST /workspace/drive-items-selected', () => {
+    it('returns a DriveDocumentProcessCard when authorized and items are selected', async () => {
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.sample-token',
+          },
+          drive: {
+            selectedItems: [
+              {
+                id: 'file-123',
+                title: 'Contract_Agreement.pdf',
+              },
+            ],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const cardResponse = JSON.parse(response.payload);
+
+      expect(cardResponse.action).toBeDefined();
+      const pushCard = cardResponse.action.navigations[0].pushCard;
+      expect(pushCard.header.title).toBe('INC-IO Docs');
+      expect(pushCard.sections[0].widgets[0].textParagraph.text).toBe(
+        'Current DocumentType: test-document'
+      );
+    });
+
+    it('returns 401 Unauthorized when JWT token is invalid or missing', async () => {
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: {
+          authorization: 'Bearer invalid-token',
+        },
+      });
+
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.payload);
+      expect(body.error).toBe('Unauthorized');
+    });
+
+    it('returns authorizationAction when userOAuthToken is missing', async () => {
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          drive: {
+            selectedItems: [
+              {
+                id: 'file-123',
+                title: 'Contract_Agreement.pdf',
+              },
+            ],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.action.authorizationAction).toBeDefined();
+    });
+  });
+
+  // Note: /workspace/homepage and /workspace/action are deprecated and deleted per ADR 0010 (Expand-and-contract).
+  // They will be rebuilt using the new UiBlock system. Marked .skip until action execution is restored.
+  describe.skip('Driving Adapter: POST /workspace/homepage (deprecated)', () => {
     it('returns a Google Workspace Card with a "Move Selected File" button', async () => {
       const response = await app.server.inject({
         method: 'POST',
@@ -78,7 +153,7 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
     });
   });
 
-  describe('Driving Adapter: POST /workspace/action with nock Google Drive API Interception', () => {
+  describe.skip('Driving Adapter: POST /workspace/action with nock Google Drive API Interception (deprecated)', () => {
     it('extracts context, executes DriveActivityHandler, moves file to !TestMove, and returns Toast Notification', async () => {
       const fileId = 'google-doc-file-456';
       const fileName = 'Contract_Agreement.pdf';

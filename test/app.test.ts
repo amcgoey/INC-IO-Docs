@@ -882,7 +882,7 @@ describe('App integration tests', () => {
       await fs.rm(tempDir, { recursive: true, force: true });
     });
 
-    it('propagates workspace configuration from manifest to /workspace/homepage and /workspace/action', async () => {
+    it('propagates workspace configuration from manifest to /workspace/drive-items-selected', async () => {
       const manifestPath = path.join(tempDir, 'manifest.json');
       const documentTypePath = path.join(tempDir, 'custom-Document.json');
       const customDocument = {
@@ -977,31 +977,10 @@ describe('App integration tests', () => {
 
       await appInstance.initialize();
 
-      // 1. Verify /workspace/homepage card includes configured title and button text
-      const homepageRes = await appInstance.server.inject({
+      const res = await appInstance.server.inject({
         method: 'POST',
-        url: '/workspace/homepage',
+        url: '/workspace/drive-items-selected',
         headers: { authorization: 'Bearer token' },
-      });
-
-      expect(homepageRes.statusCode).toBe(200);
-      const homepageBody = JSON.parse(homepageRes.payload);
-      expect(homepageBody.action.navigations[0].pushCard.header.title).toBe(
-        'Custom Enterprise Workspace'
-      );
-      expect(
-        homepageBody.action.navigations[0].pushCard.sections[0].widgets[0].buttonList.buttons[0]
-          .text
-      ).toBe('File In Custom Folder');
-
-      // 2. Verify /workspace/action triggers DocumentService with defaultDocumentType & defaultEventName from config,
-      // and DriveActivityHandler moves to !CustomDestination folder
-      const actionRes = await appInstance.server.inject({
-        method: 'POST',
-        url: '/workspace/action',
-        headers: {
-          authorization: 'Bearer token',
-        },
         payload: {
           authorizationEventObject: {
             userOAuthToken: 'ya29.user-token',
@@ -1012,21 +991,14 @@ describe('App integration tests', () => {
         },
       });
 
-      expect(actionRes.statusCode).toBe(200);
-      const actionBody = JSON.parse(actionRes.payload);
-      expect(actionBody).toEqual({
-        action: {
-          notification: {
-            text: "Moved 'ImportantDocument.pdf' to '!CustomDestination'",
-          },
-        },
-      });
-
-      expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
-        'folder-parent-1',
-        '!CustomDestination',
-        { auth: 'ya29.user-token' }
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.action.navigations[0].pushCard.header.title).toBe(
+        'Custom Enterprise Workspace'
       );
+      expect(
+        body.action.navigations[0].pushCard.sections[0].widgets[0].textParagraph.text
+      ).toBe('Current DocumentType: configured-Document-type');
     });
   });
 

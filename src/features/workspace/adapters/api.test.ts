@@ -1,17 +1,39 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHttpServer, type HttpServer } from '../../../infrastructure/http';
 import { registerWorkspaceFeatureRoutes } from './api';
-import type { AuthVerifierPort, WorkspaceDocumentRunnerPort } from '../ports';
+import type {
+  AuthVerifierPort,
+  WorkspaceConfigProviderPort,
+  WorkspaceDocumentRunnerPort,
+  WorkspaceUiBuilderPort,
+} from '../ports';
 
 describe('Workspace Feature Routes', () => {
   let server: HttpServer;
   let mockAuthVerifier: AuthVerifierPort;
+  let mockUiBuilder: WorkspaceUiBuilderPort;
   let mockDocumentService: WorkspaceDocumentRunnerPort;
 
   beforeEach(() => {
     server = createHttpServer();
     mockAuthVerifier = {
       verifyToken: vi.fn().mockResolvedValue({ isValid: true, payload: { email: 'user@example.com' } }),
+    };
+    mockUiBuilder = {
+      buildTitleBlock: vi.fn().mockReturnValue({ title: 'INC-IO Engine', subtitle: 'Process Document' }),
+      buildStatusMessageBlock: vi.fn().mockReturnValue({
+        widgets: [{ textParagraph: { text: 'Processing selected items...' } }],
+      }),
+      buildCard: vi.fn().mockReturnValue({ header: {}, sections: [] }),
+      buildNavigationAction: vi.fn().mockReturnValue({
+        action: { navigations: [{ pushCard: { header: { title: 'INC-IO Engine' } } }] },
+      }),
+      buildErrorCard: vi.fn().mockReturnValue({
+        action: { navigations: [{ pushCard: { header: { title: 'Error' } } }] },
+      }),
+      buildAuthorizationAction: vi.fn().mockReturnValue({
+        action: { authorizationAction: { authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth' } },
+      }),
     };
     mockDocumentService = {
       processDocument: vi.fn().mockResolvedValue({
@@ -24,58 +46,128 @@ describe('Workspace Feature Routes', () => {
 
     registerWorkspaceFeatureRoutes(server, {
       authVerifier: mockAuthVerifier,
+      uiBuilder: mockUiBuilder,
       documentService: mockDocumentService,
     });
   });
 
-  describe('POST /workspace/homepage', () => {
-    it('returns 200 with homepage card when auth token is valid', async () => {
+  describe('POST /workspace/drive-items-selected', () => {
+    it('returns 200 with drive document process card when auth token is valid and userOAuthToken is provided', async () => {
       const response = await server.inject({
         method: 'POST',
-        url: '/workspace/homepage',
+        url: '/workspace/drive-items-selected',
         headers: {
           authorization: 'Bearer valid-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.user-token',
+          },
+          drive: {
+            selectedItems: [{ id: 'file-123', title: 'Invoice.pdf' }],
+          },
         },
       });
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body.action.navigations[0].pushCard.header.title).toBe('INC-IO Docs');
-      expect(
-        body.action.navigations[0].pushCard.sections[0].widgets[0].buttonList.buttons[0].text
-      ).toBe('Move Selected File');
       expect(mockAuthVerifier.verifyToken).toHaveBeenCalledWith('Bearer valid-token');
+      expect(mockUiBuilder.buildTitleBlock).toHaveBeenCalledWith({
+        title: 'INC-IO Engine',
+        subtitle: 'Process Document',
+      });
+      expect(mockUiBuilder.buildStatusMessageBlock).toHaveBeenCalledWith('Processing selected items...', true);
+      expect(body).toEqual({
+        action: { navigations: [{ pushCard: { header: { title: 'INC-IO Engine' } } }] },
+      });
     });
 
-    it('returns 200 with custom title and button text when configProvider provides workspace config', async () => {
+    it('returns 200 with custom title and defaultDocumentType when configProvider provides workspace config', async () => {
       const customServer = createHttpServer();
-      const mockConfigProvider = {
+      const mockConfigProvider: WorkspaceConfigProviderPort = {
         getWorkspaceConfig: vi.fn().mockResolvedValue({
-          appTitle: 'Enterprise Archiver',
-          actionButtonText: 'Archive Document',
+          appTitle: 'Custom Enterprise Workspace',
+          defaultDocumentType: 'invoice-doc',
         }),
       };
 
       registerWorkspaceFeatureRoutes(customServer, {
         authVerifier: mockAuthVerifier,
+        uiBuilder: mockUiBuilder,
         configProvider: mockConfigProvider,
       });
 
       const response = await customServer.inject({
         method: 'POST',
-        url: '/workspace/homepage',
+        url: '/workspace/drive-items-selected',
         headers: {
           authorization: 'Bearer valid-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.user-token',
+          },
+          drive: {
+            selectedItems: [{ id: 'file-123', title: 'Invoice.pdf' }],
+          },
         },
       });
 
       expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body.action.navigations[0].pushCard.header.title).toBe('Enterprise Archiver');
-      expect(
-        body.action.navigations[0].pushCard.sections[0].widgets[0].buttonList.buttons[0].text
-      ).toBe('Archive Document');
       expect(mockConfigProvider.getWorkspaceConfig).toHaveBeenCalled();
+      expect(mockUiBuilder.buildTitleBlock).toHaveBeenCalledWith({
+        title: 'Custom Enterprise Workspace',
+        subtitle: 'Process Document',
+      });
+      expect(mockUiBuilder.buildStatusMessageBlock).toHaveBeenCalledWith(
+        'Current DocumentType: invoice-doc',
+        true
+      );
+    });
+
+    it('returns 200 with AuthorizationAction when userOAuthToken is missing in request payload', async () => {
+      const response = await server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: {
+          authorization: 'Bearer valid-token',
+        },
+        payload: {
+          drive: {
+            selectedItems: [{ id: 'file-123', title: 'Invoice.pdf' }],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockUiBuilder.buildAuthorizationAction).toHaveBeenCalledWith(undefined);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        action: { authorizationAction: { authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth' } },
+      });
+    });
+
+    it('returns 200 with custom authorizationUrl when configured and userOAuthToken is missing', async () => {
+      const customServer = createHttpServer();
+      const customAuthUrl = 'https://custom-auth.example.com/oauth2';
+
+      registerWorkspaceFeatureRoutes(customServer, {
+        authVerifier: mockAuthVerifier,
+        uiBuilder: mockUiBuilder,
+        authorizationUrl: customAuthUrl,
+      });
+
+      const response = await customServer.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: {
+          authorization: 'Bearer valid-token',
+        },
+        payload: {},
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockUiBuilder.buildAuthorizationAction).toHaveBeenCalledWith(customAuthUrl);
     });
 
     it('returns 401 when auth verification fails', async () => {
@@ -86,7 +178,7 @@ describe('Workspace Feature Routes', () => {
 
       const response = await server.inject({
         method: 'POST',
-        url: '/workspace/homepage',
+        url: '/workspace/drive-items-selected',
       });
 
       expect(response.statusCode).toBe(401);
@@ -94,303 +186,34 @@ describe('Workspace Feature Routes', () => {
       expect(body.error).toBe('Unauthorized');
       expect(body.message).toBe('Invalid token signature');
     });
-  });
 
-
-  describe('POST /workspace/action', () => {
-    it('returns 200 with toast notification on successful action execution', async () => {
-      const eventPayload = {
-        authorizationEventObject: {
-          userOAuthToken: 'ya29.sample-user-oauth-token',
-        },
-        drive: {
-          selectedItems: [
-            {
-              id: 'file-xyz',
-              title: 'Proposal.pdf',
-              mimeType: 'application/pdf',
-            },
-          ],
-        },
+    it('returns 200 with native Error Card when processing throws an unexpected error', async () => {
+      const errorServer = createHttpServer();
+      const faultyConfigProvider: WorkspaceConfigProviderPort = {
+        getWorkspaceConfig: vi.fn().mockRejectedValue(new Error('Database connection failed')),
       };
 
-      const response = await server.inject({
-        method: 'POST',
-        url: '/workspace/action',
-        headers: {
-          authorization: 'Bearer valid-jwt',
-          'x-cloud-trace-context': 'trace-12345',
-        },
-        payload: eventPayload,
-      });
-
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: "Moved 'Proposal.pdf' to 'Unfiled'",
-          },
-        },
-      });
-
-      expect(mockDocumentService.processDocument).toHaveBeenCalledWith(
-        {
-          type: 'test-document',
-          data: {
-            title: 'Proposal.pdf',
-          },
-        },
-        'onSubmit',
-        {
-          credentials: {
-            oauthToken: 'ya29.sample-user-oauth-token',
-          },
-          resources: {
-            primaryTargetId: 'file-xyz',
-          },
-        }
-      );
-    });
-
-    it('scans result.outputs backwards and renders toast notification using the last populated FileLocator', async () => {
-      (mockDocumentService.processDocument as ReturnType<typeof vi.fn>).mockResolvedValue({
-        success: true,
-        data: { type: 'test-document', data: {} },
-        activities: [],
-        outputs: [
-          {
-            success: true,
-            files: [
-              {
-                id: 'file-1',
-                name: 'InitialDraft.docx',
-                parentName: 'Drafts',
-                mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                uri: 'https://drive.google.com/file/d/file-1/view',
-              },
-            ],
-          },
-          {
-            success: true,
-            files: [
-              {
-                id: 'file-2',
-                name: 'FinalApprovedProposal.pdf',
-                parentName: 'ClientArchive',
-                mimeType: 'application/pdf',
-                uri: 'https://drive.google.com/file/d/file-2/view',
-              },
-            ],
-          },
-          {
-            success: true, // Step after file move that produces no files (e.g. logging step)
-            documentDataPatch: { logged: true },
-          },
-        ],
-      });
-
-      const eventPayload = {
-        authorizationEventObject: {
-          userOAuthToken: 'ya29.sample-user-oauth-token',
-        },
-        drive: {
-          selectedItems: [
-            {
-              id: 'file-1',
-              title: 'InitialDraft.docx',
-            },
-          ],
-        },
-      };
-
-      const response = await server.inject({
-        method: 'POST',
-        url: '/workspace/action',
-        headers: {
-          authorization: 'Bearer valid-jwt',
-        },
-        payload: eventPayload,
-      });
-
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: "Moved 'FinalApprovedProposal.pdf' to 'ClientArchive'",
-          },
-        },
-      });
-    });
-
-    it('resolves defaultDocumentType and defaultEventName dynamically from configProvider for action execution', async () => {
-      const customServer = createHttpServer();
-      const mockConfigProvider = {
-        getWorkspaceConfig: vi.fn().mockResolvedValue({
-          defaultDocumentType: 'custom-document-type',
-          defaultEventName: 'onCustomAction',
-        }),
-      };
-
-      registerWorkspaceFeatureRoutes(customServer, {
+      registerWorkspaceFeatureRoutes(errorServer, {
         authVerifier: mockAuthVerifier,
-        documentService: mockDocumentService,
-        configProvider: mockConfigProvider,
+        uiBuilder: mockUiBuilder,
+        configProvider: faultyConfigProvider,
       });
 
-      const eventPayload = {
-        authorizationEventObject: {
-          userOAuthToken: 'ya29.valid-oauth-token',
-        },
-        drive: {
-          selectedItems: [{ id: 'file-999', title: 'Invoice.pdf' }],
-        },
-      };
-
-      const response = await customServer.inject({
+      const response = await errorServer.inject({
         method: 'POST',
-        url: '/workspace/action',
+        url: '/workspace/drive-items-selected',
         headers: {
-          authorization: 'Bearer valid-jwt',
-        },
-        payload: eventPayload,
-      });
-
-      expect(response.statusCode).toBe(200);
-      expect(mockDocumentService.processDocument).toHaveBeenCalledWith(
-        {
-          type: 'custom-document-type',
-          data: {
-            title: 'Invoice.pdf',
-          },
-        },
-        'onCustomAction',
-        expect.any(Object)
-      );
-    });
-
-
-    it('returns 200 with AuthorizationAction when userOAuthToken is missing in event payload', async () => {
-      const payloadWithoutToken = {
-        drive: {
-          selectedItems: [{ id: 'file-123', title: 'FileWithoutToken.pdf' }],
-        },
-      };
-
-      const response = await server.inject({
-        method: 'POST',
-        url: '/workspace/action',
-        headers: {
-          authorization: 'Bearer valid-jwt',
-        },
-        payload: payloadWithoutToken,
-      });
-
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          authorizationAction: {
-            authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
-          },
-        },
-      });
-      expect(mockDocumentService.processDocument).not.toHaveBeenCalled();
-    });
-
-    it('returns 200 with custom authorizationUrl when configured and userOAuthToken is missing', async () => {
-      const customServer = createHttpServer();
-      const customAuthUrl = 'https://accounts.google.com/o/oauth2/v2/auth?client_id=my-app';
-      registerWorkspaceFeatureRoutes(customServer, {
-        authVerifier: mockAuthVerifier,
-        documentService: mockDocumentService,
-        authorizationUrl: customAuthUrl,
-      });
-
-      const response = await customServer.inject({
-        method: 'POST',
-        url: '/workspace/action',
-        headers: {
-          authorization: 'Bearer valid-jwt',
-        },
-        payload: {},
-      });
-
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body.action.authorizationAction.authorizationUrl).toBe(customAuthUrl);
-    });
-
-    it('returns 200 with native Error Card when documentService fails validation', async () => {
-      (mockDocumentService.processDocument as ReturnType<typeof vi.fn>).mockResolvedValue({
-        success: false,
-        errors: ['Invalid document data: Field contact is required'],
-      });
-
-      const response = await server.inject({
-        method: 'POST',
-        url: '/workspace/action',
-        headers: {
-          authorization: 'Bearer valid-jwt',
+          authorization: 'Bearer valid-token',
         },
         payload: {
           authorizationEventObject: {
-            userOAuthToken: 'ya29.valid-oauth-token',
+            userOAuthToken: 'ya29.user-token',
           },
         },
       });
 
       expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body.action).toBeDefined();
-      expect(body.action.notification.text).toContain(
-        'Invalid document data: Field contact is required'
-      );
-      expect(
-        body.action.navigations[0].pushCard.sections[0].widgets[0].textParagraph.text
-      ).toContain('Invalid document data: Field contact is required');
-    });
-
-    it('returns 200 with native Error Card when documentService or driven adapter throws an error', async () => {
-      (mockDocumentService.processDocument as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new Error('Google Drive API error in moveFile: 403 Forbidden')
-      );
-
-      const response = await server.inject({
-        method: 'POST',
-        url: '/workspace/action',
-        headers: {
-          authorization: 'Bearer valid-jwt',
-        },
-        payload: {
-          authorizationEventObject: {
-            userOAuthToken: 'ya29.valid-oauth-token',
-          },
-        },
-      });
-
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body.action).toBeDefined();
-      expect(body.action.notification.text).toContain(
-        'Google Drive API error in moveFile: 403 Forbidden'
-      );
-    });
-
-    it('returns 401 when auth verification fails for action endpoint', async () => {
-      (mockAuthVerifier.verifyToken as ReturnType<typeof vi.fn>).mockResolvedValue({
-        isValid: false,
-        error: 'Missing Authorization header',
-      });
-
-      const response = await server.inject({
-        method: 'POST',
-        url: '/workspace/action',
-      });
-
-      expect(response.statusCode).toBe(401);
-      expect(mockDocumentService.processDocument).not.toHaveBeenCalled();
+      expect(mockUiBuilder.buildErrorCard).toHaveBeenCalledWith('Database connection failed');
     });
   });
 });

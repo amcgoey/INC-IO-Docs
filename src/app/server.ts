@@ -22,7 +22,12 @@ import type {
   DocumentSchemaRegistryPort,
   TemplateEvaluatorPort,
 } from '../features/document/ports';
-import type { AuthVerifierPort, WorkspaceConfigProviderPort } from '../features/workspace/ports';
+import type {
+  AuthVerifierPort,
+  WorkspaceConfigProviderPort,
+  WorkspaceUiBuilderPort,
+} from '../features/workspace/ports';
+import * as uiBlocks from '../infrastructure/workspace-addon/ui-blocks';
 
 TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 
@@ -33,6 +38,7 @@ export interface AppOptions {
   activityEngine?: ActivityDispatcherPort | undefined;
   templateEvaluator?: TemplateEvaluatorPort | undefined;
   authVerifier?: AuthVerifierPort | undefined;
+  uiBuilder?: WorkspaceUiBuilderPort | undefined;
   driveService?: DriveServicePort | undefined;
   documentSpaceService?: DocumentSpaceService | undefined;
   authorizationUrl?: string | undefined;
@@ -94,10 +100,12 @@ export function createApp(options?: AppOptions): AppInstance {
     new DocumentSpaceService(documentSpaceRegistry, documentSpaceStorage);
 
   const authVerifier: AuthVerifierPort = options?.authVerifier ?? new GoogleJwtVerifier();
+  const uiBuilder: WorkspaceUiBuilderPort = options?.uiBuilder ?? uiBlocks;
 
   registerDocumentFeatureRoutes(server, { service: documentService, schemaQuery: documentService });
   registerWorkspaceFeatureRoutes(server, {
     authVerifier,
+    uiBuilder,
     documentService,
     configProvider: workspaceConfigProvider,
     authorizationUrl:
