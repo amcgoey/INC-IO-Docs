@@ -5,28 +5,7 @@ import type {
   DocumentSpaceStoragePort,
 } from './ports';
 
-export const SharedDrivesStorageConfigSchema = Type.Object({
-  provider: Type.String({ minLength: 1 }),
-  fetchMethod: Type.Literal('shared_drives'),
-  paginationLimit: Type.Optional(Type.Number({ default: 500 })),
-});
-
-export type SharedDrivesStorageConfig = Static<typeof SharedDrivesStorageConfigSchema>;
-
-export const FoldersStorageConfigSchema = Type.Object({
-  provider: Type.String({ minLength: 1 }),
-  fetchMethod: Type.Literal('folders'),
-  parentFolderId: Type.Optional(Type.String()),
-  sharedDriveId: Type.Optional(Type.String()),
-  paginationLimit: Type.Optional(Type.Number({ default: 500 })),
-});
-
-export type FoldersStorageConfig = Static<typeof FoldersStorageConfigSchema>;
-
-export const StorageContextConfigSchema = Type.Union([
-  SharedDrivesStorageConfigSchema,
-  FoldersStorageConfigSchema,
-]);
+export const StorageContextConfigSchema = Type.Record(Type.String(), Type.Unknown());
 
 export type StorageContextConfig = Static<typeof StorageContextConfigSchema>;
 
@@ -58,10 +37,6 @@ export type DocumentSpaceCollection = Static<typeof DocumentSpaceCollectionSchem
 export const StorageLocationSchema = Type.Object({
   provider: Type.String({ minLength: 1 }),
   abstractStorageId: Type.String({ minLength: 1 }),
-  targetFolderId: Type.Optional(Type.String()),
-  folderId: Type.Optional(Type.String()),
-  sharedDriveId: Type.Optional(Type.String()),
-  path: Type.Optional(Type.String()),
 });
 
 export type StorageLocation = Static<typeof StorageLocationSchema>;

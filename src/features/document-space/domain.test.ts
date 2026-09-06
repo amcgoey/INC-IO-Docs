@@ -20,7 +20,7 @@ import type {
 
 describe('DocumentSpace Domain Schemas', () => {
   describe('StorageContextConfigSchema', () => {
-    it('validates a valid shared_drives storage configuration', () => {
+    it('validates a record storage configuration', () => {
       const validConfig = {
         provider: 'google_drive',
         fetchMethod: 'shared_drives',
@@ -30,34 +30,19 @@ describe('DocumentSpace Domain Schemas', () => {
       expect(Value.Check(StorageContextConfigSchema, validConfig)).toBe(true);
     });
 
-    it('validates a valid folders storage configuration', () => {
-      const validConfig = {
-        provider: 'google_drive',
-        fetchMethod: 'folders',
-        parentFolderId: 'folder-abc',
-        sharedDriveId: 'drive-xyz',
-        paginationLimit: 250,
+    it('validates any arbitrary key-value storage configuration object', () => {
+      const customConfig = {
+        customKey: 'customValue',
+        nested: { foo: 'bar' },
       };
 
-      expect(Value.Check(StorageContextConfigSchema, validConfig)).toBe(true);
+      expect(Value.Check(StorageContextConfigSchema, customConfig)).toBe(true);
     });
 
-    it('rejects an invalid fetchMethod', () => {
-      const invalidConfig = {
-        provider: 'google_drive',
-        fetchMethod: 'unsupported_method',
-      };
-
-      expect(Value.Check(StorageContextConfigSchema, invalidConfig)).toBe(false);
-    });
-
-    it('rejects an empty provider string', () => {
-      const invalidConfig = {
-        provider: '',
-        fetchMethod: 'shared_drives',
-      };
-
-      expect(Value.Check(StorageContextConfigSchema, invalidConfig)).toBe(false);
+    it('rejects a non-object configuration', () => {
+      expect(Value.Check(StorageContextConfigSchema, 'string-config')).toBe(false);
+      expect(Value.Check(StorageContextConfigSchema, 123)).toBe(false);
+      expect(Value.Check(StorageContextConfigSchema, null)).toBe(false);
     });
   });
 
@@ -92,15 +77,12 @@ describe('DocumentSpace Domain Schemas', () => {
       expect(Value.Check(DocumentSpaceTypeSchema, invalid)).toBe(false);
     });
 
-    it('rejects DocumentSpaceType with invalid storageConfig', () => {
+    it('rejects DocumentSpaceType with non-object storageConfig', () => {
       const invalid = {
         id: 'project',
         displayName: 'Project',
         allowedDocumentTypes: ['communication-project'],
-        storageConfig: {
-          provider: 'google_drive',
-          fetchMethod: 'unknown_fetch',
-        },
+        storageConfig: 'not-an-object',
       };
 
       expect(Value.Check(DocumentSpaceTypeSchema, invalid)).toBe(false);
@@ -164,26 +146,13 @@ describe('DocumentSpace Domain Schemas', () => {
   });
 
   describe('StorageLocationSchema', () => {
-    it('validates a valid StorageLocation with required and optional routing properties', () => {
+    it('validates a valid StorageLocation with provider and abstractStorageId', () => {
       const location: StorageLocation = {
         provider: 'google_drive',
         abstractStorageId: 'drive-folder-123',
-        targetFolderId: 'drive-folder-123',
-        folderId: 'drive-folder-123',
-        sharedDriveId: 'shared-drive-456',
-        path: '/Projects/Alpha',
       };
 
       expect(Value.Check(StorageLocationSchema, location)).toBe(true);
-    });
-
-    it('validates a minimal StorageLocation with only provider and abstractStorageId', () => {
-      const minimal = {
-        provider: 'google_drive',
-        abstractStorageId: 'drive-folder-123',
-      };
-
-      expect(Value.Check(StorageLocationSchema, minimal)).toBe(true);
     });
 
     it('rejects StorageLocation missing provider or abstractStorageId', () => {
@@ -275,10 +244,7 @@ describe('DocumentSpaceService', () => {
           id: 'invalid',
           displayName: 'Invalid',
           allowedDocumentTypes: [],
-          storageConfig: {
-            provider: 'google_drive',
-            fetchMethod: 'bad_method' as unknown as 'shared_drives',
-          },
+          storageConfig: 'not-an-object' as unknown as Record<string, unknown>,
         },
       ],
     };

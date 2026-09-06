@@ -1,3 +1,4 @@
+import { Type, type Static } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import {
   StorageLocationSchema,
@@ -7,6 +8,24 @@ import {
   type StorageLocation,
 } from '../domain';
 import type { DocumentSpaceStoragePort } from '../ports';
+
+export const SharedDrivesStorageConfigSchema = Type.Object({
+  provider: Type.Literal('google_drive'),
+  fetchMethod: Type.Literal('shared_drives'),
+  paginationLimit: Type.Optional(Type.Number({ default: 500 })),
+});
+
+export type SharedDrivesStorageConfig = Static<typeof SharedDrivesStorageConfigSchema>;
+
+export const FoldersStorageConfigSchema = Type.Object({
+  provider: Type.Literal('google_drive'),
+  fetchMethod: Type.Literal('folders'),
+  parentFolderId: Type.Optional(Type.String()),
+  sharedDriveId: Type.Optional(Type.String()),
+  paginationLimit: Type.Optional(Type.Number({ default: 500 })),
+});
+
+export type FoldersStorageConfig = Static<typeof FoldersStorageConfigSchema>;
 
 export interface DriveStorageClientPort {
   listSharedDrives(options?: {
@@ -77,12 +96,17 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
     config: StorageContextConfig,
     typeId: string
   ): Promise<DocumentSpace[]> {
-    const limit = config.paginationLimit ?? 500;
-    if (limit <= 0) {
-      return [];
-    }
+    if (config['fetchMethod'] === 'shared_drives') {
+      if (!Value.Check(SharedDrivesStorageConfigSchema, config)) {
+        const errors = formatValidationErrors(SharedDrivesStorageConfigSchema, config);
+        throw new Error(`Invalid Google Drive storage configuration: ${errors.join(', ')}`);
+      }
+      const typedConfig = config as SharedDrivesStorageConfig;
+      const limit = typedConfig.paginationLimit ?? 500;
+      if (limit <= 0) {
+        return [];
+      }
 
-    if (config.fetchMethod === 'shared_drives') {
       return fetchWithPagination(limit, typeId, async (pageSize, pageToken) => {
         const res = await this.driveClient.listSharedDrives({
           pageSize,
@@ -95,15 +119,25 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
       });
     }
 
-    if (config.fetchMethod === 'folders') {
+    if (config['fetchMethod'] === 'folders') {
+      if (!Value.Check(FoldersStorageConfigSchema, config)) {
+        const errors = formatValidationErrors(FoldersStorageConfigSchema, config);
+        throw new Error(`Invalid Google Drive storage configuration: ${errors.join(', ')}`);
+      }
+      const typedConfig = config as FoldersStorageConfig;
+      const limit = typedConfig.paginationLimit ?? 500;
+      if (limit <= 0) {
+        return [];
+      }
+
       return fetchWithPagination(limit, typeId, async (pageSize, pageToken) => {
         const res = await this.driveClient.listFolders({
           pageSize,
-          ...(config.parentFolderId !== undefined
-            ? { parentFolderId: config.parentFolderId }
+          ...(typedConfig.parentFolderId !== undefined
+            ? { parentFolderId: typedConfig.parentFolderId }
             : {}),
-          ...(config.sharedDriveId !== undefined
-            ? { sharedDriveId: config.sharedDriveId }
+          ...(typedConfig.sharedDriveId !== undefined
+            ? { sharedDriveId: typedConfig.sharedDriveId }
             : {}),
           ...(pageToken !== undefined ? { pageToken } : {}),
         });
@@ -115,7 +149,7 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
     }
 
     throw new Error(
-      `Unsupported fetchMethod: ${(config as { fetchMethod?: string }).fetchMethod}`
+      `Unsupported fetchMethod: ${String(config['fetchMethod'])}`
     );
   }
 
@@ -127,8 +161,6 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
     const location: StorageLocation = {
       provider: 'google_drive',
       abstractStorageId,
-      targetFolderId: abstractStorageId,
-      folderId: abstractStorageId,
     };
 
     if (!Value.Check(StorageLocationSchema, location)) {

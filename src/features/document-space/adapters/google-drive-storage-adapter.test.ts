@@ -3,12 +3,12 @@ import { Value } from '@sinclair/typebox/value';
 import {
   GoogleDriveStorageAdapter,
   type DriveStorageClientPort,
+  type FoldersStorageConfig,
+  type SharedDrivesStorageConfig,
 } from './google-drive-storage-adapter';
 import {
   DocumentSpaceSchema,
   StorageLocationSchema,
-  type FoldersStorageConfig,
-  type SharedDrivesStorageConfig,
 } from '../domain';
 
 describe('GoogleDriveStorageAdapter', () => {
@@ -259,7 +259,7 @@ describe('GoogleDriveStorageAdapter', () => {
     });
   });
 
-  describe('error handling', () => {
+  describe('error handling and schema validation', () => {
     it('throws when fetchMethod is unsupported', async () => {
       const invalidConfig = {
         provider: 'google_drive',
@@ -268,6 +268,52 @@ describe('GoogleDriveStorageAdapter', () => {
 
       await expect(adapter.fetchSpaces(invalidConfig, 'project')).rejects.toThrow(
         /Unsupported fetchMethod: unsupported_method/
+      );
+    });
+
+    it('throws when shared_drives config fails schema validation due to invalid provider', async () => {
+      const invalidConfig = {
+        provider: 'other_provider',
+        fetchMethod: 'shared_drives',
+      };
+
+      await expect(adapter.fetchSpaces(invalidConfig, 'project')).rejects.toThrow(
+        /Invalid Google Drive storage configuration/
+      );
+    });
+
+    it('throws when shared_drives config fails schema validation due to invalid paginationLimit', async () => {
+      const invalidConfig = {
+        provider: 'google_drive',
+        fetchMethod: 'shared_drives',
+        paginationLimit: 'not-a-number' as unknown as number,
+      };
+
+      await expect(adapter.fetchSpaces(invalidConfig, 'project')).rejects.toThrow(
+        /Invalid Google Drive storage configuration/
+      );
+    });
+
+    it('throws when folders config fails schema validation due to invalid provider', async () => {
+      const invalidConfig = {
+        provider: 'dropbox',
+        fetchMethod: 'folders',
+      };
+
+      await expect(adapter.fetchSpaces(invalidConfig, 'project')).rejects.toThrow(
+        /Invalid Google Drive storage configuration/
+      );
+    });
+
+    it('throws when folders config fails schema validation due to invalid paginationLimit', async () => {
+      const invalidConfig = {
+        provider: 'google_drive',
+        fetchMethod: 'folders',
+        paginationLimit: true as unknown as number,
+      };
+
+      await expect(adapter.fetchSpaces(invalidConfig, 'project')).rejects.toThrow(
+        /Invalid Google Drive storage configuration/
       );
     });
 
@@ -292,8 +338,6 @@ describe('GoogleDriveStorageAdapter', () => {
       expect(location).toEqual({
         provider: 'google_drive',
         abstractStorageId: 'drive-folder-abc-123',
-        targetFolderId: 'drive-folder-abc-123',
-        folderId: 'drive-folder-abc-123',
       });
       expect(Value.Check(StorageLocationSchema, location)).toBe(true);
     });

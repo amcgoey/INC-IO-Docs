@@ -170,20 +170,6 @@ export class AppManifestProvider {
       description: `DocumentType file "${relPath}"`,
     });
   }
-
-  async getDocumentSpaceTypes(): Promise<Record<string, unknown>[]> {
-    if (!this.isManifestLoaded) {
-      try {
-        await this.loadManifest();
-      } catch (err) {
-        throw new Error(
-          `Failed to load document space types from manifest: ${err instanceof Error ? err.message : String(err)}`,
-          { cause: err }
-        );
-      }
-    }
-    return this.cachedValidatedManifest?.DocumentSpaceTypes ?? [];
-  }
 }
 
 

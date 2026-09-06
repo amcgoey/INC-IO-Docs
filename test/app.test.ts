@@ -1029,6 +1029,38 @@ describe('App integration tests', () => {
       );
     });
   });
+
+  describe('DocumentSpaceService wiring', () => {
+    it('exposes documentSpaceService on AppInstance and initializes it', () => {
+      expect(app.documentSpaceService).toBeDefined();
+      expect(typeof app.documentSpaceService.getAllTypes).toBe('function');
+      expect(typeof app.documentSpaceService.getCollection).toBe('function');
+    });
+
+    it('allows injecting a custom documentSpaceService via AppOptions', async () => {
+      const mockCustomSpaceService = {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        getAllTypes: vi.fn().mockReturnValue([]),
+        getType: vi.fn(),
+        hasType: vi.fn().mockReturnValue(false),
+        getCollection: vi.fn().mockResolvedValue({
+          type: { id: 'custom', displayName: 'Custom', allowedDocumentTypes: [], storageConfig: {} },
+          spaces: [],
+        }),
+      };
+
+      const customApp = createApp({
+        documentSchemaRegistry: mockManifestRegistry,
+        activityEngine: mockActivityEngine,
+        documentSpaceService: mockCustomSpaceService as unknown as AppInstance['documentSpaceService'],
+      });
+
+      await customApp.initialize();
+
+      expect(customApp.documentSpaceService).toBe(mockCustomSpaceService);
+      expect(mockCustomSpaceService.initialize).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 

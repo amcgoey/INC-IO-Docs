@@ -1102,6 +1102,138 @@ describe('Document domain', () => {
       }
     });
 
+    it('passes DocumentModel.space through processDocument without event or workflow execution', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'comm-project',
+          name: 'Communication Project',
+          documentSchema: {
+            fields: [
+              { key: 'contact', name: 'Contact', type: 'string', required: true },
+            ],
+          },
+        },
+      ];
+      const customRegistry = createCustomRegistry(mockDocumentTypes);
+      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const inputDocument: Document = {
+        type: 'comm-project',
+        data: { contact: 'Alice' },
+        space: {
+          id: 'space-101',
+          typeId: 'project',
+          name: 'Project Apollo',
+          abstractStorageId: 'storage-drive-101',
+        },
+      };
+
+      const result = await service.processDocument(inputDocument);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.space).toEqual({
+          id: 'space-101',
+          typeId: 'project',
+          name: 'Project Apollo',
+          abstractStorageId: 'storage-drive-101',
+        });
+      }
+    });
+
+    it('resolves templates referencing Document.space.abstractStorageId and Document.space.name in activity execution payloads', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'comm-project',
+          name: 'Communication Project',
+          documentSchema: {
+            fields: [
+              { key: 'contact', name: 'Contact', type: 'string', required: true },
+            ],
+          },
+          documentUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'MoveWorkflow',
+              },
+            },
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'MoveWorkflow',
+                activitySequence: [
+                  {
+                    type: 'MOVE_FILE',
+                    payload: {
+                      folderId: '{{Document.space.abstractStorageId}}',
+                      displayName: '{{Document.space.name}}',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+      const customRegistry = createCustomRegistry(mockDocumentTypes);
+      const evaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template, ctx) => {
+          const doc = ctx.Document as { space?: { abstractStorageId?: string; name?: string } };
+          if (template === '{{Document.space.abstractStorageId}}') {
+            return doc?.space?.abstractStorageId ?? '';
+          }
+          if (template === '{{Document.space.name}}') {
+            return doc?.space?.name ?? '';
+          }
+          return template;
+        }),
+      };
+
+      const service = new DocumentService(mockDispatcher, customRegistry, evaluator);
+      await service.initialize();
+
+      const inputDocument: Document = {
+        type: 'comm-project',
+        data: { contact: 'Alice' },
+        space: {
+          id: 'space-202',
+          typeId: 'project',
+          name: 'Project Gemini',
+          abstractStorageId: 'drive-gemini-202',
+        },
+      };
+
+      const result = await service.processDocument(inputDocument, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.activities).toEqual([
+          {
+            type: 'MOVE_FILE',
+            payload: {
+              folderId: 'drive-gemini-202',
+              displayName: 'Project Gemini',
+            },
+          },
+        ]);
+      }
+
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
+        type: 'MOVE_FILE',
+        payload: {
+          folderId: 'drive-gemini-202',
+          displayName: 'Project Gemini',
+        },
+      });
+    });
+
     it('strictly isolates calculatedFields evaluation context from each other (ADR 0003)', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
