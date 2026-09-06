@@ -91,3 +91,25 @@ jobs:
               value: ${{ env.IMAGE_TAG }}
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE || '' }}
+
+      - name: Get Cloud Run URL from Pulumi
+        id: pulumi-output
+        run: |
+          # Fetch the Cloud Run URL that Pulumi just provisioned
+          # We export this from Pulumi so we need to grab it from the stack
+          SERVICE_URL=$(pulumi stack output serviceUrl --cwd ./infra/pulumi -s dev)
+          echo "SERVICE_URL=$SERVICE_URL" >> $GITHUB_ENV
+        env:
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE || '' }}
+
+      - name: Inject Cloud Run URL into Manifest
+        run: |
+          # Replace the ngrok placeholder with the real Cloud Run URL
+          sed -i "s|https://example.ngrok-free.app|$SERVICE_URL|g" infra/deployment.json
+
+      - name: Deploy Google Workspace Add-on Manifest
+        run: |
+          # The deployment name is the resource identifier in GCP
+          gcloud workspace-add-ons deployments replace ${{ env.REPO_NAME }} \
+            --deployment-file=infra/deployment.json \
+            --project=${{ env.PROJECT_ID }}
