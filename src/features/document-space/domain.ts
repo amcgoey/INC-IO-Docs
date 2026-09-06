@@ -64,7 +64,7 @@ export class DocumentSpaceService {
 
   constructor(
     private readonly manifestRegistry: DocumentSpaceManifestRegistryPort,
-    private readonly storagePort?: DocumentSpaceStoragePort
+    private readonly storagePort: DocumentSpaceStoragePort
   ) {}
 
   async initialize(): Promise<void> {
@@ -98,11 +98,6 @@ export class DocumentSpaceService {
   }
 
   async getCollection(typeId: string): Promise<DocumentSpaceCollection> {
-    if (!this.storagePort) {
-      throw new Error(
-        'DocumentSpaceStoragePort is required to retrieve space collections'
-      );
-    }
     const spaceType = this.getType(typeId);
     const spaces = await this.storagePort.fetchSpaces(
       spaceType.storageConfig,

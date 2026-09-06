@@ -14,7 +14,10 @@ import {
   DocumentSpaceTypeSchema,
 } from '../../src/features/document-space/domain';
 import { DocumentSpaceManifestRegistryAdapter } from '../../src/features/document-space/adapters/document-space-manifest-registry';
-import type { DocumentSpaceManifestRegistryPort } from '../../src/features/document-space/ports';
+import type {
+  DocumentSpaceManifestRegistryPort,
+  DocumentSpaceStoragePort,
+} from '../../src/features/document-space/ports';
 
 describe('DocumentType JSON files schema validation', () => {
   it('should validate all DocumentType JSON files referenced by manifest.json against Typebox schemas', async () => {
@@ -96,7 +99,10 @@ describe('DocumentType JSON files schema validation', () => {
     const manifestProvider = new AppManifestProvider({ manifestPath });
     const adapter: DocumentSpaceManifestRegistryPort =
       new DocumentSpaceManifestRegistryAdapter(manifestProvider);
-    const service = new DocumentSpaceService(adapter);
+    const dummyStoragePort: DocumentSpaceStoragePort = {
+      fetchSpaces: async () => [],
+    };
+    const service = new DocumentSpaceService(adapter, dummyStoragePort);
     await service.initialize();
 
     const spaceTypes = await adapter.getDocumentSpaceTypes();

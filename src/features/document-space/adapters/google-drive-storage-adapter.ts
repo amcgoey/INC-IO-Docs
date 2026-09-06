@@ -24,59 +24,75 @@ export interface DriveStorageClientPort {
   }>;
 }
 
+async function fetchWithPagination(
+  limit: number,
+  typeId: string,
+  fetchBatch: (
+    pageSize: number,
+    pageToken?: string | undefined
+  ) => Promise<{
+    items: Array<{ id: string; name: string }>;
+    nextPageToken?: string | undefined;
+  }>
+): Promise<DocumentSpace[]> {
+  const spaces: DocumentSpace[] = [];
+  let pageToken: string | undefined = undefined;
+
+  while (spaces.length < limit) {
+    const remaining = limit - spaces.length;
+    const pageSize = Math.min(remaining, 100);
+
+    const res = await fetchBatch(pageSize, pageToken);
+
+    for (const item of res.items) {
+      spaces.push({
+        id: item.id,
+        typeId,
+        name: item.name,
+        abstractStorageId: item.id,
+      });
+
+      if (spaces.length >= limit) {
+        break;
+      }
+    }
+
+    if (!res.nextPageToken) {
+      break;
+    }
+    pageToken = res.nextPageToken;
+  }
+
+  return spaces;
+}
+
 export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
   constructor(private readonly driveClient: DriveStorageClientPort) {}
 
   async fetchSpaces(
     config: StorageContextConfig,
-    typeId?: string
+    typeId: string
   ): Promise<DocumentSpace[]> {
     const limit = config.paginationLimit ?? 500;
     if (limit <= 0) {
       return [];
     }
 
-    const assignedTypeId = typeId ?? 'default';
-    const spaces: DocumentSpace[] = [];
-    let pageToken: string | undefined = undefined;
-
     if (config.fetchMethod === 'shared_drives') {
-      while (spaces.length < limit) {
-        const remaining = limit - spaces.length;
-        const pageSize = Math.min(remaining, 100);
-
+      return fetchWithPagination(limit, typeId, async (pageSize, pageToken) => {
         const res = await this.driveClient.listSharedDrives({
           pageSize,
           ...(pageToken !== undefined ? { pageToken } : {}),
         });
-
-        for (const drive of res.drives) {
-          spaces.push({
-            id: drive.id,
-            typeId: assignedTypeId,
-            name: drive.name,
-            abstractStorageId: drive.id,
-          });
-
-          if (spaces.length >= limit) {
-            break;
-          }
-        }
-
-        if (!res.nextPageToken) {
-          break;
-        }
-        pageToken = res.nextPageToken;
-      }
-
-      return spaces;
+        return {
+          items: res.drives,
+          nextPageToken: res.nextPageToken,
+        };
+      });
     }
 
     if (config.fetchMethod === 'folders') {
-      while (spaces.length < limit) {
-        const remaining = limit - spaces.length;
-        const pageSize = Math.min(remaining, 100);
-
+      return fetchWithPagination(limit, typeId, async (pageSize, pageToken) => {
         const res = await this.driveClient.listFolders({
           pageSize,
           ...(config.parentFolderId !== undefined
@@ -87,27 +103,11 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
             : {}),
           ...(pageToken !== undefined ? { pageToken } : {}),
         });
-
-        for (const folder of res.folders) {
-          spaces.push({
-            id: folder.id,
-            typeId: assignedTypeId,
-            name: folder.name,
-            abstractStorageId: folder.id,
-          });
-
-          if (spaces.length >= limit) {
-            break;
-          }
-        }
-
-        if (!res.nextPageToken) {
-          break;
-        }
-        pageToken = res.nextPageToken;
-      }
-
-      return spaces;
+        return {
+          items: res.folders,
+          nextPageToken: res.nextPageToken,
+        };
+      });
     }
 
     throw new Error(

@@ -21,7 +21,7 @@ export interface RawManifestProviderPort {
 }
 
 export interface DocumentSpaceStoragePort {
-  fetchSpaces(config: StorageContextConfig, typeId?: string): Promise<DocumentSpace[]>;
+  fetchSpaces(config: StorageContextConfig, typeId: string): Promise<DocumentSpace[]>;
 }
 
 

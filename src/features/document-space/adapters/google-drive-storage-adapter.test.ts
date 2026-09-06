@@ -165,13 +165,13 @@ describe('GoogleDriveStorageAdapter', () => {
       expect(mockDriveClient.listSharedDrives).not.toHaveBeenCalled();
     });
 
-    it('defaults typeId to "default" if omitted', async () => {
+    it('assigns the provided typeId to mapped spaces', async () => {
       vi.mocked(mockDriveClient.listSharedDrives).mockResolvedValueOnce({
         drives: [{ id: 'd-1', name: 'Drive 1' }],
       });
 
-      const spaces = await adapter.fetchSpaces(baseConfig);
-      expect(spaces[0].typeId).toBe('default');
+      const spaces = await adapter.fetchSpaces(baseConfig, 'custom-space-type');
+      expect(spaces[0].typeId).toBe('custom-space-type');
     });
   });
 

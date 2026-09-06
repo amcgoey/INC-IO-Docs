@@ -187,15 +187,19 @@ describe('DocumentSpaceService', () => {
   };
 
   let mockManifestRegistry: DocumentSpaceManifestRegistryPort;
+  let mockStoragePort: DocumentSpaceStoragePort;
 
   beforeEach(() => {
     mockManifestRegistry = {
       getDocumentSpaceTypes: async () => [sampleProjectSpaceType, sampleProposalSpaceType],
     };
+    mockStoragePort = {
+      fetchSpaces: vi.fn(),
+    };
   });
 
   it('initializes and caches space types from the manifest registry port', async () => {
-    const service = new DocumentSpaceService(mockManifestRegistry);
+    const service = new DocumentSpaceService(mockManifestRegistry, mockStoragePort);
     await service.initialize();
 
     expect(service.hasType('project')).toBe(true);
@@ -212,7 +216,7 @@ describe('DocumentSpaceService', () => {
   });
 
   it('throws when getType is called for an unregistered space type', async () => {
-    const service = new DocumentSpaceService(mockManifestRegistry);
+    const service = new DocumentSpaceService(mockManifestRegistry, mockStoragePort);
     await service.initialize();
 
     expect(() => service.getType('non_existent')).toThrow(
@@ -235,18 +239,11 @@ describe('DocumentSpaceService', () => {
       ],
     };
 
-    const service = new DocumentSpaceService(invalidManifestRegistry);
+    const service = new DocumentSpaceService(invalidManifestRegistry, mockStoragePort);
     await expect(service.initialize()).rejects.toThrow(/invalid documentspacetype/i);
   });
 
   describe('getCollection', () => {
-    let mockStoragePort: DocumentSpaceStoragePort;
-
-    beforeEach(() => {
-      mockStoragePort = {
-        fetchSpaces: vi.fn(),
-      };
-    });
 
     it('dynamically queries the storage port and returns a DocumentSpaceCollection', async () => {
       const mockSpaces: DocumentSpace[] = [
@@ -326,15 +323,6 @@ describe('DocumentSpaceService', () => {
         /DocumentSpaceType "unregistered" not found/i
       );
       expect(mockStoragePort.fetchSpaces).not.toHaveBeenCalled();
-    });
-
-    it('throws if storagePort is not configured on DocumentSpaceService', async () => {
-      const service = new DocumentSpaceService(mockManifestRegistry);
-      await service.initialize();
-
-      await expect(service.getCollection('project')).rejects.toThrow(
-        /DocumentSpaceStoragePort is required/i
-      );
     });
 
     it('propagates errors thrown by the storage port', async () => {
