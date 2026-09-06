@@ -60,3 +60,6 @@ Domain and administrative defaults that govern application behavior, distinct fr
 **Workspace Addon**:
 The primary user interface, acting as a driving adapter to the core engine.
 
+**UiBlock**:
+A cohesive, composite UI module for the Workspace Add-on that bundles Google Card Widgets, presentation logic, and trigger handlers.
+_Avoid_: Component, Widget (when referring to the composite), Module
