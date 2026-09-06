@@ -85,6 +85,12 @@ describe("AppInfrastructure ComponentResource", () => {
     expect(runRes).toBeDefined();
     expect(runRes?.inputs.location).toBe("us-east4");
     expect(runRes?.inputs.name).toBe("inc-io-docs-dev");
+    const template = runRes?.inputs.template as { containers?: Array<{ envs?: Array<{ name: string; value: string }> }> };
+    const envs = template?.containers?.[0]?.envs;
+    expect(envs).toContainEqual({
+      name: "SKIP_SPACE_VALIDATION",
+      value: "true",
+    });
 
     // Check IAM Binding for invoker
     const iamBindings = Object.values(resources).filter(

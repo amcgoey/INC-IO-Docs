@@ -115,7 +115,10 @@ export function createApp(options?: AppOptions): AppInstance {
   const initialize = async () => {
     await documentService.initialize();
     await documentSpaceService.initialize();
-    if (!options?.skipSpaceValidation) {
+    const shouldSkipValidation =
+      options?.skipSpaceValidation ??
+      (process.env.SKIP_SPACE_VALIDATION === 'true' || process.env.NODE_ENV === 'production');
+    if (!shouldSkipValidation) {
       const spaceErrors = await (await import('../features/document-space/validation.js')).validateDocumentSpaceTypes(documentSpaceService);
       if (spaceErrors.length > 0) {
         throw new Error(`Failed to validate DocumentSpaceTypes:\n${spaceErrors.join('\n')}`);
@@ -139,7 +142,10 @@ export function createApp(options?: AppOptions): AppInstance {
 
 export const start = async (port = 8080, host = '0.0.0.0') => {
   try {
-    const app = createApp({ logger: true });
+    const app = createApp({
+      logger: true,
+      skipSpaceValidation: process.env.SKIP_SPACE_VALIDATION === 'true' || process.env.NODE_ENV === 'production',
+    });
     await app.start(port, host);
   } catch (err) {
     console.error(err);

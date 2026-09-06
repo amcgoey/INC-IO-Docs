@@ -133,6 +133,10 @@ export class AppInfrastructure extends pulumi.ComponentResource {
                   name: "NODE_OPTIONS",
                   value: "--max-old-space-size=3584",
                 },
+                {
+                  name: "SKIP_SPACE_VALIDATION",
+                  value: "true",
+                },
               ],
             },
           ],

@@ -1031,6 +1031,76 @@ describe('App integration tests', () => {
       expect(mockCustomSpaceService.initialize).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('DocumentSpace validation startup behavior', () => {
+    let failingSpaceService: AppInstance['documentSpaceService'];
+
+    beforeEach(() => {
+      failingSpaceService = {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        getAllTypes: vi.fn().mockReturnValue([{ id: 'unreachable-space' }]),
+        getType: vi.fn(),
+        hasType: vi.fn().mockReturnValue(true),
+        getCollection: vi.fn().mockRejectedValue(new Error('Drive API network error')),
+      } as unknown as AppInstance['documentSpaceService'];
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('fails fast on initialize() when space validation fails and skipSpaceValidation is not set', async () => {
+      const failingApp = createApp({
+        documentSchemaRegistry: mockManifestRegistry,
+        activityEngine: mockActivityEngine,
+        documentSpaceService: failingSpaceService,
+      });
+
+      await expect(failingApp.initialize()).rejects.toThrow(
+        /Failed to validate DocumentSpaceTypes/
+      );
+    });
+
+    it('skips validation on initialize() when SKIP_SPACE_VALIDATION=true env var is set', async () => {
+      vi.stubEnv('SKIP_SPACE_VALIDATION', 'true');
+
+      const appInstance = createApp({
+        documentSchemaRegistry: mockManifestRegistry,
+        activityEngine: mockActivityEngine,
+        documentSpaceService: failingSpaceService,
+      });
+
+      await expect(appInstance.initialize()).resolves.toBeUndefined();
+    });
+
+    it('skips validation on initialize() when NODE_ENV=production env var is set', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+
+      const appInstance = createApp({
+        documentSchemaRegistry: mockManifestRegistry,
+        activityEngine: mockActivityEngine,
+        documentSpaceService: failingSpaceService,
+      });
+
+      await expect(appInstance.initialize()).resolves.toBeUndefined();
+    });
+
+    it('runs validation when skipSpaceValidation: false even if SKIP_SPACE_VALIDATION=true or NODE_ENV=production', async () => {
+      vi.stubEnv('SKIP_SPACE_VALIDATION', 'true');
+      vi.stubEnv('NODE_ENV', 'production');
+
+      const appInstance = createApp({
+        skipSpaceValidation: false,
+        documentSchemaRegistry: mockManifestRegistry,
+        activityEngine: mockActivityEngine,
+        documentSpaceService: failingSpaceService,
+      });
+
+      await expect(appInstance.initialize()).rejects.toThrow(
+        /Failed to validate DocumentSpaceTypes/
+      );
+    });
+  });
 });
 
 
