@@ -67,18 +67,6 @@ export class DocumentSpaceService {
     }
   }
 
-  async validateEndToEnd(): Promise<string[]> {
-    const errors: string[] = [];
-    for (const [typeId, spaceType] of this.spaceTypes.entries()) {
-      try {
-        await this.storagePort.fetchSpaces(spaceType.storageConfig, typeId);
-      } catch (err) {
-        errors.push(`DocumentSpaceType "${typeId}" failed end-to-end validation: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-    return errors;
-  }
-
   getType(typeId: string): DocumentSpaceType {
     const spaceType = this.spaceTypes.get(typeId);
     if (!spaceType) {

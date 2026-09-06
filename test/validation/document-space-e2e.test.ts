@@ -6,10 +6,11 @@ import { DocumentSpaceService } from '../../src/features/document-space/domain';
 import { validateDocumentSpaceTypes } from '../../src/features/document-space/validation';
 import { GoogleDriveStorageAdapter } from '../../src/features/document-space/adapters/google-drive-storage-adapter';
 import { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
-import { DefaultTransporter } from 'google-auth-library';
 
 describe('DocumentSpaceTypes E2E Validation', () => {
-  it.skipIf(process.env.CI)('should validate all DocumentSpaceTypes against the real storage backend', async () => {
+  it.skipIf(process.env.CI || !process.env.GOOGLE_APPLICATION_CREDENTIALS)(
+    'should validate all DocumentSpaceTypes against the real storage backend',
+    async () => {
     // This test performs an actual end-to-end network request using the configured storage adapters
     // to ensure that the document space configurations are pointing to valid, accessible locations.
     const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');

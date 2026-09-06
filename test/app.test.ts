@@ -996,9 +996,7 @@ describe('App integration tests', () => {
       expect(body.action.navigations[0].pushCard.header.title).toBe(
         'Custom Enterprise Workspace'
       );
-      expect(
-        body.action.navigations[0].pushCard.sections[0].widgets[0].textParagraph.text
-      ).toBe('Current DocumentType: configured-Document-type');
+      expect(body.action.navigations[0].pushCard.sections[0].header).toBe('Document Type');
     });
   });
 

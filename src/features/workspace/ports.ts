@@ -75,6 +75,9 @@ export interface WorkspaceDocumentRunnerPort {
 }
 
 export interface WorkspaceDocumentSpaceProviderPort {
-  getAllTypes(): { id: string; displayName: string }[];
-  getCollection(typeId: string): Promise<{ spaces: { id: string; name: string }[] }>;
+  getAllTypes(): { id: string; displayName: string; allowedDocumentTypes?: string[] }[];
+  getCollection(typeId: string): Promise<{
+    type?: { id: string; displayName: string; allowedDocumentTypes?: string[] };
+    spaces: { id: string; name: string }[];
+  }>;
 }

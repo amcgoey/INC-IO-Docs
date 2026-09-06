@@ -3,7 +3,7 @@ import type {
   WorkspaceConfigProviderPort,
   WorkspaceDocumentRunnerPort,
 } from '../ports';
-import type { WorkspaceUiBuilderPort } from './ui-builder';
+import type { DocumentSelectionContext, WorkspaceUiBuilderPort } from './ui-builder';
 import {
   extractWorkspaceExecutionContext,
   type WorkspaceExecutionContext,
@@ -88,26 +88,37 @@ export function registerWorkspaceFeatureRoutes(
     configProvider,
   } = opts;
 
-  const buildCardHelper = async (context: WorkspaceExecutionContext) => {
+  const prepareDriveDocumentProcessCardContext = async (
+    context: WorkspaceExecutionContext
+  ) => {
     const wsConfig = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
-    
-    let spaceTypes: { text: string; value: string; selected?: boolean }[] = [];
-    let documentTypes: { text: string; value: string; selected?: boolean }[] = [];
+
+    let spaceTypes: DocumentSelectionContext['spaceTypes'] = [];
+    let documentTypes: DocumentSelectionContext['documentTypes'] = [];
     let spaces: string[] = [];
 
     const defaultSpaceType = wsConfig?.defaultDocumentSpaceType ?? 'projects';
+    let allowedDocumentTypes: string[] | undefined;
 
     if (documentSpaceService) {
       const types = documentSpaceService.getAllTypes();
-      spaceTypes = types.map(t => ({
+      spaceTypes = types.map((t) => ({
         text: t.displayName,
         value: t.id,
         selected: t.id === defaultSpaceType,
       }));
 
+      const selectedType = types.find((t) => t.id === defaultSpaceType);
+      if (selectedType?.allowedDocumentTypes) {
+        allowedDocumentTypes = selectedType.allowedDocumentTypes;
+      }
+
       try {
         const collection = await documentSpaceService.getCollection(defaultSpaceType);
-        spaces = collection.spaces.map(s => s.name);
+        spaces = collection.spaces.map((s) => s.name);
+        if (!allowedDocumentTypes && collection.type?.allowedDocumentTypes) {
+          allowedDocumentTypes = collection.type.allowedDocumentTypes;
+        }
       } catch (e) {
         console.warn(`Could not fetch collection for default space type: ${defaultSpaceType}`, e);
       }
@@ -115,17 +126,25 @@ export function registerWorkspaceFeatureRoutes(
 
     if (documentService?.getForms) {
       const forms = await documentService.getForms();
-      documentTypes = forms.map(f => ({
+      const filteredForms = allowedDocumentTypes
+        ? forms.filter((f) => allowedDocumentTypes.includes(f.key))
+        : forms;
+
+      documentTypes = filteredForms.map((f) => ({
         text: f.name,
         value: f.key,
         selected: f.key === wsConfig?.defaultDocumentType,
       }));
     }
 
-    return buildDriveDocumentProcessCard(context.selectedItems, wsConfig, uiBuilder, {
+    const selectionContext: DocumentSelectionContext = {
       spaceTypes,
       spaces,
       documentTypes,
+    };
+
+    return buildDriveDocumentProcessCard(context.selectedItems, wsConfig, uiBuilder, {
+      selectionContext,
     });
   };
 
@@ -142,13 +161,15 @@ export function registerWorkspaceFeatureRoutes(
 
         return {
           status: 200,
-          body: await buildCardHelper(context),
+          body: await prepareDriveDocumentProcessCardContext(context),
         };
       } catch (error) {
         return {
           status: 200,
           body: uiBuilder.buildErrorCard(
-            error instanceof Error ? error.message : 'Unknown error in /workspace/drive-items-selected'
+            error instanceof Error
+              ? error.message
+              : 'Unknown error in /workspace/drive-items-selected'
           ),
         };
       }
@@ -168,7 +189,7 @@ export function registerWorkspaceFeatureRoutes(
 
         return {
           status: 200,
-          body: await buildCardHelper(context),
+          body: await prepareDriveDocumentProcessCardContext(context),
         };
       } catch (error) {
         return {

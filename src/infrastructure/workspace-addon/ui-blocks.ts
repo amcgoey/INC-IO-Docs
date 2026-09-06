@@ -210,11 +210,21 @@ export function buildCard(
   };
 }
 
-export function buildDocumentTypeSelectionBlock(options: {
-  spaceTypes: { text: string; value: string; selected?: boolean }[];
-  onSpaceTypeChangeAction: string;
+export interface DocumentSelectionItem {
+  text: string;
+  value: string;
+  selected?: boolean;
+}
+
+export interface DocumentSelectionContext {
+  spaceTypes: DocumentSelectionItem[];
   spaces: string[];
-  documentTypes: { text: string; value: string; selected?: boolean }[];
+  documentTypes: DocumentSelectionItem[];
+}
+
+export function buildDocumentTypeSelectionBlock(options: {
+  selectionContext: DocumentSelectionContext;
+  onSpaceTypeChangeAction: string;
 }): CardSection {
   const widgets: CardWidget[] = [];
 
@@ -223,7 +233,7 @@ export function buildDocumentTypeSelectionBlock(options: {
       name: 'SelectDocumentSpaceType',
       label: 'Document Space Type',
       type: 'DROPDOWN',
-      items: options.spaceTypes,
+      items: options.selectionContext.spaceTypes,
       onChangeAction: {
         function: options.onSpaceTypeChangeAction,
         loadIndicator: 'SPINNER',
@@ -236,7 +246,7 @@ export function buildDocumentTypeSelectionBlock(options: {
       name: 'SelectDocumentSpace',
       label: 'Document Space',
       initialSuggestions: {
-        items: options.spaces.map((space) => ({ text: space })),
+        items: options.selectionContext.spaces.map((space) => ({ text: space })),
       },
     },
   });
@@ -246,7 +256,7 @@ export function buildDocumentTypeSelectionBlock(options: {
       name: 'SelectDocumentType',
       label: 'Document Type',
       type: 'DROPDOWN',
-      items: options.documentTypes,
+      items: options.selectionContext.documentTypes,
     },
   });
 

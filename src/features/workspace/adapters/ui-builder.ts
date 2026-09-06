@@ -3,6 +3,18 @@ export type UiCardSection = unknown;
 export type UiCard = unknown;
 export type UiActionResponse = unknown;
 
+export interface DocumentSelectionItem {
+  text: string;
+  value: string;
+  selected?: boolean;
+}
+
+export interface DocumentSelectionContext {
+  spaceTypes: DocumentSelectionItem[];
+  spaces: string[];
+  documentTypes: DocumentSelectionItem[];
+}
+
 export interface WorkspaceUiBuilderPort {
   buildCard(header: UiCardHeader, sections: (UiCardSection | null | undefined)[]): UiCard;
   buildTitleBlock(options: {
@@ -13,10 +25,8 @@ export interface WorkspaceUiBuilderPort {
   }): UiCardHeader;
   buildStatusMessageBlock(message?: string, isOnlySection?: boolean): UiCardSection | null;
   buildDocumentTypeSelectionBlock(options: {
-    spaceTypes: { text: string; value: string; selected?: boolean }[];
+    selectionContext: DocumentSelectionContext;
     onSpaceTypeChangeAction: string;
-    spaces: string[];
-    documentTypes: { text: string; value: string; selected?: boolean }[];
   }): UiCardSection;
   buildNavigationAction(card: UiCard): UiActionResponse;
   buildErrorCard(errorMessage: string, title?: string): UiActionResponse;

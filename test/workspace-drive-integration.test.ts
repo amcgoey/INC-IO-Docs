@@ -69,9 +69,7 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
       expect(cardResponse.action).toBeDefined();
       const pushCard = cardResponse.action.navigations[0].pushCard;
       expect(pushCard.header.title).toBe('INC-IO Docs');
-      expect(pushCard.sections[0].widgets[0].textParagraph.text).toBe(
-        'Current DocumentType: test-document'
-      );
+      expect(pushCard.sections[0].header).toBe('Document Type');
     });
 
     it('returns 401 Unauthorized when JWT token is invalid or missing', async () => {

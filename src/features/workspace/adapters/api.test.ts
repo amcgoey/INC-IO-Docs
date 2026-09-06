@@ -78,9 +78,10 @@ describe('Workspace Feature Routes', () => {
         subtitle: 'Process Document',
       });
       expect(mockUiBuilder.buildStatusMessageBlock).toHaveBeenCalledWith(
-        'Processing selected items...',
+        undefined,
         false
-      );expect(body).toEqual({
+      );
+      expect(body).toEqual({
         action: { navigations: [{ pushCard: { header: { title: 'INC-IO Engine' }, sections: [] } }] },
       });
     });
@@ -123,8 +124,69 @@ describe('Workspace Feature Routes', () => {
         subtitle: 'Process Document',
       });
       expect(mockUiBuilder.buildStatusMessageBlock).toHaveBeenCalledWith(
-        'Current DocumentType: invoice-doc',
+        undefined,
         false
+      );
+    });
+
+    it('filters documentTypes by allowedDocumentTypes of the selected space type', async () => {
+      const customServer = createHttpServer();
+      const mockSpaceService = {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            allowedDocumentTypes: ['allowed-form'],
+          },
+        ]),
+        getCollection: vi.fn().mockResolvedValue({
+          type: { id: 'projects', displayName: 'Projects', allowedDocumentTypes: ['allowed-form'] },
+          spaces: [{ id: 'space-1', name: 'Project Space 1' }],
+        }),
+      };
+      const mockDocService: WorkspaceDocumentRunnerPort = {
+        processDocument: vi.fn(),
+        getForms: vi.fn().mockResolvedValue([
+          { key: 'allowed-form', name: 'Allowed Form' },
+          { key: 'disallowed-form', name: 'Disallowed Form' },
+        ]),
+      };
+
+      registerWorkspaceFeatureRoutes(customServer, {
+        authVerifier: mockAuthVerifier,
+        uiBuilder: mockUiBuilder,
+        documentService: mockDocService,
+        documentSpaceService: mockSpaceService,
+      });
+
+      const response = await customServer.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-token' },
+        payload: {},
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockUiBuilder.buildDocumentTypeSelectionBlock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          selectionContext: expect.objectContaining({
+            documentTypes: [
+              {
+                text: 'Allowed Form',
+                value: 'allowed-form',
+                selected: false,
+              },
+            ],
+            spaces: ['Project Space 1'],
+            spaceTypes: [
+              {
+                text: 'Projects',
+                value: 'projects',
+                selected: true,
+              },
+            ],
+          }),
+        })
       );
     });
 

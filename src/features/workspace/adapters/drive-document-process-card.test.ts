@@ -23,8 +23,15 @@ describe('buildDriveDocumentProcessCard', () => {
       title: 'INC-IO Engine',
       subtitle: 'Process Document',
     });
-    expect(mockUiBuilder.buildStatusMessageBlock).toHaveBeenCalledWith('Processing selected items...', false);
-    expect(mockUiBuilder.buildDocumentTypeSelectionBlock).toHaveBeenCalled();
+    expect(mockUiBuilder.buildStatusMessageBlock).toHaveBeenCalledWith(undefined, false);
+    expect(mockUiBuilder.buildDocumentTypeSelectionBlock).toHaveBeenCalledWith({
+      selectionContext: {
+        spaceTypes: [],
+        spaces: [],
+        documentTypes: [],
+      },
+      onSpaceTypeChangeAction: 'https://example.com/onSpaceTypeChange',
+    });
     expect(mockUiBuilder.buildCard).toHaveBeenCalledWith(
       { title: 'INC-IO Engine', subtitle: 'Process Document' },
       [{ header: 'Document Type', widgets: [] }]
