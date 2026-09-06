@@ -88,7 +88,7 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
       expect(body.error).toBe('Unauthorized');
     });
 
-    it('returns authorizationAction when userOAuthToken is missing', async () => {
+    it('returns drive document process card even when userOAuthToken is missing', async () => {
       const response = await app.server.inject({
         method: 'POST',
         url: '/workspace/drive-items-selected',
@@ -109,7 +109,8 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body.action.authorizationAction).toBeDefined();
+      expect(body.action.navigations).toBeDefined();
+      expect(body.action.navigations[0].pushCard.header.title).toBe('INC-IO Docs');
     });
   });
 

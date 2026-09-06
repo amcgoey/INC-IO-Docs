@@ -2,8 +2,8 @@ import type {
   AuthVerifierPort,
   WorkspaceConfigProviderPort,
   WorkspaceDocumentRunnerPort,
-  WorkspaceUiBuilderPort,
 } from '../ports';
+import type { WorkspaceUiBuilderPort } from './ui-builder';
 import {
   extractWorkspaceExecutionContext,
   type WorkspaceExecutionContext,
@@ -41,7 +41,6 @@ export interface WorkspaceFeatureApiOptions {
   uiBuilder: WorkspaceUiBuilderPort;
   documentService?: WorkspaceDocumentRunnerPort | undefined;
   configProvider?: WorkspaceConfigProviderPort | undefined;
-  authorizationUrl?: string | undefined;
 }
 
 function withAuthentication(
@@ -84,7 +83,6 @@ export function registerWorkspaceFeatureRoutes(
     authVerifier,
     uiBuilder,
     configProvider,
-    authorizationUrl,
   } = opts;
 
   router.registerRoute({
@@ -97,13 +95,6 @@ export function registerWorkspaceFeatureRoutes(
           request.body,
           traceHeader
         );
-
-        if (!context.userOAuthToken) {
-          return {
-            status: 200,
-            body: uiBuilder.buildAuthorizationAction(authorizationUrl),
-          };
-        }
 
         const wsConfig = configProvider
           ? await configProvider.getWorkspaceConfig()

@@ -25,8 +25,8 @@ import type {
 import type {
   AuthVerifierPort,
   WorkspaceConfigProviderPort,
-  WorkspaceUiBuilderPort,
 } from '../features/workspace/ports';
+import type { WorkspaceUiBuilderPort } from '../features/workspace/adapters/ui-builder';
 import * as uiBlocks from '../infrastructure/workspace-addon/ui-blocks';
 
 TypeSystemPolicy.ExactOptionalPropertyTypes = true;
@@ -108,10 +108,6 @@ export function createApp(options?: AppOptions): AppInstance {
     uiBuilder,
     documentService,
     configProvider: workspaceConfigProvider,
-    authorizationUrl:
-      options?.authorizationUrl ??
-      process.env.GOOGLE_WORKSPACE_AUTH_URL ??
-      process.env.WORKSPACE_AUTH_URL,
   });
 
   const initialize = async () => {

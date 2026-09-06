@@ -1,16 +1,19 @@
-﻿import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { buildDriveDocumentProcessCard } from './drive-document-process-card';
-import type { WorkspaceUiBuilderPort } from '../ports';
+import type { WorkspaceUiBuilderPort } from './ui-builder';
 
 describe('buildDriveDocumentProcessCard', () => {
   it('builds card using injected uiBuilder with fallback title and default message when config is undefined', () => {
+    const mockCard = {
+      header: { title: 'INC-IO Engine', subtitle: 'Process Document' },
+      sections: [{ widgets: [{ textParagraph: { text: 'Processing selected items...' } }] }],
+    };
     const mockUiBuilder: WorkspaceUiBuilderPort = {
       buildTitleBlock: vi.fn().mockReturnValue({ title: 'INC-IO Engine', subtitle: 'Process Document' }),
       buildStatusMessageBlock: vi.fn().mockReturnValue({ widgets: [{ textParagraph: { text: 'Processing selected items...' } }] }),
-      buildCard: vi.fn().mockReturnValue({ header: {}, sections: [{}] }),
-      buildNavigationAction: vi.fn().mockReturnValue({ action: { navigations: [{ pushCard: {} }] } }),
+      buildCard: vi.fn().mockReturnValue(mockCard),
+      buildNavigationAction: vi.fn().mockReturnValue({ action: { navigations: [{ pushCard: mockCard }] } }),
       buildErrorCard: vi.fn(),
-      buildAuthorizationAction: vi.fn(),
     };
 
     const result = buildDriveDocumentProcessCard(undefined, undefined, mockUiBuilder);
@@ -24,18 +27,21 @@ describe('buildDriveDocumentProcessCard', () => {
       { title: 'INC-IO Engine', subtitle: 'Process Document' },
       [{ widgets: [{ textParagraph: { text: 'Processing selected items...' } }] }]
     );
-    expect(mockUiBuilder.buildNavigationAction).toHaveBeenCalledWith({ header: {}, sections: [{}] });
-    expect(result).toEqual({ action: { navigations: [{ pushCard: {} }] } });
+    expect(mockUiBuilder.buildNavigationAction).toHaveBeenCalledWith(mockCard);
+    expect(result).toEqual({ action: { navigations: [{ pushCard: mockCard }] } });
   });
 
   it('builds card using custom appTitle and defaultDocumentType from configuration', () => {
+    const mockCard = {
+      header: { title: 'Enterprise Portal', subtitle: 'Process Document' },
+      sections: [{ widgets: [{ textParagraph: { text: 'Current DocumentType: invoice-spec' } }] }],
+    };
     const mockUiBuilder: WorkspaceUiBuilderPort = {
       buildTitleBlock: vi.fn().mockReturnValue({ title: 'Enterprise Portal', subtitle: 'Process Document' }),
       buildStatusMessageBlock: vi.fn().mockReturnValue({ widgets: [{ textParagraph: { text: 'Current DocumentType: invoice-spec' } }] }),
-      buildCard: vi.fn().mockReturnValue({ header: {}, sections: [{}] }),
-      buildNavigationAction: vi.fn().mockReturnValue({ action: { navigations: [{ pushCard: {} }] } }),
+      buildCard: vi.fn().mockReturnValue(mockCard),
+      buildNavigationAction: vi.fn().mockReturnValue({ action: { navigations: [{ pushCard: mockCard }] } }),
       buildErrorCard: vi.fn(),
-      buildAuthorizationAction: vi.fn(),
     };
 
     const config = {
@@ -55,6 +61,6 @@ describe('buildDriveDocumentProcessCard', () => {
       'Current DocumentType: invoice-spec',
       true
     );
-    expect(result).toEqual({ action: { navigations: [{ pushCard: {} }] } });
+    expect(result).toEqual({ action: { navigations: [{ pushCard: mockCard }] } });
   });
 });

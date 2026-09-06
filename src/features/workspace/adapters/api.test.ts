@@ -5,8 +5,8 @@ import type {
   AuthVerifierPort,
   WorkspaceConfigProviderPort,
   WorkspaceDocumentRunnerPort,
-  WorkspaceUiBuilderPort,
 } from '../ports';
+import type { WorkspaceUiBuilderPort } from './ui-builder';
 
 describe('Workspace Feature Routes', () => {
   let server: HttpServer;
@@ -24,15 +24,12 @@ describe('Workspace Feature Routes', () => {
       buildStatusMessageBlock: vi.fn().mockReturnValue({
         widgets: [{ textParagraph: { text: 'Processing selected items...' } }],
       }),
-      buildCard: vi.fn().mockReturnValue({ header: {}, sections: [] }),
+      buildCard: vi.fn().mockReturnValue({ header: { title: 'INC-IO Engine' }, sections: [] }),
       buildNavigationAction: vi.fn().mockReturnValue({
-        action: { navigations: [{ pushCard: { header: { title: 'INC-IO Engine' } } }] },
+        action: { navigations: [{ pushCard: { header: { title: 'INC-IO Engine' }, sections: [] } }] },
       }),
       buildErrorCard: vi.fn().mockReturnValue({
-        action: { navigations: [{ pushCard: { header: { title: 'Error' } } }] },
-      }),
-      buildAuthorizationAction: vi.fn().mockReturnValue({
-        action: { authorizationAction: { authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth' } },
+        action: { navigations: [{ pushCard: { header: { title: 'Error' }, sections: [] } }] },
       }),
     };
     mockDocumentService = {
@@ -78,7 +75,7 @@ describe('Workspace Feature Routes', () => {
       });
       expect(mockUiBuilder.buildStatusMessageBlock).toHaveBeenCalledWith('Processing selected items...', true);
       expect(body).toEqual({
-        action: { navigations: [{ pushCard: { header: { title: 'INC-IO Engine' } } }] },
+        action: { navigations: [{ pushCard: { header: { title: 'INC-IO Engine' }, sections: [] } }] },
       });
     });
 
@@ -125,7 +122,7 @@ describe('Workspace Feature Routes', () => {
       );
     });
 
-    it('returns 200 with AuthorizationAction when userOAuthToken is missing in request payload', async () => {
+    it('returns 200 with drive document process card even when userOAuthToken is omitted', async () => {
       const response = await server.inject({
         method: 'POST',
         url: '/workspace/drive-items-selected',
@@ -140,34 +137,15 @@ describe('Workspace Feature Routes', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(mockUiBuilder.buildAuthorizationAction).toHaveBeenCalledWith(undefined);
       const body = JSON.parse(response.payload);
+      expect(mockAuthVerifier.verifyToken).toHaveBeenCalledWith('Bearer valid-token');
+      expect(mockUiBuilder.buildTitleBlock).toHaveBeenCalledWith({
+        title: 'INC-IO Engine',
+        subtitle: 'Process Document',
+      });
       expect(body).toEqual({
-        action: { authorizationAction: { authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth' } },
+        action: { navigations: [{ pushCard: { header: { title: 'INC-IO Engine' }, sections: [] } }] },
       });
-    });
-
-    it('returns 200 with custom authorizationUrl when configured and userOAuthToken is missing', async () => {
-      const customServer = createHttpServer();
-      const customAuthUrl = 'https://custom-auth.example.com/oauth2';
-
-      registerWorkspaceFeatureRoutes(customServer, {
-        authVerifier: mockAuthVerifier,
-        uiBuilder: mockUiBuilder,
-        authorizationUrl: customAuthUrl,
-      });
-
-      const response = await customServer.inject({
-        method: 'POST',
-        url: '/workspace/drive-items-selected',
-        headers: {
-          authorization: 'Bearer valid-token',
-        },
-        payload: {},
-      });
-
-      expect(response.statusCode).toBe(200);
-      expect(mockUiBuilder.buildAuthorizationAction).toHaveBeenCalledWith(customAuthUrl);
     });
 
     it('returns 401 when auth verification fails', async () => {

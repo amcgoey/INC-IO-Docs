@@ -1,11 +1,10 @@
-﻿import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   buildTitleBlock,
   buildStatusMessageBlock,
   buildCard,
   buildNavigationAction,
   buildErrorCard,
-  buildAuthorizationAction,
 } from './ui-blocks';
 
 describe('Workspace Add-on UI Blocks', () => {
@@ -170,31 +169,6 @@ describe('Workspace Add-on UI Blocks', () => {
       const errorAction = buildErrorCard('Network timeout', 'Connection Error');
       const pushCard = (errorAction.action.navigations as { pushCard: { header: { title: string } } }[])[0].pushCard;
       expect(pushCard.header.title).toBe('Connection Error');
-    });
-  });
-
-  describe('buildAuthorizationAction', () => {
-    it('returns authorizationAction with default URL', () => {
-      const authAction = buildAuthorizationAction();
-      expect(authAction).toEqual({
-        action: {
-          authorizationAction: {
-            authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
-          },
-        },
-      });
-    });
-
-    it('returns authorizationAction with custom URL', () => {
-      const customUrl = 'https://accounts.google.com/o/oauth2/v2/auth?client_id=xyz';
-      const authAction = buildAuthorizationAction(customUrl);
-      expect(authAction).toEqual({
-        action: {
-          authorizationAction: {
-            authorizationUrl: customUrl,
-          },
-        },
-      });
     });
   });
 });

@@ -1,47 +1,66 @@
-export interface AuthVerificationResult {
-  isValid: boolean;
-  payload?: Record<string, unknown> | undefined;
-  error?: string | undefined;
-}
+import { Type, type Static } from '@sinclair/typebox';
+import type { WorkspaceDocumentExecutionContext } from './domain';
+
+export const AuthVerificationResultSchema = Type.Object({
+  isValid: Type.Boolean(),
+  payload: Type.Optional(
+    Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])
+  ),
+  error: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+
+export type AuthVerificationResult = Static<typeof AuthVerificationResultSchema>;
 
 export interface AuthVerifierPort {
   verifyToken(authHeader?: string): Promise<AuthVerificationResult>;
 }
 
-export interface WorkspaceConfiguration {
-  appTitle?: string | undefined;
-  actionButtonText?: string | undefined;
-  defaultDocumentType?: string | undefined;
-  defaultEventName?: string | undefined;
-}
+export const WorkspaceConfigurationSchema = Type.Object({
+  appTitle: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  actionButtonText: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  defaultDocumentType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  defaultEventName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+
+export type WorkspaceConfiguration = Static<typeof WorkspaceConfigurationSchema>;
 
 export interface WorkspaceConfigProviderPort {
   getWorkspaceConfig(): Promise<WorkspaceConfiguration | undefined>;
 }
 
-export interface WorkspaceFileLocator {
-  id: string;
-  name: string;
-  parentName?: string | undefined;
-  mimeType?: string | undefined;
-  uri?: string | undefined;
-}
+export const WorkspaceFileLocatorSchema = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  parentName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  uri: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
 
-export interface WorkspaceActivityResult {
-  success?: boolean | undefined;
-  error?: string | undefined;
-  files?: WorkspaceFileLocator[] | undefined;
-  contextVariables?: Record<string, unknown> | undefined;
-  documentDataPatch?: Record<string, unknown> | undefined;
-}
+export type WorkspaceFileLocator = Static<typeof WorkspaceFileLocatorSchema>;
 
-export interface WorkspaceDocumentProcessResult {
-  success: boolean;
-  errors?: string[] | undefined;
-  outputs?: WorkspaceActivityResult[] | undefined;
-}
+export const WorkspaceActivityResultSchema = Type.Object({
+  success: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  error: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  files: Type.Optional(Type.Union([Type.Array(WorkspaceFileLocatorSchema), Type.Undefined()])),
+  contextVariables: Type.Optional(
+    Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])
+  ),
+  documentDataPatch: Type.Optional(
+    Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])
+  ),
+});
 
-import type { WorkspaceDocumentExecutionContext } from './domain';
+export type WorkspaceActivityResult = Static<typeof WorkspaceActivityResultSchema>;
+
+export const WorkspaceDocumentProcessResultSchema = Type.Object({
+  success: Type.Boolean(),
+  errors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  outputs: Type.Optional(Type.Union([Type.Array(WorkspaceActivityResultSchema), Type.Undefined()])),
+});
+
+export type WorkspaceDocumentProcessResult = Static<
+  typeof WorkspaceDocumentProcessResultSchema
+>;
 
 export type { WorkspaceDocumentExecutionContext };
 
@@ -52,13 +71,3 @@ export interface WorkspaceDocumentRunnerPort {
     context?: WorkspaceDocumentExecutionContext
   ): Promise<WorkspaceDocumentProcessResult>;
 }
-
-export interface WorkspaceUiBuilderPort {
-  buildCard(header: Record<string, unknown>, sections: (Record<string, unknown> | null)[]): Record<string, unknown>;
-  buildTitleBlock(options: { title: string; subtitle?: string; imageUrl?: string; imageType?: 'SQUARE' | 'CIRCLE' }): Record<string, unknown>;
-  buildStatusMessageBlock(message?: string, isOnlySection?: boolean): Record<string, unknown> | null;
-  buildNavigationAction(card: Record<string, unknown>): Record<string, unknown>;
-  buildErrorCard(errorMessage: string, title?: string): Record<string, unknown>;
-  buildAuthorizationAction(authorizationUrl?: string): Record<string, unknown>;
-}
-
