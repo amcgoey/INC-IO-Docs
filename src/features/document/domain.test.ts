@@ -3,6 +3,8 @@ import { Value } from '@sinclair/typebox/value';
 import {
   DocumentService,
   DocumentModel,
+  DocumentSpaceModel,
+  DocumentSpaceSchema,
   DocumentTypeSchema,
   DocumentFieldOptionType,
   DocumentFieldType,
@@ -61,6 +63,52 @@ describe('Document domain', () => {
 
   it('should export DocumentModel schema', () => {
     expect(DocumentModel).toBeDefined();
+  });
+
+  it('should export DocumentSpaceModel and DocumentSpaceSchema schemas', () => {
+    expect(DocumentSpaceModel).toBeDefined();
+    expect(DocumentSpaceSchema).toBeDefined();
+    expect(DocumentSpaceSchema).toBe(DocumentSpaceModel);
+  });
+
+  it('validates DocumentModel with optional space property', () => {
+    const docWithSpace: Document = {
+      type: 'invoice',
+      data: { total: 100 },
+      space: {
+        id: 'space-123',
+        typeId: 'project',
+        name: 'Apollo Project',
+        abstractStorageId: 'drive-folder-456',
+      },
+    };
+    expect(Value.Check(DocumentModel, docWithSpace)).toBe(true);
+
+    const docWithoutSpace: Document = {
+      type: 'invoice',
+      data: { total: 100 },
+    };
+    expect(Value.Check(DocumentModel, docWithoutSpace)).toBe(true);
+  });
+
+  it('rejects DocumentModel when space property is malformed', () => {
+    const invalidSpaceDoc = {
+      type: 'invoice',
+      data: { total: 100 },
+      space: {
+        id: '', // minLength: 1
+        typeId: 'project',
+        name: 'Apollo Project',
+      },
+    };
+    expect(Value.Check(DocumentModel, invalidSpaceDoc)).toBe(false);
+
+    const invalidSpaceTypeDoc = {
+      type: 'invoice',
+      data: { total: 100 },
+      space: 'not-an-object',
+    };
+    expect(Value.Check(DocumentModel, invalidSpaceTypeDoc)).toBe(false);
   });
 
   it('should export ActivityType schema', () => {
@@ -945,6 +993,113 @@ describe('Document domain', () => {
         type: 'LOG_DOCUMENT',
         payload: { status: 'calculated' },
       });
+    });
+
+    it('evaluates calculatedFields with document space metadata and preserves space on document', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'comm-project',
+          name: 'Communication Project',
+          documentSchema: {
+            fields: [
+              { key: 'contact', name: 'Contact', type: 'string', required: true },
+            ],
+            calculatedFields: [
+              {
+                key: 'projectSummary',
+                template: '{{space.name}} - {{contact}}',
+              },
+            ],
+          },
+          documentUiConfig: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'HandleSpaceWorkflow',
+              },
+            },
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'HandleSpaceWorkflow',
+                activitySequence: [
+                  {
+                    type: 'NOTIFY_SPACE',
+                    payload: {
+                      spaceName: '{{Document.space.name}}',
+                      spaceId: '{{Document.space.id}}',
+                      targetFolder: '{{Document.space.abstractStorageId}}',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+      const customRegistry = createCustomRegistry(mockDocumentTypes);
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template, ctx) => {
+          if (template === '{{space.name}} - {{contact}}') {
+            return `${(ctx.space as { name?: string })?.name} - ${ctx.contact}`;
+          }
+          if (template === '{{Document.space.name}}') {
+            return (ctx.Document as { space?: { name?: string } })?.space?.name;
+          }
+          if (template === '{{Document.space.id}}') {
+            return (ctx.Document as { space?: { id?: string } })?.space?.id;
+          }
+          if (template === '{{Document.space.abstractStorageId}}') {
+            return (ctx.Document as { space?: { abstractStorageId?: string } })?.space?.abstractStorageId;
+          }
+          return template;
+        }),
+      };
+
+      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputDocument: Document = {
+        type: 'comm-project',
+        data: {
+          contact: 'Alice',
+        },
+        space: {
+          id: 'space-99',
+          typeId: 'project',
+          name: 'Project Orion',
+          abstractStorageId: 'drive-folder-99',
+        },
+      };
+
+      const result = await service.processDocument(inputDocument, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.space).toEqual({
+          id: 'space-99',
+          typeId: 'project',
+          name: 'Project Orion',
+          abstractStorageId: 'drive-folder-99',
+        });
+        expect(result.data.data).toEqual({
+          contact: 'Alice',
+          projectSummary: 'Project Orion - Alice',
+        });
+        expect(result.activities).toEqual([
+          {
+            type: 'NOTIFY_SPACE',
+            payload: {
+              spaceName: 'Project Orion',
+              spaceId: 'space-99',
+              targetFolder: 'drive-folder-99',
+            },
+          },
+        ]);
+      }
     });
 
     it('strictly isolates calculatedFields evaluation context from each other (ADR 0003)', async () => {
@@ -3485,6 +3640,53 @@ describe('Document domain', () => {
       };
 
       const errors = validateManifestTemplates(validManifest, evaluator);
+      expect(errors).toEqual([]);
+    });
+
+    it('accepts templates referencing space and Document.space metadata variables', () => {
+      const evaluator = createEvaluator();
+      const manifest: DocumentType = {
+        key: 'space-linked-type',
+        name: 'Space Linked Type',
+        documentSchema: {
+          fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+          calculatedFields: [
+            {
+              key: 'spaceTitle',
+              template: '{{space.name}} - {{title}}',
+            },
+          ],
+          identity: {
+            id: '{{space.id}}-{{title}}',
+            idDocument: '{{space.abstractStorageId}}-{{title}}',
+            idGroup: '{{space.typeId}}',
+          },
+        },
+        storageContextConfig: {
+          targetFolder: '{{Document.space.abstractStorageId}}',
+          spaceName: '{{Document.space.name}}',
+        },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'SpaceWorkflow',
+              activitySequence: [
+                {
+                  type: 'NOTIFY_SPACE',
+                  payload: {
+                    spaceName: '{{Document.space.name}}',
+                    spaceId: '{{Document.space.id}}',
+                    spaceType: '{{Document.space.typeId}}',
+                    storageId: '{{Document.space.abstractStorageId}}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const errors = validateManifestTemplates(manifest, evaluator);
       expect(errors).toEqual([]);
     });
 

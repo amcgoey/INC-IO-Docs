@@ -6,6 +6,7 @@ import {
 } from './google-drive-storage-adapter';
 import {
   DocumentSpaceSchema,
+  StorageLocationSchema,
   type FoldersStorageConfig,
   type SharedDrivesStorageConfig,
 } from '../domain';
@@ -283,4 +284,37 @@ describe('GoogleDriveStorageAdapter', () => {
       ).rejects.toThrow('Drive network failure');
     });
   });
+
+  describe('resolveStorageLocation', () => {
+    it('resolves an abstractStorageId to a typed StorageLocation schema', async () => {
+      const location = await adapter.resolveStorageLocation('drive-folder-abc-123');
+
+      expect(location).toEqual({
+        provider: 'google_drive',
+        abstractStorageId: 'drive-folder-abc-123',
+        targetFolderId: 'drive-folder-abc-123',
+        folderId: 'drive-folder-abc-123',
+      });
+      expect(Value.Check(StorageLocationSchema, location)).toBe(true);
+    });
+
+    it('rejects when abstractStorageId is empty or whitespace', async () => {
+      await expect(adapter.resolveStorageLocation('')).rejects.toThrow(
+        /abstractStorageId must be a non-empty string/
+      );
+      await expect(adapter.resolveStorageLocation('   ')).rejects.toThrow(
+        /abstractStorageId must be a non-empty string/
+      );
+    });
+
+    it('rejects when abstractStorageId is not a string', async () => {
+      await expect(
+        adapter.resolveStorageLocation(null as unknown as string)
+      ).rejects.toThrow(/abstractStorageId must be a non-empty string/);
+      await expect(
+        adapter.resolveStorageLocation(undefined as unknown as string)
+      ).rejects.toThrow(/abstractStorageId must be a non-empty string/);
+    });
+  });
 });
+

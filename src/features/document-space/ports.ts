@@ -3,6 +3,7 @@ import type {
   DocumentSpaceCollection,
   DocumentSpaceType,
   StorageContextConfig,
+  StorageLocation,
 } from './domain';
 
 export type {
@@ -10,6 +11,7 @@ export type {
   DocumentSpaceCollection,
   DocumentSpaceType,
   StorageContextConfig,
+  StorageLocation,
 };
 
 export interface DocumentSpaceManifestRegistryPort {
@@ -22,6 +24,7 @@ export interface RawManifestProviderPort {
 
 export interface DocumentSpaceStoragePort {
   fetchSpaces(config: StorageContextConfig, typeId: string): Promise<DocumentSpace[]>;
+  resolveStorageLocation(abstractStorageId: string): Promise<StorageLocation>;
 }
 
 

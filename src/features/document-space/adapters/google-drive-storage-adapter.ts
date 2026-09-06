@@ -1,6 +1,10 @@
-import type {
-  DocumentSpace,
-  StorageContextConfig,
+import { Value } from '@sinclair/typebox/value';
+import {
+  StorageLocationSchema,
+  formatValidationErrors,
+  type DocumentSpace,
+  type StorageContextConfig,
+  type StorageLocation,
 } from '../domain';
 import type { DocumentSpaceStoragePort } from '../ports';
 
@@ -114,4 +118,25 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
       `Unsupported fetchMethod: ${(config as { fetchMethod?: string }).fetchMethod}`
     );
   }
+
+  async resolveStorageLocation(abstractStorageId: string): Promise<StorageLocation> {
+    if (!abstractStorageId || typeof abstractStorageId !== 'string' || abstractStorageId.trim().length === 0) {
+      throw new Error('abstractStorageId must be a non-empty string');
+    }
+
+    const location: StorageLocation = {
+      provider: 'google_drive',
+      abstractStorageId,
+      targetFolderId: abstractStorageId,
+      folderId: abstractStorageId,
+    };
+
+    if (!Value.Check(StorageLocationSchema, location)) {
+      const errors = formatValidationErrors(StorageLocationSchema, location);
+      throw new Error(`Invalid StorageLocation schema: ${errors.join(', ')}`);
+    }
+
+    return location;
+  }
 }
+

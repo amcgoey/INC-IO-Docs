@@ -13,6 +13,16 @@ export function formatValidationErrors<T extends TSchema>(schema: T, value: unkn
   return [...Value.Errors(schema, value)].map((e) => `${e.path}: ${e.message}`);
 }
 
+export const DocumentSpaceModel = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  typeId: Type.String({ minLength: 1 }),
+  name: Type.String({ minLength: 1 }),
+  abstractStorageId: Type.String({ minLength: 1 }),
+});
+
+export const DocumentSpaceSchema = DocumentSpaceModel;
+export type DocumentSpace = Static<typeof DocumentSpaceModel>;
+
 export const DocumentModel = Type.Object({
   // STUB: Pending Chunk 3
   id: Type.Optional(Type.String()),
@@ -22,6 +32,7 @@ export const DocumentModel = Type.Object({
   idGroup: Type.Optional(Type.String()),
   type: Type.String(),
   data: Type.Record(Type.String(), Type.Unknown()),
+  space: Type.Optional(DocumentSpaceModel),
 });
 
 export type Document = Static<typeof DocumentModel>;
@@ -401,6 +412,14 @@ export class DocumentService implements DocumentServicePort, SchemaQueryPort {
     const basePayload: { [key: string]: unknown } = {
       ...systemContext,
       ...enrichedData,
+      ...(document.space !== undefined
+        ? {
+            space: document.space,
+            Document: {
+              space: document.space,
+            },
+          }
+        : {}),
     };
 
     let resolvedData: { [key: string]: unknown } = { ...enrichedData };
@@ -613,6 +632,16 @@ export function walkTemplates(
 function getBaseVariables(manifest: DocumentType): string[] {
   const vars: string[] = [
     ...Object.keys(SystemContextSchema.properties),
+    'space',
+    'space.id',
+    'space.typeId',
+    'space.name',
+    'space.abstractStorageId',
+    'Document.space',
+    'Document.space.id',
+    'Document.space.typeId',
+    'Document.space.name',
+    'Document.space.abstractStorageId',
   ];
 
   for (const field of manifest.documentSchema.fields) {
@@ -641,6 +670,11 @@ function getExecutionVariables(manifest: DocumentType, baseVariables: string[]):
   const vars: string[] = [
     'Document.id',
     'Document.type',
+    'Document.space',
+    'Document.space.id',
+    'Document.space.typeId',
+    'Document.space.name',
+    'Document.space.abstractStorageId',
   ];
 
   for (const baseVar of baseVariables) {

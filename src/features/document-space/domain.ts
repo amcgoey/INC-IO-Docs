@@ -55,6 +55,17 @@ export const DocumentSpaceCollectionSchema = Type.Object({
 
 export type DocumentSpaceCollection = Static<typeof DocumentSpaceCollectionSchema>;
 
+export const StorageLocationSchema = Type.Object({
+  provider: Type.String({ minLength: 1 }),
+  abstractStorageId: Type.String({ minLength: 1 }),
+  targetFolderId: Type.Optional(Type.String()),
+  folderId: Type.Optional(Type.String()),
+  sharedDriveId: Type.Optional(Type.String()),
+  path: Type.Optional(Type.String()),
+});
+
+export type StorageLocation = Static<typeof StorageLocationSchema>;
+
 export function formatValidationErrors<T extends TSchema>(schema: T, value: unknown): string[] {
   return [...Value.Errors(schema, value)].map((e) => `${e.path}: ${e.message}`);
 }

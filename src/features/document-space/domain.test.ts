@@ -5,11 +5,13 @@ import {
   DocumentSpaceSchema,
   DocumentSpaceCollectionSchema,
   StorageContextConfigSchema,
+  StorageLocationSchema,
   DocumentSpaceService,
   formatValidationErrors,
   type DocumentSpaceType,
   type DocumentSpace,
   type DocumentSpaceCollection,
+  type StorageLocation,
 } from './domain';
 import type {
   DocumentSpaceManifestRegistryPort,
@@ -160,6 +162,47 @@ describe('DocumentSpace Domain Schemas', () => {
       expect(Value.Check(DocumentSpaceCollectionSchema, collection)).toBe(true);
     });
   });
+
+  describe('StorageLocationSchema', () => {
+    it('validates a valid StorageLocation with required and optional routing properties', () => {
+      const location: StorageLocation = {
+        provider: 'google_drive',
+        abstractStorageId: 'drive-folder-123',
+        targetFolderId: 'drive-folder-123',
+        folderId: 'drive-folder-123',
+        sharedDriveId: 'shared-drive-456',
+        path: '/Projects/Alpha',
+      };
+
+      expect(Value.Check(StorageLocationSchema, location)).toBe(true);
+    });
+
+    it('validates a minimal StorageLocation with only provider and abstractStorageId', () => {
+      const minimal = {
+        provider: 'google_drive',
+        abstractStorageId: 'drive-folder-123',
+      };
+
+      expect(Value.Check(StorageLocationSchema, minimal)).toBe(true);
+    });
+
+    it('rejects StorageLocation missing provider or abstractStorageId', () => {
+      const missingProvider = {
+        abstractStorageId: 'drive-folder-123',
+      };
+      const missingAbstractId = {
+        provider: 'google_drive',
+      };
+      const emptyProvider = {
+        provider: '',
+        abstractStorageId: 'drive-folder-123',
+      };
+
+      expect(Value.Check(StorageLocationSchema, missingProvider)).toBe(false);
+      expect(Value.Check(StorageLocationSchema, missingAbstractId)).toBe(false);
+      expect(Value.Check(StorageLocationSchema, emptyProvider)).toBe(false);
+    });
+  });
 });
 
 describe('DocumentSpaceService', () => {
@@ -195,6 +238,7 @@ describe('DocumentSpaceService', () => {
     };
     mockStoragePort = {
       fetchSpaces: vi.fn(),
+      resolveStorageLocation: vi.fn(),
     };
   });
 

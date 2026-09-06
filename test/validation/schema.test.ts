@@ -101,6 +101,10 @@ describe('DocumentType JSON files schema validation', () => {
       new DocumentSpaceManifestRegistryAdapter(manifestProvider);
     const dummyStoragePort: DocumentSpaceStoragePort = {
       fetchSpaces: async () => [],
+      resolveStorageLocation: async (abstractStorageId) => ({
+        provider: 'google_drive',
+        abstractStorageId,
+      }),
     };
     const service = new DocumentSpaceService(adapter, dummyStoragePort);
     await service.initialize();
