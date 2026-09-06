@@ -16,6 +16,9 @@ describe('GoogleDriveClient', () => {
         copy: vi.fn(),
         export: vi.fn(),
       },
+      drives: {
+        list: vi.fn(),
+      },
     } as unknown as drive_v3.Drive;
 
     client = new GoogleDriveClient({ drive: mockDrive });
@@ -2248,6 +2251,135 @@ describe('GoogleDriveClient', () => {
           targetFolderId: 'folder-1',
         })
       ).rejects.toThrow(/Google Drive API error in uploadStream: Internal Server Error/);
+    });
+  });
+
+  describe('listSharedDrives', () => {
+    it('returns shared drives and nextPageToken', async () => {
+      (mockDrive.drives.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: {
+          drives: [
+            { id: 'drive-1', name: 'Engineering' },
+            { id: 'drive-2', name: 'Design' },
+            { id: null, name: 'Invalid' },
+          ],
+          nextPageToken: 'token-123',
+        },
+      });
+
+      const res = await client.listSharedDrives({ pageSize: 50, pageToken: 'token-abc' });
+
+      expect(mockDrive.drives.list).toHaveBeenCalledWith({
+        pageSize: 50,
+        pageToken: 'token-abc',
+        fields: 'nextPageToken, drives(id, name)',
+      });
+      expect(res).toEqual({
+        drives: [
+          { id: 'drive-1', name: 'Engineering' },
+          { id: 'drive-2', name: 'Design' },
+        ],
+        nextPageToken: 'token-123',
+      });
+    });
+
+    it('defaults pageSize to 100 if omitted', async () => {
+      (mockDrive.drives.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: { drives: [] },
+      });
+
+      await client.listSharedDrives();
+
+      expect(mockDrive.drives.list).toHaveBeenCalledWith({
+        pageSize: 100,
+        pageToken: undefined,
+        fields: 'nextPageToken, drives(id, name)',
+      });
+    });
+
+    it('wraps API errors in GoogleDriveApiError', async () => {
+      (mockDrive.drives.list as ReturnType<typeof vi.fn>).mockRejectedValueOnce({
+        status: 403,
+        message: 'Insufficient permissions',
+      });
+
+      await expect(client.listSharedDrives()).rejects.toThrow(
+        /Google Drive API error in listSharedDrives: Insufficient permissions/
+      );
+    });
+  });
+
+  describe('listFolders', () => {
+    it('queries user drive folders when sharedDriveId is omitted', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: {
+          files: [
+            { id: 'folder-1', name: 'Project Alpha' },
+            { id: 'folder-2', name: 'Project Beta' },
+          ],
+          nextPageToken: 'page-2',
+        },
+      });
+
+      const res = await client.listFolders({
+        parentFolderId: 'parent-123',
+        pageSize: 50,
+        pageToken: 'page-1',
+      });
+
+      expect(mockDrive.files.list).toHaveBeenCalledWith({
+        q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false and 'parent-123' in parents",
+        pageSize: 50,
+        pageToken: 'page-1',
+        fields: 'nextPageToken, files(id, name)',
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true,
+        corpora: 'user',
+        spaces: 'drive',
+      });
+      expect(res).toEqual({
+        folders: [
+          { id: 'folder-1', name: 'Project Alpha' },
+          { id: 'folder-2', name: 'Project Beta' },
+        ],
+        nextPageToken: 'page-2',
+      });
+    });
+
+    it('queries shared drive when sharedDriveId is provided', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: {
+          files: [{ id: 'folder-shared', name: 'Shared Root Folder' }],
+        },
+      });
+
+      const res = await client.listFolders({
+        sharedDriveId: 'shared-drive-456',
+      });
+
+      expect(mockDrive.files.list).toHaveBeenCalledWith({
+        q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        pageSize: 100,
+        pageToken: undefined,
+        fields: 'nextPageToken, files(id, name)',
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true,
+        corpora: 'drive',
+        driveId: 'shared-drive-456',
+      });
+      expect(res.folders).toHaveLength(1);
+      expect(res.folders[0].id).toBe('folder-shared');
+    });
+
+    it('wraps API errors in GoogleDriveApiError', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockRejectedValueOnce({
+        status: 500,
+        message: 'Internal Error',
+      });
+
+      await expect(client.listFolders()).rejects.toThrow(
+        /Google Drive API error in listFolders: Internal Error/
+      );
     });
   });
 });

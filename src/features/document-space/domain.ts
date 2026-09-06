@@ -1,6 +1,9 @@
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import type { DocumentSpaceManifestRegistryPort } from './ports';
+import type {
+  DocumentSpaceManifestRegistryPort,
+  DocumentSpaceStoragePort,
+} from './ports';
 
 export const SharedDrivesStorageConfigSchema = Type.Object({
   provider: Type.String({ minLength: 1 }),
@@ -60,7 +63,8 @@ export class DocumentSpaceService {
   private spaceTypes = new Map<string, DocumentSpaceType>();
 
   constructor(
-    private readonly manifestRegistry: DocumentSpaceManifestRegistryPort
+    private readonly manifestRegistry: DocumentSpaceManifestRegistryPort,
+    private readonly storagePort?: DocumentSpaceStoragePort
   ) {}
 
   async initialize(): Promise<void> {
@@ -91,5 +95,23 @@ export class DocumentSpaceService {
 
   getAllTypes(): DocumentSpaceType[] {
     return Array.from(this.spaceTypes.values());
+  }
+
+  async getCollection(typeId: string): Promise<DocumentSpaceCollection> {
+    if (!this.storagePort) {
+      throw new Error(
+        'DocumentSpaceStoragePort is required to retrieve space collections'
+      );
+    }
+    const spaceType = this.getType(typeId);
+    const spaces = await this.storagePort.fetchSpaces(
+      spaceType.storageConfig,
+      spaceType.id
+    );
+
+    return {
+      type: spaceType,
+      spaces,
+    };
   }
 }

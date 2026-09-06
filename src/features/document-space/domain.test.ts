@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import {
   DocumentSpaceTypeSchema,
@@ -11,7 +11,10 @@ import {
   type DocumentSpace,
   type DocumentSpaceCollection,
 } from './domain';
-import type { DocumentSpaceManifestRegistryPort } from './ports';
+import type {
+  DocumentSpaceManifestRegistryPort,
+  DocumentSpaceStoragePort,
+} from './ports';
 
 describe('DocumentSpace Domain Schemas', () => {
   describe('StorageContextConfigSchema', () => {
@@ -234,6 +237,118 @@ describe('DocumentSpaceService', () => {
 
     const service = new DocumentSpaceService(invalidManifestRegistry);
     await expect(service.initialize()).rejects.toThrow(/invalid documentspacetype/i);
+  });
+
+  describe('getCollection', () => {
+    let mockStoragePort: DocumentSpaceStoragePort;
+
+    beforeEach(() => {
+      mockStoragePort = {
+        fetchSpaces: vi.fn(),
+      };
+    });
+
+    it('dynamically queries the storage port and returns a DocumentSpaceCollection', async () => {
+      const mockSpaces: DocumentSpace[] = [
+        {
+          id: 'drive-101',
+          typeId: 'project',
+          name: 'Renovation Space',
+          abstractStorageId: 'drive-101',
+        },
+      ];
+
+      vi.mocked(mockStoragePort.fetchSpaces).mockResolvedValueOnce(mockSpaces);
+
+      const service = new DocumentSpaceService(mockManifestRegistry, mockStoragePort);
+      await service.initialize();
+
+      const collection = await service.getCollection('project');
+
+      expect(mockStoragePort.fetchSpaces).toHaveBeenCalledTimes(1);
+      expect(mockStoragePort.fetchSpaces).toHaveBeenCalledWith(
+        sampleProjectSpaceType.storageConfig,
+        'project'
+      );
+
+      expect(collection).toEqual({
+        type: sampleProjectSpaceType,
+        spaces: mockSpaces,
+      });
+      expect(Value.Check(DocumentSpaceCollectionSchema, collection)).toBe(true);
+    });
+
+    it('queries storage port dynamically on each call without caching', async () => {
+      const initialSpaces: DocumentSpace[] = [
+        {
+          id: 'drive-1',
+          typeId: 'project',
+          name: 'Drive 1',
+          abstractStorageId: 'drive-1',
+        },
+      ];
+      const updatedSpaces: DocumentSpace[] = [
+        {
+          id: 'drive-1',
+          typeId: 'project',
+          name: 'Drive 1',
+          abstractStorageId: 'drive-1',
+        },
+        {
+          id: 'drive-2',
+          typeId: 'project',
+          name: 'Drive 2',
+          abstractStorageId: 'drive-2',
+        },
+      ];
+
+      vi.mocked(mockStoragePort.fetchSpaces)
+        .mockResolvedValueOnce(initialSpaces)
+        .mockResolvedValueOnce(updatedSpaces);
+
+      const service = new DocumentSpaceService(mockManifestRegistry, mockStoragePort);
+      await service.initialize();
+
+      const firstCall = await service.getCollection('project');
+      expect(firstCall.spaces).toEqual(initialSpaces);
+
+      const secondCall = await service.getCollection('project');
+      expect(secondCall.spaces).toEqual(updatedSpaces);
+
+      expect(mockStoragePort.fetchSpaces).toHaveBeenCalledTimes(2);
+    });
+
+    it('throws when getCollection is called for an unregistered space type', async () => {
+      const service = new DocumentSpaceService(mockManifestRegistry, mockStoragePort);
+      await service.initialize();
+
+      await expect(service.getCollection('unregistered')).rejects.toThrow(
+        /DocumentSpaceType "unregistered" not found/i
+      );
+      expect(mockStoragePort.fetchSpaces).not.toHaveBeenCalled();
+    });
+
+    it('throws if storagePort is not configured on DocumentSpaceService', async () => {
+      const service = new DocumentSpaceService(mockManifestRegistry);
+      await service.initialize();
+
+      await expect(service.getCollection('project')).rejects.toThrow(
+        /DocumentSpaceStoragePort is required/i
+      );
+    });
+
+    it('propagates errors thrown by the storage port', async () => {
+      vi.mocked(mockStoragePort.fetchSpaces).mockRejectedValueOnce(
+        new Error('Drive network failure')
+      );
+
+      const service = new DocumentSpaceService(mockManifestRegistry, mockStoragePort);
+      await service.initialize();
+
+      await expect(service.getCollection('project')).rejects.toThrow(
+        'Drive network failure'
+      );
+    });
   });
 });
 

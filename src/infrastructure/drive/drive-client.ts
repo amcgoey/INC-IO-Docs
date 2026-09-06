@@ -47,6 +47,37 @@ export interface DriveContentUpdateOptions {
 
 export type DriveContentSaveOptions = DriveContentCreateOptions | DriveContentUpdateOptions;
 
+export interface DriveSharedDriveItem {
+  id: string;
+  name: string;
+}
+
+export interface DriveFolderItem {
+  id: string;
+  name: string;
+}
+
+export interface DriveListSharedDrivesOptions {
+  pageSize?: number | undefined;
+  pageToken?: string | undefined;
+}
+
+export interface DriveListSharedDrivesResult {
+  drives: DriveSharedDriveItem[];
+  nextPageToken?: string | undefined;
+}
+
+export interface DriveListFoldersOptions {
+  parentFolderId?: string | undefined;
+  sharedDriveId?: string | undefined;
+  pageSize?: number | undefined;
+  pageToken?: string | undefined;
+}
+
+export interface DriveListFoldersResult {
+  folders: DriveFolderItem[];
+  nextPageToken?: string | undefined;
+}
 
 export class GoogleDriveApiError extends Error {
   readonly statusCode?: number | undefined;
@@ -781,6 +812,100 @@ export class GoogleDriveClient {
       }
     } catch (error) {
       this.wrapApiError('uploadStream', error);
+    }
+  }
+
+  async listSharedDrives(
+    options?: DriveListSharedDrivesOptions,
+    driveOptions?: DriveOperationOptions
+  ): Promise<DriveListSharedDrivesResult> {
+    const drive = this.getDrive(driveOptions?.auth);
+    try {
+      const pageSize =
+        options?.pageSize !== undefined
+          ? Math.min(Math.max(options.pageSize, 1), 100)
+          : 100;
+
+      const res = await this.executeWithRetry(() =>
+        drive.drives.list({
+          pageSize,
+          ...(options?.pageToken ? { pageToken: options.pageToken } : {}),
+          fields: 'nextPageToken, drives(id, name)',
+        })
+      );
+
+      const rawDrives = res.data.drives ?? [];
+      const drives: DriveSharedDriveItem[] = [];
+      for (const d of rawDrives) {
+        if (d.id && d.name) {
+          drives.push({ id: d.id, name: d.name });
+        }
+      }
+
+      return {
+        drives,
+        nextPageToken: res.data.nextPageToken ?? undefined,
+      };
+    } catch (error) {
+      this.wrapApiError('listSharedDrives', error);
+    }
+  }
+
+  async listFolders(
+    options?: DriveListFoldersOptions,
+    driveOptions?: DriveOperationOptions
+  ): Promise<DriveListFoldersResult> {
+    const drive = this.getDrive(driveOptions?.auth);
+    try {
+      const clauses = [
+        "mimeType = 'application/vnd.google-apps.folder'",
+        'trashed = false',
+      ];
+
+      if (options?.parentFolderId) {
+        const escapedParent = escapeDriveQuery(options.parentFolderId);
+        clauses.push(`'${escapedParent}' in parents`);
+      }
+
+      const q = clauses.join(' and ');
+      const pageSize =
+        options?.pageSize !== undefined
+          ? Math.min(Math.max(options.pageSize, 1), 100)
+          : 100;
+
+      const listParams: drive_v3.Params$Resource$Files$List = {
+        q,
+        pageSize,
+        ...(options?.pageToken ? { pageToken: options.pageToken } : {}),
+        fields: 'nextPageToken, files(id, name)',
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true,
+      };
+
+      if (options?.sharedDriveId) {
+        listParams.corpora = 'drive';
+        listParams.driveId = options.sharedDriveId;
+      } else {
+        listParams.corpora = 'user';
+        listParams.spaces = 'drive';
+      }
+
+      const res = await this.executeWithRetry(() => drive.files.list(listParams));
+
+      const rawFiles = res.data.files ?? [];
+      const folders: DriveFolderItem[] = [];
+      for (const f of rawFiles) {
+        if (f.id && f.name) {
+          folders.push({ id: f.id, name: f.name });
+        }
+      }
+
+      return {
+        folders,
+        nextPageToken: res.data.nextPageToken ?? undefined,
+      };
+    } catch (error) {
+      this.wrapApiError('listFolders', error);
     }
   }
 }

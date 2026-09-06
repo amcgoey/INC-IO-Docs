@@ -1,6 +1,16 @@
-import type { DocumentSpaceType } from './domain';
+import type {
+  DocumentSpace,
+  DocumentSpaceCollection,
+  DocumentSpaceType,
+  StorageContextConfig,
+} from './domain';
 
-export type { DocumentSpaceType };
+export type {
+  DocumentSpace,
+  DocumentSpaceCollection,
+  DocumentSpaceType,
+  StorageContextConfig,
+};
 
 export interface DocumentSpaceManifestRegistryPort {
   getDocumentSpaceTypes(): Promise<DocumentSpaceType[]>;
@@ -8,6 +18,10 @@ export interface DocumentSpaceManifestRegistryPort {
 
 export interface RawManifestProviderPort {
   getRawManifest(): Promise<unknown>;
+}
+
+export interface DocumentSpaceStoragePort {
+  fetchSpaces(config: StorageContextConfig, typeId?: string): Promise<DocumentSpace[]>;
 }
 
 
