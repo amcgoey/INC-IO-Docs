@@ -109,24 +109,17 @@ export function buildStatusMessageBlock(
 ): CardSection | null {
   if (!message || message.trim() === '') {
     if (isOnlySection) {
-      // If it's the only section and there's no message, we throw an error that is caught
-      // and displayed within the Status Message itself to prevent schema violations.
-      try {
-        throw new Error('Card must contain at least one visible section.');
-      } catch (error) {
-        return {
-          widgets: [
-            {
-              textParagraph: {
-                text:
-                  error instanceof Error
-                    ? `Error: ${error.message}`
-                    : 'Error: Card must contain at least one visible section.',
-              },
+      // If it's the only section and there's no message, we must return a visible section
+      // to prevent schema violations. We display a default error message.
+      return {
+        widgets: [
+          {
+            textParagraph: {
+              text: 'Error: Card must contain at least one visible section.',
             },
-          ],
-        };
-      }
+          },
+        ],
+      };
     }
     return null; // Return null if no message, letting the caller omit this section
   }
