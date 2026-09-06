@@ -416,6 +416,7 @@ export class DocumentService implements DocumentServicePort, SchemaQueryPort {
         ? {
             space: document.space,
             Document: {
+              ...document,
               space: document.space,
             },
           }
@@ -626,22 +627,31 @@ export function walkTemplates(
   }
 }
 
+const DOCUMENT_SPACE_PROPERTIES = [
+  'id',
+  'typeId',
+  'name',
+  'abstractStorageId',
+] as const;
+
+const DOCUMENT_SPACE_EXECUTION_VARIABLES = [
+  'Document.space',
+  ...DOCUMENT_SPACE_PROPERTIES.map((prop) => `Document.space.${prop}`),
+];
+
+const DOCUMENT_SPACE_BASE_VARIABLES = [
+  'space',
+  ...DOCUMENT_SPACE_PROPERTIES.map((prop) => `space.${prop}`),
+  ...DOCUMENT_SPACE_EXECUTION_VARIABLES,
+];
+
 /**
  * Compiles the list of base variables available during document hydration and identity/calculatedField resolution.
  */
 function getBaseVariables(manifest: DocumentType): string[] {
   const vars: string[] = [
     ...Object.keys(SystemContextSchema.properties),
-    'space',
-    'space.id',
-    'space.typeId',
-    'space.name',
-    'space.abstractStorageId',
-    'Document.space',
-    'Document.space.id',
-    'Document.space.typeId',
-    'Document.space.name',
-    'Document.space.abstractStorageId',
+    ...DOCUMENT_SPACE_BASE_VARIABLES,
   ];
 
   for (const field of manifest.documentSchema.fields) {
@@ -670,11 +680,7 @@ function getExecutionVariables(manifest: DocumentType, baseVariables: string[]):
   const vars: string[] = [
     'Document.id',
     'Document.type',
-    'Document.space',
-    'Document.space.id',
-    'Document.space.typeId',
-    'Document.space.name',
-    'Document.space.abstractStorageId',
+    ...DOCUMENT_SPACE_EXECUTION_VARIABLES,
   ];
 
   for (const baseVar of baseVariables) {
