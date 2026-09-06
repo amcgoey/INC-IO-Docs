@@ -124,12 +124,14 @@ describe('Workspace Add-on UI Blocks', () => {
       const action = buildNavigationAction(card);
 
       expect(action).toEqual({
-        action: {
-          navigations: [
-            {
-              pushCard: card,
-            },
-          ],
+        renderActions: {
+          action: {
+            navigations: [
+              {
+                pushCard: card,
+              },
+            ],
+          },
         },
       });
     });
@@ -139,27 +141,29 @@ describe('Workspace Add-on UI Blocks', () => {
     it('returns an error card action with default title and notification', () => {
       const errorAction = buildErrorCard('Something broke');
       expect(errorAction).toEqual({
-        action: {
-          navigations: [
-            {
-              pushCard: {
-                header: { title: 'Error' },
-                sections: [
-                  {
-                    widgets: [
-                      {
-                        textParagraph: {
-                          text: 'Something broke',
+        renderActions: {
+          action: {
+            navigations: [
+              {
+                pushCard: {
+                  header: { title: 'Error' },
+                  sections: [
+                    {
+                      widgets: [
+                        {
+                          textParagraph: {
+                            text: 'Something broke',
+                          },
                         },
-                      },
-                    ],
-                  },
-                ],
+                      ],
+                    },
+                  ],
+                },
               },
+            ],
+            notification: {
+              text: 'Something broke',
             },
-          ],
-          notification: {
-            text: 'Something broke',
           },
         },
       });
@@ -167,7 +171,11 @@ describe('Workspace Add-on UI Blocks', () => {
 
     it('returns an error card action with custom title', () => {
       const errorAction = buildErrorCard('Network timeout', 'Connection Error');
-      const pushCard = (errorAction.action.navigations as { pushCard: { header: { title: string } } }[])[0].pushCard;
+      const pushCard = (
+        errorAction.renderActions.action.navigations as {
+          pushCard: { header: { title: string } };
+        }[]
+      )[0].pushCard;
       expect(pushCard.header.title).toBe('Connection Error');
     });
   });

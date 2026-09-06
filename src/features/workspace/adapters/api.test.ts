@@ -30,10 +30,14 @@ describe('Workspace Feature Routes', () => {
       }),
       buildCard: vi.fn().mockReturnValue({ header: { title: 'INC-IO Engine' }, sections: [] }),
       buildNavigationAction: vi.fn().mockReturnValue({
-        action: { navigations: [{ pushCard: { header: { title: 'INC-IO Engine' }, sections: [] } }] },
+        renderActions: {
+          action: { navigations: [{ pushCard: { header: { title: 'INC-IO Engine' }, sections: [] } }] },
+        },
       }),
       buildErrorCard: vi.fn().mockReturnValue({
-        action: { navigations: [{ pushCard: { header: { title: 'Error' }, sections: [] } }] },
+        renderActions: {
+          action: { navigations: [{ pushCard: { header: { title: 'Error' }, sections: [] } }] },
+        },
       }),
     };
     mockDocumentService = {
@@ -82,7 +86,9 @@ describe('Workspace Feature Routes', () => {
         false
       );
       expect(body).toEqual({
-        action: { navigations: [{ pushCard: { header: { title: 'INC-IO Engine' }, sections: [] } }] },
+        renderActions: {
+          action: { navigations: [{ pushCard: { header: { title: 'INC-IO Engine' }, sections: [] } }] },
+        },
       });
     });
 
@@ -212,7 +218,9 @@ describe('Workspace Feature Routes', () => {
         subtitle: 'Process Document',
       });
       expect(body).toEqual({
-        action: { navigations: [{ pushCard: { header: { title: 'INC-IO Engine' }, sections: [] } }] },
+        renderActions: {
+          action: { navigations: [{ pushCard: { header: { title: 'INC-IO Engine' }, sections: [] } }] },
+        },
       });
     });
 

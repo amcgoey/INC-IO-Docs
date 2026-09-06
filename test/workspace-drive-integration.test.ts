@@ -66,8 +66,8 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
       expect(response.statusCode).toBe(200);
       const cardResponse = JSON.parse(response.payload);
 
-      expect(cardResponse.action).toBeDefined();
-      const pushCard = cardResponse.action.navigations[0].pushCard;
+      expect(cardResponse.renderActions?.action).toBeDefined();
+      const pushCard = cardResponse.renderActions.action.navigations[0].pushCard;
       expect(pushCard.header.title).toBe('INC-IO Docs');
       expect(pushCard.sections[0].header).toBe('Document Type');
     });
@@ -107,8 +107,8 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body.action.navigations).toBeDefined();
-      expect(body.action.navigations[0].pushCard.header.title).toBe('INC-IO Docs');
+      expect(body.renderActions?.action?.navigations).toBeDefined();
+      expect(body.renderActions.action.navigations[0].pushCard.header.title).toBe('INC-IO Docs');
     });
   });
 
