@@ -12,6 +12,12 @@ export interface WorkspaceUiBuilderPort {
     imageType?: 'SQUARE' | 'CIRCLE';
   }): UiCardHeader;
   buildStatusMessageBlock(message?: string, isOnlySection?: boolean): UiCardSection | null;
+  buildDocumentTypeSelectionBlock(options: {
+    spaceTypes: { text: string; value: string; selected?: boolean }[];
+    onSpaceTypeChangeAction: string;
+    spaces: string[];
+    documentTypes: { text: string; value: string; selected?: boolean }[];
+  }): UiCardSection;
   buildNavigationAction(card: UiCard): UiActionResponse;
   buildErrorCard(errorMessage: string, title?: string): UiActionResponse;
 }

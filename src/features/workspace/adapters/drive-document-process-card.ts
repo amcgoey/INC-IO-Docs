@@ -5,22 +5,47 @@ import type { UiActionResponse, WorkspaceUiBuilderPort } from './ui-builder';
 export function buildDriveDocumentProcessCard(
   selectedItems: WorkspaceDriveSelectedItem[] | undefined,
   config: WorkspaceConfiguration | undefined,
-  uiBuilder: WorkspaceUiBuilderPort
+  uiBuilder: WorkspaceUiBuilderPort,
+  options?: {
+    spaceTypes?: { text: string; value: string; selected?: boolean }[];
+    spaces?: string[];
+    documentTypes?: { text: string; value: string; selected?: boolean }[];
+    statusMessage?: string;
+  }
 ): UiActionResponse {
-  // Use the default document type from config as a stub status message for manual testing.
-  // TODO: Remove this stub message once other functional Blocks are added to the card.
-  const stubMessage = config?.defaultDocumentType 
-    ? `Current DocumentType: ${config.defaultDocumentType}`
-    : 'Processing selected items...';
-
   const header = uiBuilder.buildTitleBlock({
     title: config?.appTitle ?? 'INC-IO Engine',
     subtitle: 'Process Document',
   });
 
-  const statusSection = uiBuilder.buildStatusMessageBlock(stubMessage, true);
+  const spaceTypes = options?.spaceTypes ?? [];
+  const spaces = options?.spaces ?? [];
+  const documentTypes = options?.documentTypes ?? [];
+  const onSpaceTypeChangeAction = 'https://example.com/onSpaceTypeChange'; // Stub for now
 
-  const card = uiBuilder.buildCard(header, [statusSection]);
+  // Allow optional status message from options or config if provided
+  let statusMessage = options?.statusMessage;
+  if (statusMessage === undefined) {
+    statusMessage = config?.defaultDocumentType
+      ? `Current DocumentType: ${config.defaultDocumentType}`
+      : 'Processing selected items...';
+  }
+  const statusSection = uiBuilder.buildStatusMessageBlock(statusMessage, false);
+
+  const documentTypeSection = uiBuilder.buildDocumentTypeSelectionBlock({
+    spaceTypes,
+    onSpaceTypeChangeAction,
+    spaces,
+    documentTypes,
+  });
+
+  const sections = [];
+  if (statusSection) {
+    sections.push(statusSection);
+  }
+  sections.push(documentTypeSection);
+
+  const card = uiBuilder.buildCard(header, sections);
 
   return uiBuilder.buildNavigationAction(card);
 }

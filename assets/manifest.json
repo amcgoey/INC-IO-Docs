@@ -1,6 +1,7 @@
 {
   "documentTypes": [
-    "./document-types/communication-project.json"
+    "./document-types/communication-project.json",
+    "./document-types/communication-proposal.json"
   ],
   "configuration": {
     "workspace": {
@@ -22,8 +23,8 @@
   },
   "DocumentSpaceTypes": [
     {
-      "id": "project",
-      "displayName": "Project",
+      "id": "projects",
+      "displayName": "Projects",
       "allowedDocumentTypes": [
         "communication-project"
       ],
@@ -32,7 +33,20 @@
         "fetchMethod": "shared_drives",
         "paginationLimit": 500
       }
+    },
+    {
+      "id": "proposals",
+      "displayName": "Proposals",
+      "allowedDocumentTypes": [
+        "communication-proposal"
+      ],
+      "storageConfig": {
+        "provider": "google_drive",
+        "fetchMethod": "folders",
+        "sharedDriveName": "INC Marketing",
+        "parentFolderName": "Opportunities",
+        "paginationLimit": 500
+      }
     }
   ]
 }
-

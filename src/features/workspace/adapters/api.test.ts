@@ -24,6 +24,10 @@ describe('Workspace Feature Routes', () => {
       buildStatusMessageBlock: vi.fn().mockReturnValue({
         widgets: [{ textParagraph: { text: 'Processing selected items...' } }],
       }),
+      buildDocumentTypeSelectionBlock: vi.fn().mockReturnValue({
+        header: 'Document Type',
+        widgets: [],
+      }),
       buildCard: vi.fn().mockReturnValue({ header: { title: 'INC-IO Engine' }, sections: [] }),
       buildNavigationAction: vi.fn().mockReturnValue({
         action: { navigations: [{ pushCard: { header: { title: 'INC-IO Engine' }, sections: [] } }] },
@@ -73,8 +77,10 @@ describe('Workspace Feature Routes', () => {
         title: 'INC-IO Engine',
         subtitle: 'Process Document',
       });
-      expect(mockUiBuilder.buildStatusMessageBlock).toHaveBeenCalledWith('Processing selected items...', true);
-      expect(body).toEqual({
+      expect(mockUiBuilder.buildStatusMessageBlock).toHaveBeenCalledWith(
+        'Processing selected items...',
+        false
+      );expect(body).toEqual({
         action: { navigations: [{ pushCard: { header: { title: 'INC-IO Engine' }, sections: [] } }] },
       });
     });
@@ -118,7 +124,7 @@ describe('Workspace Feature Routes', () => {
       });
       expect(mockUiBuilder.buildStatusMessageBlock).toHaveBeenCalledWith(
         'Current DocumentType: invoice-doc',
-        true
+        false
       );
     });
 

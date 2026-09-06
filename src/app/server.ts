@@ -43,6 +43,7 @@ export interface AppOptions {
   documentSpaceService?: DocumentSpaceService | undefined;
   authorizationUrl?: string | undefined;
   logger?: boolean | undefined;
+  skipSpaceValidation?: boolean | undefined;
 }
 
 export interface AppInstance {
@@ -107,12 +108,19 @@ export function createApp(options?: AppOptions): AppInstance {
     authVerifier,
     uiBuilder,
     documentService,
+    documentSpaceService,
     configProvider: workspaceConfigProvider,
   });
 
   const initialize = async () => {
     await documentService.initialize();
     await documentSpaceService.initialize();
+    if (!options?.skipSpaceValidation) {
+      const spaceErrors = await (await import('../features/document-space/validation.js')).validateDocumentSpaceTypes(documentSpaceService);
+      if (spaceErrors.length > 0) {
+        throw new Error(`Failed to validate DocumentSpaceTypes:\n${spaceErrors.join('\n')}`);
+      }
+    }
   };
 
   const start = async (port = 8080, host = '0.0.0.0') => {

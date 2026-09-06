@@ -117,7 +117,7 @@ describe('DocumentType JSON files schema validation', () => {
       expect(service.hasType(spaceType.id)).toBe(true);
       const retrieved = service.getType(spaceType.id);
       expect(retrieved).toEqual(spaceType);
-      expect(retrieved.storageConfig.fetchMethod).toBe('shared_drives');
+      expect(['shared_drives', 'folders']).toContain(retrieved.storageConfig.fetchMethod);
     }
   });
 });

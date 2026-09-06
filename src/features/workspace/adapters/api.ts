@@ -40,6 +40,7 @@ export interface WorkspaceFeatureApiOptions {
   authVerifier: AuthVerifierPort;
   uiBuilder: WorkspaceUiBuilderPort;
   documentService?: WorkspaceDocumentRunnerPort | undefined;
+  documentSpaceService?: import('../ports').WorkspaceDocumentSpaceProviderPort | undefined;
   configProvider?: WorkspaceConfigProviderPort | undefined;
 }
 
@@ -82,8 +83,51 @@ export function registerWorkspaceFeatureRoutes(
   const {
     authVerifier,
     uiBuilder,
+    documentService,
+    documentSpaceService,
     configProvider,
   } = opts;
+
+  const buildCardHelper = async (context: WorkspaceExecutionContext) => {
+    const wsConfig = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
+    
+    let spaceTypes: { text: string; value: string; selected?: boolean }[] = [];
+    let documentTypes: { text: string; value: string; selected?: boolean }[] = [];
+    let spaces: string[] = [];
+
+    const defaultSpaceType = wsConfig?.defaultDocumentSpaceType ?? 'projects';
+
+    if (documentSpaceService) {
+      const types = documentSpaceService.getAllTypes();
+      spaceTypes = types.map(t => ({
+        text: t.displayName,
+        value: t.id,
+        selected: t.id === defaultSpaceType,
+      }));
+
+      try {
+        const collection = await documentSpaceService.getCollection(defaultSpaceType);
+        spaces = collection.spaces.map(s => s.name);
+      } catch (e) {
+        console.warn(`Could not fetch collection for default space type: ${defaultSpaceType}`, e);
+      }
+    }
+
+    if (documentService?.getForms) {
+      const forms = await documentService.getForms();
+      documentTypes = forms.map(f => ({
+        text: f.name,
+        value: f.key,
+        selected: f.key === wsConfig?.defaultDocumentType,
+      }));
+    }
+
+    return buildDriveDocumentProcessCard(context.selectedItems, wsConfig, uiBuilder, {
+      spaceTypes,
+      spaces,
+      documentTypes,
+    });
+  };
 
   router.registerRoute({
     method: 'POST',
@@ -96,13 +140,9 @@ export function registerWorkspaceFeatureRoutes(
           traceHeader
         );
 
-        const wsConfig = configProvider
-          ? await configProvider.getWorkspaceConfig()
-          : undefined;
-
         return {
           status: 200,
-          body: buildDriveDocumentProcessCard(context.selectedItems, wsConfig, uiBuilder),
+          body: await buildCardHelper(context),
         };
       } catch (error) {
         return {
@@ -126,13 +166,9 @@ export function registerWorkspaceFeatureRoutes(
           traceHeader
         );
 
-        const wsConfig = configProvider
-          ? await configProvider.getWorkspaceConfig()
-          : undefined;
-
         return {
           status: 200,
-          body: buildDriveDocumentProcessCard(context.selectedItems, wsConfig, uiBuilder),
+          body: await buildCardHelper(context),
         };
       } catch (error) {
         return {

@@ -19,6 +19,7 @@ export const WorkspaceConfigurationSchema = Type.Object({
   appTitle: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   actionButtonText: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   defaultDocumentType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  defaultDocumentSpaceType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   defaultEventName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
 });
 
@@ -70,4 +71,10 @@ export interface WorkspaceDocumentRunnerPort {
     eventName?: string,
     context?: WorkspaceDocumentExecutionContext
   ): Promise<WorkspaceDocumentProcessResult>;
+  getForms?(): Promise<{ key: string; name: string }[]>;
+}
+
+export interface WorkspaceDocumentSpaceProviderPort {
+  getAllTypes(): { id: string; displayName: string }[];
+  getCollection(typeId: string): Promise<{ spaces: { id: string; name: string }[] }>;
 }

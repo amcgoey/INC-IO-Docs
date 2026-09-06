@@ -1,0 +1,80 @@
+{
+  "key": "communication-proposal",
+  "name": "Communication Proposal",
+  "documentSchema": {
+    "fields": [
+      {
+        "key": "contact",
+        "name": "Contact",
+        "type": "string",
+        "description": "Contact folder name",
+        "required": true
+      },
+      {
+        "key": "date",
+        "name": "Date",
+        "type": "string",
+        "description": "Date in yyMMdd format",
+        "required": true
+      },
+      {
+        "key": "direction",
+        "name": "Direction",
+        "type": "string",
+        "description": "Communication direction",
+        "required": true,
+        "options": {
+          "source": "direction",
+          "key": "key",
+          "name": "name"
+        }
+      },
+      {
+        "key": "description",
+        "name": "Description",
+        "type": "string",
+        "description": "Description of communication",
+        "required": true
+      }
+    ],
+    "identity": {
+      "id": "{{contact}}-{{date}}-{{direction.key}}-{{description}}",
+      "idDocument": "{{contact}}-{{date}}-{{direction.key}}-{{description}}",
+      "idGroup": "{{contact}}"
+    },
+    "options": {
+      "direction": [
+        {
+          "key": "IN",
+          "name": "Incoming"
+        },
+        {
+          "key": "OT",
+          "name": "Outgoing"
+        }
+      ]
+    }
+  },
+  "documentUiConfig": {
+    "events": {
+      "onSubmit": {
+        "catchAllWorkflow": "FileCommProposal"
+      }
+    }
+  },
+  "documentWorkflowConfig": {
+    "workflows": [
+      {
+        "name": "FileCommProposal",
+        "activitySequence": [
+          {
+            "type": "LOG_DOCUMENT",
+            "payload": {
+              "status": "filed"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

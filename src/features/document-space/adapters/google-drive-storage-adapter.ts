@@ -22,6 +22,8 @@ export const FoldersStorageConfigSchema = Type.Object({
   fetchMethod: Type.Literal('folders'),
   parentFolderId: Type.Optional(Type.String()),
   sharedDriveId: Type.Optional(Type.String()),
+  parentFolderName: Type.Optional(Type.String()),
+  sharedDriveName: Type.Optional(Type.String()),
   paginationLimit: Type.Optional(Type.Number({ default: 500 })),
 });
 
@@ -45,6 +47,17 @@ export interface DriveStorageClientPort {
     folders: Array<{ id: string; name: string }>;
     nextPageToken?: string | undefined;
   }>;
+
+  searchFiles?(
+    query: {
+      targetName: string;
+      exactMatch?: boolean | undefined;
+      sharedDriveId?: string | undefined;
+      mimeTypes?: string[] | undefined;
+      expectedParentPathNames?: string[] | undefined;
+    },
+    options?: { auth?: string | undefined }
+  ): Promise<Array<{ id: string; name: string; mimeType?: string | undefined }>>;
 }
 
 async function fetchWithPagination(
@@ -130,14 +143,57 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
         return [];
       }
 
+      let resolvedSharedDriveId = typedConfig.sharedDriveId;
+      if (!resolvedSharedDriveId && typedConfig.sharedDriveName) {
+        let drivePageToken: string | undefined;
+        let found = false;
+        do {
+          const res = await this.driveClient.listSharedDrives({
+            pageSize: 100,
+            pageToken: drivePageToken,
+          });
+          const drive = res.drives.find(d => d.name === typedConfig.sharedDriveName);
+          if (drive) {
+            resolvedSharedDriveId = drive.id;
+            found = true;
+            break;
+          }
+          drivePageToken = res.nextPageToken;
+        } while (drivePageToken);
+
+        if (!found) {
+          throw new Error(`Shared drive not found with name: ${typedConfig.sharedDriveName}`);
+        }
+      }
+
+      let resolvedParentFolderId = typedConfig.parentFolderId;
+      if (!resolvedParentFolderId && typedConfig.parentFolderName) {
+        if (!this.driveClient.searchFiles) {
+          throw new Error('driveClient.searchFiles is not implemented on the provided DriveStorageClientPort');
+        }
+        const files = await this.driveClient.searchFiles({
+          targetName: typedConfig.parentFolderName,
+          exactMatch: true,
+          sharedDriveId: resolvedSharedDriveId,
+          mimeTypes: ['application/vnd.google-apps.folder'],
+        });
+        if (files.length === 0) {
+          throw new Error(`Parent folder not found with name: ${typedConfig.parentFolderName}`);
+        }
+        if (files.length > 1) {
+          throw new Error(`Multiple parent folders found with name: ${typedConfig.parentFolderName}`);
+        }
+        resolvedParentFolderId = files[0].id;
+      }
+
       return fetchWithPagination(limit, typeId, async (pageSize, pageToken) => {
         const res = await this.driveClient.listFolders({
           pageSize,
-          ...(typedConfig.parentFolderId !== undefined
-            ? { parentFolderId: typedConfig.parentFolderId }
+          ...(resolvedParentFolderId !== undefined
+            ? { parentFolderId: resolvedParentFolderId }
             : {}),
-          ...(typedConfig.sharedDriveId !== undefined
-            ? { sharedDriveId: typedConfig.sharedDriveId }
+          ...(resolvedSharedDriveId !== undefined
+            ? { sharedDriveId: resolvedSharedDriveId }
             : {}),
           ...(pageToken !== undefined ? { pageToken } : {}),
         });

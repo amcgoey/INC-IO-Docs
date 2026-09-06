@@ -62,7 +62,7 @@ describe('App integration tests', () => {
       dispatch: vi.fn().mockResolvedValue(undefined),
     };
 
-    app = createApp({
+    app = createApp({ skipSpaceValidation: true, 
       documentSchemaRegistry: mockManifestRegistry,
       activityEngine: mockActivityEngine,
     });
@@ -230,7 +230,7 @@ describe('App integration tests', () => {
 
     it('GET /forms should return valid FormSchemas when APP_MANIFEST_PATH points to production manifest', async () => {
       vi.stubEnv('APP_MANIFEST_PATH', path.resolve(__dirname, '../assets/manifest.json'));
-      const defaultApp = createApp();
+      const defaultApp = createApp({ skipSpaceValidation: true });
       await defaultApp.initialize();
 
       const response = await defaultApp.server.inject({
@@ -268,7 +268,7 @@ describe('App integration tests', () => {
       const failingRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockRejectedValue(error),
       };
-      return createApp({ documentSchemaRegistry: failingRegistry });
+      return createApp({ skipSpaceValidation: true,  documentSchemaRegistry: failingRegistry });
     }
 
     it('fails fast on createApp when neither options.manifestPath nor APP_MANIFEST_PATH is set and no documentSchemaRegistry is provided', () => {
@@ -314,7 +314,7 @@ describe('App integration tests', () => {
 
     it('fails fast during startup when manifest file is missing via options.manifestPath', async () => {
       const nonExistentManifestPath = path.join(tempDir, 'non-existent-manifest.json');
-      const failingApp = createApp({ manifestPath: nonExistentManifestPath });
+      const failingApp = createApp({ skipSpaceValidation: true,  manifestPath: nonExistentManifestPath });
 
       await expect(failingApp.initialize()).rejects.toThrow(/ENOENT|no such file/i);
     });
@@ -331,7 +331,7 @@ describe('App integration tests', () => {
     it('fails fast during startup when manifest file contains corrupted JSON', async () => {
       const corruptedManifestPath = path.join(tempDir, 'corrupted-manifest.json');
       await fs.writeFile(corruptedManifestPath, '{ invalid json');
-      const failingApp = createApp({ manifestPath: corruptedManifestPath });
+      const failingApp = createApp({ skipSpaceValidation: true,  manifestPath: corruptedManifestPath });
 
       await expect(failingApp.initialize()).rejects.toThrow(/Invalid JSON in manifest file/);
     });
@@ -339,7 +339,7 @@ describe('App integration tests', () => {
     it('fails fast during startup when manifest file schema is invalid', async () => {
       const invalidManifestPath = path.join(tempDir, 'invalid-manifest.json');
       await fs.writeFile(invalidManifestPath, JSON.stringify({ documentTypes: 'not-an-array' }));
-      const failingApp = createApp({ manifestPath: invalidManifestPath });
+      const failingApp = createApp({ skipSpaceValidation: true,  manifestPath: invalidManifestPath });
 
       await expect(failingApp.initialize()).rejects.toThrow(/Invalid manifest file structure/);
     });
@@ -350,7 +350,7 @@ describe('App integration tests', () => {
         manifestPath,
         JSON.stringify({ documentTypes: ['./missing-Document-type.json'] })
       );
-      const failingApp = createApp({ manifestPath });
+      const failingApp = createApp({ skipSpaceValidation: true,  manifestPath });
 
       await expect(failingApp.initialize()).rejects.toThrow(/ENOENT|no such file/i);
     });
@@ -360,7 +360,7 @@ describe('App integration tests', () => {
       const documentTypePath = path.join(tempDir, 'corrupted-Document.json');
       await fs.writeFile(manifestPath, JSON.stringify({ documentTypes: ['./corrupted-Document.json'] }));
       await fs.writeFile(documentTypePath, '{ invalid json');
-      const failingApp = createApp({ manifestPath });
+      const failingApp = createApp({ skipSpaceValidation: true,  manifestPath });
 
       await expect(failingApp.initialize()).rejects.toThrow(/Invalid JSON in DocumentType file/);
     });
@@ -373,7 +373,7 @@ describe('App integration tests', () => {
         documentTypePath,
         JSON.stringify({ key: 'invalid', name: 'Invalid', documentSchema: { fields: 'not-an-array' } })
       );
-      const failingApp = createApp({ manifestPath });
+      const failingApp = createApp({ skipSpaceValidation: true,  manifestPath });
 
       await expect(failingApp.initialize()).rejects.toThrow(/Invalid DocumentType schema/);
     });
@@ -398,7 +398,7 @@ describe('App integration tests', () => {
       const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(unsupportedDocumentTypes),
       };
-      const failingApp = createApp({ documentSchemaRegistry: customRegistry });
+      const failingApp = createApp({ skipSpaceValidation: true,  documentSchemaRegistry: customRegistry });
 
       await expect(failingApp.initialize()).rejects.toThrow(/Unsupported field type 'unknown'/);
     });
@@ -428,7 +428,7 @@ describe('App integration tests', () => {
       await fs.writeFile(documentTypePath, JSON.stringify(customDocument));
       await fs.writeFile(manifestPath, JSON.stringify({ documentTypes: ['./custom-Document.json'] }));
 
-      const appInstance = createApp({ manifestPath });
+      const appInstance = createApp({ skipSpaceValidation: true,  manifestPath });
       await appInstance.initialize();
       const forms = await appInstance.documentService.getForms();
 
@@ -495,7 +495,7 @@ describe('App integration tests', () => {
 
       vi.stubEnv('APP_MANIFEST_PATH', envManifestPath);
 
-      const appInstance = createApp({ manifestPath: optManifestPath });
+      const appInstance = createApp({ skipSpaceValidation: true,  manifestPath: optManifestPath });
       await appInstance.initialize();
       const forms = await appInstance.documentService.getForms();
 
@@ -511,7 +511,7 @@ describe('App integration tests', () => {
       };
 
       const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
-      const prodApp = createApp({
+      const prodApp = createApp({ skipSpaceValidation: true, 
         manifestPath,
         activityEngine: mockDispatcher,
       });
@@ -580,7 +580,7 @@ describe('App integration tests', () => {
       };
 
       const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
-      const prodApp = createApp({
+      const prodApp = createApp({ skipSpaceValidation: true, 
         manifestPath,
         activityEngine: mockDispatcher,
       });
@@ -668,7 +668,7 @@ describe('App integration tests', () => {
         loadAll: vi.fn().mockResolvedValue(customDocumentTypes),
       };
 
-      const customApp = createApp({
+      const customApp = createApp({ skipSpaceValidation: true, 
         documentSchemaRegistry: customRegistry,
         activityEngine: mockDispatcher,
       });
@@ -707,7 +707,7 @@ describe('App integration tests', () => {
   describe('End-to-End Initialization Flow', () => {
     it('initializes app with real adapters using fixture manifest and returns stripped FormSchemas via GET /forms', async () => {
       const manifestPath = path.resolve(__dirname, 'fixtures/manifest.json');
-      const e2eApp = createApp({ manifestPath });
+      const e2eApp = createApp({ skipSpaceValidation: true,  manifestPath });
 
       await e2eApp.initialize();
 
@@ -819,7 +819,7 @@ describe('App integration tests', () => {
         loadAll: vi.fn().mockResolvedValue(customDocumentTypes),
       };
 
-      const appInstance = createApp({
+      const appInstance = createApp({ skipSpaceValidation: true, 
         documentSchemaRegistry: customRegistry,
         activityEngine: mockDispatcher,
       });
@@ -969,7 +969,7 @@ describe('App integration tests', () => {
         }),
       };
 
-      const appInstance = createApp({
+      const appInstance = createApp({ skipSpaceValidation: true, 
         manifestPath,
         driveService: mockDriveService,
         authVerifier: mockAuthVerifier,
@@ -1021,7 +1021,7 @@ describe('App integration tests', () => {
         }),
       };
 
-      const customApp = createApp({
+      const customApp = createApp({ skipSpaceValidation: true, 
         documentSchemaRegistry: mockManifestRegistry,
         activityEngine: mockActivityEngine,
         documentSpaceService: mockCustomSpaceService as unknown as AppInstance['documentSpaceService'],

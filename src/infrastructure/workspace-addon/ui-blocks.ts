@@ -30,6 +30,60 @@ export const TextParagraphWidgetSchema = Type.Object({
 
 export type TextParagraphWidget = Static<typeof TextParagraphWidgetSchema>;
 
+export const ActionParameterSchema = Type.Object({
+  key: Type.String(),
+  value: Type.String(),
+});
+
+export const ActionSchema = Type.Object({
+  function: Type.String(),
+  parameters: Type.Optional(Type.Array(ActionParameterSchema)),
+  loadIndicator: Type.Optional(Type.Union([Type.Literal('SPINNER'), Type.Literal('NONE')])),
+});
+
+export type Action = Static<typeof ActionSchema>;
+
+export const SelectionItemSchema = Type.Object({
+  text: Type.String(),
+  value: Type.String(),
+  selected: Type.Optional(Type.Boolean()),
+});
+
+export type SelectionItem = Static<typeof SelectionItemSchema>;
+
+export const SelectionInputSchema = Type.Object({
+  name: Type.String(),
+  label: Type.Optional(Type.String()),
+  type: Type.Union([Type.Literal('DROPDOWN'), Type.Literal('CHECK_BOX'), Type.Literal('RADIO_BUTTON')]),
+  items: Type.Array(SelectionItemSchema),
+  onChangeAction: Type.Optional(ActionSchema),
+});
+
+export type SelectionInput = Static<typeof SelectionInputSchema>;
+
+export const SuggestionItemSchema = Type.Object({
+  text: Type.String()
+});
+
+export type SuggestionItem = Static<typeof SuggestionItemSchema>;
+
+export const SuggestionsSchema = Type.Object({
+  items: Type.Array(SuggestionItemSchema)
+});
+
+export type Suggestions = Static<typeof SuggestionsSchema>;
+
+export const TextInputSchema = Type.Object({
+  name: Type.String(),
+  label: Type.Optional(Type.String()),
+  hintText: Type.Optional(Type.String()),
+  value: Type.Optional(Type.String()),
+  initialSuggestions: Type.Optional(SuggestionsSchema),
+  onChangeAction: Type.Optional(ActionSchema),
+});
+
+export type TextInput = Static<typeof TextInputSchema>;
+
 export const CardWidgetSchema = Type.Object({
   textParagraph: Type.Optional(
     Type.Union([
@@ -52,11 +106,14 @@ export const CardWidgetSchema = Type.Object({
       Type.Undefined(),
     ])
   ),
+  selectionInput: Type.Optional(SelectionInputSchema),
+  textInput: Type.Optional(TextInputSchema),
 });
 
 export type CardWidget = Static<typeof CardWidgetSchema>;
 
 export const CardSectionSchema = Type.Object({
+  header: Type.Optional(Type.String()),
   widgets: Type.Array(CardWidgetSchema),
 });
 
@@ -150,6 +207,52 @@ export function buildCard(
   return {
     header,
     sections: validSections,
+  };
+}
+
+export function buildDocumentTypeSelectionBlock(options: {
+  spaceTypes: { text: string; value: string; selected?: boolean }[];
+  onSpaceTypeChangeAction: string;
+  spaces: string[];
+  documentTypes: { text: string; value: string; selected?: boolean }[];
+}): CardSection {
+  const widgets: CardWidget[] = [];
+
+  widgets.push({
+    selectionInput: {
+      name: 'SelectDocumentSpaceType',
+      label: 'Document Space Type',
+      type: 'DROPDOWN',
+      items: options.spaceTypes,
+      onChangeAction: {
+        function: options.onSpaceTypeChangeAction,
+        loadIndicator: 'SPINNER',
+      },
+    },
+  });
+
+  widgets.push({
+    textInput: {
+      name: 'SelectDocumentSpace',
+      label: 'Document Space',
+      initialSuggestions: {
+        items: options.spaces.map((space) => ({ text: space })),
+      },
+    },
+  });
+
+  widgets.push({
+    selectionInput: {
+      name: 'SelectDocumentType',
+      label: 'Document Type',
+      type: 'DROPDOWN',
+      items: options.documentTypes,
+    },
+  });
+
+  return {
+    header: 'Document Type',
+    widgets,
   };
 }
 

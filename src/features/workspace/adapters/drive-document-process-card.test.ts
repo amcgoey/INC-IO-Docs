@@ -3,14 +3,15 @@ import { buildDriveDocumentProcessCard } from './drive-document-process-card';
 import type { WorkspaceUiBuilderPort } from './ui-builder';
 
 describe('buildDriveDocumentProcessCard', () => {
-  it('builds card using injected uiBuilder with fallback title and default message when config is undefined', () => {
+  it('builds card using injected uiBuilder with fallback title and no status message when options omitted', () => {
     const mockCard = {
       header: { title: 'INC-IO Engine', subtitle: 'Process Document' },
-      sections: [{ widgets: [{ textParagraph: { text: 'Processing selected items...' } }] }],
+      sections: [{ header: 'Document Type', widgets: [] }],
     };
     const mockUiBuilder: WorkspaceUiBuilderPort = {
       buildTitleBlock: vi.fn().mockReturnValue({ title: 'INC-IO Engine', subtitle: 'Process Document' }),
-      buildStatusMessageBlock: vi.fn().mockReturnValue({ widgets: [{ textParagraph: { text: 'Processing selected items...' } }] }),
+      buildStatusMessageBlock: vi.fn().mockReturnValue(null),
+      buildDocumentTypeSelectionBlock: vi.fn().mockReturnValue({ header: 'Document Type', widgets: [] }),
       buildCard: vi.fn().mockReturnValue(mockCard),
       buildNavigationAction: vi.fn().mockReturnValue({ action: { navigations: [{ pushCard: mockCard }] } }),
       buildErrorCard: vi.fn(),
@@ -22,23 +23,28 @@ describe('buildDriveDocumentProcessCard', () => {
       title: 'INC-IO Engine',
       subtitle: 'Process Document',
     });
-    expect(mockUiBuilder.buildStatusMessageBlock).toHaveBeenCalledWith('Processing selected items...', true);
+    expect(mockUiBuilder.buildStatusMessageBlock).toHaveBeenCalledWith('Processing selected items...', false);
+    expect(mockUiBuilder.buildDocumentTypeSelectionBlock).toHaveBeenCalled();
     expect(mockUiBuilder.buildCard).toHaveBeenCalledWith(
       { title: 'INC-IO Engine', subtitle: 'Process Document' },
-      [{ widgets: [{ textParagraph: { text: 'Processing selected items...' } }] }]
+      [{ header: 'Document Type', widgets: [] }]
     );
     expect(mockUiBuilder.buildNavigationAction).toHaveBeenCalledWith(mockCard);
     expect(result).toEqual({ action: { navigations: [{ pushCard: mockCard }] } });
   });
 
-  it('builds card using custom appTitle and defaultDocumentType from configuration', () => {
+  it('builds card with status message when provided in options', () => {
     const mockCard = {
       header: { title: 'Enterprise Portal', subtitle: 'Process Document' },
-      sections: [{ widgets: [{ textParagraph: { text: 'Current DocumentType: invoice-spec' } }] }],
+      sections: [
+        { widgets: [{ textParagraph: { text: 'Processing selected items...' } }] },
+        { header: 'Document Type', widgets: [] }
+      ],
     };
     const mockUiBuilder: WorkspaceUiBuilderPort = {
       buildTitleBlock: vi.fn().mockReturnValue({ title: 'Enterprise Portal', subtitle: 'Process Document' }),
-      buildStatusMessageBlock: vi.fn().mockReturnValue({ widgets: [{ textParagraph: { text: 'Current DocumentType: invoice-spec' } }] }),
+      buildStatusMessageBlock: vi.fn().mockReturnValue({ widgets: [{ textParagraph: { text: 'Processing selected items...' } }] }),
+      buildDocumentTypeSelectionBlock: vi.fn().mockReturnValue({ header: 'Document Type', widgets: [] }),
       buildCard: vi.fn().mockReturnValue(mockCard),
       buildNavigationAction: vi.fn().mockReturnValue({ action: { navigations: [{ pushCard: mockCard }] } }),
       buildErrorCard: vi.fn(),
@@ -46,20 +52,27 @@ describe('buildDriveDocumentProcessCard', () => {
 
     const config = {
       appTitle: 'Enterprise Portal',
-      defaultDocumentType: 'invoice-spec',
     };
 
     const selectedItems = [{ id: 'drive-file-1', title: 'Invoice.pdf' }];
+    const options = { statusMessage: 'Processing selected items...' };
 
-    const result = buildDriveDocumentProcessCard(selectedItems, config, mockUiBuilder);
+    const result = buildDriveDocumentProcessCard(selectedItems, config, mockUiBuilder, options);
 
     expect(mockUiBuilder.buildTitleBlock).toHaveBeenCalledWith({
       title: 'Enterprise Portal',
       subtitle: 'Process Document',
     });
     expect(mockUiBuilder.buildStatusMessageBlock).toHaveBeenCalledWith(
-      'Current DocumentType: invoice-spec',
-      true
+      'Processing selected items...',
+      false
+    );
+    expect(mockUiBuilder.buildCard).toHaveBeenCalledWith(
+      { title: 'Enterprise Portal', subtitle: 'Process Document' },
+      [
+        { widgets: [{ textParagraph: { text: 'Processing selected items...' } }] },
+        { header: 'Document Type', widgets: [] }
+      ]
     );
     expect(result).toEqual({ action: { navigations: [{ pushCard: mockCard }] } });
   });
