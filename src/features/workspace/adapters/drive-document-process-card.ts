@@ -1,13 +1,12 @@
 import type { WorkspaceDriveSelectedItem } from '../domain';
 import type { WorkspaceConfiguration } from '../ports';
-import type { WorkspaceUiBuilderPort } from './ui-builder';
-import type { CardActionResponse } from '../../../infrastructure/workspace-addon/ui-blocks';
+import type { UiActionResponse, WorkspaceUiBuilderPort } from './ui-builder';
 
 export function buildDriveDocumentProcessCard(
   selectedItems: WorkspaceDriveSelectedItem[] | undefined,
   config: WorkspaceConfiguration | undefined,
   uiBuilder: WorkspaceUiBuilderPort
-): CardActionResponse {
+): UiActionResponse {
   // Use the default document type from config as a stub status message for manual testing.
   // TODO: Remove this stub message once other functional Blocks are added to the card.
   const stubMessage = config?.defaultDocumentType 
