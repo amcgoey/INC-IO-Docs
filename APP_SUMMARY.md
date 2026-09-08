@@ -18,7 +18,7 @@ The application strictly follows a **Hybrid Hexagonal Architecture** (Ports and 
 
 ### Directory Structure & Layers
 
-*   **`src/features/` (High Locality):** Contains self-contained feature slices (e.g., `document`, `document-space`, `workspace`). Each feature directory includes:
+*   **`src/features/` (High Locality):** Contains self-contained feature slices (e.g., `document`, `document-space`). Each feature directory includes:
     *   `domain.ts`: Core business logic and type definitions. Completely isolated from external dependencies (except Typebox).
     *   `ports.ts`: Interfaces defining explicit boundaries (driving and driven ports).
     *   `adapters/`: Implementations that bridge the feature's ports to the outside world.
