@@ -12,9 +12,13 @@ _Avoid_: Business entity, generic schema, recordType
 The subset of a `DocumentType` defining the shape of the data payload.
 _Avoid_: recordSchema
 
-**FormSchema**:
-The presentation-ready definition containing the `DocumentSchema` and UI configuration needed by the frontend.
-_Avoid_: raw schema, documentUiConfig
+**DocumentUiSchema**:
+A highly condensed, abstract blueprint that maps `DocumentSchema` fields to UI concepts (widgets, labels, reactive behaviors). Separated from the core domain.
+_Avoid_: documentUiConfig, FormSchema
+
+**SpaceUiSchema**:
+The abstract blueprint mapping `DocumentSpaceType` attributes to UI concepts.
+_Avoid_: spaceUiConfig
 
 **Document**:
 A validated, immutable instance perfectly satisfying a `DocumentType`.
