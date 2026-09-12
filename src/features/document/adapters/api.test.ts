@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { registerDocumentFeatureRoutes } from './api';
-import type { DocumentServicePort, SchemaQueryPort } from '../ports';
-import type { FormSchema } from '../domain';
+import type { DocumentServicePort, SchemaQueryPort, FormSchema } from '../ports';
 import type { HttpServer, RouteDefinition, RouteSchema } from '../../../infrastructure/http';
 
 function createMockRouter() {

@@ -1,18 +1,27 @@
-import type {
-  Activity,
-  ActivityOutput,
-  ExecutionContext,
-  FileLocator,
-  FormSchema,
-  ProcessDocumentResult,
-  DocumentType,
+import { Type, type Static } from '@sinclair/typebox';
+import {
+  DocumentTypeSchema,
+  type Activity,
+  type ActivityOutput,
+  type ExecutionContext,
+  type FileLocator,
+  type ProcessDocumentResult,
+  type DocumentType,
 } from './domain';
+
+export const FormSchemaType = Type.Pick(DocumentTypeSchema, [
+  'key',
+  'name',
+  'documentSchema',
+  'documentUiSchema',
+]);
+
+export type FormSchema = Static<typeof FormSchemaType>;
 
 export type {
   FileLocator,
   ActivityOutput,
   ExecutionContext,
-  FormSchema,
   ProcessDocumentResult,
   DocumentType,
 };

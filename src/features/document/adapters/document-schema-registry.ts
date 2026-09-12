@@ -9,6 +9,8 @@ import type {
   DocumentSchemaRegistryPort,
   RawManifestProviderPort,
   TemplateEvaluatorPort,
+  SchemaQueryPort,
+  FormSchema,
 } from '../ports';
 
 const RawDocumentKeySchema = Type.Object({
@@ -19,7 +21,9 @@ function extractKey(raw: unknown): string {
   return Value.Check(RawDocumentKeySchema, raw) && raw.key ? ` "${raw.key}"` : '';
 }
 
-export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort {
+export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort, SchemaQueryPort {
+  private cachedForms: FormSchema[] | null = null;
+
   constructor(
     private readonly manifestProvider: RawManifestProviderPort,
     private readonly templateEvaluator: TemplateEvaluatorPort
@@ -58,7 +62,27 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
       documentTypes.push(validatedDocumentType);
     }
 
+    this.cachedForms = documentTypes.map((dt) => {
+      const formSchema: FormSchema = {
+        key: dt.key,
+        name: dt.name,
+        documentSchema: dt.documentSchema,
+      };
+      if (dt.documentUiSchema !== undefined) {
+        formSchema.documentUiSchema = dt.documentUiSchema;
+      }
+      return formSchema;
+    });
+
     return documentTypes;
+  }
+
+  async getForms(): Promise<FormSchema[]> {
+    if (this.cachedForms) {
+      return this.cachedForms;
+    }
+    await this.loadAll();
+    return this.cachedForms ?? [];
   }
 }
 

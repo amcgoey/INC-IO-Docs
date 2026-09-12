@@ -4,8 +4,8 @@ import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { createApp, type AppInstance } from '../src/app/server';
-import type { DocumentSchemaRegistryPort, ActivityDispatcherPort } from '../src/features/document/ports';
-import { FormSchemaType, type DocumentType } from '../src/features/document/domain';
+import { FormSchemaType, type DocumentSchemaRegistryPort, type ActivityDispatcherPort } from '../src/features/document/ports';
+import type { DocumentType } from '../src/features/document/domain';
 
 describe('App integration tests', () => {
   let app: AppInstance;

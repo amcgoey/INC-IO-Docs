@@ -17,7 +17,6 @@ import {
   WorkflowType,
   DocumentWorkflowConfigType,
   StorageContextConfigType,
-  FormSchemaType,
   ActivityType,
   ActivityOutputType,
   FileLocatorType,
@@ -30,7 +29,6 @@ import {
   type FileLocator,
   type Document,
   type DocumentType,
-  type FormSchema,
   type StorageContextConfig,
 } from './domain';
 import {
@@ -38,6 +36,8 @@ import {
   AmbiguousPathSpecError,
   AmbiguousFileError,
   FileNotFoundError,
+  FormSchemaType,
+  type FormSchema,
   type ActivityDispatcherPort,
   type ExecutionContext,
   type DocumentSchemaRegistryPort,

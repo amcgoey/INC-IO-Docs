@@ -4,10 +4,13 @@ import type {
   ActivityDispatcherPort,
   DocumentSchemaRegistryPort,
   DocumentServicePort,
+  FormSchema,
   SchemaQueryPort,
   TemplateEvaluationContext,
   TemplateEvaluatorPort,
 } from './ports';
+
+export type { FormSchema } from './ports';
 
 export function formatValidationErrors<T extends TSchema>(schema: T, value: unknown): string[] {
   return [...Value.Errors(schema, value)].map((e) => `${e.path}: ${e.message}`);
@@ -196,15 +199,6 @@ export const DocumentTypeSchema = Type.Object({
 });
 
 export type DocumentType = Static<typeof DocumentTypeSchema>;
-
-export const FormSchemaType = Type.Object({
-  key: Type.String(),
-  name: Type.String(),
-  documentSchema: DocumentSchemaType,
-  documentUiSchema: Type.Optional(DocumentUiSchemaType),
-});
-
-export type FormSchema = Static<typeof FormSchemaType>;
 
 export type ProcessDocumentResult =
   | {

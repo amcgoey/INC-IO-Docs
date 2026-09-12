@@ -20,6 +20,7 @@ import type {
   AppConfigurationProviderPort,
   DriveServicePort,
   DocumentSchemaRegistryPort,
+  SchemaQueryPort,
   TemplateEvaluatorPort,
 } from '../features/document/ports';
 import type {
@@ -103,7 +104,12 @@ export function createApp(options?: AppOptions): AppInstance {
   const authVerifier: AuthVerifierPort = options?.authVerifier ?? new GoogleJwtVerifier();
   const uiBuilder: WorkspaceUiBuilderPort = options?.uiBuilder ?? uiBlocks;
 
-  registerDocumentFeatureRoutes(server, { service: documentService, schemaQuery: documentService });
+  const schemaQuery: SchemaQueryPort =
+    typeof (documentSchemaRegistry as unknown as SchemaQueryPort).getForms === 'function'
+      ? (documentSchemaRegistry as unknown as SchemaQueryPort)
+      : documentService;
+
+  registerDocumentFeatureRoutes(server, { service: documentService, schemaQuery });
   registerWorkspaceFeatureRoutes(server, {
     authVerifier,
     uiBuilder,

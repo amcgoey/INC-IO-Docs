@@ -7,7 +7,7 @@ This document provides a high-level overview of the INC-IO-Docs application, des
 INC-IO-Docs is a **Schema-Driven Document Management App** and rules engine. It acts as a core system that validates payloads, resolves identities, and orchestrates activities around structured documents.
 
 **Key Capabilities:**
-*   **Schema-Driven:** Operates based on `DocumentType` JSON schemas loaded from a runtime directory. These schemas dictate the shape of data payloads, presentation UI (`FormSchema`), and fields.
+*   **Schema-Driven:** Operates based on `DocumentType` JSON schemas loaded from a runtime directory. These schemas dictate the shape of data payloads, presentation UI (`DocumentUiSchema`), and fields.
 *   **Document Management:** Manages `Document` instances—validated, immutable records that perfectly satisfy a `DocumentType`. These records contain references to file locations (e.g., on Google Drive) rather than embedding binary files.
 *   **Activity Orchestration:** The core domain generates declarative instructions (`Activity` objects) that are executed by driven adapters (e.g., writing to Google Drive, communicating with external APIs).
 *   **Workspace Integration:** The primary user interface is a Google Workspace Add-on, allowing users to interact with the document management system directly from Google Workspace.

@@ -5,9 +5,9 @@ import { AppManifestProvider } from '../../src/infrastructure/manifest/app-manif
 import { HandlebarsAdapter } from '../../src/infrastructure/template-engine/handlebars-adapter';
 import {
   DocumentTypeSchema,
-  FormSchemaType,
   formatValidationErrors,
 } from '../../src/features/document/domain';
+import { FormSchemaType } from '../../src/features/document/ports';
 import { Value } from '@sinclair/typebox/value';
 import {
   DocumentSpaceService,
