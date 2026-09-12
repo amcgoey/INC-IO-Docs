@@ -61,5 +61,9 @@ Domain and administrative defaults that govern application behavior, distinct fr
 The primary user interface, acting as a driving adapter to the core engine.
 
 **UiBlock**:
-A cohesive, composite UI module for the Workspace Add-on that bundles Google Card Widgets, presentation logic, and trigger handlers.
-_Avoid_: Component, Widget (when referring to the composite), Module
+A pure presenter function living within a feature adapter that constructs declarative `UiCard` schemas, co-locating domain logic and UI layout without infrastructural dependencies.
+_Avoid_: Component, Widget (when referring to the composite), Module, Renderer
+
+**UiCard**:
+A declarative, abstract view model schema representing the UI layout and interactions. It is returned by feature presenters (`UiBlocks`) and translated into platform-specific configurations (e.g., Google Workspace JSON) by a dumb renderer.
+_Avoid_: GoogleCard, JsonResponse
