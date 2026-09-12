@@ -162,9 +162,12 @@ export const UiEventType = Type.Object({
 
 export type UiEvent = Static<typeof UiEventType>;
 
-export const DocumentUiSchemaType = Type.Object({
-  events: Type.Optional(Type.Record(Type.String(), UiEventType)),
-});
+export const DocumentUiSchemaType = Type.Object(
+  {
+    events: Type.Optional(Type.Record(Type.String(), UiEventType)),
+  },
+  { additionalProperties: true }
+);
 
 export type DocumentUiSchema = Static<typeof DocumentUiSchemaType>;
 

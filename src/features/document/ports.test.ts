@@ -5,6 +5,8 @@ import {
   type FormSchema,
   DocumentUiSchemaType,
   type DocumentUiSchema,
+  SpaceUiSchemaType,
+  type SpaceUiSchema,
 } from './ports';
 
 describe('Document Ports & DTOs', () => {
@@ -73,5 +75,46 @@ describe('Document Ports & DTOs', () => {
       events: 'not-an-object',
     };
     expect(Value.Check(DocumentUiSchemaType, invalidUiSchema)).toBe(false);
+  });
+
+  it('DocumentUiSchemaType validates layout and fields structure', () => {
+    const fullUiSchema: DocumentUiSchema = {
+      layout: ['firstName', 'lastName'],
+      fields: {
+        firstName: {
+          widget: 'textInput',
+          label: 'First Name',
+          props: { placeholder: 'Enter first name' },
+        },
+        lastName: {
+          label: 'Last Name',
+        },
+      },
+      events: {
+        onSubmit: {
+          catchAllWorkflow: 'StandardWorkflow',
+        },
+      },
+    };
+    expect(Value.Check(DocumentUiSchemaType, fullUiSchema)).toBe(true);
+  });
+
+  it('SpaceUiSchemaType validates layout and fields structure', () => {
+    expect(SpaceUiSchemaType).toBeDefined();
+    const validSpaceUiSchema: SpaceUiSchema = {
+      layout: ['spaceName', 'region'],
+      fields: {
+        spaceName: {
+          widget: 'textInput',
+          label: 'Space Name',
+        },
+        region: {
+          widget: 'selectionInput',
+          label: 'Region',
+          props: { items: ['US', 'EU'] },
+        },
+      },
+    };
+    expect(Value.Check(SpaceUiSchemaType, validSpaceUiSchema)).toBe(true);
   });
 });

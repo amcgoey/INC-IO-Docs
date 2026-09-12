@@ -125,6 +125,8 @@ export const CardSchema = Type.Object({
 });
 
 export type Card = Static<typeof CardSchema>;
+export const UiCardSchema = CardSchema;
+export type UiCard = Card;
 
 export const CardNavigationSchema = Type.Object({
   pushCard: CardSchema,

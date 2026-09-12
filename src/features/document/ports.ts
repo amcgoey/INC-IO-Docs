@@ -1,7 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 import {
   DocumentSchemaType,
-  DocumentUiSchemaType,
   UiEventType,
   UiEventRuleType,
   type Activity,
@@ -10,19 +9,44 @@ import {
   type FileLocator,
   type ProcessDocumentResult,
   type DocumentType,
-  type DocumentUiSchema,
   type UiEvent,
   type UiEventRule,
 } from './domain';
 
 export {
-  DocumentUiSchemaType,
-  type DocumentUiSchema,
   UiEventType,
   type UiEvent,
   UiEventRuleType,
   type UiEventRule,
 };
+
+export const UiFieldSchema = Type.Object({
+  widget: Type.Optional(Type.String()),
+  label: Type.Optional(Type.String()),
+  props: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+});
+
+export type UiField = Static<typeof UiFieldSchema>;
+
+export const DocumentUiSchemaType = Type.Object({
+  layout: Type.Optional(Type.Array(Type.String())),
+  fields: Type.Optional(Type.Record(Type.String(), UiFieldSchema)),
+  events: Type.Optional(Type.Record(Type.String(), UiEventType)),
+});
+
+export type DocumentUiSchema = Static<typeof DocumentUiSchemaType>;
+
+export const SpaceUiSchemaType = Type.Object({
+  layout: Type.Optional(Type.Array(Type.String())),
+  fields: Type.Optional(Type.Record(Type.String(), UiFieldSchema)),
+});
+
+export type SpaceUiSchema = Static<typeof SpaceUiSchemaType>;
+
+export interface DocumentUiSchemaQueryPort {
+  getDocumentUiSchema(documentTypeKey: string): Promise<DocumentUiSchema | undefined>;
+  getSpaceUiSchema(spaceTypeKey: string): Promise<SpaceUiSchema | undefined>;
+}
 
 export const FormSchemaType = Type.Object({
   key: Type.String(),

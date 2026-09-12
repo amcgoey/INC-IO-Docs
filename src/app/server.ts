@@ -29,6 +29,9 @@ import type {
 } from '../features/workspace/ports';
 import type { WorkspaceUiBuilderPort } from '../features/workspace/adapters/ui-builder';
 import * as uiBlocks from '../infrastructure/workspace-addon/ui-blocks';
+import { createDocumentFeatureWiring } from './document.wiring';
+import type { DocumentUiSchemaQueryPort } from '../features/document/ports';
+import type { DocumentUiBlockAdapter } from '../features/document/adapters/ui-block';
 
 TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 
@@ -52,6 +55,8 @@ export interface AppInstance {
   documentService: DocumentService;
   documentSpaceService: DocumentSpaceService;
   documentSchemaRegistry: DocumentSchemaRegistryPort & SchemaQueryPort;
+  documentUiSchemaQuery?: DocumentUiSchemaQueryPort | undefined;
+  documentUiBlock?: DocumentUiBlockAdapter | undefined;
   initialize: () => Promise<void>;
   start: (port?: number, host?: string) => Promise<void>;
 }
@@ -134,11 +139,17 @@ export function createApp(options?: AppOptions): AppInstance {
     await server.start(port, host);
   };
 
+  const documentWiring = manifestProvider
+    ? createDocumentFeatureWiring({ manifestProvider })
+    : undefined;
+
   return {
     server,
     documentService,
     documentSpaceService,
     documentSchemaRegistry,
+    documentUiSchemaQuery: documentWiring?.documentUiSchemaQuery,
+    documentUiBlock: documentWiring?.documentUiBlock,
     initialize,
     start,
   };
