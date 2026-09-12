@@ -24,7 +24,10 @@ The structure balances **Locality** (feature-first) with **Leverage** (shared, d
 
 ## Rules
 1. **Dependency Inversion**: Domain and Ports must never import from Adapters. Adapters depend on Ports.
-2. **Type-Safety**: Use `Typebox` for JSON schema validation and TypeScript type inference.
+2. **Type-Safety & Schema Location**: Use `Typebox` for JSON schema validation and TypeScript type inference. Schemas must always live inside the feature boundary so the feature dictates its own data contracts.
+   - **`domain.ts`**: Use for core domain concepts (e.g., `User`, `Document`) that are shared across multiple adapters or domain services within the feature.
+   - **`ports.ts`**: Use for Data Transfer Objects (DTOs) strictly tied to a specific port interface (e.g., a pure read model) that carry no domain invariants.
+   - *Note*: Infrastructure layers must never house feature schemas. `src/app/` is responsible for mapping raw infrastructure data to the feature's Typebox schemas.
 3. **Testing**: Use `Vitest`. Unit tests must be co-located with their subjects in `src/` and should mock driven ports. Integration tests in `test/` can test the real adapters.
 4. **Verification**: A change is not complete until `npm run typecheck` and `npm run lint` pass cleanly.
 5. **Read Patterns (Fast-Track vs Guarded):** Route reads based on their need for business logic.
