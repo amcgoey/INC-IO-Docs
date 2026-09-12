@@ -36,8 +36,6 @@ import {
   AmbiguousPathSpecError,
   AmbiguousFileError,
   FileNotFoundError,
-  FormSchemaType,
-  type FormSchema,
   type ActivityDispatcherPort,
   type ExecutionContext,
   type DocumentSchemaRegistryPort,
@@ -519,31 +517,6 @@ describe('Document domain', () => {
     expect(Value.Check(DocumentTypeSchema, documentTypeWithBackendConfigs)).toBe(true);
   });
 
-  it('FormSchemaType validates FormSchema definitions', () => {
-    expect(FormSchemaType).toBeDefined();
-    const validFormSchema: FormSchema = {
-      key: 'submittal',
-      name: 'Submittal Document',
-      documentSchema: {
-        fields: [
-          {
-            key: 'title',
-            name: 'Title',
-            type: 'string',
-            required: true,
-          },
-        ],
-      },
-      documentUiSchema: {
-        events: {
-          onSubmit: {
-            catchAllWorkflow: 'SubmitSubmittal',
-          },
-        },
-      },
-    };
-    expect(Value.Check(FormSchemaType, validFormSchema)).toBe(true);
-  });
 
   describe('DocumentSchemaOptionTupleType and DocumentSchemaType.options', () => {
     it('validates DocumentSchemaOptionTupleType as Record<string, unknown>', () => {

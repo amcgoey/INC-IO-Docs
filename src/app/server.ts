@@ -35,7 +35,7 @@ TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 export interface AppOptions {
   manifestProvider?: AppManifestProvider | undefined;
   manifestPath?: string | undefined;
-  documentSchemaRegistry?: (DocumentSchemaRegistryPort & Partial<SchemaQueryPort>) | undefined;
+  documentSchemaRegistry?: (DocumentSchemaRegistryPort & SchemaQueryPort) | undefined;
   activityEngine?: ActivityDispatcherPort | undefined;
   templateEvaluator?: TemplateEvaluatorPort | undefined;
   authVerifier?: AuthVerifierPort | undefined;
@@ -74,39 +74,8 @@ export function createApp(options?: AppOptions): AppInstance {
   }
 
   const documentSchemaRegistry: DocumentSchemaRegistryPort & SchemaQueryPort =
-    options?.documentSchemaRegistry && 'getForms' in options.documentSchemaRegistry && typeof (options.documentSchemaRegistry as SchemaQueryPort).getForms === 'function'
-      ? (options.documentSchemaRegistry as DocumentSchemaRegistryPort & SchemaQueryPort)
-      : options?.documentSchemaRegistry
-        ? (() => {
-            let cachedForms: import('../features/document/ports').FormSchema[] | null = null;
-            return {
-              ...options.documentSchemaRegistry,
-              loadAll: async () => {
-                const types = await options.documentSchemaRegistry!.loadAll();
-                cachedForms = types.map((dt) => ({
-                  key: dt.key,
-                  name: dt.name,
-                  documentSchema: dt.documentSchema,
-                  ...(dt.documentUiSchema !== undefined && { documentUiSchema: dt.documentUiSchema }),
-                }));
-                return types;
-              },
-              getForms: async () => {
-                if (cachedForms) {
-                  return cachedForms;
-                }
-                const types = await options.documentSchemaRegistry!.loadAll();
-                cachedForms = types.map((dt) => ({
-                  key: dt.key,
-                  name: dt.name,
-                  documentSchema: dt.documentSchema,
-                  ...(dt.documentUiSchema !== undefined && { documentUiSchema: dt.documentUiSchema }),
-                }));
-                return cachedForms;
-              },
-            };
-          })()
-        : new DocumentSchemaRegistryAdapter(manifestProvider!, templateEvaluator);
+    options?.documentSchemaRegistry ??
+    new DocumentSchemaRegistryAdapter(manifestProvider!, templateEvaluator);
 
   const driveConfigProvider: AppConfigurationProviderPort | undefined = manifestProvider;
   const workspaceConfigProvider: WorkspaceConfigProviderPort | undefined = manifestProvider;

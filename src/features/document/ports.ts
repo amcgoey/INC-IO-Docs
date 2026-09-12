@@ -1,6 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 import {
-  DocumentTypeSchema,
+  DocumentSchemaType,
+  DocumentUiSchemaType,
   type Activity,
   type ActivityOutput,
   type ExecutionContext,
@@ -9,12 +10,12 @@ import {
   type DocumentType,
 } from './domain';
 
-export const FormSchemaType = Type.Pick(DocumentTypeSchema, [
-  'key',
-  'name',
-  'documentSchema',
-  'documentUiSchema',
-]);
+export const FormSchemaType = Type.Object({
+  key: Type.String(),
+  name: Type.String(),
+  documentSchema: DocumentSchemaType,
+  documentUiSchema: Type.Optional(DocumentUiSchemaType),
+});
 
 export type FormSchema = Static<typeof FormSchemaType>;
 

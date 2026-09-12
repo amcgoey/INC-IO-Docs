@@ -4,12 +4,18 @@ import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { createApp, type AppInstance } from '../src/app/server';
-import { FormSchemaType, type DocumentSchemaRegistryPort, type ActivityDispatcherPort } from '../src/features/document/ports';
+import {
+  FormSchemaType,
+  type FormSchema,
+  type DocumentSchemaRegistryPort,
+  type SchemaQueryPort,
+  type ActivityDispatcherPort,
+} from '../src/features/document/ports';
 import type { DocumentType } from '../src/features/document/domain';
 
 describe('App integration tests', () => {
   let app: AppInstance;
-  let mockManifestRegistry: DocumentSchemaRegistryPort;
+  let mockManifestRegistry: DocumentSchemaRegistryPort & SchemaQueryPort;
   let mockActivityEngine: ActivityDispatcherPort;
   let mockDocumentTypes: DocumentType[];
 
@@ -54,8 +60,29 @@ describe('App integration tests', () => {
       },
     ];
 
+    let cachedForms: FormSchema[] | null = null;
     mockManifestRegistry = {
-      loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
+      loadAll: vi.fn().mockImplementation(async () => {
+        cachedForms = mockDocumentTypes.map((dt) => {
+          const form: FormSchema = {
+            key: dt.key,
+            name: dt.name,
+            documentSchema: dt.documentSchema,
+          };
+          if (dt.documentUiSchema !== undefined) {
+            form.documentUiSchema = dt.documentUiSchema;
+          }
+          return form;
+        });
+        return mockDocumentTypes;
+      }),
+      getForms: vi.fn().mockImplementation(async () => {
+        if (cachedForms) {
+          return cachedForms;
+        }
+        await mockManifestRegistry.loadAll();
+        return cachedForms ?? [];
+      }),
     };
 
     mockActivityEngine = {
@@ -265,8 +292,9 @@ describe('App integration tests', () => {
     });
 
     function createAppWithFailingRegistry(error: Error) {
-      const failingRegistry: DocumentSchemaRegistryPort = {
+      const failingRegistry: DocumentSchemaRegistryPort & SchemaQueryPort = {
         loadAll: vi.fn().mockRejectedValue(error),
+        getForms: vi.fn().mockRejectedValue(error),
       };
       return createApp({ skipSpaceValidation: true,  documentSchemaRegistry: failingRegistry });
     }
@@ -395,8 +423,9 @@ describe('App integration tests', () => {
           },
         },
       ];
-      const customRegistry: DocumentSchemaRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort & SchemaQueryPort = {
         loadAll: vi.fn().mockResolvedValue(unsupportedDocumentTypes),
+        getForms: vi.fn().mockResolvedValue([]),
       };
       const failingApp = createApp({ skipSpaceValidation: true,  documentSchemaRegistry: customRegistry });
 
@@ -664,8 +693,9 @@ describe('App integration tests', () => {
         },
       ];
 
-      const customRegistry: DocumentSchemaRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort & SchemaQueryPort = {
         loadAll: vi.fn().mockResolvedValue(customDocumentTypes),
+        getForms: vi.fn().mockResolvedValue([]),
       };
 
       const customApp = createApp({ skipSpaceValidation: true, 
@@ -815,8 +845,9 @@ describe('App integration tests', () => {
         },
       ];
 
-      const customRegistry: DocumentSchemaRegistryPort = {
+      const customRegistry: DocumentSchemaRegistryPort & SchemaQueryPort = {
         loadAll: vi.fn().mockResolvedValue(customDocumentTypes),
+        getForms: vi.fn().mockResolvedValue([]),
       };
 
       const appInstance = createApp({ skipSpaceValidation: true, 
