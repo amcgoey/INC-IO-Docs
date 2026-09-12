@@ -1,19 +1,87 @@
 import { Type, type Static } from '@sinclair/typebox';
-import {
-  DocumentSchemaType,
-  DocumentUiSchemaType,
-  type Activity,
-  type ActivityOutput,
-  type ExecutionContext,
-  type FileLocator,
-  type ProcessDocumentResult,
-  type DocumentType,
+import type {
+  Activity,
+  ActivityOutput,
+  ExecutionContext,
+  FileLocator,
+  ProcessDocumentResult,
+  DocumentType,
 } from './domain';
+
+export const UiEventRuleType = Type.Object({
+  matchFields: Type.Optional(Type.Record(Type.String(), Type.String())),
+  workflow: Type.String(),
+});
+
+export type UiEventRule = Static<typeof UiEventRuleType>;
+
+export const UiEventType = Type.Object({
+  rules: Type.Optional(Type.Array(UiEventRuleType)),
+  catchAllWorkflow: Type.Optional(Type.String()),
+});
+
+export type UiEvent = Static<typeof UiEventType>;
+
+export const DocumentUiSchemaType = Type.Object({
+  events: Type.Optional(Type.Record(Type.String(), UiEventType)),
+});
+
+export type DocumentUiSchema = Static<typeof DocumentUiSchemaType>;
+
+export const FormFieldOptionType = Type.Object({
+  source: Type.String(),
+  key: Type.String(),
+  name: Type.String(),
+  allowUserInput: Type.Optional(Type.Boolean()),
+});
+
+export type FormFieldOption = Static<typeof FormFieldOptionType>;
+
+export const FormFieldType = Type.Object({
+  key: Type.String(),
+  name: Type.String(),
+  type: Type.String(),
+  description: Type.Optional(Type.String()),
+  required: Type.Optional(Type.Boolean()),
+  defaultValue: Type.Optional(Type.String()),
+  format: Type.Optional(Type.String()),
+  options: Type.Optional(FormFieldOptionType),
+});
+
+export type FormField = Static<typeof FormFieldType>;
+
+export const FormCalculatedFieldType = Type.Object({
+  key: Type.String(),
+  template: Type.String(),
+  description: Type.Optional(Type.String()),
+});
+
+export type FormCalculatedField = Static<typeof FormCalculatedFieldType>;
+
+export const FormIdentitySchemaType = Type.Object(
+  {
+    id: Type.Optional(Type.String()),
+    idDocument: Type.Optional(Type.String()),
+    idGroup: Type.Optional(Type.String()),
+  },
+  { additionalProperties: Type.String() }
+);
+
+export type FormIdentitySchema = Static<typeof FormIdentitySchemaType>;
+
+export const FormDocumentSchemaType = Type.Object({
+  fields: Type.Array(FormFieldType),
+  calculatedFields: Type.Optional(Type.Array(FormCalculatedFieldType)),
+  identity: Type.Optional(FormIdentitySchemaType),
+  options: Type.Optional(Type.Record(Type.String(), Type.Array(Type.Record(Type.String(), Type.Unknown())))),
+});
+
+export type FormDocumentSchema = Static<typeof FormDocumentSchemaType>;
 
 export const FormSchemaType = Type.Object({
   key: Type.String(),
   name: Type.String(),
-  documentSchema: DocumentSchemaType,
+  documentSchema: FormDocumentSchemaType,
   documentUiSchema: Type.Optional(DocumentUiSchemaType),
 });
 

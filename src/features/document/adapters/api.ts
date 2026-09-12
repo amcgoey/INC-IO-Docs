@@ -31,6 +31,16 @@ export interface DocumentFeatureApiOptions {
   schemaQuery: SchemaQueryPort;
 }
 
+function toInternalServerErrorResponse(error: unknown, fallbackMessage: string): HttpResponse {
+  return {
+    status: 500,
+    body: {
+      error: 'Internal Server Error',
+      message: error instanceof Error ? error.message : fallbackMessage,
+    },
+  };
+}
+
 export function registerDocumentFeatureRoutes(router: HttpServer, opts: DocumentFeatureApiOptions): void {
   const { service, schemaQuery } = opts;
 
@@ -45,13 +55,7 @@ export function registerDocumentFeatureRoutes(router: HttpServer, opts: Document
           body: forms,
         };
       } catch (error) {
-        return {
-          status: 500,
-          body: {
-            error: 'Internal Server Error',
-            message: error instanceof Error ? error.message : 'Failed to retrieve forms',
-          },
-        };
+        return toInternalServerErrorResponse(error, 'Failed to retrieve forms');
       }
     },
   });
@@ -69,13 +73,7 @@ export function registerDocumentFeatureRoutes(router: HttpServer, opts: Document
           body: result,
         };
       } catch (error) {
-        return {
-          status: 500,
-          body: {
-            error: 'Internal Server Error',
-            message: error instanceof Error ? error.message : 'Failed to process document',
-          },
-        };
+        return toInternalServerErrorResponse(error, 'Failed to process document');
       }
     },
   });

@@ -1,11 +1,17 @@
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import type {
-  ActivityDispatcherPort,
-  DocumentSchemaRegistryPort,
-  DocumentServicePort,
-  TemplateEvaluationContext,
-  TemplateEvaluatorPort,
+import {
+  DocumentUiSchemaType,
+  type DocumentUiSchema,
+  UiEventType,
+  type UiEvent,
+  UiEventRuleType,
+  type UiEventRule,
+  type ActivityDispatcherPort,
+  type DocumentSchemaRegistryPort,
+  type DocumentServicePort,
+  type TemplateEvaluationContext,
+  type TemplateEvaluatorPort,
 } from './ports';
 
 export function formatValidationErrors<T extends TSchema>(schema: T, value: unknown): string[] {
@@ -148,25 +154,14 @@ export const DocumentSchemaType = Type.Object({
 
 export type DocumentSchema = Static<typeof DocumentSchemaType>;
 
-export const UiEventRuleType = Type.Object({
-  matchFields: Type.Optional(Type.Record(Type.String(), Type.String())),
-  workflow: Type.String(),
-});
-
-export type UiEventRule = Static<typeof UiEventRuleType>;
-
-export const UiEventType = Type.Object({
-  rules: Type.Optional(Type.Array(UiEventRuleType)),
-  catchAllWorkflow: Type.Optional(Type.String()),
-});
-
-export type UiEvent = Static<typeof UiEventType>;
-
-export const DocumentUiSchemaType = Type.Object({
-  events: Type.Optional(Type.Record(Type.String(), UiEventType)),
-});
-
-export type DocumentUiSchema = Static<typeof DocumentUiSchemaType>;
+export {
+  DocumentUiSchemaType,
+  type DocumentUiSchema,
+  UiEventType,
+  type UiEvent,
+  UiEventRuleType,
+  type UiEventRule,
+};
 
 export const WorkflowType = Type.Object({
   name: Type.String(),

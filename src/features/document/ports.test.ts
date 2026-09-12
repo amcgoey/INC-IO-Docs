@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
-import { FormSchemaType, type FormSchema } from './ports';
+import {
+  FormSchemaType,
+  type FormSchema,
+  DocumentUiSchemaType,
+  type DocumentUiSchema,
+} from './ports';
 
 describe('Document Ports & DTOs', () => {
   it('FormSchemaType validates FormSchema definitions', () => {
@@ -45,5 +50,28 @@ describe('Document Ports & DTOs', () => {
       },
     };
     expect(Value.Check(FormSchemaType, validFormSchema)).toBe(true);
+  });
+
+  it('DocumentUiSchemaType validates events structure', () => {
+    expect(DocumentUiSchemaType).toBeDefined();
+    const validUiSchema: DocumentUiSchema = {
+      events: {
+        onSubmit: {
+          rules: [
+            {
+              matchFields: { category: 'urgent' },
+              workflow: 'ExpeditedWorkflow',
+            },
+          ],
+          catchAllWorkflow: 'StandardWorkflow',
+        },
+      },
+    };
+    expect(Value.Check(DocumentUiSchemaType, validUiSchema)).toBe(true);
+
+    const invalidUiSchema = {
+      events: 'not-an-object',
+    };
+    expect(Value.Check(DocumentUiSchemaType, invalidUiSchema)).toBe(false);
   });
 });
