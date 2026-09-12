@@ -20,10 +20,53 @@ export {
   type UiEventRule,
 };
 
+const DataVarString = Type.String({ pattern: '^data\\.' });
+
+export const JSONLogicRuleType = Type.Recursive(
+  (Self) =>
+    Type.Union([
+      // Primitives
+      Type.String(),
+      Type.Number(),
+      Type.Boolean(),
+      Type.Null(),
+      Type.Array(Self),
+      // Operators
+      Type.Object({ '==': Type.Tuple([Self, Self]) }, { additionalProperties: false }),
+      Type.Object({ '!=': Type.Tuple([Self, Self]) }, { additionalProperties: false }),
+      Type.Object({ '<': Type.Tuple([Self, Self]) }, { additionalProperties: false }),
+      Type.Object({ '>': Type.Tuple([Self, Self]) }, { additionalProperties: false }),
+      Type.Object({ '<=': Type.Tuple([Self, Self]) }, { additionalProperties: false }),
+      Type.Object({ '>=': Type.Tuple([Self, Self]) }, { additionalProperties: false }),
+      Type.Object({ and: Type.Array(Self, { minItems: 1 }) }, { additionalProperties: false }),
+      Type.Object({ or: Type.Array(Self, { minItems: 1 }) }, { additionalProperties: false }),
+      Type.Object({ '!': Type.Union([Self, Type.Tuple([Self])]) }, { additionalProperties: false }),
+      Type.Object({ '!!': Type.Union([Self, Type.Tuple([Self])]) }, { additionalProperties: false }),
+      Type.Object(
+        {
+          var: Type.Union([
+            DataVarString,
+            Type.Tuple([DataVarString]),
+            Type.Tuple([DataVarString, Self]),
+          ]),
+        },
+        { additionalProperties: false }
+      ),
+      Type.Object({ cat: Type.Array(Self, { minItems: 1 }) }, { additionalProperties: false }),
+      Type.Object({ in: Type.Tuple([Self, Self]) }, { additionalProperties: false }),
+      Type.Object({ log: Type.Union([Self, Type.Tuple([Self])]) }, { additionalProperties: false }),
+    ]),
+  { $id: 'JSONLogicRule' }
+);
+
+export type JSONLogicRule = Static<typeof JSONLogicRuleType>;
+
 export const UiFieldSchema = Type.Object({
   widget: Type.Optional(Type.String()),
   label: Type.Optional(Type.String()),
   props: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  showIf: Type.Optional(JSONLogicRuleType),
+  disableIf: Type.Optional(JSONLogicRuleType),
 });
 
 export type UiField = Static<typeof UiFieldSchema>;

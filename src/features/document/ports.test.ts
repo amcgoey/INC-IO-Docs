@@ -7,6 +7,8 @@ import {
   type DocumentUiSchema,
   SpaceUiSchemaType,
   type SpaceUiSchema,
+  JSONLogicRuleType,
+  type JSONLogicRule,
 } from './ports';
 
 describe('Document Ports & DTOs', () => {
@@ -85,6 +87,8 @@ describe('Document Ports & DTOs', () => {
           widget: 'textInput',
           label: 'First Name',
           props: { placeholder: 'Enter first name' },
+          showIf: { '==': [{ var: 'data.includeFirstName' }, true] },
+          disableIf: { '!': { var: 'data.isEditable' } },
         },
         lastName: {
           label: 'Last Name',
@@ -107,6 +111,8 @@ describe('Document Ports & DTOs', () => {
         spaceName: {
           widget: 'textInput',
           label: 'Space Name',
+          showIf: { '!=': [{ var: 'data.anonymous' }, true] },
+          disableIf: { '==': [{ var: 'data.locked' }, true] },
         },
         region: {
           widget: 'selectionInput',
@@ -116,5 +122,127 @@ describe('Document Ports & DTOs', () => {
       },
     };
     expect(Value.Check(SpaceUiSchemaType, validSpaceUiSchema)).toBe(true);
+  });
+
+  describe('JSONLogicRuleType Validation', () => {
+    it('validates allowed operators', () => {
+      const validRules: JSONLogicRule[] = [
+        { '==': [{ var: 'data.status' }, 'active'] },
+        { '!=': [{ var: 'data.count' }, 5] },
+        { '<': [1, 2] },
+        { '>': [2, 1] },
+        { '<=': [1, 1] },
+        { '>=': [2, 2] },
+        { and: [{ '==': [{ var: 'data.ready' }, true] }] },
+        {
+          or: [
+            { '==': [{ var: 'data.flag' }, true] },
+            { '!=': [{ var: 'data.role' }, 'guest'] },
+          ],
+        },
+        { '!': { var: 'data.isHidden' } },
+        { '!': [{ var: 'data.isHidden' }] },
+        { '!!': { var: 'data.isVisible' } },
+        { '!!': [{ var: 'data.isVisible' }] },
+        { cat: ['Hello ', { var: 'data.name' }] },
+        { in: ['apple', ['apple', 'banana']] },
+        { log: 'Evaluating rule...' },
+        { log: ['Evaluating rule...'] },
+        { var: 'data.firstName' },
+        { var: ['data.lastName'] },
+        { var: ['data.middleName', 'N/A'] },
+      ];
+
+      for (const rule of validRules) {
+        const isValid = Value.Check(JSONLogicRuleType, rule);
+        if (!isValid) {
+          const error = Value.Errors(JSONLogicRuleType, rule).First();
+          expect.fail(
+            `Rule failed validation: ${JSON.stringify(rule)}, error: ${JSON.stringify(error)}`
+          );
+        }
+        expect(isValid).toBe(true);
+      }
+    });
+
+    it('validates literal values and arrays', () => {
+      expect(Value.Check(JSONLogicRuleType, 'hello')).toBe(true);
+      expect(Value.Check(JSONLogicRuleType, 42)).toBe(true);
+      expect(Value.Check(JSONLogicRuleType, true)).toBe(true);
+      expect(Value.Check(JSONLogicRuleType, false)).toBe(true);
+      expect(Value.Check(JSONLogicRuleType, null)).toBe(true);
+      expect(Value.Check(JSONLogicRuleType, ['apple', 'banana'])).toBe(true);
+    });
+
+    it('validates deeply nested rules', () => {
+      const nestedRule: JSONLogicRule = {
+        and: [
+          { '==': [{ var: 'data.status' }, 'active'] },
+          {
+            or: [
+              { '>': [{ var: 'data.age' }, 18] },
+              { '!': { var: 'data.requiresParentalConsent' } },
+            ],
+          },
+        ],
+      };
+
+      expect(Value.Check(JSONLogicRuleType, nestedRule)).toBe(true);
+    });
+
+    it('rejects forbidden operators and invalid structures', () => {
+      const invalidRules = [
+        { '+': [1, 2] }, // Mathematical operator not in allow-list
+        { '-': [2, 1] }, // Mathematical operator not in allow-list
+        { '*': [2, 3] }, // Mathematical operator not in allow-list
+        { '/': [6, 2] }, // Mathematical operator not in allow-list
+        { map: [{ var: 'data.items' }, { var: '' }] }, // Array operator not in allow-list
+        { filter: [{ var: 'data.items' }, { var: '' }] }, // Array operator not in allow-list
+        { reduce: [{ var: 'data.items' }, { var: '' }, 0] }, // Array operator not in allow-list
+        { '==': [{ var: 'data.status' }] }, // '==' requires exactly 2 arguments
+        { and: [] }, // 'and' requires at least 1 argument
+        { or: [] }, // 'or' requires at least 1 argument
+        { arbitraryKey: 'value' }, // Arbitrary keys not allowed
+        { var: 123 }, // 'var' requires a string or tuple
+        {}, // Empty object is not a valid JSONLogic expression
+      ];
+
+      for (const rule of invalidRules) {
+        expect(Value.Check(JSONLogicRuleType, rule)).toBe(false);
+      }
+    });
+
+    it('rejects var without data namespace context', () => {
+      const invalidVarRules = [
+        { var: 'firstName' },
+        { var: 'root.firstName' },
+        { var: ['firstName'] },
+        { var: ['lastName', 'Smith'] },
+      ];
+
+      for (const rule of invalidVarRules) {
+        expect(Value.Check(JSONLogicRuleType, rule)).toBe(false);
+      }
+    });
+
+    it('rejects forbidden operators in showIf and disableIf', () => {
+      const invalidDocSchema = {
+        fields: {
+          firstName: {
+            showIf: { '+': [1, 1] },
+          },
+        },
+      };
+      expect(Value.Check(DocumentUiSchemaType, invalidDocSchema)).toBe(false);
+
+      const invalidSpaceSchema = {
+        fields: {
+          spaceName: {
+            disableIf: { customOp: [1, 2] },
+          },
+        },
+      };
+      expect(Value.Check(SpaceUiSchemaType, invalidSpaceSchema)).toBe(false);
+    });
   });
 });

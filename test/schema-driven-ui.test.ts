@@ -61,6 +61,7 @@ describe('Schema-Driven UI Integration Test', () => {
           vendorCategory: {
             widget: 'selectionInput',
             label: 'Vendor Category Group',
+            showIf: { '==': [{ var: 'data.needsVendor' }, true] },
             props: {
               items: [
                 { text: 'Hardware', value: 'hw' },
