@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Value } from '@sinclair/typebox/value';
 import { DocumentSchemaRegistryAdapter } from './document-schema-registry';
-import type { RawManifestProviderPort, TemplateEvaluatorPort } from '../ports';
+import { FormSchemaType, type RawManifestProviderPort, type TemplateEvaluatorPort } from '../ports';
 
 describe('DocumentSchemaRegistryAdapter', () => {
   let mockEvaluator: TemplateEvaluatorPort;
@@ -31,14 +32,14 @@ describe('DocumentSchemaRegistryAdapter', () => {
     const schemaMap = new Map(entries);
 
     return {
-      getRawManifest: async () => ({ documentTypes: paths }),
-      readParsedSchema: async (relPath: string) => {
+      getRawManifest: vi.fn(async () => ({ documentTypes: paths })),
+      readParsedSchema: vi.fn(async (relPath: string) => {
         const schema = schemaMap.get(relPath);
         if (schema === undefined) {
           throw new Error(`Failed to read DocumentType file "${relPath}"`);
         }
         return schema;
-      },
+      }),
     };
   }
 
@@ -492,6 +493,106 @@ describe('DocumentSchemaRegistryAdapter', () => {
       await expect(adapter.loadAll()).rejects.toThrow(
         /Invalid template in "storage-invalid": Invalid template at "storageContextConfig\.targetFolder": references unknown fields or is malformed\./
       );
+    });
+  });
+
+  describe('SchemaQueryPort (getForms)', () => {
+    it('returns FormSchema array stripping backend configs and validates against FormSchemaType', async () => {
+      const mockDocumentType = {
+        key: 'comm-proj',
+        name: 'Communication Project',
+        documentSchema: {
+          fields: [
+            {
+              key: 'subject',
+              name: 'Subject',
+              type: 'string',
+              required: true,
+              options: {
+                source: 'subjects',
+                key: 'key',
+                name: 'name',
+                allowUserInput: true,
+              },
+            },
+          ],
+        },
+        documentUiSchema: {
+          events: {
+            onSubmit: {
+              catchAllWorkflow: 'HandleComm',
+            },
+          },
+        },
+        documentWorkflowConfig: {
+          workflows: [{ name: 'HandleComm' }],
+        },
+        storageContextConfig: {
+          path: '/projects/comm',
+        },
+      };
+
+      const mockProvider = createMockManifestProvider({
+        './schemas/comm-proj.json': mockDocumentType,
+      });
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
+
+      const forms = await adapter.getForms();
+      expect(forms).toHaveLength(1);
+      expect(forms[0]).toEqual({
+        key: 'comm-proj',
+        name: 'Communication Project',
+        documentSchema: {
+          fields: [
+            {
+              key: 'subject',
+              name: 'Subject',
+              type: 'string',
+              required: true,
+              options: {
+                source: 'subjects',
+                key: 'key',
+                name: 'name',
+                allowUserInput: true,
+              },
+            },
+          ],
+        },
+        documentUiSchema: {
+          events: {
+            onSubmit: {
+              catchAllWorkflow: 'HandleComm',
+            },
+          },
+        },
+      });
+
+      expect(Value.Check(FormSchemaType, forms[0])).toBe(true);
+      expect(forms[0]).not.toHaveProperty('documentWorkflowConfig');
+      expect(forms[0]).not.toHaveProperty('storageContextConfig');
+      expect(forms[0].documentSchema.fields[0].options?.allowUserInput).toBe(true);
+    });
+
+    it('returns cached forms on subsequent getForms calls without re-reading manifest', async () => {
+      const mockDocumentType = {
+        key: 'simple-doc',
+        name: 'Simple Document',
+        documentSchema: {
+          fields: [{ key: 'name', name: 'Name', type: 'string', required: true }],
+        },
+      };
+
+      const mockProvider = createMockManifestProvider({
+        './schemas/simple.json': mockDocumentType,
+      });
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
+
+      const firstCall = await adapter.getForms();
+      const secondCall = await adapter.getForms();
+
+      expect(firstCall).toEqual(secondCall);
+      expect(mockProvider.getRawManifest).toHaveBeenCalledTimes(1);
+      expect(mockProvider.readParsedSchema).toHaveBeenCalledTimes(1);
     });
   });
 });

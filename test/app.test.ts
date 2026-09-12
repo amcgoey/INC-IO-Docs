@@ -430,7 +430,7 @@ describe('App integration tests', () => {
 
       const appInstance = createApp({ skipSpaceValidation: true,  manifestPath });
       await appInstance.initialize();
-      const forms = await appInstance.documentService.getForms();
+      const forms = await appInstance.documentSchemaRegistry.getForms();
 
       expect(forms).toHaveLength(1);
       expect(forms[0].key).toBe('custom-Document-key');
@@ -452,7 +452,7 @@ describe('App integration tests', () => {
 
       const appInstance = createApp();
       await appInstance.initialize();
-      const forms = await appInstance.documentService.getForms();
+      const forms = await appInstance.documentSchemaRegistry.getForms();
 
       expect(forms).toHaveLength(1);
       expect(forms[0].key).toBe('env-Document-key');
@@ -497,7 +497,7 @@ describe('App integration tests', () => {
 
       const appInstance = createApp({ skipSpaceValidation: true,  manifestPath: optManifestPath });
       await appInstance.initialize();
-      const forms = await appInstance.documentService.getForms();
+      const forms = await appInstance.documentSchemaRegistry.getForms();
 
       expect(forms).toHaveLength(1);
       expect(forms[0].key).toBe('option-key');

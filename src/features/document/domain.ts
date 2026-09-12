@@ -4,13 +4,9 @@ import type {
   ActivityDispatcherPort,
   DocumentSchemaRegistryPort,
   DocumentServicePort,
-  FormSchema,
-  SchemaQueryPort,
   TemplateEvaluationContext,
   TemplateEvaluatorPort,
 } from './ports';
-
-export type { FormSchema } from './ports';
 
 export function formatValidationErrors<T extends TSchema>(schema: T, value: unknown): string[] {
   return [...Value.Errors(schema, value)].map((e) => `${e.path}: ${e.message}`);
@@ -309,7 +305,7 @@ function resolvePayloadTemplates(
   return value;
 }
 
-export class DocumentService implements DocumentServicePort, SchemaQueryPort {
+export class DocumentService implements DocumentServicePort {
   private documentTypes: DocumentType[] = [];
   private compiledSchemas = new Map<string, TSchema>();
 
@@ -330,22 +326,6 @@ export class DocumentService implements DocumentServicePort, SchemaQueryPort {
       }
       this.compiledSchemas.set(documentType.key, Type.Object(properties));
     }
-  }
-
-  async getForms(): Promise<FormSchema[]> {
-    return this.documentTypes.map((documentType) => {
-      const formSchema: FormSchema = {
-        key: documentType.key,
-        name: documentType.name,
-        documentSchema: documentType.documentSchema,
-      };
-
-      if (documentType.documentUiSchema !== undefined) {
-        formSchema.documentUiSchema = documentType.documentUiSchema;
-      }
-
-      return formSchema;
-    });
   }
 
   async processDocument(

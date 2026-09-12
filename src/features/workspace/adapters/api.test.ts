@@ -5,6 +5,7 @@ import type {
   AuthVerifierPort,
   WorkspaceConfigProviderPort,
   WorkspaceDocumentRunnerPort,
+  WorkspaceSchemaQueryPort,
 } from '../ports';
 import type { WorkspaceUiBuilderPort } from './ui-builder';
 
@@ -146,6 +147,8 @@ describe('Workspace Feature Routes', () => {
       };
       const mockDocService: WorkspaceDocumentRunnerPort = {
         processDocument: vi.fn(),
+      };
+      const mockSchemaQuery: WorkspaceSchemaQueryPort = {
         getForms: vi.fn().mockResolvedValue([
           { key: 'allowed-form', name: 'Allowed Form' },
           { key: 'disallowed-form', name: 'Disallowed Form' },
@@ -156,6 +159,7 @@ describe('Workspace Feature Routes', () => {
         authVerifier: mockAuthVerifier,
         uiBuilder: mockUiBuilder,
         documentService: mockDocService,
+        schemaQuery: mockSchemaQuery,
         documentSpaceService: mockSpaceService,
       });
 

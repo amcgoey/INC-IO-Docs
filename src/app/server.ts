@@ -35,7 +35,7 @@ TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 export interface AppOptions {
   manifestProvider?: AppManifestProvider | undefined;
   manifestPath?: string | undefined;
-  documentSchemaRegistry?: DocumentSchemaRegistryPort | undefined;
+  documentSchemaRegistry?: (DocumentSchemaRegistryPort & Partial<SchemaQueryPort>) | undefined;
   activityEngine?: ActivityDispatcherPort | undefined;
   templateEvaluator?: TemplateEvaluatorPort | undefined;
   authVerifier?: AuthVerifierPort | undefined;
@@ -51,6 +51,7 @@ export interface AppInstance {
   server: HttpServer;
   documentService: DocumentService;
   documentSpaceService: DocumentSpaceService;
+  documentSchemaRegistry: DocumentSchemaRegistryPort & SchemaQueryPort;
   initialize: () => Promise<void>;
   start: (port?: number, host?: string) => Promise<void>;
 }
@@ -72,9 +73,40 @@ export function createApp(options?: AppOptions): AppInstance {
     }
   }
 
-  const documentSchemaRegistry: DocumentSchemaRegistryPort =
-    options?.documentSchemaRegistry ??
-    new DocumentSchemaRegistryAdapter(manifestProvider!, templateEvaluator);
+  const documentSchemaRegistry: DocumentSchemaRegistryPort & SchemaQueryPort =
+    options?.documentSchemaRegistry && 'getForms' in options.documentSchemaRegistry && typeof (options.documentSchemaRegistry as SchemaQueryPort).getForms === 'function'
+      ? (options.documentSchemaRegistry as DocumentSchemaRegistryPort & SchemaQueryPort)
+      : options?.documentSchemaRegistry
+        ? (() => {
+            let cachedForms: import('../features/document/ports').FormSchema[] | null = null;
+            return {
+              ...options.documentSchemaRegistry,
+              loadAll: async () => {
+                const types = await options.documentSchemaRegistry!.loadAll();
+                cachedForms = types.map((dt) => ({
+                  key: dt.key,
+                  name: dt.name,
+                  documentSchema: dt.documentSchema,
+                  ...(dt.documentUiSchema !== undefined && { documentUiSchema: dt.documentUiSchema }),
+                }));
+                return types;
+              },
+              getForms: async () => {
+                if (cachedForms) {
+                  return cachedForms;
+                }
+                const types = await options.documentSchemaRegistry!.loadAll();
+                cachedForms = types.map((dt) => ({
+                  key: dt.key,
+                  name: dt.name,
+                  documentSchema: dt.documentSchema,
+                  ...(dt.documentUiSchema !== undefined && { documentUiSchema: dt.documentUiSchema }),
+                }));
+                return cachedForms;
+              },
+            };
+          })()
+        : new DocumentSchemaRegistryAdapter(manifestProvider!, templateEvaluator);
 
   const driveConfigProvider: AppConfigurationProviderPort | undefined = manifestProvider;
   const workspaceConfigProvider: WorkspaceConfigProviderPort | undefined = manifestProvider;
@@ -104,16 +136,12 @@ export function createApp(options?: AppOptions): AppInstance {
   const authVerifier: AuthVerifierPort = options?.authVerifier ?? new GoogleJwtVerifier();
   const uiBuilder: WorkspaceUiBuilderPort = options?.uiBuilder ?? uiBlocks;
 
-  const schemaQuery: SchemaQueryPort =
-    typeof (documentSchemaRegistry as unknown as SchemaQueryPort).getForms === 'function'
-      ? (documentSchemaRegistry as unknown as SchemaQueryPort)
-      : documentService;
-
-  registerDocumentFeatureRoutes(server, { service: documentService, schemaQuery });
+  registerDocumentFeatureRoutes(server, { service: documentService, schemaQuery: documentSchemaRegistry });
   registerWorkspaceFeatureRoutes(server, {
     authVerifier,
     uiBuilder,
     documentService,
+    schemaQuery: documentSchemaRegistry,
     documentSpaceService,
     configProvider: workspaceConfigProvider,
   });
@@ -141,6 +169,7 @@ export function createApp(options?: AppOptions): AppInstance {
     server,
     documentService,
     documentSpaceService,
+    documentSchemaRegistry,
     initialize,
     start,
   };

@@ -71,7 +71,10 @@ export interface WorkspaceDocumentRunnerPort {
     eventName?: string,
     context?: WorkspaceDocumentExecutionContext
   ): Promise<WorkspaceDocumentProcessResult>;
-  getForms?(): Promise<{ key: string; name: string }[]>;
+}
+
+export interface WorkspaceSchemaQueryPort {
+  getForms(): Promise<{ key: string; name: string }[]> | { key: string; name: string }[];
 }
 
 export interface WorkspaceDocumentSpaceProviderPort {

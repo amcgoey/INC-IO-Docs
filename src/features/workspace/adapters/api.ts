@@ -2,6 +2,7 @@ import type {
   AuthVerifierPort,
   WorkspaceConfigProviderPort,
   WorkspaceDocumentRunnerPort,
+  WorkspaceSchemaQueryPort,
 } from '../ports';
 import type { DocumentSelectionState, WorkspaceUiBuilderPort } from './ui-builder';
 import {
@@ -40,6 +41,7 @@ export interface WorkspaceFeatureApiOptions {
   authVerifier: AuthVerifierPort;
   uiBuilder: WorkspaceUiBuilderPort;
   documentService?: WorkspaceDocumentRunnerPort | undefined;
+  schemaQuery?: WorkspaceSchemaQueryPort | undefined;
   documentSpaceService?: import('../ports').WorkspaceDocumentSpaceProviderPort | undefined;
   configProvider?: WorkspaceConfigProviderPort | undefined;
 }
@@ -83,7 +85,6 @@ export function registerWorkspaceFeatureRoutes(
   const {
     authVerifier,
     uiBuilder,
-    documentService,
     documentSpaceService,
     configProvider,
   } = opts;
@@ -124,8 +125,8 @@ export function registerWorkspaceFeatureRoutes(
       }
     }
 
-    if (documentService?.getForms) {
-      const forms = await documentService.getForms();
+    if (opts.schemaQuery?.getForms) {
+      const forms = await opts.schemaQuery.getForms();
       const filteredForms = allowedDocumentTypes
         ? forms.filter((f) => allowedDocumentTypes.includes(f.key))
         : forms;
