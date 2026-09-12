@@ -20,7 +20,7 @@ export {
   type UiEventRule,
 };
 
-const DataVarString = Type.String({ pattern: '^data\\.' });
+const DataVarString = Type.String({ pattern: '^data(\\..+)?$' });
 
 export const JSONLogicRuleType = Type.Recursive(
   (Self) =>
@@ -47,13 +47,19 @@ export const JSONLogicRuleType = Type.Recursive(
           var: Type.Union([
             DataVarString,
             Type.Tuple([DataVarString]),
-            Type.Tuple([DataVarString, Self]),
+            Type.Tuple([
+              DataVarString,
+              Type.Union([Self, Type.Record(Type.String(), Type.Unknown())]),
+            ]),
           ]),
         },
         { additionalProperties: false }
       ),
       Type.Object({ cat: Type.Array(Self, { minItems: 1 }) }, { additionalProperties: false }),
-      Type.Object({ in: Type.Tuple([Self, Self]) }, { additionalProperties: false }),
+      Type.Object(
+        { in: Type.Tuple([Self, Type.Union([Self, Type.Record(Type.String(), Type.Unknown())])]) },
+        { additionalProperties: false }
+      ),
       Type.Object({ log: Type.Union([Self, Type.Tuple([Self])]) }, { additionalProperties: false }),
     ]),
   { $id: 'JSONLogicRule' }

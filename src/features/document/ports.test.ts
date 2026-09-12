@@ -148,9 +148,14 @@ describe('Document Ports & DTOs', () => {
         { in: ['apple', ['apple', 'banana']] },
         { log: 'Evaluating rule...' },
         { log: ['Evaluating rule...'] },
+        { var: 'data' },
+        { var: ['data'] },
         { var: 'data.firstName' },
         { var: ['data.lastName'] },
         { var: ['data.middleName', 'N/A'] },
+        { var: ['data.user', { name: 'Guest' }] },
+        { var: ['data', { defaultTheme: 'light' }] },
+        { in: ['role', { role: 'admin' }] },
       ];
 
       for (const rule of validRules) {
@@ -216,6 +221,7 @@ describe('Document Ports & DTOs', () => {
       const invalidVarRules = [
         { var: 'firstName' },
         { var: 'root.firstName' },
+        { var: 'database' },
         { var: ['firstName'] },
         { var: ['lastName', 'Smith'] },
       ];
