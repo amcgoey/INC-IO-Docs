@@ -114,7 +114,7 @@ describe('DocumentSchemaRegistryAdapter', () => {
           },
         ],
       },
-      documentUiConfig: {
+      documentUiSchema: {
         events: {
           onSubmit: {
             catchAllWorkflow: 'SubmitComm',
@@ -195,7 +195,7 @@ describe('DocumentSchemaRegistryAdapter', () => {
         ],
         undeclaredSchemaProp: 'should-also-be-stripped',
       },
-      documentUiConfig: {
+      documentUiSchema: {
         events: {
           onSubmit: {
             catchAllWorkflow: 'SubmitExtra',
@@ -226,7 +226,7 @@ describe('DocumentSchemaRegistryAdapter', () => {
           },
         ],
       },
-      documentUiConfig: {
+      documentUiSchema: {
         events: {
           onSubmit: {
             catchAllWorkflow: 'SubmitExtra',
@@ -240,8 +240,8 @@ describe('DocumentSchemaRegistryAdapter', () => {
     expect(result[0].documentSchema).not.toHaveProperty('undeclaredSchemaProp');
     expect(result[0].documentSchema.fields[0]).not.toHaveProperty('undeclaredFieldProp');
     expect(result[0].documentSchema.fields[0]).not.toHaveProperty('extraObj');
-    expect(result[0].documentUiConfig).not.toHaveProperty('bogusUiProp');
-    expect(result[0].documentUiConfig?.events?.onSubmit).not.toHaveProperty('extraUiProp');
+    expect(result[0].documentUiSchema).not.toHaveProperty('bogusUiProp');
+    expect(result[0].documentUiSchema?.events?.onSubmit).not.toHaveProperty('extraUiProp');
   });
 
   describe('calculatedFields template validation on loadAll', () => {

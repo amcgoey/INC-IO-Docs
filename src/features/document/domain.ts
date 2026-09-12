@@ -163,11 +163,11 @@ export const UiEventType = Type.Object({
 
 export type UiEvent = Static<typeof UiEventType>;
 
-export const DocumentUiConfigType = Type.Object({
+export const DocumentUiSchemaType = Type.Object({
   events: Type.Optional(Type.Record(Type.String(), UiEventType)),
 });
 
-export type DocumentUiConfig = Static<typeof DocumentUiConfigType>;
+export type DocumentUiSchema = Static<typeof DocumentUiSchemaType>;
 
 export const WorkflowType = Type.Object({
   name: Type.String(),
@@ -190,7 +190,7 @@ export const DocumentTypeSchema = Type.Object({
   key: Type.String(),
   name: Type.String(),
   documentSchema: DocumentSchemaType,
-  documentUiConfig: Type.Optional(DocumentUiConfigType),
+  documentUiSchema: Type.Optional(DocumentUiSchemaType),
   documentWorkflowConfig: Type.Optional(DocumentWorkflowConfigType),
   storageContextConfig: Type.Optional(StorageContextConfigType),
 });
@@ -201,7 +201,7 @@ export const FormSchemaType = Type.Object({
   key: Type.String(),
   name: Type.String(),
   documentSchema: DocumentSchemaType,
-  documentUiConfig: Type.Optional(DocumentUiConfigType),
+  documentUiSchema: Type.Optional(DocumentUiSchemaType),
 });
 
 export type FormSchema = Static<typeof FormSchemaType>;
@@ -346,8 +346,8 @@ export class DocumentService implements DocumentServicePort, SchemaQueryPort {
         documentSchema: documentType.documentSchema,
       };
 
-      if (documentType.documentUiConfig !== undefined) {
-        formSchema.documentUiConfig = documentType.documentUiConfig;
+      if (documentType.documentUiSchema !== undefined) {
+        formSchema.documentUiSchema = documentType.documentUiSchema;
       }
 
       return formSchema;
@@ -459,8 +459,8 @@ export class DocumentService implements DocumentServicePort, SchemaQueryPort {
 
     let selectedWorkflowName: string | undefined;
 
-    if (eventName && documentType.documentUiConfig?.events?.[eventName]) {
-      const uiEvent = documentType.documentUiConfig.events[eventName];
+    if (eventName && documentType.documentUiSchema?.events?.[eventName]) {
+      const uiEvent = documentType.documentUiSchema.events[eventName];
       if (uiEvent.rules && uiEvent.rules.length > 0) {
         for (const rule of uiEvent.rules) {
           if (matchesRule(rule.matchFields, enrichedDocument)) {

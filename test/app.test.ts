@@ -28,7 +28,7 @@ describe('App integration tests', () => {
             },
           ],
         },
-        documentUiConfig: {
+        documentUiSchema: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'SubmitCommProject',
@@ -208,7 +208,7 @@ describe('App integration tests', () => {
             },
           ],
         },
-        documentUiConfig: {
+        documentUiSchema: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'SubmitCommProject',
@@ -223,7 +223,7 @@ describe('App integration tests', () => {
       // Verify backend-only and undeclared properties are not present
       expect(body[0]).not.toHaveProperty('documentWorkflowConfig');
       expect(body[0]).not.toHaveProperty('storageContextConfig');
-      expect(Object.keys(body[0]).sort()).toEqual(['key', 'name', 'documentSchema', 'documentUiConfig'].sort());
+      expect(Object.keys(body[0]).sort()).toEqual(['key', 'name', 'documentSchema', 'documentUiSchema'].sort());
 
       expect(mockManifestRegistry.loadAll).toHaveBeenCalledTimes(1);
     });
@@ -641,7 +641,7 @@ describe('App integration tests', () => {
               ],
             },
           },
-          documentUiConfig: {
+          documentUiSchema: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'SubmitCombobox',
@@ -734,7 +734,7 @@ describe('App integration tests', () => {
             },
           ],
         },
-        documentUiConfig: {
+        documentUiSchema: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'SubmitTestWorkflow',
@@ -752,7 +752,7 @@ describe('App integration tests', () => {
       expect(body[0]).not.toHaveProperty('documentWorkflowConfig');
       expect(body[0]).not.toHaveProperty('storageContextConfig');
       expect(Object.keys(body[0]).sort()).toEqual(
-        ['key', 'name', 'documentSchema', 'documentUiConfig'].sort()
+        ['key', 'name', 'documentSchema', 'documentUiSchema'].sort()
       );
     });
   });
@@ -781,7 +781,7 @@ describe('App integration tests', () => {
               idGroup: 'GRP-{{contact}}',
             },
           },
-          documentUiConfig: {
+          documentUiSchema: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'HandleCommWorkflow',
@@ -889,7 +889,7 @@ describe('App integration tests', () => {
         key: 'configured-Document-type',
         name: 'Configured Document Type',
         documentSchema: { fields: [{ key: 'title', name: 'Title', type: 'string', required: true }] },
-        documentUiConfig: {
+        documentUiSchema: {
           events: {
             onConfiguredSubmit: {
               catchAllWorkflow: 'ConfiguredWorkflow',

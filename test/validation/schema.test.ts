@@ -84,8 +84,8 @@ describe('DocumentType JSON files schema validation', () => {
         key: documentType.key,
         name: documentType.name,
         documentSchema: documentType.documentSchema,
-        ...(documentType.documentUiConfig !== undefined && {
-          documentUiConfig: documentType.documentUiConfig,
+        ...(documentType.documentUiSchema !== undefined && {
+          documentUiSchema: documentType.documentUiSchema,
         }),
       };
       expect(Value.Check(FormSchemaType, formSchema)).toBe(true);

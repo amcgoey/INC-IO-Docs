@@ -234,7 +234,7 @@ describe('Document domain', () => {
             },
           ],
         },
-        documentUiConfig: {
+        documentUiSchema: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'SubmitSubmittalWorkflow',
@@ -423,7 +423,7 @@ describe('Document domain', () => {
           },
         ],
       },
-      documentUiConfig: {
+      documentUiSchema: {
         events: {
           onSubmit: {
             catchAllWorkflow: 'SubmitSubmittal',
@@ -501,7 +501,7 @@ describe('Document domain', () => {
           },
         ],
       },
-      documentUiConfig: {
+      documentUiSchema: {
         events: {
           onSubmit: {
             catchAllWorkflow: 'SubmitSubmittal',
@@ -534,7 +534,7 @@ describe('Document domain', () => {
           },
         ],
       },
-      documentUiConfig: {
+      documentUiSchema: {
         events: {
           onSubmit: {
             catchAllWorkflow: 'SubmitSubmittal',
@@ -563,7 +563,7 @@ describe('Document domain', () => {
             },
           ],
         },
-        documentUiConfig: {
+        documentUiSchema: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'HandleComm',
@@ -620,7 +620,7 @@ describe('Document domain', () => {
             },
           ],
         },
-        documentUiConfig: {
+        documentUiSchema: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'HandleComm',
@@ -929,7 +929,7 @@ describe('Document domain', () => {
               },
             ],
           },
-          documentUiConfig: {
+          documentUiSchema: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'HandleCommWorkflow',
@@ -1014,7 +1014,7 @@ describe('Document domain', () => {
               },
             ],
           },
-          documentUiConfig: {
+          documentUiSchema: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'HandleSpaceWorkflow',
@@ -1157,7 +1157,7 @@ describe('Document domain', () => {
               { key: 'contact', name: 'Contact', type: 'string', required: true },
             ],
           },
-          documentUiConfig: {
+          documentUiSchema: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'MoveWorkflow',
@@ -1297,7 +1297,7 @@ describe('Document domain', () => {
               idGroup: '{{contact}}',
             },
           },
-          documentUiConfig: {
+          documentUiSchema: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'IdentityWorkflow',
@@ -1860,7 +1860,7 @@ describe('Document domain', () => {
               ],
             },
           },
-          documentUiConfig: {
+          documentUiSchema: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'SubmitWorkflow',
@@ -2188,7 +2188,7 @@ describe('Document domain', () => {
           ],
         },
       },
-      documentUiConfig: {
+      documentUiSchema: {
         events: {
           onSubmit: {
             rules: [
@@ -2500,7 +2500,7 @@ describe('Document domain', () => {
             id: 'REC-{{contact}}',
           },
         },
-        documentUiConfig: {
+        documentUiSchema: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'DispatchActivityWorkflow',
@@ -2665,7 +2665,7 @@ describe('Document domain', () => {
             { key: 'summary', template: '{{date}} {{direction}} - {{description}}' },
           ],
         },
-        documentUiConfig: {
+        documentUiSchema: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'StorageWorkflow',
@@ -2808,7 +2808,7 @@ describe('Document domain', () => {
             { key: 'code', name: 'Code', type: 'string', required: true },
           ],
         },
-        documentUiConfig: {
+        documentUiSchema: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'NestedStorageWorkflow',
@@ -2901,7 +2901,7 @@ describe('Document domain', () => {
         documentSchema: {
           fields: [{ key: 'name', name: 'Name', type: 'string', required: true }],
         },
-        documentUiConfig: {
+        documentUiSchema: {
           events: {
             onSubmit: {
               catchAllWorkflow: 'SimpleWorkflow',
@@ -2976,7 +2976,7 @@ describe('Document domain', () => {
           id: 'ID-{{title}}',
         },
       },
-      documentUiConfig: {
+      documentUiSchema: {
         events: {
           onSubmit: {
             catchAllWorkflow: 'ExecuteSecureAction',
@@ -3195,7 +3195,7 @@ describe('Document domain', () => {
               { key: 'title', name: 'Title', type: 'string', required: true },
             ],
           },
-          documentUiConfig: {
+          documentUiSchema: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'MultiStepWorkflow',
@@ -3302,7 +3302,7 @@ describe('Document domain', () => {
               { key: 'step0', name: 'Step 0', type: 'string', required: true },
             ],
           },
-          documentUiConfig: {
+          documentUiSchema: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'ChainedWorkflow',
@@ -3376,7 +3376,7 @@ describe('Document domain', () => {
               { key: 'inputMsg', name: 'Input Message', type: 'string', required: true },
             ],
           },
-          documentUiConfig: {
+          documentUiSchema: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'LogWorkflow',
@@ -3465,7 +3465,7 @@ describe('Document domain', () => {
               { key: 'title', name: 'Title', type: 'string', required: true },
             ],
           },
-          documentUiConfig: {
+          documentUiSchema: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'FailingWorkflow',
@@ -3534,7 +3534,7 @@ describe('Document domain', () => {
               { key: 'title', name: 'Title', type: 'string', required: true },
             ],
           },
-          documentUiConfig: {
+          documentUiSchema: {
             events: {
               onSubmit: {
                 catchAllWorkflow: 'MultiStepWorkflow',

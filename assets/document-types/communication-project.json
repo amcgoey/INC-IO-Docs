@@ -56,7 +56,7 @@
       ]
     }
   },
-  "documentUiConfig": {
+  "documentUiSchema": {
     "events": {
       "onSubmit": {
         "catchAllWorkflow": "FileCommProject"

@@ -79,7 +79,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
         ],
       },
     },
-    documentUiConfig: {
+    documentUiSchema: {
       events: {
         onSubmit: {
           rules: [
