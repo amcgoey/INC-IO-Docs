@@ -1,17 +1,11 @@
 import { TypeSystemPolicy } from '@sinclair/typebox/system';
-import { createHttpServer, type HttpServer } from '../infrastructure/http';
-import { registerDocumentFeatureRoutes } from '../features/document/adapters/api';
-import { registerWorkspaceFeatureRoutes } from '../features/workspace/adapters/api';
-import { ActivityEngine } from '../features/document/adapters/activity-engine';
-import { DriveActivityHandler } from '../features/document/adapters/drive-activity-handler';
-import { DriveServiceAdapter } from '../features/document/adapters/drive-service-adapter';
-import { AppManifestProvider } from '../infrastructure/manifest/app-manifest-provider';
-import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
-import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
-import { GoogleJwtVerifier } from '../infrastructure/workspace-addon/jwt-verifier';
-import { DocumentService } from '../features/document/domain';
-import { DocumentSpaceService } from '../features/document-space/domain';
-import { GoogleDriveStorageAdapter } from '../features/document-space/adapters/google-drive-storage-adapter';
+import { createSharedInfrastructure, type SharedInfrastructure } from './shared.wiring';
+import { createDocumentFeatureWiring, wireDocumentServicesAndRoutes } from './document.wiring';
+import { createDocumentSpaceFeatureWiring } from './document-space.wiring';
+import { wireWorkspaceFeature } from './workspace.wiring';
+
+import type { DocumentService } from '../features/document/domain';
+import type { DocumentSpaceService } from '../features/document-space/domain';
 import type {
   RawManifestProviderPort,
   DocumentSpaceUiSchemaQueryPort,
@@ -29,22 +23,21 @@ import type {
   AuthVerifierPort,
   WorkspaceConfigProviderPort,
 } from '../features/workspace/ports';
-import type { WorkspaceUiBuilderPort } from '../features/workspace/adapters/ui-builder';
-import * as uiBlocks from '../infrastructure/workspace-addon/ui-blocks';
-import { createDocumentFeatureWiring } from './document.wiring';
-import { createDocumentSpaceFeatureWiring } from './document-space.wiring';
-import type { DocumentUiBlockAdapter } from '../features/document/adapters/ui-block';
 
-TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+// We import the HTTP server port from shared.wiring to avoid leaking infrastructure paths
+import type { HttpServer } from './shared.wiring';
 
+// Import only the ports for options to avoid leaking adapter/infra types.
+// We make a small concession to backwards compatibility if an adapter type was leaked,
+// but the test suites can pass mocks that satisfy the ports.
 export interface AppOptions {
-  manifestProvider?: AppManifestProvider | undefined;
+  manifestProvider?: (AppConfigurationProviderPort & WorkspaceConfigProviderPort & RawManifestProviderPort) | undefined;
   manifestPath?: string | undefined;
   documentSchemaRegistry?: (DocumentSchemaRegistryPort & SchemaQueryPort) | undefined;
   activityEngine?: ActivityDispatcherPort | undefined;
   templateEvaluator?: TemplateEvaluatorPort | undefined;
   authVerifier?: AuthVerifierPort | undefined;
-  uiBuilder?: WorkspaceUiBuilderPort | undefined;
+  uiBuilder?: any | undefined;
   driveService?: DriveServicePort | undefined;
   documentSpaceService?: DocumentSpaceService | undefined;
   authorizationUrl?: string | undefined;
@@ -59,28 +52,31 @@ export interface AppInstance {
   documentSchemaRegistry: DocumentSchemaRegistryPort & SchemaQueryPort;
   documentUiSchemaQuery?: DocumentUiSchemaQueryPort | undefined;
   documentSpaceUiSchemaQuery?: DocumentSpaceUiSchemaQueryPort | undefined;
-  documentUiBlock?: DocumentUiBlockAdapter | undefined;
+  documentUiBlock?: any | undefined;
   initialize: () => Promise<void>;
   start: (port?: number, host?: string) => Promise<void>;
 }
 
-export function createApp(options?: AppOptions): AppInstance {
-  const server = createHttpServer(options?.logger !== undefined ? { logger: options.logger } : {});
-  const templateEvaluator = options?.templateEvaluator ?? new HandlebarsAdapter();
+TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 
-  let manifestProvider = options?.manifestProvider;
-  if (!manifestProvider) {
-    const manifestPath = options?.manifestPath ?? process.env.APP_MANIFEST_PATH;
-    if (!options?.documentSchemaRegistry && !manifestPath) {
-      throw new Error(
-        'Manifest path is not defined. Please provide options.manifestPath or set the APP_MANIFEST_PATH environment variable.'
-      );
-    }
-    if (manifestPath) {
-      manifestProvider = new AppManifestProvider({ manifestPath });
-    }
+export function createApp(options?: AppOptions): AppInstance {
+  // 1. Shared Infrastructure
+  if (!options?.documentSchemaRegistry && !options?.manifestProvider && !options?.manifestPath && !process.env.APP_MANIFEST_PATH) {
+    throw new Error(
+      "Manifest path is not defined. Please provide options.manifestPath or set the APP_MANIFEST_PATH environment variable."
+    );
   }
 
+  const sharedInfra = createSharedInfrastructure({
+    logger: options?.logger,
+    manifestPath: options?.manifestPath,
+    manifestProvider: options?.manifestProvider,
+    templateEvaluator: options?.templateEvaluator,
+  });
+
+  const { server, templateEvaluator, manifestProvider, driveClient } = sharedInfra;
+
+  // 2. Document Feature - Schemas
   let documentSchemaRegistry: (DocumentSchemaRegistryPort & SchemaQueryPort) | undefined =
     options?.documentSchemaRegistry;
   let documentWiring: ReturnType<typeof createDocumentFeatureWiring> | undefined = undefined;
@@ -95,48 +91,41 @@ export function createApp(options?: AppOptions): AppInstance {
   }
 
   if (!documentSchemaRegistry) {
-    throw new Error('DocumentSchemaRegistry could not be initialized.');
+    throw new Error("DocumentSchemaRegistry could not be initialized.");
   }
 
-  const driveConfigProvider: AppConfigurationProviderPort | undefined = manifestProvider;
-  const workspaceConfigProvider: WorkspaceConfigProviderPort | undefined = manifestProvider;
+  const configProvider = manifestProvider ?? { getAppConfig: async () => ({}) };
+  const rawManifestProvider = manifestProvider ?? { getRawManifest: async () => ({}) };
 
-  const driveClient = new GoogleDriveClient({ configProvider: driveConfigProvider });
-
-  const driveService: DriveServicePort =
-    options?.driveService ??
-    new DriveServiceAdapter(driveClient);
-
-  const driveActivityHandler = new DriveActivityHandler(driveService, {
-    configProvider: driveConfigProvider,
+  // 3. Document Feature - Services & Routes
+  const documentService = wireDocumentServicesAndRoutes({
+    server,
+    driveClient,
+    configProvider: configProvider as AppConfigurationProviderPort,
+    documentSchemaRegistry,
+    templateEvaluator,
+    driveService: options?.driveService,
+    activityEngine: options?.activityEngine,
   });
-  const activityEngine = options?.activityEngine ?? new ActivityEngine([driveActivityHandler]);
-  const documentService = new DocumentService(activityEngine, documentSchemaRegistry, templateEvaluator);
 
-  const rawManifestProvider: RawManifestProviderPort =
-    manifestProvider ?? {
-      getRawManifest: async () => ({}),
-    };
-  const documentSpaceStorage = new GoogleDriveStorageAdapter(driveClient);
+  // 4. Document Space Feature
   const documentSpaceWiring = createDocumentSpaceFeatureWiring({
-    rawManifestProvider,
-    storageAdapter: documentSpaceStorage,
+    rawManifestProvider: rawManifestProvider as RawManifestProviderPort,
+    driveClient,
   });
   const documentSpaceService =
     options?.documentSpaceService ??
     documentSpaceWiring.documentSpaceService;
 
-  const authVerifier: AuthVerifierPort = options?.authVerifier ?? new GoogleJwtVerifier();
-  const uiBuilder: WorkspaceUiBuilderPort = options?.uiBuilder ?? uiBlocks;
-
-  registerDocumentFeatureRoutes(server, { service: documentService, schemaQuery: documentSchemaRegistry });
-  registerWorkspaceFeatureRoutes(server, {
-    authVerifier,
-    uiBuilder,
+  // 5. Workspace Feature
+  wireWorkspaceFeature({
+    server,
     documentService,
-    schemaQuery: documentSchemaRegistry,
     documentSpaceService,
-    configProvider: workspaceConfigProvider,
+    documentSchemaRegistry,
+    authVerifier: options?.authVerifier,
+    uiBuilder: options?.uiBuilder,
+    configProvider: manifestProvider,
   });
 
   const initialize = async () => {
@@ -144,16 +133,16 @@ export function createApp(options?: AppOptions): AppInstance {
     await documentSpaceService.initialize();
     const shouldSkipValidation =
       options?.skipSpaceValidation ??
-      (process.env.SKIP_SPACE_VALIDATION === 'true' || process.env.NODE_ENV === 'production');
+      (process.env.SKIP_SPACE_VALIDATION === "true" || process.env.NODE_ENV === "production");
     if (!shouldSkipValidation) {
       const spaceErrors = await documentSpaceService.validateEndToEnd();
       if (spaceErrors.length > 0) {
-        throw new Error(`Failed to validate DocumentSpaceTypes:\n${spaceErrors.join('\n')}`);
+        throw new Error(`Failed to validate DocumentSpaceTypes:\n${spaceErrors.join("\n")}`);
       }
     }
   };
 
-  const start = async (port = 8080, host = '0.0.0.0') => {
+  const start = async (port = 8080, host = "0.0.0.0") => {
     await initialize();
     await server.start(port, host);
   };
@@ -171,11 +160,11 @@ export function createApp(options?: AppOptions): AppInstance {
   };
 }
 
-export const start = async (port = 8080, host = '0.0.0.0') => {
+export const start = async (port = 8080, host = "0.0.0.0") => {
   try {
     const app = createApp({
       logger: true,
-      skipSpaceValidation: process.env.SKIP_SPACE_VALIDATION === 'true' || process.env.NODE_ENV === 'production',
+      skipSpaceValidation: process.env.SKIP_SPACE_VALIDATION === "true" || process.env.NODE_ENV === "production",
     });
     await app.start(port, host);
   } catch (err) {
@@ -187,3 +176,4 @@ export const start = async (port = 8080, host = '0.0.0.0') => {
 if (require.main === module) {
   void start();
 }
+

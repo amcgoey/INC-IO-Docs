@@ -1,4 +1,4 @@
-import type { AppManifestProvider } from '../infrastructure/manifest/app-manifest-provider';
+import type { RawManifestProviderPort } from '../features/document-space/ports';
 import { DocumentSchemaRegistryAdapter } from '../features/document/adapters/document-schema-registry';
 import { DocumentUiSchemaQueryAdapter } from '../features/document/adapters/document-ui-schema-query';
 import { DocumentUiBlockAdapter } from '../features/document/adapters/ui-block';
@@ -7,6 +7,9 @@ import type {
   DocumentUiSchemaQueryPort,
   SchemaQueryPort,
   TemplateEvaluatorPort,
+  DriveServicePort,
+  ActivityDispatcherPort,
+  AppConfigurationProviderPort
 } from '../features/document/ports';
 import {
   computeEvaluationOrder,
@@ -17,9 +20,16 @@ import {
   buildCard,
   buildTitleBlock,
 } from '../infrastructure/workspace-addon/ui-blocks';
+import { DocumentService } from '../features/document/domain';
+import { DriveServiceAdapter } from '../features/document/adapters/drive-service-adapter';
+import { DriveActivityHandler } from '../features/document/adapters/drive-activity-handler';
+import { ActivityEngine } from '../features/document/adapters/activity-engine';
+import { registerDocumentFeatureRoutes } from '../features/document/adapters/api';
+import type { HttpServer } from '../infrastructure/http';
+import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 
 export interface DocumentFeatureWiringOptions {
-  manifestProvider: AppManifestProvider;
+  manifestProvider: RawManifestProviderPort;
   templateEvaluator?: TemplateEvaluatorPort | undefined;
   documentSchemaRegistry?: (DocumentSchemaRegistryPort & SchemaQueryPort) | undefined;
 }
@@ -65,3 +75,34 @@ export function createDocumentFeatureWiring(
     documentUiBlock,
   };
 }
+
+export interface WireDocumentServicesOptions {
+  server: HttpServer;
+  driveClient: GoogleDriveClient;
+  configProvider: AppConfigurationProviderPort;
+  documentSchemaRegistry: DocumentSchemaRegistryPort & SchemaQueryPort;
+  templateEvaluator: TemplateEvaluatorPort;
+  driveService?: DriveServicePort | undefined;
+  activityEngine?: ActivityDispatcherPort | undefined;
+}
+
+export function wireDocumentServicesAndRoutes(options: WireDocumentServicesOptions): DocumentService {
+  const driveService: DriveServicePort =
+    options.driveService ??
+    new DriveServiceAdapter(options.driveClient);
+
+  const driveActivityHandler = new DriveActivityHandler(driveService, {
+    configProvider: options.configProvider,
+  });
+  
+  const activityEngine = options.activityEngine ?? new ActivityEngine([driveActivityHandler]);
+  const documentService = new DocumentService(activityEngine, options.documentSchemaRegistry, options.templateEvaluator);
+
+  registerDocumentFeatureRoutes(options.server, { 
+    service: documentService, 
+    schemaQuery: options.documentSchemaRegistry 
+  });
+
+  return documentService;
+}
+
