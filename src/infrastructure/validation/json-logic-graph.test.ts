@@ -268,6 +268,29 @@ describe('JSONLogic Graph & Kahn\'s Algorithm', () => {
       );
     });
 
+    it('reports only true cycle nodes and excludes innocent downstream nodes', () => {
+      // A -> B -> A (cycle), and C -> A (C depends on A, innocent downstream)
+      const docSchema = {
+        fields: [{ key: 'A' }, { key: 'B' }, { key: 'C' }],
+      };
+
+      const uiSchema = {
+        fields: {
+          A: { computeValue: { var: 'data.B' } },
+          B: { computeValue: { var: 'data.A' } },
+          C: { computeValue: { var: 'data.A' } },
+        },
+      };
+
+      try {
+        computeEvaluationOrder(docSchema, uiSchema);
+        expect.unreachable('Should have thrown');
+      } catch (error) {
+        const msg = (error as Error).message;
+        expect(msg).toMatch(/Circular dependency detected in computeValue rules: (A, B|B, A)$/);
+      }
+    });
+
     it('returns empty array when no fields exist', () => {
       expect(computeEvaluationOrder(undefined, undefined)).toEqual([]);
       expect(computeEvaluationOrder({ fields: [] }, { fields: {} })).toEqual([]);
@@ -290,15 +313,29 @@ describe('JSONLogic Graph & Kahn\'s Algorithm', () => {
       expect(result?.evaluationOrder).toEqual(['first', 'last', 'full']);
     });
 
-    it('does not recompute if evaluationOrder is already present', () => {
+    it('validates and preserves existing evaluationOrder if valid', () => {
       const existing = ['custom', 'order'];
       const uiSchema = {
-        fields: { a: {}, b: {} },
+        fields: { custom: {}, order: {} },
         evaluationOrder: existing,
       };
 
       const result = ensureEvaluationOrder(uiSchema);
-      expect(result?.evaluationOrder).toBe(existing);
+      expect(result?.evaluationOrder).toEqual(existing);
+    });
+
+    it('throws during ensureEvaluationOrder if pre-existing evaluationOrder has circular dependencies', () => {
+      const uiSchema = {
+        fields: {
+          a: { computeValue: { var: 'data.b' } },
+          b: { computeValue: { var: 'data.a' } },
+        },
+        evaluationOrder: ['a', 'b'],
+      };
+
+      expect(() => ensureEvaluationOrder(uiSchema)).toThrow(
+        /Circular dependency detected in computeValue rules/
+      );
     });
 
     it('handles undefined input gracefully', () => {

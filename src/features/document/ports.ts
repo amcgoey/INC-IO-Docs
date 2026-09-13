@@ -1,8 +1,14 @@
-import { Type, type Static, type TSchema, type TTuple } from '@sinclair/typebox';
+import { Type, type Static } from '@sinclair/typebox';
 import {
   DocumentSchemaType,
   UiEventType,
   UiEventRuleType,
+  JSONLogicRuleType,
+  type JSONLogicRule,
+  DocumentUiFieldSchema,
+  type DocumentUiField,
+  DocumentUiSchemaType,
+  type DocumentUiSchema,
   type Activity,
   type ActivityOutput,
   type ExecutionContext,
@@ -18,98 +24,36 @@ export {
   type UiEvent,
   UiEventRuleType,
   type UiEventRule,
+  JSONLogicRuleType,
+  type JSONLogicRule,
+  DocumentUiFieldSchema,
+  type DocumentUiField,
+  DocumentUiSchemaType,
+  type DocumentUiSchema,
 };
 
-const DataVarString = Type.String({ pattern: '^data(\\..+)?$' });
-
-const createBinaryOp = <K extends string, S extends TSchema>(op: K, schema: S) =>
-  Type.Object({ [op]: Type.Tuple([schema, schema]) } as { [P in K]: TTuple<[S, S]> }, {
-    additionalProperties: false,
-  });
-
-export const JSONLogicRuleType = Type.Recursive(
-  (Self) => {
-    const RuleOrPlainObject = Type.Union([
-      Self,
-      Type.Record(Type.String(), Type.Unknown()),
-    ]);
-
-    return Type.Union([
-      // Primitives
-      Type.String(),
-      Type.Number(),
-      Type.Boolean(),
-      Type.Null(),
-      Type.Array(Self),
-      // Comparison Operators
-      createBinaryOp('==', Self),
-      createBinaryOp('!=', Self),
-      createBinaryOp('<', Self),
-      createBinaryOp('>', Self),
-      createBinaryOp('<=', Self),
-      createBinaryOp('>=', Self),
-      // Logical Operators
-      Type.Object({ and: Type.Array(Self, { minItems: 1 }) }, { additionalProperties: false }),
-      Type.Object({ or: Type.Array(Self, { minItems: 1 }) }, { additionalProperties: false }),
-      Type.Object({ '!': Type.Union([Self, Type.Tuple([Self])]) }, { additionalProperties: false }),
-      Type.Object({ '!!': Type.Union([Self, Type.Tuple([Self])]) }, { additionalProperties: false }),
-      // Data Access
-      Type.Object(
-        {
-          var: Type.Union([
-            DataVarString,
-            Type.Tuple([DataVarString]),
-            Type.Tuple([DataVarString, RuleOrPlainObject]),
-          ]),
-        },
-        { additionalProperties: false }
-      ),
-      // Utility Operators
-      Type.Object({ cat: Type.Array(Self, { minItems: 1 }) }, { additionalProperties: false }),
-      Type.Object({ in: Type.Tuple([Self, RuleOrPlainObject]) }, { additionalProperties: false }),
-      Type.Object({ log: Type.Union([Self, Type.Tuple([Self])]) }, { additionalProperties: false }),
-    ]);
-  },
-  { $id: 'JSONLogicRule' }
-);
-
-export type JSONLogicRule = Static<typeof JSONLogicRuleType>;
-
-export const UiFieldSchema = Type.Object({
-  widget: Type.Optional(Type.String()),
-  label: Type.Optional(Type.String()),
-  props: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-  showIf: Type.Optional(JSONLogicRuleType),
-  disableIf: Type.Optional(JSONLogicRuleType),
-  computeValue: Type.Optional(JSONLogicRuleType),
-});
-
-export type UiField = Static<typeof UiFieldSchema>;
-
-export const DocumentUiFieldSchema = UiFieldSchema;
-export type DocumentUiField = UiField;
-
-export const DocumentUiSchemaType = Type.Object({
-  layout: Type.Optional(Type.Array(Type.String())),
-  fields: Type.Optional(Type.Record(Type.String(), DocumentUiFieldSchema)),
-  events: Type.Optional(Type.Record(Type.String(), UiEventType)),
-  evaluationOrder: Type.Optional(Type.Array(Type.String())),
-});
-
-export type DocumentUiSchema = Static<typeof DocumentUiSchemaType>;
+export const UiFieldSchema = DocumentUiFieldSchema;
+export type UiField = DocumentUiField;
 
 export interface DocumentUiSchemaQueryPort {
   getDocumentUiSchema(documentTypeKey: string): Promise<DocumentUiSchema | undefined>;
 }
 
+export type SchemaOrKeys =
+  | string[]
+  | { fields?: Array<{ key: string }> | Record<string, unknown> }
+  | Record<string, unknown>;
+
 export type EvaluationOrderCalculator = (
-  schemaOrKeys?: string[] | { fields?: Array<{ key: string }> } | Record<string, unknown>,
+  schemaOrKeys?: SchemaOrKeys,
   uiSchema?: { layout?: string[]; fields?: Record<string, { computeValue?: unknown }> }
 ) => string[];
 
-export type EvaluationOrderEnsurer = <T extends { layout?: string[]; fields?: Record<string, unknown>; evaluationOrder?: string[] }>(
+export type EvaluationOrderEnsurer = <
+  T extends { layout?: string[]; fields?: Record<string, unknown>; evaluationOrder?: string[] }
+>(
   container?: T,
-  schemaOrKeys?: string[] | { fields?: Array<{ key: string }> } | Record<string, unknown>
+  schemaOrKeys?: SchemaOrKeys
 ) => (T & { evaluationOrder?: string[] }) | undefined;
 
 export const FormSchemaType = Type.Object({

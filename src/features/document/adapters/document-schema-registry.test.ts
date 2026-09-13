@@ -623,8 +623,11 @@ describe('DocumentSchemaRegistryAdapter', () => {
       const mockProvider = createMockManifestProvider({
         './schemas/invoice.json': mockDocumentType,
       });
-      const mockCalculator = vi.fn().mockReturnValue(['unitPrice', 'quantity', 'total']);
-      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator, mockCalculator);
+      const mockEnsurer = vi.fn().mockImplementation((ui) => ({
+        ...ui,
+        evaluationOrder: ['unitPrice', 'quantity', 'total'],
+      }));
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator, mockEnsurer);
 
       const documentTypes = await adapter.loadAll();
       expect(
@@ -664,13 +667,35 @@ describe('DocumentSchemaRegistryAdapter', () => {
       const mockProvider = createMockManifestProvider({
         './schemas/circular.json': mockCircularDocType,
       });
-      const mockCalculator = vi.fn().mockImplementation(() => {
+      const mockEnsurer = vi.fn().mockImplementation(() => {
         throw new Error('Circular dependency detected in computeValue rules: fieldA, fieldB');
       });
-      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator, mockCalculator);
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator, mockEnsurer);
 
       await expect(adapter.loadAll()).rejects.toThrow(
         /Invalid DocumentType UI schema "circular-doc": Circular dependency detected in computeValue rules/i
+      );
+    });
+
+    it('fails loudly during loadAll when documentUiSchema fails schema validation', async () => {
+      const mockInvalidUiDocType = {
+        key: 'invalid-ui-doc',
+        name: 'Invalid UI Doc',
+        documentSchema: {
+          fields: [{ key: 'fieldA', name: 'Field A', type: 'string', required: true }],
+        },
+        documentUiSchema: {
+          fields: 'not-an-object',
+        },
+      };
+
+      const mockProvider = createMockManifestProvider({
+        './schemas/invalid-ui.json': mockInvalidUiDocType,
+      });
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
+
+      await expect(adapter.loadAll()).rejects.toThrow(
+        /Invalid DocumentType.*schema.*invalid-ui-doc/i
       );
     });
   });

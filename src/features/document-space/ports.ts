@@ -43,6 +43,15 @@ export const JSONLogicRuleType = Type.Recursive(
       createBinaryOp('>', Self),
       createBinaryOp('<=', Self),
       createBinaryOp('>=', Self),
+      // Arithmetic Operators
+      createBinaryOp('+', Self),
+      Type.Object({ '+': Type.Array(Self, { minItems: 1 }) }, { additionalProperties: false }),
+      createBinaryOp('-', Self),
+      Type.Object({ '-': Type.Union([Type.Tuple([Self]), Type.Tuple([Self, Self])]) }, { additionalProperties: false }),
+      createBinaryOp('*', Self),
+      Type.Object({ '*': Type.Array(Self, { minItems: 2 }) }, { additionalProperties: false }),
+      createBinaryOp('/', Self),
+      createBinaryOp('%', Self),
       // Logical Operators
       Type.Object({ and: Type.Array(Self, { minItems: 1 }) }, { additionalProperties: false }),
       Type.Object({ or: Type.Array(Self, { minItems: 1 }) }, { additionalProperties: false }),
@@ -101,14 +110,16 @@ export interface RawManifestProviderPort {
   getRawManifest(): Promise<unknown>;
 }
 
-export type EvaluationOrderCalculator = (
-  schemaOrKeys?: string[] | { fields?: Array<{ key: string }> } | Record<string, unknown>,
-  uiSchema?: { layout?: string[]; fields?: Record<string, { computeValue?: unknown }> }
-) => string[];
+export type SchemaOrKeys =
+  | string[]
+  | { fields?: Array<{ key: string }> | Record<string, unknown> }
+  | Record<string, unknown>;
 
-export type EvaluationOrderEnsurer = <T extends { layout?: string[]; fields?: Record<string, unknown>; evaluationOrder?: string[] }>(
+export type EvaluationOrderEnsurer = <
+  T extends { layout?: string[]; fields?: Record<string, unknown>; evaluationOrder?: string[] }
+>(
   container?: T,
-  schemaOrKeys?: string[] | { fields?: Array<{ key: string }> } | Record<string, unknown>
+  schemaOrKeys?: SchemaOrKeys
 ) => (T & { evaluationOrder?: string[] }) | undefined;
 
 export interface DocumentSpaceStoragePort {

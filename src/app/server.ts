@@ -5,7 +5,6 @@ import { registerWorkspaceFeatureRoutes } from '../features/workspace/adapters/a
 import { ActivityEngine } from '../features/document/adapters/activity-engine';
 import { DriveActivityHandler } from '../features/document/adapters/drive-activity-handler';
 import { DriveServiceAdapter } from '../features/document/adapters/drive-service-adapter';
-import { DocumentSchemaRegistryAdapter } from '../features/document/adapters/document-schema-registry';
 import { AppManifestProvider } from '../infrastructure/manifest/app-manifest-provider';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
@@ -24,6 +23,7 @@ import type {
   DocumentSchemaRegistryPort,
   SchemaQueryPort,
   TemplateEvaluatorPort,
+  DocumentUiSchemaQueryPort,
 } from '../features/document/ports';
 import type {
   AuthVerifierPort,
@@ -33,8 +33,6 @@ import type { WorkspaceUiBuilderPort } from '../features/workspace/adapters/ui-b
 import * as uiBlocks from '../infrastructure/workspace-addon/ui-blocks';
 import { createDocumentFeatureWiring } from './document.wiring';
 import { createDocumentSpaceFeatureWiring } from './document-space.wiring';
-import { computeEvaluationOrder } from '../infrastructure/validation/json-logic-graph';
-import type { DocumentUiSchemaQueryPort } from '../features/document/ports';
 import type { DocumentUiBlockAdapter } from '../features/document/adapters/ui-block';
 
 TypeSystemPolicy.ExactOptionalPropertyTypes = true;
@@ -83,9 +81,22 @@ export function createApp(options?: AppOptions): AppInstance {
     }
   }
 
-  const documentSchemaRegistry: DocumentSchemaRegistryPort & SchemaQueryPort =
-    options?.documentSchemaRegistry ??
-    new DocumentSchemaRegistryAdapter(manifestProvider!, templateEvaluator, computeEvaluationOrder);
+  let documentSchemaRegistry: (DocumentSchemaRegistryPort & SchemaQueryPort) | undefined =
+    options?.documentSchemaRegistry;
+  let documentWiring: ReturnType<typeof createDocumentFeatureWiring> | undefined = undefined;
+
+  if (manifestProvider) {
+    documentWiring = createDocumentFeatureWiring({
+      manifestProvider,
+      templateEvaluator,
+      documentSchemaRegistry: options?.documentSchemaRegistry,
+    });
+    documentSchemaRegistry = documentWiring.documentSchemaRegistry;
+  }
+
+  if (!documentSchemaRegistry) {
+    throw new Error('DocumentSchemaRegistry could not be initialized.');
+  }
 
   const driveConfigProvider: AppConfigurationProviderPort | undefined = manifestProvider;
   const workspaceConfigProvider: WorkspaceConfigProviderPort | undefined = manifestProvider;
@@ -146,10 +157,6 @@ export function createApp(options?: AppOptions): AppInstance {
     await initialize();
     await server.start(port, host);
   };
-
-  const documentWiring = manifestProvider
-    ? createDocumentFeatureWiring({ manifestProvider })
-    : undefined;
 
   return {
     server,

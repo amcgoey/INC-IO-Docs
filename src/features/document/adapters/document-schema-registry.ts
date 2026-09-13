@@ -13,7 +13,7 @@ import {
   type SchemaQueryPort,
   type FormSchema,
   type DocumentUiSchema as PortDocumentUiSchema,
-  type EvaluationOrderCalculator,
+  type EvaluationOrderEnsurer,
 } from '../ports';
 
 const RawDocumentKeySchema = Type.Object({
@@ -30,7 +30,7 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
   constructor(
     private readonly manifestProvider: RawManifestProviderPort,
     private readonly templateEvaluator: TemplateEvaluatorPort,
-    private readonly evaluationOrderCalculator?: EvaluationOrderCalculator
+    private readonly evaluationOrderEnsurer?: EvaluationOrderEnsurer
   ) {}
 
   async loadAll(): Promise<DocumentType[]> {
@@ -52,7 +52,7 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
         throw new Error(`Invalid DocumentType schema${key}: ${errors}`);
       }
 
-      const validatedDocumentType = cleaned as DocumentType;
+      let validatedDocumentType = cleaned as DocumentType;
 
       const templateErrors = validateManifestTemplates(
         validatedDocumentType,
@@ -68,21 +68,30 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
       const rawUiSchema = (rawDocumentType as { documentUiSchema?: unknown })?.documentUiSchema;
       if (rawUiSchema) {
         const cleanedUi = Value.Clean(PortDocumentUiSchemaType, structuredClone(rawUiSchema));
-        if (Value.Check(PortDocumentUiSchemaType, cleanedUi)) {
-          resolvedUiSchema = cleanedUi as PortDocumentUiSchema;
+        if (!Value.Check(PortDocumentUiSchemaType, cleanedUi)) {
+          const errors = [...Value.Errors(PortDocumentUiSchemaType, cleanedUi)]
+            .map((e) => `${e.path}: ${e.message}`)
+            .join(', ');
+          throw new Error(
+            `Invalid DocumentType UI schema "${validatedDocumentType.key}": ${errors}`
+          );
         }
+        resolvedUiSchema = cleanedUi as PortDocumentUiSchema;
       }
 
-      if (resolvedUiSchema?.fields && this.evaluationOrderCalculator) {
+      if (resolvedUiSchema?.fields && this.evaluationOrderEnsurer) {
         try {
-          const evaluationOrder = this.evaluationOrderCalculator(
-            validatedDocumentType.documentSchema,
-            resolvedUiSchema
-          );
-          resolvedUiSchema.evaluationOrder = evaluationOrder;
-          if (validatedDocumentType.documentUiSchema) {
-            (validatedDocumentType.documentUiSchema as Record<string, unknown>).evaluationOrder =
-              evaluationOrder;
+          resolvedUiSchema =
+            (this.evaluationOrderEnsurer(
+              resolvedUiSchema,
+              validatedDocumentType.documentSchema
+            ) as PortDocumentUiSchema) ?? resolvedUiSchema;
+
+          if (validatedDocumentType.documentUiSchema || resolvedUiSchema) {
+            validatedDocumentType = {
+              ...validatedDocumentType,
+              documentUiSchema: resolvedUiSchema,
+            };
           }
         } catch (error) {
           throw new Error(

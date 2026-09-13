@@ -133,6 +133,13 @@ describe('Document Ports & DTOs', () => {
         { var: ['data.user', { name: 'Guest' }] },
         { var: ['data', { defaultTheme: 'light' }] },
         { in: ['role', { role: 'admin' }] },
+        { '+': [1, 2] },
+        { '+': [1, 2, 3] },
+        { '-': [5, 2] },
+        { '-': [5] },
+        { '*': [3, 4] },
+        { '/': [10, 2] },
+        { '%': [10, 3] },
       ];
 
       for (const rule of validRules) {
@@ -174,10 +181,6 @@ describe('Document Ports & DTOs', () => {
 
     it('rejects forbidden operators and invalid structures', () => {
       const invalidRules = [
-        { '+': [1, 2] }, // Mathematical operator not in allow-list
-        { '-': [2, 1] }, // Mathematical operator not in allow-list
-        { '*': [2, 3] }, // Mathematical operator not in allow-list
-        { '/': [6, 2] }, // Mathematical operator not in allow-list
         { map: [{ var: 'data.items' }, { var: '' }] }, // Array operator not in allow-list
         { filter: [{ var: 'data.items' }, { var: '' }] }, // Array operator not in allow-list
         { reduce: [{ var: 'data.items' }, { var: '' }, 0] }, // Array operator not in allow-list
@@ -212,7 +215,7 @@ describe('Document Ports & DTOs', () => {
       const invalidDocSchema = {
         fields: {
           firstName: {
-            showIf: { '+': [1, 1] },
+            showIf: { map: [{ var: 'data.items' }, { var: '' }] },
           },
         },
       };
@@ -221,7 +224,7 @@ describe('Document Ports & DTOs', () => {
       const invalidComputeSchema = {
         fields: {
           total: {
-            computeValue: { '+': [{ var: 'data.subtotal' }, 10] },
+            computeValue: { reduce: [{ var: 'data.items' }, { var: '' }, 0] },
           },
         },
       };
