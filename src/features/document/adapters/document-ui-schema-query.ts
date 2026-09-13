@@ -6,7 +6,7 @@ import type {
   SpaceUiSchema,
 } from '../ports';
 import { DocumentUiSchemaType, SpaceUiSchemaType } from '../ports';
-import { computeEvaluationOrder } from './dependency-graph';
+import { computeEvaluationOrder } from '../../../infrastructure/validation/json-logic-graph';
 
 interface ManifestWithDocumentTypes {
   documentTypes?: string[];
@@ -38,7 +38,7 @@ export class DocumentUiSchemaQueryAdapter implements DocumentUiSchemaQueryPort {
         );
         if (Value.Check(DocumentUiSchemaType, cleaned)) {
           const uiSchema = cleaned as DocumentUiSchema;
-          if (!uiSchema.evaluationOrder) {
+          if (uiSchema.fields && !uiSchema.evaluationOrder) {
             uiSchema.evaluationOrder = computeEvaluationOrder(
               rawDoc.documentSchema,
               uiSchema
@@ -64,7 +64,14 @@ export class DocumentUiSchemaQueryAdapter implements DocumentUiSchemaQueryPort {
           structuredClone(spaceType.spaceUiSchema)
         );
         if (Value.Check(SpaceUiSchemaType, cleaned)) {
-          return cleaned as SpaceUiSchema;
+          const spaceUiSchema = cleaned as SpaceUiSchema;
+          if (spaceUiSchema.fields && !spaceUiSchema.evaluationOrder) {
+            spaceUiSchema.evaluationOrder = computeEvaluationOrder(
+              undefined,
+              spaceUiSchema
+            );
+          }
+          return spaceUiSchema;
         }
       }
     }

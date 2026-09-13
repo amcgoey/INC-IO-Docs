@@ -75,27 +75,22 @@ export const JSONLogicRuleType = Type.Recursive(
 
 export type JSONLogicRule = Static<typeof JSONLogicRuleType>;
 
-export const BaseUiFieldSchema = Type.Object({
+export const UiFieldSchema = Type.Object({
   widget: Type.Optional(Type.String()),
   label: Type.Optional(Type.String()),
   props: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   showIf: Type.Optional(JSONLogicRuleType),
   disableIf: Type.Optional(JSONLogicRuleType),
+  computeValue: Type.Optional(JSONLogicRuleType),
 });
 
-export const SpaceUiFieldSchema = BaseUiFieldSchema;
-export type SpaceUiField = Static<typeof SpaceUiFieldSchema>;
+export type UiField = Static<typeof UiFieldSchema>;
 
-export const DocumentUiFieldSchema = Type.Composite([
-  BaseUiFieldSchema,
-  Type.Object({
-    computeValue: Type.Optional(JSONLogicRuleType),
-  }),
-]);
+export const DocumentUiFieldSchema = UiFieldSchema;
+export type DocumentUiField = UiField;
 
-export type DocumentUiField = Static<typeof DocumentUiFieldSchema>;
-export const UiFieldSchema = DocumentUiFieldSchema;
-export type UiField = DocumentUiField;
+export const SpaceUiFieldSchema = UiFieldSchema;
+export type SpaceUiField = UiField;
 
 export const DocumentUiSchemaType = Type.Object({
   layout: Type.Optional(Type.Array(Type.String())),
@@ -109,6 +104,7 @@ export type DocumentUiSchema = Static<typeof DocumentUiSchemaType>;
 export const SpaceUiSchemaType = Type.Object({
   layout: Type.Optional(Type.Array(Type.String())),
   fields: Type.Optional(Type.Record(Type.String(), SpaceUiFieldSchema)),
+  evaluationOrder: Type.Optional(Type.Array(Type.String())),
 });
 
 export type SpaceUiSchema = Static<typeof SpaceUiSchemaType>;

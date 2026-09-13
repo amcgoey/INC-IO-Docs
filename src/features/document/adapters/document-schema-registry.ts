@@ -14,7 +14,7 @@ import {
   type FormSchema,
   type DocumentUiSchema as PortDocumentUiSchema,
 } from '../ports';
-import { computeEvaluationOrder } from './dependency-graph';
+import { computeEvaluationOrder } from '../../../infrastructure/validation/json-logic-graph';
 
 const RawDocumentKeySchema = Type.Object({
   key: Type.Optional(Type.String()),

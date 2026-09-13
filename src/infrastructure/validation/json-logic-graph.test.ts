@@ -2,10 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   extractJsonLogicDependencies,
   computeEvaluationOrder,
-} from './dependency-graph';
-import type { DocumentUiSchema } from '../ports';
+} from './json-logic-graph';
 
-describe('Dependency Graph & Kahn\'s Algorithm', () => {
+describe('JSONLogic Graph & Kahn\'s Algorithm', () => {
   describe('extractJsonLogicDependencies', () => {
     it('extracts var dependencies pointing to data namespace', () => {
       const rule = {
@@ -69,13 +68,13 @@ describe('Dependency Graph & Kahn\'s Algorithm', () => {
     it('evaluates fields without computeValue first, followed by computed fields', () => {
       const docSchema = {
         fields: [
-          { key: 'firstName', name: 'First Name', type: 'string' },
-          { key: 'lastName', name: 'Last Name', type: 'string' },
-          { key: 'fullName', name: 'Full Name', type: 'string' },
+          { key: 'firstName' },
+          { key: 'lastName' },
+          { key: 'fullName' },
         ],
       };
 
-      const uiSchema: DocumentUiSchema = {
+      const uiSchema = {
         layout: ['firstName', 'lastName', 'fullName'],
         fields: {
           firstName: { label: 'First Name' },
@@ -95,18 +94,52 @@ describe('Dependency Graph & Kahn\'s Algorithm', () => {
       expect(order.indexOf('lastName')).toBeLessThan(order.indexOf('fullName'));
     });
 
+    it('works with string[] keys directly as first argument', () => {
+      const keys = ['firstName', 'lastName', 'fullName'];
+      const uiSchema = {
+        fields: {
+          fullName: {
+            computeValue: {
+              cat: [{ var: 'data.firstName' }, ' ', { var: 'data.lastName' }],
+            },
+          },
+        },
+      };
+
+      const order = computeEvaluationOrder(keys, uiSchema);
+      expect(order).toEqual(['firstName', 'lastName', 'fullName']);
+    });
+
+    it('works with SpaceUiSchema-like objects where fields are in an object container', () => {
+      const spaceSchema = {
+        fields: {
+          subtotal: {},
+          taxRate: {},
+          taxAmount: {
+            computeValue: {
+              '*': [{ var: 'data.subtotal' }, { var: 'data.taxRate' }],
+            },
+          },
+        },
+      };
+
+      const order = computeEvaluationOrder(spaceSchema);
+      expect(order.indexOf('subtotal')).toBeLessThan(order.indexOf('taxAmount'));
+      expect(order.indexOf('taxRate')).toBeLessThan(order.indexOf('taxAmount'));
+    });
+
     it('handles multiple levels of computed dependencies (chain)', () => {
       const docSchema = {
         fields: [
-          { key: 'unitPrice', name: 'Unit Price', type: 'number' },
-          { key: 'quantity', name: 'Quantity', type: 'number' },
-          { key: 'subtotal', name: 'Subtotal', type: 'number' },
-          { key: 'tax', name: 'Tax', type: 'number' },
-          { key: 'total', name: 'Total', type: 'number' },
+          { key: 'unitPrice' },
+          { key: 'quantity' },
+          { key: 'subtotal' },
+          { key: 'tax' },
+          { key: 'total' },
         ],
       };
 
-      const uiSchema: DocumentUiSchema = {
+      const uiSchema = {
         fields: {
           unitPrice: {},
           quantity: {},
@@ -139,14 +172,14 @@ describe('Dependency Graph & Kahn\'s Algorithm', () => {
     it('handles diamond dependencies correctly', () => {
       const docSchema = {
         fields: [
-          { key: 'base', name: 'Base', type: 'string' },
-          { key: 'left', name: 'Left', type: 'string' },
-          { key: 'right', name: 'Right', type: 'string' },
-          { key: 'combined', name: 'Combined', type: 'string' },
+          { key: 'base' },
+          { key: 'left' },
+          { key: 'right' },
+          { key: 'combined' },
         ],
       };
 
-      const uiSchema: DocumentUiSchema = {
+      const uiSchema = {
         fields: {
           base: {},
           left: {
@@ -172,10 +205,10 @@ describe('Dependency Graph & Kahn\'s Algorithm', () => {
 
     it('fails loudly when an immediate self-dependency cycle is detected', () => {
       const docSchema = {
-        fields: [{ key: 'counter', name: 'Counter', type: 'number' }],
+        fields: [{ key: 'counter' }],
       };
 
-      const uiSchema: DocumentUiSchema = {
+      const uiSchema = {
         fields: {
           counter: {
             computeValue: { var: 'data.counter' },
@@ -191,12 +224,12 @@ describe('Dependency Graph & Kahn\'s Algorithm', () => {
     it('fails loudly when a 2-node circular dependency is detected', () => {
       const docSchema = {
         fields: [
-          { key: 'fieldA', name: 'Field A', type: 'string' },
-          { key: 'fieldB', name: 'Field B', type: 'string' },
+          { key: 'fieldA' },
+          { key: 'fieldB' },
         ],
       };
 
-      const uiSchema: DocumentUiSchema = {
+      const uiSchema = {
         fields: {
           fieldA: {
             computeValue: { var: 'data.fieldB' },
@@ -215,13 +248,13 @@ describe('Dependency Graph & Kahn\'s Algorithm', () => {
     it('fails loudly when a multi-node circular dependency is detected', () => {
       const docSchema = {
         fields: [
-          { key: 'x', name: 'X', type: 'string' },
-          { key: 'y', name: 'Y', type: 'string' },
-          { key: 'z', name: 'Z', type: 'string' },
+          { key: 'x' },
+          { key: 'y' },
+          { key: 'z' },
         ],
       };
 
-      const uiSchema: DocumentUiSchema = {
+      const uiSchema = {
         fields: {
           x: { computeValue: { var: 'data.y' } },
           y: { computeValue: { var: 'data.z' } },

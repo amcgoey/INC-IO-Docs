@@ -104,4 +104,36 @@ describe('DocumentUiSchemaQueryAdapter', () => {
 
     expect(result).toBeUndefined();
   });
+
+  it('computes evaluationOrder on SpaceUiSchema when fields with computeValue are present', async () => {
+    const mockManifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        DocumentSpaceTypes: [
+          {
+            id: 'space-computed',
+            displayName: 'Computed Space',
+            spaceUiSchema: {
+              layout: ['base', 'derived'],
+              fields: {
+                base: { widget: 'textInput', label: 'Base' },
+                derived: {
+                  widget: 'textInput',
+                  label: 'Derived',
+                  computeValue: { cat: [{ var: 'data.base' }, '-ext'] },
+                },
+              },
+            },
+          },
+        ],
+      }),
+      readParsedSchema: vi.fn(),
+    };
+
+    const adapter = new DocumentUiSchemaQueryAdapter(mockManifestProvider);
+    const result = await adapter.getSpaceUiSchema('space-computed');
+
+    expect(result).toBeDefined();
+    expect(result?.evaluationOrder).toEqual(['base', 'derived']);
+  });
 });
+
