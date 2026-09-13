@@ -90,17 +90,21 @@ export type UiCardSection = unknown;
 export type UiCard = unknown;
 export type UiActionResponse = unknown;
 
-export interface DocumentSelectionItem {
-  text: string;
-  value: string;
-  selected?: boolean;
-}
+export const DocumentSelectionItemSchema = Type.Object({
+  text: Type.String(),
+  value: Type.String(),
+  selected: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+});
 
-export interface DocumentSelectionState {
-  spaceTypes: DocumentSelectionItem[];
-  spaces: string[];
-  documentTypes: DocumentSelectionItem[];
-}
+export type DocumentSelectionItem = Static<typeof DocumentSelectionItemSchema>;
+
+export const DocumentSelectionStateSchema = Type.Object({
+  spaceTypes: Type.Array(DocumentSelectionItemSchema),
+  spaces: Type.Array(Type.String()),
+  documentTypes: Type.Array(DocumentSelectionItemSchema),
+});
+
+export type DocumentSelectionState = Static<typeof DocumentSelectionStateSchema>;
 
 export type DocumentSelectionContext = DocumentSelectionState;
 
