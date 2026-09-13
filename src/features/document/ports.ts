@@ -1,4 +1,4 @@
-import { Type, type Static } from '@sinclair/typebox';
+import { Type, type Static, type TSchema, type TTuple } from '@sinclair/typebox';
 import {
   DocumentSchemaType,
   UiEventType,
@@ -22,46 +22,54 @@ export {
 
 const DataVarString = Type.String({ pattern: '^data(\\..+)?$' });
 
+const createBinaryOp = <K extends string, S extends TSchema>(op: K, schema: S) =>
+  Type.Object({ [op]: Type.Tuple([schema, schema]) } as { [P in K]: TTuple<[S, S]> }, {
+    additionalProperties: false,
+  });
+
 export const JSONLogicRuleType = Type.Recursive(
-  (Self) =>
-    Type.Union([
+  (Self) => {
+    const RuleOrPlainObject = Type.Union([
+      Self,
+      Type.Record(Type.String(), Type.Unknown()),
+    ]);
+
+    return Type.Union([
       // Primitives
       Type.String(),
       Type.Number(),
       Type.Boolean(),
       Type.Null(),
       Type.Array(Self),
-      // Operators
-      Type.Object({ '==': Type.Tuple([Self, Self]) }, { additionalProperties: false }),
-      Type.Object({ '!=': Type.Tuple([Self, Self]) }, { additionalProperties: false }),
-      Type.Object({ '<': Type.Tuple([Self, Self]) }, { additionalProperties: false }),
-      Type.Object({ '>': Type.Tuple([Self, Self]) }, { additionalProperties: false }),
-      Type.Object({ '<=': Type.Tuple([Self, Self]) }, { additionalProperties: false }),
-      Type.Object({ '>=': Type.Tuple([Self, Self]) }, { additionalProperties: false }),
+      // Comparison Operators
+      createBinaryOp('==', Self),
+      createBinaryOp('!=', Self),
+      createBinaryOp('<', Self),
+      createBinaryOp('>', Self),
+      createBinaryOp('<=', Self),
+      createBinaryOp('>=', Self),
+      // Logical Operators
       Type.Object({ and: Type.Array(Self, { minItems: 1 }) }, { additionalProperties: false }),
       Type.Object({ or: Type.Array(Self, { minItems: 1 }) }, { additionalProperties: false }),
       Type.Object({ '!': Type.Union([Self, Type.Tuple([Self])]) }, { additionalProperties: false }),
       Type.Object({ '!!': Type.Union([Self, Type.Tuple([Self])]) }, { additionalProperties: false }),
+      // Data Access
       Type.Object(
         {
           var: Type.Union([
             DataVarString,
             Type.Tuple([DataVarString]),
-            Type.Tuple([
-              DataVarString,
-              Type.Union([Self, Type.Record(Type.String(), Type.Unknown())]),
-            ]),
+            Type.Tuple([DataVarString, RuleOrPlainObject]),
           ]),
         },
         { additionalProperties: false }
       ),
+      // Utility Operators
       Type.Object({ cat: Type.Array(Self, { minItems: 1 }) }, { additionalProperties: false }),
-      Type.Object(
-        { in: Type.Tuple([Self, Type.Union([Self, Type.Record(Type.String(), Type.Unknown())])]) },
-        { additionalProperties: false }
-      ),
+      Type.Object({ in: Type.Tuple([Self, RuleOrPlainObject]) }, { additionalProperties: false }),
       Type.Object({ log: Type.Union([Self, Type.Tuple([Self])]) }, { additionalProperties: false }),
-    ]),
+    ]);
+  },
   { $id: 'JSONLogicRule' }
 );
 
