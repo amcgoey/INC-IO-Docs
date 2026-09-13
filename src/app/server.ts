@@ -13,7 +13,10 @@ import { GoogleJwtVerifier } from '../infrastructure/workspace-addon/jwt-verifie
 import { DocumentService } from '../features/document/domain';
 import { DocumentSpaceService } from '../features/document-space/domain';
 import { GoogleDriveStorageAdapter } from '../features/document-space/adapters/google-drive-storage-adapter';
-import type { RawManifestProviderPort } from '../features/document-space/ports';
+import type {
+  RawManifestProviderPort,
+  DocumentSpaceUiSchemaQueryPort,
+} from '../features/document-space/ports';
 import type {
   ActivityDispatcherPort,
   AppConfigurationProviderPort,
@@ -57,6 +60,7 @@ export interface AppInstance {
   documentSpaceService: DocumentSpaceService;
   documentSchemaRegistry: DocumentSchemaRegistryPort & SchemaQueryPort;
   documentUiSchemaQuery?: DocumentUiSchemaQueryPort | undefined;
+  documentSpaceUiSchemaQuery?: DocumentSpaceUiSchemaQueryPort | undefined;
   documentUiBlock?: DocumentUiBlockAdapter | undefined;
   initialize: () => Promise<void>;
   start: (port?: number, host?: string) => Promise<void>;
@@ -153,6 +157,7 @@ export function createApp(options?: AppOptions): AppInstance {
     documentSpaceService,
     documentSchemaRegistry,
     documentUiSchemaQuery: documentWiring?.documentUiSchemaQuery,
+    documentSpaceUiSchemaQuery: documentSpaceWiring.documentSpaceUiSchemaQuery,
     documentUiBlock: documentWiring?.documentUiBlock,
     initialize,
     start,

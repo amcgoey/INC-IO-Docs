@@ -2,16 +2,13 @@ import { Value } from '@sinclair/typebox/value';
 import type {
   DocumentUiSchema,
   DocumentUiSchemaQueryPort,
-  EvaluationOrderCalculator,
+  EvaluationOrderEnsurer,
   RawManifestProviderPort,
-  SpaceUiSchema,
 } from '../ports';
-import { DocumentUiSchemaType, SpaceUiSchemaType } from '../ports';
+import { DocumentUiSchemaType } from '../ports';
 
 interface ManifestWithDocumentTypes {
   documentTypes?: string[];
-  DocumentSpaceTypes?: Array<Record<string, unknown>>;
-  documentSpaceTypes?: Array<Record<string, unknown>>;
 }
 
 interface RawDocumentTypeRecord {
@@ -23,7 +20,7 @@ interface RawDocumentTypeRecord {
 export class DocumentUiSchemaQueryAdapter implements DocumentUiSchemaQueryPort {
   constructor(
     private readonly manifestProvider: RawManifestProviderPort,
-    private readonly evaluationOrderCalculator?: EvaluationOrderCalculator
+    private readonly evaluationOrderEnsurer?: EvaluationOrderEnsurer
   ) {}
 
   async getDocumentUiSchema(documentTypeKey: string): Promise<DocumentUiSchema | undefined> {
@@ -41,40 +38,10 @@ export class DocumentUiSchemaQueryAdapter implements DocumentUiSchemaQueryPort {
         );
         if (Value.Check(DocumentUiSchemaType, cleaned)) {
           const uiSchema = cleaned as DocumentUiSchema;
-          if (uiSchema.fields && !uiSchema.evaluationOrder && this.evaluationOrderCalculator) {
-            uiSchema.evaluationOrder = this.evaluationOrderCalculator(
-              rawDoc.documentSchema,
-              uiSchema
-            );
+          if (this.evaluationOrderEnsurer) {
+            this.evaluationOrderEnsurer(uiSchema, rawDoc.documentSchema);
           }
           return uiSchema;
-        }
-      }
-    }
-
-    return undefined;
-  }
-
-  async getSpaceUiSchema(spaceTypeKey: string): Promise<SpaceUiSchema | undefined> {
-    const rawManifest = (await this.manifestProvider.getRawManifest()) as ManifestWithDocumentTypes | undefined;
-    const spaceTypes = rawManifest?.DocumentSpaceTypes ?? rawManifest?.documentSpaceTypes ?? [];
-
-    for (const spaceType of spaceTypes) {
-      const id = spaceType.id ?? spaceType.key;
-      if (id === spaceTypeKey && spaceType.spaceUiSchema) {
-        const cleaned = Value.Clean(
-          SpaceUiSchemaType,
-          structuredClone(spaceType.spaceUiSchema)
-        );
-        if (Value.Check(SpaceUiSchemaType, cleaned)) {
-          const spaceUiSchema = cleaned as SpaceUiSchema;
-          if (spaceUiSchema.fields && !spaceUiSchema.evaluationOrder && this.evaluationOrderCalculator) {
-            spaceUiSchema.evaluationOrder = this.evaluationOrderCalculator(
-              undefined,
-              spaceUiSchema
-            );
-          }
-          return spaceUiSchema;
         }
       }
     }

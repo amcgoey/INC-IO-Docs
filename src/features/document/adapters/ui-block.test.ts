@@ -173,7 +173,6 @@ describe('UiBlock Adapter', () => {
             },
           },
         }),
-        getSpaceUiSchema: vi.fn().mockResolvedValue(undefined),
       };
 
       const documentSchema: DocumentSchema = {
@@ -218,7 +217,6 @@ describe('UiBlock Adapter', () => {
     it('works when query port returns undefined UI schema using fallback defaults', async () => {
       const mockQueryPort: DocumentUiSchemaQueryPort = {
         getDocumentUiSchema: vi.fn().mockResolvedValue(undefined),
-        getSpaceUiSchema: vi.fn().mockResolvedValue(undefined),
       };
 
       const documentSchema: DocumentSchema = {

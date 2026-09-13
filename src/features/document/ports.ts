@@ -89,9 +89,6 @@ export type UiField = Static<typeof UiFieldSchema>;
 export const DocumentUiFieldSchema = UiFieldSchema;
 export type DocumentUiField = UiField;
 
-export const SpaceUiFieldSchema = UiFieldSchema;
-export type SpaceUiField = UiField;
-
 export const DocumentUiSchemaType = Type.Object({
   layout: Type.Optional(Type.Array(Type.String())),
   fields: Type.Optional(Type.Record(Type.String(), DocumentUiFieldSchema)),
@@ -101,23 +98,19 @@ export const DocumentUiSchemaType = Type.Object({
 
 export type DocumentUiSchema = Static<typeof DocumentUiSchemaType>;
 
-export const SpaceUiSchemaType = Type.Object({
-  layout: Type.Optional(Type.Array(Type.String())),
-  fields: Type.Optional(Type.Record(Type.String(), SpaceUiFieldSchema)),
-  evaluationOrder: Type.Optional(Type.Array(Type.String())),
-});
-
-export type SpaceUiSchema = Static<typeof SpaceUiSchemaType>;
-
 export interface DocumentUiSchemaQueryPort {
   getDocumentUiSchema(documentTypeKey: string): Promise<DocumentUiSchema | undefined>;
-  getSpaceUiSchema(spaceTypeKey: string): Promise<SpaceUiSchema | undefined>;
 }
 
 export type EvaluationOrderCalculator = (
   schemaOrKeys?: string[] | { fields?: Array<{ key: string }> } | Record<string, unknown>,
   uiSchema?: { layout?: string[]; fields?: Record<string, { computeValue?: unknown }> }
 ) => string[];
+
+export type EvaluationOrderEnsurer = <T extends { layout?: string[]; fields?: Record<string, unknown>; evaluationOrder?: string[] }>(
+  container?: T,
+  schemaOrKeys?: string[] | { fields?: Array<{ key: string }> } | Record<string, unknown>
+) => (T & { evaluationOrder?: string[] }) | undefined;
 
 export const FormSchemaType = Type.Object({
   key: Type.String(),

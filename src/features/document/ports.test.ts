@@ -5,8 +5,6 @@ import {
   type FormSchema,
   DocumentUiSchemaType,
   type DocumentUiSchema,
-  SpaceUiSchemaType,
-  type SpaceUiSchema,
   JSONLogicRuleType,
   type JSONLogicRule,
 } from './ports';
@@ -101,27 +99,6 @@ describe('Document Ports & DTOs', () => {
       },
     };
     expect(Value.Check(DocumentUiSchemaType, fullUiSchema)).toBe(true);
-  });
-
-  it('SpaceUiSchemaType validates layout and fields structure', () => {
-    expect(SpaceUiSchemaType).toBeDefined();
-    const validSpaceUiSchema: SpaceUiSchema = {
-      layout: ['spaceName', 'region'],
-      fields: {
-        spaceName: {
-          widget: 'textInput',
-          label: 'Space Name',
-          showIf: { '!=': [{ var: 'data.anonymous' }, true] },
-          disableIf: { '==': [{ var: 'data.locked' }, true] },
-        },
-        region: {
-          widget: 'selectionInput',
-          label: 'Region',
-          props: { items: ['US', 'EU'] },
-        },
-      },
-    };
-    expect(Value.Check(SpaceUiSchemaType, validSpaceUiSchema)).toBe(true);
   });
 
   describe('JSONLogicRuleType Validation', () => {
@@ -249,18 +226,9 @@ describe('Document Ports & DTOs', () => {
         },
       };
       expect(Value.Check(DocumentUiSchemaType, invalidComputeSchema)).toBe(false);
-
-      const invalidSpaceSchema = {
-        fields: {
-          spaceName: {
-            disableIf: { customOp: [1, 2] },
-          },
-        },
-      };
-      expect(Value.Check(SpaceUiSchemaType, invalidSpaceSchema)).toBe(false);
     });
 
-    it('validates computeValue and evaluationOrder on both DocumentUiSchema and SpaceUiSchema', () => {
+    it('validates computeValue and evaluationOrder on DocumentUiSchema', () => {
       const validDocSchema: DocumentUiSchema = {
         layout: ['first', 'last', 'full'],
         fields: {
@@ -274,19 +242,6 @@ describe('Document Ports & DTOs', () => {
         evaluationOrder: ['first', 'last', 'full'],
       };
       expect(Value.Check(DocumentUiSchemaType, validDocSchema)).toBe(true);
-
-      const validSpaceSchema: SpaceUiSchema = {
-        layout: ['base', 'derived'],
-        fields: {
-          base: { label: 'Base' },
-          derived: {
-            label: 'Derived',
-            computeValue: { '==': [{ var: 'data.base' }, 'test'] },
-          },
-        },
-        evaluationOrder: ['base', 'derived'],
-      };
-      expect(Value.Check(SpaceUiSchemaType, validSpaceSchema)).toBe(true);
     });
   });
 });

@@ -272,26 +272,6 @@ describe('JSONLogic Graph & Kahn\'s Algorithm', () => {
       expect(computeEvaluationOrder(undefined, undefined)).toEqual([]);
       expect(computeEvaluationOrder({ fields: [] }, { fields: {} })).toEqual([]);
     });
-
-    it('supports custom namespace parameter', () => {
-      const docSchema = {
-        fields: [{ key: 'a' }, { key: 'b' }],
-      };
-      const uiSchema = {
-        fields: {
-          b: {
-            computeValue: { var: 'custom.a' },
-          },
-        },
-      };
-
-      const defaultOrder = computeEvaluationOrder(docSchema, uiSchema);
-      // with default 'data' namespace, 'custom.a' is ignored
-      expect(defaultOrder).toEqual(['a', 'b']);
-
-      const customOrder = computeEvaluationOrder(docSchema, uiSchema, 'custom');
-      expect(customOrder.indexOf('a')).toBeLessThan(customOrder.indexOf('b'));
-    });
   });
 
   describe('ensureEvaluationOrder', () => {

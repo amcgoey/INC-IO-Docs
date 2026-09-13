@@ -2,7 +2,10 @@ import type { AppManifestProvider } from '../infrastructure/manifest/app-manifes
 import { DocumentUiSchemaQueryAdapter } from '../features/document/adapters/document-ui-schema-query';
 import { DocumentUiBlockAdapter } from '../features/document/adapters/ui-block';
 import type { DocumentUiSchemaQueryPort } from '../features/document/ports';
-import { computeEvaluationOrder } from '../infrastructure/validation/json-logic-graph';
+import {
+  computeEvaluationOrder,
+  ensureEvaluationOrder,
+} from '../infrastructure/validation/json-logic-graph';
 
 export interface DocumentFeatureWiringOptions {
   manifestProvider: AppManifestProvider;
@@ -18,7 +21,7 @@ export function createDocumentFeatureWiring(
 ): DocumentFeatureWiring {
   const documentUiSchemaQuery = new DocumentUiSchemaQueryAdapter(
     options.manifestProvider,
-    computeEvaluationOrder
+    ensureEvaluationOrder
   );
   const documentUiBlock = new DocumentUiBlockAdapter(
     documentUiSchemaQuery,

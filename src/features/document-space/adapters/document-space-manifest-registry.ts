@@ -2,15 +2,17 @@ import { Value } from '@sinclair/typebox/value';
 import { DocumentSpaceTypeSchema, type DocumentSpaceType } from '../domain';
 import type {
   DocumentSpaceManifestRegistryPort,
-  EvaluationOrderCalculator,
+  EvaluationOrderEnsurer,
   RawManifestProviderPort,
 } from '../ports';
+import { SpaceUiSchemaType, type SpaceUiSchema } from '../ports';
+
 export class DocumentSpaceManifestRegistryAdapter
   implements DocumentSpaceManifestRegistryPort
 {
   constructor(
     private readonly manifestProvider: RawManifestProviderPort,
-    private readonly evaluationOrderCalculator?: EvaluationOrderCalculator
+    private readonly evaluationOrderEnsurer?: EvaluationOrderEnsurer
   ) {}
 
   async getDocumentSpaceTypes(): Promise<DocumentSpaceType[]> {
@@ -22,25 +24,32 @@ export class DocumentSpaceManifestRegistryAdapter
 
     for (const rawSpace of rawSpaces) {
       const rawSpaceRecord = rawSpace as { id?: string; spaceUiSchema?: unknown };
-      if (
-        rawSpaceRecord?.spaceUiSchema &&
-        typeof rawSpaceRecord.spaceUiSchema === 'object' &&
-        this.evaluationOrderCalculator
-      ) {
-        try {
-          const spaceUi = rawSpaceRecord.spaceUiSchema as {
-            layout?: string[];
-            fields?: Record<string, { computeValue?: unknown }>;
-            evaluationOrder?: string[];
-          };
-          if (spaceUi.fields && !spaceUi.evaluationOrder) {
-            spaceUi.evaluationOrder = this.evaluationOrderCalculator(undefined, spaceUi);
-          }
-        } catch (error) {
+      if (rawSpaceRecord?.spaceUiSchema) {
+        const cleanedUi = Value.Clean(
+          SpaceUiSchemaType,
+          structuredClone(rawSpaceRecord.spaceUiSchema)
+        );
+        if (!Value.Check(SpaceUiSchemaType, cleanedUi)) {
+          const errors = [...Value.Errors(SpaceUiSchemaType, cleanedUi)]
+            .map((e) => `${e.path}: ${e.message}`)
+            .join(', ');
           throw new Error(
-            `Invalid DocumentSpaceType UI schema "${rawSpaceRecord.id ?? ''}": ${(error as Error).message}`,
-            { cause: error }
+            `Invalid DocumentSpaceType UI schema "${rawSpaceRecord.id ?? ''}": ${errors}`
           );
+        }
+
+        const spaceUi = cleanedUi as SpaceUiSchema;
+        if (this.evaluationOrderEnsurer) {
+          try {
+            this.evaluationOrderEnsurer(spaceUi);
+            (rawSpaceRecord.spaceUiSchema as Record<string, unknown>).evaluationOrder =
+              spaceUi.evaluationOrder;
+          } catch (error) {
+            throw new Error(
+              `Invalid DocumentSpaceType UI schema "${rawSpaceRecord.id ?? ''}": ${(error as Error).message}`,
+              { cause: error }
+            );
+          }
         }
       }
 

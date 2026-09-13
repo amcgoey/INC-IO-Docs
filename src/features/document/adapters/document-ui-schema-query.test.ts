@@ -59,82 +59,38 @@ describe('DocumentUiSchemaQueryAdapter', () => {
     expect(result?.events?.onSubmit?.catchAllWorkflow).toBe('SubmitWorkflow');
   });
 
-  it('fetches and returns SpaceUiSchema from manifest DocumentSpaceTypes', async () => {
+  it('ensures evaluationOrder on DocumentUiSchema when fields with computeValue are present', async () => {
     const mockManifestProvider: RawManifestProviderPort = {
       getRawManifest: vi.fn().mockResolvedValue({
-        DocumentSpaceTypes: [
-          {
-            id: 'space-alpha',
-            displayName: 'Alpha Space',
-            spaceUiSchema: {
-              layout: ['spaceName'],
-              fields: {
-                spaceName: { widget: 'textInput', label: 'Custom Space Name' },
-              },
-            },
-          },
-        ],
+        documentTypes: ['./calc.json'],
       }),
-      readParsedSchema: vi.fn(),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        key: 'calc',
+        name: 'Calc',
+        documentSchema: {
+          fields: [{ key: 'first' }, { key: 'last' }, { key: 'full' }],
+        },
+        documentUiSchema: {
+          fields: {
+            first: {},
+            last: {},
+            full: { computeValue: { cat: [{ var: 'data.first' }, ' ', { var: 'data.last' }] } },
+          },
+        },
+      }),
     };
 
-    const adapter = new DocumentUiSchemaQueryAdapter(mockManifestProvider);
-    const result = await adapter.getSpaceUiSchema('space-alpha');
+    const mockEnsurer = vi.fn().mockImplementation((ui) => {
+      ui.evaluationOrder = ['first', 'last', 'full'];
+      return ui;
+    });
+
+    const adapter = new DocumentUiSchemaQueryAdapter(mockManifestProvider, mockEnsurer);
+    const result = await adapter.getDocumentUiSchema('calc');
 
     expect(result).toBeDefined();
-    expect(result?.layout).toEqual(['spaceName']);
-    expect(result?.fields?.spaceName?.label).toBe('Custom Space Name');
-  });
-
-  it('returns undefined if SpaceUiSchema is not present on space type', async () => {
-    const mockManifestProvider: RawManifestProviderPort = {
-      getRawManifest: vi.fn().mockResolvedValue({
-        DocumentSpaceTypes: [
-          {
-            id: 'space-beta',
-            displayName: 'Beta Space',
-          },
-        ],
-      }),
-      readParsedSchema: vi.fn(),
-    };
-
-    const adapter = new DocumentUiSchemaQueryAdapter(mockManifestProvider);
-    const result = await adapter.getSpaceUiSchema('space-beta');
-
-    expect(result).toBeUndefined();
-  });
-
-  it('computes evaluationOrder on SpaceUiSchema when fields with computeValue are present', async () => {
-    const mockManifestProvider: RawManifestProviderPort = {
-      getRawManifest: vi.fn().mockResolvedValue({
-        DocumentSpaceTypes: [
-          {
-            id: 'space-computed',
-            displayName: 'Computed Space',
-            spaceUiSchema: {
-              layout: ['base', 'derived'],
-              fields: {
-                base: { widget: 'textInput', label: 'Base' },
-                derived: {
-                  widget: 'textInput',
-                  label: 'Derived',
-                  computeValue: { cat: [{ var: 'data.base' }, '-ext'] },
-                },
-              },
-            },
-          },
-        ],
-      }),
-      readParsedSchema: vi.fn(),
-    };
-
-    const mockCalculator = vi.fn().mockReturnValue(['base', 'derived']);
-    const adapter = new DocumentUiSchemaQueryAdapter(mockManifestProvider, mockCalculator);
-    const result = await adapter.getSpaceUiSchema('space-computed');
-
-    expect(result).toBeDefined();
-    expect(result?.evaluationOrder).toEqual(['base', 'derived']);
+    expect(mockEnsurer).toHaveBeenCalled();
+    expect(result?.evaluationOrder).toEqual(['first', 'last', 'full']);
   });
 });
 

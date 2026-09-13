@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import { createDocumentFeatureWiring } from '../src/app/document.wiring';
+import { createDocumentSpaceFeatureWiring } from '../src/app/document-space.wiring';
 import { createApp } from '../src/app/server';
 import { UiCardSchema } from '../src/infrastructure/workspace-addon/ui-blocks';
 
@@ -130,8 +131,12 @@ describe('Schema-Driven UI Integration Test', () => {
     expect(uiSchema?.fields?.requestTitle?.label).toBe('Request Subject');
     expect(uiSchema?.events?.onSubmit?.catchAllWorkflow).toBe('SubmitProcurement');
 
-    // 2. Verify SpaceUiSchema is queryable
-    const spaceUiSchema = await documentUiSchemaQuery.getSpaceUiSchema('procurement-space');
+    // 2. Verify SpaceUiSchema is queryable via documentSpaceUiSchemaQuery
+    const { documentSpaceUiSchemaQuery } = createDocumentSpaceFeatureWiring({
+      rawManifestProvider: manifestProvider,
+      storageAdapter: { fetchSpaces: async () => [], resolveStorageLocation: async () => ({ provider: 'p', abstractStorageId: 'id' }) },
+    });
+    const spaceUiSchema = await documentSpaceUiSchemaQuery.getSpaceUiSchema('procurement-space');
     expect(spaceUiSchema).toBeDefined();
     expect(spaceUiSchema?.layout).toEqual(['departmentName']);
     expect(spaceUiSchema?.fields?.departmentName?.label).toBe('Department Name');
