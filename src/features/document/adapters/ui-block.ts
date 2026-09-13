@@ -7,7 +7,7 @@ import {
   type CardSection,
   type CardWidget,
 } from '../../../infrastructure/workspace-addon/ui-blocks';
-import { computeEvaluationOrder } from './dependency-graph';
+import { computeEvaluationOrder } from '../domain';
 
 export function camelCaseToTitleCase(str: string): string {
   return str

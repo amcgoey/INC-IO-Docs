@@ -98,7 +98,6 @@ export type DocumentUiSchema = Static<typeof DocumentUiSchemaType>;
 export const SpaceUiSchemaType = Type.Object({
   layout: Type.Optional(Type.Array(Type.String())),
   fields: Type.Optional(Type.Record(Type.String(), UiFieldSchema)),
-  evaluationOrder: Type.Optional(Type.Array(Type.String())),
 });
 
 export type SpaceUiSchema = Static<typeof SpaceUiSchemaType>;

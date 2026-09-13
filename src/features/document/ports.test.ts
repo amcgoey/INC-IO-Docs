@@ -284,7 +284,6 @@ describe('Document Ports & DTOs', () => {
             computeValue: { '==': [{ var: 'data.base' }, 'test'] },
           },
         },
-        evaluationOrder: ['base', 'derived'],
       };
       expect(Value.Check(SpaceUiSchemaType, validSpaceSchema)).toBe(true);
     });
