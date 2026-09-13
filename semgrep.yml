@@ -1,3 +1,13 @@
+.import_patterns: &import_patterns
+  - pattern: import $X from '$MODULE'
+  - pattern: import { ... } from '$MODULE'
+  - pattern: import * as $X from '$MODULE'
+  - pattern: import type { ... } from '$MODULE'
+  - pattern: import type $X from '$MODULE'
+  - pattern: import '$MODULE'
+  - pattern: require('$MODULE')
+  - pattern: import('$MODULE')
+
 rules:
   # =========================================================================
   # STRICT RULES (ERROR)
@@ -13,13 +23,7 @@ rules:
         - "**/src/features/**/domain.ts"
         - "**/src/features/**/ports.ts"
     patterns:
-      - pattern-either:
-          - pattern: import $X from '$MODULE'
-          - pattern: import { ... } from '$MODULE'
-          - pattern: import * as $X from '$MODULE'
-          - pattern: import type { ... } from '$MODULE'
-          - pattern: import type $X from '$MODULE'
-          - pattern: import '$MODULE'
+      - pattern-either: *import_patterns
       - metavariable-regex:
           metavariable: $MODULE
           regex: '^(?!(\.|@sinclair/typebox)).*$|.*adapters.*|.*infrastructure.*'
@@ -38,13 +42,7 @@ rules:
         - "**/infra/**"
         - "**/src/features/**/adapters/**"
     patterns:
-      - pattern-either:
-          - pattern: import $X from '$MODULE'
-          - pattern: import { ... } from '$MODULE'
-          - pattern: import * as $X from '$MODULE'
-          - pattern: import type { ... } from '$MODULE'
-          - pattern: import type $X from '$MODULE'
-          - pattern: import '$MODULE'
+      - pattern-either: *import_patterns
       - metavariable-regex:
           metavariable: $MODULE
           regex: '.*infrastructure.*'
@@ -58,13 +56,7 @@ rules:
       include:
         - "**/src/infrastructure/**"
     patterns:
-      - pattern-either:
-          - pattern: import $X from '$MODULE'
-          - pattern: import { ... } from '$MODULE'
-          - pattern: import * as $X from '$MODULE'
-          - pattern: import type { ... } from '$MODULE'
-          - pattern: import type $X from '$MODULE'
-          - pattern: import '$MODULE'
+      - pattern-either: *import_patterns
       - metavariable-regex:
           metavariable: $MODULE
           regex: '.*features.*'
@@ -147,13 +139,7 @@ rules:
         - "**/src/app/**"
         - "**/src/infrastructure/**"
     patterns:
-      - pattern-either:
-          - pattern: import $X from '$MODULE'
-          - pattern: import { ... } from '$MODULE'
-          - pattern: import * as $X from '$MODULE'
-          - pattern: import type { ... } from '$MODULE'
-          - pattern: import type $X from '$MODULE'
-          - pattern: import '$MODULE'
+      - pattern-either: *import_patterns
       - metavariable-regex:
           metavariable: $MODULE
           regex: '(googleapis|fastify|@fastify/.*)'
@@ -170,15 +156,9 @@ rules:
         - "**/*.test.ts"
         - "**/*.test.js"
     patterns:
-      - pattern-either:
-          - pattern: import $X from '$PATH'
-          - pattern: import { ... } from '$PATH'
-          - pattern: import * as $X from '$PATH'
-          - pattern: import type { ... } from '$PATH'
-          - pattern: import type $X from '$PATH'
-          - pattern: import '$PATH'
+      - pattern-either: *import_patterns
       - metavariable-regex:
-          metavariable: $PATH
+          metavariable: $MODULE
           regex: '.*test/.*'
 
   # 11. Testing Locality - Unit Test Co-location
@@ -209,3 +189,88 @@ rules:
       - pattern-either:
           - pattern: Type.Any(...)
           - pattern: Type.Unsafe(...)
+
+  # =========================================================================
+  # ADR 0012: Feature-Based Composition Roots
+  # =========================================================================
+
+  # 14. Ban Global DI Frameworks
+  - id: ban-global-di-frameworks
+    message: "Global DI frameworks are banned (ADR 0012). Use manual per-feature composition roots (e.g., src/app/<feature>.wiring.ts)."
+    severity: ERROR
+    languages: [typescript, javascript]
+    patterns:
+      - pattern-either: *import_patterns
+      - metavariable-regex:
+          metavariable: $MODULE
+          regex: '^(inversify|tsyringe|awilix|typedi|@nestjs/common|@nestjs/core)$'
+
+  # 15. Monolithic Wiring Ban
+  - id: no-monolithic-wiring
+    message: "Do not wire feature dependencies in monolithic entry points (ADR 0012). Imports from adapters/infrastructure are banned here; use per-feature composition roots (*.wiring.ts)."
+    severity: WARNING
+    languages: [typescript, javascript]
+    paths:
+      include:
+        - "**/src/app/index.ts"
+        - "**/src/app/main.ts"
+        - "**/src/app/server.ts"
+        - "**/src/app/bootstrap.ts"
+        - "**/src/app/app.ts"
+    patterns:
+      - pattern-either: *import_patterns
+      - metavariable-regex:
+          metavariable: $MODULE
+          regex: '.*adapters.*|.*infrastructure.*'
+
+  # =========================================================================
+  # ADR 0011: Fast-Track and Guarded Reads
+  # =========================================================================
+
+  # 16. Domain Pass-Through Reads
+  - id: domain-pass-through-read
+    message: "Domain models should not contain empty async pass-through methods for reads (ADR 0011). Route pure data queries directly from driving adapters to driven ports (Fast-Track Read)."
+    severity: WARNING
+    languages: [typescript, javascript]
+    paths:
+      include:
+        - "**/src/features/**/domain.ts"
+    patterns:
+      - pattern-either:
+          # Class-based pass-through (Async)
+          - pattern: |
+              async $METHOD(...) {
+                return this.$PORT.$ANY_METHOD(...)
+              }
+          - pattern: |
+              $METHOD(...) {
+                return await this.$PORT.$ANY_METHOD(...)
+              }
+          # Functional pass-through (Async)
+          - pattern: |
+              async function $METHOD(..., $PORT, ...) {
+                return $PORT.$ANY_METHOD(...)
+              }
+          - pattern: |
+              function $METHOD(..., $PORT, ...) {
+                return await $PORT.$ANY_METHOD(...)
+              }
+          - pattern: |
+              const $METHOD = async (..., $PORT, ...) => {
+                return $PORT.$ANY_METHOD(...)
+              }
+          - pattern: |
+              const $METHOD = async (..., $PORT, ...) => $PORT.$ANY_METHOD(...)
+          # Alias assignment pass-through (Kept to prevent missing edge cases)
+          - patterns:
+              - pattern-either:
+                  - pattern: $METHOD = this.$PORT.$ANY_METHOD
+                  - pattern: $METHOD = $PORT.$ANY_METHOD
+              - pattern-not: $METHOD = $PORT.$ANY_METHOD as $TYPE
+              - pattern-not: $METHOD = this.$PORT.$ANY_METHOD as $TYPE
+      - metavariable-regex:
+          metavariable: $ANY_METHOD
+          regex: '^(?!has|get|set|add|delete|clear|map|filter|reduce).*$'
+
+
+
