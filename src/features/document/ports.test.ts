@@ -260,7 +260,7 @@ describe('Document Ports & DTOs', () => {
       expect(Value.Check(SpaceUiSchemaType, invalidSpaceSchema)).toBe(false);
     });
 
-    it('validates computeValue and evaluationOrder on DocumentUiSchema and SpaceUiSchema', () => {
+    it('validates computeValue and evaluationOrder on DocumentUiSchema and validates SpaceUiSchema without computeValue', () => {
       const validDocSchema: DocumentUiSchema = {
         layout: ['first', 'last', 'full'],
         fields: {
@@ -281,7 +281,7 @@ describe('Document Ports & DTOs', () => {
           base: { label: 'Base' },
           derived: {
             label: 'Derived',
-            computeValue: { '==': [{ var: 'data.base' }, 'test'] },
+            showIf: { '==': [{ var: 'data.base' }, 'test'] },
           },
         },
       };

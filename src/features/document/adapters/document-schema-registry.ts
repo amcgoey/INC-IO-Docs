@@ -3,7 +3,6 @@ import { Value } from '@sinclair/typebox/value';
 import {
   DocumentTypeSchema,
   validateManifestTemplates,
-  computeEvaluationOrder,
   type DocumentType,
 } from '../domain';
 import {
@@ -15,6 +14,7 @@ import {
   type FormSchema,
   type DocumentUiSchema as PortDocumentUiSchema,
 } from '../ports';
+import { computeEvaluationOrder } from './dependency-graph';
 
 const RawDocumentKeySchema = Type.Object({
   key: Type.Optional(Type.String()),

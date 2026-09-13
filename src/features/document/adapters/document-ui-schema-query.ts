@@ -6,7 +6,7 @@ import type {
   SpaceUiSchema,
 } from '../ports';
 import { DocumentUiSchemaType, SpaceUiSchemaType } from '../ports';
-import { computeEvaluationOrder } from '../domain';
+import { computeEvaluationOrder } from './dependency-graph';
 
 interface ManifestWithDocumentTypes {
   documentTypes?: string[];
