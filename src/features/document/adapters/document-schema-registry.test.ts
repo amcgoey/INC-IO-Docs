@@ -642,6 +642,37 @@ describe('DocumentSchemaRegistryAdapter', () => {
       ]);
     });
 
+    it('runs evaluationOrderEnsurer during loadAll when documentUiSchema defines layout without fields', async () => {
+      const mockDocumentType = {
+        key: 'layout-only-doc',
+        name: 'Layout Only Document',
+        documentSchema: {
+          fields: [
+            { key: 'colA', name: 'Column A', type: 'string', required: true },
+            { key: 'colB', name: 'Column B', type: 'string', required: true },
+          ],
+        },
+        documentUiSchema: {
+          layout: ['colA', 'colB'],
+        },
+      };
+
+      const mockProvider = createMockManifestProvider({
+        './schemas/layout-only.json': mockDocumentType,
+      });
+      const mockEnsurer = vi.fn().mockImplementation((ui) => ({
+        ...ui,
+        evaluationOrder: ['colA', 'colB'],
+      }));
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator, mockEnsurer);
+
+      const documentTypes = await adapter.loadAll();
+      expect(mockEnsurer).toHaveBeenCalledTimes(1);
+      expect(
+        (documentTypes[0].documentUiSchema as { evaluationOrder?: string[] })?.evaluationOrder
+      ).toEqual(['colA', 'colB']);
+    });
+
     it('fails loudly during loadAll when circular dependencies exist in computeValue', async () => {
       const mockCircularDocType = {
         key: 'circular-doc',

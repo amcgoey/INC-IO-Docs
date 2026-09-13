@@ -78,14 +78,28 @@ export function extractJsonLogicDependencies(rule: unknown): string[] {
       const varVal = record.var;
       let varPath: string | undefined;
 
-      if (typeof varVal === 'string') {
+      if (varVal === null || varVal === undefined || varVal === '') {
+        dependencies.add('*');
+      } else if (typeof varVal === 'string') {
         varPath = varVal;
-      } else if (Array.isArray(varVal) && typeof varVal[0] === 'string') {
-        varPath = varVal[0];
+      } else if (Array.isArray(varVal)) {
+        if (
+          varVal.length === 0 ||
+          varVal[0] === null ||
+          varVal[0] === undefined ||
+          varVal[0] === '' ||
+          varVal[0] === 'data'
+        ) {
+          dependencies.add('*');
+        } else if (typeof varVal[0] === 'string') {
+          varPath = varVal[0];
+        } else if (typeof varVal[0] === 'object' && varVal[0] !== null) {
+          walk(varVal[0]);
+        }
         if (varVal.length > 1) {
           walk(varVal[1]);
         }
-      } else if (typeof varVal === 'object' && varVal !== null) {
+      } else if (typeof varVal === 'object') {
         walk(varVal);
       }
 

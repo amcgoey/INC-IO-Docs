@@ -108,28 +108,28 @@ export type UiField = DocumentUiField;
 
 export interface DocumentUiCardHeader {
   title: string;
-  subtitle?: string;
-  imageUrl?: string;
-  imageType?: 'SQUARE' | 'CIRCLE';
+  subtitle?: string | undefined;
+  imageUrl?: string | undefined;
+  imageType?: 'SQUARE' | 'CIRCLE' | undefined;
 }
 
 export interface DocumentUiCardSection {
-  header?: string;
+  header?: string | undefined;
   widgets: Array<{ selectionInput?: Record<string, unknown>; textInput?: Record<string, unknown>; [key: string]: unknown }>;
 }
 
 export interface DocumentUiCard {
   header: DocumentUiCardHeader;
   sections: DocumentUiCardSection[];
-  evaluationOrder?: string[];
+  evaluationOrder?: string[] | undefined;
   [key: string]: unknown;
 }
 
 export interface DocumentUiCardHeaderOptions {
   title: string;
-  subtitle?: string;
-  imageUrl?: string;
-  imageType?: 'SQUARE' | 'CIRCLE';
+  subtitle?: string | undefined;
+  imageUrl?: string | undefined;
+  imageType?: 'SQUARE' | 'CIRCLE' | undefined;
 }
 
 export interface DocumentUiCardBuilderPort {

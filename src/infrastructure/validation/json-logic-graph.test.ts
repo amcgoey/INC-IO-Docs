@@ -363,9 +363,16 @@ describe('JSONLogic Graph & Kahn\'s Algorithm', () => {
       expect(result?.evaluationOrder).toEqual(['fieldA', 'fieldB']);
     });
 
-    it('extracts root data dependency when var is "data" or empty string', () => {
+    it('extracts root data dependency when var is "data", empty string, null, or empty array', () => {
       expect(extractJsonLogicDependencies({ var: 'data' })).toEqual(['*']);
       expect(extractJsonLogicDependencies({ var: '' })).toEqual(['*']);
+      expect(extractJsonLogicDependencies({ var: null })).toEqual(['*']);
+      expect(extractJsonLogicDependencies({ var: undefined })).toEqual(['*']);
+      expect(extractJsonLogicDependencies({ var: [] })).toEqual(['*']);
+      expect(extractJsonLogicDependencies({ var: [null] })).toEqual(['*']);
+      expect(extractJsonLogicDependencies({ var: [null, 'default'] })).toEqual(['*']);
+      expect(extractJsonLogicDependencies({ var: ['', 'default'] })).toEqual(['*']);
+      expect(extractJsonLogicDependencies({ var: ['data', 'default'] })).toEqual(['*']);
     });
 
     it('handles root data dependency by waiting for all other fields', () => {

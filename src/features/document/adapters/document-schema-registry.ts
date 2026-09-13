@@ -83,7 +83,10 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
         };
       }
 
-      if (resolvedUiSchema?.fields && this.evaluationOrderEnsurer) {
+      if (
+        (resolvedUiSchema?.fields || resolvedUiSchema?.layout) &&
+        this.evaluationOrderEnsurer
+      ) {
         try {
           resolvedUiSchema =
             (this.evaluationOrderEnsurer(
