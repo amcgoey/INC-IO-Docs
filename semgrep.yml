@@ -208,7 +208,7 @@ rules:
   # 15. Monolithic Wiring Ban
   - id: no-monolithic-wiring
     message: "Do not wire feature dependencies in monolithic entry points (ADR 0012). Imports from adapters are banned here; use per-feature composition roots (*.wiring.ts)."
-    severity: WARNING
+    severity: ERROR
     languages: [typescript, javascript]
     paths:
       include:
