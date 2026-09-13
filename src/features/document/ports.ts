@@ -106,6 +106,41 @@ export type DocumentUiSchema = Static<typeof DocumentUiSchemaType>;
 export const UiFieldSchema = DocumentUiFieldSchema;
 export type UiField = DocumentUiField;
 
+export interface DocumentUiCardHeader {
+  title: string;
+  subtitle?: string;
+  imageUrl?: string;
+  imageType?: 'SQUARE' | 'CIRCLE';
+}
+
+export interface DocumentUiCardSection {
+  header?: string;
+  widgets: Array<{ selectionInput?: Record<string, unknown>; textInput?: Record<string, unknown>; [key: string]: unknown }>;
+}
+
+export interface DocumentUiCard {
+  header: DocumentUiCardHeader;
+  sections: DocumentUiCardSection[];
+  evaluationOrder?: string[];
+  [key: string]: unknown;
+}
+
+export interface DocumentUiCardHeaderOptions {
+  title: string;
+  subtitle?: string;
+  imageUrl?: string;
+  imageType?: 'SQUARE' | 'CIRCLE';
+}
+
+export interface DocumentUiCardBuilderPort {
+  buildCard(
+    header: unknown,
+    sections: unknown[],
+    evaluationOrder?: string[]
+  ): DocumentUiCard;
+  buildTitleBlock(options: DocumentUiCardHeaderOptions): unknown;
+}
+
 export interface DocumentUiSchemaQueryPort {
   getDocumentUiSchema(documentTypeKey: string): Promise<DocumentUiSchema | undefined>;
 }

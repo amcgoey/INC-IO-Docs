@@ -9,7 +9,16 @@ import {
 } from './ui-block';
 import type { DocumentSchema, DocumentField } from '../domain';
 import type { DocumentUiSchema, DocumentUiSchemaQueryPort } from '../ports';
-import { CardSchema } from '../../../infrastructure/workspace-addon/ui-blocks';
+import {
+  CardSchema,
+  buildCard,
+  buildTitleBlock,
+} from '../../../infrastructure/workspace-addon/ui-blocks';
+
+const cardBuilder = {
+  buildCard,
+  buildTitleBlock,
+};
 
 describe('UiBlock Adapter', () => {
   describe('camelCaseToTitleCase', () => {
@@ -190,11 +199,11 @@ describe('UiBlock Adapter', () => {
         ],
       };
 
-      const adapter = new DocumentUiBlockAdapter(mockQueryPort);
-      const card = await adapter.renderDocumentCard('contract-doc', documentSchema, {
+      const adapter = new DocumentUiBlockAdapter(mockQueryPort, cardBuilder);
+      const card = (await adapter.renderDocumentCard('contract-doc', documentSchema, {
         title: 'Contract Details',
         subtitle: 'Review schema',
-      });
+      })) as import('../../../infrastructure/workspace-addon/ui-blocks').Card;
 
       expect(mockQueryPort.getDocumentUiSchema).toHaveBeenCalledWith('contract-doc');
       expect(card.header.title).toBe('Contract Details');
@@ -229,8 +238,8 @@ describe('UiBlock Adapter', () => {
         ],
       };
 
-      const adapter = new DocumentUiBlockAdapter(mockQueryPort);
-      const card = await adapter.renderDocumentCard('doc-type', documentSchema);
+      const adapter = new DocumentUiBlockAdapter(mockQueryPort, cardBuilder);
+      const card = (await adapter.renderDocumentCard('doc-type', documentSchema)) as import('../../../infrastructure/workspace-addon/ui-blocks').Card;
 
       expect(card.header.title).toBe('Document Form');
       expect(card.sections[0].widgets[0].textInput?.name).toBe('notesField');
@@ -245,10 +254,16 @@ describe('UiBlock Adapter', () => {
         fields: [{ key: 'itemName', name: 'itemName', type: 'string' }],
       };
       const mockCalculator = vi.fn().mockReturnValue(['itemName']);
-      const card = buildDocumentFormCard(documentSchema, undefined, {
-        title: 'Direct Card',
-        sectionHeader: 'Item Section',
-      }, mockCalculator);
+      const card = buildDocumentFormCard(
+        cardBuilder,
+        documentSchema,
+        undefined,
+        {
+          title: 'Direct Card',
+          sectionHeader: 'Item Section',
+        },
+        mockCalculator
+      ) as import('../../../infrastructure/workspace-addon/ui-blocks').Card;
       expect(card.header.title).toBe('Direct Card');
       expect(card.sections[0].header).toBe('Item Section');
       expect(card.sections[0].widgets[0].textInput?.label).toBe('Item Name');
@@ -278,7 +293,13 @@ describe('UiBlock Adapter', () => {
       };
 
       const mockCalculator = vi.fn().mockReturnValue(['price', 'quantity', 'total']);
-      const card = buildDocumentFormCard(documentSchema, uiSchema, undefined, mockCalculator);
+      const card = buildDocumentFormCard(
+        cardBuilder,
+        documentSchema,
+        uiSchema,
+        undefined,
+        mockCalculator
+      ) as import('../../../infrastructure/workspace-addon/ui-blocks').Card;
       expect(card.evaluationOrder).toEqual(['price', 'quantity', 'total']);
       expect(Value.Check(CardSchema, card)).toBe(true);
     });
@@ -292,7 +313,11 @@ describe('UiBlock Adapter', () => {
         evaluationOrder: ['b', 'a'],
       };
 
-      const card = buildDocumentFormCard(documentSchema, uiSchema);
+      const card = buildDocumentFormCard(
+        cardBuilder,
+        documentSchema,
+        uiSchema
+      ) as import('../../../infrastructure/workspace-addon/ui-blocks').Card;
       expect(card.evaluationOrder).toEqual(['b', 'a']);
       expect(Value.Check(CardSchema, card)).toBe(true);
     });
@@ -312,9 +337,9 @@ describe('UiBlock Adapter', () => {
         throw new Error('Circular dependency detected in computeValue rules');
       });
 
-      expect(() => buildDocumentFormCard(documentSchema, uiSchema, undefined, mockCalculator)).toThrow(
-        /Circular dependency detected in computeValue rules/
-      );
+      expect(() =>
+        buildDocumentFormCard(cardBuilder, documentSchema, uiSchema, undefined, mockCalculator)
+      ).toThrow(/Circular dependency detected in computeValue rules/);
     });
   });
 });

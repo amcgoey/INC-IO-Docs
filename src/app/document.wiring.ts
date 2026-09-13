@@ -13,6 +13,10 @@ import {
   ensureEvaluationOrder,
 } from '../infrastructure/validation/json-logic-graph';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
+import {
+  buildCard,
+  buildTitleBlock,
+} from '../infrastructure/workspace-addon/ui-blocks';
 
 export interface DocumentFeatureWiringOptions {
   manifestProvider: AppManifestProvider;
@@ -44,8 +48,14 @@ export function createDocumentFeatureWiring(
     documentSchemaRegistry
   );
 
+  const cardBuilder = {
+    buildCard,
+    buildTitleBlock,
+  };
+
   const documentUiBlock = new DocumentUiBlockAdapter(
     documentUiSchemaQuery,
+    cardBuilder,
     computeEvaluationOrder
   );
 

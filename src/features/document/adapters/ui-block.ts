@@ -1,12 +1,12 @@
 import type { DocumentSchema, DocumentField } from '../domain';
-import type { DocumentUiSchema, DocumentUiSchemaQueryPort, EvaluationOrderCalculator } from '../ports';
-import {
-  buildCard,
-  buildTitleBlock,
-  type Card,
-  type CardSection,
-  type CardWidget,
-} from '../../../infrastructure/workspace-addon/ui-blocks';
+import type {
+  DocumentUiSchema,
+  DocumentUiSchemaQueryPort,
+  EvaluationOrderCalculator,
+  DocumentUiCardBuilderPort,
+  DocumentUiCard,
+  DocumentUiCardSection,
+} from '../ports';
 
 export function camelCaseToTitleCase(str: string): string {
   return str
@@ -27,8 +27,8 @@ export function inferDefaultWidget(field: DocumentField): 'textInput' | 'selecti
 export function buildDocumentFormWidgets(
   documentSchema: DocumentSchema,
   uiSchema?: DocumentUiSchema
-): CardWidget[] {
-  const widgets: CardWidget[] = [];
+): Array<{ selectionInput?: Record<string, unknown>; textInput?: Record<string, unknown> }> {
+  const widgets: Array<{ selectionInput?: Record<string, unknown>; textInput?: Record<string, unknown> }> = [];
   const layout =
     uiSchema?.layout && uiSchema.layout.length > 0
       ? uiSchema.layout
@@ -83,18 +83,19 @@ export interface DocumentFormCardOptions {
 }
 
 export function buildDocumentFormCard(
+  cardBuilder: DocumentUiCardBuilderPort,
   documentSchema: DocumentSchema,
   uiSchema?: DocumentUiSchema,
   options?: DocumentFormCardOptions,
   evaluationOrderCalculator?: EvaluationOrderCalculator
-): Card {
-  const header = buildTitleBlock({
+): DocumentUiCard {
+  const header = cardBuilder.buildTitleBlock({
     title: options?.title ?? 'Document Form',
     ...(options?.subtitle ? { subtitle: options.subtitle } : {}),
   });
 
   const widgets = buildDocumentFormWidgets(documentSchema, uiSchema);
-  const section: CardSection = {
+  const section: DocumentUiCardSection = {
     ...(options?.sectionHeader ? { header: options.sectionHeader } : {}),
     widgets,
   };
@@ -103,12 +104,13 @@ export function buildDocumentFormCard(
     uiSchema?.evaluationOrder ??
     (evaluationOrderCalculator ? evaluationOrderCalculator(documentSchema, uiSchema) : undefined);
 
-  return buildCard(header, [section], evaluationOrder);
+  return cardBuilder.buildCard(header, [section], evaluationOrder);
 }
 
 export class DocumentUiBlockAdapter {
   constructor(
     private readonly uiSchemaQuery: DocumentUiSchemaQueryPort,
+    private readonly cardBuilder: DocumentUiCardBuilderPort,
     private readonly evaluationOrderCalculator?: EvaluationOrderCalculator
   ) {}
 
@@ -116,9 +118,10 @@ export class DocumentUiBlockAdapter {
     documentTypeKey: string,
     documentSchema: DocumentSchema,
     options?: DocumentFormCardOptions
-  ): Promise<Card> {
+  ): Promise<DocumentUiCard> {
     const uiSchema = await this.uiSchemaQuery.getDocumentUiSchema(documentTypeKey);
     return buildDocumentFormCard(
+      this.cardBuilder,
       documentSchema,
       uiSchema,
       options,
