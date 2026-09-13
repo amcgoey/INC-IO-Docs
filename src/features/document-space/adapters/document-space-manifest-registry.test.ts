@@ -7,7 +7,9 @@ describe('DocumentSpaceManifestRegistryAdapter', () => {
   const sampleProjectSpace: DocumentSpaceType = {
     id: 'project',
     displayName: 'Project Space',
-    allowedDocumentTypes: ['communication-project'],
+    spaceSchema: {
+      allowedDocumentTypes: ['communication-project'],
+    },
     storageConfig: {
       provider: 'google_drive',
       fetchMethod: 'shared_drives',
@@ -18,7 +20,9 @@ describe('DocumentSpaceManifestRegistryAdapter', () => {
   const sampleProposalSpace: DocumentSpaceType = {
     id: 'proposal',
     displayName: 'Proposal Space',
-    allowedDocumentTypes: ['proposal-doc'],
+    spaceSchema: {
+      allowedDocumentTypes: ['proposal-doc'],
+    },
     storageConfig: {
       provider: 'google_drive',
       fetchMethod: 'folders',
@@ -63,7 +67,7 @@ describe('DocumentSpaceManifestRegistryAdapter', () => {
       DocumentSpaceTypes: [
         {
           id: 'invalid-space',
-          // missing displayName and allowedDocumentTypes
+          // missing displayName and spaceSchema
           storageConfig: {
             provider: 'google_drive',
             fetchMethod: 'invalid_fetch_method',
@@ -82,7 +86,9 @@ describe('DocumentSpaceManifestRegistryAdapter', () => {
     const rawSpace = {
       id: 'computed-space',
       displayName: 'Computed Space',
-      allowedDocumentTypes: ['sample-doc'],
+      spaceSchema: {
+        allowedDocumentTypes: ['sample-doc'],
+      },
       storageConfig: { provider: 'google_drive' },
       spaceUiSchema: {
         layout: ['base', 'derived'],
@@ -121,7 +127,9 @@ describe('DocumentSpaceManifestRegistryAdapter', () => {
         {
           id: 'cyclic-space',
           displayName: 'Cyclic Space',
-          allowedDocumentTypes: ['sample-doc'],
+          spaceSchema: {
+            allowedDocumentTypes: ['sample-doc'],
+          },
           storageConfig: { provider: 'google_drive' },
           spaceUiSchema: {
             fields: {

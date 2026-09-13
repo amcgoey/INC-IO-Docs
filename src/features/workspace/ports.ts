@@ -78,9 +78,17 @@ export interface WorkspaceSchemaQueryPort {
 }
 
 export interface WorkspaceDocumentSpaceProviderPort {
-  getAllTypes(): { id: string; displayName: string; allowedDocumentTypes?: string[] }[];
+  getAllTypes(): {
+    id: string;
+    displayName: string;
+    spaceSchema: { allowedDocumentTypes: string[] };
+  }[];
   getCollection(typeId: string): Promise<{
-    type?: { id: string; displayName: string; allowedDocumentTypes?: string[] };
+    type?: {
+      id: string;
+      displayName: string;
+      spaceSchema: { allowedDocumentTypes: string[] };
+    };
     spaces: { id: string; name: string }[];
   }>;
 }

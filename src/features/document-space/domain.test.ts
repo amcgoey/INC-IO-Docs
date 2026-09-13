@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import {
+  SpaceSchemaConfigSchema,
   DocumentSpaceTypeSchema,
   DocumentSpaceSchema,
   DocumentSpaceCollectionSchema,
@@ -19,6 +20,27 @@ import type {
 } from './ports';
 
 describe('DocumentSpace Domain Schemas', () => {
+  describe('SpaceSchemaConfigSchema', () => {
+    it('validates a schema configuration with allowedDocumentTypes', () => {
+      const validConfig = {
+        allowedDocumentTypes: ['project-doc', 'proposal-doc'],
+      };
+
+      expect(Value.Check(SpaceSchemaConfigSchema, validConfig)).toBe(true);
+    });
+
+    it('rejects a schema configuration without allowedDocumentTypes', () => {
+      expect(Value.Check(SpaceSchemaConfigSchema, {})).toBe(false);
+    });
+
+    it('rejects a schema configuration with non-string allowedDocumentTypes', () => {
+      expect(
+        Value.Check(SpaceSchemaConfigSchema, {
+          allowedDocumentTypes: [123],
+        })
+      ).toBe(false);
+    });
+  });
   describe('StorageContextConfigSchema', () => {
     it('validates a record storage configuration', () => {
       const validConfig = {
@@ -51,7 +73,9 @@ describe('DocumentSpace Domain Schemas', () => {
       const spaceType: DocumentSpaceType = {
         id: 'project',
         displayName: 'Project',
-        allowedDocumentTypes: ['communication-project', 'proposal-doc'],
+        spaceSchema: {
+          allowedDocumentTypes: ['communication-project', 'proposal-doc'],
+        },
         storageConfig: {
           provider: 'google_drive',
           fetchMethod: 'shared_drives',
@@ -67,7 +91,22 @@ describe('DocumentSpace Domain Schemas', () => {
       const invalid = {
         id: '',
         displayName: 'Project',
-        allowedDocumentTypes: ['communication-project'],
+        spaceSchema: {
+          allowedDocumentTypes: ['communication-project'],
+        },
+        storageConfig: {
+          provider: 'google_drive',
+          fetchMethod: 'shared_drives',
+        },
+      };
+
+      expect(Value.Check(DocumentSpaceTypeSchema, invalid)).toBe(false);
+    });
+
+    it('rejects DocumentSpaceType with missing spaceSchema', () => {
+      const invalid = {
+        id: 'project',
+        displayName: 'Project',
         storageConfig: {
           provider: 'google_drive',
           fetchMethod: 'shared_drives',
@@ -81,7 +120,9 @@ describe('DocumentSpace Domain Schemas', () => {
       const invalid = {
         id: 'project',
         displayName: 'Project',
-        allowedDocumentTypes: ['communication-project'],
+        spaceSchema: {
+          allowedDocumentTypes: ['communication-project'],
+        },
         storageConfig: 'not-an-object',
       };
 
@@ -118,7 +159,9 @@ describe('DocumentSpace Domain Schemas', () => {
         type: {
           id: 'project',
           displayName: 'Project',
-          allowedDocumentTypes: ['communication-project'],
+          spaceSchema: {
+            allowedDocumentTypes: ['communication-project'],
+          },
           storageConfig: {
             provider: 'google_drive',
             fetchMethod: 'shared_drives',
@@ -178,7 +221,9 @@ describe('DocumentSpaceService', () => {
   const sampleProjectSpaceType: DocumentSpaceType = {
     id: 'project',
     displayName: 'Project',
-    allowedDocumentTypes: ['communication-project'],
+    spaceSchema: {
+      allowedDocumentTypes: ['communication-project'],
+    },
     storageConfig: {
       provider: 'google_drive',
       fetchMethod: 'shared_drives',
@@ -189,7 +234,9 @@ describe('DocumentSpaceService', () => {
   const sampleProposalSpaceType: DocumentSpaceType = {
     id: 'proposal',
     displayName: 'Proposal',
-    allowedDocumentTypes: ['proposal-doc'],
+    spaceSchema: {
+      allowedDocumentTypes: ['proposal-doc'],
+    },
     storageConfig: {
       provider: 'google_drive',
       fetchMethod: 'folders',
@@ -243,7 +290,7 @@ describe('DocumentSpaceService', () => {
         {
           id: 'invalid',
           displayName: 'Invalid',
-          allowedDocumentTypes: [],
+          spaceSchema: { allowedDocumentTypes: [] },
           storageConfig: 'not-an-object' as unknown as Record<string, unknown>,
         },
       ],
@@ -356,13 +403,13 @@ describe('DocumentSpaceService', () => {
           {
             id: 'projects',
             displayName: 'Projects',
-            allowedDocumentTypes: ['project-doc'],
+            spaceSchema: { allowedDocumentTypes: ['project-doc'] },
             storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
           },
           {
             id: 'proposals',
             displayName: 'Proposals',
-            allowedDocumentTypes: ['proposal-doc'],
+            spaceSchema: { allowedDocumentTypes: ['proposal-doc'] },
             storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
           },
         ]),
@@ -387,19 +434,19 @@ describe('DocumentSpaceService', () => {
           {
             id: 'valid-space',
             displayName: 'Valid',
-            allowedDocumentTypes: ['doc'],
+            spaceSchema: { allowedDocumentTypes: ['doc'] },
             storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
           },
           {
             id: 'broken-space',
             displayName: 'Broken',
-            allowedDocumentTypes: ['doc'],
+            spaceSchema: { allowedDocumentTypes: ['doc'] },
             storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
           },
           {
             id: 'another-broken',
             displayName: 'Another Broken',
-            allowedDocumentTypes: ['doc'],
+            spaceSchema: { allowedDocumentTypes: ['doc'] },
             storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
           },
         ]),

@@ -111,15 +111,15 @@ export function registerWorkspaceFeatureRoutes(
       }));
 
       const selectedType = types.find((t) => t.id === defaultSpaceType);
-      if (selectedType?.allowedDocumentTypes) {
-        allowedDocumentTypes = selectedType.allowedDocumentTypes;
+      if (selectedType) {
+        allowedDocumentTypes = selectedType.spaceSchema.allowedDocumentTypes;
       }
 
       try {
         const collection = await documentSpaceService.getCollection(defaultSpaceType);
         spaces = collection.spaces.map((s) => s.name);
-        if (!allowedDocumentTypes && collection.type?.allowedDocumentTypes) {
-          allowedDocumentTypes = collection.type.allowedDocumentTypes;
+        if (!allowedDocumentTypes && collection.type) {
+          allowedDocumentTypes = collection.type.spaceSchema.allowedDocumentTypes;
         }
       } catch (e) {
         console.warn(`Could not fetch collection for default space type: ${defaultSpaceType}`, e);

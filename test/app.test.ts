@@ -1045,7 +1045,7 @@ describe('App integration tests', () => {
         getType: vi.fn(),
         hasType: vi.fn().mockReturnValue(false),
         getCollection: vi.fn().mockResolvedValue({
-          type: { id: 'custom', displayName: 'Custom', allowedDocumentTypes: [], storageConfig: {} },
+          type: { id: 'custom', displayName: 'Custom', spaceSchema: { allowedDocumentTypes: [] }, storageConfig: {} },
           spaces: [],
         }),
       };

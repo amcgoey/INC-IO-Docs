@@ -137,11 +137,19 @@ describe('Workspace Feature Routes', () => {
           {
             id: 'projects',
             displayName: 'Projects',
-            allowedDocumentTypes: ['allowed-form'],
+            spaceSchema: {
+              allowedDocumentTypes: ['allowed-form'],
+            },
           },
         ]),
         getCollection: vi.fn().mockResolvedValue({
-          type: { id: 'projects', displayName: 'Projects', allowedDocumentTypes: ['allowed-form'] },
+          type: {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: {
+              allowedDocumentTypes: ['allowed-form'],
+            },
+          },
           spaces: [{ id: 'space-1', name: 'Project Space 1' }],
         }),
       };

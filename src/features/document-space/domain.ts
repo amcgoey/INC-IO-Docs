@@ -5,6 +5,12 @@ import type {
   DocumentSpaceStoragePort,
 } from './ports';
 
+export const SpaceSchemaConfigSchema = Type.Object({
+  allowedDocumentTypes: Type.Array(Type.String()),
+});
+
+export type SpaceSchemaConfig = Static<typeof SpaceSchemaConfigSchema>;
+
 export const StorageContextConfigSchema = Type.Record(Type.String(), Type.Unknown());
 
 export type StorageContextConfig = Static<typeof StorageContextConfigSchema>;
@@ -12,7 +18,7 @@ export type StorageContextConfig = Static<typeof StorageContextConfigSchema>;
 export const DocumentSpaceTypeSchema = Type.Object({
   id: Type.String({ minLength: 1 }),
   displayName: Type.String({ minLength: 1 }),
-  allowedDocumentTypes: Type.Array(Type.String()),
+  spaceSchema: SpaceSchemaConfigSchema,
   storageConfig: StorageContextConfigSchema,
   spaceUiSchema: Type.Optional(Type.Unknown()),
 });

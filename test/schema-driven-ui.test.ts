@@ -92,7 +92,9 @@ describe('Schema-Driven UI Integration Test', () => {
         {
           id: 'procurement-space',
           displayName: 'Procurement Space',
-          allowedDocumentTypes: ['procurement-request'],
+          spaceSchema: {
+            allowedDocumentTypes: ['procurement-request'],
+          },
           storageConfig: {
             rootFolder: 'ProcurementDocs',
           },

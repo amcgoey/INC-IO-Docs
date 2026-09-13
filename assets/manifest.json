@@ -25,9 +25,11 @@
     {
       "id": "projects",
       "displayName": "Projects",
-      "allowedDocumentTypes": [
-        "communication-project"
-      ],
+      "spaceSchema": {
+        "allowedDocumentTypes": [
+          "communication-project"
+        ]
+      },
       "storageConfig": {
         "provider": "google_drive",
         "fetchMethod": "shared_drives",
@@ -37,9 +39,11 @@
     {
       "id": "proposals",
       "displayName": "Proposals",
-      "allowedDocumentTypes": [
-        "communication-proposal"
-      ],
+      "spaceSchema": {
+        "allowedDocumentTypes": [
+          "communication-proposal"
+        ]
+      },
       "storageConfig": {
         "provider": "google_drive",
         "fetchMethod": "folders",
