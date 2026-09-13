@@ -210,6 +210,7 @@ export function computeEvaluationOrder(
 
 /**
  * Ensures evaluationOrder is computed and attached to a container if fields exist and evaluationOrder is missing.
+ * Returns a shallow copy containing evaluationOrder to avoid mutating input references.
  */
 export function ensureEvaluationOrder<T extends ContainerWithLayoutLike>(
   container?: T,
@@ -219,7 +220,12 @@ export function ensureEvaluationOrder<T extends ContainerWithLayoutLike>(
     return container;
   }
   if (container.fields && !container.evaluationOrder) {
-    container.evaluationOrder = computeEvaluationOrder(schemaOrKeys, container);
+    const evaluationOrder = computeEvaluationOrder(schemaOrKeys, container);
+    return {
+      ...container,
+      evaluationOrder,
+    };
   }
   return container as T & { evaluationOrder?: string[] };
 }
+

@@ -1,11 +1,10 @@
-import { Value } from '@sinclair/typebox/value';
 import type {
   DocumentSpaceUiSchemaQueryPort,
   EvaluationOrderEnsurer,
   RawManifestProviderPort,
   SpaceUiSchema,
 } from '../ports';
-import { SpaceUiSchemaType } from '../ports';
+import { parseAndValidateSpaceUiSchema } from './space-ui-schema-parser';
 
 interface ManifestWithDocumentSpaceTypes {
   DocumentSpaceTypes?: Array<Record<string, unknown>>;
@@ -24,17 +23,11 @@ export class DocumentSpaceUiSchemaQueryAdapter implements DocumentSpaceUiSchemaQ
     for (const spaceType of spaceTypes) {
       const id = spaceType.id ?? spaceType.key;
       if (id === spaceTypeKey && spaceType.spaceUiSchema) {
-        const cleaned = Value.Clean(
-          SpaceUiSchemaType,
-          structuredClone(spaceType.spaceUiSchema)
+        return parseAndValidateSpaceUiSchema(
+          spaceType.spaceUiSchema,
+          spaceTypeKey,
+          this.evaluationOrderEnsurer
         );
-        if (Value.Check(SpaceUiSchemaType, cleaned)) {
-          const spaceUiSchema = cleaned as SpaceUiSchema;
-          if (this.evaluationOrderEnsurer) {
-            this.evaluationOrderEnsurer(spaceUiSchema);
-          }
-          return spaceUiSchema;
-        }
       }
     }
 

@@ -37,9 +37,9 @@ export class DocumentUiSchemaQueryAdapter implements DocumentUiSchemaQueryPort {
           structuredClone(rawDoc.documentUiSchema)
         );
         if (Value.Check(DocumentUiSchemaType, cleaned)) {
-          const uiSchema = cleaned as DocumentUiSchema;
+          let uiSchema = cleaned as DocumentUiSchema;
           if (this.evaluationOrderEnsurer) {
-            this.evaluationOrderEnsurer(uiSchema, rawDoc.documentSchema);
+            uiSchema = (this.evaluationOrderEnsurer(uiSchema, rawDoc.documentSchema) as DocumentUiSchema) ?? uiSchema;
           }
           return uiSchema;
         }

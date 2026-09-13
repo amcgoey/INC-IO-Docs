@@ -5,7 +5,7 @@ import type {
   EvaluationOrderEnsurer,
   RawManifestProviderPort,
 } from '../ports';
-import { SpaceUiSchemaType, type SpaceUiSchema } from '../ports';
+import { parseAndValidateSpaceUiSchema } from './space-ui-schema-parser';
 
 export class DocumentSpaceManifestRegistryAdapter
   implements DocumentSpaceManifestRegistryPort
@@ -25,31 +25,14 @@ export class DocumentSpaceManifestRegistryAdapter
     for (const rawSpace of rawSpaces) {
       const rawSpaceRecord = rawSpace as { id?: string; spaceUiSchema?: unknown };
       if (rawSpaceRecord?.spaceUiSchema) {
-        const cleanedUi = Value.Clean(
-          SpaceUiSchemaType,
-          structuredClone(rawSpaceRecord.spaceUiSchema)
+        const spaceUi = parseAndValidateSpaceUiSchema(
+          rawSpaceRecord.spaceUiSchema,
+          rawSpaceRecord.id ?? '',
+          this.evaluationOrderEnsurer
         );
-        if (!Value.Check(SpaceUiSchemaType, cleanedUi)) {
-          const errors = [...Value.Errors(SpaceUiSchemaType, cleanedUi)]
-            .map((e) => `${e.path}: ${e.message}`)
-            .join(', ');
-          throw new Error(
-            `Invalid DocumentSpaceType UI schema "${rawSpaceRecord.id ?? ''}": ${errors}`
-          );
-        }
-
-        const spaceUi = cleanedUi as SpaceUiSchema;
-        if (this.evaluationOrderEnsurer) {
-          try {
-            this.evaluationOrderEnsurer(spaceUi);
-            (rawSpaceRecord.spaceUiSchema as Record<string, unknown>).evaluationOrder =
-              spaceUi.evaluationOrder;
-          } catch (error) {
-            throw new Error(
-              `Invalid DocumentSpaceType UI schema "${rawSpaceRecord.id ?? ''}": ${(error as Error).message}`,
-              { cause: error }
-            );
-          }
+        if (spaceUi?.evaluationOrder) {
+          (rawSpaceRecord.spaceUiSchema as Record<string, unknown>).evaluationOrder =
+            spaceUi.evaluationOrder;
         }
       }
 
