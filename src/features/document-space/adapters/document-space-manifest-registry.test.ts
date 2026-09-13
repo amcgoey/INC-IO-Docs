@@ -99,7 +99,8 @@ describe('DocumentSpaceManifestRegistryAdapter', () => {
       DocumentSpaceTypes: [rawSpace],
     });
 
-    const adapter = new DocumentSpaceManifestRegistryAdapter(mockProvider);
+    const mockCalculator = vi.fn().mockReturnValue(['base', 'derived']);
+    const adapter = new DocumentSpaceManifestRegistryAdapter(mockProvider, mockCalculator);
     const spaceTypes = await adapter.getDocumentSpaceTypes();
 
     expect(spaceTypes).toHaveLength(1);
@@ -126,7 +127,10 @@ describe('DocumentSpaceManifestRegistryAdapter', () => {
       ],
     });
 
-    const adapter = new DocumentSpaceManifestRegistryAdapter(mockProvider);
+    const mockCalculator = vi.fn().mockImplementation(() => {
+      throw new Error('Circular dependency detected');
+    });
+    const adapter = new DocumentSpaceManifestRegistryAdapter(mockProvider, mockCalculator);
     await expect(adapter.getDocumentSpaceTypes()).rejects.toThrow(
       /Invalid DocumentSpaceType UI schema "cyclic-space": Circular dependency detected/
     );

@@ -129,7 +129,8 @@ describe('DocumentUiSchemaQueryAdapter', () => {
       readParsedSchema: vi.fn(),
     };
 
-    const adapter = new DocumentUiSchemaQueryAdapter(mockManifestProvider);
+    const mockCalculator = vi.fn().mockReturnValue(['base', 'derived']);
+    const adapter = new DocumentUiSchemaQueryAdapter(mockManifestProvider, mockCalculator);
     const result = await adapter.getSpaceUiSchema('space-computed');
 
     expect(result).toBeDefined();

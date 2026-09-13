@@ -623,7 +623,8 @@ describe('DocumentSchemaRegistryAdapter', () => {
       const mockProvider = createMockManifestProvider({
         './schemas/invoice.json': mockDocumentType,
       });
-      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
+      const mockCalculator = vi.fn().mockReturnValue(['unitPrice', 'quantity', 'total']);
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator, mockCalculator);
 
       const documentTypes = await adapter.loadAll();
       expect(
@@ -663,7 +664,10 @@ describe('DocumentSchemaRegistryAdapter', () => {
       const mockProvider = createMockManifestProvider({
         './schemas/circular.json': mockCircularDocType,
       });
-      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
+      const mockCalculator = vi.fn().mockImplementation(() => {
+        throw new Error('Circular dependency detected in computeValue rules: fieldA, fieldB');
+      });
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator, mockCalculator);
 
       await expect(adapter.loadAll()).rejects.toThrow(
         /Invalid DocumentType UI schema "circular-doc": Circular dependency detected in computeValue rules/i

@@ -13,7 +13,6 @@ import { GoogleJwtVerifier } from '../infrastructure/workspace-addon/jwt-verifie
 import { DocumentService } from '../features/document/domain';
 import { DocumentSpaceService } from '../features/document-space/domain';
 import { GoogleDriveStorageAdapter } from '../features/document-space/adapters/google-drive-storage-adapter';
-import { DocumentSpaceManifestRegistryAdapter } from '../features/document-space/adapters/document-space-manifest-registry';
 import type { RawManifestProviderPort } from '../features/document-space/ports';
 import type {
   ActivityDispatcherPort,
@@ -30,6 +29,8 @@ import type {
 import type { WorkspaceUiBuilderPort } from '../features/workspace/adapters/ui-builder';
 import * as uiBlocks from '../infrastructure/workspace-addon/ui-blocks';
 import { createDocumentFeatureWiring } from './document.wiring';
+import { createDocumentSpaceFeatureWiring } from './document-space.wiring';
+import { computeEvaluationOrder } from '../infrastructure/validation/json-logic-graph';
 import type { DocumentUiSchemaQueryPort } from '../features/document/ports';
 import type { DocumentUiBlockAdapter } from '../features/document/adapters/ui-block';
 
@@ -80,7 +81,7 @@ export function createApp(options?: AppOptions): AppInstance {
 
   const documentSchemaRegistry: DocumentSchemaRegistryPort & SchemaQueryPort =
     options?.documentSchemaRegistry ??
-    new DocumentSchemaRegistryAdapter(manifestProvider!, templateEvaluator);
+    new DocumentSchemaRegistryAdapter(manifestProvider!, templateEvaluator, computeEvaluationOrder);
 
   const driveConfigProvider: AppConfigurationProviderPort | undefined = manifestProvider;
   const workspaceConfigProvider: WorkspaceConfigProviderPort | undefined = manifestProvider;
@@ -101,11 +102,14 @@ export function createApp(options?: AppOptions): AppInstance {
     manifestProvider ?? {
       getRawManifest: async () => ({}),
     };
-  const documentSpaceRegistry = new DocumentSpaceManifestRegistryAdapter(rawManifestProvider);
   const documentSpaceStorage = new GoogleDriveStorageAdapter(driveClient);
+  const documentSpaceWiring = createDocumentSpaceFeatureWiring({
+    rawManifestProvider,
+    storageAdapter: documentSpaceStorage,
+  });
   const documentSpaceService =
     options?.documentSpaceService ??
-    new DocumentSpaceService(documentSpaceRegistry, documentSpaceStorage);
+    documentSpaceWiring.documentSpaceService;
 
   const authVerifier: AuthVerifierPort = options?.authVerifier ?? new GoogleJwtVerifier();
   const uiBuilder: WorkspaceUiBuilderPort = options?.uiBuilder ?? uiBlocks;

@@ -246,10 +246,11 @@ describe('UiBlock Adapter', () => {
       const documentSchema: DocumentSchema = {
         fields: [{ key: 'itemName', name: 'itemName', type: 'string' }],
       };
+      const mockCalculator = vi.fn().mockReturnValue(['itemName']);
       const card = buildDocumentFormCard(documentSchema, undefined, {
         title: 'Direct Card',
         sectionHeader: 'Item Section',
-      });
+      }, mockCalculator);
       expect(card.header.title).toBe('Direct Card');
       expect(card.sections[0].header).toBe('Item Section');
       expect(card.sections[0].widgets[0].textInput?.label).toBe('Item Name');
@@ -278,7 +279,8 @@ describe('UiBlock Adapter', () => {
         },
       };
 
-      const card = buildDocumentFormCard(documentSchema, uiSchema);
+      const mockCalculator = vi.fn().mockReturnValue(['price', 'quantity', 'total']);
+      const card = buildDocumentFormCard(documentSchema, uiSchema, undefined, mockCalculator);
       expect(card.evaluationOrder).toEqual(['price', 'quantity', 'total']);
       expect(Value.Check(CardSchema, card)).toBe(true);
     });
@@ -308,7 +310,11 @@ describe('UiBlock Adapter', () => {
         },
       };
 
-      expect(() => buildDocumentFormCard(documentSchema, uiSchema)).toThrow(
+      const mockCalculator = vi.fn().mockImplementation(() => {
+        throw new Error('Circular dependency detected in computeValue rules');
+      });
+
+      expect(() => buildDocumentFormCard(documentSchema, uiSchema, undefined, mockCalculator)).toThrow(
         /Circular dependency detected in computeValue rules/
       );
     });

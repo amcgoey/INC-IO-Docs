@@ -114,6 +114,11 @@ export interface DocumentUiSchemaQueryPort {
   getSpaceUiSchema(spaceTypeKey: string): Promise<SpaceUiSchema | undefined>;
 }
 
+export type EvaluationOrderCalculator = (
+  schemaOrKeys?: string[] | { fields?: Array<{ key: string }> } | Record<string, unknown>,
+  uiSchema?: { layout?: string[]; fields?: Record<string, { computeValue?: unknown }> }
+) => string[];
+
 export const FormSchemaType = Type.Object({
   key: Type.String(),
   name: Type.String(),

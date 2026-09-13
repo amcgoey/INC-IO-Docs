@@ -2,11 +2,11 @@ import { Value } from '@sinclair/typebox/value';
 import type {
   DocumentUiSchema,
   DocumentUiSchemaQueryPort,
+  EvaluationOrderCalculator,
   RawManifestProviderPort,
   SpaceUiSchema,
 } from '../ports';
 import { DocumentUiSchemaType, SpaceUiSchemaType } from '../ports';
-import { ensureEvaluationOrder } from '../../../infrastructure/validation/json-logic-graph';
 
 interface ManifestWithDocumentTypes {
   documentTypes?: string[];
@@ -21,7 +21,10 @@ interface RawDocumentTypeRecord {
 }
 
 export class DocumentUiSchemaQueryAdapter implements DocumentUiSchemaQueryPort {
-  constructor(private readonly manifestProvider: RawManifestProviderPort) {}
+  constructor(
+    private readonly manifestProvider: RawManifestProviderPort,
+    private readonly evaluationOrderCalculator?: EvaluationOrderCalculator
+  ) {}
 
   async getDocumentUiSchema(documentTypeKey: string): Promise<DocumentUiSchema | undefined> {
     const rawManifest = (await this.manifestProvider.getRawManifest()) as ManifestWithDocumentTypes | undefined;
@@ -37,7 +40,14 @@ export class DocumentUiSchemaQueryAdapter implements DocumentUiSchemaQueryPort {
           structuredClone(rawDoc.documentUiSchema)
         );
         if (Value.Check(DocumentUiSchemaType, cleaned)) {
-          return ensureEvaluationOrder(cleaned as DocumentUiSchema, rawDoc.documentSchema);
+          const uiSchema = cleaned as DocumentUiSchema;
+          if (uiSchema.fields && !uiSchema.evaluationOrder && this.evaluationOrderCalculator) {
+            uiSchema.evaluationOrder = this.evaluationOrderCalculator(
+              rawDoc.documentSchema,
+              uiSchema
+            );
+          }
+          return uiSchema;
         }
       }
     }
@@ -57,7 +67,14 @@ export class DocumentUiSchemaQueryAdapter implements DocumentUiSchemaQueryPort {
           structuredClone(spaceType.spaceUiSchema)
         );
         if (Value.Check(SpaceUiSchemaType, cleaned)) {
-          return ensureEvaluationOrder(cleaned as SpaceUiSchema);
+          const spaceUiSchema = cleaned as SpaceUiSchema;
+          if (spaceUiSchema.fields && !spaceUiSchema.evaluationOrder && this.evaluationOrderCalculator) {
+            spaceUiSchema.evaluationOrder = this.evaluationOrderCalculator(
+              undefined,
+              spaceUiSchema
+            );
+          }
+          return spaceUiSchema;
         }
       }
     }

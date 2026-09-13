@@ -22,6 +22,11 @@ export interface RawManifestProviderPort {
   getRawManifest(): Promise<unknown>;
 }
 
+export type EvaluationOrderCalculator = (
+  schemaOrKeys?: string[] | { fields?: Array<{ key: string }> } | Record<string, unknown>,
+  uiSchema?: { layout?: string[]; fields?: Record<string, { computeValue?: unknown }> }
+) => string[];
+
 export interface DocumentSpaceStoragePort {
   fetchSpaces(config: StorageContextConfig, typeId: string): Promise<DocumentSpace[]>;
   resolveStorageLocation(abstractStorageId: string): Promise<StorageLocation>;

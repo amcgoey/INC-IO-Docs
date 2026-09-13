@@ -13,8 +13,8 @@ import {
   type SchemaQueryPort,
   type FormSchema,
   type DocumentUiSchema as PortDocumentUiSchema,
+  type EvaluationOrderCalculator,
 } from '../ports';
-import { ensureEvaluationOrder } from '../../../infrastructure/validation/json-logic-graph';
 
 const RawDocumentKeySchema = Type.Object({
   key: Type.Optional(Type.String()),
@@ -29,7 +29,8 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
 
   constructor(
     private readonly manifestProvider: RawManifestProviderPort,
-    private readonly templateEvaluator: TemplateEvaluatorPort
+    private readonly templateEvaluator: TemplateEvaluatorPort,
+    private readonly evaluationOrderCalculator?: EvaluationOrderCalculator
   ) {}
 
   async loadAll(): Promise<DocumentType[]> {
@@ -72,12 +73,16 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
         }
       }
 
-      if (resolvedUiSchema?.fields) {
+      if (resolvedUiSchema?.fields && this.evaluationOrderCalculator) {
         try {
-          ensureEvaluationOrder(resolvedUiSchema, validatedDocumentType.documentSchema);
+          const evaluationOrder = this.evaluationOrderCalculator(
+            validatedDocumentType.documentSchema,
+            resolvedUiSchema
+          );
+          resolvedUiSchema.evaluationOrder = evaluationOrder;
           if (validatedDocumentType.documentUiSchema) {
             (validatedDocumentType.documentUiSchema as Record<string, unknown>).evaluationOrder =
-              resolvedUiSchema.evaluationOrder;
+              evaluationOrder;
           }
         } catch (error) {
           throw new Error(

@@ -1,5 +1,5 @@
 import type { DocumentSchema, DocumentField } from '../domain';
-import type { DocumentUiSchema, DocumentUiSchemaQueryPort } from '../ports';
+import type { DocumentUiSchema, DocumentUiSchemaQueryPort, EvaluationOrderCalculator } from '../ports';
 import {
   buildCard,
   buildTitleBlock,
@@ -7,7 +7,6 @@ import {
   type CardSection,
   type CardWidget,
 } from '../../../infrastructure/workspace-addon/ui-blocks';
-import { computeEvaluationOrder } from '../../../infrastructure/validation/json-logic-graph';
 
 export function camelCaseToTitleCase(str: string): string {
   return str
@@ -86,7 +85,8 @@ export interface DocumentFormCardOptions {
 export function buildDocumentFormCard(
   documentSchema: DocumentSchema,
   uiSchema?: DocumentUiSchema,
-  options?: DocumentFormCardOptions
+  options?: DocumentFormCardOptions,
+  evaluationOrderCalculator?: EvaluationOrderCalculator
 ): Card {
   const header = buildTitleBlock({
     title: options?.title ?? 'Document Form',
@@ -100,13 +100,17 @@ export function buildDocumentFormCard(
   };
 
   const evaluationOrder =
-    uiSchema?.evaluationOrder ?? computeEvaluationOrder(documentSchema, uiSchema);
+    uiSchema?.evaluationOrder ??
+    (evaluationOrderCalculator ? evaluationOrderCalculator(documentSchema, uiSchema) : undefined);
 
   return buildCard(header, [section], evaluationOrder);
 }
 
 export class DocumentUiBlockAdapter {
-  constructor(private readonly uiSchemaQuery: DocumentUiSchemaQueryPort) {}
+  constructor(
+    private readonly uiSchemaQuery: DocumentUiSchemaQueryPort,
+    private readonly evaluationOrderCalculator?: EvaluationOrderCalculator
+  ) {}
 
   async renderDocumentCard(
     documentTypeKey: string,
@@ -114,6 +118,11 @@ export class DocumentUiBlockAdapter {
     options?: DocumentFormCardOptions
   ): Promise<Card> {
     const uiSchema = await this.uiSchemaQuery.getDocumentUiSchema(documentTypeKey);
-    return buildDocumentFormCard(documentSchema, uiSchema, options);
+    return buildDocumentFormCard(
+      documentSchema,
+      uiSchema,
+      options,
+      this.evaluationOrderCalculator
+    );
   }
 }

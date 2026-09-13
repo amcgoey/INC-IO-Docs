@@ -2,17 +2,16 @@ import { Value } from '@sinclair/typebox/value';
 import { DocumentSpaceTypeSchema, type DocumentSpaceType } from '../domain';
 import type {
   DocumentSpaceManifestRegistryPort,
+  EvaluationOrderCalculator,
   RawManifestProviderPort,
 } from '../ports';
-import {
-  ensureEvaluationOrder,
-  type ContainerWithLayoutLike,
-} from '../../../infrastructure/validation/json-logic-graph';
-
 export class DocumentSpaceManifestRegistryAdapter
   implements DocumentSpaceManifestRegistryPort
 {
-  constructor(private readonly manifestProvider: RawManifestProviderPort) {}
+  constructor(
+    private readonly manifestProvider: RawManifestProviderPort,
+    private readonly evaluationOrderCalculator?: EvaluationOrderCalculator
+  ) {}
 
   async getDocumentSpaceTypes(): Promise<DocumentSpaceType[]> {
     const rawManifest = (await this.manifestProvider.getRawManifest()) as {
@@ -23,9 +22,20 @@ export class DocumentSpaceManifestRegistryAdapter
 
     for (const rawSpace of rawSpaces) {
       const rawSpaceRecord = rawSpace as { id?: string; spaceUiSchema?: unknown };
-      if (rawSpaceRecord?.spaceUiSchema && typeof rawSpaceRecord.spaceUiSchema === 'object') {
+      if (
+        rawSpaceRecord?.spaceUiSchema &&
+        typeof rawSpaceRecord.spaceUiSchema === 'object' &&
+        this.evaluationOrderCalculator
+      ) {
         try {
-          ensureEvaluationOrder(rawSpaceRecord.spaceUiSchema as ContainerWithLayoutLike);
+          const spaceUi = rawSpaceRecord.spaceUiSchema as {
+            layout?: string[];
+            fields?: Record<string, { computeValue?: unknown }>;
+            evaluationOrder?: string[];
+          };
+          if (spaceUi.fields && !spaceUi.evaluationOrder) {
+            spaceUi.evaluationOrder = this.evaluationOrderCalculator(undefined, spaceUi);
+          }
         } catch (error) {
           throw new Error(
             `Invalid DocumentSpaceType UI schema "${rawSpaceRecord.id ?? ''}": ${(error as Error).message}`,
