@@ -1,4 +1,4 @@
-﻿import type { DocumentSchema } from '../domain';
+import type { DocumentSchema } from '../domain';
 import type { DocumentUiSchema } from '../ports';
 
 /**
