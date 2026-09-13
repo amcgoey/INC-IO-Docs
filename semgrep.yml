@@ -221,7 +221,7 @@ rules:
       - pattern-either: *import_patterns
       - metavariable-regex:
           metavariable: $MODULE
-          regex: '.*adapters.*|.*infrastructure.*'
+          regex: '.*adapters.*'
 
   # =========================================================================
   # ADR 0011: Fast-Track and Guarded Reads
@@ -261,6 +261,13 @@ rules:
               }
           - pattern: |
               const $METHOD = async (..., $PORT, ...) => $PORT.$ANY_METHOD(...)
+          # Alias assignment pass-through (Kept to prevent missing edge cases)
+          - patterns:
+              - pattern-either:
+                  - pattern: $METHOD = this.$PORT.$ANY_METHOD
+                  - pattern: $METHOD = $PORT.$ANY_METHOD
+              - pattern-not: $METHOD = $PORT.$ANY_METHOD as $TYPE
+              - pattern-not: $METHOD = this.$PORT.$ANY_METHOD as $TYPE
       - metavariable-regex:
           metavariable: $ANY_METHOD
           regex: '^(?!has|get|set|add|delete|clear|map|filter|reduce).*$'

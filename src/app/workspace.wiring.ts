@@ -4,6 +4,8 @@ import * as uiBlocks from '../infrastructure/workspace-addon/ui-blocks';
 import type { HttpServer } from '../infrastructure/http';
 import type { AuthVerifierPort, WorkspaceConfigProviderPort } from '../features/workspace/ports';
 import type { WorkspaceUiBuilderPort } from '../features/workspace/adapters/ui-builder';
+
+export type { WorkspaceUiBuilderPort };
 import type { DocumentService } from '../features/document/domain';
 import type { DocumentSpaceService } from '../features/document-space/domain';
 import type { DocumentSchemaRegistryPort, SchemaQueryPort } from '../features/document/ports';

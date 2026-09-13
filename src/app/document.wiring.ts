@@ -1,7 +1,8 @@
-import type { RawManifestProviderPort } from '../features/document-space/ports';
 import { DocumentSchemaRegistryAdapter } from '../features/document/adapters/document-schema-registry';
 import { DocumentUiSchemaQueryAdapter } from '../features/document/adapters/document-ui-schema-query';
 import { DocumentUiBlockAdapter } from '../features/document/adapters/ui-block';
+
+export type { DocumentUiBlockAdapter };
 import type {
   DocumentSchemaRegistryPort,
   DocumentUiSchemaQueryPort,
@@ -9,7 +10,8 @@ import type {
   TemplateEvaluatorPort,
   DriveServicePort,
   ActivityDispatcherPort,
-  AppConfigurationProviderPort
+  AppConfigurationProviderPort,
+  RawManifestProviderPort
 } from '../features/document/ports';
 import {
   computeEvaluationOrder,

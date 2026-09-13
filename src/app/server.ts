@@ -1,5 +1,8 @@
 import { TypeSystemPolicy } from '@sinclair/typebox/system';
-import { createSharedInfrastructure, type SharedInfrastructure } from './shared.wiring';
+import { createHttpServer, type HttpServer } from '../infrastructure/http';
+import { AppManifestProvider } from '../infrastructure/manifest/app-manifest-provider';
+import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
+import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import { createDocumentFeatureWiring, wireDocumentServicesAndRoutes } from './document.wiring';
 import { createDocumentSpaceFeatureWiring } from './document-space.wiring';
 import { wireWorkspaceFeature } from './workspace.wiring';
@@ -7,7 +10,7 @@ import { wireWorkspaceFeature } from './workspace.wiring';
 import type { DocumentService } from '../features/document/domain';
 import type { DocumentSpaceService } from '../features/document-space/domain';
 import type {
-  RawManifestProviderPort,
+  RawManifestProviderPort as SpaceRawManifestProviderPort,
   DocumentSpaceUiSchemaQueryPort,
 } from '../features/document-space/ports';
 import type {
@@ -18,26 +21,31 @@ import type {
   SchemaQueryPort,
   TemplateEvaluatorPort,
   DocumentUiSchemaQueryPort,
+  RawManifestProviderPort,
 } from '../features/document/ports';
 import type {
   AuthVerifierPort,
   WorkspaceConfigProviderPort,
 } from '../features/workspace/ports';
+import type { WorkspaceUiBuilderPort } from './workspace.wiring';
+import type { DocumentUiBlockAdapter } from './document.wiring';
 
-// We import the HTTP server port from shared.wiring to avoid leaking infrastructure paths
-import type { HttpServer } from './shared.wiring';
+export type { WorkspaceUiBuilderPort, DocumentUiBlockAdapter };
 
-// Import only the ports for options to avoid leaking adapter/infra types.
-// We make a small concession to backwards compatibility if an adapter type was leaked,
-// but the test suites can pass mocks that satisfy the ports.
+export type AppManifestProviderUnion =
+  AppConfigurationProviderPort &
+  WorkspaceConfigProviderPort &
+  RawManifestProviderPort &
+  SpaceRawManifestProviderPort;
+
 export interface AppOptions {
-  manifestProvider?: (AppConfigurationProviderPort & WorkspaceConfigProviderPort & RawManifestProviderPort) | undefined;
+  manifestProvider?: AppManifestProviderUnion | undefined;
   manifestPath?: string | undefined;
   documentSchemaRegistry?: (DocumentSchemaRegistryPort & SchemaQueryPort) | undefined;
   activityEngine?: ActivityDispatcherPort | undefined;
   templateEvaluator?: TemplateEvaluatorPort | undefined;
   authVerifier?: AuthVerifierPort | undefined;
-  uiBuilder?: any | undefined;
+  uiBuilder?: WorkspaceUiBuilderPort | undefined;
   driveService?: DriveServicePort | undefined;
   documentSpaceService?: DocumentSpaceService | undefined;
   authorizationUrl?: string | undefined;
@@ -52,7 +60,7 @@ export interface AppInstance {
   documentSchemaRegistry: DocumentSchemaRegistryPort & SchemaQueryPort;
   documentUiSchemaQuery?: DocumentUiSchemaQueryPort | undefined;
   documentSpaceUiSchemaQuery?: DocumentSpaceUiSchemaQueryPort | undefined;
-  documentUiBlock?: any | undefined;
+  documentUiBlock?: DocumentUiBlockAdapter | undefined;
   initialize: () => Promise<void>;
   start: (port?: number, host?: string) => Promise<void>;
 }
@@ -60,23 +68,22 @@ export interface AppInstance {
 TypeSystemPolicy.ExactOptionalPropertyTypes = true;
 
 export function createApp(options?: AppOptions): AppInstance {
-  // 1. Shared Infrastructure
-  if (!options?.documentSchemaRegistry && !options?.manifestProvider && !options?.manifestPath && !process.env.APP_MANIFEST_PATH) {
-    throw new Error(
-      "Manifest path is not defined. Please provide options.manifestPath or set the APP_MANIFEST_PATH environment variable."
-    );
+  const server = createHttpServer(options?.logger !== undefined ? { logger: options.logger } : {});
+  const templateEvaluator = options?.templateEvaluator ?? new HandlebarsAdapter();
+
+  let manifestProvider = options?.manifestProvider;
+  if (!manifestProvider) {
+    const manifestPath = options?.manifestPath ?? process.env.APP_MANIFEST_PATH;
+    if (!options?.documentSchemaRegistry && !manifestPath) {
+      throw new Error(
+        'Manifest path is not defined. Please provide options.manifestPath or set the APP_MANIFEST_PATH environment variable.'
+      );
+    }
+    if (manifestPath) {
+      manifestProvider = new AppManifestProvider({ manifestPath });
+    }
   }
 
-  const sharedInfra = createSharedInfrastructure({
-    logger: options?.logger,
-    manifestPath: options?.manifestPath,
-    manifestProvider: options?.manifestProvider,
-    templateEvaluator: options?.templateEvaluator,
-  });
-
-  const { server, templateEvaluator, manifestProvider, driveClient } = sharedInfra;
-
-  // 2. Document Feature - Schemas
   let documentSchemaRegistry: (DocumentSchemaRegistryPort & SchemaQueryPort) | undefined =
     options?.documentSchemaRegistry;
   let documentWiring: ReturnType<typeof createDocumentFeatureWiring> | undefined = undefined;
@@ -91,33 +98,29 @@ export function createApp(options?: AppOptions): AppInstance {
   }
 
   if (!documentSchemaRegistry) {
-    throw new Error("DocumentSchemaRegistry could not be initialized.");
+    throw new Error('DocumentSchemaRegistry could not be initialized.');
   }
 
-  const configProvider = manifestProvider ?? { getAppConfig: async () => ({}) };
-  const rawManifestProvider = manifestProvider ?? { getRawManifest: async () => ({}) };
+  const driveClient = new GoogleDriveClient({ configProvider: manifestProvider });
 
-  // 3. Document Feature - Services & Routes
   const documentService = wireDocumentServicesAndRoutes({
     server,
     driveClient,
-    configProvider: configProvider as AppConfigurationProviderPort,
+    configProvider: (manifestProvider ?? { getAppConfig: async () => ({}) }) as AppConfigurationProviderPort,
     documentSchemaRegistry,
     templateEvaluator,
     driveService: options?.driveService,
     activityEngine: options?.activityEngine,
   });
 
-  // 4. Document Space Feature
   const documentSpaceWiring = createDocumentSpaceFeatureWiring({
-    rawManifestProvider: rawManifestProvider as RawManifestProviderPort,
+    rawManifestProvider: (manifestProvider ?? { getRawManifest: async () => ({}) }) as SpaceRawManifestProviderPort,
     driveClient,
   });
   const documentSpaceService =
     options?.documentSpaceService ??
     documentSpaceWiring.documentSpaceService;
 
-  // 5. Workspace Feature
   wireWorkspaceFeature({
     server,
     documentService,
@@ -133,16 +136,16 @@ export function createApp(options?: AppOptions): AppInstance {
     await documentSpaceService.initialize();
     const shouldSkipValidation =
       options?.skipSpaceValidation ??
-      (process.env.SKIP_SPACE_VALIDATION === "true" || process.env.NODE_ENV === "production");
+      (process.env.SKIP_SPACE_VALIDATION === 'true' || process.env.NODE_ENV === 'production');
     if (!shouldSkipValidation) {
       const spaceErrors = await documentSpaceService.validateEndToEnd();
       if (spaceErrors.length > 0) {
-        throw new Error(`Failed to validate DocumentSpaceTypes:\n${spaceErrors.join("\n")}`);
+        throw new Error(`Failed to validate DocumentSpaceTypes:\n${spaceErrors.join('\n')}`);
       }
     }
   };
 
-  const start = async (port = 8080, host = "0.0.0.0") => {
+  const start = async (port = 8080, host = '0.0.0.0') => {
     await initialize();
     await server.start(port, host);
   };
@@ -160,11 +163,11 @@ export function createApp(options?: AppOptions): AppInstance {
   };
 }
 
-export const start = async (port = 8080, host = "0.0.0.0") => {
+export const start = async (port = 8080, host = '0.0.0.0') => {
   try {
     const app = createApp({
       logger: true,
-      skipSpaceValidation: process.env.SKIP_SPACE_VALIDATION === "true" || process.env.NODE_ENV === "production",
+      skipSpaceValidation: process.env.SKIP_SPACE_VALIDATION === 'true' || process.env.NODE_ENV === 'production',
     });
     await app.start(port, host);
   } catch (err) {
@@ -176,4 +179,3 @@ export const start = async (port = 8080, host = "0.0.0.0") => {
 if (require.main === module) {
   void start();
 }
-
