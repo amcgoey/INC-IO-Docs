@@ -6,6 +6,7 @@ import type {
   SpaceUiSchema,
 } from '../ports';
 import { DocumentUiSchemaType, SpaceUiSchemaType } from '../ports';
+import { computeEvaluationOrder } from './dependency-graph';
 
 interface ManifestWithDocumentTypes {
   documentTypes?: string[];
@@ -15,6 +16,7 @@ interface ManifestWithDocumentTypes {
 
 interface RawDocumentTypeRecord {
   key?: string;
+  documentSchema?: { fields?: Array<{ key: string }> };
   documentUiSchema?: unknown;
 }
 
@@ -35,7 +37,14 @@ export class DocumentUiSchemaQueryAdapter implements DocumentUiSchemaQueryPort {
           structuredClone(rawDoc.documentUiSchema)
         );
         if (Value.Check(DocumentUiSchemaType, cleaned)) {
-          return cleaned as DocumentUiSchema;
+          const uiSchema = cleaned as DocumentUiSchema;
+          if (!uiSchema.evaluationOrder) {
+            uiSchema.evaluationOrder = computeEvaluationOrder(
+              rawDoc.documentSchema,
+              uiSchema
+            );
+          }
+          return uiSchema;
         }
       }
     }
@@ -55,7 +64,14 @@ export class DocumentUiSchemaQueryAdapter implements DocumentUiSchemaQueryPort {
           structuredClone(spaceType.spaceUiSchema)
         );
         if (Value.Check(SpaceUiSchemaType, cleaned)) {
-          return cleaned as SpaceUiSchema;
+          const spaceUiSchema = cleaned as SpaceUiSchema;
+          if (!spaceUiSchema.evaluationOrder) {
+            spaceUiSchema.evaluationOrder = computeEvaluationOrder(
+              undefined,
+              spaceUiSchema
+            );
+          }
+          return spaceUiSchema;
         }
       }
     }

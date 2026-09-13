@@ -81,6 +81,7 @@ export const UiFieldSchema = Type.Object({
   props: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   showIf: Type.Optional(JSONLogicRuleType),
   disableIf: Type.Optional(JSONLogicRuleType),
+  computeValue: Type.Optional(JSONLogicRuleType),
 });
 
 export type UiField = Static<typeof UiFieldSchema>;
@@ -89,6 +90,7 @@ export const DocumentUiSchemaType = Type.Object({
   layout: Type.Optional(Type.Array(Type.String())),
   fields: Type.Optional(Type.Record(Type.String(), UiFieldSchema)),
   events: Type.Optional(Type.Record(Type.String(), UiEventType)),
+  evaluationOrder: Type.Optional(Type.Array(Type.String())),
 });
 
 export type DocumentUiSchema = Static<typeof DocumentUiSchemaType>;
@@ -96,6 +98,7 @@ export type DocumentUiSchema = Static<typeof DocumentUiSchemaType>;
 export const SpaceUiSchemaType = Type.Object({
   layout: Type.Optional(Type.Array(Type.String())),
   fields: Type.Optional(Type.Record(Type.String(), UiFieldSchema)),
+  evaluationOrder: Type.Optional(Type.Array(Type.String())),
 });
 
 export type SpaceUiSchema = Static<typeof SpaceUiSchemaType>;

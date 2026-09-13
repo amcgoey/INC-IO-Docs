@@ -7,6 +7,7 @@ import {
   type CardSection,
   type CardWidget,
 } from '../../../infrastructure/workspace-addon/ui-blocks';
+import { computeEvaluationOrder } from './dependency-graph';
 
 export function camelCaseToTitleCase(str: string): string {
   return str
@@ -98,7 +99,10 @@ export function buildDocumentFormCard(
     widgets,
   };
 
-  return buildCard(header, [section]);
+  const evaluationOrder =
+    uiSchema?.evaluationOrder ?? computeEvaluationOrder(documentSchema, uiSchema);
+
+  return buildCard(header, [section], evaluationOrder);
 }
 
 export class DocumentUiBlockAdapter {

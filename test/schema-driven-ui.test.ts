@@ -189,4 +189,91 @@ describe('Schema-Driven UI Integration Test', () => {
     const uiSchema = await app.documentUiSchemaQuery!.getDocumentUiSchema('procurement-request');
     expect(uiSchema?.layout).toEqual(['requestTitle', 'estimatedCost', 'vendorCategory']);
   });
+
+  it('computes evaluationOrder end-to-end and emits safe order on UiCard with uncomputed fields first', async () => {
+    const calcDocPath = path.join(tempDir, 'calc-doc.json');
+    const calcDocContent = {
+      key: 'calc-doc',
+      name: 'Calculated Document',
+      documentSchema: {
+        fields: [
+          { key: 'qty', name: 'Quantity', type: 'number', required: true },
+          { key: 'rate', name: 'Rate', type: 'number', required: true },
+          { key: 'total', name: 'Total', type: 'number', required: true },
+        ],
+      },
+      documentUiSchema: {
+        fields: {
+          qty: { label: 'Quantity' },
+          rate: { label: 'Rate' },
+          total: {
+            label: 'Total',
+            computeValue: {
+              and: [{ var: 'data.qty' }, { var: 'data.rate' }],
+            },
+          },
+        },
+      },
+    };
+    await fs.writeFile(calcDocPath, JSON.stringify(calcDocContent, null, 2), 'utf-8');
+
+    const calcManifestPath = path.join(tempDir, 'calc-manifest.json');
+    await fs.writeFile(
+      calcManifestPath,
+      JSON.stringify({ documentTypes: ['./calc-doc.json'] }, null, 2),
+      'utf-8'
+    );
+
+    const manifestProvider = new AppManifestProvider({ manifestPath: calcManifestPath });
+    const { documentUiSchemaQuery, documentUiBlock } = createDocumentFeatureWiring({
+      manifestProvider,
+    });
+
+    const uiSchema = await documentUiSchemaQuery.getDocumentUiSchema('calc-doc');
+    expect(uiSchema?.evaluationOrder).toEqual(['qty', 'rate', 'total']);
+
+    const card = await documentUiBlock.renderDocumentCard(
+      'calc-doc',
+      calcDocContent.documentSchema
+    );
+    expect(card.evaluationOrder).toEqual(['qty', 'rate', 'total']);
+    expect(Value.Check(UiCardSchema, card)).toBe(true);
+  });
+
+  it('fails loudly when loading a manifest containing circular dependencies in computeValue', async () => {
+    const cycleDocPath = path.join(tempDir, 'cycle-doc.json');
+    const cycleDocContent = {
+      key: 'cycle-doc',
+      name: 'Cycle Document',
+      documentSchema: {
+        fields: [
+          { key: 'nodeA', name: 'Node A', type: 'string', required: true },
+          { key: 'nodeB', name: 'Node B', type: 'string', required: true },
+        ],
+      },
+      documentUiSchema: {
+        fields: {
+          nodeA: { computeValue: { var: 'data.nodeB' } },
+          nodeB: { computeValue: { var: 'data.nodeA' } },
+        },
+      },
+    };
+    await fs.writeFile(cycleDocPath, JSON.stringify(cycleDocContent, null, 2), 'utf-8');
+
+    const cycleManifestPath = path.join(tempDir, 'cycle-manifest.json');
+    await fs.writeFile(
+      cycleManifestPath,
+      JSON.stringify({ documentTypes: ['./cycle-doc.json'] }, null, 2),
+      'utf-8'
+    );
+
+    const manifestProvider = new AppManifestProvider({ manifestPath: cycleManifestPath });
+    const { documentUiSchemaQuery } = createDocumentFeatureWiring({
+      manifestProvider,
+    });
+
+    await expect(documentUiSchemaQuery.getDocumentUiSchema('cycle-doc')).rejects.toThrow(
+      /Circular dependency detected in computeValue rules/i
+    );
+  });
 });

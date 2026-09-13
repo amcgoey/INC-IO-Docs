@@ -122,6 +122,7 @@ export type CardSection = Static<typeof CardSectionSchema>;
 export const CardSchema = Type.Object({
   header: CardHeaderSchema,
   sections: Type.Array(CardSectionSchema),
+  evaluationOrder: Type.Optional(Type.Array(Type.String())),
 });
 
 export type Card = Static<typeof CardSchema>;
@@ -196,7 +197,8 @@ export function buildStatusMessageBlock(
 
 export function buildCard(
   header: CardHeader,
-  sections: (CardSection | null | undefined)[]
+  sections: (CardSection | null | undefined)[],
+  evaluationOrder?: string[]
 ): Card {
   const validSections = sections.filter(
     (s): s is CardSection => s !== null && s !== undefined
@@ -206,10 +208,16 @@ export function buildCard(
     throw new Error('A Google Workspace Add-on card must contain at least one valid section.');
   }
 
-  return {
+  const card: Card = {
     header,
     sections: validSections,
   };
+
+  if (evaluationOrder !== undefined) {
+    card.evaluationOrder = evaluationOrder;
+  }
+
+  return card;
 }
 
 export interface DocumentSelectionItem {

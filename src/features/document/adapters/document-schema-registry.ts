@@ -5,13 +5,16 @@ import {
   validateManifestTemplates,
   type DocumentType,
 } from '../domain';
-import type {
-  DocumentSchemaRegistryPort,
-  RawManifestProviderPort,
-  TemplateEvaluatorPort,
-  SchemaQueryPort,
-  FormSchema,
+import {
+  DocumentUiSchemaType as PortDocumentUiSchemaType,
+  type DocumentSchemaRegistryPort,
+  type RawManifestProviderPort,
+  type TemplateEvaluatorPort,
+  type SchemaQueryPort,
+  type FormSchema,
+  type DocumentUiSchema as PortDocumentUiSchema,
 } from '../ports';
+import { computeEvaluationOrder } from './dependency-graph';
 
 const RawDocumentKeySchema = Type.Object({
   key: Type.Optional(Type.String()),
@@ -34,6 +37,7 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
       documentTypes?: string[];
     };
     const documentTypes: DocumentType[] = [];
+    const resolvedUiSchemas: Array<PortDocumentUiSchema | undefined> = [];
 
     for (const relPath of rawManifest?.documentTypes ?? []) {
       const rawDocumentType = await this.manifestProvider.readParsedSchema(relPath);
@@ -59,17 +63,47 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
         );
       }
 
+      let resolvedUiSchema: PortDocumentUiSchema | undefined = undefined;
+      const rawUiSchema = (rawDocumentType as { documentUiSchema?: unknown })?.documentUiSchema;
+      if (rawUiSchema) {
+        const cleanedUi = Value.Clean(PortDocumentUiSchemaType, structuredClone(rawUiSchema));
+        if (Value.Check(PortDocumentUiSchemaType, cleanedUi)) {
+          resolvedUiSchema = cleanedUi as PortDocumentUiSchema;
+        }
+      }
+
+      if (resolvedUiSchema?.fields) {
+        try {
+          const evaluationOrder = computeEvaluationOrder(
+            validatedDocumentType.documentSchema,
+            resolvedUiSchema
+          );
+          resolvedUiSchema.evaluationOrder = evaluationOrder;
+          if (validatedDocumentType.documentUiSchema) {
+            (validatedDocumentType.documentUiSchema as Record<string, unknown>).evaluationOrder =
+              evaluationOrder;
+          }
+        } catch (error) {
+          throw new Error(
+            `Invalid DocumentType UI schema "${validatedDocumentType.key}": ${(error as Error).message}`,
+            { cause: error }
+          );
+        }
+      }
+
       documentTypes.push(validatedDocumentType);
+      resolvedUiSchemas.push(resolvedUiSchema);
     }
 
-    this.cachedForms = documentTypes.map((dt) => {
+    this.cachedForms = documentTypes.map((dt, idx) => {
       const formSchema: FormSchema = {
         key: dt.key,
         name: dt.name,
         documentSchema: dt.documentSchema,
       };
-      if (dt.documentUiSchema !== undefined) {
-        formSchema.documentUiSchema = dt.documentUiSchema;
+      const ui = resolvedUiSchemas[idx] ?? (dt.documentUiSchema as PortDocumentUiSchema | undefined);
+      if (ui !== undefined) {
+        formSchema.documentUiSchema = ui;
       }
       return formSchema;
     });

@@ -231,7 +231,7 @@ describe('Document Ports & DTOs', () => {
       }
     });
 
-    it('rejects forbidden operators in showIf and disableIf', () => {
+    it('rejects forbidden operators in showIf, disableIf, and computeValue', () => {
       const invalidDocSchema = {
         fields: {
           firstName: {
@@ -241,6 +241,15 @@ describe('Document Ports & DTOs', () => {
       };
       expect(Value.Check(DocumentUiSchemaType, invalidDocSchema)).toBe(false);
 
+      const invalidComputeSchema = {
+        fields: {
+          total: {
+            computeValue: { '+': [{ var: 'data.subtotal' }, 10] },
+          },
+        },
+      };
+      expect(Value.Check(DocumentUiSchemaType, invalidComputeSchema)).toBe(false);
+
       const invalidSpaceSchema = {
         fields: {
           spaceName: {
@@ -249,6 +258,35 @@ describe('Document Ports & DTOs', () => {
         },
       };
       expect(Value.Check(SpaceUiSchemaType, invalidSpaceSchema)).toBe(false);
+    });
+
+    it('validates computeValue and evaluationOrder on DocumentUiSchema and SpaceUiSchema', () => {
+      const validDocSchema: DocumentUiSchema = {
+        layout: ['first', 'last', 'full'],
+        fields: {
+          first: { label: 'First' },
+          last: { label: 'Last' },
+          full: {
+            label: 'Full',
+            computeValue: { cat: [{ var: 'data.first' }, ' ', { var: 'data.last' }] },
+          },
+        },
+        evaluationOrder: ['first', 'last', 'full'],
+      };
+      expect(Value.Check(DocumentUiSchemaType, validDocSchema)).toBe(true);
+
+      const validSpaceSchema: SpaceUiSchema = {
+        layout: ['base', 'derived'],
+        fields: {
+          base: { label: 'Base' },
+          derived: {
+            label: 'Derived',
+            computeValue: { '==': [{ var: 'data.base' }, 'test'] },
+          },
+        },
+        evaluationOrder: ['base', 'derived'],
+      };
+      expect(Value.Check(SpaceUiSchemaType, validSpaceSchema)).toBe(true);
     });
   });
 });

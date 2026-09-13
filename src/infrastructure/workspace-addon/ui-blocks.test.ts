@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { Value } from '@sinclair/typebox/value';
 import {
   buildTitleBlock,
   buildStatusMessageBlock,
@@ -6,6 +7,7 @@ import {
   buildNavigationAction,
   buildErrorCard,
   buildDocumentTypeSelectionBlock,
+  CardSchema,
 } from './ui-blocks';
 
 describe('Workspace Add-on UI Blocks', () => {
@@ -106,6 +108,19 @@ describe('Workspace Add-on UI Blocks', () => {
 
       expect(card.sections).toHaveLength(1);
       expect(card.sections[0]).toEqual(validSection);
+    });
+
+    it('includes optional evaluationOrder in card and validates against CardSchema', () => {
+      const header = buildTitleBlock({ title: 'Card Title' });
+      const section = buildStatusMessageBlock('Status OK');
+      const card = buildCard(header, [section], ['fieldA', 'fieldB']);
+
+      expect(card).toEqual({
+        header: { title: 'Card Title' },
+        sections: [section],
+        evaluationOrder: ['fieldA', 'fieldB'],
+      });
+      expect(Value.Check(CardSchema, card)).toBe(true);
     });
 
     it('throws an error if no valid sections are provided', () => {

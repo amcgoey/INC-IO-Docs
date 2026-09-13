@@ -594,5 +594,80 @@ describe('DocumentSchemaRegistryAdapter', () => {
       expect(mockProvider.getRawManifest).toHaveBeenCalledTimes(1);
       expect(mockProvider.readParsedSchema).toHaveBeenCalledTimes(1);
     });
+
+    it('computes evaluationOrder on documentUiSchema during loadAll and attaches to FormSchema', async () => {
+      const mockDocumentType = {
+        key: 'invoice-doc',
+        name: 'Invoice Document',
+        documentSchema: {
+          fields: [
+            { key: 'unitPrice', name: 'Unit Price', type: 'number', required: true },
+            { key: 'quantity', name: 'Quantity', type: 'number', required: true },
+            { key: 'total', name: 'Total', type: 'number', required: true },
+          ],
+        },
+        documentUiSchema: {
+          fields: {
+            unitPrice: { label: 'Unit Price' },
+            quantity: { label: 'Quantity' },
+            total: {
+              label: 'Total',
+              computeValue: {
+                and: [{ var: 'data.unitPrice' }, { var: 'data.quantity' }],
+              },
+            },
+          },
+        },
+      };
+
+      const mockProvider = createMockManifestProvider({
+        './schemas/invoice.json': mockDocumentType,
+      });
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
+
+      const documentTypes = await adapter.loadAll();
+      expect(
+        (documentTypes[0].documentUiSchema as { evaluationOrder?: string[] })?.evaluationOrder
+      ).toEqual(['unitPrice', 'quantity', 'total']);
+
+      const forms = await adapter.getForms();
+      expect(forms[0].documentUiSchema?.evaluationOrder).toEqual([
+        'unitPrice',
+        'quantity',
+        'total',
+      ]);
+    });
+
+    it('fails loudly during loadAll when circular dependencies exist in computeValue', async () => {
+      const mockCircularDocType = {
+        key: 'circular-doc',
+        name: 'Circular Document',
+        documentSchema: {
+          fields: [
+            { key: 'fieldA', name: 'Field A', type: 'string', required: true },
+            { key: 'fieldB', name: 'Field B', type: 'string', required: true },
+          ],
+        },
+        documentUiSchema: {
+          fields: {
+            fieldA: {
+              computeValue: { var: 'data.fieldB' },
+            },
+            fieldB: {
+              computeValue: { var: 'data.fieldA' },
+            },
+          },
+        },
+      };
+
+      const mockProvider = createMockManifestProvider({
+        './schemas/circular.json': mockCircularDocType,
+      });
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
+
+      await expect(adapter.loadAll()).rejects.toThrow(
+        /Invalid DocumentType UI schema "circular-doc": Circular dependency detected in computeValue rules/i
+      );
+    });
   });
 });

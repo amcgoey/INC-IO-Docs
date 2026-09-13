@@ -254,6 +254,63 @@ describe('UiBlock Adapter', () => {
       expect(card.sections[0].header).toBe('Item Section');
       expect(card.sections[0].widgets[0].textInput?.label).toBe('Item Name');
       expect(Value.Check(CardSchema, card)).toBe(true);
+      expect(card.evaluationOrder).toEqual(['itemName']);
+    });
+
+    it('emits safe evaluationOrder with uncomputed fields evaluated first', () => {
+      const documentSchema: DocumentSchema = {
+        fields: [
+          { key: 'price', name: 'price', type: 'number' },
+          { key: 'quantity', name: 'quantity', type: 'number' },
+          { key: 'total', name: 'total', type: 'number' },
+        ],
+      };
+      const uiSchema: DocumentUiSchema = {
+        fields: {
+          price: { label: 'Price' },
+          quantity: { label: 'Quantity' },
+          total: {
+            label: 'Total',
+            computeValue: {
+              and: [{ var: 'data.price' }, { var: 'data.quantity' }],
+            },
+          },
+        },
+      };
+
+      const card = buildDocumentFormCard(documentSchema, uiSchema);
+      expect(card.evaluationOrder).toEqual(['price', 'quantity', 'total']);
+      expect(Value.Check(CardSchema, card)).toBe(true);
+    });
+
+    it('preserves precomputed evaluationOrder when provided in uiSchema', () => {
+      const documentSchema: DocumentSchema = {
+        fields: [{ key: 'a', name: 'a', type: 'string' }, { key: 'b', name: 'b', type: 'string' }],
+      };
+      const uiSchema: DocumentUiSchema = {
+        fields: { a: {}, b: {} },
+        evaluationOrder: ['b', 'a'],
+      };
+
+      const card = buildDocumentFormCard(documentSchema, uiSchema);
+      expect(card.evaluationOrder).toEqual(['b', 'a']);
+      expect(Value.Check(CardSchema, card)).toBe(true);
+    });
+
+    it('throws loudly when circular dependency is detected in buildDocumentFormCard', () => {
+      const documentSchema: DocumentSchema = {
+        fields: [{ key: 'field1', name: 'field1', type: 'string' }, { key: 'field2', name: 'field2', type: 'string' }],
+      };
+      const uiSchema: DocumentUiSchema = {
+        fields: {
+          field1: { computeValue: { var: 'data.field2' } },
+          field2: { computeValue: { var: 'data.field1' } },
+        },
+      };
+
+      expect(() => buildDocumentFormCard(documentSchema, uiSchema)).toThrow(
+        /Circular dependency detected in computeValue rules/
+      );
     });
   });
 });
