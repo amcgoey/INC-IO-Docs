@@ -32,7 +32,8 @@ export function createDocumentSpaceFeatureWiring(
   );
   const documentSpaceUiSchemaQuery = new DocumentSpaceUiSchemaQueryAdapter(
     options.rawManifestProvider,
-    ensureEvaluationOrder
+    ensureEvaluationOrder,
+    documentSpaceRegistry
   );
 
   return {

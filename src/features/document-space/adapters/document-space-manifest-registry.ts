@@ -23,20 +23,18 @@ export class DocumentSpaceManifestRegistryAdapter
     const documentSpaceTypes: DocumentSpaceType[] = [];
 
     for (const rawSpace of rawSpaces) {
-      const rawSpaceRecord = rawSpace as { id?: string; spaceUiSchema?: unknown };
-      if (rawSpaceRecord?.spaceUiSchema) {
+      const cloned = structuredClone(rawSpace) as Record<string, unknown>;
+      if (cloned?.spaceUiSchema) {
         const spaceUi = parseAndValidateSpaceUiSchema(
-          rawSpaceRecord.spaceUiSchema,
-          rawSpaceRecord.id ?? '',
+          cloned.spaceUiSchema,
+          (cloned.id as string) ?? '',
           this.evaluationOrderEnsurer
         );
-        if (spaceUi?.evaluationOrder) {
-          (rawSpaceRecord.spaceUiSchema as Record<string, unknown>).evaluationOrder =
-            spaceUi.evaluationOrder;
+        if (spaceUi) {
+          cloned.spaceUiSchema = spaceUi;
         }
       }
 
-      const cloned = structuredClone(rawSpace);
       const cleaned = Value.Clean(DocumentSpaceTypeSchema, cloned);
       if (!Value.Check(DocumentSpaceTypeSchema, cleaned)) {
         const errors = [...Value.Errors(DocumentSpaceTypeSchema, cleaned)]

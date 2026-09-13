@@ -313,15 +313,17 @@ describe('JSONLogic Graph & Kahn\'s Algorithm', () => {
       expect(result?.evaluationOrder).toEqual(['first', 'last', 'full']);
     });
 
-    it('validates and preserves existing evaluationOrder if valid', () => {
-      const existing = ['custom', 'order'];
+    it('computes safe evaluationOrder and does not allow unsafe override', () => {
       const uiSchema = {
-        fields: { custom: {}, order: {} },
-        evaluationOrder: existing,
+        fields: {
+          b: { computeValue: { var: 'data.a' } },
+          a: {},
+        },
+        evaluationOrder: ['b', 'a'], // Unsafe/reversed override
       };
 
       const result = ensureEvaluationOrder(uiSchema);
-      expect(result?.evaluationOrder).toEqual(existing);
+      expect(result?.evaluationOrder).toEqual(['a', 'b']);
     });
 
     it('throws during ensureEvaluationOrder if pre-existing evaluationOrder has circular dependencies', () => {

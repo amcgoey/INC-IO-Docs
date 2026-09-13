@@ -40,7 +40,8 @@ export function createDocumentFeatureWiring(
 
   const documentUiSchemaQuery = new DocumentUiSchemaQueryAdapter(
     options.manifestProvider,
-    ensureEvaluationOrder
+    ensureEvaluationOrder,
+    documentSchemaRegistry
   );
 
   const documentUiBlock = new DocumentUiBlockAdapter(

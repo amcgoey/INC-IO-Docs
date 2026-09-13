@@ -326,7 +326,7 @@ export function ensureEvaluationOrder<
     const computedOrder = computeEvaluationOrder(schemaOrKeys, container);
     return {
       ...container,
-      evaluationOrder: container.evaluationOrder ?? computedOrder,
+      evaluationOrder: computedOrder,
     };
   }
   return container as T & { evaluationOrder?: string[] };

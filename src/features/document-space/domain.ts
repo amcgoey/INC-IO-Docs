@@ -14,6 +14,7 @@ export const DocumentSpaceTypeSchema = Type.Object({
   displayName: Type.String({ minLength: 1 }),
   allowedDocumentTypes: Type.Array(Type.String()),
   storageConfig: StorageContextConfigSchema,
+  spaceUiSchema: Type.Optional(Type.Unknown()),
 });
 
 export type DocumentSpaceType = Static<typeof DocumentSpaceTypeSchema>;

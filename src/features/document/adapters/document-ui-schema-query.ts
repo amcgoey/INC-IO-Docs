@@ -4,6 +4,7 @@ import type {
   DocumentUiSchemaQueryPort,
   EvaluationOrderEnsurer,
   RawManifestProviderPort,
+  SchemaQueryPort,
 } from '../ports';
 import { DocumentUiSchemaType } from '../ports';
 
@@ -20,10 +21,16 @@ interface RawDocumentTypeRecord {
 export class DocumentUiSchemaQueryAdapter implements DocumentUiSchemaQueryPort {
   constructor(
     private readonly manifestProvider: RawManifestProviderPort,
-    private readonly evaluationOrderEnsurer?: EvaluationOrderEnsurer
+    private readonly evaluationOrderEnsurer?: EvaluationOrderEnsurer,
+    private readonly schemaQuery?: SchemaQueryPort
   ) {}
 
   async getDocumentUiSchema(documentTypeKey: string): Promise<DocumentUiSchema | undefined> {
+    if (this.schemaQuery) {
+      const forms = await this.schemaQuery.getForms();
+      const form = forms.find((f) => f.key === documentTypeKey);
+      return form?.documentUiSchema;
+    }
     const rawManifest = (await this.manifestProvider.getRawManifest()) as ManifestWithDocumentTypes | undefined;
     const documentTypes = rawManifest?.documentTypes ?? [];
 

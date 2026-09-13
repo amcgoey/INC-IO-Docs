@@ -108,8 +108,11 @@ describe('DocumentSpaceManifestRegistryAdapter', () => {
 
     expect(spaceTypes).toHaveLength(1);
     expect(
-      (rawSpace.spaceUiSchema as { evaluationOrder?: string[] }).evaluationOrder
+      (spaceTypes[0].spaceUiSchema as { evaluationOrder?: string[] })?.evaluationOrder
     ).toEqual(['base', 'derived']);
+    expect(
+      (rawSpace.spaceUiSchema as { evaluationOrder?: string[] }).evaluationOrder
+    ).toBeUndefined();
   });
 
   it('throws error when spaceUiSchema contains circular dependencies', async () => {

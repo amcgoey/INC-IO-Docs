@@ -1,4 +1,5 @@
 import type {
+  DocumentSpaceManifestRegistryPort,
   DocumentSpaceUiSchemaQueryPort,
   EvaluationOrderEnsurer,
   RawManifestProviderPort,
@@ -13,10 +14,18 @@ interface ManifestWithDocumentSpaceTypes {
 export class DocumentSpaceUiSchemaQueryAdapter implements DocumentSpaceUiSchemaQueryPort {
   constructor(
     private readonly manifestProvider: RawManifestProviderPort,
-    private readonly evaluationOrderEnsurer?: EvaluationOrderEnsurer
+    private readonly evaluationOrderEnsurer?: EvaluationOrderEnsurer,
+    private readonly spaceManifestRegistry?: DocumentSpaceManifestRegistryPort
   ) {}
 
   async getSpaceUiSchema(spaceTypeKey: string): Promise<SpaceUiSchema | undefined> {
+    if (this.spaceManifestRegistry) {
+      const spaceTypes = await this.spaceManifestRegistry.getDocumentSpaceTypes();
+      const space = spaceTypes.find(
+        (s) => s.id === spaceTypeKey || (s as unknown as { key?: string }).key === spaceTypeKey
+      );
+      return space?.spaceUiSchema as SpaceUiSchema | undefined;
+    }
     const rawManifest = (await this.manifestProvider.getRawManifest()) as ManifestWithDocumentSpaceTypes | undefined;
     const spaceTypes = rawManifest?.DocumentSpaceTypes ?? [];
 
