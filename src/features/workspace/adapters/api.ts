@@ -1,10 +1,11 @@
 import type {
   AuthVerifierPort,
+  DocumentSelectionState,
   WorkspaceConfigProviderPort,
   WorkspaceDocumentRunnerPort,
   WorkspaceSchemaQueryPort,
+  WorkspaceUiBuilderPort,
 } from '../ports';
-import type { DocumentSelectionState, WorkspaceUiBuilderPort } from './ui-builder';
 import {
   extractWorkspaceExecutionContext,
   type WorkspaceExecutionContext,

@@ -2,8 +2,11 @@ import { registerWorkspaceFeatureRoutes } from '../features/workspace/adapters/a
 import { GoogleJwtVerifier } from '../infrastructure/workspace-addon/jwt-verifier';
 import * as uiBlocks from '../infrastructure/workspace-addon/ui-blocks';
 import type { HttpServer } from '../infrastructure/http';
-import type { AuthVerifierPort, WorkspaceConfigProviderPort } from '../features/workspace/ports';
-import type { WorkspaceUiBuilderPort } from '../features/workspace/adapters/ui-builder';
+import type {
+  AuthVerifierPort,
+  WorkspaceConfigProviderPort,
+  WorkspaceUiBuilderPort,
+} from '../features/workspace/ports';
 
 export type { WorkspaceUiBuilderPort };
 import type { DocumentService } from '../features/document/domain';

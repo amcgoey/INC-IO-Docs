@@ -1,10 +1,10 @@
 import type { WorkspaceDriveSelectedItem } from '../domain';
-import type { WorkspaceConfiguration } from '../ports';
 import type {
   DocumentSelectionState,
   UiActionResponse,
+  WorkspaceConfiguration,
   WorkspaceUiBuilderPort,
-} from './ui-builder';
+} from '../ports';
 
 export interface DriveDocumentProcessCardOptions {
   selectionContext?: DocumentSelectionState;

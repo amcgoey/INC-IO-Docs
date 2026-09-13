@@ -6,8 +6,8 @@ import type {
   WorkspaceConfigProviderPort,
   WorkspaceDocumentRunnerPort,
   WorkspaceSchemaQueryPort,
+  WorkspaceUiBuilderPort,
 } from '../ports';
-import type { WorkspaceUiBuilderPort } from './ui-builder';
 
 describe('Workspace Feature Routes', () => {
   let server: HttpServer;

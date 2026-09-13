@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { buildDriveDocumentProcessCard } from './drive-document-process-card';
-import type { WorkspaceUiBuilderPort } from './ui-builder';
+import type { WorkspaceUiBuilderPort } from '../ports';
 
 describe('buildDriveDocumentProcessCard', () => {
   it('builds card using injected uiBuilder with fallback title and no status message when options omitted', () => {

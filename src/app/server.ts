@@ -26,20 +26,20 @@ import type {
 import type {
   AuthVerifierPort,
   WorkspaceConfigProviderPort,
+  WorkspaceUiBuilderPort,
 } from '../features/workspace/ports';
-import type { WorkspaceUiBuilderPort } from './workspace.wiring';
 import type { DocumentUiBlockAdapter } from './document.wiring';
 
 export type { WorkspaceUiBuilderPort, DocumentUiBlockAdapter };
 
-export type AppManifestProviderUnion =
+export type CompositeManifestProvider =
   AppConfigurationProviderPort &
   WorkspaceConfigProviderPort &
   RawManifestProviderPort &
   SpaceRawManifestProviderPort;
 
 export interface AppOptions {
-  manifestProvider?: AppManifestProviderUnion | undefined;
+  manifestProvider?: CompositeManifestProvider | undefined;
   manifestPath?: string | undefined;
   documentSchemaRegistry?: (DocumentSchemaRegistryPort & SchemaQueryPort) | undefined;
   activityEngine?: ActivityDispatcherPort | undefined;
@@ -103,10 +103,18 @@ export function createApp(options?: AppOptions): AppInstance {
 
   const driveClient = new GoogleDriveClient({ configProvider: manifestProvider });
 
+  const defaultAppConfigProvider: AppConfigurationProviderPort = {
+    getDriveConfig: async () => undefined,
+  };
+
+  const defaultSpaceRawManifestProvider: SpaceRawManifestProviderPort = {
+    getRawManifest: async () => ({}),
+  };
+
   const documentService = wireDocumentServicesAndRoutes({
     server,
     driveClient,
-    configProvider: (manifestProvider ?? { getAppConfig: async () => ({}) }) as AppConfigurationProviderPort,
+    configProvider: manifestProvider ?? defaultAppConfigProvider,
     documentSchemaRegistry,
     templateEvaluator,
     driveService: options?.driveService,
@@ -114,7 +122,7 @@ export function createApp(options?: AppOptions): AppInstance {
   });
 
   const documentSpaceWiring = createDocumentSpaceFeatureWiring({
-    rawManifestProvider: (manifestProvider ?? { getRawManifest: async () => ({}) }) as SpaceRawManifestProviderPort,
+    rawManifestProvider: manifestProvider ?? defaultSpaceRawManifestProvider,
     driveClient,
   });
   const documentSpaceService =
