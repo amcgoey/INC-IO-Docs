@@ -1,4 +1,5 @@
 import { Type, type Static } from '@sinclair/typebox';
+import { Value } from '@sinclair/typebox/value';
 
 export const ComputationFieldSchema = Type.Object(
   {
@@ -38,8 +39,10 @@ export const ContainerWithLayoutSchema = Type.Object(
 );
 export type ContainerWithLayoutLike = Static<typeof ContainerWithLayoutSchema>;
 
+export const StringArraySchema = Type.Array(Type.String());
+
 export const SchemaOrKeysSchema = Type.Union([
-  Type.Array(Type.String()),
+  StringArraySchema,
   ContainerWithFieldsSchema,
   Type.Record(Type.String(), Type.Unknown()),
 ]);
@@ -51,7 +54,7 @@ export type SchemaOrKeys =
 /**
  * Recursively inspects a JSONLogic AST to extract all referenced field names
  * from `var` operators pointing to the `data` namespace
- * (e.g. `data.firstName` -> `firstName`).
+ * (e.g. `data.firstName` -> `firstName`, or `data` / `""` -> `*` representing entire root data context).
  */
 export function extractJsonLogicDependencies(rule: unknown): string[] {
   const dependencies = new Set<string>();
@@ -86,7 +89,10 @@ export function extractJsonLogicDependencies(rule: unknown): string[] {
         walk(varVal);
       }
 
-      if (varPath && varPath.startsWith(prefix)) {
+      if (varPath === 'data' || varPath === '') {
+        // Direct root data context access: depends on all fields
+        dependencies.add('*');
+      } else if (varPath && varPath.startsWith(prefix)) {
         const fieldName = varPath.slice(prefix.length).split('.')[0];
         if (fieldName) {
           dependencies.add(fieldName);
@@ -169,14 +175,30 @@ function findCycleNodes(nodes: string[], adjacency: Map<string, string[]>): stri
   return Array.from(cycleNodes);
 }
 
-/**
- * Computes an execution order for field evaluation using Kahn's algorithm (topological sort).
- * Validates that no circular dependencies exist among computeValue expressions.
- */
-export function computeEvaluationOrder(
+interface GraphSortResult {
+  evaluationOrder: string[];
+  adjacency: Map<string, string[]>;
+  allFieldKeys: string[];
+}
+
+function buildAndSortGraph(
   schemaOrKeys?: SchemaOrKeys,
   uiSchema?: { layout?: string[]; fields?: Record<string, unknown>; evaluationOrder?: string[] }
-): string[] {
+): GraphSortResult {
+  if (schemaOrKeys !== undefined && !Value.Check(SchemaOrKeysSchema, schemaOrKeys)) {
+    const errors = [...Value.Errors(SchemaOrKeysSchema, schemaOrKeys)]
+      .map((e) => `${e.path}: ${e.message}`)
+      .join(', ');
+    throw new Error(`Invalid schemaOrKeys: ${errors}`);
+  }
+
+  if (uiSchema !== undefined && !Value.Check(ContainerWithLayoutSchema, uiSchema)) {
+    const errors = [...Value.Errors(ContainerWithLayoutSchema, uiSchema)]
+      .map((e) => `${e.path}: ${e.message}`)
+      .join(', ');
+    throw new Error(`Invalid uiSchema: ${errors}`);
+  }
+
   const allFieldKeys: string[] = [];
   const seenKeys = new Set<string>();
 
@@ -187,22 +209,23 @@ export function computeEvaluationOrder(
     }
   }
 
-  if (Array.isArray(schemaOrKeys)) {
-    for (const k of schemaOrKeys) {
-      if (typeof k === 'string') {
+  if (schemaOrKeys !== undefined) {
+    if (Value.Check(StringArraySchema, schemaOrKeys)) {
+      for (const k of schemaOrKeys) {
         addKey(k);
       }
-    }
-  } else if (schemaOrKeys && typeof schemaOrKeys === 'object' && 'fields' in schemaOrKeys) {
-    const rawFields = (schemaOrKeys as { fields?: unknown }).fields;
-    if (Array.isArray(rawFields)) {
-      for (const field of rawFields) {
-        if (field && typeof field === 'object' && 'key' in field && typeof field.key === 'string') {
+    } else if (Value.Check(ContainerWithFieldsSchema, schemaOrKeys) && schemaOrKeys.fields) {
+      if (Array.isArray(schemaOrKeys.fields)) {
+        for (const field of schemaOrKeys.fields) {
           addKey(field.key);
         }
+      } else {
+        for (const k of Object.keys(schemaOrKeys.fields)) {
+          addKey(k);
+        }
       }
-    } else if (rawFields && typeof rawFields === 'object') {
-      for (const k of Object.keys(rawFields)) {
+    } else if (typeof schemaOrKeys === 'object' && schemaOrKeys !== null) {
+      for (const k of Object.keys(schemaOrKeys)) {
         addKey(k);
       }
     }
@@ -221,7 +244,11 @@ export function computeEvaluationOrder(
   }
 
   if (allFieldKeys.length === 0) {
-    return [];
+    return {
+      evaluationOrder: [],
+      adjacency: new Map(),
+      allFieldKeys: [],
+    };
   }
 
   // Build dependency graph and in-degrees
@@ -240,7 +267,10 @@ export function computeEvaluationOrder(
   for (const key of allFieldKeys) {
     const candidateField =
       uiSchema?.fields?.[key] ??
-      (schemaOrKeys && typeof schemaOrKeys === 'object' && 'fields' in schemaOrKeys && !Array.isArray((schemaOrKeys as { fields?: unknown }).fields)
+      (schemaOrKeys &&
+      typeof schemaOrKeys === 'object' &&
+      'fields' in schemaOrKeys &&
+      !Array.isArray((schemaOrKeys as { fields?: unknown }).fields)
         ? (schemaOrKeys as { fields?: Record<string, unknown> }).fields?.[key]
         : undefined);
     const uiField =
@@ -253,16 +283,31 @@ export function computeEvaluationOrder(
       const rawDeps = extractJsonLogicDependencies(uiField.computeValue);
       const uniqueDeps = Array.from(new Set(rawDeps));
 
-      for (const dep of uniqueDeps) {
+      const dependsOnAll = uniqueDeps.includes('*');
+      const directDeps = uniqueDeps.filter((d) => d !== '*');
+      const targetDeps = new Set<string>();
+
+      if (dependsOnAll) {
+        for (const otherKey of allFieldKeys) {
+          if (otherKey !== key) {
+            targetDeps.add(otherKey);
+          }
+        }
+      }
+
+      for (const dep of directDeps) {
         if (dep === key) {
           throw new Error(`Circular dependency detected in computeValue rules: ${key}`);
         }
-
         if (inDegrees.has(dep)) {
-          adjacency.get(dep)!.push(key);
-          reverseAdjacency.get(key)!.push(dep);
-          inDegrees.set(key, (inDegrees.get(key) ?? 0) + 1);
+          targetDeps.add(dep);
         }
+      }
+
+      for (const dep of targetDeps) {
+        adjacency.get(dep)!.push(key);
+        reverseAdjacency.get(key)!.push(dep);
+        inDegrees.set(key, (inDegrees.get(key) ?? 0) + 1);
       }
     }
   }
@@ -296,8 +341,7 @@ export function computeEvaluationOrder(
 
   if (evaluationOrder.length !== allFieldKeys.length) {
     const unresolvedNodes = allFieldKeys.filter((k) => (inDegrees.get(k) ?? 0) > 0);
-    // Use Tarjan's SCC on reverseAdjacency (or adjacency) to find true cycle participants
-    // Note: dependency is dep -> key in adjacency, so dep in reverseAdjacency of key means key depends on dep.
+    // Use Tarjan's SCC on reverseAdjacency to find true cycle participants
     const trueCycleNodes = findCycleNodes(unresolvedNodes, reverseAdjacency);
     const reportedNodes = trueCycleNodes.length > 0 ? trueCycleNodes : unresolvedNodes;
     throw new Error(
@@ -305,12 +349,69 @@ export function computeEvaluationOrder(
     );
   }
 
-  return evaluationOrder;
+  return {
+    evaluationOrder,
+    adjacency,
+    allFieldKeys,
+  };
 }
 
 /**
- * Ensures evaluationOrder is computed and attached to a container if fields exist.
- * Validates DAG topology even if evaluationOrder is already present.
+ * Validates an explicit evaluationOrder against schema fields and DAG dependencies.
+ * Throws an error if any field is missing, duplicated, or if a dependency is violated.
+ */
+function validateExplicitEvaluationOrder(
+  explicitOrder: string[],
+  allFieldKeys: string[],
+  adjacency: Map<string, string[]>
+): void {
+  const allKeysSet = new Set(allFieldKeys);
+  const explicitSet = new Set(explicitOrder);
+
+  for (const key of explicitOrder) {
+    if (!allKeysSet.has(key)) {
+      throw new Error(`Invalid evaluationOrder: unknown field "${key}" not found in schema`);
+    }
+  }
+  for (const key of allFieldKeys) {
+    if (!explicitSet.has(key)) {
+      throw new Error(`Invalid evaluationOrder: missing field "${key}" in evaluationOrder`);
+    }
+  }
+  if (explicitOrder.length !== allFieldKeys.length) {
+    throw new Error(`Invalid evaluationOrder: contains duplicate fields`);
+  }
+
+  const positionMap = new Map<string, number>();
+  explicitOrder.forEach((key, index) => positionMap.set(key, index));
+
+  for (const [dep, dependents] of adjacency.entries()) {
+    const depPos = positionMap.get(dep)!;
+    for (const dependent of dependents) {
+      const dependentPos = positionMap.get(dependent)!;
+      if (depPos >= dependentPos) {
+        throw new Error(
+          `Invalid evaluationOrder: field "${dependent}" depends on "${dep}", but "${dep}" is evaluated after "${dependent}"`
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Computes an execution order for field evaluation using Kahn's algorithm (topological sort).
+ * Validates that no circular dependencies exist among computeValue expressions.
+ */
+export function computeEvaluationOrder(
+  schemaOrKeys?: SchemaOrKeys,
+  uiSchema?: { layout?: string[]; fields?: Record<string, unknown>; evaluationOrder?: string[] }
+): string[] {
+  return buildAndSortGraph(schemaOrKeys, uiSchema).evaluationOrder;
+}
+
+/**
+ * Ensures evaluationOrder is computed and attached to a container if fields or layout exist.
+ * Validates DAG topology and validates explicit evaluationOrder when present.
  * Returns a shallow copy containing evaluationOrder to avoid mutating input references.
  */
 export function ensureEvaluationOrder<
@@ -322,12 +423,30 @@ export function ensureEvaluationOrder<
   if (!container) {
     return container;
   }
-  if (container.fields) {
-    const computedOrder = computeEvaluationOrder(schemaOrKeys, container);
+
+  const hasFields = Boolean(container.fields && Object.keys(container.fields).length > 0);
+  const hasLayout = Boolean(container.layout && container.layout.length > 0);
+  const hasSchema = Boolean(schemaOrKeys);
+
+  if (hasFields || hasLayout || hasSchema) {
+    const { evaluationOrder: computedOrder, allFieldKeys, adjacency } = buildAndSortGraph(
+      schemaOrKeys,
+      container
+    );
+
+    if (container.evaluationOrder) {
+      validateExplicitEvaluationOrder(container.evaluationOrder, allFieldKeys, adjacency);
+      return {
+        ...container,
+        evaluationOrder: container.evaluationOrder,
+      };
+    }
+
     return {
       ...container,
       evaluationOrder: computedOrder,
     };
   }
+
   return container as T & { evaluationOrder?: string[] };
 }

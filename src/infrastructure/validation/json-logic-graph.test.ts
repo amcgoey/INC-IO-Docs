@@ -49,7 +49,7 @@ describe('JSONLogic Graph & Kahn\'s Algorithm', () => {
         and: [
           { var: 'system.currentUser' },
           { var: 'context.orgId' },
-          { var: 'data' },
+          { var: 'user.name' },
         ],
       };
       const deps = extractJsonLogicDependencies(rule);
@@ -313,7 +313,7 @@ describe('JSONLogic Graph & Kahn\'s Algorithm', () => {
       expect(result?.evaluationOrder).toEqual(['first', 'last', 'full']);
     });
 
-    it('computes safe evaluationOrder and does not allow unsafe override', () => {
+    it('throws during ensureEvaluationOrder if explicit evaluationOrder violates dependency order', () => {
       const uiSchema = {
         fields: {
           b: { computeValue: { var: 'data.a' } },
@@ -322,8 +322,63 @@ describe('JSONLogic Graph & Kahn\'s Algorithm', () => {
         evaluationOrder: ['b', 'a'], // Unsafe/reversed override
       };
 
+      expect(() => ensureEvaluationOrder(uiSchema)).toThrow(
+        /Invalid evaluationOrder: field "b" depends on "a", but "a" is evaluated after "b"/
+      );
+    });
+
+    it('preserves valid explicit evaluationOrder', () => {
+      const uiSchema = {
+        fields: {
+          b: { computeValue: { var: 'data.a' } },
+          a: {},
+        },
+        evaluationOrder: ['a', 'b'],
+      };
+
       const result = ensureEvaluationOrder(uiSchema);
       expect(result?.evaluationOrder).toEqual(['a', 'b']);
+    });
+
+    it('throws if explicit evaluationOrder is missing a field', () => {
+      const uiSchema = {
+        fields: {
+          a: {},
+          b: {},
+        },
+        evaluationOrder: ['a'],
+      };
+
+      expect(() => ensureEvaluationOrder(uiSchema)).toThrow(
+        /Invalid evaluationOrder: missing field "b"/
+      );
+    });
+
+    it('attaches evaluationOrder even when fields is undefined but layout is present', () => {
+      const uiSchema = {
+        layout: ['fieldA', 'fieldB'],
+      };
+
+      const result = ensureEvaluationOrder(uiSchema);
+      expect(result?.evaluationOrder).toEqual(['fieldA', 'fieldB']);
+    });
+
+    it('extracts root data dependency when var is "data" or empty string', () => {
+      expect(extractJsonLogicDependencies({ var: 'data' })).toEqual(['*']);
+      expect(extractJsonLogicDependencies({ var: '' })).toEqual(['*']);
+    });
+
+    it('handles root data dependency by waiting for all other fields', () => {
+      const uiSchema = {
+        fields: {
+          summary: { computeValue: { log: { var: 'data' } } },
+          first: {},
+          last: {},
+        },
+      };
+
+      const order = computeEvaluationOrder(undefined, uiSchema);
+      expect(order).toEqual(['first', 'last', 'summary']);
     });
 
     it('throws during ensureEvaluationOrder if pre-existing evaluationOrder has circular dependencies', () => {
