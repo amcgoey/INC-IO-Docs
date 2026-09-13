@@ -1,6 +1,5 @@
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import {
-  DocumentSchemaType,
   UiEventType,
   UiEventRuleType,
   type Activity,
@@ -128,10 +127,49 @@ export type EvaluationOrderEnsurer = <
   schemaOrKeys?: SchemaOrKeys
 ) => (T & { evaluationOrder?: string[] }) | undefined;
 
+export const FormDocumentFieldOptionType = Type.Object({
+  source: Type.String(),
+  key: Type.String(),
+  name: Type.String(),
+  allowUserInput: Type.Optional(Type.Boolean()),
+}, { additionalProperties: true });
+
+export type FormDocumentFieldOption = Static<typeof FormDocumentFieldOptionType>;
+
+export const FormDocumentFieldType = Type.Object({
+  key: Type.String(),
+  name: Type.String(),
+  type: Type.String(),
+  description: Type.Optional(Type.String()),
+  required: Type.Optional(Type.Boolean()),
+  defaultValue: Type.Optional(Type.String()),
+  format: Type.Optional(Type.String()),
+  options: Type.Optional(FormDocumentFieldOptionType),
+}, { additionalProperties: true });
+
+export type FormDocumentField = Static<typeof FormDocumentFieldType>;
+
+export const FormDocumentCalculatedFieldType = Type.Object({
+  key: Type.String(),
+  template: Type.String(),
+  description: Type.Optional(Type.String()),
+}, { additionalProperties: true });
+
+export type FormDocumentCalculatedField = Static<typeof FormDocumentCalculatedFieldType>;
+
+export const FormDocumentSchemaType = Type.Object({
+  fields: Type.Array(FormDocumentFieldType),
+  calculatedFields: Type.Optional(Type.Array(FormDocumentCalculatedFieldType)),
+  identity: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  options: Type.Optional(Type.Record(Type.String(), Type.Array(Type.Record(Type.String(), Type.Unknown())))),
+}, { additionalProperties: true });
+
+export type FormDocumentSchema = Static<typeof FormDocumentSchemaType>;
+
 export const FormSchemaType = Type.Object({
   key: Type.String(),
   name: Type.String(),
-  documentSchema: DocumentSchemaType,
+  documentSchema: FormDocumentSchemaType,
   documentUiSchema: Type.Optional(DocumentUiSchemaType),
 });
 

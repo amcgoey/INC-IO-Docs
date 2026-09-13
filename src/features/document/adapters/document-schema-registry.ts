@@ -6,13 +6,13 @@ import {
   type DocumentType,
 } from '../domain';
 import {
-  DocumentUiSchemaType as PortDocumentUiSchemaType,
+  DocumentUiSchemaType,
   type DocumentSchemaRegistryPort,
   type RawManifestProviderPort,
   type TemplateEvaluatorPort,
   type SchemaQueryPort,
   type FormSchema,
-  type DocumentUiSchema as PortDocumentUiSchema,
+  type DocumentUiSchema,
   type EvaluationOrderEnsurer,
 } from '../ports';
 
@@ -38,7 +38,7 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
       documentTypes?: string[];
     };
     const documentTypes: DocumentType[] = [];
-    const resolvedUiSchemas: Array<PortDocumentUiSchema | undefined> = [];
+    const resolvedUiSchemas: Array<DocumentUiSchema | undefined> = [];
 
     for (const relPath of rawManifest?.documentTypes ?? []) {
       const rawDocumentType = await this.manifestProvider.readParsedSchema(relPath);
@@ -64,19 +64,23 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
         );
       }
 
-      let resolvedUiSchema: PortDocumentUiSchema | undefined = undefined;
+      let resolvedUiSchema: DocumentUiSchema | undefined = undefined;
       const rawUiSchema = (rawDocumentType as { documentUiSchema?: unknown })?.documentUiSchema;
       if (rawUiSchema) {
-        const cleanedUi = Value.Clean(PortDocumentUiSchemaType, structuredClone(rawUiSchema));
-        if (!Value.Check(PortDocumentUiSchemaType, cleanedUi)) {
-          const errors = [...Value.Errors(PortDocumentUiSchemaType, cleanedUi)]
+        const cleanedUi = Value.Clean(DocumentUiSchemaType, structuredClone(rawUiSchema));
+        if (!Value.Check(DocumentUiSchemaType, cleanedUi)) {
+          const errors = [...Value.Errors(DocumentUiSchemaType, cleanedUi)]
             .map((e) => `${e.path}: ${e.message}`)
             .join(', ');
           throw new Error(
             `Invalid DocumentType UI schema "${validatedDocumentType.key}": ${errors}`
           );
         }
-        resolvedUiSchema = cleanedUi as PortDocumentUiSchema;
+        resolvedUiSchema = cleanedUi as DocumentUiSchema;
+        validatedDocumentType = {
+          ...validatedDocumentType,
+          documentUiSchema: resolvedUiSchema,
+        };
       }
 
       if (resolvedUiSchema?.fields && this.evaluationOrderEnsurer) {
@@ -85,14 +89,12 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
             (this.evaluationOrderEnsurer(
               resolvedUiSchema,
               validatedDocumentType.documentSchema
-            ) as PortDocumentUiSchema) ?? resolvedUiSchema;
+            ) as DocumentUiSchema) ?? resolvedUiSchema;
 
-          if (validatedDocumentType.documentUiSchema || resolvedUiSchema) {
-            validatedDocumentType = {
-              ...validatedDocumentType,
-              documentUiSchema: resolvedUiSchema,
-            };
-          }
+          validatedDocumentType = {
+            ...validatedDocumentType,
+            documentUiSchema: resolvedUiSchema,
+          };
         } catch (error) {
           throw new Error(
             `Invalid DocumentType UI schema "${validatedDocumentType.key}": ${(error as Error).message}`,
@@ -111,7 +113,7 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
         name: dt.name,
         documentSchema: dt.documentSchema,
       };
-      const ui = resolvedUiSchemas[idx] ?? (dt.documentUiSchema as PortDocumentUiSchema | undefined);
+      const ui = resolvedUiSchemas[idx] ?? (dt.documentUiSchema as DocumentUiSchema | undefined);
       if (ui !== undefined) {
         formSchema.documentUiSchema = ui;
       }

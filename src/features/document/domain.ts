@@ -162,15 +162,6 @@ export const UiEventType = Type.Object({
 
 export type UiEvent = Static<typeof UiEventType>;
 
-export const DocumentUiSchemaType = Type.Object(
-  {
-    events: Type.Optional(Type.Record(Type.String(), UiEventType)),
-  },
-  { additionalProperties: true }
-);
-
-export type DocumentUiSchema = Static<typeof DocumentUiSchemaType>;
-
 export const WorkflowType = Type.Object({
   name: Type.String(),
   activitySequence: Type.Optional(Type.Array(ActivityType)),
@@ -188,11 +179,20 @@ export const StorageContextConfigType = Type.Record(Type.String(), Type.Unknown(
 
 export type StorageContextConfig = Static<typeof StorageContextConfigType>;
 
+export const DocumentUiEventsSchema = Type.Object(
+  {
+    events: Type.Optional(Type.Record(Type.String(), UiEventType)),
+  },
+  { additionalProperties: true }
+);
+
+export type DocumentUiEvents = Static<typeof DocumentUiEventsSchema>;
+
 export const DocumentTypeSchema = Type.Object({
   key: Type.String(),
   name: Type.String(),
   documentSchema: DocumentSchemaType,
-  documentUiSchema: Type.Optional(DocumentUiSchemaType),
+  documentUiSchema: Type.Optional(DocumentUiEventsSchema),
   documentWorkflowConfig: Type.Optional(DocumentWorkflowConfigType),
   storageContextConfig: Type.Optional(StorageContextConfigType),
 });
