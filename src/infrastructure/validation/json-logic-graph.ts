@@ -17,10 +17,15 @@ export interface ContainerWithLayoutLike {
 
 /**
  * Recursively inspects a JSONLogic AST to extract all referenced field names
- * from `var` operators pointing to the `data` namespace (e.g., `data.firstName` -> `firstName`).
+ * from `var` operators pointing to the specified namespace (defaulting to `data`,
+ * e.g. `data.firstName` -> `firstName`).
  */
-export function extractJsonLogicDependencies(rule: unknown): string[] {
+export function extractJsonLogicDependencies(
+  rule: unknown,
+  namespace: string = 'data'
+): string[] {
   const dependencies = new Set<string>();
+  const prefix = `${namespace}.`;
 
   function walk(node: unknown): void {
     if (!node || typeof node !== 'object') {
@@ -51,8 +56,8 @@ export function extractJsonLogicDependencies(rule: unknown): string[] {
         walk(varVal);
       }
 
-      if (varPath && varPath.startsWith('data.')) {
-        const fieldName = varPath.slice(5).split('.')[0];
+      if (varPath && varPath.startsWith(prefix)) {
+        const fieldName = varPath.slice(prefix.length).split('.')[0];
         if (fieldName) {
           dependencies.add(fieldName);
         }
@@ -80,7 +85,8 @@ export function extractJsonLogicDependencies(rule: unknown): string[] {
  */
 export function computeEvaluationOrder(
   schemaOrKeys?: string[] | ContainerWithFieldsLike,
-  uiSchema?: ContainerWithLayoutLike
+  uiSchema?: ContainerWithLayoutLike,
+  namespace: string = 'data'
 ): string[] {
   const fieldKeySet = new Set<string>();
   const allFieldKeys: string[] = [];
@@ -144,12 +150,12 @@ export function computeEvaluationOrder(
       (!Array.isArray(schemaOrKeys) &&
       schemaOrKeys?.fields &&
       !Array.isArray(schemaOrKeys.fields)
-        ? (schemaOrKeys.fields as Record<string, ComputationFieldLike>)[key]
+        ? schemaOrKeys.fields[key]
         : undefined);
 
     if (uiField?.computeValue !== undefined) {
       hasComputeValueMap.set(key, true);
-      const rawDeps = extractJsonLogicDependencies(uiField.computeValue);
+      const rawDeps = extractJsonLogicDependencies(uiField.computeValue, namespace);
       const uniqueDeps = Array.from(new Set(rawDeps));
 
       for (const dep of uniqueDeps) {
@@ -200,4 +206,21 @@ export function computeEvaluationOrder(
   }
 
   return evaluationOrder;
+}
+
+/**
+ * Ensures evaluationOrder is computed and attached to a container if fields exist and evaluationOrder is missing.
+ */
+export function ensureEvaluationOrder<T extends ContainerWithLayoutLike>(
+  container?: T,
+  schemaOrKeys?: string[] | ContainerWithFieldsLike,
+  namespace: string = 'data'
+): (T & { evaluationOrder?: string[] }) | undefined {
+  if (!container) {
+    return container;
+  }
+  if (container.fields && !container.evaluationOrder) {
+    container.evaluationOrder = computeEvaluationOrder(schemaOrKeys, container, namespace);
+  }
+  return container as T & { evaluationOrder?: string[] };
 }

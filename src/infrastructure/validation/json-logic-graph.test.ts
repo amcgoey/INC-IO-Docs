@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   extractJsonLogicDependencies,
   computeEvaluationOrder,
+  ensureEvaluationOrder,
 } from './json-logic-graph';
 
 describe('JSONLogic Graph & Kahn\'s Algorithm', () => {
@@ -271,5 +272,58 @@ describe('JSONLogic Graph & Kahn\'s Algorithm', () => {
       expect(computeEvaluationOrder(undefined, undefined)).toEqual([]);
       expect(computeEvaluationOrder({ fields: [] }, { fields: {} })).toEqual([]);
     });
+
+    it('supports custom namespace parameter', () => {
+      const docSchema = {
+        fields: [{ key: 'a' }, { key: 'b' }],
+      };
+      const uiSchema = {
+        fields: {
+          b: {
+            computeValue: { var: 'custom.a' },
+          },
+        },
+      };
+
+      const defaultOrder = computeEvaluationOrder(docSchema, uiSchema);
+      // with default 'data' namespace, 'custom.a' is ignored
+      expect(defaultOrder).toEqual(['a', 'b']);
+
+      const customOrder = computeEvaluationOrder(docSchema, uiSchema, 'custom');
+      expect(customOrder.indexOf('a')).toBeLessThan(customOrder.indexOf('b'));
+    });
+  });
+
+  describe('ensureEvaluationOrder', () => {
+    it('attaches evaluationOrder only when missing and fields exist', () => {
+      const uiSchema = {
+        fields: {
+          first: {},
+          last: {},
+          full: {
+            computeValue: { cat: [{ var: 'data.first' }, ' ', { var: 'data.last' }] },
+          },
+        },
+      };
+
+      const result = ensureEvaluationOrder(uiSchema);
+      expect(result?.evaluationOrder).toEqual(['first', 'last', 'full']);
+    });
+
+    it('does not recompute if evaluationOrder is already present', () => {
+      const existing = ['custom', 'order'];
+      const uiSchema = {
+        fields: { a: {}, b: {} },
+        evaluationOrder: existing,
+      };
+
+      const result = ensureEvaluationOrder(uiSchema);
+      expect(result?.evaluationOrder).toBe(existing);
+    });
+
+    it('handles undefined input gracefully', () => {
+      expect(ensureEvaluationOrder(undefined)).toBeUndefined();
+    });
   });
 });
+

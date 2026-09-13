@@ -77,4 +77,59 @@ describe('DocumentSpaceManifestRegistryAdapter', () => {
       /Invalid DocumentSpaceType schema/i
     );
   });
+
+  it('hydrates evaluationOrder on spaceUiSchema when fields with computeValue are present', async () => {
+    const rawSpace = {
+      id: 'computed-space',
+      displayName: 'Computed Space',
+      allowedDocumentTypes: ['sample-doc'],
+      storageConfig: { provider: 'google_drive' },
+      spaceUiSchema: {
+        layout: ['base', 'derived'],
+        fields: {
+          base: { label: 'Base' },
+          derived: {
+            label: 'Derived',
+            computeValue: { cat: [{ var: 'data.base' }, ' extra'] },
+          },
+        },
+      },
+    };
+    const mockProvider = createMockManifestProvider({
+      DocumentSpaceTypes: [rawSpace],
+    });
+
+    const adapter = new DocumentSpaceManifestRegistryAdapter(mockProvider);
+    const spaceTypes = await adapter.getDocumentSpaceTypes();
+
+    expect(spaceTypes).toHaveLength(1);
+    expect(
+      (rawSpace.spaceUiSchema as { evaluationOrder?: string[] }).evaluationOrder
+    ).toEqual(['base', 'derived']);
+  });
+
+  it('throws error when spaceUiSchema contains circular dependencies', async () => {
+    const mockProvider = createMockManifestProvider({
+      DocumentSpaceTypes: [
+        {
+          id: 'cyclic-space',
+          displayName: 'Cyclic Space',
+          allowedDocumentTypes: ['sample-doc'],
+          storageConfig: { provider: 'google_drive' },
+          spaceUiSchema: {
+            fields: {
+              f1: { computeValue: { var: 'data.f2' } },
+              f2: { computeValue: { var: 'data.f1' } },
+            },
+          },
+        },
+      ],
+    });
+
+    const adapter = new DocumentSpaceManifestRegistryAdapter(mockProvider);
+    await expect(adapter.getDocumentSpaceTypes()).rejects.toThrow(
+      /Invalid DocumentSpaceType UI schema "cyclic-space": Circular dependency detected/
+    );
+  });
 });
+

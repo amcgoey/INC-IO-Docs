@@ -14,7 +14,7 @@ import {
   type FormSchema,
   type DocumentUiSchema as PortDocumentUiSchema,
 } from '../ports';
-import { computeEvaluationOrder } from '../../../infrastructure/validation/json-logic-graph';
+import { ensureEvaluationOrder } from '../../../infrastructure/validation/json-logic-graph';
 
 const RawDocumentKeySchema = Type.Object({
   key: Type.Optional(Type.String()),
@@ -74,14 +74,10 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
 
       if (resolvedUiSchema?.fields) {
         try {
-          const evaluationOrder = computeEvaluationOrder(
-            validatedDocumentType.documentSchema,
-            resolvedUiSchema
-          );
-          resolvedUiSchema.evaluationOrder = evaluationOrder;
+          ensureEvaluationOrder(resolvedUiSchema, validatedDocumentType.documentSchema);
           if (validatedDocumentType.documentUiSchema) {
             (validatedDocumentType.documentUiSchema as Record<string, unknown>).evaluationOrder =
-              evaluationOrder;
+              resolvedUiSchema.evaluationOrder;
           }
         } catch (error) {
           throw new Error(
