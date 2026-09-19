@@ -65,9 +65,12 @@ Domain and administrative defaults that govern application behavior, distinct fr
 The primary user interface, acting as a driving adapter to the core engine.
 
 **UiBlock**:
-A pure presenter function living within a feature adapter that constructs declarative `UiCard` schemas, co-locating domain logic and UI layout without infrastructural dependencies.
+A pure presenter function inside `schema-driven-ui`. Maps data and UI schemas into modular, abstract UI elements.
 _Avoid_: Component, Widget (when referring to the composite), Module, Renderer
 
-**UiCard**:
-A declarative, abstract view model schema representing the UI layout and interactions. It is returned by feature presenters (`UiBlocks`) and translated into platform-specific configurations (e.g., Google Workspace JSON) by a dumb renderer.
-_Avoid_: GoogleCard, JsonResponse
+**UiView**:
+A compiled, declarative view model emitted by `schema-driven-ui`. Flattens `UiBlock` outputs into a generic payload consumed by dumb infrastructure renderers.
+_Avoid_: GoogleCard, UiCard, JsonResponse
+
+**UiViewSchema**:
+A declarative layout orchestrating which `UiBlock`s compose a `UiView`. Hard-coded within infrastructure-specific driving adapters inside `schema-driven-ui`.
