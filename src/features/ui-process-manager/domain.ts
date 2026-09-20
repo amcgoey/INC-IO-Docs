@@ -52,6 +52,22 @@ export interface ProcessUiStateOutput {
   validationErrors?: string[] | undefined;
 }
 
+function filterFormData(
+  formData: Record<string, unknown> | undefined,
+  predicate: (key: string) => boolean
+): Record<string, unknown> {
+  if (!formData) {
+    return {};
+  }
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(formData)) {
+    if (predicate(key)) {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 /**
  * Strips all keys from formData that do not belong to the selection state
  * (keys not starting with 'SelectDocument').
@@ -59,16 +75,7 @@ export interface ProcessUiStateOutput {
 export function retainSelectionState(
   formData?: Record<string, unknown>
 ): Record<string, unknown> {
-  if (!formData) {
-    return {};
-  }
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(formData)) {
-    if (key.startsWith('SelectDocument')) {
-      result[key] = value;
-    }
-  }
-  return result;
+  return filterFormData(formData, (key) => key.startsWith('SelectDocument'));
 }
 
 /**
@@ -78,16 +85,7 @@ export function retainSelectionState(
 export function extractDocumentData(
   formData?: Record<string, unknown>
 ): Record<string, unknown> {
-  if (!formData) {
-    return {};
-  }
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(formData)) {
-    if (!key.startsWith('SelectDocument')) {
-      result[key] = value;
-    }
-  }
-  return result;
+  return filterFormData(formData, (key) => !key.startsWith('SelectDocument'));
 }
 
 /**

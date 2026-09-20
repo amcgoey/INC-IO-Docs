@@ -10,10 +10,10 @@ import {
   type UiProcessCardRequest,
   type UiProcessDocumentRunnerPort,
   type UiProcessFormEvaluatorPort,
+  type RawManifestProviderPort,
 } from '../features/ui-process-manager';
 import {
   createSchemaDrivenUiWiring,
-  type RawManifestProviderPort,
 } from './schema-driven-ui.wiring';
 import type { SchemaDrivenUiService } from '../features/schema-driven-ui/domain';
 import {

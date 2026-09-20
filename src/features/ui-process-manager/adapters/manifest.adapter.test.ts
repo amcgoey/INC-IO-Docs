@@ -34,6 +34,7 @@ describe('ManifestAdapter', () => {
           'invoice-key': { name: 'Invoice', displayName: 'Client Invoice' },
         },
       }),
+      readParsedSchema: vi.fn(),
     };
 
     const adapter = new ManifestAdapter(mockProvider);
@@ -47,7 +48,10 @@ describe('ManifestAdapter', () => {
         'doc-1': { name: 'Doc 1' },
       },
     });
-    const mockProvider: RawManifestProviderPort = { getRawManifest };
+    const mockProvider: RawManifestProviderPort = {
+      getRawManifest,
+      readParsedSchema: vi.fn(),
+    };
 
     const adapter = new ManifestAdapter(mockProvider);
     await adapter.getAllDocumentTypes();

@@ -68,7 +68,7 @@ export interface UiProcessSpaceProviderPort {
 
 export interface RawManifestProviderPort {
   getRawManifest(): Promise<unknown>;
-  readParsedSchema?(relPath: string): Promise<unknown>;
+  readParsedSchema(relPath: string): Promise<unknown>;
 }
 
 export interface UiProcessManifestPort {
@@ -85,7 +85,6 @@ export interface UiProcessDocumentExecutionResult {
   success: boolean;
   errors?: string[] | undefined;
   error?: string | undefined;
-  outputs?: unknown[] | undefined;
 }
 
 export interface UiProcessDocumentRunnerPort {

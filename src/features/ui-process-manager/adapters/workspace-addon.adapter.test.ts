@@ -200,7 +200,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       const mockDocumentRunner = {
         processDocument: vi.fn().mockResolvedValue({
           success: true,
-          outputs: [{ status: 'success' }],
         }),
       };
 
