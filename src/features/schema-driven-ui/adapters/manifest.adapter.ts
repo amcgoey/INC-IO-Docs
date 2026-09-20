@@ -14,6 +14,12 @@ export type EvaluationOrderEnsurer = (
   documentSchema?: AbstractDataSchema
 ) => UiSchema;
 
+export type RawDocumentTypeSchema = {
+  key?: string;
+  documentSchema?: unknown;
+  documentUiSchema?: unknown;
+};
+
 export class ManifestUiAdapter implements UiManifestPort {
   constructor(
     private readonly manifestProvider: RawManifestProviderPort,
@@ -33,7 +39,7 @@ export class ManifestUiAdapter implements UiManifestPort {
 
   private async findRawDoc(
     documentTypeKey: string
-  ): Promise<{ key?: string; documentSchema?: unknown; documentUiSchema?: unknown } | undefined> {
+  ): Promise<RawDocumentTypeSchema | undefined> {
     const rawManifest = (await this.manifestProvider.getRawManifest()) as
       | { documentTypes?: string[] }
       | undefined;
@@ -41,7 +47,7 @@ export class ManifestUiAdapter implements UiManifestPort {
 
     for (const relPath of documentTypes) {
       const rawDoc = (await this.manifestProvider.readParsedSchema(relPath)) as
-        | { key?: string; documentSchema?: unknown; documentUiSchema?: unknown }
+        | RawDocumentTypeSchema
         | undefined;
       if (rawDoc?.key === documentTypeKey) {
         return rawDoc;

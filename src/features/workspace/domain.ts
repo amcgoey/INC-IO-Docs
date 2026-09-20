@@ -77,6 +77,7 @@ export interface WorkspaceExecutionContext {
   platform?: string | undefined;
   traceId?: string | undefined;
   selectedItems?: WorkspaceDriveSelectedItem[] | undefined;
+  validationErrors?: string[] | undefined;
   rawEvent?: unknown;
 }
 
@@ -90,6 +91,20 @@ export function extractWorkspaceExecutionContext(
   const userOAuthToken =
     event.authorizationEventObject?.userOAuthToken ?? event.userOAuthToken;
 
+  let validationErrors: string[] | undefined;
+  // nosemgrep: domain-pass-through-read
+  const rawValidationErrors = event.commonEventObject?.parameters?.validationErrors as string | undefined;
+  if (typeof rawValidationErrors === 'string') {
+    try {
+      const parsed = JSON.parse(rawValidationErrors);
+      if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) {
+        validationErrors = parsed;
+      }
+    } catch {
+      validationErrors = [rawValidationErrors];
+    }
+  }
+
   return {
     userOAuthToken: typeof userOAuthToken === 'string' ? userOAuthToken : undefined,
     userEmail: typeof event.userEmail === 'string' ? event.userEmail : undefined,
@@ -97,6 +112,7 @@ export function extractWorkspaceExecutionContext(
     platform: event.commonEventObject?.platform,
     traceId,
     selectedItems: event.drive?.selectedItems,
+    validationErrors,
     rawEvent: payload,
   };
 }

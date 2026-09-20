@@ -20,7 +20,7 @@ import { createSchemaDrivenUiWiring, type RawManifestProviderPort } from './sche
 export interface WorkspaceFeatureWiringOptions {
   server: HttpServer;
   documentService: DocumentService;
-  documentSpaceService: DocumentSpaceService;
+  documentSpaceService?: DocumentSpaceService | undefined;
   documentSchemaRegistry: DocumentSchemaRegistryPort & SchemaQueryPort;
   authVerifier?: AuthVerifierPort | undefined;
   uiBuilder?: WorkspaceUiBuilderPort | undefined;

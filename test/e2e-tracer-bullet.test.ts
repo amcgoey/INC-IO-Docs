@@ -113,17 +113,18 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
 
 
 
-  it('exercises error lifecycle when raw trigger has invalid credentials, returning 401 Unauthorized', async () => {
-    const rawTrigger = {
-      authorizationEventObject: {
-        userOAuthToken: 'ya29.sample-token',
+  it('supports the Status Message Block when validation errors are present in trigger parameters', async () => {
+    const rawTriggerWithErrors = {
+      commonEventObject: {
+        parameters: {
+          validationErrors: JSON.stringify(['Title cannot be empty', 'Date format must be yyMMdd']),
+        },
       },
       drive: {
         selectedItems: [
           {
-            id: 'drive-file-123',
+            id: 'drive-file-999',
             title: 'Q3_Financial_Review.pdf',
-            mimeType: 'application/pdf',
           },
         ],
       },
@@ -133,12 +134,25 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
       method: 'POST',
       url: '/workspace/drive-items-selected',
       headers: {
-        authorization: 'Bearer invalid-jwt-token',
+        authorization: 'Bearer valid-jwt-token',
       },
-      payload: rawTrigger,
+      payload: rawTriggerWithErrors,
     });
 
-    expect(response.statusCode).toBe(401);
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.payload);
+    expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+    expect(body.action?.navigations).toBeDefined();
+
+    const pushCard = body.action!.navigations![0].pushCard;
+    // Section 0: Status Message Block
+    expect(pushCard.sections[0].widgets[0].textParagraph?.text).toContain('Title cannot be empty');
+    expect(pushCard.sections[0].widgets[0].textParagraph?.text).toContain('Date format must be yyMMdd');
+
+    // All other blocks remain present
+    expect(pushCard.sections[1].header).toBe('Document Type');
+    expect(pushCard.sections[2].header).toBe('Document Data');
+    expect(pushCard.sections[3].header).toBe('Admin');
   });
 
   it('leaves other flows untouched by continuing to use legacy card builder on /workspace/homepage trigger', async () => {

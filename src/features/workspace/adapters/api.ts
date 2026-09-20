@@ -165,6 +165,9 @@ export function registerWorkspaceFeatureRoutes(
         viewId: 'drive-document-process-card',
         documentTypeKey: selectedDocType,
         selectionState: selectionContext,
+        ...(context.validationErrors && context.validationErrors.length > 0
+          ? { validationErrors: context.validationErrors }
+          : {}),
       });
     }
 
