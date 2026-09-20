@@ -20,14 +20,13 @@ describe('Document Admin Block', () => {
     ]);
   });
 
-  it('allows customizing header and collapsible options', () => {
+  it('allows customizing header option', () => {
     const section = buildDocumentAdminSection({
       header: 'Advanced Administration',
-      collapsible: false,
     });
 
     expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
     expect(section.header).toBe('Advanced Administration');
-    expect(section.collapsible).toBe(false);
+    expect(section.collapsible).toBe(true);
   });
 });

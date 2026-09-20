@@ -2,13 +2,12 @@ import type { UiViewSection } from '../domain';
 
 export interface DocumentAdminOptions {
   header?: string;
-  collapsible?: boolean;
 }
 
 export function buildDocumentAdminSection(options?: DocumentAdminOptions): UiViewSection {
   return {
     header: options?.header ?? 'Admin',
-    collapsible: options?.collapsible ?? true,
+    collapsible: true,
     widgets: [
       {
         buttonList: {
