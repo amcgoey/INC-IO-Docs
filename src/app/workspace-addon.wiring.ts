@@ -16,18 +16,9 @@ import {
 } from '../infrastructure/workspace-addon/translator';
 import { createUiProcessManagerWiring } from './ui-process-manager.wiring';
 import type { RawManifestProviderPort } from './schema-driven-ui.wiring';
+import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
 
-export interface WorkspaceConfiguration {
-  appTitle?: string | undefined;
-  actionButtonText?: string | undefined;
-  defaultDocumentType?: string | undefined;
-  defaultDocumentSpaceType?: string | undefined;
-  defaultEventName?: string | undefined;
-}
-
-export interface WorkspaceConfigProviderPort {
-  getWorkspaceConfig(): Promise<WorkspaceConfiguration | undefined>;
-}
+export type { WorkspaceConfigProviderPort };
 
 export interface WorkspaceAddonWiringOptions {
   server: HttpServer;

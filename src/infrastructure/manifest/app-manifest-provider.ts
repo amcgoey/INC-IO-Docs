@@ -7,6 +7,7 @@ export const WorkspaceConfigurationSchema = Type.Object({
   appTitle: Type.Optional(Type.String()),
   actionButtonText: Type.Optional(Type.String()),
   defaultDocumentType: Type.Optional(Type.String()),
+  defaultDocumentSpaceType: Type.Optional(Type.String()),
   defaultEventName: Type.Optional(Type.String()),
 });
 

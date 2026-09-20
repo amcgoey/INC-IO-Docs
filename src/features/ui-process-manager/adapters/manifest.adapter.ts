@@ -1,14 +1,84 @@
-import type { UiProcessManifestPort } from '../ports';
+import type { UiProcessManifestPort, RawManifestProviderPort } from '../ports';
 
-export interface RawManifestProviderPort {
-  getRawManifest(): Promise<unknown>;
-  readParsedSchema?(relPath: string): Promise<unknown>;
+export type { RawManifestProviderPort };
+
+interface RawDocDef {
+  key: string;
+  name?: string | undefined;
+  displayName?: string | undefined;
+  documentSchema?: unknown;
+  documentUiSchema?: unknown;
 }
 
 export class ManifestAdapter implements UiProcessManifestPort {
   private cachedDocTypes?: Array<{ key: string; name?: string | undefined; displayName?: string | undefined }>;
 
   constructor(private readonly manifestProvider: RawManifestProviderPort) {}
+
+  private async loadAllRawDocDefs(): Promise<RawDocDef[]> {
+    const raw = (await this.manifestProvider.getRawManifest()) as
+      | {
+          documentTypes?:
+            | string[]
+            | Record<
+                string,
+                {
+                  name?: string;
+                  displayName?: string;
+                  documentSchema?: unknown;
+                  documentUiSchema?: unknown;
+                }
+              >;
+        }
+      | undefined;
+
+    if (!raw?.documentTypes) {
+      return [];
+    }
+
+    const result: RawDocDef[] = [];
+
+    if (Array.isArray(raw.documentTypes)) {
+      for (const relPath of raw.documentTypes) {
+        try {
+          if (this.manifestProvider.readParsedSchema) {
+            const parsed = (await this.manifestProvider.readParsedSchema(relPath)) as
+              | {
+                  key?: string;
+                  name?: string;
+                  displayName?: string;
+                  documentSchema?: unknown;
+                  documentUiSchema?: unknown;
+                }
+              | undefined;
+            if (parsed?.key) {
+              result.push({
+                key: parsed.key,
+                name: parsed.name,
+                displayName: parsed.displayName,
+                documentSchema: parsed.documentSchema,
+                documentUiSchema: parsed.documentUiSchema,
+              });
+            }
+          }
+        } catch {
+          // ignore unreadable/invalid schemas
+        }
+      }
+    } else if (typeof raw.documentTypes === 'object') {
+      for (const [key, def] of Object.entries(raw.documentTypes)) {
+        result.push({
+          key,
+          name: def?.name,
+          displayName: def?.displayName,
+          documentSchema: def?.documentSchema,
+          documentUiSchema: def?.documentUiSchema,
+        });
+      }
+    }
+
+    return result;
+  }
 
   async resolveDocumentTypeKey(nameOrKey: string): Promise<string | undefined> {
     const all = await this.getAllDocumentTypes();
@@ -25,39 +95,12 @@ export class ManifestAdapter implements UiProcessManifestPort {
       return this.cachedDocTypes;
     }
 
-    const raw = (await this.manifestProvider.getRawManifest()) as
-      | { documentTypes?: string[] | Record<string, { name?: string; displayName?: string }> }
-      | undefined;
-    const result: Array<{ key: string; name?: string | undefined; displayName?: string | undefined }> = [];
-
-    if (Array.isArray(raw?.documentTypes)) {
-      for (const relPath of raw.documentTypes) {
-        try {
-          if (this.manifestProvider.readParsedSchema) {
-            const parsed = (await this.manifestProvider.readParsedSchema(relPath)) as
-              | { key?: string; name?: string; displayName?: string }
-              | undefined;
-            if (parsed?.key) {
-              result.push({
-                key: parsed.key,
-                name: parsed.name,
-                displayName: parsed.displayName,
-              });
-            }
-          }
-        } catch {
-          // ignore unreadable/invalid schemas
-        }
-      }
-    } else if (raw?.documentTypes && typeof raw.documentTypes === 'object') {
-      for (const [key, def] of Object.entries(raw.documentTypes)) {
-        result.push({
-          key,
-          name: def?.name,
-          displayName: def?.displayName,
-        });
-      }
-    }
+    const defs = await this.loadAllRawDocDefs();
+    const result = defs.map(({ key, name, displayName }) => ({
+      key,
+      ...(name ? { name } : {}),
+      ...(displayName ? { displayName } : {}),
+    }));
 
     this.cachedDocTypes = result;
     return result;
@@ -69,55 +112,16 @@ export class ManifestAdapter implements UiProcessManifestPort {
     if (!documentTypeKey) {
       return {};
     }
-    const rawManifest = (await this.manifestProvider.getRawManifest()) as
-      | {
-          documentTypes?:
-            | string[]
-            | Record<string, { documentSchema?: unknown; documentUiSchema?: unknown }>;
-        }
-      | undefined;
 
-    if (!rawManifest) {
+    const defs = await this.loadAllRawDocDefs();
+    const found = defs.find((d) => d.key === documentTypeKey);
+    if (!found) {
       return {};
     }
 
-    if (
-      rawManifest.documentTypes &&
-      !Array.isArray(rawManifest.documentTypes) &&
-      typeof rawManifest.documentTypes === 'object'
-    ) {
-      const docDef = (
-        rawManifest.documentTypes as Record<
-          string,
-          { documentSchema?: unknown; documentUiSchema?: unknown }
-        >
-      )[documentTypeKey];
-      if (docDef) {
-        return {
-          docSchema: docDef.documentSchema,
-          uiSchema: docDef.documentUiSchema,
-        };
-      }
-    }
-
-    if (Array.isArray(rawManifest.documentTypes) && this.manifestProvider.readParsedSchema) {
-      for (const relPath of rawManifest.documentTypes) {
-        try {
-          const rawDoc = (await this.manifestProvider.readParsedSchema(relPath)) as
-            | { key?: string; documentSchema?: unknown; documentUiSchema?: unknown }
-            | undefined;
-          if (rawDoc?.key === documentTypeKey) {
-            return {
-              docSchema: rawDoc.documentSchema,
-              uiSchema: rawDoc.documentUiSchema,
-            };
-          }
-        } catch {
-          // ignore unreadable schemas
-        }
-      }
-    }
-
-    return {};
+    return {
+      docSchema: found.documentSchema,
+      uiSchema: found.documentUiSchema,
+    };
   }
 }

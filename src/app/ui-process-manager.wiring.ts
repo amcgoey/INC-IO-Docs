@@ -23,18 +23,11 @@ import {
 import {
   mapUiViewToAbstractUiView,
   mapSelectionItems,
-  type WorkspaceConfigProviderPort,
 } from './workspace-addon.wiring';
+import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
+import type { FormChangeEvaluatorFn as FormChangeEvaluator } from '../features/ui-process-manager';
 
-export type FormChangeEvaluator = (
-  formData: Record<string, unknown>,
-  docSchema?: unknown,
-  uiSchema?: unknown
-) => {
-  computedData: Record<string, unknown>;
-  hiddenFields: string[];
-  disabledFields: string[];
-};
+export type { FormChangeEvaluator };
 
 export interface UiProcessManagerWiringOptions {
   configProvider?: WorkspaceConfigProviderPort | undefined;

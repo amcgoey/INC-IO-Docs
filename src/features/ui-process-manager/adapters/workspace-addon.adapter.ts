@@ -64,6 +64,30 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       }
     }
 
+    const renderErrorCard = async (validationErrors: string[]) => {
+      const state = evaluateProcessUiState({
+        context: {
+          ...context,
+          validationErrors,
+          isUpdateCard: true,
+        },
+        resolvedDocumentTypeKey,
+        resolvedSpaceType: currentSpaceType,
+        config: mappedConfig,
+        spaceTypes,
+        collectionSpaces,
+      });
+
+      return await viewGenerator.generateCard({
+        viewId: state.viewId,
+        documentTypeKey: state.documentTypeKey,
+        selectionState: state.selectionState,
+        formData: state.formData,
+        isUpdateCard: true,
+        validationErrors: state.validationErrors,
+      });
+    };
+
     if (actionName === 'processDocument') {
       const selectedSpace = context.formData?.SelectDocumentSpace as string | undefined;
       const data = extractDocumentData(context.formData);
@@ -72,30 +96,6 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       const execContext = {
         ...(context.userOAuthToken ? { credentials: { oauthToken: context.userOAuthToken } } : {}),
         ...(selectedItem?.id ? { resources: { primaryTargetId: selectedItem.id } } : {}),
-      };
-
-      const renderErrorCard = async (validationErrors: string[]) => {
-        const state = evaluateProcessUiState({
-          context: {
-            ...context,
-            validationErrors,
-            isUpdateCard: true,
-          },
-          resolvedDocumentTypeKey,
-          resolvedSpaceType: currentSpaceType,
-          config: mappedConfig,
-          spaceTypes,
-          collectionSpaces,
-        });
-
-        return await viewGenerator.generateCard({
-          viewId: state.viewId,
-          documentTypeKey: state.documentTypeKey,
-          selectionState: state.selectionState,
-          formData: state.formData,
-          isUpdateCard: true,
-          validationErrors: state.validationErrors,
-        });
       };
 
       try {
@@ -144,6 +144,9 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         hiddenFields = evaluation.hiddenFields;
       } catch (e) {
         console.warn('Form change evaluation failed:', e);
+        return await renderErrorCard([
+          e instanceof Error ? e.message : 'Form change evaluation failed',
+        ]);
       }
     }
 

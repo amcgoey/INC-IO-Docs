@@ -7,6 +7,7 @@ import type {
   UiProcessViewGeneratorPort,
   UiProcessEventContext,
   UiProcessCardRequest,
+  UiProcessFormEvaluatorPort,
 } from '../ports';
 
 describe('WorkspaceAddonAdapter in ui-process-manager', () => {
@@ -367,6 +368,37 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         computedSummary: 'Alice - Projects',
       });
       expect(response.request.hiddenFields).toEqual(['internalNotes']);
+    });
+
+    it('renders error card when formEvaluator throws an error on onFormChange', async () => {
+      const failingFormEvaluator: UiProcessFormEvaluatorPort = {
+        evaluate: vi.fn().mockRejectedValue(new Error('Rule syntax error')),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        viewGenerator: mockViewGenerator,
+        formEvaluator: failingFormEvaluator,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'onFormChange',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentType: 'communication-project',
+        },
+      };
+
+      const response = (await adapter.processUiEvent(context)) as {
+        renderedCard: boolean;
+        request: UiProcessCardRequest;
+      };
+
+      expect(response.renderedCard).toBe(true);
+      expect(response.request.isUpdateCard).toBe(true);
+      expect(response.request.validationErrors).toEqual(['Rule syntax error']);
     });
   });
 });

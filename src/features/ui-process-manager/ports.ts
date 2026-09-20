@@ -66,6 +66,11 @@ export interface UiProcessSpaceProviderPort {
   getCollection(typeId: string): Promise<UiProcessSpaceCollection>;
 }
 
+export interface RawManifestProviderPort {
+  getRawManifest(): Promise<unknown>;
+  readParsedSchema?(relPath: string): Promise<unknown>;
+}
+
 export interface UiProcessManifestPort {
   resolveDocumentTypeKey(nameOrKey: string): Promise<string | undefined>;
   getAllDocumentTypes(): Promise<Array<{ key: string; name?: string | undefined; displayName?: string | undefined }>>;
