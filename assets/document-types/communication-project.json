@@ -23,6 +23,7 @@
         "type": "string",
         "description": "Communication direction",
         "required": true,
+        "defaultValue": "OT",
         "options": {
           "source": "direction",
           "key": "key",

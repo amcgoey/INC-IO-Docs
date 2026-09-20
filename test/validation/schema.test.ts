@@ -140,6 +140,24 @@ describe('DocumentType JSON files schema validation', () => {
       expect(['shared_drives', 'folders']).toContain(retrieved.storageConfig.fetchMethod);
     }
   });
+
+  it('should have defaultValue: OT on direction field for communication schemas', async () => {
+    const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
+    const manifestProvider = new AppManifestProvider({ manifestPath });
+    const adapter = new DocumentSchemaRegistryAdapter(
+      manifestProvider,
+      new HandlebarsAdapter()
+    );
+    const documentTypes = await adapter.loadAll();
+
+    for (const key of ['communication-project', 'communication-proposal']) {
+      const docType = documentTypes.find((d) => d.key === key);
+      expect(docType).toBeDefined();
+      const directionField = docType!.documentSchema.fields.find((f) => f.key === 'direction');
+      expect(directionField).toBeDefined();
+      expect(directionField?.defaultValue).toBe('OT');
+    }
+  });
 });
 
 
