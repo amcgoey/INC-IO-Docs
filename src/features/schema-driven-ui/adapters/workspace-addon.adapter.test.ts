@@ -1,7 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
-import { UiViewModel } from '../domain';
-import * as blocks from '../blocks';
+import { UiViewModel, type UiView } from '../domain';
 import {
   WorkspaceAddonAdapter,
   WORKSPACE_ADDON_VIEW_ID,
@@ -9,29 +8,36 @@ import {
 import type { UiViewAdapterContext } from '../ports';
 
 describe('WorkspaceAddonAdapter', () => {
+  let adapter: WorkspaceAddonAdapter;
+
+  const assertValidUiView = (view: UiView): void => {
+    expect(Value.Check(UiViewModel, view)).toBe(true);
+  };
+
+  beforeEach(() => {
+    adapter = new WorkspaceAddonAdapter();
+  });
+
   it('initializes with hard-coded viewId and standard process header per ADR-0010', () => {
-    const adapter = new WorkspaceAddonAdapter();
     expect(adapter.viewId).toBe(WORKSPACE_ADDON_VIEW_ID);
 
     const view = adapter.composeView({ viewId: adapter.viewId });
     expect(view.id).toBe(WORKSPACE_ADDON_VIEW_ID);
     expect(view.header?.title).toBe('INC-IO Engine');
     expect(view.header?.subtitle).toBe('Process Document');
-    expect(Value.Check(UiViewModel, view)).toBe(true);
+    assertValidUiView(view);
   });
 
   it('composes minimal view containing admin section when context is sparse', () => {
-    const adapter = new WorkspaceAddonAdapter();
     const context: UiViewAdapterContext = { viewId: adapter.viewId };
 
     const view = adapter.composeView(context);
     expect(view.sections).toHaveLength(1);
     expect(view.sections[0].header).toBe('Admin');
-    expect(Value.Check(UiViewModel, view)).toBe(true);
+    assertValidUiView(view);
   });
 
   it('orchestrates status message block first when validation errors are provided', () => {
-    const adapter = new WorkspaceAddonAdapter();
     const context: UiViewAdapterContext = {
       viewId: adapter.viewId,
       validationErrors: ['Document title is required', 'Cost must be positive'],
@@ -42,11 +48,10 @@ describe('WorkspaceAddonAdapter', () => {
     expect(view.sections[0].widgets[0].textParagraph?.text).toContain('Document title is required');
     expect(view.sections[0].widgets[0].textParagraph?.text).toContain('Cost must be positive');
     expect(view.sections[1].header).toBe('Admin');
-    expect(Value.Check(UiViewModel, view)).toBe(true);
+    assertValidUiView(view);
   });
 
   it('orchestrates selection section with action triggers when selectionState is present', () => {
-    const adapter = new WorkspaceAddonAdapter();
     const context: UiViewAdapterContext = {
       viewId: adapter.viewId,
       selectionState: {
@@ -67,11 +72,10 @@ describe('WorkspaceAddonAdapter', () => {
     expect(selectionSection.widgets[2].selectionInput?.onChangeAction).toEqual({
       action: 'onDocumentTypeChange',
     });
-    expect(Value.Check(UiViewModel, view)).toBe(true);
+    assertValidUiView(view);
   });
 
   it('orchestrates document info section when documentSchema and uiSchema are provided', () => {
-    const adapter = new WorkspaceAddonAdapter();
     const context: UiViewAdapterContext = {
       viewId: adapter.viewId,
       documentSchema: {
@@ -96,11 +100,10 @@ describe('WorkspaceAddonAdapter', () => {
     expect(infoSection.widgets).toHaveLength(2);
     expect(infoSection.widgets[0].textInput?.label).toBe('Invoice #');
     expect(infoSection.widgets[1].textInput?.label).toBe('Total ($)');
-    expect(Value.Check(UiViewModel, view)).toBe(true);
+    assertValidUiView(view);
   });
 
   it('propagates evaluationOrder from uiSchema to the UiView root', () => {
-    const adapter = new WorkspaceAddonAdapter();
     const context: UiViewAdapterContext = {
       viewId: adapter.viewId,
       uiSchema: {
@@ -110,16 +113,10 @@ describe('WorkspaceAddonAdapter', () => {
 
     const view = adapter.composeView(context);
     expect(view.evaluationOrder).toEqual(['qty', 'unitPrice', 'total']);
-    expect(Value.Check(UiViewModel, view)).toBe(true);
+    assertValidUiView(view);
   });
 
-  it('verifies adapter composition by walking schema context and invoking the right blocks', () => {
-    const statusSpy = vi.spyOn(blocks, 'buildStatusMessageSection');
-    const selectionSpy = vi.spyOn(blocks, 'buildDocumentTypeSelectionSection');
-    const infoSpy = vi.spyOn(blocks, 'buildDocumentInfoSection');
-    const adminSpy = vi.spyOn(blocks, 'buildDocumentAdminSection');
-
-    const adapter = new WorkspaceAddonAdapter();
+  it('declaratively composes full end-to-end card with all sections in expected schema order', () => {
     const context: UiViewAdapterContext = {
       viewId: adapter.viewId,
       validationErrors: ['Error A'],
@@ -140,24 +137,17 @@ describe('WorkspaceAddonAdapter', () => {
 
     const view = adapter.composeView(context);
 
-    expect(statusSpy).toHaveBeenCalledWith({ validationErrors: ['Error A'] });
-    expect(selectionSpy).toHaveBeenCalledWith(context.selectionState, {
-      onSpaceTypeChangeAction: { action: 'onSpaceTypeChange' },
-      onDocumentTypeChangeAction: { action: 'onDocumentTypeChange' },
-    });
-    expect(infoSpy).toHaveBeenCalledWith(
-      context.documentSchema,
-      context.uiSchema,
-      { sectionHeader: 'Document Data' }
-    );
-    expect(adminSpy).toHaveBeenCalled();
-
+    // Assert sections order per declarative schema:
+    // 1. Status Message Section
+    // 2. Document Type Selection Section
+    // 3. Document Info Section
+    // 4. Admin Section
     expect(view.sections).toHaveLength(4);
-    expect(Value.Check(UiViewModel, view)).toBe(true);
-
-    statusSpy.mockRestore();
-    selectionSpy.mockRestore();
-    infoSpy.mockRestore();
-    adminSpy.mockRestore();
+    expect(view.sections[0].widgets[0].textParagraph?.text).toContain('Error A');
+    expect(view.sections[1].header).toBe('Document Type');
+    expect(view.sections[2].header).toBe('Document Data');
+    expect(view.sections[3].header).toBe('Admin');
+    expect(view.evaluationOrder).toEqual(['title']);
+    assertValidUiView(view);
   });
 });
