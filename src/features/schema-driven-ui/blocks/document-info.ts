@@ -1,9 +1,26 @@
-import type { UiViewSection, UiSchema, UiViewWidget, SelectionItem, UiField } from '../domain';
+import { Type, type Static } from '@sinclair/typebox';
+import {
+  SelectionItemSchema,
+  type UiViewSection,
+  type UiSchema,
+  type UiViewWidget,
+  type UiField,
+} from '../domain';
 import type { AbstractDataSchema, AbstractDataField } from './types';
 
 export interface DocumentInfoOptions {
   sectionHeader?: string | undefined;
 }
+
+export const StandardWidgetCustomPropsSchema = Type.Object({
+  type: Type.Optional(Type.String()),
+  placeholder: Type.Optional(Type.String()),
+  hintText: Type.Optional(Type.String()),
+  value: Type.Optional(Type.String()),
+  items: Type.Optional(Type.Array(SelectionItemSchema)),
+});
+
+export type StandardWidgetCustomProps = Static<typeof StandardWidgetCustomPropsSchema>;
 
 export function camelCaseToTitleCase(str: string): string {
   return str
@@ -25,7 +42,7 @@ interface WidgetBuilderContext {
   field: AbstractDataField;
   label: string;
   uiField: UiField | undefined;
-  customProps: Record<string, unknown>;
+  customProps: StandardWidgetCustomProps;
   onChangeAction: unknown | undefined;
 }
 
@@ -36,31 +53,21 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
     selectionInput: {
       name: field.key,
       label,
-      type: typeof customProps.type === 'string' ? customProps.type : 'DROPDOWN',
-      items: Array.isArray(customProps.items) ? (customProps.items as SelectionItem[]) : [],
+      type: customProps.type ?? 'DROPDOWN',
+      items: customProps.items ?? [],
       ...(onChangeAction ? { onChangeAction } : {}),
     },
   }),
   textInput: ({ field, label, customProps, onChangeAction }) => {
-    const hintText =
-      typeof customProps.placeholder === 'string'
-        ? customProps.placeholder
-        : typeof customProps.hintText === 'string'
-          ? customProps.hintText
-          : undefined;
-
+    const hintText = customProps.placeholder ?? customProps.hintText;
     const value =
-      field.defaultValue !== undefined
-        ? String(field.defaultValue)
-        : typeof customProps.value === 'string'
-          ? customProps.value
-          : undefined;
+      field.defaultValue !== undefined ? String(field.defaultValue) : customProps.value;
 
     return {
       textInput: {
         name: field.key,
         label,
-        ...(hintText ? { hintText } : {}),
+        ...(hintText !== undefined ? { hintText } : {}),
         ...(value !== undefined ? { value } : {}),
         ...(onChangeAction ? { onChangeAction } : {}),
       },
@@ -93,7 +100,7 @@ export function buildDocumentInfoSection(
     const uiField = uiSchema?.fields?.[fieldKey];
     const label = uiField?.label ?? camelCaseToTitleCase(field.key);
     const widgetType = uiField?.widget ?? inferDefaultWidget(field);
-    const customProps = (uiField?.props as Record<string, unknown> | undefined) ?? {};
+    const customProps = (uiField?.props as StandardWidgetCustomProps | undefined) ?? {};
 
     const onChangeAction =
       uiField?.onChange !== undefined

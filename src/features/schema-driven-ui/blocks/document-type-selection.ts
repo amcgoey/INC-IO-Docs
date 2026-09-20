@@ -1,9 +1,13 @@
-import type { UiViewSection, SelectionState, UiViewWidget } from '../domain';
+import type { UiViewSection, SelectionState, UiViewWidget, SelectionItem } from '../domain';
 
 export interface DocumentTypeSelectionOptions {
   sectionHeader?: string;
   onSpaceTypeChangeAction?: unknown;
   onDocumentTypeChangeAction?: unknown;
+}
+
+function withFallbackItems(items: SelectionItem[], fallbackText: string): SelectionItem[] {
+  return items.length > 0 ? items : [{ text: fallbackText, value: '' }];
 }
 
 export function buildDocumentTypeSelectionSection(
@@ -12,10 +16,7 @@ export function buildDocumentTypeSelectionSection(
 ): UiViewSection {
   const widgets: UiViewWidget[] = [];
 
-  const spaceTypes =
-    selectionState.spaceTypes.length > 0
-      ? selectionState.spaceTypes
-      : [{ text: 'No space types available', value: '' }];
+  const spaceTypes = withFallbackItems(selectionState.spaceTypes, 'No space types available');
 
   widgets.push({
     selectionInput: {
@@ -39,10 +40,7 @@ export function buildDocumentTypeSelectionSection(
     },
   });
 
-  const documentTypes =
-    selectionState.documentTypes.length > 0
-      ? selectionState.documentTypes
-      : [{ text: 'No document types available', value: '' }];
+  const documentTypes = withFallbackItems(selectionState.documentTypes, 'No document types available');
 
   widgets.push({
     selectionInput: {
