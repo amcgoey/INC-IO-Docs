@@ -17,7 +17,7 @@
     "start": "node dist/src/app/server.js",
     "knip": "knip",
     "knip:fix": "knip --fix",
-    "knip:refactor": "knip -c knip.refactor.json"
+    "knip:refactor": "knip -c knip.refactor.json --no-config-hints"
   },
   "repository": {
     "type": "git",

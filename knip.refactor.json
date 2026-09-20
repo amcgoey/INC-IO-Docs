@@ -9,14 +9,22 @@
     "src/features/schema-driven-ui/**/*.ts",
     "src/infrastructure/workspace-addon/**/*.ts"
   ],
+  "ignore": [
+    "src/features/document/**"
+  ],
   "vitest": {
     "entry": [
       "src/features/schema-driven-ui/**/*.test.ts",
       "src/infrastructure/workspace-addon/**/*.test.ts"
     ]
   },
+  "ignoreDependencies": [
+    "@fastify/type-provider-typebox",
+    "fastify",
+    "handlebars",
+    "unpdf"
+  ],
   "rules": {
-    "dependencies": "off",
     "types": "off",
     "duplicates": "off"
   },

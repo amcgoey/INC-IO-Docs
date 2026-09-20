@@ -64,6 +64,11 @@ export interface WorkspaceProcessCardOrchestratorPort {
   generateCard(request: WorkspaceProcessCardRequest): Promise<unknown>;
 }
 
+export interface WorkspaceManifestProviderPort {
+  getRawManifest(): Promise<unknown>;
+  readParsedSchema?(relPath: string): Promise<unknown>;
+}
+
 export interface WorkspaceAddonApiOptions {
   authVerifier: WorkspaceAuthVerifierPort;
   documentService?: WorkspaceDocumentRunnerPort | undefined;
@@ -79,10 +84,7 @@ export interface WorkspaceAddonApiOptions {
     hiddenFields: string[];
     disabledFields: string[];
   }) | undefined;
-  manifestProvider?: {
-    getRawManifest(): Promise<unknown>;
-    readParsedSchema?(relPath: string): Promise<unknown>;
-  } | undefined;
+  manifestProvider?: WorkspaceManifestProviderPort | undefined;
 }
 
 function withAuthentication(
@@ -118,10 +120,7 @@ function withAuthentication(
 }
 
 async function getDocAndUiSchemas(
-  manifestProvider?: {
-    getRawManifest(): Promise<unknown>;
-    readParsedSchema?(relPath: string): Promise<unknown>;
-  },
+  manifestProvider?: WorkspaceManifestProviderPort,
   documentTypeKey?: string
 ): Promise<{ docSchema?: unknown; uiSchema?: unknown }> {
   if (!manifestProvider || !documentTypeKey) {
@@ -383,10 +382,8 @@ export function registerWorkspaceAddonRoutes(
     };
   };
 
-  router.registerRoute({
-    method: 'POST',
-    url: '/workspace/drive-items-selected',
-    handler: withAuthentication(authVerifier, async (request) => {
+  const createProcessCardRouteHandler = (endpointName: string) =>
+    withAuthentication(authVerifier, async (request) => {
       try {
         const traceHeader = request.headers?.['x-cloud-trace-context'] as string | undefined;
         const context: WorkspaceExecutionContext = extractWorkspaceExecutionContext(
@@ -401,39 +398,22 @@ export function registerWorkspaceAddonRoutes(
         return {
           status: 200,
           body: buildErrorCard(
-            error instanceof Error
-              ? error.message
-              : 'Unknown error in /workspace/drive-items-selected'
+            error instanceof Error ? error.message : `Unknown error in ${endpointName}`
           ),
         };
       }
-    }),
+    });
+
+  router.registerRoute({
+    method: 'POST',
+    url: '/workspace/drive-items-selected',
+    handler: createProcessCardRouteHandler('/workspace/drive-items-selected'),
   });
 
   router.registerRoute({
     method: 'POST',
     url: '/workspace/homepage',
-    handler: withAuthentication(authVerifier, async (request) => {
-      try {
-        const traceHeader = request.headers?.['x-cloud-trace-context'] as string | undefined;
-        const context: WorkspaceExecutionContext = extractWorkspaceExecutionContext(
-          request.body,
-          traceHeader
-        );
-
-        return {
-          status: 200,
-          body: await prepareDriveDocumentProcessCardContext(context),
-        };
-      } catch (error) {
-        return {
-          status: 200,
-          body: buildErrorCard(
-            error instanceof Error ? error.message : 'Unknown error in /workspace/homepage'
-          ),
-        };
-      }
-    }),
+    handler: createProcessCardRouteHandler('/workspace/homepage'),
   });
 
   router.registerRoute({
