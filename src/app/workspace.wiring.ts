@@ -1,6 +1,7 @@
 import { registerWorkspaceFeatureRoutes } from '../features/workspace/adapters/api';
 import { GoogleJwtVerifier } from '../infrastructure/workspace-addon/jwt-verifier';
 import * as uiBlocks from '../infrastructure/workspace-addon/ui-blocks';
+import { evaluateFormChange } from '../infrastructure/workspace-addon/json-logic-evaluator';
 import type { HttpServer } from '../infrastructure/http';
 import type {
   AuthVerifierPort,
@@ -192,6 +193,7 @@ export function wireWorkspaceFeature(
     configProvider: options.configProvider,
     processCardOrchestrator,
     manifestProvider: options.manifestProvider,
+    evaluateFormChange,
   });
 }
 

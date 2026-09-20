@@ -13,7 +13,6 @@ import {
   type WorkspaceExecutionContext,
 } from '../domain';
 import { buildDriveDocumentProcessCard } from './drive-document-process-card';
-import { evaluateFormChange } from '../../../infrastructure/workspace-addon/json-logic-evaluator';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
 
@@ -49,6 +48,15 @@ export interface WorkspaceFeatureApiOptions {
   documentSpaceService?: import('../ports').WorkspaceDocumentSpaceProviderPort | undefined;
   configProvider?: WorkspaceConfigProviderPort | undefined;
   processCardOrchestrator?: WorkspaceProcessCardOrchestratorPort | undefined;
+  evaluateFormChange?: ((
+    formData: Record<string, unknown>,
+    docSchema?: unknown,
+    uiSchema?: unknown
+  ) => {
+    computedData: Record<string, unknown>;
+    hiddenFields: string[];
+    disabledFields: string[];
+  }) | undefined;
   manifestProvider?: {
     getRawManifest(): Promise<unknown>;
     readParsedSchema?(relPath: string): Promise<unknown>;
@@ -253,7 +261,9 @@ export function registerWorkspaceFeatureRoutes(
         (context.parameters?.documentTypeKey as string | undefined);
 
       const { docSchema, uiSchema } = await getDocAndUiSchemas(opts.manifestProvider, selectedDocType);
-      const evaluation = evaluateFormChange(context.formData ?? {}, docSchema, uiSchema);
+      const evaluation = opts.evaluateFormChange
+        ? opts.evaluateFormChange(context.formData ?? {}, docSchema, uiSchema)
+        : { computedData: context.formData ?? {}, hiddenFields: [], disabledFields: [] };
 
       if (opts.processCardOrchestrator) {
         const card = await prepareDriveDocumentProcessCardContext(context, {

@@ -338,11 +338,18 @@ describe('Workspace Feature Routes', () => {
         }),
       };
 
+      const mockEvaluateFormChange = vi.fn().mockReturnValue({
+        computedData: { contact: 'Alice', computedField: 'Alice - Verified' },
+        hiddenFields: [],
+        disabledFields: [],
+      });
+
       registerWorkspaceFeatureRoutes(formServer, {
         authVerifier: mockAuthVerifier,
         uiBuilder: mockUiBuilder,
         processCardOrchestrator: mockOrchestrator,
         manifestProvider: mockManifestProvider,
+        evaluateFormChange: mockEvaluateFormChange,
       });
 
       const response = await formServer.inject({

@@ -190,8 +190,53 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     });
     expect(initialResponse.statusCode).toBe(200);
 
-    // 2. Simulate onFormChange roundtrip: user selects direction 'Incoming' and enters contact
-    const changeResponse = await app.server.inject({
+    // 2. Simulate onFormChange roundtrip 1: user selects direction 'Outgoing' ('OT')
+    // Dynamic rule: incomingNotes showIf: { '==': [{ var: 'data.direction' }, 'IN'] }
+    // When direction is 'OT', incomingNotes must be dynamically hidden.
+    const changeResponse1 = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/on-form-change',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        commonEventObject: {
+          parameters: {
+            action: 'onFormChange',
+          },
+          formInputs: {
+            SelectDocumentType: { stringInputs: { value: ['communication-project'] } },
+            contact: { stringInputs: { value: ['John Doe'] } },
+            direction: { stringInputs: { value: ['OT'] } },
+          },
+        },
+        drive: {
+          selectedItems: [{ id: 'drive-file-999', title: 'Q3_Financial_Review.pdf' }],
+        },
+      },
+    });
+
+    expect(changeResponse1.statusCode).toBe(200);
+    const changeBody1 = JSON.parse(changeResponse1.payload);
+    expect(Value.Check(GoogleWorkspaceActionResponseSchema, changeBody1)).toBe(true);
+
+    const updateCard1 = changeBody1.action.navigations[0].updateCard;
+    expect(updateCard1).toBeDefined();
+
+    const dataSection1 = updateCard1.sections.find(
+      (s: { header?: string }) => s.header === 'Document Data'
+    );
+    expect(dataSection1).toBeDefined();
+
+    // Verify incomingNotes is dynamically hidden when direction === 'OT'
+    const notesWidget1 = dataSection1.widgets.find(
+      (w: { textInput?: { name: string } }) => w.textInput?.name === 'incomingNotes'
+    );
+    expect(notesWidget1).toBeUndefined();
+
+    // 3. Simulate onFormChange roundtrip 2: user toggles cascading dropdown direction to 'Incoming' ('IN')
+    // Dynamic rule evaluates: incomingNotes showIf evaluates to true, revealing the field!
+    const changeResponse2 = await app.server.inject({
       method: 'POST',
       url: '/workspace/on-form-change',
       headers: {
@@ -214,34 +259,72 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
       },
     });
 
-    expect(changeResponse.statusCode).toBe(200);
-    const changeBody = JSON.parse(changeResponse.payload);
-    expect(Value.Check(GoogleWorkspaceActionResponseSchema, changeBody)).toBe(true);
-    expect(changeBody.action?.navigations).toBeDefined();
-
-    const updateCard = changeBody.action.navigations[0].updateCard;
-    expect(updateCard).toBeDefined();
-    expect(updateCard.header.title).toBe('INC-IO Engine');
-
-    // Document Data section must reflect updated values
-    const dataSection = updateCard.sections.find(
+    expect(changeResponse2.statusCode).toBe(200);
+    const changeBody2 = JSON.parse(changeResponse2.payload);
+    const updateCard2 = changeBody2.action.navigations[0].updateCard;
+    const dataSection2 = updateCard2.sections.find(
       (s: { header?: string }) => s.header === 'Document Data'
     );
-    expect(dataSection).toBeDefined();
 
-    const contactWidget = dataSection.widgets.find(
-      (w: { textInput?: { name: string } }) => w.textInput?.name === 'contact'
+    // Verify incomingNotes is now dynamically visible
+    const notesWidget2 = dataSection2.widgets.find(
+      (w: { textInput?: { name: string } }) => w.textInput?.name === 'incomingNotes'
     );
-    expect(contactWidget?.textInput?.value).toBe('John Doe');
+    expect(notesWidget2).toBeDefined();
 
-    const directionWidget = dataSection.widgets.find(
+    const directionWidget2 = dataSection2.widgets.find(
       (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'direction'
     );
-    expect(directionWidget?.selectionInput).toBeDefined();
-    const incomingItem = directionWidget?.selectionInput?.items.find(
+    expect(directionWidget2?.selectionInput).toBeDefined();
+    const incomingItem = directionWidget2?.selectionInput?.items.find(
       (item: { value: string }) => item.value === 'IN'
     );
     expect(incomingItem?.selected).toBe(true);
+
+    // 4. Simulate onFormChange roundtrip 3: user changes the Document Space Type cascading selection dropdown to 'proposals'
+    const changeResponse3 = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/on-form-change',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        commonEventObject: {
+          parameters: {
+            action: 'onFormChange',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
+            SelectDocumentType: { stringInputs: { value: ['communication-proposal'] } },
+          },
+        },
+        drive: {
+          selectedItems: [{ id: 'drive-file-999', title: 'Q3_Financial_Review.pdf' }],
+        },
+      },
+    });
+
+    expect(changeResponse3.statusCode).toBe(200);
+    const changeBody3 = JSON.parse(changeResponse3.payload);
+    const updateCard3 = changeBody3.action.navigations[0].updateCard;
+    const docTypeSection3 = updateCard3.sections.find(
+      (s: { header?: string }) => s.header === 'Document Type'
+    );
+    const spaceTypeWidget3 = docTypeSection3.widgets.find(
+      (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'SelectDocumentSpaceType'
+    );
+    const selectedSpaceType = spaceTypeWidget3?.selectionInput?.items.find(
+      (item: { value: string }) => item.value === 'proposals'
+    );
+    expect(selectedSpaceType?.selected).toBe(true);
+
+    const docTypeWidget3 = docTypeSection3.widgets.find(
+      (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'SelectDocumentType'
+    );
+    const selectedProposalItem = docTypeWidget3?.selectionInput?.items.find(
+      (item: { value: string }) => item.value === 'communication-proposal'
+    );
+    expect(selectedProposalItem?.selected).toBe(true);
   });
 
   it('mutation & error rendering: drives flow to final Process submission testing both failure and success paths', async () => {

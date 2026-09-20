@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createHttpServer } from '../src/infrastructure/http';
 import { registerWorkspaceFeatureRoutes } from '../src/features/workspace/adapters/api';
+import { evaluateFormChange } from '../src/infrastructure/workspace-addon/json-logic-evaluator';
 import type {
   AuthVerifierPort,
   WorkspaceProcessCardOrchestratorPort,
@@ -77,6 +78,7 @@ describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
       uiBuilder: {} as unknown as import('../src/features/workspace/ports').WorkspaceUiBuilderPort,
       processCardOrchestrator: mockOrchestrator,
       manifestProvider: mockManifestProvider,
+      evaluateFormChange,
     });
 
     const response = await server.inject({
