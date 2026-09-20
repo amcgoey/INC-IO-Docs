@@ -306,6 +306,61 @@ describe('Document Info Block', () => {
       );
       expect(widgetNames).not.toContain('internalNotes');
     });
+
+    it('maps data schema options into textInput autocomplete property as SelectionItems', () => {
+      const schemaWithOptions: AbstractDataSchema = {
+        fields: [
+          {
+            key: 'category',
+            type: 'string',
+            options: ['Action', 'Comedy'],
+          },
+          {
+            key: 'tag',
+            type: 'string',
+            options: { source: 'tagLookup' },
+          },
+          {
+            key: 'plainField',
+            type: 'string',
+          },
+        ],
+        options: {
+          tagLookup: [
+            { name: 'Urgent', key: 'urgent' },
+            { name: 'Routine', key: 'routine' },
+          ],
+        },
+      };
+
+      const uiSchema: UiSchema = {
+        fields: {
+          category: { widget: 'textInput' },
+          tag: { widget: 'textInput' },
+        },
+      };
+
+      const section = buildDocumentInfoSection(schemaWithOptions, uiSchema);
+      expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+
+      // 1. category: textInput with autocomplete from string array
+      expect(section.widgets[0].textInput?.name).toBe('category');
+      expect(section.widgets[0].textInput?.autocomplete).toEqual([
+        { text: 'Action', value: 'Action' },
+        { text: 'Comedy', value: 'Comedy' },
+      ]);
+
+      // 2. tag: textInput with autocomplete from dataSchema.options
+      expect(section.widgets[1].textInput?.name).toBe('tag');
+      expect(section.widgets[1].textInput?.autocomplete).toEqual([
+        { text: 'Urgent', value: 'urgent' },
+        { text: 'Routine', value: 'routine' },
+      ]);
+
+      // 3. plainField: textInput without options has undefined autocomplete
+      expect(section.widgets[2].textInput?.name).toBe('plainField');
+      expect(section.widgets[2].textInput?.autocomplete).toBeUndefined();
+    });
   });
 });
 

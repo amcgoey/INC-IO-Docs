@@ -202,6 +202,32 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
     });
   });
 
+  it('translates textInput with autocomplete to Google initialSuggestions format', () => {
+    const view = {
+      sections: [
+        {
+          widgets: [
+            {
+              textInput: {
+                name: 'SelectDocumentSpace',
+                label: 'Document Space',
+                autocomplete: [
+                  { text: 'Project Alpha', value: 'proj-alpha' },
+                  { text: 'Project Beta', value: 'proj-beta' },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const card = translateUiViewToWorkspaceCard(view);
+    expect(card.sections[0].widgets[0].textInput?.initialSuggestions).toEqual({
+      items: [{ text: 'Project Alpha' }, { text: 'Project Beta' }],
+    });
+  });
+
   it('provides default header when UiView has no header', () => {
     const viewWithoutHeader = {
       sections: [

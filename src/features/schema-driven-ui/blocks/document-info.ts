@@ -48,45 +48,53 @@ interface WidgetBuilderContext {
 
 type WidgetBuilder = (ctx: WidgetBuilderContext) => UiViewWidget;
 
+export function extractSelectionItems(
+  field: AbstractDataField,
+  customProps: StandardWidgetCustomProps,
+  dataSchema?: AbstractDataSchema | undefined
+): SelectionItem[] {
+  let defaultItems: SelectionItem[] = [];
+  if (Array.isArray(field.options)) {
+    defaultItems = field.options.map((opt) => {
+      if (typeof opt === 'string') {
+        return { text: opt, value: opt };
+      }
+      if (typeof opt === 'object' && opt !== null && 'value' in opt) {
+        const typedOpt = opt as { text?: unknown; value: unknown };
+        return {
+          text: String(typedOpt.text ?? typedOpt.value),
+          value: String(typedOpt.value),
+        };
+      }
+      return { text: String(opt), value: String(opt) };
+    });
+  } else if (
+    field.options &&
+    typeof field.options === 'object' &&
+    'source' in field.options &&
+    dataSchema?.options
+  ) {
+    const sourceKey = (field.options as { source: string }).source;
+    const rawTuples = dataSchema.options[sourceKey];
+    if (Array.isArray(rawTuples)) {
+      defaultItems = rawTuples.map((tuple) => {
+        if (typeof tuple === 'object' && tuple !== null) {
+          const t = tuple as { key?: unknown; name?: unknown; text?: unknown; value?: unknown };
+          const text = String(t.name ?? t.text ?? t.key ?? t.value);
+          const value = String(t.key ?? t.value ?? t.name ?? t.text);
+          return { text, value };
+        }
+        return { text: String(tuple), value: String(tuple) };
+      });
+    }
+  }
+
+  return customProps.items ?? defaultItems;
+}
+
 const widgetBuilders: Record<string, WidgetBuilder> = {
   selectionInput: ({ field, label, customProps, onChangeAction, formValue, dataSchema }) => {
-    let defaultItems: SelectionItem[] = [];
-    if (Array.isArray(field.options)) {
-      defaultItems = field.options.map((opt) => {
-        if (typeof opt === 'string') {
-          return { text: opt, value: opt };
-        }
-        if (typeof opt === 'object' && opt !== null && 'value' in opt) {
-          const typedOpt = opt as { text?: unknown; value: unknown };
-          return {
-            text: String(typedOpt.text ?? typedOpt.value),
-            value: String(typedOpt.value),
-          };
-        }
-        return { text: String(opt), value: String(opt) };
-      });
-    } else if (
-      field.options &&
-      typeof field.options === 'object' &&
-      'source' in field.options &&
-      dataSchema?.options
-    ) {
-      const sourceKey = (field.options as { source: string }).source;
-      const rawTuples = dataSchema.options[sourceKey];
-      if (Array.isArray(rawTuples)) {
-        defaultItems = rawTuples.map((tuple) => {
-          if (typeof tuple === 'object' && tuple !== null) {
-            const t = tuple as { key?: unknown; name?: unknown; text?: unknown; value?: unknown };
-            const text = String(t.name ?? t.text ?? t.key ?? t.value);
-            const value = String(t.key ?? t.value ?? t.name ?? t.text);
-            return { text, value };
-          }
-          return { text: String(tuple), value: String(tuple) };
-        });
-      }
-    }
-
-    const baseItems = customProps.items ?? defaultItems;
+    const baseItems = extractSelectionItems(field, customProps, dataSchema);
     const items =
       formValue !== undefined
         ? baseItems.map((item) => ({
@@ -107,7 +115,7 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
       ),
     };
   },
-  textInput: ({ field, label, customProps, onChangeAction, formValue }) => {
+  textInput: ({ field, label, customProps, onChangeAction, formValue, dataSchema }) => {
     const hintText = customProps.placeholder ?? customProps.hintText;
     const value =
       formValue !== undefined
@@ -116,6 +124,8 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
           ? String(field.defaultValue)
           : customProps.value;
 
+    const autocompleteItems = extractSelectionItems(field, customProps, dataSchema);
+
     return {
       textInput: withOnChangeAction(
         {
@@ -123,6 +133,7 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
           label,
           ...(hintText !== undefined ? { hintText } : {}),
           ...(value !== undefined ? { value } : {}),
+          ...(autocompleteItems.length > 0 ? { autocomplete: autocompleteItems } : {}),
         },
         onChangeAction
       ),

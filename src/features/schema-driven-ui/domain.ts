@@ -150,6 +150,7 @@ const BaseInputWidgetProps = {
 export const UiViewWidgetSchema = Type.Object(
   {
     type: Type.Optional(Type.String()),
+    autocomplete: Type.Optional(Type.Array(SelectionItemSchema)),
     textParagraph: Type.Optional(
       Type.Object(
         {
@@ -164,6 +165,7 @@ export const UiViewWidgetSchema = Type.Object(
           ...BaseInputWidgetProps,
           hintText: Type.Optional(Type.String()),
           value: Type.Optional(Type.String()),
+          autocomplete: Type.Optional(Type.Array(SelectionItemSchema)),
         },
         { additionalProperties: false }
       )

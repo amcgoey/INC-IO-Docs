@@ -125,6 +125,24 @@ describe('schema-driven-ui domain schemas', () => {
       expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
     });
 
+    it('validates UiViewWidgetSchema with autocomplete on textInput and widget', () => {
+      const widgetWithTextInputAutocomplete = {
+        textInput: {
+          name: 'space',
+          label: 'Document Space',
+          autocomplete: [{ text: 'Project A', value: 'proj-a' }],
+        },
+      };
+      const widgetWithTopLevelAutocomplete = {
+        autocomplete: [{ text: 'Project B', value: 'proj-b' }],
+        textInput: {
+          name: 'space2',
+        },
+      };
+      expect(Value.Check(UiViewWidgetSchema, widgetWithTextInputAutocomplete)).toBe(true);
+      expect(Value.Check(UiViewWidgetSchema, widgetWithTopLevelAutocomplete)).toBe(true);
+    });
+
     it('validates a complete UiViewModel', () => {
       const view = {
         id: 'main-view',

@@ -37,6 +37,10 @@ describe('Document Type Selection Block', () => {
     expect(spaceWidget.textInput?.name).toBe('SelectDocumentSpace');
     expect(spaceWidget.textInput?.label).toBe('Document Space');
     expect(spaceWidget.textInput?.value).toBe('proj-alpha');
+    expect(spaceWidget.textInput?.autocomplete).toEqual([
+      { text: 'proj-alpha', value: 'proj-alpha' },
+      { text: 'proj-beta', value: 'proj-beta' },
+    ]);
 
     // Widget 3: SelectDocumentType (Dropdown)
     const docTypeWidget = section.widgets[2];
@@ -59,6 +63,7 @@ describe('Document Type Selection Block', () => {
     expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
     expect(section.widgets[0].selectionInput?.items).toEqual([]);
     expect(section.widgets[1].textInput?.value).toBeUndefined();
+    expect(section.widgets[1].textInput?.autocomplete).toBeUndefined();
     expect(section.widgets[2].selectionInput?.items).toEqual([]);
   });
 

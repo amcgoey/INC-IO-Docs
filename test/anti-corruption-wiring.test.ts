@@ -82,6 +82,11 @@ describe('Anti-Corruption Wiring Integration', () => {
     // Section 2: Document type selection
     expect(pushCard.sections[1].header).toBe('Document Type');
     expect(pushCard.sections[1].widgets[0].selectionInput?.name).toBe('SelectDocumentSpaceType');
+    expect(pushCard.sections[1].widgets[1].textInput?.name).toBe('SelectDocumentSpace');
+    expect(pushCard.sections[1].widgets[1].textInput?.initialSuggestions).toEqual({
+      items: [{ text: 'Corp Contracts' }],
+    });
+    expect(pushCard.sections[1].widgets[2].selectionInput?.name).toBe('SelectDocumentType');
 
 
     // Section 3: Document data

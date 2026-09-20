@@ -112,6 +112,7 @@ export const AbstractUiViewTextInputWidgetSchema = Type.Object(
         hintText: Type.Optional(Type.String()),
         value: Type.Optional(Type.String()),
         initialSuggestions: Type.Optional(AbstractUiSuggestionsSchema),
+        autocomplete: Type.Optional(Type.Array(AbstractUiSelectionItemSchema)),
         onChangeAction: Type.Optional(AbstractUiActionSchema),
       },
       { additionalProperties: false }
@@ -316,6 +317,10 @@ export function translateUiViewToWorkspaceCard(payload: unknown): GoogleWorkspac
         }
         if (w.textInput.initialSuggestions !== undefined) {
           textInput.initialSuggestions = w.textInput.initialSuggestions;
+        } else if (w.textInput.autocomplete !== undefined && w.textInput.autocomplete.length > 0) {
+          textInput.initialSuggestions = {
+            items: w.textInput.autocomplete.map((item) => ({ text: item.text })),
+          };
         }
         widget.textInput = textInput;
       }
