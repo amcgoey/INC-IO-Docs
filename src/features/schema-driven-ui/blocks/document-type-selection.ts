@@ -1,5 +1,6 @@
 import type { UiViewSection, UiViewWidget, UiViewAction } from '../domain';
 import type { SelectionState, SelectionItem } from '../ports';
+import { withOnChangeAction } from './common';
 
 export interface DocumentTypeSelectionOptions {
   sectionHeader?: string | undefined;
@@ -14,13 +15,15 @@ function buildDropdownWidget(
   onChangeAction?: UiViewAction | undefined
 ): UiViewWidget {
   return {
-    selectionInput: {
-      name,
-      label,
-      type: 'DROPDOWN',
-      items,
-      ...(onChangeAction !== undefined ? { onChangeAction } : {}),
-    },
+    selectionInput: withOnChangeAction(
+      {
+        name,
+        label,
+        type: 'DROPDOWN',
+        items,
+      },
+      onChangeAction
+    ),
   };
 }
 

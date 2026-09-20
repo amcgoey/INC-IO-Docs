@@ -34,12 +34,7 @@ export function inferDefaultWidget(field: AbstractDataField): 'textInput' | 'sel
   return 'textInput';
 }
 
-function withOnChangeAction<T extends object>(
-  props: T,
-  onChangeAction: UiViewAction | undefined
-): T & { onChangeAction?: UiViewAction } {
-  return onChangeAction !== undefined ? { ...props, onChangeAction } : props;
-}
+import { withOnChangeAction } from './common';
 
 interface WidgetBuilderContext {
   field: AbstractDataField;
