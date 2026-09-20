@@ -7,7 +7,8 @@ import {
   DocumentTypeSchema,
   formatValidationErrors,
 } from '../../src/features/document/domain';
-import { FormSchemaType, type DocumentUiSchema } from '../../src/features/document/ports';
+import { FormSchemaType } from '../../src/features/document/ports';
+import { UiSchema, type UiSchema as UiSchemaType } from '../../src/features/schema-driven-ui/domain';
 import { Value } from '@sinclair/typebox/value';
 import {
   DocumentSpaceService,
@@ -79,20 +80,22 @@ describe('DocumentType JSON files schema validation', () => {
         }
       }
 
-      // Verify documentUiSchema hydration
+      // Verify documentUiSchema hydration conforms to schema-driven-ui UiSchema
       expect(documentType.documentUiSchema).toBeDefined();
-      const uiSchema = documentType.documentUiSchema as DocumentUiSchema | undefined;
-      if (uiSchema) {
-        expect(Array.isArray(uiSchema.layout)).toBe(true);
-        expect(uiSchema.layout?.length).toBeGreaterThan(0);
-        expect(typeof uiSchema.fields).toBe('object');
+      const uiErrors = formatValidationErrors(UiSchema, documentType.documentUiSchema);
+      expect(uiErrors).toEqual([]);
+      expect(Value.Check(UiSchema, documentType.documentUiSchema)).toBe(true);
 
-        for (const [, uiField] of Object.entries(uiSchema.fields ?? {})) {
-          if (uiField.widget) expect(typeof uiField.widget).toBe('string');
-          if (uiField.label) expect(typeof uiField.label).toBe('string');
-          if (uiField.onChange !== undefined) {
-            expect(['boolean', 'string'].includes(typeof uiField.onChange)).toBe(true);
-          }
+      const uiSchema = documentType.documentUiSchema as UiSchemaType;
+      expect(Array.isArray(uiSchema.layout)).toBe(true);
+      expect(uiSchema.layout?.length).toBeGreaterThan(0);
+      expect(typeof uiSchema.fields).toBe('object');
+
+      for (const [, uiField] of Object.entries(uiSchema.fields ?? {})) {
+        if (uiField.widget) expect(typeof uiField.widget).toBe('string');
+        if (uiField.label) expect(typeof uiField.label).toBe('string');
+        if (uiField.onChange !== undefined) {
+          expect(['boolean', 'string'].includes(typeof uiField.onChange)).toBe(true);
         }
       }
 
