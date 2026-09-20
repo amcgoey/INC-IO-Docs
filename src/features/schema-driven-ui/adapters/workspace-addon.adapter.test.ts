@@ -14,6 +14,13 @@ describe('WorkspaceAddonAdapter', () => {
     expect(Value.Check(UiViewModel, view)).toBe(true);
   };
 
+  const createContext = (
+    overrides?: Partial<UiViewAdapterContext>
+  ): UiViewAdapterContext => ({
+    viewId: adapter.viewId,
+    ...overrides,
+  });
+
   beforeEach(() => {
     adapter = new WorkspaceAddonAdapter();
   });
@@ -21,7 +28,7 @@ describe('WorkspaceAddonAdapter', () => {
   it('initializes with hard-coded viewId and standard process header per ADR-0010', () => {
     expect(adapter.viewId).toBe(WORKSPACE_ADDON_VIEW_ID);
 
-    const view = adapter.composeView({ viewId: adapter.viewId });
+    const view = adapter.composeView(createContext());
     expect(view.id).toBe(WORKSPACE_ADDON_VIEW_ID);
     expect(view.header?.title).toBe('INC-IO Engine');
     expect(view.header?.subtitle).toBe('Process Document');
@@ -29,19 +36,16 @@ describe('WorkspaceAddonAdapter', () => {
   });
 
   it('composes minimal view containing admin section when context is sparse', () => {
-    const context: UiViewAdapterContext = { viewId: adapter.viewId };
-
-    const view = adapter.composeView(context);
+    const view = adapter.composeView(createContext());
     expect(view.sections).toHaveLength(1);
     expect(view.sections[0].header).toBe('Admin');
     assertValidUiView(view);
   });
 
   it('orchestrates status message block first when validation errors are provided', () => {
-    const context: UiViewAdapterContext = {
-      viewId: adapter.viewId,
+    const context = createContext({
       validationErrors: ['Document title is required', 'Cost must be positive'],
-    };
+    });
 
     const view = adapter.composeView(context);
     expect(view.sections).toHaveLength(2);
@@ -52,14 +56,13 @@ describe('WorkspaceAddonAdapter', () => {
   });
 
   it('orchestrates selection section with action triggers when selectionState is present', () => {
-    const context: UiViewAdapterContext = {
-      viewId: adapter.viewId,
+    const context = createContext({
       selectionState: {
         spaceTypes: [{ text: 'Department', value: 'dept' }],
         spaces: ['Engineering'],
         documentTypes: [{ text: 'Invoice', value: 'inv' }],
       },
-    };
+    });
 
     const view = adapter.composeView(context);
     expect(view.sections).toHaveLength(2);
@@ -76,8 +79,7 @@ describe('WorkspaceAddonAdapter', () => {
   });
 
   it('orchestrates document info section when documentSchema and uiSchema are provided', () => {
-    const context: UiViewAdapterContext = {
-      viewId: adapter.viewId,
+    const context = createContext({
       documentSchema: {
         fields: [
           { key: 'invoiceNumber', type: 'string' },
@@ -91,7 +93,7 @@ describe('WorkspaceAddonAdapter', () => {
           totalAmount: { label: 'Total ($)' },
         },
       },
-    };
+    });
 
     const view = adapter.composeView(context);
     expect(view.sections).toHaveLength(2);
@@ -104,12 +106,11 @@ describe('WorkspaceAddonAdapter', () => {
   });
 
   it('propagates evaluationOrder from uiSchema to the UiView root', () => {
-    const context: UiViewAdapterContext = {
-      viewId: adapter.viewId,
+    const context = createContext({
       uiSchema: {
         evaluationOrder: ['qty', 'unitPrice', 'total'],
       },
-    };
+    });
 
     const view = adapter.composeView(context);
     expect(view.evaluationOrder).toEqual(['qty', 'unitPrice', 'total']);
@@ -117,8 +118,7 @@ describe('WorkspaceAddonAdapter', () => {
   });
 
   it('declaratively composes full end-to-end card with all sections in expected schema order', () => {
-    const context: UiViewAdapterContext = {
-      viewId: adapter.viewId,
+    const context = createContext({
       validationErrors: ['Error A'],
       selectionState: {
         spaceTypes: [{ text: 'Default', value: 'default' }],
@@ -133,7 +133,7 @@ describe('WorkspaceAddonAdapter', () => {
         fields: { title: { label: 'Title' } },
         evaluationOrder: ['title'],
       },
-    };
+    });
 
     const view = adapter.composeView(context);
 

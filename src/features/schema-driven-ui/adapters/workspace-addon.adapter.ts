@@ -18,7 +18,7 @@ type SectionProducer = (context: UiViewAdapterContext) => UiViewSection | undefi
 const WORKSPACE_ADDON_VIEW_SCHEMA: readonly SectionProducer[] = [
   // 1. Status Section (validation errors)
   (context) =>
-    context.validationErrors && context.validationErrors.length > 0
+    context.validationErrors
       ? buildStatusMessageSection({ validationErrors: context.validationErrors })
       : undefined,
 
