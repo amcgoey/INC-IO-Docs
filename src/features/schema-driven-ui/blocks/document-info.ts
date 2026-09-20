@@ -1,8 +1,8 @@
-import type { UiViewSection, UiSchema, UiViewWidget, SelectionItem } from '../domain';
+import type { UiViewSection, UiSchema, UiViewWidget, SelectionItem, UiField } from '../domain';
 import type { AbstractDataSchema, AbstractDataField } from './types';
 
 export interface DocumentInfoOptions {
-  sectionHeader?: string;
+  sectionHeader?: string | undefined;
 }
 
 export function camelCaseToTitleCase(str: string): string {
@@ -21,10 +21,57 @@ export function inferDefaultWidget(field: AbstractDataField): 'textInput' | 'sel
   return 'textInput';
 }
 
+interface WidgetBuilderContext {
+  field: AbstractDataField;
+  label: string;
+  uiField: UiField | undefined;
+  customProps: Record<string, unknown>;
+  onChangeAction: unknown | undefined;
+}
+
+type WidgetBuilder = (ctx: WidgetBuilderContext) => UiViewWidget;
+
+const widgetBuilders: Record<string, WidgetBuilder> = {
+  selectionInput: ({ field, label, customProps, onChangeAction }) => ({
+    selectionInput: {
+      name: field.key,
+      label,
+      type: typeof customProps.type === 'string' ? customProps.type : 'DROPDOWN',
+      items: Array.isArray(customProps.items) ? (customProps.items as SelectionItem[]) : [],
+      ...(onChangeAction ? { onChangeAction } : {}),
+    },
+  }),
+  textInput: ({ field, label, customProps, onChangeAction }) => {
+    const hintText =
+      typeof customProps.placeholder === 'string'
+        ? customProps.placeholder
+        : typeof customProps.hintText === 'string'
+          ? customProps.hintText
+          : undefined;
+
+    const value =
+      field.defaultValue !== undefined
+        ? String(field.defaultValue)
+        : typeof customProps.value === 'string'
+          ? customProps.value
+          : undefined;
+
+    return {
+      textInput: {
+        name: field.key,
+        label,
+        ...(hintText ? { hintText } : {}),
+        ...(value !== undefined ? { value } : {}),
+        ...(onChangeAction ? { onChangeAction } : {}),
+      },
+    };
+  },
+};
+
 export function buildDocumentInfoSection(
   dataSchema: AbstractDataSchema,
-  uiSchema?: UiSchema,
-  options?: DocumentInfoOptions
+  uiSchema?: UiSchema | undefined,
+  options?: DocumentInfoOptions | undefined
 ): UiViewSection {
   const widgets: UiViewWidget[] = [];
   const layout =
@@ -55,45 +102,16 @@ export function buildDocumentInfoSection(
           : { action: `${field.key}Changed` }
         : undefined;
 
-    if (widgetType === 'selectionInput') {
-      const items = Array.isArray(customProps.items)
-        ? (customProps.items as SelectionItem[])
-        : [];
-
-      widgets.push({
-        selectionInput: {
-          name: field.key,
-          label,
-          type: typeof customProps.type === 'string' ? customProps.type : 'DROPDOWN',
-          items,
-          ...(onChangeAction ? { onChangeAction } : {}),
-        },
-      });
-    } else {
-      const hintText =
-        typeof customProps.placeholder === 'string'
-          ? customProps.placeholder
-          : typeof customProps.hintText === 'string'
-            ? customProps.hintText
-            : undefined;
-
-      const value =
-        field.defaultValue !== undefined
-          ? String(field.defaultValue)
-          : typeof customProps.value === 'string'
-            ? customProps.value
-            : undefined;
-
-      widgets.push({
-        textInput: {
-          name: field.key,
-          label,
-          ...(hintText ? { hintText } : {}),
-          ...(value !== undefined ? { value } : {}),
-          ...(onChangeAction ? { onChangeAction } : {}),
-        },
-      });
-    }
+    const builder = widgetBuilders[widgetType] ?? widgetBuilders.textInput;
+    widgets.push(
+      builder({
+        field,
+        label,
+        uiField,
+        customProps,
+        onChangeAction,
+      })
+    );
   }
 
   const section: UiViewSection = { widgets };

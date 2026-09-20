@@ -165,5 +165,58 @@ describe('Document Info Block', () => {
       expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
       expect(section.widgets).toHaveLength(3);
     });
+
+    it('predictably maps mock schemas (e.g. documentUiSchema) without performing I/O', () => {
+      const mockDocumentSchema: AbstractDataSchema = {
+        fields: [
+          { key: 'contact', type: 'string' },
+          { key: 'date', type: 'string' },
+          { key: 'direction', type: 'string', options: { source: 'direction' } },
+          { key: 'description', type: 'string' },
+        ],
+      };
+
+      const mockDocumentUiSchema: UiSchema = {
+        layout: ['contact', 'date', 'direction', 'description'],
+        fields: {
+          contact: { widget: 'textInput', label: 'Contact' },
+          date: { widget: 'textInput', label: 'Date' },
+          direction: { widget: 'selectionInput', label: 'Direction', onChange: true },
+          description: { widget: 'textInput', label: 'Description' },
+        },
+      };
+
+      const section = buildDocumentInfoSection(mockDocumentSchema, mockDocumentUiSchema, {
+        sectionHeader: 'Communication Details',
+      });
+
+      expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+      expect(section.header).toBe('Communication Details');
+      // Layout has: ["contact", "date", "direction", "description"]
+      expect(section.widgets).toHaveLength(4);
+
+      // 1. contact: textInput
+      expect(section.widgets[0].textInput).toBeDefined();
+      expect(section.widgets[0].textInput?.name).toBe('contact');
+      expect(section.widgets[0].textInput?.label).toBe('Contact');
+
+      // 2. date: textInput
+      expect(section.widgets[1].textInput).toBeDefined();
+      expect(section.widgets[1].textInput?.name).toBe('date');
+      expect(section.widgets[1].textInput?.label).toBe('Date');
+
+      // 3. direction: selectionInput with onChangeAction
+      expect(section.widgets[2].selectionInput).toBeDefined();
+      expect(section.widgets[2].selectionInput?.name).toBe('direction');
+      expect(section.widgets[2].selectionInput?.label).toBe('Direction');
+      expect(section.widgets[2].selectionInput?.onChangeAction).toEqual({
+        action: 'directionChanged',
+      });
+
+      // 4. description: textInput
+      expect(section.widgets[3].textInput).toBeDefined();
+      expect(section.widgets[3].textInput?.name).toBe('description');
+      expect(section.widgets[3].textInput?.label).toBe('Description');
+    });
   });
 });
