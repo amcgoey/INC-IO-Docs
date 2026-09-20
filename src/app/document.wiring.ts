@@ -1,8 +1,6 @@
 import { DocumentSchemaRegistryAdapter } from '../features/document/adapters/document-schema-registry';
-import { DocumentUiSchemaQueryAdapter } from '../features/document/adapters/document-ui-schema-query';
 import type {
   DocumentSchemaRegistryPort,
-  DocumentUiSchemaQueryPort,
   TemplateEvaluatorPort,
   DriveServicePort,
   ActivityDispatcherPort,
@@ -27,7 +25,6 @@ export interface DocumentFeatureWiringOptions {
 
 export interface DocumentFeatureWiring {
   documentSchemaRegistry: DocumentSchemaRegistryPort;
-  documentUiSchemaQuery: DocumentUiSchemaQueryPort;
 }
 
 export function createDocumentFeatureWiring(
@@ -42,14 +39,8 @@ export function createDocumentFeatureWiring(
       ensureEvaluationOrder
     );
 
-  const documentUiSchemaQuery = new DocumentUiSchemaQueryAdapter(
-    options.manifestProvider,
-    ensureEvaluationOrder
-  );
-
   return {
     documentSchemaRegistry,
-    documentUiSchemaQuery,
   };
 }
 

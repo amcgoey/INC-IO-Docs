@@ -19,7 +19,6 @@ import type {
   DriveServicePort,
   DocumentSchemaRegistryPort,
   TemplateEvaluatorPort,
-  DocumentUiSchemaQueryPort,
   RawManifestProviderPort,
 } from '../features/document/ports';
 import type {
@@ -52,7 +51,6 @@ export interface AppInstance {
   documentService: DocumentService;
   documentSpaceService: DocumentSpaceService;
   documentSchemaRegistry: DocumentSchemaRegistryPort;
-  documentUiSchemaQuery?: DocumentUiSchemaQueryPort | undefined;
   documentSpaceUiSchemaQuery?: DocumentSpaceUiSchemaQueryPort | undefined;
   initialize: () => Promise<void>;
   start: (port?: number, host?: string) => Promise<void>;
@@ -155,7 +153,6 @@ export function createApp(options?: AppOptions): AppInstance {
     documentService,
     documentSpaceService,
     documentSchemaRegistry,
-    documentUiSchemaQuery: documentWiring?.documentUiSchemaQuery,
     documentSpaceUiSchemaQuery: documentSpaceWiring.documentSpaceUiSchemaQuery,
     initialize,
     start,

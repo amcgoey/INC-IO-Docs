@@ -1,8 +1,8 @@
 import type { HttpServer, HttpRequest, HttpResponse } from '../http';
 import {
   buildErrorCard,
-  type DocumentSelectionState,
 } from './ui-blocks';
+import type { SelectionState } from '../../features/schema-driven-ui/ports';
 import {
   extractWorkspaceExecutionContext,
   createWorkspaceDocumentExecutionContext,
@@ -57,7 +57,7 @@ export type WorkspaceDocumentSpaceProviderPort = WorkspaceDocumentSpaceProvider;
 export interface WorkspaceProcessCardRequest {
   viewId: string;
   documentTypeKey?: string | undefined;
-  selectionState?: DocumentSelectionState | undefined;
+  selectionState?: SelectionState | undefined;
   validationErrors?: string[] | undefined;
   formData?: Record<string, unknown> | undefined;
   hiddenFields?: string[] | undefined;
@@ -192,8 +192,8 @@ export function registerWorkspaceAddonRoutes(
   ) => {
     const wsConfig = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
 
-    let spaceTypes: DocumentSelectionState['spaceTypes'] = [];
-    let documentTypes: DocumentSelectionState['documentTypes'] = [];
+    let spaceTypes: SelectionState['spaceTypes'] = [];
+    let documentTypes: SelectionState['documentTypes'] = [];
     let spaces: string[] = [];
 
     const currentSpaceType =
@@ -240,7 +240,7 @@ export function registerWorkspaceAddonRoutes(
       }));
     }
 
-    const selectionContext: DocumentSelectionState = {
+    const selectionContext: SelectionState = {
       spaceTypes,
       spaces,
       documentTypes,

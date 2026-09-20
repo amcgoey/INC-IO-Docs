@@ -3,16 +3,23 @@ import { Value } from '@sinclair/typebox/value';
 import {
   DocumentTypeSchema,
   validateManifestTemplates,
+  UiEventType,
   type DocumentType,
+  type DocumentUiEvents,
 } from '../domain';
 import {
-  DocumentUiSchemaType,
   type DocumentSchemaRegistryPort,
   type RawManifestProviderPort,
   type TemplateEvaluatorPort,
-  type DocumentUiSchema,
   type EvaluationOrderEnsurer,
 } from '../ports';
+
+const DocumentUiValidationSchema = Type.Object({
+  layout: Type.Optional(Type.Array(Type.String())),
+  fields: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  events: Type.Optional(Type.Record(Type.String(), UiEventType)),
+  evaluationOrder: Type.Optional(Type.Array(Type.String())),
+});
 
 const RawDocumentKeySchema = Type.Object({
   key: Type.Optional(Type.String()),
@@ -59,40 +66,49 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
         );
       }
 
-      let resolvedUiSchema: DocumentUiSchema | undefined = undefined;
+      let resolvedUiSchema:
+        | {
+            layout?: string[];
+            fields?: Record<string, unknown>;
+            events?: Record<string, unknown>;
+            evaluationOrder?: string[];
+          }
+        | undefined = undefined;
       const rawUiSchema = (rawDocumentType as { documentUiSchema?: unknown })?.documentUiSchema;
       if (rawUiSchema) {
-        const cleanedUi = Value.Clean(DocumentUiSchemaType, structuredClone(rawUiSchema));
-        if (!Value.Check(DocumentUiSchemaType, cleanedUi)) {
-          const errors = [...Value.Errors(DocumentUiSchemaType, cleanedUi)]
+        const cleanedUi = Value.Clean(DocumentUiValidationSchema, structuredClone(rawUiSchema));
+        if (!Value.Check(DocumentUiValidationSchema, cleanedUi)) {
+          const errors = [...Value.Errors(DocumentUiValidationSchema, cleanedUi)]
             .map((e) => `${e.path}: ${e.message}`)
             .join(', ');
           throw new Error(
             `Invalid DocumentType UI schema "${validatedDocumentType.key}": ${errors}`
           );
         }
-        resolvedUiSchema = cleanedUi as DocumentUiSchema;
+        resolvedUiSchema = cleanedUi;
         validatedDocumentType = {
           ...validatedDocumentType,
-          documentUiSchema: resolvedUiSchema,
+          documentUiSchema: resolvedUiSchema as DocumentUiEvents,
         };
       }
 
       if (
-        (resolvedUiSchema?.fields || resolvedUiSchema?.layout) &&
+        resolvedUiSchema &&
+        (resolvedUiSchema.fields || resolvedUiSchema.layout) &&
         this.evaluationOrderEnsurer
       ) {
         try {
-          resolvedUiSchema =
-            (this.evaluationOrderEnsurer(
-              resolvedUiSchema,
-              validatedDocumentType.documentSchema
-            ) as DocumentUiSchema) ?? resolvedUiSchema;
-
-          validatedDocumentType = {
-            ...validatedDocumentType,
-            documentUiSchema: resolvedUiSchema,
-          };
+          const ensured = this.evaluationOrderEnsurer(
+            resolvedUiSchema,
+            validatedDocumentType.documentSchema
+          );
+          if (ensured) {
+            resolvedUiSchema = ensured as typeof resolvedUiSchema;
+            validatedDocumentType = {
+              ...validatedDocumentType,
+              documentUiSchema: resolvedUiSchema as DocumentUiEvents,
+            };
+          }
         } catch (error) {
           throw new Error(
             `Invalid DocumentType UI schema "${validatedDocumentType.key}": ${(error as Error).message}`,

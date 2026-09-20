@@ -3,7 +3,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
-import { createDocumentFeatureWiring } from '../src/app/document.wiring';
+import { ManifestUiAdapter } from '../src/features/schema-driven-ui/adapters/manifest.adapter';
+import { ensureEvaluationOrder } from '../src/infrastructure/validation/json-logic-graph';
 import { createDocumentSpaceFeatureWiring } from '../src/app/document-space.wiring';
 import { createApp } from '../src/app/server';
 
@@ -23,26 +24,21 @@ describe('Schema-Driven UI Integration Test', () => {
         fields: [
           {
             key: 'requestTitle',
-            name: 'requestTitle',
+            name: 'Request Title',
             type: 'string',
             required: true,
           },
           {
             key: 'estimatedCost',
-            name: 'estimatedCost',
+            name: 'Estimated Cost',
             type: 'number',
             required: true,
           },
           {
             key: 'vendorCategory',
-            name: 'vendorCategory',
+            name: 'Vendor Category',
             type: 'string',
-            required: true,
-          },
-          {
-            key: 'internalNotes',
-            name: 'internalNotes',
-            type: 'string',
+            required: false,
           },
         ],
       },
@@ -52,15 +48,17 @@ describe('Schema-Driven UI Integration Test', () => {
           requestTitle: {
             widget: 'textInput',
             label: 'Request Subject',
+            props: { placeholder: 'Brief summary of purchase' },
+          },
+          estimatedCost: {
+            widget: 'textInput',
+            label: 'Estimated Cost ($)',
           },
           vendorCategory: {
-            widget: 'selectionInput',
-            label: 'Vendor Category Group',
+            widget: 'dropdown',
+            label: 'Vendor Category',
             props: {
-              items: [
-                { text: 'Hardware', value: 'hw' },
-                { text: 'Software', value: 'sw' },
-              ],
+              options: ['Hardware', 'Software', 'Consulting'],
             },
           },
         },
@@ -71,11 +69,7 @@ describe('Schema-Driven UI Integration Test', () => {
         },
       },
     };
-    await fs.writeFile(
-      procurementDocPath,
-      JSON.stringify(procurementDocContent, null, 2),
-      'utf-8'
-    );
+    await fs.writeFile(procurementDocPath, JSON.stringify(procurementDocContent, null, 2), 'utf-8');
 
     const manifestContent = {
       documentTypes: ['./procurement.json'],
@@ -110,12 +104,13 @@ describe('Schema-Driven UI Integration Test', () => {
 
   it('flows from raw manifest JSON through modular wiring to document and space UI queries', async () => {
     const manifestProvider = new AppManifestProvider({ manifestPath });
-    const { documentUiSchemaQuery } = createDocumentFeatureWiring({
+    const uiAdapter = new ManifestUiAdapter(
       manifestProvider,
-    });
+      (ui, doc) => ensureEvaluationOrder(ui, doc) ?? ui
+    );
 
     // 1. Verify Fast-Track Read port reads DocumentUiSchema directly bypassing domain
-    const uiSchema = await documentUiSchemaQuery.getDocumentUiSchema('procurement-request');
+    const uiSchema = await uiAdapter.getUiSchema('procurement-request');
     expect(uiSchema).toBeDefined();
     expect(uiSchema?.layout).toEqual(['requestTitle', 'estimatedCost', 'vendorCategory']);
     expect(uiSchema?.fields?.requestTitle?.label).toBe('Request Subject');
@@ -138,10 +133,10 @@ describe('Schema-Driven UI Integration Test', () => {
       skipSpaceValidation: true,
     });
 
-    expect(app.documentUiSchemaQuery).toBeDefined();
+    expect(app.documentSpaceUiSchemaQuery).toBeDefined();
 
-    const uiSchema = await app.documentUiSchemaQuery!.getDocumentUiSchema('procurement-request');
-    expect(uiSchema?.layout).toEqual(['requestTitle', 'estimatedCost', 'vendorCategory']);
+    const spaceUiSchema = await app.documentSpaceUiSchemaQuery!.getSpaceUiSchema('procurement-space');
+    expect(spaceUiSchema?.layout).toEqual(['departmentName']);
   });
 
   it('computes evaluationOrder end-to-end and emits safe order on uiSchema with uncomputed fields first', async () => {
@@ -179,11 +174,12 @@ describe('Schema-Driven UI Integration Test', () => {
     );
 
     const manifestProvider = new AppManifestProvider({ manifestPath: calcManifestPath });
-    const { documentUiSchemaQuery } = createDocumentFeatureWiring({
+    const uiAdapter = new ManifestUiAdapter(
       manifestProvider,
-    });
+      (ui, doc) => ensureEvaluationOrder(ui, doc) ?? ui
+    );
 
-    const uiSchema = await documentUiSchemaQuery.getDocumentUiSchema('calc-doc');
+    const uiSchema = await uiAdapter.getUiSchema('calc-doc');
     expect(uiSchema?.evaluationOrder).toEqual(['qty', 'rate', 'total']);
   });
 
@@ -215,11 +211,12 @@ describe('Schema-Driven UI Integration Test', () => {
     );
 
     const manifestProvider = new AppManifestProvider({ manifestPath: cycleManifestPath });
-    const { documentUiSchemaQuery } = createDocumentFeatureWiring({
+    const uiAdapter = new ManifestUiAdapter(
       manifestProvider,
-    });
+      (ui, doc) => ensureEvaluationOrder(ui, doc) ?? ui
+    );
 
-    await expect(documentUiSchemaQuery.getDocumentUiSchema('cycle-doc')).rejects.toThrow(
+    await expect(uiAdapter.getUiSchema('cycle-doc')).rejects.toThrow(
       /Circular dependency detected in computeValue rules/i
     );
   });
