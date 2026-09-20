@@ -36,6 +36,7 @@ export interface ProcessUiStateEvent {
 export interface ProcessUiStateInput {
   context: ProcessUiStateEvent;
   resolvedDocumentTypeKey?: string | undefined;
+  resolvedSpaceType?: string | undefined;
   config?: ProcessUiStateConfig | undefined;
   spaceTypes: UiProcessSpaceType[];
   collectionSpaces: string[];
@@ -112,7 +113,8 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const isSpaceTypeChange = action === 'onSpaceTypeChange';
   const isDocTypeChange = action === 'onDocumentTypeChange';
 
-  const currentSpaceType = resolveSpaceType(context.formData, input.config);
+  const currentSpaceType =
+    input.resolvedSpaceType ?? resolveSpaceType(context.formData, input.config);
 
   const selectedSpaceTypeObj = input.spaceTypes.find((t) => t.id === currentSpaceType);
   const allowedDocumentTypes = selectedSpaceTypeObj?.spaceSchema.allowedDocumentTypes ?? [];
