@@ -125,7 +125,7 @@ describe('schema-driven-ui domain schemas', () => {
       expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
     });
 
-    it('validates UiViewWidgetSchema with autocomplete on textInput and widget', () => {
+    it('validates UiViewWidgetSchema with autocomplete on textInput and rejects root-level autocomplete', () => {
       const widgetWithTextInputAutocomplete = {
         textInput: {
           name: 'space',
@@ -140,7 +140,7 @@ describe('schema-driven-ui domain schemas', () => {
         },
       };
       expect(Value.Check(UiViewWidgetSchema, widgetWithTextInputAutocomplete)).toBe(true);
-      expect(Value.Check(UiViewWidgetSchema, widgetWithTopLevelAutocomplete)).toBe(true);
+      expect(Value.Check(UiViewWidgetSchema, widgetWithTopLevelAutocomplete)).toBe(false);
     });
 
     it('validates a complete UiViewModel', () => {
