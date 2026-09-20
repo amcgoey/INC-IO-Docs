@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   clearDocumentInfoSegment,
   translateDocumentType,
+  resolveSpaceType,
   evaluateProcessUiState,
   type ProcessUiStateInput,
 } from './domain';
@@ -60,6 +61,26 @@ describe('ui-process-manager domain', () => {
     });
   });
 
+  describe('resolveSpaceType', () => {
+    it('returns space type from formData when present', () => {
+      const result = resolveSpaceType(
+        { SelectDocumentSpaceType: 'proposals' },
+        { defaultDocumentSpaceType: 'projects' }
+      );
+      expect(result).toBe('proposals');
+    });
+
+    it('falls back to config defaultDocumentSpaceType when not in formData', () => {
+      const result = resolveSpaceType({}, { defaultDocumentSpaceType: 'invoices' });
+      expect(result).toBe('invoices');
+    });
+
+    it('falls back to projects when neither formData nor config provides it', () => {
+      expect(resolveSpaceType(undefined, undefined)).toBe('projects');
+      expect(resolveSpaceType({}, {})).toBe('projects');
+    });
+  });
+
   describe('evaluateProcessUiState', () => {
     const sampleSpaceTypes = [
       {
@@ -82,11 +103,13 @@ describe('ui-process-manager domain', () => {
 
     it('defaults document type to the first allowed type and sets isUpdateCard when Space Type changes', () => {
       const input: ProcessUiStateInput = {
-        actionName: 'onSpaceTypeChange',
-        formData: {
-          SelectDocumentSpaceType: 'proposals',
-          SelectDocumentType: 'communication-project', // previous doc type from projects
-          contact: 'Jane',
+        context: {
+          actionName: 'onSpaceTypeChange',
+          formData: {
+            SelectDocumentSpaceType: 'proposals',
+            SelectDocumentType: 'communication-project', // previous doc type from projects
+            contact: 'Jane',
+          },
         },
         config: {
           defaultDocumentSpaceType: 'projects',
@@ -113,13 +136,15 @@ describe('ui-process-manager domain', () => {
 
     it('explicitly clears DocumentInfo segment and triggers isUpdateCard when Document Type changes', () => {
       const input: ProcessUiStateInput = {
-        actionName: 'onDocumentTypeChange',
-        formData: {
-          SelectDocumentSpaceType: 'projects',
-          SelectDocumentSpace: 'Project Alpha',
-          SelectDocumentType: 'invoice-project',
-          contact: 'Jane',
-          date: '260920',
+        context: {
+          actionName: 'onDocumentTypeChange',
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace: 'Project Alpha',
+            SelectDocumentType: 'invoice-project',
+            contact: 'Jane',
+            date: '260920',
+          },
         },
         config: {
           defaultDocumentSpaceType: 'projects',
@@ -144,9 +169,11 @@ describe('ui-process-manager domain', () => {
 
     it('translates human-readable names in formData to backend keys', () => {
       const input: ProcessUiStateInput = {
-        formData: {
-          SelectDocumentSpaceType: 'projects',
-          SelectDocumentType: 'Communication Project',
+        context: {
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentType: 'Communication Project',
+          },
         },
         config: {
           defaultDocumentSpaceType: 'projects',

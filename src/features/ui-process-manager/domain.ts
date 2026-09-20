@@ -20,17 +20,22 @@ export interface UiProcessSpaceType {
   spaceSchema: { allowedDocumentTypes: string[] };
 }
 
+export const UiProcessEventContextSchema = Type.Object({
+  actionName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
+  parameters: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
+  validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+});
+export type UiProcessEventContext = Static<typeof UiProcessEventContextSchema>;
+
 export interface ProcessUiStateConfig {
   defaultDocumentType?: string | undefined;
   defaultDocumentSpaceType?: string | undefined;
 }
 
 export interface ProcessUiStateInput {
-  actionName?: string | undefined;
-  parameters?: Record<string, string> | undefined;
-  formData?: Record<string, unknown> | undefined;
-  validationErrors?: string[] | undefined;
-  isUpdateCard?: boolean | undefined;
+  context: UiProcessEventContext;
   config?: ProcessUiStateConfig | undefined;
   spaceTypes: UiProcessSpaceType[];
   collectionSpaces: string[];
@@ -80,6 +85,20 @@ export function translateDocumentType(
 }
 
 /**
+ * Resolves the active space type from form data or configuration fallback.
+ */
+export function resolveSpaceType(
+  formData?: Record<string, unknown>,
+  config?: ProcessUiStateConfig
+): string {
+  return (
+    (formData?.SelectDocumentSpaceType as string | undefined) ??
+    config?.defaultDocumentSpaceType ??
+    'projects'
+  );
+}
+
+/**
  * Pure domain state evaluation for CQRS UI Orchestration.
  * Enforces:
  * 1. UI reload (isUpdateCard) on Space Type change.
@@ -88,24 +107,22 @@ export function translateDocumentType(
  * 4. Translating human-readable document type names into backend keys.
  */
 export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiStateOutput {
-  const action = input.actionName ?? input.parameters?.action;
+  const { context } = input;
+  const action = context.actionName ?? context.parameters?.action;
   const isSpaceTypeChange = action === 'onSpaceTypeChange';
   const isDocTypeChange = action === 'onDocumentTypeChange';
 
-  const currentSpaceType =
-    (input.formData?.SelectDocumentSpaceType as string | undefined) ??
-    input.config?.defaultDocumentSpaceType ??
-    'projects';
+  const currentSpaceType = resolveSpaceType(context.formData, input.config);
 
   const selectedSpaceTypeObj = input.spaceTypes.find((t) => t.id === currentSpaceType);
   const allowedDocumentTypes = selectedSpaceTypeObj?.spaceSchema.allowedDocumentTypes ?? [];
 
-  let effectiveFormData: Record<string, unknown> = { ...(input.formData ?? {}) };
-  const isUpdateCard = Boolean(input.isUpdateCard || isSpaceTypeChange || isDocTypeChange);
+  let effectiveFormData: Record<string, unknown> = { ...(context.formData ?? {}) };
+  const isUpdateCard = Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange);
 
   const rawSelectedDocType =
     (effectiveFormData.SelectDocumentType as string | undefined) ??
-    input.parameters?.documentTypeKey ??
+    context.parameters?.documentTypeKey ??
     input.config?.defaultDocumentType;
 
   let currentDocTypeKey = rawSelectedDocType
@@ -167,8 +184,8 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     selectionState,
     formData: effectiveFormData,
     isUpdateCard,
-    ...(input.validationErrors && input.validationErrors.length > 0
-      ? { validationErrors: input.validationErrors }
+    ...(context.validationErrors && context.validationErrors.length > 0
+      ? { validationErrors: context.validationErrors }
       : {}),
   };
 }

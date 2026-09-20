@@ -150,4 +150,51 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
     expect(result.request.documentTypeKey).toBe('communication-project');
     expect(result.request.formData?.SelectDocumentType).toBe('communication-project');
   });
+
+  it('warns and retains first mapping when document type display names collide', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const collidingManifestPort: UiProcessManifestPort = {
+      resolveDocumentTypeKey: vi.fn(),
+      getAllDocumentTypes: vi.fn().mockResolvedValue([
+        { key: 'first-key', displayName: 'Duplicate Name' },
+        { key: 'second-key', displayName: 'Duplicate Name' },
+      ]),
+    };
+
+    const adapter = new WorkspaceAddonAdapter({
+      spaceProvider: {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: { allowedDocumentTypes: ['first-key', 'second-key'] },
+          },
+        ]),
+        getCollection: vi.fn().mockResolvedValue({ spaces: [] }),
+      },
+      manifestPort: collidingManifestPort,
+      viewGenerator: mockViewGenerator,
+    });
+
+    const context: UiProcessEventContext = {
+      formData: {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentType: 'Duplicate Name',
+      },
+    };
+
+    const result = (await adapter.processUiEvent(context)) as {
+      renderedCard: boolean;
+      request: UiProcessCardRequest;
+    };
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Document type display name collision: "Duplicate Name" is already mapped to "first-key"')
+    );
+    // Should retain first mapped key
+    expect(result.request.documentTypeKey).toBe('first-key');
+
+    warnSpy.mockRestore();
+  });
 });

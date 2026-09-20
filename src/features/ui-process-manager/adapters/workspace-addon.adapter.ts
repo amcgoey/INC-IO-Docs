@@ -6,7 +6,7 @@ import type {
   UiProcessManifestPort,
   UiProcessViewGeneratorPort,
 } from '../ports';
-import { evaluateProcessUiState } from '../domain';
+import { evaluateProcessUiState, resolveSpaceType } from '../domain';
 
 export interface WorkspaceAddonAdapterOptions {
   spaceProvider: UiProcessSpaceProviderPort;
@@ -24,10 +24,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     const config = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
     const spaceTypes = spaceProvider.getAllTypes();
 
-    const currentSpaceType =
-      (context.formData?.SelectDocumentSpaceType as string | undefined) ??
-      config?.defaultDocumentSpaceType ??
-      'projects';
+    const currentSpaceType = resolveSpaceType(context.formData, config);
 
     let collectionSpaces: string[] = [];
     try {
@@ -41,12 +38,22 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     if (manifestPort) {
       try {
         const docTypes = await manifestPort.getAllDocumentTypes();
+        const registerMapping = (name: string, key: string) => {
+          if (nameToKeyMap[name] && nameToKeyMap[name] !== key) {
+            console.warn(
+              `Document type display name collision: "${name}" is already mapped to "${nameToKeyMap[name]}". Ignoring mapping to "${key}".`
+            );
+          } else {
+            nameToKeyMap[name] = key;
+          }
+        };
+
         for (const doc of docTypes) {
           if (doc.name) {
-            nameToKeyMap[doc.name] = doc.key;
+            registerMapping(doc.name, doc.key);
           }
           if (doc.displayName) {
-            nameToKeyMap[doc.displayName] = doc.key;
+            registerMapping(doc.displayName, doc.key);
           }
         }
       } catch (e) {
@@ -55,11 +62,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     }
 
     const state = evaluateProcessUiState({
-      actionName: context.actionName,
-      parameters: context.parameters,
-      formData: context.formData,
-      ...(context.validationErrors ? { validationErrors: context.validationErrors } : {}),
-      ...(context.isUpdateCard !== undefined ? { isUpdateCard: context.isUpdateCard } : {}),
+      context,
       config: {
         ...(config?.defaultDocumentType ? { defaultDocumentType: config.defaultDocumentType } : {}),
         ...(config?.defaultDocumentSpaceType
