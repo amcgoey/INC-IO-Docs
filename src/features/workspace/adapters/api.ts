@@ -94,7 +94,8 @@ export function registerWorkspaceFeatureRoutes(
   } = opts;
 
   const prepareDriveDocumentProcessCardContext = async (
-    context: WorkspaceExecutionContext
+    context: WorkspaceExecutionContext,
+    validationErrors?: string[]
   ) => {
     const wsConfig = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
 
@@ -140,7 +141,14 @@ export function registerWorkspaceFeatureRoutes(
         value: f.key,
         selected: f.key === wsConfig?.defaultDocumentType,
       }));
+    } else if (allowedDocumentTypes && allowedDocumentTypes.length > 0) {
+      documentTypes = allowedDocumentTypes.map((typeKey) => ({
+        text: typeKey,
+        value: typeKey,
+        selected: typeKey === wsConfig?.defaultDocumentType,
+      }));
     }
+
 
     const selectionContext: DocumentSelectionState = {
       spaceTypes,
@@ -158,6 +166,7 @@ export function registerWorkspaceFeatureRoutes(
         viewId: 'drive-document-process-card',
         documentTypeKey: selectedDocType,
         selectionState: selectionContext,
+        ...(validationErrors && validationErrors.length > 0 ? { validationErrors } : {}),
       });
     }
 
@@ -176,10 +185,14 @@ export function registerWorkspaceFeatureRoutes(
           request.body,
           traceHeader
         );
+        const bodyObj = request.body as { validationErrors?: string[] } | undefined;
+        const validationErrors = Array.isArray(bodyObj?.validationErrors)
+          ? bodyObj.validationErrors
+          : undefined;
 
         return {
           status: 200,
-          body: await prepareDriveDocumentProcessCardContext(context),
+          body: await prepareDriveDocumentProcessCardContext(context, validationErrors),
         };
       } catch (error) {
         return {
@@ -204,10 +217,11 @@ export function registerWorkspaceFeatureRoutes(
           request.body,
           traceHeader
         );
+        const wsConfig = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
 
         return {
           status: 200,
-          body: await prepareDriveDocumentProcessCardContext(context),
+          body: buildDriveDocumentProcessCard(context.selectedItems, wsConfig, uiBuilder),
         };
       } catch (error) {
         return {
@@ -219,4 +233,5 @@ export function registerWorkspaceFeatureRoutes(
       }
     }),
   });
+
 }
