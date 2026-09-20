@@ -1,3 +1,4 @@
+import type { TSchema, Static } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import type { UiManifestPort } from '../ports';
 import { AbstractDataSchema } from '../ports';
@@ -10,7 +11,7 @@ export interface RawManifestProviderPort {
 
 export type EvaluationOrderEnsurer = (
   uiSchema: UiSchema,
-  documentSchema?: unknown
+  documentSchema?: AbstractDataSchema
 ) => UiSchema;
 
 export class ManifestUiAdapter implements UiManifestPort {
@@ -18,6 +19,17 @@ export class ManifestUiAdapter implements UiManifestPort {
     private readonly manifestProvider: RawManifestProviderPort,
     private readonly evaluationOrderEnsurer?: EvaluationOrderEnsurer
   ) {}
+
+  private cleanAndCheck<T extends TSchema>(rawData: unknown, schema: T): Static<T> | undefined {
+    if (!rawData) {
+      return undefined;
+    }
+    const cleaned = Value.Clean(schema, structuredClone(rawData));
+    if (!Value.Check(schema, cleaned)) {
+      return undefined;
+    }
+    return cleaned as Static<T>;
+  }
 
   private async findRawDoc(
     documentTypeKey: string
@@ -40,29 +52,19 @@ export class ManifestUiAdapter implements UiManifestPort {
 
   async getUiSchema(documentTypeKey: string): Promise<UiSchema | undefined> {
     const rawDoc = await this.findRawDoc(documentTypeKey);
-    if (!rawDoc?.documentUiSchema) {
+    let uiSchema = this.cleanAndCheck(rawDoc?.documentUiSchema, UiSchema);
+    if (!uiSchema) {
       return undefined;
     }
-    const cleaned = Value.Clean(UiSchema, structuredClone(rawDoc.documentUiSchema));
-    if (!Value.Check(UiSchema, cleaned)) {
-      return undefined;
-    }
-    let uiSchema = cleaned as UiSchema;
     if (this.evaluationOrderEnsurer) {
-      uiSchema = this.evaluationOrderEnsurer(uiSchema, rawDoc.documentSchema);
+      const docSchema = this.cleanAndCheck(rawDoc?.documentSchema, AbstractDataSchema);
+      uiSchema = this.evaluationOrderEnsurer(uiSchema, docSchema);
     }
     return uiSchema;
   }
 
   async getDocumentSchema(documentTypeKey: string): Promise<AbstractDataSchema | undefined> {
     const rawDoc = await this.findRawDoc(documentTypeKey);
-    if (!rawDoc?.documentSchema) {
-      return undefined;
-    }
-    const cleaned = Value.Clean(AbstractDataSchema, structuredClone(rawDoc.documentSchema));
-    if (!Value.Check(AbstractDataSchema, cleaned)) {
-      return undefined;
-    }
-    return cleaned as AbstractDataSchema;
+    return this.cleanAndCheck(rawDoc?.documentSchema, AbstractDataSchema);
   }
 }
