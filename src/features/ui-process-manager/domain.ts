@@ -20,22 +20,22 @@ export interface UiProcessSpaceType {
   spaceSchema: { allowedDocumentTypes: string[] };
 }
 
-export const UiProcessEventContextSchema = Type.Object({
-  actionName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
-  formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
-  parameters: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
-  validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
-  isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
-});
-export type UiProcessEventContext = Static<typeof UiProcessEventContextSchema>;
-
 export interface ProcessUiStateConfig {
   defaultDocumentType?: string | undefined;
   defaultDocumentSpaceType?: string | undefined;
 }
 
+export interface ProcessUiStateEvent {
+  actionName?: string | undefined;
+  formData?: Record<string, unknown> | undefined;
+  parameters?: Record<string, string> | undefined;
+  validationErrors?: string[] | undefined;
+  isUpdateCard?: boolean | undefined;
+}
+
 export interface ProcessUiStateInput {
-  context: UiProcessEventContext;
+  context: ProcessUiStateEvent;
+  resolvedDocumentTypeKey?: string | undefined;
   config?: ProcessUiStateConfig | undefined;
   spaceTypes: UiProcessSpaceType[];
   collectionSpaces: string[];
@@ -103,8 +103,8 @@ export function resolveSpaceType(
  * Enforces:
  * 1. UI reload (isUpdateCard) on Space Type change.
  * 2. Defaulting Document Type to first allowed type when Space Type changes.
- * 3. Clearing DocumentInfo segment of formData on Document Type change.
- * 4. Translating human-readable document type names into backend keys.
+ * 3. Clearing DocumentInfo segment of formData on Document Type or Space Type change.
+ * 4. Consolidates selection state and translation into effective form data.
  */
 export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiStateOutput {
   const { context } = input;
@@ -120,43 +120,32 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   let effectiveFormData: Record<string, unknown> = { ...(context.formData ?? {}) };
   const isUpdateCard = Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange);
 
+  // If resolvedDocumentTypeKey is already provided by orchestrator translation, use it;
+  // otherwise fallback to rawSelectedDocType and nameToKeyMap translation if provided
   const rawSelectedDocType =
     (effectiveFormData.SelectDocumentType as string | undefined) ??
     context.parameters?.documentTypeKey ??
     input.config?.defaultDocumentType;
 
-  let currentDocTypeKey = rawSelectedDocType
-    ? translateDocumentType(rawSelectedDocType, input.nameToKeyMap)
-    : undefined;
+  let currentDocTypeKey =
+    input.resolvedDocumentTypeKey ??
+    (rawSelectedDocType ? translateDocumentType(rawSelectedDocType, input.nameToKeyMap) : undefined);
 
-  if (isSpaceTypeChange) {
-    // When Space Type changes, default Document Type to first allowed type
-    if (allowedDocumentTypes.length > 0) {
-      currentDocTypeKey = allowedDocumentTypes[0];
-    }
-    // Form data for document info must be cleared because space/doc type changed
+  if (isSpaceTypeChange && allowedDocumentTypes.length > 0) {
+    currentDocTypeKey = allowedDocumentTypes[0];
+  }
+
+  if (isSpaceTypeChange || isDocTypeChange) {
     effectiveFormData = clearDocumentInfoSegment(effectiveFormData);
     effectiveFormData.SelectDocumentSpaceType = currentSpaceType;
-    if (currentDocTypeKey) {
-      effectiveFormData.SelectDocumentType = currentDocTypeKey;
-    }
-  } else if (isDocTypeChange) {
-    // When Document Type changes, explicitly clear DocumentInfo segment
-    effectiveFormData = clearDocumentInfoSegment(effectiveFormData);
-    effectiveFormData.SelectDocumentSpaceType = currentSpaceType;
-    if (currentDocTypeKey) {
-      effectiveFormData.SelectDocumentType = currentDocTypeKey;
-    }
-  } else {
-    // Ensure translation is written back to formData
-    if (currentDocTypeKey) {
-      effectiveFormData.SelectDocumentType = currentDocTypeKey;
-    }
   }
 
   // If still unassigned or invalid, fallback to first allowed or default
   if (!currentDocTypeKey || (allowedDocumentTypes.length > 0 && !allowedDocumentTypes.includes(currentDocTypeKey))) {
-    currentDocTypeKey = allowedDocumentTypes[0] ?? input.config?.defaultDocumentType ?? 'default';
+    currentDocTypeKey = allowedDocumentTypes[0] ?? input.config?.defaultDocumentType ?? '';
+  }
+
+  if (currentDocTypeKey) {
     effectiveFormData.SelectDocumentType = currentDocTypeKey;
   }
 

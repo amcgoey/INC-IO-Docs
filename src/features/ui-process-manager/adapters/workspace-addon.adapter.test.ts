@@ -151,15 +151,13 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
     expect(result.request.formData?.SelectDocumentType).toBe('communication-project');
   });
 
-  it('warns and retains first mapping when document type display names collide', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-    const collidingManifestPort: UiProcessManifestPort = {
-      resolveDocumentTypeKey: vi.fn(),
-      getAllDocumentTypes: vi.fn().mockResolvedValue([
-        { key: 'first-key', displayName: 'Duplicate Name' },
-        { key: 'second-key', displayName: 'Duplicate Name' },
-      ]),
+  it('resolves human-readable names using manifestPort.resolveDocumentTypeKey', async () => {
+    const customManifestPort: UiProcessManifestPort = {
+      resolveDocumentTypeKey: vi.fn().mockImplementation(async (nameOrKey: string) => {
+        if (nameOrKey === 'Human Readable Proposal') return 'communication-proposal';
+        return nameOrKey;
+      }),
+      getAllDocumentTypes: vi.fn().mockResolvedValue([]),
     };
 
     const adapter = new WorkspaceAddonAdapter({
@@ -168,19 +166,19 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           {
             id: 'projects',
             displayName: 'Projects',
-            spaceSchema: { allowedDocumentTypes: ['first-key', 'second-key'] },
+            spaceSchema: { allowedDocumentTypes: ['communication-proposal'] },
           },
         ]),
         getCollection: vi.fn().mockResolvedValue({ spaces: [] }),
       },
-      manifestPort: collidingManifestPort,
+      manifestPort: customManifestPort,
       viewGenerator: mockViewGenerator,
     });
 
     const context: UiProcessEventContext = {
       formData: {
         SelectDocumentSpaceType: 'projects',
-        SelectDocumentType: 'Duplicate Name',
+        SelectDocumentType: 'Human Readable Proposal',
       },
     };
 
@@ -189,12 +187,8 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       request: UiProcessCardRequest;
     };
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Document type display name collision: "Duplicate Name" is already mapped to "first-key"')
-    );
-    // Should retain first mapped key
-    expect(result.request.documentTypeKey).toBe('first-key');
-
-    warnSpy.mockRestore();
+    expect(customManifestPort.resolveDocumentTypeKey).toHaveBeenCalledWith('Human Readable Proposal');
+    expect(result.request.documentTypeKey).toBe('communication-proposal');
+    expect(result.request.formData?.SelectDocumentType).toBe('communication-proposal');
   });
 });

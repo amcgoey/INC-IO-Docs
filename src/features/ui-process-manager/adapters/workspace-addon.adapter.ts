@@ -34,35 +34,26 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       console.warn(`Could not fetch collection for space type: ${currentSpaceType}`, e);
     }
 
-    const nameToKeyMap: Record<string, string> = {};
-    if (manifestPort) {
-      try {
-        const docTypes = await manifestPort.getAllDocumentTypes();
-        const registerMapping = (name: string, key: string) => {
-          if (nameToKeyMap[name] && nameToKeyMap[name] !== key) {
-            console.warn(
-              `Document type display name collision: "${name}" is already mapped to "${nameToKeyMap[name]}". Ignoring mapping to "${key}".`
-            );
-          } else {
-            nameToKeyMap[name] = key;
-          }
-        };
+    const rawSelectedDocType =
+      (context.formData?.SelectDocumentType as string | undefined) ??
+      context.parameters?.documentTypeKey ??
+      config?.defaultDocumentType;
 
-        for (const doc of docTypes) {
-          if (doc.name) {
-            registerMapping(doc.name, doc.key);
-          }
-          if (doc.displayName) {
-            registerMapping(doc.displayName, doc.key);
-          }
+    let resolvedDocumentTypeKey = rawSelectedDocType;
+    if (rawSelectedDocType && manifestPort) {
+      try {
+        const resolved = await manifestPort.resolveDocumentTypeKey(rawSelectedDocType);
+        if (resolved) {
+          resolvedDocumentTypeKey = resolved;
         }
       } catch (e) {
-        console.warn('Could not fetch document types from manifest port', e);
+        console.warn(`Could not resolve document type key for: ${rawSelectedDocType}`, e);
       }
     }
 
     const state = evaluateProcessUiState({
       context,
+      resolvedDocumentTypeKey,
       config: {
         ...(config?.defaultDocumentType ? { defaultDocumentType: config.defaultDocumentType } : {}),
         ...(config?.defaultDocumentSpaceType
@@ -71,7 +62,6 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       },
       spaceTypes,
       collectionSpaces,
-      nameToKeyMap,
     });
 
     return await viewGenerator.generateCard({

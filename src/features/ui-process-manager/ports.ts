@@ -5,8 +5,6 @@ import {
   UiSelectionStateSchema,
   type UiSelectionState,
   type UiProcessSpaceType,
-  UiProcessEventContextSchema,
-  type UiProcessEventContext,
 } from './domain';
 
 export {
@@ -15,9 +13,16 @@ export {
   UiSelectionStateSchema,
   type UiSelectionState,
   type UiProcessSpaceType,
-  UiProcessEventContextSchema,
-  type UiProcessEventContext,
 };
+
+export const UiProcessEventContextSchema = Type.Object({
+  actionName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
+  parameters: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
+  validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+});
+export type UiProcessEventContext = Static<typeof UiProcessEventContextSchema>;
 
 export const UiProcessCardRequestSchema = Type.Object({
   viewId: Type.String({ minLength: 1 }),
@@ -38,7 +43,6 @@ export interface UiProcessConfigProviderPort {
     defaultDocumentSpaceType?: string | undefined;
   } | undefined>;
 }
-
 
 export interface UiProcessSpaceCollection {
   type?: UiProcessSpaceType | undefined;
