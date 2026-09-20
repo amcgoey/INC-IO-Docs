@@ -36,7 +36,7 @@ describe('Document Admin Block', () => {
     });
 
     expect(section.widgets[0].buttonList?.buttons).toEqual([
-      { text: 'Process Document', onClick: { action: { action: 'customProcess' } } },
+      { text: 'Process Document', onClick: { action: 'customProcess' } },
       { text: 'Refresh Document', onClick: { action: 'refresh' } },
       { text: 'View Raw JSON', onClick: { action: 'viewJson' } },
     ]);

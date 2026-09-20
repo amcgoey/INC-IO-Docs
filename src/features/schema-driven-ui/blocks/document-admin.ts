@@ -1,16 +1,20 @@
-import type { UiViewSection } from '../domain';
+import type { UiViewSection, UiViewAction } from '../domain';
 
 export interface DocumentAdminOptions {
-  header?: string;
-  onProcessAction?: unknown;
+  header?: string | undefined;
+  onProcessAction?: UiViewAction | string | undefined;
 }
 
 export function buildDocumentAdminSection(options?: DocumentAdminOptions): UiViewSection {
   const buttons = [];
   if (options?.onProcessAction !== undefined) {
+    const processAction: UiViewAction =
+      typeof options.onProcessAction === 'string'
+        ? { action: options.onProcessAction }
+        : options.onProcessAction;
     buttons.push({
       text: 'Process Document',
-      onClick: { action: options.onProcessAction },
+      onClick: processAction,
     });
   }
   buttons.push(

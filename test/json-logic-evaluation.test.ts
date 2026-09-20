@@ -108,10 +108,10 @@ describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
     // tax = 100 * 0.1 = 10
     // grandTotal = 100 + 10 = 110
     // taxExemptNotes should be in hiddenFields because tax !== 0
-    expect(capturedRequest.formData.subtotal).toBe(100);
-    expect(capturedRequest.formData.tax).toBe(10);
-    expect(capturedRequest.formData.grandTotal).toBe(110);
-    expect(capturedRequest.hiddenFields).toContain('taxExemptNotes');
-    expect(capturedRequest.isUpdateCard).toBe(true);
+    expect(capturedRequest!.formData!.subtotal).toBe(100);
+    expect(capturedRequest!.formData!.tax).toBe(10);
+    expect(capturedRequest!.formData!.grandTotal).toBe(110);
+    expect(capturedRequest!.hiddenFields).toContain('taxExemptNotes');
+    expect(capturedRequest!.isUpdateCard).toBe(true);
   });
 });

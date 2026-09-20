@@ -1,17 +1,17 @@
-import type { UiViewSection, UiViewWidget } from '../domain';
+import type { UiViewSection, UiViewWidget, UiViewAction } from '../domain';
 import type { SelectionState, SelectionItem } from '../ports';
 
 export interface DocumentTypeSelectionOptions {
-  sectionHeader?: string;
-  onSpaceTypeChangeAction?: unknown;
-  onDocumentTypeChangeAction?: unknown;
+  sectionHeader?: string | undefined;
+  onSpaceTypeChangeAction?: UiViewAction | undefined;
+  onDocumentTypeChangeAction?: UiViewAction | undefined;
 }
 
 function buildDropdownWidget(
   name: string,
   label: string,
   items: SelectionItem[],
-  onChangeAction?: unknown
+  onChangeAction?: UiViewAction | undefined
 ): UiViewWidget {
   return {
     selectionInput: {

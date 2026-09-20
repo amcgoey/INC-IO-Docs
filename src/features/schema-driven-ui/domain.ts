@@ -131,10 +131,20 @@ export const UiViewHeaderSchema = Type.Object(
 
 export type UiViewHeader = Static<typeof UiViewHeaderSchema>;
 
+export const UiViewActionSchema = Type.Object(
+  {
+    action: Type.String(),
+    parameters: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  },
+  { additionalProperties: false }
+);
+
+export type UiViewAction = Static<typeof UiViewActionSchema>;
+
 const BaseInputWidgetProps = {
   name: Type.String(),
   label: Type.Optional(Type.String()),
-  onChangeAction: Type.Optional(Type.Unknown()),
+  onChangeAction: Type.Optional(UiViewActionSchema),
 };
 
 export const UiViewWidgetSchema = Type.Object(
@@ -175,7 +185,7 @@ export const UiViewWidgetSchema = Type.Object(
             Type.Object(
               {
                 text: Type.String(),
-                onClick: Type.Optional(Type.Unknown()),
+                onClick: Type.Optional(UiViewActionSchema),
               },
               { additionalProperties: false }
             )

@@ -3,6 +3,7 @@ import type {
   UiSchema,
   UiViewWidget,
   UiField,
+  UiViewAction,
 } from '../domain';
 import type {
   AbstractDataSchema,
@@ -33,12 +34,19 @@ export function inferDefaultWidget(field: AbstractDataField): 'textInput' | 'sel
   return 'textInput';
 }
 
+function withOnChangeAction<T extends object>(
+  props: T,
+  onChangeAction: UiViewAction | undefined
+): T & { onChangeAction?: UiViewAction } {
+  return onChangeAction !== undefined ? { ...props, onChangeAction } : props;
+}
+
 interface WidgetBuilderContext {
   field: AbstractDataField;
   label: string;
   uiField: UiField | undefined;
   customProps: StandardWidgetCustomProps;
-  onChangeAction: unknown | undefined;
+  onChangeAction: UiViewAction | undefined;
   formValue: unknown | undefined;
   dataSchema?: AbstractDataSchema | undefined;
 }
@@ -93,13 +101,15 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
         : baseItems;
 
     return {
-      selectionInput: {
-        name: field.key,
-        label,
-        type: customProps.type ?? 'DROPDOWN',
-        items,
-        ...(onChangeAction ? { onChangeAction } : {}),
-      },
+      selectionInput: withOnChangeAction(
+        {
+          name: field.key,
+          label,
+          type: customProps.type ?? 'DROPDOWN',
+          items,
+        },
+        onChangeAction
+      ),
     };
   },
   textInput: ({ field, label, customProps, onChangeAction, formValue }) => {
@@ -112,13 +122,15 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
           : customProps.value;
 
     return {
-      textInput: {
-        name: field.key,
-        label,
-        ...(hintText !== undefined ? { hintText } : {}),
-        ...(value !== undefined ? { value } : {}),
-        ...(onChangeAction ? { onChangeAction } : {}),
-      },
+      textInput: withOnChangeAction(
+        {
+          name: field.key,
+          label,
+          ...(hintText !== undefined ? { hintText } : {}),
+          ...(value !== undefined ? { value } : {}),
+        },
+        onChangeAction
+      ),
     };
   },
 };
@@ -153,7 +165,7 @@ export function buildDocumentInfoSection(
     const widgetType = uiField?.widget ?? inferDefaultWidget(field);
     const customProps = (uiField?.props as StandardWidgetCustomProps | undefined) ?? {};
 
-    const onChangeAction =
+    const onChangeAction: UiViewAction | undefined =
       typeof uiField?.onChange === 'string'
         ? { action: uiField.onChange }
         : uiField?.onChange === true
