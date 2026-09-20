@@ -10,9 +10,10 @@ import {
   type WorkspaceDocumentExecutionContext,
 } from './context';
 
-export interface WorkspaceAuthVerifierPort {
+export interface WorkspaceAuthVerifier {
   verifyToken(authHeader?: string): Promise<{ isValid: boolean; error?: string | undefined; payload?: unknown }>;
 }
+export type WorkspaceAuthVerifierPort = WorkspaceAuthVerifier;
 
 export interface WorkspaceConfiguration {
   appTitle?: string | undefined;
@@ -22,19 +23,21 @@ export interface WorkspaceConfiguration {
   defaultEventName?: string | undefined;
 }
 
-export interface WorkspaceConfigProviderPort {
+export interface WorkspaceConfigProvider {
   getWorkspaceConfig(): Promise<WorkspaceConfiguration | undefined>;
 }
+export type WorkspaceConfigProviderPort = WorkspaceConfigProvider;
 
-export interface WorkspaceDocumentRunnerPort {
+export interface WorkspaceDocumentRunner {
   processDocument(
     payload?: unknown,
     eventName?: string,
     context?: WorkspaceDocumentExecutionContext
   ): Promise<{ success: boolean; errors?: string[]; error?: string; outputs?: unknown[] }>;
 }
+export type WorkspaceDocumentRunnerPort = WorkspaceDocumentRunner;
 
-export interface WorkspaceDocumentSpaceProviderPort {
+export interface WorkspaceDocumentSpaceProvider {
   getAllTypes(): {
     id: string;
     displayName: string;
@@ -49,6 +52,7 @@ export interface WorkspaceDocumentSpaceProviderPort {
     spaces: { id: string; name: string }[];
   }>;
 }
+export type WorkspaceDocumentSpaceProviderPort = WorkspaceDocumentSpaceProvider;
 
 export interface WorkspaceProcessCardRequest {
   viewId: string;
@@ -60,35 +64,41 @@ export interface WorkspaceProcessCardRequest {
   isUpdateCard?: boolean | undefined;
 }
 
-export interface WorkspaceProcessCardOrchestratorPort {
+export interface WorkspaceProcessCardOrchestrator {
   generateCard(request: WorkspaceProcessCardRequest): Promise<unknown>;
 }
+export type WorkspaceProcessCardOrchestratorPort = WorkspaceProcessCardOrchestrator;
 
-export interface WorkspaceManifestProviderPort {
+export interface WorkspaceManifestProvider {
   getRawManifest(): Promise<unknown>;
   readParsedSchema?(relPath: string): Promise<unknown>;
 }
+export type WorkspaceManifestProviderPort = WorkspaceManifestProvider;
+
+export interface FormChangeEvaluationResult {
+  computedData: Record<string, unknown>;
+  hiddenFields: string[];
+  disabledFields: string[];
+}
+
+export type FormChangeEvaluator = (
+  formData: Record<string, unknown>,
+  docSchema?: unknown,
+  uiSchema?: unknown
+) => FormChangeEvaluationResult;
 
 export interface WorkspaceAddonApiOptions {
-  authVerifier: WorkspaceAuthVerifierPort;
-  documentService?: WorkspaceDocumentRunnerPort | undefined;
-  documentSpaceService?: WorkspaceDocumentSpaceProviderPort | undefined;
-  configProvider?: WorkspaceConfigProviderPort | undefined;
-  processCardOrchestrator?: WorkspaceProcessCardOrchestratorPort | undefined;
-  evaluateFormChange?: ((
-    formData: Record<string, unknown>,
-    docSchema?: unknown,
-    uiSchema?: unknown
-  ) => {
-    computedData: Record<string, unknown>;
-    hiddenFields: string[];
-    disabledFields: string[];
-  }) | undefined;
-  manifestProvider?: WorkspaceManifestProviderPort | undefined;
+  authVerifier: WorkspaceAuthVerifier;
+  documentService?: WorkspaceDocumentRunner | undefined;
+  documentSpaceService?: WorkspaceDocumentSpaceProvider | undefined;
+  configProvider?: WorkspaceConfigProvider | undefined;
+  processCardOrchestrator?: WorkspaceProcessCardOrchestrator | undefined;
+  evaluateFormChange?: FormChangeEvaluator | undefined;
+  manifestProvider?: WorkspaceManifestProvider | undefined;
 }
 
 function withAuthentication(
-  authVerifier: WorkspaceAuthVerifierPort,
+  authVerifier: WorkspaceAuthVerifier,
   handler: (request: HttpRequest) => Promise<HttpResponse>
 ): (request: HttpRequest) => Promise<HttpResponse> {
   return async (request: HttpRequest): Promise<HttpResponse> => {
@@ -120,7 +130,7 @@ function withAuthentication(
 }
 
 async function getDocAndUiSchemas(
-  manifestProvider?: WorkspaceManifestProviderPort,
+  manifestProvider?: WorkspaceManifestProvider,
   documentTypeKey?: string
 ): Promise<{ docSchema?: unknown; uiSchema?: unknown }> {
   if (!manifestProvider || !documentTypeKey) {
