@@ -51,6 +51,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       { key: 'communication-project', name: 'Communication Project' },
       { key: 'communication-proposal', name: 'Communication Proposal' },
     ]),
+    getDocumentTypeSchemas: vi.fn().mockResolvedValue({}),
   };
 
   const mockViewGenerator: UiProcessViewGeneratorPort = {
@@ -158,6 +159,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         return nameOrKey;
       }),
       getAllDocumentTypes: vi.fn().mockResolvedValue([]),
+      getDocumentTypeSchemas: vi.fn().mockResolvedValue({}),
     };
 
     const adapter = new WorkspaceAddonAdapter({

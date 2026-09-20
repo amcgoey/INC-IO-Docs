@@ -118,7 +118,7 @@ export function createUiProcessManagerWiring(
     : undefined;
 
   const formEvaluator: UiProcessFormEvaluatorPort | undefined = options.evaluateFormChange
-    ? new FormEvaluatorAdapter(options.manifestProvider, options.evaluateFormChange)
+    ? new FormEvaluatorAdapter(manifestPort, options.evaluateFormChange)
     : undefined;
 
   const orchestrator = new WorkspaceAddonAdapter({

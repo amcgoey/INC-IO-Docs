@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   retainSelectionState,
+  extractDocumentData,
   translateDocumentType,
   resolveSpaceType,
   evaluateProcessUiState,
@@ -38,6 +39,35 @@ describe('ui-process-manager domain', () => {
     it('returns empty object when formData is undefined or empty', () => {
       expect(retainSelectionState(undefined)).toEqual({});
       expect(retainSelectionState({})).toEqual({});
+    });
+  });
+
+  describe('extractDocumentData', () => {
+    it('extracts only non-SelectDocument keys from formData', () => {
+      const formData = {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentSpace: 'Project Alpha',
+        SelectDocumentType: 'communication-project',
+        contact: 'John Doe',
+        date: '260920',
+        direction: 'IN',
+      };
+
+      const result = extractDocumentData(formData);
+
+      expect(result).toEqual({
+        contact: 'John Doe',
+        date: '260920',
+        direction: 'IN',
+      });
+      expect(result).not.toHaveProperty('SelectDocumentSpaceType');
+      expect(result).not.toHaveProperty('SelectDocumentSpace');
+      expect(result).not.toHaveProperty('SelectDocumentType');
+    });
+
+    it('returns empty object when formData is undefined or empty', () => {
+      expect(extractDocumentData(undefined)).toEqual({});
+      expect(extractDocumentData({})).toEqual({});
     });
   });
 

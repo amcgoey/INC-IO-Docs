@@ -72,6 +72,25 @@ export function retainSelectionState(
 }
 
 /**
+ * Extracts data fields from formData by stripping selection state keys
+ * (keys starting with 'SelectDocument').
+ */
+export function extractDocumentData(
+  formData?: Record<string, unknown>
+): Record<string, unknown> {
+  if (!formData) {
+    return {};
+  }
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(formData)) {
+    if (!key.startsWith('SelectDocument')) {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+/**
  * Translates a human-readable document type display name into its canonical backend key.
  * If the input is already a backend key or no mapping is found, returns it unchanged.
  */

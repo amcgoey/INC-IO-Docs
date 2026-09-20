@@ -55,4 +55,26 @@ describe('ManifestAdapter', () => {
 
     expect(getRawManifest).toHaveBeenCalledTimes(1);
   });
+
+  it('retrieves document and UI schemas from manifest record or array', async () => {
+    const mockProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['schemas/doc1.json'],
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        key: 'doc1',
+        documentSchema: { title: 'Doc 1' },
+        documentUiSchema: { fields: ['a'] },
+      }),
+    };
+
+    const adapter = new ManifestAdapter(mockProvider);
+    const schemas = await adapter.getDocumentTypeSchemas('doc1');
+
+    expect(schemas.docSchema).toEqual({ title: 'Doc 1' });
+    expect(schemas.uiSchema).toEqual({ fields: ['a'] });
+
+    const empty = await adapter.getDocumentTypeSchemas('non-existent');
+    expect(empty).toEqual({});
+  });
 });

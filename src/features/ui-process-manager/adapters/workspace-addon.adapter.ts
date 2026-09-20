@@ -8,7 +8,7 @@ import type {
   UiProcessDocumentRunnerPort,
   UiProcessFormEvaluatorPort,
 } from '../ports';
-import { evaluateProcessUiState, resolveSpaceType } from '../domain';
+import { evaluateProcessUiState, resolveSpaceType, extractDocumentData } from '../domain';
 
 export interface WorkspaceAddonAdapterOptions {
   spaceProvider: UiProcessSpaceProviderPort;
@@ -66,12 +66,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
     if (actionName === 'processDocument') {
       const selectedSpace = context.formData?.SelectDocumentSpace as string | undefined;
-      const data: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(context.formData ?? {})) {
-        if (!k.startsWith('SelectDocument')) {
-          data[k] = v;
-        }
-      }
+      const data = extractDocumentData(context.formData);
 
       const selectedItem = context.selectedItems?.[0];
       const execContext = {

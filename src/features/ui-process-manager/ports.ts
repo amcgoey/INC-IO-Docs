@@ -69,6 +69,7 @@ export interface UiProcessSpaceProviderPort {
 export interface UiProcessManifestPort {
   resolveDocumentTypeKey(nameOrKey: string): Promise<string | undefined>;
   getAllDocumentTypes(): Promise<Array<{ key: string; name?: string | undefined; displayName?: string | undefined }>>;
+  getDocumentTypeSchemas(key: string): Promise<{ docSchema?: unknown; uiSchema?: unknown }>;
 }
 
 export interface UiProcessViewGeneratorPort {

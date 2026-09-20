@@ -1,17 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
 import { FormEvaluatorAdapter } from './form-evaluator.adapter';
-import type { RawManifestProviderPort } from './manifest.adapter';
+import type { UiProcessManifestPort } from '../ports';
 
 describe('FormEvaluatorAdapter', () => {
-  it('evaluates form change by resolving schema from manifest and executing evaluator function', async () => {
-    const mockProvider: RawManifestProviderPort = {
-      getRawManifest: vi.fn().mockResolvedValue({
-        documentTypes: {
-          'test-doc': {
-            documentSchema: { type: 'object' },
-            documentUiSchema: { fields: [] },
-          },
-        },
+  it('evaluates form change by resolving schema from manifestPort and executing evaluator function', async () => {
+    const mockManifestPort: UiProcessManifestPort = {
+      resolveDocumentTypeKey: vi.fn(),
+      getAllDocumentTypes: vi.fn(),
+      getDocumentTypeSchemas: vi.fn().mockResolvedValue({
+        docSchema: { type: 'object' },
+        uiSchema: { fields: [] },
       }),
     };
 
@@ -21,9 +19,10 @@ describe('FormEvaluatorAdapter', () => {
       disabledFields: [],
     });
 
-    const adapter = new FormEvaluatorAdapter(mockProvider, mockEvaluator);
+    const adapter = new FormEvaluatorAdapter(mockManifestPort, mockEvaluator);
     const result = await adapter.evaluate({ inputVal: '123' }, 'test-doc');
 
+    expect(mockManifestPort.getDocumentTypeSchemas).toHaveBeenCalledWith('test-doc');
     expect(mockEvaluator).toHaveBeenCalledWith(
       { inputVal: '123' },
       { type: 'object' },
@@ -37,8 +36,10 @@ describe('FormEvaluatorAdapter', () => {
   });
 
   it('evaluates gracefully when no documentTypeKey is provided', async () => {
-    const mockProvider: RawManifestProviderPort = {
-      getRawManifest: vi.fn().mockResolvedValue({}),
+    const mockManifestPort: UiProcessManifestPort = {
+      resolveDocumentTypeKey: vi.fn(),
+      getAllDocumentTypes: vi.fn(),
+      getDocumentTypeSchemas: vi.fn().mockResolvedValue({}),
     };
 
     const mockEvaluator = vi.fn().mockReturnValue({
@@ -47,9 +48,10 @@ describe('FormEvaluatorAdapter', () => {
       disabledFields: [],
     });
 
-    const adapter = new FormEvaluatorAdapter(mockProvider, mockEvaluator);
+    const adapter = new FormEvaluatorAdapter(mockManifestPort, mockEvaluator);
     const result = await adapter.evaluate({});
 
+    expect(mockManifestPort.getDocumentTypeSchemas).not.toHaveBeenCalled();
     expect(mockEvaluator).toHaveBeenCalledWith({}, undefined, undefined);
     expect(result.computedData).toEqual({});
   });
