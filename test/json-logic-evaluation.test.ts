@@ -1,21 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createHttpServer } from '../src/infrastructure/http';
-import { registerWorkspaceFeatureRoutes } from '../src/features/workspace/adapters/api';
+import {
+  registerWorkspaceAddonRoutes,
+  type WorkspaceAuthVerifierPort,
+  type WorkspaceProcessCardOrchestratorPort,
+  type WorkspaceProcessCardRequest,
+} from '../src/infrastructure/workspace-addon/api';
 import { evaluateFormChange } from '../src/infrastructure/workspace-addon/json-logic-evaluator';
-import type {
-  AuthVerifierPort,
-  WorkspaceProcessCardOrchestratorPort,
-} from '../src/features/workspace/ports';
 
 describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
   it('tests onFormChange handler in isolation to ensure it correctly executes computeEvaluationOrder for partial roundtrips', async () => {
     const server = createHttpServer();
 
-    const mockAuthVerifier: AuthVerifierPort = {
+    const mockAuthVerifier: WorkspaceAuthVerifierPort = {
       verifyToken: vi.fn().mockResolvedValue({ isValid: true, payload: { email: 'user@example.com' } }),
     };
 
-    let capturedRequest: import('../src/features/workspace/ports').WorkspaceProcessCardRequest | undefined;
+    let capturedRequest: WorkspaceProcessCardRequest | undefined;
     const mockOrchestrator: WorkspaceProcessCardOrchestratorPort = {
       generateCard: vi.fn().mockImplementation(async (request) => {
         capturedRequest = request;
@@ -43,25 +44,31 @@ describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
           'invoice-doc': {
             documentSchema: {
               fields: [
-                { key: 'quantity', defaultValue: 2 },
-                { key: 'unitPrice', defaultValue: 50 },
-                { key: 'subtotal' },
-                { key: 'tax' },
-                { key: 'grandTotal' },
-                { key: 'taxExemptNotes' },
+                { key: 'quantity', type: 'number' },
+                { key: 'unitPrice', type: 'number' },
+                { key: 'subtotal', type: 'number' },
+                { key: 'tax', type: 'number' },
+                { key: 'grandTotal', type: 'number' },
+                { key: 'taxExemptNotes', type: 'string' },
               ],
             },
             documentUiSchema: {
               layout: ['quantity', 'unitPrice', 'subtotal', 'tax', 'grandTotal', 'taxExemptNotes'],
               fields: {
-                grandTotal: {
-                  computeValue: { '+': [{ var: 'data.subtotal' }, { var: 'data.tax' }] },
+                subtotal: {
+                  computeValue: {
+                    '*': [{ var: 'data.quantity' }, { var: 'data.unitPrice' }],
+                  },
                 },
                 tax: {
-                  computeValue: { '*': [{ var: 'data.subtotal' }, 0.1] },
+                  computeValue: {
+                    '*': [{ var: 'data.subtotal' }, 0.1],
+                  },
                 },
-                subtotal: {
-                  computeValue: { '*': [{ var: 'data.quantity' }, { var: 'data.unitPrice' }] },
+                grandTotal: {
+                  computeValue: {
+                    '+': [{ var: 'data.subtotal' }, { var: 'data.tax' }],
+                  },
                 },
                 taxExemptNotes: {
                   showIf: { '==': [{ var: 'data.tax' }, 0] },
@@ -73,9 +80,8 @@ describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
       }),
     };
 
-    registerWorkspaceFeatureRoutes(server, {
+    registerWorkspaceAddonRoutes(server, {
       authVerifier: mockAuthVerifier,
-      uiBuilder: {} as unknown as import('../src/features/workspace/ports').WorkspaceUiBuilderPort,
       processCardOrchestrator: mockOrchestrator,
       manifestProvider: mockManifestProvider,
       evaluateFormChange,
@@ -102,18 +108,24 @@ describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    const body = JSON.parse(response.payload);
-    expect(body.action?.navigations?.[0]?.updateCard).toBeDefined();
+    expect(mockOrchestrator.generateCard).toHaveBeenCalledTimes(1);
+    expect(capturedRequest).toBeDefined();
+    expect(capturedRequest?.isUpdateCard).toBe(true);
+    expect(capturedRequest?.documentTypeKey).toBe('invoice-doc');
 
-    // Verify computeEvaluationOrder executed correctly in topological sequence:
-    // subtotal = 5 * 20 = 100
-    // tax = 100 * 0.1 = 10
-    // grandTotal = 100 + 10 = 110
-    // taxExemptNotes should be in hiddenFields because tax !== 0
-    expect(capturedRequest!.formData!.subtotal).toBe(100);
-    expect(capturedRequest!.formData!.tax).toBe(10);
-    expect(capturedRequest!.formData!.grandTotal).toBe(110);
-    expect(capturedRequest!.hiddenFields).toContain('taxExemptNotes');
-    expect(capturedRequest!.isUpdateCard).toBe(true);
+    // Assert computed values:
+    // quantity=5, unitPrice=20 -> subtotal=100 -> tax=10 -> grandTotal=110
+    expect(capturedRequest?.formData).toEqual({
+      SelectDocumentType: 'invoice-doc',
+      quantity: '5',
+      unitPrice: '20',
+      subtotal: 100,
+      tax: 10,
+      grandTotal: 110,
+    });
+
+    // Assert JSON Logic showIf evaluation:
+    // tax is 10 (!= 0), so taxExemptNotes should be hidden
+    expect(capturedRequest?.hiddenFields).toContain('taxExemptNotes');
   });
 });

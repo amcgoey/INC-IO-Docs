@@ -16,7 +16,8 @@
     "build": "tsc",
     "start": "node dist/src/app/server.js",
     "knip": "knip",
-    "knip:fix": "knip --fix"
+    "knip:fix": "knip --fix",
+    "knip:refactor": "knip -c knip.refactor.json"
   },
   "repository": {
     "type": "git",

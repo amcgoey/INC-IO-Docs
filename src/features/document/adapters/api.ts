@@ -1,4 +1,4 @@
-import type { DocumentServicePort, SchemaQueryPort } from '../ports';
+import type { DocumentServicePort } from '../ports';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
 
@@ -28,7 +28,6 @@ export interface HttpServer {
 
 export interface DocumentFeatureApiOptions {
   service: DocumentServicePort;
-  schemaQuery: SchemaQueryPort;
 }
 
 function toInternalServerErrorResponse(error: unknown, fallbackMessage: string): HttpResponse {
@@ -42,23 +41,7 @@ function toInternalServerErrorResponse(error: unknown, fallbackMessage: string):
 }
 
 export function registerDocumentFeatureRoutes(router: HttpServer, opts: DocumentFeatureApiOptions): void {
-  const { service, schemaQuery } = opts;
-
-  router.registerRoute({
-    method: 'GET',
-    url: '/forms',
-    handler: async () => {
-      try {
-        const forms = await schemaQuery.getForms();
-        return {
-          status: 200,
-          body: forms,
-        };
-      } catch (error) {
-        return toInternalServerErrorResponse(error, 'Failed to retrieve forms');
-      }
-    },
-  });
+  const { service } = opts;
 
   router.registerRoute({
     method: 'POST',
@@ -78,4 +61,3 @@ export function registerDocumentFeatureRoutes(router: HttpServer, opts: Document
     },
   });
 }
-

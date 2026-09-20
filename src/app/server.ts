@@ -5,7 +5,7 @@ import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import { createDocumentFeatureWiring, wireDocumentServicesAndRoutes } from './document.wiring';
 import { createDocumentSpaceFeatureWiring } from './document-space.wiring';
-import { wireWorkspaceFeature } from './workspace.wiring';
+import { wireWorkspaceAddonRoutes } from './workspace-addon.wiring';
 
 import type { DocumentService } from '../features/document/domain';
 import type { DocumentSpaceService } from '../features/document-space/domain';
@@ -18,19 +18,14 @@ import type {
   AppConfigurationProviderPort,
   DriveServicePort,
   DocumentSchemaRegistryPort,
-  SchemaQueryPort,
   TemplateEvaluatorPort,
   DocumentUiSchemaQueryPort,
   RawManifestProviderPort,
 } from '../features/document/ports';
 import type {
-  AuthVerifierPort,
+  WorkspaceAuthVerifierPort,
   WorkspaceConfigProviderPort,
-  WorkspaceUiBuilderPort,
-} from '../features/workspace/ports';
-import type { DocumentUiBlockAdapter } from './document.wiring';
-
-export type { WorkspaceUiBuilderPort, DocumentUiBlockAdapter };
+} from '../infrastructure/workspace-addon/api';
 
 export type CompositeManifestProvider =
   AppConfigurationProviderPort &
@@ -41,11 +36,10 @@ export type CompositeManifestProvider =
 export interface AppOptions {
   manifestProvider?: CompositeManifestProvider | undefined;
   manifestPath?: string | undefined;
-  documentSchemaRegistry?: (DocumentSchemaRegistryPort & SchemaQueryPort) | undefined;
+  documentSchemaRegistry?: DocumentSchemaRegistryPort | undefined;
   activityEngine?: ActivityDispatcherPort | undefined;
   templateEvaluator?: TemplateEvaluatorPort | undefined;
-  authVerifier?: AuthVerifierPort | undefined;
-  uiBuilder?: WorkspaceUiBuilderPort | undefined;
+  authVerifier?: WorkspaceAuthVerifierPort | undefined;
   driveService?: DriveServicePort | undefined;
   documentSpaceService?: DocumentSpaceService | undefined;
   authorizationUrl?: string | undefined;
@@ -57,10 +51,9 @@ export interface AppInstance {
   server: HttpServer;
   documentService: DocumentService;
   documentSpaceService: DocumentSpaceService;
-  documentSchemaRegistry: DocumentSchemaRegistryPort & SchemaQueryPort;
+  documentSchemaRegistry: DocumentSchemaRegistryPort;
   documentUiSchemaQuery?: DocumentUiSchemaQueryPort | undefined;
   documentSpaceUiSchemaQuery?: DocumentSpaceUiSchemaQueryPort | undefined;
-  documentUiBlock?: DocumentUiBlockAdapter | undefined;
   initialize: () => Promise<void>;
   start: (port?: number, host?: string) => Promise<void>;
 }
@@ -84,7 +77,7 @@ export function createApp(options?: AppOptions): AppInstance {
     }
   }
 
-  let documentSchemaRegistry: (DocumentSchemaRegistryPort & SchemaQueryPort) | undefined =
+  let documentSchemaRegistry: DocumentSchemaRegistryPort | undefined =
     options?.documentSchemaRegistry;
   let documentWiring: ReturnType<typeof createDocumentFeatureWiring> | undefined = undefined;
 
@@ -129,17 +122,14 @@ export function createApp(options?: AppOptions): AppInstance {
     options?.documentSpaceService ??
     documentSpaceWiring.documentSpaceService;
 
-  wireWorkspaceFeature({
+  wireWorkspaceAddonRoutes({
     server,
     documentService,
     documentSpaceService,
-    documentSchemaRegistry,
     authVerifier: options?.authVerifier,
-    uiBuilder: options?.uiBuilder,
     configProvider: manifestProvider,
     manifestProvider,
   });
-
 
   const initialize = async () => {
     await documentService.initialize();
@@ -167,7 +157,6 @@ export function createApp(options?: AppOptions): AppInstance {
     documentSchemaRegistry,
     documentUiSchemaQuery: documentWiring?.documentUiSchemaQuery,
     documentSpaceUiSchemaQuery: documentSpaceWiring.documentSpaceUiSchemaQuery,
-    documentUiBlock: documentWiring?.documentUiBlock,
     initialize,
     start,
   };

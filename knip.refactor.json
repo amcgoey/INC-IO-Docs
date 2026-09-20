@@ -1,0 +1,24 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src/app/workspace-addon.wiring.ts",
+    "src/features/schema-driven-ui/index.ts",
+    "src/infrastructure/workspace-addon/index.ts"
+  ],
+  "project": [
+    "src/features/schema-driven-ui/**/*.ts",
+    "src/infrastructure/workspace-addon/**/*.ts"
+  ],
+  "vitest": {
+    "entry": [
+      "src/features/schema-driven-ui/**/*.test.ts",
+      "src/infrastructure/workspace-addon/**/*.test.ts"
+    ]
+  },
+  "rules": {
+    "dependencies": "off",
+    "types": "off",
+    "duplicates": "off"
+  },
+  "ignoreBinaries": ["semgrep"]
+}

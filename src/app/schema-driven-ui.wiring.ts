@@ -1,10 +1,10 @@
 import { SchemaDrivenUiService, type UiSchema } from '../features/schema-driven-ui/domain';
-import { WorkspaceAddonAdapter } from '../features/schema-driven-ui/adapters/workspace-addon.adapter';
 import {
+  WorkspaceAddonAdapter,
   ManifestUiAdapter,
   type RawManifestProviderPort,
   type EvaluationOrderEnsurer,
-} from '../features/schema-driven-ui/adapters/manifest.adapter';
+} from '../features/schema-driven-ui/adapters';
 import { ensureEvaluationOrder } from '../infrastructure/validation/json-logic-graph';
 
 export type { RawManifestProviderPort };

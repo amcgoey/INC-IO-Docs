@@ -2,17 +2,17 @@ import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import nock from 'nock';
 import { createApp, type AppInstance } from '../src/app/server';
-import type { AuthVerifierPort, AuthVerificationResult } from '../src/features/workspace/ports';
+import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
 import { GoogleDriveClient } from '../src/infrastructure/drive/drive-client';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 
 describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
   let app: AppInstance;
-  let mockAuthVerifier: AuthVerifierPort;
+  let mockAuthVerifier: WorkspaceAuthVerifierPort;
 
   beforeEach(async () => {
     mockAuthVerifier = {
-      verifyToken: vi.fn().mockImplementation(async (header?: string): Promise<AuthVerificationResult> => {
+      verifyToken: vi.fn().mockImplementation(async (header?: string) => {
         if (header && header.startsWith('Bearer valid-')) {
           return {
             isValid: true,

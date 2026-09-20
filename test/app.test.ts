@@ -2,20 +2,16 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Value } from '@sinclair/typebox/value';
 import { createApp, type AppInstance } from '../src/app/server';
-import {
-  FormSchemaType,
-  type FormSchema,
-  type DocumentSchemaRegistryPort,
-  type SchemaQueryPort,
-  type ActivityDispatcherPort,
+import type {
+  DocumentSchemaRegistryPort,
+  ActivityDispatcherPort,
 } from '../src/features/document/ports';
 import type { DocumentType } from '../src/features/document/domain';
 
 describe('App integration tests', () => {
   let app: AppInstance;
-  let mockManifestRegistry: DocumentSchemaRegistryPort & SchemaQueryPort;
+  let mockManifestRegistry: DocumentSchemaRegistryPort;
   let mockActivityEngine: ActivityDispatcherPort;
   let mockDocumentTypes: DocumentType[];
 
@@ -60,29 +56,8 @@ describe('App integration tests', () => {
       },
     ];
 
-    let cachedForms: FormSchema[] | null = null;
     mockManifestRegistry = {
-      loadAll: vi.fn().mockImplementation(async () => {
-        cachedForms = mockDocumentTypes.map((dt) => {
-          const form: FormSchema = {
-            key: dt.key,
-            name: dt.name,
-            documentSchema: dt.documentSchema,
-          };
-          if (dt.documentUiSchema !== undefined) {
-            form.documentUiSchema = dt.documentUiSchema;
-          }
-          return form;
-        });
-        return mockDocumentTypes;
-      }),
-      getForms: vi.fn().mockImplementation(async () => {
-        if (cachedForms) {
-          return cachedForms;
-        }
-        await mockManifestRegistry.loadAll();
-        return cachedForms ?? [];
-      }),
+      loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
     };
 
     mockActivityEngine = {
@@ -212,70 +187,6 @@ describe('App integration tests', () => {
       expect(mockActivityEngine.dispatch).not.toHaveBeenCalled();
     });
 
-    it('GET /forms should return 200 with FormSchema list mapped from DocumentSchemaRegistryPort without backend configs', async () => {
-      const response = await app.server.inject({
-        method: 'GET',
-        url: '/forms',
-      });
-
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(Array.isArray(body)).toBe(true);
-      expect(body).toHaveLength(1);
-      expect(body[0]).toEqual({
-        key: 'communication-project',
-        name: 'Communication Project',
-        documentSchema: {
-          fields: [
-            {
-              key: 'contact',
-              name: 'Contact Person',
-              type: 'string',
-              required: true,
-            },
-          ],
-        },
-        documentUiSchema: {
-          events: {
-            onSubmit: {
-              catchAllWorkflow: 'SubmitCommProject',
-            },
-          },
-        },
-      });
-
-      // Verify strict contract validation against FormSchemaType
-      expect(Value.Check(FormSchemaType, body[0])).toBe(true);
-
-      // Verify backend-only and undeclared properties are not present
-      expect(body[0]).not.toHaveProperty('documentWorkflowConfig');
-      expect(body[0]).not.toHaveProperty('storageContextConfig');
-      expect(Object.keys(body[0]).sort()).toEqual(['key', 'name', 'documentSchema', 'documentUiSchema'].sort());
-
-      expect(mockManifestRegistry.loadAll).toHaveBeenCalledTimes(1);
-    });
-
-    it('GET /forms should return valid FormSchemas when APP_MANIFEST_PATH points to production manifest', async () => {
-      vi.stubEnv('APP_MANIFEST_PATH', path.resolve(__dirname, '../assets/manifest.json'));
-      const defaultApp = createApp({ skipSpaceValidation: true });
-      await defaultApp.initialize();
-
-      const response = await defaultApp.server.inject({
-        method: 'GET',
-        url: '/forms',
-      });
-
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(Array.isArray(body)).toBe(true);
-      expect(body.length).toBeGreaterThan(0);
-      for (const form of body) {
-        expect(Value.Check(FormSchemaType, form)).toBe(true);
-        expect(form).not.toHaveProperty('documentWorkflowConfig');
-        expect(form).not.toHaveProperty('storageContextConfig');
-      }
-      vi.unstubAllEnvs();
-    });
   });
 
   describe('Fail-fast startup behavior', () => {
@@ -292,9 +203,8 @@ describe('App integration tests', () => {
     });
 
     function createAppWithFailingRegistry(error: Error) {
-      const failingRegistry: DocumentSchemaRegistryPort & SchemaQueryPort = {
+      const failingRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockRejectedValue(error),
-        getForms: vi.fn().mockRejectedValue(error),
       };
       return createApp({ skipSpaceValidation: true,  documentSchemaRegistry: failingRegistry });
     }
@@ -423,9 +333,8 @@ describe('App integration tests', () => {
           },
         },
       ];
-      const customRegistry: DocumentSchemaRegistryPort & SchemaQueryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(unsupportedDocumentTypes),
-        getForms: vi.fn().mockResolvedValue([]),
       };
       const failingApp = createApp({ skipSpaceValidation: true,  documentSchemaRegistry: customRegistry });
 
@@ -459,11 +368,11 @@ describe('App integration tests', () => {
 
       const appInstance = createApp({ skipSpaceValidation: true,  manifestPath });
       await appInstance.initialize();
-      const forms = await appInstance.documentSchemaRegistry.getForms();
+      const docTypes = await appInstance.documentSchemaRegistry.loadAll();
 
-      expect(forms).toHaveLength(1);
-      expect(forms[0].key).toBe('custom-Document-key');
-      expect(forms[0].name).toBe('Custom Document Name');
+      expect(docTypes).toHaveLength(1);
+      expect(docTypes[0].key).toBe('custom-Document-key');
+      expect(docTypes[0].name).toBe('Custom Document Name');
     });
 
     it('resolves manifest strictly from APP_MANIFEST_PATH environment variable', async () => {
@@ -481,20 +390,11 @@ describe('App integration tests', () => {
 
       const appInstance = createApp();
       await appInstance.initialize();
-      const forms = await appInstance.documentSchemaRegistry.getForms();
+      const docTypes = await appInstance.documentSchemaRegistry.loadAll();
 
-      expect(forms).toHaveLength(1);
-      expect(forms[0].key).toBe('env-Document-key');
-      expect(forms[0].name).toBe('Env Document Name');
-
-      const response = await appInstance.server.inject({
-        method: 'GET',
-        url: '/forms',
-      });
-      expect(response.statusCode).toBe(200);
-      const responseBody = JSON.parse(response.payload);
-      expect(responseBody).toHaveLength(1);
-      expect(responseBody[0].key).toBe('env-Document-key');
+      expect(docTypes).toHaveLength(1);
+      expect(docTypes[0].key).toBe('env-Document-key');
+      expect(docTypes[0].name).toBe('Env Document Name');
     });
 
     it('prefers options.manifestPath over APP_MANIFEST_PATH environment variable', async () => {
@@ -526,10 +426,10 @@ describe('App integration tests', () => {
 
       const appInstance = createApp({ skipSpaceValidation: true,  manifestPath: optManifestPath });
       await appInstance.initialize();
-      const forms = await appInstance.documentSchemaRegistry.getForms();
+      const docTypes = await appInstance.documentSchemaRegistry.loadAll();
 
-      expect(forms).toHaveLength(1);
-      expect(forms[0].key).toBe('option-key');
+      expect(docTypes).toHaveLength(1);
+      expect(docTypes[0].key).toBe('option-key');
     });
   });
 
@@ -693,9 +593,8 @@ describe('App integration tests', () => {
         },
       ];
 
-      const customRegistry: DocumentSchemaRegistryPort & SchemaQueryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(customDocumentTypes),
-        getForms: vi.fn().mockResolvedValue([]),
       };
 
       const customApp = createApp({ skipSpaceValidation: true, 
@@ -735,55 +634,18 @@ describe('App integration tests', () => {
   });
 
   describe('End-to-End Initialization Flow', () => {
-    it('initializes app with real adapters using fixture manifest and returns stripped FormSchemas via GET /forms', async () => {
+    it('initializes app with real adapters using fixture manifest and loads DocumentTypes', async () => {
       const manifestPath = path.resolve(__dirname, 'fixtures/manifest.json');
       const e2eApp = createApp({ skipSpaceValidation: true,  manifestPath });
 
       await e2eApp.initialize();
 
-      const response = await e2eApp.server.inject({
-        method: 'GET',
-        url: '/forms',
-      });
-
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(Array.isArray(body)).toBe(true);
-      expect(body).toHaveLength(1);
-
-      const expectedForm = {
-        key: 'test-document',
-        name: 'Test Document',
-        documentSchema: {
-          fields: [
-            {
-              key: 'title',
-              name: 'Title',
-              type: 'string',
-              required: true,
-            },
-          ],
-        },
-        documentUiSchema: {
-          events: {
-            onSubmit: {
-              catchAllWorkflow: 'SubmitTestWorkflow',
-            },
-          },
-        },
-      };
-
-      expect(body[0]).toEqual(expectedForm);
-
-      // Verify strict contract validation against FormSchemaType
-      expect(Value.Check(FormSchemaType, body[0])).toBe(true);
-
-      // Verify backend configurations are stripped out
-      expect(body[0]).not.toHaveProperty('documentWorkflowConfig');
-      expect(body[0]).not.toHaveProperty('storageContextConfig');
-      expect(Object.keys(body[0]).sort()).toEqual(
-        ['key', 'name', 'documentSchema', 'documentUiSchema'].sort()
-      );
+      const docTypes = await e2eApp.documentSchemaRegistry.loadAll();
+      expect(docTypes).toHaveLength(1);
+      expect(docTypes[0].key).toBe('test-document');
+      expect(docTypes[0].name).toBe('Test Document');
+      expect(docTypes[0].documentSchema.fields[0].key).toBe('title');
+      expect(docTypes[0].documentUiSchema?.events?.onSubmit?.catchAllWorkflow).toBe('SubmitTestWorkflow');
     });
   });
 
@@ -845,9 +707,8 @@ describe('App integration tests', () => {
         },
       ];
 
-      const customRegistry: DocumentSchemaRegistryPort & SchemaQueryPort = {
+      const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue(customDocumentTypes),
-        getForms: vi.fn().mockResolvedValue([]),
       };
 
       const appInstance = createApp({ skipSpaceValidation: true, 

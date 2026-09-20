@@ -107,40 +107,6 @@ export type DocumentUiSchema = Static<typeof DocumentUiSchemaType>;
 export const UiFieldSchema = DocumentUiFieldSchema;
 export type UiField = DocumentUiField;
 
-export interface DocumentUiCardHeader {
-  title: string;
-  subtitle?: string | undefined;
-  imageUrl?: string | undefined;
-  imageType?: 'SQUARE' | 'CIRCLE' | undefined;
-}
-
-export interface DocumentUiCardSection {
-  header?: string | undefined;
-  widgets: Array<{ selectionInput?: Record<string, unknown>; textInput?: Record<string, unknown>; [key: string]: unknown }>;
-}
-
-export interface DocumentUiCard {
-  header: DocumentUiCardHeader;
-  sections: DocumentUiCardSection[];
-  evaluationOrder?: string[] | undefined;
-  [key: string]: unknown;
-}
-
-export interface DocumentUiCardHeaderOptions {
-  title: string;
-  subtitle?: string | undefined;
-  imageUrl?: string | undefined;
-  imageType?: 'SQUARE' | 'CIRCLE' | undefined;
-}
-
-export interface DocumentUiCardBuilderPort {
-  buildCard(
-    header: unknown,
-    sections: unknown[],
-    evaluationOrder?: string[]
-  ): DocumentUiCard;
-  buildTitleBlock(options: DocumentUiCardHeaderOptions): unknown;
-}
 
 export interface DocumentUiSchemaQueryPort {
   getDocumentUiSchema(documentTypeKey: string): Promise<DocumentUiSchema | undefined>;
@@ -242,9 +208,6 @@ export interface DocumentServicePort {
   ): Promise<ProcessDocumentResult>;
 }
 
-export interface SchemaQueryPort {
-  getForms(): Promise<FormSchema[]> | FormSchema[];
-}
 
 export interface DocumentSchemaRegistryPort {
   loadAll(): Promise<DocumentType[]>;

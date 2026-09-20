@@ -349,8 +349,8 @@ export type CardSection = GoogleWorkspaceSection;
 export const CardSchema = GoogleWorkspaceCardSchema;
 export type Card = GoogleWorkspaceCard & { evaluationOrder?: string[] };
 
-export const UiCardSchema = GoogleWorkspaceCardSchema;
-export type UiCard = GoogleWorkspaceCard & { evaluationOrder?: string[] };
+export const UiViewSchema = GoogleWorkspaceCardSchema;
+export type UiView = GoogleWorkspaceCard & { evaluationOrder?: string[] };
 
 export const CardNavigationSchema = GoogleWorkspaceNavigationSchema;
 export type CardNavigation = GoogleWorkspaceNavigation;

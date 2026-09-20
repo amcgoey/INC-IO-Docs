@@ -4,10 +4,9 @@ import {
   createSchemaDrivenUiWiring,
   type RawManifestProviderPort,
 } from '../src/app/schema-driven-ui.wiring';
-import { wireWorkspaceFeature } from '../src/app/workspace.wiring';
+import { wireWorkspaceAddonRoutes } from '../src/app/workspace-addon.wiring';
 import type { HttpServer, RouteDefinition } from '../src/infrastructure/http';
 import type { DocumentService } from '../src/features/document/domain';
-import type { DocumentSchemaRegistryPort, SchemaQueryPort } from '../src/features/document/ports';
 import { translateUiViewToNavigationAction } from '../src/infrastructure/workspace-addon/translator';
 import { GoogleWorkspaceActionResponseSchema } from '../src/infrastructure/workspace-addon/ui-blocks';
 
@@ -98,7 +97,7 @@ describe('Anti-Corruption Wiring Integration', () => {
     expect(pushCard.sections[3].collapsible).toBe(true);
   });
 
-  it('wires processCardOrchestrator in wireWorkspaceFeature to resolve schema-driven-ui pipeline without leaking types', async () => {
+  it('wires processCardOrchestrator in wireWorkspaceAddonRoutes to resolve schema-driven-ui pipeline without leaking types', async () => {
     const routes: RouteDefinition[] = [];
     const mockServer = {
       registerRoute: (route: RouteDefinition) => {
@@ -106,7 +105,7 @@ describe('Anti-Corruption Wiring Integration', () => {
       },
     } as unknown as HttpServer;
 
-    wireWorkspaceFeature({
+    wireWorkspaceAddonRoutes({
       server: mockServer,
       manifestProvider: mockManifestProvider,
       documentService: {} as unknown as DocumentService,
@@ -115,9 +114,6 @@ describe('Anti-Corruption Wiring Integration', () => {
           defaultDocumentType: 'contract-doc',
         }),
       },
-      documentSchemaRegistry: {
-        getForms: vi.fn().mockResolvedValue([]),
-      } as unknown as DocumentSchemaRegistryPort & SchemaQueryPort,
       authVerifier: {
         verifyToken: vi.fn().mockResolvedValue({
           isValid: true,

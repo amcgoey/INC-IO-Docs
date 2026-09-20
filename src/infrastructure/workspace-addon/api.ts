@@ -1,51 +1,73 @@
-import type {
-  AuthVerifierPort,
-  DocumentSelectionState,
-  WorkspaceConfigProviderPort,
-  WorkspaceDocumentRunnerPort,
-  WorkspaceProcessCardOrchestratorPort,
-  WorkspaceSchemaQueryPort,
-  WorkspaceUiBuilderPort,
-} from '../ports';
+import type { HttpServer, HttpRequest, HttpResponse } from '../http';
+import {
+  buildErrorCard,
+  type DocumentSelectionState,
+} from './ui-blocks';
 import {
   extractWorkspaceExecutionContext,
   createWorkspaceDocumentExecutionContext,
   type WorkspaceExecutionContext,
-} from '../domain';
-import { buildDriveDocumentProcessCard } from './drive-document-process-card';
+  type WorkspaceDocumentExecutionContext,
+} from './context';
 
-export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
-
-export interface HttpRequest {
-  body?: unknown;
-  headers?: Record<string, string | string[] | undefined> | undefined;
-  query?: unknown;
-  params?: unknown;
+export interface WorkspaceAuthVerifierPort {
+  verifyToken(authHeader?: string): Promise<{ isValid: boolean; error?: string | undefined; payload?: unknown }>;
 }
 
-export interface HttpResponse {
-  status: number;
-  body?: unknown;
-  headers?: Record<string, string>;
+export interface WorkspaceConfiguration {
+  appTitle?: string | undefined;
+  actionButtonText?: string | undefined;
+  defaultDocumentType?: string | undefined;
+  defaultDocumentSpaceType?: string | undefined;
+  defaultEventName?: string | undefined;
 }
 
-export interface RouteDefinition {
-  method: HttpMethod;
-  url: string;
-  schema?: unknown;
-  handler: (request: HttpRequest) => Promise<HttpResponse> | HttpResponse;
+export interface WorkspaceConfigProviderPort {
+  getWorkspaceConfig(): Promise<WorkspaceConfiguration | undefined>;
 }
 
-export interface HttpServer {
-  registerRoute(route: RouteDefinition): void;
+export interface WorkspaceDocumentRunnerPort {
+  processDocument(
+    payload?: unknown,
+    eventName?: string,
+    context?: WorkspaceDocumentExecutionContext
+  ): Promise<{ success: boolean; errors?: string[]; error?: string; outputs?: unknown[] }>;
 }
 
-export interface WorkspaceFeatureApiOptions {
-  authVerifier: AuthVerifierPort;
-  uiBuilder: WorkspaceUiBuilderPort;
+export interface WorkspaceDocumentSpaceProviderPort {
+  getAllTypes(): {
+    id: string;
+    displayName: string;
+    spaceSchema: { allowedDocumentTypes: string[] };
+  }[];
+  getCollection(typeId: string): Promise<{
+    type?: {
+      id: string;
+      displayName: string;
+      spaceSchema: { allowedDocumentTypes: string[] };
+    };
+    spaces: { id: string; name: string }[];
+  }>;
+}
+
+export interface WorkspaceProcessCardRequest {
+  viewId: string;
+  documentTypeKey?: string | undefined;
+  selectionState?: DocumentSelectionState | undefined;
+  validationErrors?: string[] | undefined;
+  formData?: Record<string, unknown> | undefined;
+  hiddenFields?: string[] | undefined;
+  isUpdateCard?: boolean | undefined;
+}
+
+export interface WorkspaceProcessCardOrchestratorPort {
+  generateCard(request: WorkspaceProcessCardRequest): Promise<unknown>;
+}
+
+export interface WorkspaceAddonApiOptions {
+  authVerifier: WorkspaceAuthVerifierPort;
   documentService?: WorkspaceDocumentRunnerPort | undefined;
-  schemaQuery?: WorkspaceSchemaQueryPort | undefined;
-  documentSpaceService?: import('../ports').WorkspaceDocumentSpaceProviderPort | undefined;
+  documentSpaceService?: WorkspaceDocumentSpaceProviderPort | undefined;
   configProvider?: WorkspaceConfigProviderPort | undefined;
   processCardOrchestrator?: WorkspaceProcessCardOrchestratorPort | undefined;
   evaluateFormChange?: ((
@@ -64,7 +86,7 @@ export interface WorkspaceFeatureApiOptions {
 }
 
 function withAuthentication(
-  authVerifier: AuthVerifierPort,
+  authVerifier: WorkspaceAuthVerifierPort,
   handler: (request: HttpRequest) => Promise<HttpResponse>
 ): (request: HttpRequest) => Promise<HttpResponse> {
   return async (request: HttpRequest): Promise<HttpResponse> => {
@@ -113,7 +135,6 @@ async function getDocAndUiSchemas(
     return {};
   }
 
-  // Case 1: documentTypes is an object/record keyed by doc type key
   if (rawManifest.documentTypes && !Array.isArray(rawManifest.documentTypes) && typeof rawManifest.documentTypes === 'object') {
     const docDef = (rawManifest.documentTypes as Record<string, { documentSchema?: unknown; documentUiSchema?: unknown }>)[documentTypeKey];
     if (docDef) {
@@ -124,7 +145,6 @@ async function getDocAndUiSchemas(
     }
   }
 
-  // Case 2: documentTypes is an array of paths and readParsedSchema is available
   if (Array.isArray(rawManifest.documentTypes) && manifestProvider.readParsedSchema) {
     for (const relPath of rawManifest.documentTypes) {
       const rawDoc = (await manifestProvider.readParsedSchema(relPath)) as
@@ -142,13 +162,12 @@ async function getDocAndUiSchemas(
   return {};
 }
 
-export function registerWorkspaceFeatureRoutes(
+export function registerWorkspaceAddonRoutes(
   router: HttpServer,
-  opts: WorkspaceFeatureApiOptions
+  opts: WorkspaceAddonApiOptions
 ): void {
   const {
     authVerifier,
-    uiBuilder,
     documentSpaceService,
     configProvider,
   } = opts;
@@ -204,18 +223,7 @@ export function registerWorkspaceFeatureRoutes(
       (context.formData?.SelectDocumentType as string | undefined) ??
       wsConfig?.defaultDocumentType;
 
-    if (opts.schemaQuery?.getForms) {
-      const forms = await opts.schemaQuery.getForms();
-      const filteredForms = allowedDocumentTypes
-        ? forms.filter((f) => allowedDocumentTypes.includes(f.key))
-        : forms;
-
-      documentTypes = filteredForms.map((f) => ({
-        text: f.name,
-        value: f.key,
-        selected: f.key === currentDocType,
-      }));
-    } else if (allowedDocumentTypes && allowedDocumentTypes.length > 0) {
+    if (allowedDocumentTypes && allowedDocumentTypes.length > 0) {
       documentTypes = allowedDocumentTypes.map((typeKey) => ({
         text: typeKey,
         value: typeKey,
@@ -249,9 +257,7 @@ export function registerWorkspaceFeatureRoutes(
       });
     }
 
-    return buildDriveDocumentProcessCard(context.selectedItems, wsConfig, uiBuilder, {
-      selectionContext,
-    });
+    return buildErrorCard('Process card orchestrator not configured');
   };
 
   const handleFormChange = async (context: WorkspaceExecutionContext): Promise<HttpResponse> => {
@@ -285,7 +291,7 @@ export function registerWorkspaceFeatureRoutes(
     } catch (error) {
       return {
         status: 200,
-        body: uiBuilder.buildErrorCard(
+        body: buildErrorCard(
           error instanceof Error ? error.message : 'Unknown error in onFormChange'
         ),
       };
@@ -327,8 +333,8 @@ export function registerWorkspaceFeatureRoutes(
 
           if (result && result.success === false) {
             const validationErrors =
-              (result as { errors?: string[] }).errors ??
-              ((result as { error?: string }).error ? [(result as { error?: string }).error!] : ['Document validation failed']);
+              result.errors ??
+              (result.error ? [result.error] : ['Document validation failed']);
             const card = await prepareDriveDocumentProcessCardContext({
               ...context,
               validationErrors,
@@ -373,7 +379,7 @@ export function registerWorkspaceFeatureRoutes(
 
     return {
       status: 200,
-      body: uiBuilder.buildErrorCard(`Unknown action: ${actionName ?? 'unspecified'}`),
+      body: buildErrorCard(`Unknown action: ${actionName ?? 'unspecified'}`),
     };
   };
 
@@ -394,7 +400,7 @@ export function registerWorkspaceFeatureRoutes(
       } catch (error) {
         return {
           status: 200,
-          body: uiBuilder.buildErrorCard(
+          body: buildErrorCard(
             error instanceof Error
               ? error.message
               : 'Unknown error in /workspace/drive-items-selected'
@@ -414,16 +420,15 @@ export function registerWorkspaceFeatureRoutes(
           request.body,
           traceHeader
         );
-        const wsConfig = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
 
         return {
           status: 200,
-          body: buildDriveDocumentProcessCard(context.selectedItems, wsConfig, uiBuilder),
+          body: await prepareDriveDocumentProcessCardContext(context),
         };
       } catch (error) {
         return {
           status: 200,
-          body: uiBuilder.buildErrorCard(
+          body: buildErrorCard(
             error instanceof Error ? error.message : 'Unknown error in /workspace/homepage'
           ),
         };

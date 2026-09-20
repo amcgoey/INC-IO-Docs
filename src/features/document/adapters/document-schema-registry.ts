@@ -10,8 +10,6 @@ import {
   type DocumentSchemaRegistryPort,
   type RawManifestProviderPort,
   type TemplateEvaluatorPort,
-  type SchemaQueryPort,
-  type FormSchema,
   type DocumentUiSchema,
   type EvaluationOrderEnsurer,
 } from '../ports';
@@ -24,9 +22,7 @@ function extractKey(raw: unknown): string {
   return Value.Check(RawDocumentKeySchema, raw) && raw.key ? ` "${raw.key}"` : '';
 }
 
-export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort, SchemaQueryPort {
-  private cachedForms: FormSchema[] | null = null;
-
+export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort {
   constructor(
     private readonly manifestProvider: RawManifestProviderPort,
     private readonly templateEvaluator: TemplateEvaluatorPort,
@@ -38,7 +34,6 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
       documentTypes?: string[];
     };
     const documentTypes: DocumentType[] = [];
-    const resolvedUiSchemas: Array<DocumentUiSchema | undefined> = [];
 
     for (const relPath of rawManifest?.documentTypes ?? []) {
       const rawDocumentType = await this.manifestProvider.readParsedSchema(relPath);
@@ -107,31 +102,8 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
       }
 
       documentTypes.push(validatedDocumentType);
-      resolvedUiSchemas.push(resolvedUiSchema);
     }
-
-    this.cachedForms = documentTypes.map((dt, idx) => {
-      const formSchema: FormSchema = {
-        key: dt.key,
-        name: dt.name,
-        documentSchema: dt.documentSchema,
-      };
-      const ui = resolvedUiSchemas[idx] ?? (dt.documentUiSchema as DocumentUiSchema | undefined);
-      if (ui !== undefined) {
-        formSchema.documentUiSchema = ui;
-      }
-      return formSchema;
-    });
 
     return documentTypes;
   }
-
-  async getForms(): Promise<FormSchema[]> {
-    if (this.cachedForms) {
-      return this.cachedForms;
-    }
-    await this.loadAll();
-    return this.cachedForms ?? [];
-  }
 }
-

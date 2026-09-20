@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { registerDocumentFeatureRoutes } from './api';
-import type { DocumentServicePort, SchemaQueryPort, FormSchema } from '../ports';
+import type { DocumentServicePort } from '../ports';
 import type { HttpServer, RouteDefinition, RouteSchema } from '../../../infrastructure/http';
 
 function createMockRouter() {
@@ -18,25 +18,6 @@ function createMockRouter() {
 
 describe('Document Feature API driving adapter', () => {
   it('registers feature routes and handles requests', async () => {
-    const mockForm: FormSchema = {
-      key: 'test-form',
-      name: 'Test Form',
-      documentSchema: {
-        fields: [
-          {
-            key: 'Field1',
-            name: 'Field 1',
-            type: 'string',
-            required: true,
-          },
-        ],
-      },
-    };
-
-    const mockSchemaQuery: SchemaQueryPort = {
-      getForms: vi.fn().mockResolvedValue([mockForm]),
-    };
-
     const mockService: DocumentServicePort = {
       processDocument: vi.fn().mockResolvedValue({
         success: true,
@@ -52,21 +33,12 @@ describe('Document Feature API driving adapter', () => {
 
     const { router: mockRouter, registeredRoutes } = createMockRouter();
 
-    registerDocumentFeatureRoutes(mockRouter, { service: mockService, schemaQuery: mockSchemaQuery });
+    registerDocumentFeatureRoutes(mockRouter, { service: mockService });
 
-    expect(mockRouter.registerRoute).toHaveBeenCalledTimes(2);
-    
-    const formsRoute = registeredRoutes.find(r => r.method === 'GET' && r.url === '/forms');
-    expect(formsRoute).toBeDefined();
+    expect(mockRouter.registerRoute).toHaveBeenCalledTimes(1);
 
     const documentsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/documents');
     expect(documentsRoute).toBeDefined();
-
-    // Test GET /forms
-    const formsResponse = await formsRoute!.handler({});
-    expect(formsResponse.status).toBe(200);
-    expect(mockSchemaQuery.getForms).toHaveBeenCalled();
-    expect(formsResponse.body).toEqual([mockForm]);
 
     // Test POST /documents success with eventName query parameter
     const validPayload = {
@@ -93,10 +65,6 @@ describe('Document Feature API driving adapter', () => {
   });
 
   it('POST /documents forwards undefined eventName when query parameter is omitted', async () => {
-    const mockSchemaQuery: SchemaQueryPort = {
-      getForms: vi.fn().mockResolvedValue([]),
-    };
-
     const mockService: DocumentServicePort = {
       processDocument: vi.fn().mockResolvedValue({
         success: true,
@@ -107,7 +75,7 @@ describe('Document Feature API driving adapter', () => {
 
     const { router: mockRouter, registeredRoutes } = createMockRouter();
 
-    registerDocumentFeatureRoutes(mockRouter, { service: mockService, schemaQuery: mockSchemaQuery });
+    registerDocumentFeatureRoutes(mockRouter, { service: mockService });
 
     const documentsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/documents');
     expect(documentsRoute).toBeDefined();
@@ -120,10 +88,6 @@ describe('Document Feature API driving adapter', () => {
   });
 
   it('POST /documents returns 400 when service returns failure', async () => {
-    const mockSchemaQuery: SchemaQueryPort = {
-      getForms: vi.fn().mockResolvedValue([]),
-    };
-
     const mockService: DocumentServicePort = {
       processDocument: vi.fn().mockResolvedValue({
         success: false,
@@ -133,7 +97,7 @@ describe('Document Feature API driving adapter', () => {
 
     const { router: mockRouter, registeredRoutes } = createMockRouter();
 
-    registerDocumentFeatureRoutes(mockRouter, { service: mockService, schemaQuery: mockSchemaQuery });
+    registerDocumentFeatureRoutes(mockRouter, { service: mockService });
 
     const documentsRoute = registeredRoutes.find(r => r.method === 'POST' && r.url === '/documents');
     expect(documentsRoute).toBeDefined();

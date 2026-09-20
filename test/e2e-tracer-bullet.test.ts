@@ -3,18 +3,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { createApp, type AppInstance } from '../src/app/server';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
-import type { AuthVerifierPort, AuthVerificationResult } from '../src/features/workspace/ports';
+import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
 import { GoogleWorkspaceActionResponseSchema } from '../src/infrastructure/workspace-addon/ui-blocks';
-
-
 
 describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
   let app: AppInstance;
-  let mockAuthVerifier: AuthVerifierPort;
+  let mockAuthVerifier: WorkspaceAuthVerifierPort;
 
   beforeEach(async () => {
     mockAuthVerifier = {
-      verifyToken: vi.fn().mockImplementation(async (header?: string): Promise<AuthVerificationResult> => {
+      verifyToken: vi.fn().mockImplementation(async (header?: string) => {
         if (header && header.startsWith('Bearer valid-')) {
           return {
             isValid: true,
@@ -155,7 +153,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     expect(pushCard.sections[3].header).toBe('Admin');
   });
 
-  it('leaves other flows untouched by continuing to use legacy card builder on /workspace/homepage trigger', async () => {
+  it('renders schema-driven process card on /workspace/homepage trigger', async () => {
     const response = await app.server.inject({
       method: 'POST',
       url: '/workspace/homepage',
@@ -168,10 +166,8 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     expect(response.statusCode).toBe(200);
     const body = JSON.parse(response.payload);
     expect(body.action?.navigations).toBeDefined();
-    // Legacy builder retains INC-IO Docs title and only renders Document Type section
-    expect(body.action.navigations[0].pushCard.header.title).toBe('INC-IO Docs');
-    expect(body.action.navigations[0].pushCard.sections).toHaveLength(1);
-    expect(body.action.navigations[0].pushCard.sections[0].header).toBe('Document Type');
+    expect(body.action.navigations[0].pushCard.header.title).toBe('INC-IO Engine');
+    expect(body.action.navigations[0].pushCard.sections.length).toBeGreaterThanOrEqual(1);
   });
 
   it('interaction loop: programmatically navigates cascading dropdowns and form changes via simulated JSON Logic roundtrips', async () => {
