@@ -9,7 +9,6 @@ import {
   buildErrorCard,
   GoogleWorkspaceCardSchema,
   GoogleWorkspaceSectionSchema,
-  GoogleWorkspaceWidgetSchema,
 } from './ui-blocks';
 
 describe('Workspace Add-on UI Blocks', () => {

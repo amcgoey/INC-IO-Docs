@@ -43,22 +43,6 @@ export const WorkspaceEventPayloadType = Type.Object({
 
 export type WorkspaceEventPayload = Static<typeof WorkspaceEventPayloadType>;
 
-export const WorkspaceDocumentExecutionContextSchema = Type.Object({
-  credentials: Type.Optional(
-    Type.Object({
-      oauthToken: Type.Optional(Type.String()),
-    })
-  ),
-  resources: Type.Optional(
-    Type.Object({
-      primaryTargetId: Type.Optional(Type.String()),
-    })
-  ),
-});
-
-export type WorkspaceDocumentExecutionContext = Static<
-  typeof WorkspaceDocumentExecutionContextSchema
->;
 
 export interface WorkspaceExecutionContext {
   userOAuthToken?: string | undefined;
@@ -132,15 +116,6 @@ export function extractWorkspaceExecutionContext(
   };
 }
 
-export function createWorkspaceDocumentExecutionContext(
-  context: WorkspaceExecutionContext
-): WorkspaceDocumentExecutionContext {
-  const selectedItem = context.selectedItems?.[0];
-  return {
-    ...(context.userOAuthToken ? { credentials: { oauthToken: context.userOAuthToken } } : {}),
-    ...(selectedItem?.id ? { resources: { primaryTargetId: selectedItem.id } } : {}),
-  };
-}
 
 export function findLatestFileLocator<TFile extends { name: string }>(
   outputs?: { files?: TFile[] | undefined }[] | undefined

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   extractWorkspaceExecutionContext,
-  createWorkspaceDocumentExecutionContext,
   findLatestFileLocator,
 } from './context';
 
@@ -86,24 +85,6 @@ describe('Workspace Add-on Context', () => {
     });
   });
 
-  describe('createWorkspaceDocumentExecutionContext', () => {
-    it('maps userOAuthToken and primary target id', () => {
-      const execContext = createWorkspaceDocumentExecutionContext({
-        userOAuthToken: 'test-oauth-token',
-        selectedItems: [{ id: 'target-item-456' }],
-      });
-
-      expect(execContext).toEqual({
-        credentials: { oauthToken: 'test-oauth-token' },
-        resources: { primaryTargetId: 'target-item-456' },
-      });
-    });
-
-    it('returns empty context when no token or target id', () => {
-      const execContext = createWorkspaceDocumentExecutionContext({});
-      expect(execContext).toEqual({});
-    });
-  });
 
   describe('findLatestFileLocator', () => {
     it('returns undefined if outputs is empty or undefined', () => {

@@ -1,14 +1,26 @@
+import { Type, type Static } from '@sinclair/typebox';
 import type { HttpServer, HttpRequest, HttpResponse } from '../http';
 import {
   buildErrorCard,
 } from './ui-blocks';
-import type { SelectionState } from '../../features/schema-driven-ui/ports';
 import {
   extractWorkspaceExecutionContext,
-  createWorkspaceDocumentExecutionContext,
   type WorkspaceExecutionContext,
-  type WorkspaceDocumentExecutionContext,
 } from './context';
+
+export const WorkspaceSelectionItemSchema = Type.Object({
+  text: Type.String(),
+  value: Type.String(),
+  selected: Type.Optional(Type.Boolean()),
+});
+export type WorkspaceSelectionItem = Static<typeof WorkspaceSelectionItemSchema>;
+
+export const WorkspaceSelectionStateSchema = Type.Object({
+  spaceTypes: Type.Array(WorkspaceSelectionItemSchema),
+  spaces: Type.Array(Type.String()),
+  documentTypes: Type.Array(WorkspaceSelectionItemSchema),
+});
+export type WorkspaceSelectionState = Static<typeof WorkspaceSelectionStateSchema>;
 
 export interface WorkspaceAuthVerifier {
   verifyToken(authHeader?: string): Promise<{ isValid: boolean; error?: string | undefined; payload?: unknown }>;
@@ -32,7 +44,7 @@ export interface WorkspaceDocumentRunner {
   processDocument(
     payload?: unknown,
     eventName?: string,
-    context?: WorkspaceDocumentExecutionContext
+    context?: WorkspaceExecutionContext
   ): Promise<{ success: boolean; errors?: string[]; error?: string; outputs?: unknown[] }>;
 }
 export type WorkspaceDocumentRunnerPort = WorkspaceDocumentRunner;
@@ -57,7 +69,7 @@ export type WorkspaceDocumentSpaceProviderPort = WorkspaceDocumentSpaceProvider;
 export interface WorkspaceProcessCardRequest {
   viewId: string;
   documentTypeKey?: string | undefined;
-  selectionState?: SelectionState | undefined;
+  selectionState?: WorkspaceSelectionState | undefined;
   validationErrors?: string[] | undefined;
   formData?: Record<string, unknown> | undefined;
   hiddenFields?: string[] | undefined;
@@ -192,8 +204,8 @@ export function registerWorkspaceAddonRoutes(
   ) => {
     const wsConfig = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
 
-    let spaceTypes: SelectionState['spaceTypes'] = [];
-    let documentTypes: SelectionState['documentTypes'] = [];
+    let spaceTypes: WorkspaceSelectionState['spaceTypes'] = [];
+    let documentTypes: WorkspaceSelectionState['documentTypes'] = [];
     let spaces: string[] = [];
 
     const currentSpaceType =
@@ -240,7 +252,7 @@ export function registerWorkspaceAddonRoutes(
       }));
     }
 
-    const selectionContext: SelectionState = {
+    const selectionContext: WorkspaceSelectionState = {
       spaceTypes,
       spaces,
       documentTypes,
@@ -329,7 +341,6 @@ export function registerWorkspaceAddonRoutes(
 
       try {
         if (opts.documentService) {
-          const execContext = createWorkspaceDocumentExecutionContext(context);
           const result = await opts.documentService.processDocument(
             {
               type: selectedDocType ?? 'default',
@@ -337,7 +348,7 @@ export function registerWorkspaceAddonRoutes(
               ...(selectedSpace ? { space: selectedSpace } : {}),
             },
             'onSubmit',
-            execContext
+            context
           );
 
           if (result && result.success === false) {

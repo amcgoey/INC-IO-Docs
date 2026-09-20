@@ -4,6 +4,7 @@ import type {
   ActivityDispatcherPort,
   DocumentSchemaRegistryPort,
   DocumentServicePort,
+  ExecutionContext,
   TemplateEvaluationContext,
   TemplateEvaluatorPort,
 } from './ports';
@@ -63,30 +64,6 @@ export const ActivityOutputType = Type.Object({
 
 export type ActivityOutput = Static<typeof ActivityOutputType>;
 
-/**
- * ExecutionContext represents ambient infrastructure runtime variables (credentials, target resources)
- * passed into activity dispatching.
- *
- * NOTE ON CODE DUPLICATION:
- * This schema is intentionally defined independently within the `document` feature boundary and mirrors
- * `WorkspaceDocumentExecutionContextSchema` in the `workspace` feature. In accordance with ADR 0001
- * (Hybrid Hexagonal Architecture - Locality over Layering) and Hexagonal Architecture boundary rules,
- * feature slices are self-contained and must not share internal domain models across feature boundaries.
- */
-export const ExecutionContextSchema = Type.Object({
-  credentials: Type.Optional(
-    Type.Object({
-      oauthToken: Type.Optional(Type.String()),
-    })
-  ),
-  resources: Type.Optional(
-    Type.Object({
-      primaryTargetId: Type.Optional(Type.String()),
-    })
-  ),
-});
-
-export type ExecutionContext = Static<typeof ExecutionContextSchema>;
 
 export const DocumentFieldOptionType = Type.Object({
   source: Type.String(),

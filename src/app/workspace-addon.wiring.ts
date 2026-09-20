@@ -177,7 +177,18 @@ export function wireWorkspaceAddonRoutes(
 
   registerWorkspaceAddonRoutes(options.server, {
     authVerifier,
-    documentService: options.documentService,
+    documentService: options.documentService
+      ? {
+          processDocument: (payload, eventName, context) => {
+            const selectedItem = context?.selectedItems?.[0];
+            const execContext = {
+              ...(context?.userOAuthToken ? { credentials: { oauthToken: context.userOAuthToken } } : {}),
+              ...(selectedItem?.id ? { resources: { primaryTargetId: selectedItem.id } } : {}),
+            };
+            return options.documentService.processDocument(payload, eventName, execContext);
+          },
+        }
+      : undefined,
     documentSpaceService: options.documentSpaceService,
     configProvider: options.configProvider,
     processCardOrchestrator,

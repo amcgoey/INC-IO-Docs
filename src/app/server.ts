@@ -77,10 +77,9 @@ export function createApp(options?: AppOptions): AppInstance {
 
   let documentSchemaRegistry: DocumentSchemaRegistryPort | undefined =
     options?.documentSchemaRegistry;
-  let documentWiring: ReturnType<typeof createDocumentFeatureWiring> | undefined = undefined;
 
   if (manifestProvider) {
-    documentWiring = createDocumentFeatureWiring({
+    const documentWiring = createDocumentFeatureWiring({
       manifestProvider,
       templateEvaluator,
       documentSchemaRegistry: options?.documentSchemaRegistry,

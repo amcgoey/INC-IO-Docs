@@ -142,4 +142,66 @@ describe('Anti-Corruption Wiring Integration', () => {
     const body = response.body as { action: { navigations: Array<{ pushCard: { header: { title: string } } }> } };
     expect(body.action.navigations[0].pushCard.header.title).toBe('INC-IO Engine');
   });
+
+  it('maps WorkspaceExecutionContext to Document ExecutionContext through the anonymous documentService adapter', async () => {
+    const routes: RouteDefinition[] = [];
+    const mockServer = {
+      registerRoute: (route: RouteDefinition) => {
+        routes.push(route);
+      },
+    } as unknown as HttpServer;
+
+    const mockProcessDocument = vi.fn().mockResolvedValue({ success: true });
+
+    wireWorkspaceAddonRoutes({
+      server: mockServer,
+      manifestProvider: mockManifestProvider,
+      documentService: {
+        processDocument: mockProcessDocument,
+      } as unknown as DocumentService,
+      authVerifier: {
+        verifyToken: vi.fn().mockResolvedValue({
+          isValid: true,
+          payload: { email: 'test@example.com' },
+        }),
+      },
+    });
+
+    const route = routes.find((r) => r.url === '/workspace/action');
+    expect(route).toBeDefined();
+
+    const response = await route!.handler({
+      headers: { authorization: 'Bearer valid-token' },
+      body: {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-token',
+        },
+        drive: {
+          selectedItems: [{ id: 'drive-file-789', title: 'Doc.pdf' }],
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'processDocument',
+          },
+          formInputs: {
+            SelectDocumentType: { stringInputs: { value: ['contract-doc'] } },
+            title: { stringInputs: { value: ['Contract A'] } },
+          },
+        },
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockProcessDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'contract-doc',
+      }),
+      'onSubmit',
+      {
+        credentials: { oauthToken: 'ya29.sample-token' },
+        resources: { primaryTargetId: 'drive-file-789' },
+      }
+    );
+  });
 });
+
