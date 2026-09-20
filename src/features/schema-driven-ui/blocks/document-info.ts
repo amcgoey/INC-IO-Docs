@@ -50,9 +50,9 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
           return { text: opt, value: opt };
         }
         if (typeof opt === 'object' && opt !== null && 'value' in opt) {
-          const typedOpt = opt as { text?: unknown; label?: unknown; name?: unknown; value: unknown };
+          const typedOpt = opt as { text?: unknown; value: unknown };
           return {
-            text: String(typedOpt.text ?? typedOpt.label ?? typedOpt.name ?? typedOpt.value),
+            text: String(typedOpt.text ?? typedOpt.value),
             value: String(typedOpt.value),
           };
         }

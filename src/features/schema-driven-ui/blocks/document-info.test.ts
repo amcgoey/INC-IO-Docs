@@ -231,8 +231,8 @@ describe('Document Info Block', () => {
             key: 'priority',
             type: 'string',
             options: [
-              { label: 'High Priority', value: 'high' },
-              { label: 'Low Priority', value: 'low' },
+              { text: 'High Priority', value: 'high' },
+              { text: 'Low Priority', value: 'low' },
             ],
           },
         ],

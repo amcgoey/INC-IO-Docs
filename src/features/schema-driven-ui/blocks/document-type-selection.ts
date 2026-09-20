@@ -6,8 +6,21 @@ export interface DocumentTypeSelectionOptions {
   onDocumentTypeChangeAction?: unknown;
 }
 
-function withFallbackItems(items: SelectionItem[], fallbackText: string): SelectionItem[] {
-  return items.length > 0 ? items : [{ text: fallbackText, value: '' }];
+function buildDropdownWidget(
+  name: string,
+  label: string,
+  items: SelectionItem[],
+  onChangeAction?: unknown
+): UiViewWidget {
+  return {
+    selectionInput: {
+      name,
+      label,
+      type: 'DROPDOWN',
+      items,
+      ...(onChangeAction !== undefined ? { onChangeAction } : {}),
+    },
+  };
 }
 
 export function buildDocumentTypeSelectionSection(
@@ -16,19 +29,14 @@ export function buildDocumentTypeSelectionSection(
 ): UiViewSection {
   const widgets: UiViewWidget[] = [];
 
-  const spaceTypes = withFallbackItems(selectionState.spaceTypes, 'No space types available');
-
-  widgets.push({
-    selectionInput: {
-      name: 'SelectDocumentSpaceType',
-      label: 'Document Space Type',
-      type: 'DROPDOWN',
-      items: spaceTypes,
-      ...(options?.onSpaceTypeChangeAction !== undefined
-        ? { onChangeAction: options.onSpaceTypeChangeAction }
-        : {}),
-    },
-  });
+  widgets.push(
+    buildDropdownWidget(
+      'SelectDocumentSpaceType',
+      'Document Space Type',
+      selectionState.spaceTypes,
+      options?.onSpaceTypeChangeAction
+    )
+  );
 
   const spaceValue = selectionState.spaces.length > 0 ? selectionState.spaces[0] : undefined;
   widgets.push({
@@ -40,19 +48,14 @@ export function buildDocumentTypeSelectionSection(
     },
   });
 
-  const documentTypes = withFallbackItems(selectionState.documentTypes, 'No document types available');
-
-  widgets.push({
-    selectionInput: {
-      name: 'SelectDocumentType',
-      label: 'Document Type',
-      type: 'DROPDOWN',
-      items: documentTypes,
-      ...(options?.onDocumentTypeChangeAction !== undefined
-        ? { onChangeAction: options.onDocumentTypeChangeAction }
-        : {}),
-    },
-  });
+  widgets.push(
+    buildDropdownWidget(
+      'SelectDocumentType',
+      'Document Type',
+      selectionState.documentTypes,
+      options?.onDocumentTypeChangeAction
+    )
+  );
 
   return {
     header: options?.sectionHeader ?? 'Document Type',

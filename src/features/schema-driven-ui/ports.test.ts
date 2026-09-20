@@ -4,6 +4,8 @@ import {
   SelectionItemSchema,
   SelectionStateSchema,
   GenerateViewRequestSchema,
+  AbstractDataSchema,
+  StandardWidgetCustomPropsSchema,
   type SelectionState,
   type GenerateViewRequest,
 } from './ports';
@@ -56,4 +58,26 @@ describe('schema-driven-ui ports', () => {
       expect(Value.Check(GenerateViewRequestSchema, req)).toBe(false);
     });
   });
+
+  describe('Data and Widget DTO schemas', () => {
+    it('validates AbstractDataSchema', () => {
+      const data = {
+        fields: [
+          { key: 'title', type: 'string', defaultValue: 'Default Title' },
+          { key: 'status', type: 'string', options: ['Draft', 'Published'] },
+        ],
+      };
+      expect(Value.Check(AbstractDataSchema, data)).toBe(true);
+    });
+
+    it('validates StandardWidgetCustomPropsSchema', () => {
+      const props = {
+        type: 'DROPDOWN',
+        hintText: 'Select option',
+        items: [{ text: 'Draft', value: 'draft' }],
+      };
+      expect(Value.Check(StandardWidgetCustomPropsSchema, props)).toBe(true);
+    });
+  });
 });
+

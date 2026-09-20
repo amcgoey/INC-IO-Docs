@@ -46,7 +46,7 @@ describe('Document Type Selection Block', () => {
     expect(docTypeWidget.selectionInput?.items).toEqual(selectionState.documentTypes);
   });
 
-  it('provides fallback placeholder items when spaceTypes or documentTypes are empty', () => {
+  it('handles empty spaceTypes or documentTypes gracefully without synthetic items', () => {
     const selectionState: SelectionState = {
       spaceTypes: [],
       spaces: [],
@@ -56,13 +56,9 @@ describe('Document Type Selection Block', () => {
     const section = buildDocumentTypeSelectionSection(selectionState);
 
     expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
-    expect(section.widgets[0].selectionInput?.items).toEqual([
-      { text: 'No space types available', value: '' },
-    ]);
+    expect(section.widgets[0].selectionInput?.items).toEqual([]);
     expect(section.widgets[1].textInput?.value).toBeUndefined();
-    expect(section.widgets[2].selectionInput?.items).toEqual([
-      { text: 'No document types available', value: '' },
-    ]);
+    expect(section.widgets[2].selectionInput?.items).toEqual([]);
   });
 
   it('attaches onChangeAction and custom header when options are passed', () => {

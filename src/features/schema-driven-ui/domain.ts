@@ -278,7 +278,7 @@ export class SchemaDrivenUiService {
     }
 
     let resolvedUiSchema: UiSchema | undefined = undefined;
-    let resolvedDocSchema: unknown | undefined = undefined;
+    let resolvedDocSchema: UiViewAdapterContext['documentSchema'] = undefined;
 
     if (request.documentTypeKey) {
       resolvedUiSchema = await this.manifestPort.getUiSchema(request.documentTypeKey);

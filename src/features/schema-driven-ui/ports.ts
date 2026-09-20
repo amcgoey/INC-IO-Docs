@@ -43,12 +43,12 @@ export type StandardWidgetCustomProps = Static<typeof StandardWidgetCustomPropsS
 
 export interface UiManifestPort {
   getUiSchema(documentTypeKey: string): Promise<UiSchema | undefined>;
-  getDocumentSchema(documentTypeKey: string): Promise<unknown | undefined>;
+  getDocumentSchema(documentTypeKey: string): Promise<AbstractDataSchema | undefined>;
 }
 
 export interface UiViewAdapterContext extends GenerateViewRequest {
   uiSchema?: UiSchema | undefined;
-  documentSchema?: unknown | undefined;
+  documentSchema?: AbstractDataSchema | undefined;
 }
 
 export interface UiViewSchemaAdapterPort {
