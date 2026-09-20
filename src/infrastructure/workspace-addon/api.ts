@@ -1,4 +1,3 @@
-import { Type, type Static } from '@sinclair/typebox';
 import type { HttpServer, HttpRequest, HttpResponse } from '../http';
 import {
   buildErrorCard,
@@ -8,30 +7,10 @@ import {
   type WorkspaceExecutionContext,
 } from './context';
 
-export const WorkspaceSelectionItemSchema = Type.Object({
-  text: Type.String(),
-  value: Type.String(),
-  selected: Type.Optional(Type.Boolean()),
-});
-export type WorkspaceSelectionItem = Static<typeof WorkspaceSelectionItemSchema>;
-
 export interface WorkspaceAuthVerifier {
   verifyToken(authHeader?: string): Promise<{ isValid: boolean; error?: string | undefined; payload?: unknown }>;
 }
 export type WorkspaceAuthVerifierPort = WorkspaceAuthVerifier;
-
-export interface WorkspaceConfiguration {
-  appTitle?: string | undefined;
-  actionButtonText?: string | undefined;
-  defaultDocumentType?: string | undefined;
-  defaultDocumentSpaceType?: string | undefined;
-  defaultEventName?: string | undefined;
-}
-
-export interface WorkspaceConfigProvider {
-  getWorkspaceConfig(): Promise<WorkspaceConfiguration | undefined>;
-}
-export type WorkspaceConfigProviderPort = WorkspaceConfigProvider;
 
 export interface WorkspaceUiOrchestratorPort {
   processUiEvent(context: WorkspaceExecutionContext): Promise<unknown>;

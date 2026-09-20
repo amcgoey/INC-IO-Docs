@@ -1,7 +1,6 @@
 import {
   registerWorkspaceAddonRoutes,
   type WorkspaceAuthVerifierPort,
-  type WorkspaceConfigProviderPort,
   type WorkspaceUiOrchestratorPort,
 } from '../infrastructure/workspace-addon/api';
 import { GoogleJwtVerifier } from '../infrastructure/workspace-addon/jwt-verifier';
@@ -18,6 +17,17 @@ import {
 import { createUiProcessManagerWiring } from './ui-process-manager.wiring';
 import type { RawManifestProviderPort } from './schema-driven-ui.wiring';
 
+export interface WorkspaceConfiguration {
+  appTitle?: string | undefined;
+  actionButtonText?: string | undefined;
+  defaultDocumentType?: string | undefined;
+  defaultDocumentSpaceType?: string | undefined;
+  defaultEventName?: string | undefined;
+}
+
+export interface WorkspaceConfigProviderPort {
+  getWorkspaceConfig(): Promise<WorkspaceConfiguration | undefined>;
+}
 
 export interface WorkspaceAddonWiringOptions {
   server: HttpServer;

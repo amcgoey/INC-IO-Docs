@@ -55,7 +55,7 @@ export interface ProcessUiStateOutput {
  * Strips all keys from formData that do not belong to the selection state
  * (keys not starting with 'SelectDocument').
  */
-export function clearDocumentInfoSegment(
+export function retainSelectionState(
   formData?: Record<string, unknown>
 ): Record<string, unknown> {
   if (!formData) {
@@ -76,12 +76,12 @@ export function clearDocumentInfoSegment(
  */
 export function translateDocumentType(
   nameOrKey: string,
-  mapping?: Record<string, string>
+  nameToKeyMap?: Record<string, string>
 ): string {
-  if (!mapping) {
+  if (!nameToKeyMap) {
     return nameOrKey;
   }
-  return mapping[nameOrKey] ?? nameOrKey;
+  return nameToKeyMap[nameOrKey] ?? nameOrKey;
 }
 
 /**
@@ -136,7 +136,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   }
 
   if (isSpaceTypeChange || isDocTypeChange) {
-    effectiveFormData = clearDocumentInfoSegment(effectiveFormData);
+    effectiveFormData = retainSelectionState(effectiveFormData);
     effectiveFormData.SelectDocumentSpaceType = currentSpaceType;
   }
 

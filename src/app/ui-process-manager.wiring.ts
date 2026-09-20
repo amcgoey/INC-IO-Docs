@@ -1,4 +1,3 @@
-import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/api';
 import type { DocumentSpaceService } from '../features/document-space/domain';
 import type { DocumentService } from '../features/document/domain';
 import {
@@ -23,6 +22,7 @@ import {
 import {
   mapUiViewToAbstractUiView,
   mapSelectionItems,
+  type WorkspaceConfigProviderPort,
 } from './workspace-addon.wiring';
 
 export type FormChangeEvaluator = (

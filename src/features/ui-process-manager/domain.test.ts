@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  clearDocumentInfoSegment,
+  retainSelectionState,
   translateDocumentType,
   resolveSpaceType,
   evaluateProcessUiState,
@@ -8,8 +8,8 @@ import {
 } from './domain';
 
 describe('ui-process-manager domain', () => {
-  describe('clearDocumentInfoSegment', () => {
-    it('clears all non-SelectDocument keys from formData', () => {
+  describe('retainSelectionState', () => {
+    it('clears all non-SelectDocument keys from formData and retains selection state', () => {
       const formData = {
         SelectDocumentSpaceType: 'projects',
         SelectDocumentSpace: 'Project Alpha',
@@ -21,7 +21,7 @@ describe('ui-process-manager domain', () => {
         incomingNotes: 'Follow up required',
       };
 
-      const result = clearDocumentInfoSegment(formData);
+      const result = retainSelectionState(formData);
 
       expect(result).toEqual({
         SelectDocumentSpaceType: 'projects',
@@ -36,8 +36,8 @@ describe('ui-process-manager domain', () => {
     });
 
     it('returns empty object when formData is undefined or empty', () => {
-      expect(clearDocumentInfoSegment(undefined)).toEqual({});
-      expect(clearDocumentInfoSegment({})).toEqual({});
+      expect(retainSelectionState(undefined)).toEqual({});
+      expect(retainSelectionState({})).toEqual({});
     });
   });
 

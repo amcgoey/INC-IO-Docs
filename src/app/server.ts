@@ -23,8 +23,8 @@ import type {
 } from '../features/document/ports';
 import type {
   WorkspaceAuthVerifierPort,
-  WorkspaceConfigProviderPort,
 } from '../infrastructure/workspace-addon/api';
+import type { WorkspaceConfigProviderPort } from './workspace-addon.wiring';
 
 export type CompositeManifestProvider =
   AppConfigurationProviderPort &
