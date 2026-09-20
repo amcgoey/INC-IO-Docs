@@ -1,7 +1,9 @@
-import type {
-  UiSchema,
-  UiView,
-  GenerateViewRequest,
+import { Type, type Static } from '@sinclair/typebox';
+import {
+  SelectionItemSchema,
+  type UiSchema,
+  type UiView,
+  type GenerateViewRequest,
 } from './domain';
 
 export {
@@ -12,6 +14,30 @@ export {
   GenerateViewRequestSchema,
   type GenerateViewRequest,
 } from './domain';
+
+// --- Data & Presentation DTO Schemas ---
+
+export const AbstractDataFieldSchema = Type.Object({
+  key: Type.String(),
+  type: Type.Optional(Type.String()),
+  options: Type.Optional(Type.Unknown()),
+  defaultValue: Type.Optional(Type.Unknown()),
+});
+export type AbstractDataField = Static<typeof AbstractDataFieldSchema>;
+
+export const AbstractDataSchema = Type.Object({
+  fields: Type.Array(AbstractDataFieldSchema),
+});
+export type AbstractDataSchema = Static<typeof AbstractDataSchema>;
+
+export const StandardWidgetCustomPropsSchema = Type.Object({
+  type: Type.Optional(Type.String()),
+  placeholder: Type.Optional(Type.String()),
+  hintText: Type.Optional(Type.String()),
+  value: Type.Optional(Type.String()),
+  items: Type.Optional(Type.Array(SelectionItemSchema)),
+});
+export type StandardWidgetCustomProps = Static<typeof StandardWidgetCustomPropsSchema>;
 
 // --- Port Interfaces ---
 

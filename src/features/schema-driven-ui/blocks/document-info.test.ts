@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { UiViewSectionSchema, type UiSchema } from '../domain';
-import type { AbstractDataSchema, AbstractDataField } from './types';
+import type { AbstractDataSchema, AbstractDataField } from '../ports';
 import {
   camelCaseToTitleCase,
   inferDefaultWidget,
@@ -218,5 +218,40 @@ describe('Document Info Block', () => {
       expect(section.widgets[3].textInput?.name).toBe('description');
       expect(section.widgets[3].textInput?.label).toBe('Description');
     });
+
+    it('derives default dropdown items from field.options when customProps.items is omitted', () => {
+      const schemaWithOptions: AbstractDataSchema = {
+        fields: [
+          {
+            key: 'direction',
+            type: 'string',
+            options: ['Incoming', 'Outgoing'],
+          },
+          {
+            key: 'priority',
+            type: 'string',
+            options: [
+              { label: 'High Priority', value: 'high' },
+              { label: 'Low Priority', value: 'low' },
+            ],
+          },
+        ],
+      };
+
+      const section = buildDocumentInfoSection(schemaWithOptions);
+      expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+      expect(section.widgets).toHaveLength(2);
+
+      expect(section.widgets[0].selectionInput?.items).toEqual([
+        { text: 'Incoming', value: 'Incoming' },
+        { text: 'Outgoing', value: 'Outgoing' },
+      ]);
+
+      expect(section.widgets[1].selectionInput?.items).toEqual([
+        { text: 'High Priority', value: 'high' },
+        { text: 'Low Priority', value: 'low' },
+      ]);
+    });
   });
 });
+

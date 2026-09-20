@@ -1,26 +1,19 @@
-import { Type, type Static } from '@sinclair/typebox';
-import {
-  SelectionItemSchema,
-  type UiViewSection,
-  type UiSchema,
-  type UiViewWidget,
-  type UiField,
+import type {
+  UiViewSection,
+  UiSchema,
+  UiViewWidget,
+  UiField,
 } from '../domain';
-import type { AbstractDataSchema, AbstractDataField } from './types';
+import type {
+  AbstractDataSchema,
+  AbstractDataField,
+  StandardWidgetCustomProps,
+  SelectionItem,
+} from '../ports';
 
 export interface DocumentInfoOptions {
   sectionHeader?: string | undefined;
 }
-
-export const StandardWidgetCustomPropsSchema = Type.Object({
-  type: Type.Optional(Type.String()),
-  placeholder: Type.Optional(Type.String()),
-  hintText: Type.Optional(Type.String()),
-  value: Type.Optional(Type.String()),
-  items: Type.Optional(Type.Array(SelectionItemSchema)),
-});
-
-export type StandardWidgetCustomProps = Static<typeof StandardWidgetCustomPropsSchema>;
 
 export function camelCaseToTitleCase(str: string): string {
   return str
@@ -49,15 +42,34 @@ interface WidgetBuilderContext {
 type WidgetBuilder = (ctx: WidgetBuilderContext) => UiViewWidget;
 
 const widgetBuilders: Record<string, WidgetBuilder> = {
-  selectionInput: ({ field, label, customProps, onChangeAction }) => ({
-    selectionInput: {
-      name: field.key,
-      label,
-      type: customProps.type ?? 'DROPDOWN',
-      items: customProps.items ?? [],
-      ...(onChangeAction ? { onChangeAction } : {}),
-    },
-  }),
+  selectionInput: ({ field, label, customProps, onChangeAction }) => {
+    let defaultItems: SelectionItem[] = [];
+    if (Array.isArray(field.options)) {
+      defaultItems = field.options.map((opt) => {
+        if (typeof opt === 'string') {
+          return { text: opt, value: opt };
+        }
+        if (typeof opt === 'object' && opt !== null && 'value' in opt) {
+          const typedOpt = opt as { text?: unknown; label?: unknown; name?: unknown; value: unknown };
+          return {
+            text: String(typedOpt.text ?? typedOpt.label ?? typedOpt.name ?? typedOpt.value),
+            value: String(typedOpt.value),
+          };
+        }
+        return { text: String(opt), value: String(opt) };
+      });
+    }
+
+    return {
+      selectionInput: {
+        name: field.key,
+        label,
+        type: customProps.type ?? 'DROPDOWN',
+        items: customProps.items ?? defaultItems,
+        ...(onChangeAction ? { onChangeAction } : {}),
+      },
+    };
+  },
   textInput: ({ field, label, customProps, onChangeAction }) => {
     const hintText = customProps.placeholder ?? customProps.hintText;
     const value =
