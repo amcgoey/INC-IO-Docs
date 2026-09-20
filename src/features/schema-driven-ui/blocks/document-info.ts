@@ -16,6 +16,7 @@ export interface DocumentInfoOptions {
   sectionHeader?: string | undefined;
   formData?: Record<string, unknown> | undefined;
   hiddenFields?: string[] | undefined;
+  onProcessAction?: UiViewAction | string | undefined;
 }
 
 export function camelCaseToTitleCase(str: string): string {
@@ -190,6 +191,23 @@ export function buildDocumentInfoSection(
         dataSchema,
       })
     );
+  }
+
+  if (options?.onProcessAction !== undefined) {
+    const processAction: UiViewAction =
+      typeof options.onProcessAction === 'string'
+        ? { action: options.onProcessAction }
+        : options.onProcessAction;
+    widgets.push({
+      buttonList: {
+        buttons: [
+          {
+            text: 'Process Document',
+            onClick: processAction,
+          },
+        ],
+      },
+    });
   }
 
   const section: UiViewSection = { widgets };

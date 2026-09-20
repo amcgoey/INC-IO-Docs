@@ -175,4 +175,59 @@ describe('WorkspaceAddonAdapter', () => {
     expect(docTypeDropdown?.items?.[0].value).toBe('inv');
     assertValidUiView(view);
   });
+
+  it('renders Process Document button in Document Data section when documentTypeKey is provided', async () => {
+    const context = createContext({
+      documentTypeKey: 'invoice',
+      documentSchema: {
+        fields: [{ key: 'invoiceNumber', type: 'string' }],
+      },
+      uiSchema: {
+        layout: ['invoiceNumber'],
+        fields: { invoiceNumber: { label: 'Invoice #' } },
+      },
+    });
+
+    const view = await adapter.composeView(context);
+    expect(view.sections).toHaveLength(2);
+
+    const infoSection = view.sections[0];
+    expect(infoSection.header).toBe('Document Data');
+    expect(infoSection.widgets).toHaveLength(2);
+    expect(infoSection.widgets[0].textInput?.name).toBe('invoiceNumber');
+    expect(infoSection.widgets[1].buttonList?.buttons).toEqual([
+      { text: 'Process Document', onClick: { action: 'processDocument' } },
+    ]);
+
+    const adminSection = view.sections[1];
+    expect(adminSection.header).toBe('Admin');
+    expect(adminSection.widgets[0].buttonList?.buttons).toEqual([
+      { text: 'Refresh Document', onClick: { action: 'refresh' } },
+      { text: 'View Raw JSON', onClick: { action: 'viewJson' } },
+    ]);
+    assertValidUiView(view);
+  });
+
+  it('excludes Process Document button when documentTypeKey is empty or undefined', async () => {
+    const contextUndefined = createContext({
+      documentSchema: {
+        fields: [{ key: 'invoiceNumber', type: 'string' }],
+      },
+    });
+
+    const viewUndefined = await adapter.composeView(contextUndefined);
+    const infoSectionUndefined = viewUndefined.sections[0];
+    expect(infoSectionUndefined.widgets.some((w) => w.buttonList !== undefined)).toBe(false);
+
+    const contextEmpty = createContext({
+      documentTypeKey: '',
+      documentSchema: {
+        fields: [{ key: 'invoiceNumber', type: 'string' }],
+      },
+    });
+
+    const viewEmpty = await adapter.composeView(contextEmpty);
+    const infoSectionEmpty = viewEmpty.sections[0];
+    expect(infoSectionEmpty.widgets.some((w) => w.buttonList !== undefined)).toBe(false);
+  });
 });

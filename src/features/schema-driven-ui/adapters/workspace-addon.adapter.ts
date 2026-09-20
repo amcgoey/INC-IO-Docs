@@ -42,14 +42,12 @@ const WORKSPACE_ADDON_VIEW_SCHEMA: readonly SectionProducer[] = [
           sectionHeader: 'Document Data',
           formData: context.formData,
           hiddenFields: context.hiddenFields,
+          ...(context.documentTypeKey ? { onProcessAction: { action: 'processDocument' } } : {}),
         })
       : undefined,
 
   // 4. Admin Section (always present)
-  () =>
-    buildDocumentAdminSection({
-      onProcessAction: { action: 'processDocument' },
-    }),
+  () => buildDocumentAdminSection(),
 ];
 
 export class WorkspaceAddonAdapter implements UiViewSchemaAdapterPort {

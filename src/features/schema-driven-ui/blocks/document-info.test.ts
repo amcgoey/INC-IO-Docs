@@ -361,6 +361,44 @@ describe('Document Info Block', () => {
       expect(section.widgets[2].textInput?.name).toBe('plainField');
       expect(section.widgets[2].textInput?.autocomplete).toBeUndefined();
     });
+
+    it('appends Process Document button when onProcessAction is provided', () => {
+      const schema: AbstractDataSchema = {
+        fields: [{ key: 'title', type: 'string' }],
+      };
+
+      const sectionWithStringAction = buildDocumentInfoSection(schema, undefined, {
+        onProcessAction: 'processDocument',
+      });
+
+      expect(Value.Check(UiViewSectionSchema, sectionWithStringAction)).toBe(true);
+      expect(sectionWithStringAction.widgets).toHaveLength(2);
+      expect(sectionWithStringAction.widgets[1].buttonList).toBeDefined();
+      expect(sectionWithStringAction.widgets[1].buttonList?.buttons).toEqual([
+        { text: 'Process Document', onClick: { action: 'processDocument' } },
+      ]);
+
+      const sectionWithObjectAction = buildDocumentInfoSection(schema, undefined, {
+        onProcessAction: { action: 'customProcess', parameters: { docId: '123' } },
+      });
+
+      expect(Value.Check(UiViewSectionSchema, sectionWithObjectAction)).toBe(true);
+      expect(sectionWithObjectAction.widgets).toHaveLength(2);
+      expect(sectionWithObjectAction.widgets[1].buttonList?.buttons).toEqual([
+        { text: 'Process Document', onClick: { action: 'customProcess', parameters: { docId: '123' } } },
+      ]);
+    });
+
+    it('does not append Process Document button when onProcessAction is undefined', () => {
+      const schema: AbstractDataSchema = {
+        fields: [{ key: 'title', type: 'string' }],
+      };
+
+      const section = buildDocumentInfoSection(schema);
+      expect(section.widgets).toHaveLength(1);
+      expect(section.widgets[0].textInput).toBeDefined();
+      expect(section.widgets.some((w) => w.buttonList !== undefined)).toBe(false);
+    });
   });
 });
 

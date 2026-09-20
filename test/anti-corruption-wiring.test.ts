@@ -91,11 +91,22 @@ describe('Anti-Corruption Wiring Integration', () => {
 
     // Section 3: Document data
     expect(pushCard.sections[2].header).toBe('Document Data');
-    expect(pushCard.sections[2].widgets).toHaveLength(2);
+    expect(pushCard.sections[2].widgets).toHaveLength(3);
     expect(pushCard.sections[2].widgets[0].textInput?.name).toBe('title');
     expect(pushCard.sections[2].widgets[0].textInput?.label).toBe('Contract Title');
     expect(pushCard.sections[2].widgets[1].textInput?.name).toBe('amount');
     expect(pushCard.sections[2].widgets[1].textInput?.label).toBe('Total Amount');
+    expect(pushCard.sections[2].widgets[2].buttonList?.buttons).toEqual([
+      {
+        text: 'Process Document',
+        onClick: {
+          action: {
+            function: 'processDocument',
+            loadIndicator: 'SPINNER',
+          },
+        },
+      },
+    ]);
 
     // Section 4: Document Space Admin
     expect(pushCard.sections[3].header).toBe('Admin');

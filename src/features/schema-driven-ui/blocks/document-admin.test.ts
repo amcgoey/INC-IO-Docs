@@ -29,16 +29,4 @@ describe('Document Admin Block', () => {
     expect(section.header).toBe('Advanced Administration');
     expect(section.collapsible).toBe(true);
   });
-
-  it('includes Process Document button when onProcessAction is provided', () => {
-    const section = buildDocumentAdminSection({
-      onProcessAction: { action: 'customProcess' },
-    });
-
-    expect(section.widgets[0].buttonList?.buttons).toEqual([
-      { text: 'Process Document', onClick: { action: 'customProcess' } },
-      { text: 'Refresh Document', onClick: { action: 'refresh' } },
-      { text: 'View Raw JSON', onClick: { action: 'viewJson' } },
-    ]);
-  });
 });
