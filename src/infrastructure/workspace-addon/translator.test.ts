@@ -293,12 +293,12 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
     ).toThrow('Invalid UiView');
   });
 
-  it('throws error when sections array is empty (violating Card requirements)', () => {
+  it('throws error when sections array is empty (violating Card requirements at boundary)', () => {
     expect(() =>
       translateUiViewToWorkspaceCard({
         sections: [],
       })
-    ).toThrow('A Google Workspace Add-on card must contain at least one valid section.');
+    ).toThrow('Invalid UiView');
   });
 
   it('matches the AbstractUiViewSchema with valid UiView structures', () => {

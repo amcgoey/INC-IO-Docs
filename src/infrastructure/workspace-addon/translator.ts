@@ -61,7 +61,7 @@ export const AbstractUiActionSchema = Type.Union([
         Type.Union([Type.Literal('SPINNER'), Type.Literal('NONE')])
       ),
     },
-    { additionalProperties: true }
+    { additionalProperties: false }
   ),
 ]);
 
@@ -81,7 +81,6 @@ export type AbstractUiOnClick = Static<typeof AbstractUiOnClickSchema>;
 
 export const AbstractUiViewWidgetSchema = Type.Object(
   {
-    type: Type.Optional(Type.String()),
     textParagraph: Type.Optional(
       Type.Object(
         {
@@ -159,7 +158,7 @@ export const AbstractUiViewSchema = Type.Object(
   {
     id: Type.Optional(Type.String()),
     header: Type.Optional(AbstractUiViewHeaderSchema),
-    sections: Type.Array(AbstractUiViewSectionSchema),
+    sections: Type.Array(AbstractUiViewSectionSchema, { minItems: 1 }),
     evaluationOrder: Type.Optional(Type.Array(Type.String())),
   },
   { additionalProperties: false }
@@ -184,7 +183,9 @@ function validateOrThrow<T extends TSchema>(
   }
 }
 
-function normalizeAction(action: unknown): GoogleWorkspaceAction | undefined {
+function normalizeAction(
+  action: AbstractUiAction | undefined
+): GoogleWorkspaceAction | undefined {
   if (!action) {
     return undefined;
   }
@@ -194,41 +195,29 @@ function normalizeAction(action: unknown): GoogleWorkspaceAction | undefined {
       loadIndicator: 'SPINNER',
     };
   }
-  if (typeof action === 'object' && action !== null && 'function' in action) {
-    const actionRecord = action as Record<string, unknown>;
-    const normalized: GoogleWorkspaceAction = {
-      function: String(actionRecord.function),
-      loadIndicator:
-        actionRecord.loadIndicator === 'NONE' || actionRecord.loadIndicator === 'SPINNER'
-          ? actionRecord.loadIndicator
-          : 'SPINNER',
-    };
-    if (Array.isArray(actionRecord.parameters)) {
-      normalized.parameters = actionRecord.parameters as { key: string; value: string }[];
-    }
-    return normalized;
+  const normalized: GoogleWorkspaceAction = {
+    function: action.function,
+    loadIndicator: action.loadIndicator ?? 'SPINNER',
+  };
+  if (action.parameters !== undefined) {
+    normalized.parameters = action.parameters;
   }
-  return undefined;
+  return normalized;
 }
 
 function normalizeButtonOnClick(
-  onClick: unknown
+  onClick: AbstractUiOnClick | undefined
 ): { action?: GoogleWorkspaceAction } | undefined {
   if (!onClick) {
     return undefined;
   }
-  if (
-    typeof onClick === 'object' &&
-    onClick !== null &&
-    'action' in onClick
-  ) {
-    const obj = onClick as { action?: unknown };
-    const action = normalizeAction(obj.action);
+  if (typeof onClick === 'string' || 'function' in onClick) {
+    const action = normalizeAction(onClick);
     return action ? { action } : undefined;
   }
-  const action = normalizeAction(onClick);
-  if (action) {
-    return { action };
+  if ('action' in onClick) {
+    const action = normalizeAction(onClick.action);
+    return action ? { action } : undefined;
   }
   return undefined;
 }
@@ -294,10 +283,7 @@ export function translateUiViewToWorkspaceCard(payload: unknown): GoogleWorkspac
       }
 
       if (w.selectionInput) {
-        const selectionType =
-          w.selectionInput.type === 'CHECK_BOX' || w.selectionInput.type === 'RADIO_BUTTON'
-            ? w.selectionInput.type
-            : 'DROPDOWN';
+        const selectionType = w.selectionInput.type ?? 'DROPDOWN';
 
         const selectionInput: GoogleWorkspaceSelectionInput = {
           name: w.selectionInput.name,
