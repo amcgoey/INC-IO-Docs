@@ -113,6 +113,34 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
 
 
 
+  it('exercises error lifecycle when raw trigger has invalid credentials, returning 401 Unauthorized', async () => {
+    const rawTrigger = {
+      authorizationEventObject: {
+        userOAuthToken: 'ya29.sample-token',
+      },
+      drive: {
+        selectedItems: [
+          {
+            id: 'drive-file-123',
+            title: 'Q3_Financial_Review.pdf',
+            mimeType: 'application/pdf',
+          },
+        ],
+      },
+    };
+
+    const response = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/drive-items-selected',
+      headers: {
+        authorization: 'Bearer invalid-jwt-token',
+      },
+      payload: rawTrigger,
+    });
+
+    expect(response.statusCode).toBe(401);
+  });
+
   it('leaves other flows untouched by continuing to use legacy card builder on /workspace/homepage trigger', async () => {
     const response = await app.server.inject({
       method: 'POST',

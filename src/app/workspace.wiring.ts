@@ -14,6 +14,7 @@ export type { WorkspaceUiBuilderPort };
 import type { DocumentService } from '../features/document/domain';
 import type { DocumentSpaceService } from '../features/document-space/domain';
 import type { DocumentSchemaRegistryPort, SchemaQueryPort } from '../features/document/ports';
+import { translateUiViewToNavigationAction } from '../infrastructure/workspace-addon/translator';
 import { createSchemaDrivenUiWiring, type RawManifestProviderPort } from './schema-driven-ui.wiring';
 
 export interface WorkspaceFeatureWiringOptions {
@@ -50,7 +51,7 @@ export function wireWorkspaceFeature(
     });
     processCardOrchestrator = {
       async generateCard(request: WorkspaceProcessCardRequest) {
-        return schemaDrivenUi.generateWorkspaceProcessCard({
+        const view = await schemaDrivenUi.schemaDrivenUiService.generateView({
           viewId: request.viewId,
           ...(request.documentTypeKey !== undefined ? { documentTypeKey: request.documentTypeKey } : {}),
           ...(request.validationErrors !== undefined ? { validationErrors: request.validationErrors } : {}),
@@ -64,6 +65,7 @@ export function wireWorkspaceFeature(
               }
             : {}),
         });
+        return translateUiViewToNavigationAction(view);
       },
     };
   }

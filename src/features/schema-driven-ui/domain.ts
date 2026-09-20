@@ -6,34 +6,23 @@ import type {
   UiViewAdapterContext,
 } from './ports';
 
-// --- Selection State Schemas ---
+import {
+  SelectionItemSchema,
+  type SelectionItem,
+  SelectionStateSchema,
+  type SelectionState,
+  GenerateViewRequestSchema,
+  type GenerateViewRequest,
+} from './ports';
 
-export const SelectionItemSchema = Type.Object({
-  text: Type.String(),
-  value: Type.String(),
-  selected: Type.Optional(Type.Boolean()),
-});
-
-export type SelectionItem = Static<typeof SelectionItemSchema>;
-
-export const SelectionStateSchema = Type.Object({
-  spaceTypes: Type.Array(SelectionItemSchema),
-  spaces: Type.Array(Type.String()),
-  documentTypes: Type.Array(SelectionItemSchema),
-});
-
-export type SelectionState = Static<typeof SelectionStateSchema>;
-
-// --- Request DTO Schema ---
-
-export const GenerateViewRequestSchema = Type.Object({
-  viewId: Type.String({ minLength: 1 }),
-  documentTypeKey: Type.Optional(Type.String({ minLength: 1 })),
-  selectionState: Type.Optional(SelectionStateSchema),
-  validationErrors: Type.Optional(Type.Array(Type.String())),
-});
-
-export type GenerateViewRequest = Static<typeof GenerateViewRequestSchema>;
+export {
+  SelectionItemSchema,
+  type SelectionItem,
+  SelectionStateSchema,
+  type SelectionState,
+  GenerateViewRequestSchema,
+  type GenerateViewRequest,
+};
 
 // --- JSON Logic Schema ---
 

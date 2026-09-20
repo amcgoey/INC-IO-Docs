@@ -4,6 +4,7 @@ import {
   createSchemaDrivenUiWiring,
   type RawManifestProviderPort,
 } from '../src/app/schema-driven-ui.wiring';
+import { translateUiViewToNavigationAction } from '../src/infrastructure/workspace-addon/translator';
 import { GoogleWorkspaceActionResponseSchema } from '../src/infrastructure/workspace-addon/ui-blocks';
 
 describe('Anti-Corruption Wiring Integration', () => {
@@ -41,7 +42,6 @@ describe('Anti-Corruption Wiring Integration', () => {
     });
 
     expect(wiring.schemaDrivenUiService).toBeDefined();
-    expect(typeof wiring.generateWorkspaceProcessCard).toBe('function');
   });
 
   it('resolves schema-driven-ui read ports and translates to GoogleWorkspaceActionResponse without leaking types', async () => {
@@ -49,7 +49,7 @@ describe('Anti-Corruption Wiring Integration', () => {
       manifestProvider: mockManifestProvider,
     });
 
-    const actionResponse = await wiring.generateWorkspaceProcessCard({
+    const view = await wiring.schemaDrivenUiService.generateView({
       viewId: 'drive-document-process-card',
       documentTypeKey: 'contract-doc',
       selectionState: {
@@ -59,6 +59,7 @@ describe('Anti-Corruption Wiring Integration', () => {
       },
       validationErrors: ['Title cannot be empty'],
     });
+    const actionResponse = translateUiViewToNavigationAction(view);
 
     // 1. Verify that the output satisfies the infrastructure-defined Google Workspace Action Response schema
     expect(Value.Check(GoogleWorkspaceActionResponseSchema, actionResponse)).toBe(true);
