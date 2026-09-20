@@ -252,6 +252,19 @@ function normalizeButtonOnClick(
   return action ? { action } : undefined;
 }
 
+function applyCommonInputProps<T extends { label?: string; onChangeAction?: GoogleWorkspaceAction }>(
+  target: T,
+  source: { label?: string; onChangeAction?: AbstractUiAction }
+): void {
+  if (source.label !== undefined) {
+    target.label = source.label;
+  }
+  const action = normalizeAction(source.onChangeAction);
+  if (action !== undefined) {
+    target.onChangeAction = action;
+  }
+}
+
 // --- Deep Module Public Interface ---
 
 /**
@@ -293,9 +306,7 @@ export function translateUiViewToWorkspaceCard(payload: unknown): GoogleWorkspac
         const textInput: GoogleWorkspaceTextInput = {
           name: w.textInput.name,
         };
-        if (w.textInput.label !== undefined) {
-          textInput.label = w.textInput.label;
-        }
+        applyCommonInputProps(textInput, w.textInput);
         if (w.textInput.hintText !== undefined) {
           textInput.hintText = w.textInput.hintText;
         }
@@ -304,10 +315,6 @@ export function translateUiViewToWorkspaceCard(payload: unknown): GoogleWorkspac
         }
         if (w.textInput.initialSuggestions !== undefined) {
           textInput.initialSuggestions = w.textInput.initialSuggestions;
-        }
-        const action = normalizeAction(w.textInput.onChangeAction);
-        if (action !== undefined) {
-          textInput.onChangeAction = action;
         }
         widget.textInput = textInput;
       }
@@ -330,13 +337,7 @@ export function translateUiViewToWorkspaceCard(payload: unknown): GoogleWorkspac
               return itemObj;
             }) ?? [],
         };
-        if (w.selectionInput.label !== undefined) {
-          selectionInput.label = w.selectionInput.label;
-        }
-        const action = normalizeAction(w.selectionInput.onChangeAction);
-        if (action !== undefined) {
-          selectionInput.onChangeAction = action;
-        }
+        applyCommonInputProps(selectionInput, w.selectionInput);
         widget.selectionInput = selectionInput;
       }
 

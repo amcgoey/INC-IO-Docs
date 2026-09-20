@@ -1,4 +1,5 @@
-import type { UiViewSection, SelectionState, UiViewWidget, SelectionItem } from '../domain';
+import type { UiViewSection, UiViewWidget } from '../domain';
+import type { SelectionState, SelectionItem } from '../ports';
 
 export interface DocumentTypeSelectionOptions {
   sectionHeader?: string;

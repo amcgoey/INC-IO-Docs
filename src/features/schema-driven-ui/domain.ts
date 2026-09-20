@@ -8,21 +8,9 @@ import type {
 
 import {
   SelectionItemSchema,
-  type SelectionItem,
-  SelectionStateSchema,
-  type SelectionState,
   GenerateViewRequestSchema,
   type GenerateViewRequest,
 } from './ports';
-
-export {
-  SelectionItemSchema,
-  type SelectionItem,
-  SelectionStateSchema,
-  type SelectionState,
-  GenerateViewRequestSchema,
-  type GenerateViewRequest,
-};
 
 // --- JSON Logic Schema ---
 

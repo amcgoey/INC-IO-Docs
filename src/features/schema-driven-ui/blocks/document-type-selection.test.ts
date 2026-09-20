@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
-import { UiViewSectionSchema, type SelectionState } from '../domain';
+import { UiViewSectionSchema } from '../domain';
+import type { SelectionState } from '../ports';
 import { buildDocumentTypeSelectionSection } from './document-type-selection';
 
 describe('Document Type Selection Block', () => {

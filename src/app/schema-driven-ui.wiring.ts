@@ -24,7 +24,7 @@ export function createSchemaDrivenUiWiring(
   const ensurer: EvaluationOrderEnsurer =
     options.evaluationOrderEnsurer ??
     ((uiSchema, docSchema) =>
-      (ensureEvaluationOrder(uiSchema, docSchema) as UiSchema) ?? uiSchema);
+      ensureEvaluationOrder<UiSchema>(uiSchema, docSchema) ?? uiSchema);
 
   const manifestAdapter = new ManifestUiAdapter(options.manifestProvider, ensurer);
   const workspaceAddonAdapter = new WorkspaceAddonAdapter();
