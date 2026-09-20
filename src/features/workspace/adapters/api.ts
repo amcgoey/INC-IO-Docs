@@ -3,6 +3,7 @@ import type {
   DocumentSelectionState,
   WorkspaceConfigProviderPort,
   WorkspaceDocumentRunnerPort,
+  WorkspaceProcessCardOrchestratorPort,
   WorkspaceSchemaQueryPort,
   WorkspaceUiBuilderPort,
 } from '../ports';
@@ -45,7 +46,9 @@ export interface WorkspaceFeatureApiOptions {
   schemaQuery?: WorkspaceSchemaQueryPort | undefined;
   documentSpaceService?: import('../ports').WorkspaceDocumentSpaceProviderPort | undefined;
   configProvider?: WorkspaceConfigProviderPort | undefined;
+  processCardOrchestrator?: WorkspaceProcessCardOrchestratorPort | undefined;
 }
+
 
 function withAuthentication(
   authVerifier: AuthVerifierPort,
@@ -144,6 +147,19 @@ export function registerWorkspaceFeatureRoutes(
       spaces,
       documentTypes,
     };
+
+    if (opts.processCardOrchestrator) {
+      const selectedDocType =
+        wsConfig?.defaultDocumentType ??
+        documentTypes.find((d) => d.selected)?.value ??
+        documentTypes[0]?.value;
+
+      return await opts.processCardOrchestrator.generateCard({
+        viewId: 'drive-document-process-card',
+        documentTypeKey: selectedDocType,
+        selectionState: selectionContext,
+      });
+    }
 
     return buildDriveDocumentProcessCard(context.selectedItems, wsConfig, uiBuilder, {
       selectionContext,

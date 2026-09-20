@@ -132,3 +132,15 @@ export interface WorkspaceUiBuilderPort {
   buildNavigationAction(card: UiCard): UiActionResponse;
   buildErrorCard(errorMessage: string, title?: string): UiActionResponse;
 }
+
+export interface WorkspaceProcessCardRequest {
+  viewId: string;
+  documentTypeKey?: string;
+  selectionState?: DocumentSelectionState;
+  validationErrors?: string[];
+}
+
+export interface WorkspaceProcessCardOrchestratorPort {
+  generateCard(request: WorkspaceProcessCardRequest): Promise<unknown>;
+}
+

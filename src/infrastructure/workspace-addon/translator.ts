@@ -63,7 +63,18 @@ export const AbstractUiActionSchema = Type.Union([
     },
     { additionalProperties: false }
   ),
+  Type.Object(
+    {
+      action: Type.String(),
+      parameters: Type.Optional(Type.Array(AbstractUiActionParameterSchema)),
+      loadIndicator: Type.Optional(
+        Type.Union([Type.Literal('SPINNER'), Type.Literal('NONE')])
+      ),
+    },
+    { additionalProperties: false }
+  ),
 ]);
+
 
 export type AbstractUiAction = Static<typeof AbstractUiActionSchema>;
 
@@ -212,14 +223,16 @@ function normalizeAction(
       loadIndicator: 'SPINNER',
     };
   }
+  const funcName = 'function' in action ? action.function : action.action;
   const normalized: GoogleWorkspaceAction = {
-    function: action.function,
+    function: funcName,
     loadIndicator: action.loadIndicator ?? 'SPINNER',
   };
   if (action.parameters !== undefined) {
     normalized.parameters = action.parameters;
   }
   return normalized;
+
 }
 
 function normalizeButtonOnClick(

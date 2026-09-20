@@ -273,5 +273,41 @@ describe('Workspace Feature Routes', () => {
       expect(response.statusCode).toBe(200);
       expect(mockUiBuilder.buildErrorCard).toHaveBeenCalledWith('Database connection failed');
     });
+
+    it('delegates to processCardOrchestrator when provided in options', async () => {
+      const orchestratorServer = createHttpServer();
+      const mockOrchestrator = {
+        generateCard: vi.fn().mockResolvedValue({
+          action: { navigations: [{ pushCard: { header: { title: 'Schema-Driven Card' }, sections: [] } }] },
+        }),
+      };
+
+      registerWorkspaceFeatureRoutes(orchestratorServer, {
+        authVerifier: mockAuthVerifier,
+        uiBuilder: mockUiBuilder,
+        processCardOrchestrator: mockOrchestrator,
+      });
+
+      const response = await orchestratorServer.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: {
+          authorization: 'Bearer valid-token',
+        },
+        payload: {
+          drive: { selectedItems: [{ id: 'file-1', title: 'test.pdf' }] },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockOrchestrator.generateCard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          viewId: 'drive-document-process-card',
+        })
+      );
+      const body = JSON.parse(response.payload);
+      expect(body.action.navigations[0].pushCard.header.title).toBe('Schema-Driven Card');
+    });
   });
 });
+

@@ -68,8 +68,9 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
 
       expect(cardResponse.action).toBeDefined();
       const pushCard = cardResponse.action.navigations[0].pushCard;
-      expect(pushCard.header.title).toBe('INC-IO Docs');
+      expect(pushCard.header.title).toBe('INC-IO Engine');
       expect(pushCard.sections[0].header).toBe('Document Type');
+
     });
 
     it('returns 401 Unauthorized when JWT token is invalid or missing', async () => {
@@ -108,8 +109,9 @@ describe('Workspace-to-Drive E2E Integration (Happy Path)', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
       expect(body.action?.navigations).toBeDefined();
-      expect(body.action.navigations[0].pushCard.header.title).toBe('INC-IO Docs');
+      expect(body.action.navigations[0].pushCard.header.title).toBe('INC-IO Engine');
     });
+
   });
 
   // Note: /workspace/homepage and /workspace/action are deprecated and deleted per ADR 0010 (Expand-and-contract).

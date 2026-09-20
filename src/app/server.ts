@@ -137,7 +137,9 @@ export function createApp(options?: AppOptions): AppInstance {
     authVerifier: options?.authVerifier,
     uiBuilder: options?.uiBuilder,
     configProvider: manifestProvider,
+    manifestProvider,
   });
+
 
   const initialize = async () => {
     await documentService.initialize();

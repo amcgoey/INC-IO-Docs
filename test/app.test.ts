@@ -1024,11 +1024,10 @@ describe('App integration tests', () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      expect(body.action.navigations[0].pushCard.header.title).toBe(
-        'Custom Enterprise Workspace'
-      );
+      expect(body.action.navigations[0].pushCard.header.title).toBe('INC-IO Engine');
       expect(body.action.navigations[0].pushCard.sections[0].header).toBe('Document Type');
     });
+
   });
 
   describe('DocumentSpaceService wiring', () => {
