@@ -87,6 +87,7 @@ export const DocumentUiFieldSchema = Type.Object({
   widget: Type.Optional(Type.String()),
   label: Type.Optional(Type.String()),
   props: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  onChange: Type.Optional(Type.Union([Type.Boolean(), Type.String()])),
   showIf: Type.Optional(JSONLogicRuleType),
   disableIf: Type.Optional(JSONLogicRuleType),
   computeValue: Type.Optional(JSONLogicRuleType),

@@ -7,7 +7,7 @@ import {
   DocumentTypeSchema,
   formatValidationErrors,
 } from '../../src/features/document/domain';
-import { FormSchemaType } from '../../src/features/document/ports';
+import { FormSchemaType, type DocumentUiSchema } from '../../src/features/document/ports';
 import { Value } from '@sinclair/typebox/value';
 import {
   DocumentSpaceService,
@@ -76,6 +76,23 @@ describe('DocumentType JSON files schema validation', () => {
         if (documentType.documentSchema.identity.idGroup) {
           expect(typeof documentType.documentSchema.identity.idGroup).toBe('string');
           expect(documentType.documentSchema.identity.idGroup.length).toBeGreaterThan(0);
+        }
+      }
+
+      // Verify documentUiSchema hydration
+      expect(documentType.documentUiSchema).toBeDefined();
+      const uiSchema = documentType.documentUiSchema as DocumentUiSchema | undefined;
+      if (uiSchema) {
+        expect(Array.isArray(uiSchema.layout)).toBe(true);
+        expect(uiSchema.layout?.length).toBeGreaterThan(0);
+        expect(typeof uiSchema.fields).toBe('object');
+
+        for (const [, uiField] of Object.entries(uiSchema.fields ?? {})) {
+          if (uiField.widget) expect(typeof uiField.widget).toBe('string');
+          if (uiField.label) expect(typeof uiField.label).toBe('string');
+          if (uiField.onChange !== undefined) {
+            expect(['boolean', 'string'].includes(typeof uiField.onChange)).toBe(true);
+          }
         }
       }
 

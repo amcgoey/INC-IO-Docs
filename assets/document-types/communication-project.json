@@ -57,6 +57,31 @@
     }
   },
   "documentUiSchema": {
+    "layout": [
+      "contact",
+      "date",
+      "direction",
+      "description"
+    ],
+    "fields": {
+      "contact": {
+        "widget": "textInput",
+        "label": "Contact"
+      },
+      "date": {
+        "widget": "textInput",
+        "label": "Date"
+      },
+      "direction": {
+        "widget": "selectionInput",
+        "label": "Direction",
+        "onChange": true
+      },
+      "description": {
+        "widget": "textInput",
+        "label": "Description"
+      }
+    },
     "events": {
       "onSubmit": {
         "catchAllWorkflow": "FileCommProject"
