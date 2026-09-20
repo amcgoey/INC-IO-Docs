@@ -64,13 +64,20 @@ Domain and administrative defaults that govern application behavior, distinct fr
 **Workspace Addon**:
 The primary user interface, acting as a driving adapter to the core engine.
 
+**UiProcessManager**:
+The command/write model orchestrator in the CQRS UI pattern. Responsible for evaluating UI state and events, decomposing information to pass to domain features via ports, and translating display names into technical keys. Does not build UI structures.
+_Avoid_: UiController, StateManager
+
+**SchemaDrivenUi**:
+The read-only model orchestrator in the CQRS UI pattern. A generic engine that receives clean view state from the `UiProcessManager` and constructs abstract `UiView`s. Responsible for fetching or resolving display names for rendering.
+
 **UiBlock**:
-A pure presenter function inside `schema-driven-ui`. Maps data and UI schemas into modular, abstract UI elements.
+A pure presenter function inside `SchemaDrivenUi`. Maps data and UI schemas into modular, abstract UI elements.
 _Avoid_: Component, Widget (when referring to the composite), Module, Renderer
 
 **UiView**:
-A compiled, declarative view model emitted by `schema-driven-ui`. Flattens `UiBlock` outputs into a generic payload consumed by dumb infrastructure renderers.
+A compiled, declarative view model emitted by `SchemaDrivenUi`. Flattens `UiBlock` outputs into a generic payload consumed by dumb infrastructure renderers.
 _Avoid_: GoogleCard, UiCard, JsonResponse
 
 **UiViewSchema**:
-A declarative layout orchestrating which `UiBlock`s compose a `UiView`. Hard-coded within infrastructure-specific driving adapters inside `schema-driven-ui`.
+A declarative layout orchestrating which `UiBlock`s compose a `UiView`. Hard-coded within infrastructure-specific driving adapters inside `SchemaDrivenUi`.
