@@ -1,6 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 
-export const CardHeaderOptionsSchema = Type.Object({
+export const GoogleWorkspaceHeaderOptionsSchema = Type.Object({
   title: Type.String(),
   subtitle: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   imageUrl: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
@@ -9,9 +9,9 @@ export const CardHeaderOptionsSchema = Type.Object({
   ),
 });
 
-export type CardHeaderOptions = Static<typeof CardHeaderOptionsSchema>;
+export type GoogleWorkspaceHeaderOptions = Static<typeof GoogleWorkspaceHeaderOptionsSchema>;
 
-export const CardHeaderSchema = Type.Object({
+export const GoogleWorkspaceHeaderSchema = Type.Object({
   title: Type.String(),
   subtitle: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   imageUrl: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
@@ -20,7 +20,7 @@ export const CardHeaderSchema = Type.Object({
   ),
 });
 
-export type CardHeader = Static<typeof CardHeaderSchema>;
+export type GoogleWorkspaceHeader = Static<typeof GoogleWorkspaceHeaderSchema>;
 
 export const TextParagraphWidgetSchema = Type.Object({
   textParagraph: Type.Object({
@@ -84,7 +84,7 @@ export const TextInputSchema = Type.Object({
 
 export type TextInput = Static<typeof TextInputSchema>;
 
-export const CardWidgetSchema = Type.Object({
+export const GoogleWorkspaceWidgetSchema = Type.Object({
   textParagraph: Type.Optional(
     Type.Union([
       Type.Object({
@@ -110,51 +110,51 @@ export const CardWidgetSchema = Type.Object({
   textInput: Type.Optional(TextInputSchema),
 });
 
-export type CardWidget = Static<typeof CardWidgetSchema>;
+export type GoogleWorkspaceWidget = Static<typeof GoogleWorkspaceWidgetSchema>;
 
-export const CardSectionSchema = Type.Object({
+export const GoogleWorkspaceSectionSchema = Type.Object({
   header: Type.Optional(Type.String()),
-  widgets: Type.Array(CardWidgetSchema),
+  widgets: Type.Array(GoogleWorkspaceWidgetSchema),
+  collapsible: Type.Optional(Type.Boolean()),
+  uncollapsibleWidgetsCount: Type.Optional(Type.Number()),
 });
 
-export type CardSection = Static<typeof CardSectionSchema>;
+export type GoogleWorkspaceSection = Static<typeof GoogleWorkspaceSectionSchema>;
 
-export const CardSchema = Type.Object({
-  header: CardHeaderSchema,
-  sections: Type.Array(CardSectionSchema),
+export const GoogleWorkspaceCardSchema = Type.Object({
+  header: GoogleWorkspaceHeaderSchema,
+  sections: Type.Array(GoogleWorkspaceSectionSchema),
   evaluationOrder: Type.Optional(Type.Array(Type.String())),
 });
 
-export type Card = Static<typeof CardSchema>;
-export const UiCardSchema = CardSchema;
-export type UiCard = Card;
+export type GoogleWorkspaceCard = Static<typeof GoogleWorkspaceCardSchema>;
 
-export const CardNavigationSchema = Type.Object({
-  pushCard: CardSchema,
+export const GoogleWorkspaceNavigationSchema = Type.Object({
+  pushCard: GoogleWorkspaceCardSchema,
 });
 
-export type CardNavigation = Static<typeof CardNavigationSchema>;
+export type GoogleWorkspaceNavigation = Static<typeof GoogleWorkspaceNavigationSchema>;
 
-export const CardNotificationSchema = Type.Object({
+export const GoogleWorkspaceNotificationSchema = Type.Object({
   text: Type.String(),
 });
 
-export type CardNotification = Static<typeof CardNotificationSchema>;
+export type GoogleWorkspaceNotification = Static<typeof GoogleWorkspaceNotificationSchema>;
 
-export const CardActionSchema = Type.Object({
-  navigations: Type.Optional(Type.Union([Type.Array(CardNavigationSchema), Type.Undefined()])),
-  notification: Type.Optional(Type.Union([CardNotificationSchema, Type.Undefined()])),
+export const GoogleWorkspaceActionSchema = Type.Object({
+  navigations: Type.Optional(Type.Union([Type.Array(GoogleWorkspaceNavigationSchema), Type.Undefined()])),
+  notification: Type.Optional(Type.Union([GoogleWorkspaceNotificationSchema, Type.Undefined()])),
 });
 
-export type CardAction = Static<typeof CardActionSchema>;
+export type GoogleWorkspaceAction = Static<typeof GoogleWorkspaceActionSchema>;
 
-export const CardActionResponseSchema = Type.Object({
-  action: CardActionSchema,
+export const GoogleWorkspaceActionResponseSchema = Type.Object({
+  action: GoogleWorkspaceActionSchema,
 });
 
-export type CardActionResponse = Static<typeof CardActionResponseSchema>;
+export type GoogleWorkspaceActionResponse = Static<typeof GoogleWorkspaceActionResponseSchema>;
 
-export function buildTitleBlock(options: CardHeaderOptions): CardHeader {
+export function buildTitleBlock(options: GoogleWorkspaceHeaderOptions): GoogleWorkspaceHeader {
   return {
     title: options.title,
     ...(options.subtitle ? { subtitle: options.subtitle } : {}),
@@ -166,7 +166,7 @@ export function buildTitleBlock(options: CardHeaderOptions): CardHeader {
 export function buildStatusMessageBlock(
   message?: string | undefined,
   isOnlySection = false
-): CardSection | null {
+): GoogleWorkspaceSection | null {
   if (!message || message.trim() === '') {
     if (isOnlySection) {
       // If it's the only section and there's no message, we must return a visible section
@@ -196,19 +196,19 @@ export function buildStatusMessageBlock(
 }
 
 export function buildCard(
-  header: CardHeader,
-  sections: (CardSection | null | undefined)[],
+  header: GoogleWorkspaceHeader,
+  sections: (GoogleWorkspaceSection | null | undefined)[],
   evaluationOrder?: string[]
-): Card {
+): GoogleWorkspaceCard {
   const validSections = sections.filter(
-    (s): s is CardSection => s !== null && s !== undefined
+    (s): s is GoogleWorkspaceSection => s !== null && s !== undefined
   );
 
   if (validSections.length === 0) {
     throw new Error('A Google Workspace Add-on card must contain at least one valid section.');
   }
 
-  const card: Card = {
+  const card: GoogleWorkspaceCard = {
     header,
     sections: validSections,
   };
@@ -237,8 +237,8 @@ export type DocumentSelectionContext = DocumentSelectionState;
 export function buildDocumentTypeSelectionBlock(options: {
   selectionContext: DocumentSelectionState;
   onSpaceTypeChangeAction: string;
-}): CardSection {
-  const widgets: CardWidget[] = [];
+}): GoogleWorkspaceSection {
+  const widgets: GoogleWorkspaceWidget[] = [];
 
   const spaceTypes =
     options.selectionContext.spaceTypes.length > 0
@@ -293,7 +293,7 @@ export function buildDocumentTypeSelectionBlock(options: {
   };
 }
 
-export function buildNavigationAction(card: Card): CardActionResponse {
+export function buildNavigationAction(card: GoogleWorkspaceCard): GoogleWorkspaceActionResponse {
   return {
     action: {
       navigations: [
@@ -305,7 +305,10 @@ export function buildNavigationAction(card: Card): CardActionResponse {
   };
 }
 
-export function buildErrorCard(errorMessage: string, title = 'Error'): CardActionResponse {
+export function buildErrorCard(
+  errorMessage: string,
+  title = 'Error'
+): GoogleWorkspaceActionResponse {
   const header = buildTitleBlock({ title });
   const messageBlock = buildStatusMessageBlock(errorMessage, true);
   // messageBlock is guaranteed non-null when isOnlySection is true
@@ -323,3 +326,35 @@ export function buildErrorCard(errorMessage: string, title = 'Error'): CardActio
     },
   };
 }
+
+// --- Backward Compatibility Aliases ---
+export const CardHeaderOptionsSchema = GoogleWorkspaceHeaderOptionsSchema;
+export type CardHeaderOptions = GoogleWorkspaceHeaderOptions;
+
+export const CardHeaderSchema = GoogleWorkspaceHeaderSchema;
+export type CardHeader = GoogleWorkspaceHeader;
+
+export const CardWidgetSchema = GoogleWorkspaceWidgetSchema;
+export type CardWidget = GoogleWorkspaceWidget;
+
+export const CardSectionSchema = GoogleWorkspaceSectionSchema;
+export type CardSection = GoogleWorkspaceSection;
+
+export const CardSchema = GoogleWorkspaceCardSchema;
+export type Card = GoogleWorkspaceCard;
+
+export const UiCardSchema = GoogleWorkspaceCardSchema;
+export type UiCard = GoogleWorkspaceCard;
+
+export const CardNavigationSchema = GoogleWorkspaceNavigationSchema;
+export type CardNavigation = GoogleWorkspaceNavigation;
+
+export const CardNotificationSchema = GoogleWorkspaceNotificationSchema;
+export type CardNotification = GoogleWorkspaceNotification;
+
+export const CardActionSchema = GoogleWorkspaceActionSchema;
+export type CardAction = GoogleWorkspaceAction;
+
+export const CardActionResponseSchema = GoogleWorkspaceActionResponseSchema;
+export type CardActionResponse = GoogleWorkspaceActionResponse;
+

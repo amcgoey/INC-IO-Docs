@@ -8,6 +8,11 @@ import {
   buildErrorCard,
   buildDocumentTypeSelectionBlock,
   CardSchema,
+  CardSectionSchema,
+  CardWidgetSchema,
+  GoogleWorkspaceCardSchema,
+  GoogleWorkspaceSectionSchema,
+  GoogleWorkspaceWidgetSchema,
 } from './ui-blocks';
 
 describe('Workspace Add-on UI Blocks', () => {
@@ -267,5 +272,36 @@ describe('Workspace Add-on UI Blocks', () => {
       ]);
     });
   });
+
+  describe('GoogleWorkspace schemas and backward compatibility aliases', () => {
+    it('validates a GoogleWorkspaceCard with collapsible section against both schemas', () => {
+      expect(CardSchema).toBe(GoogleWorkspaceCardSchema);
+      expect(CardSectionSchema).toBe(GoogleWorkspaceSectionSchema);
+      expect(CardWidgetSchema).toBe(GoogleWorkspaceWidgetSchema);
+
+      const sectionWithCollapsible = {
+        header: 'Collapsible Section',
+        collapsible: true,
+        uncollapsibleWidgetsCount: 1,
+        widgets: [
+          {
+            textParagraph: { text: 'Visible widget' },
+          },
+        ],
+      };
+
+      expect(Value.Check(GoogleWorkspaceSectionSchema, sectionWithCollapsible)).toBe(true);
+      expect(Value.Check(CardSectionSchema, sectionWithCollapsible)).toBe(true);
+
+      const card = {
+        header: { title: 'Test' },
+        sections: [sectionWithCollapsible],
+      };
+
+      expect(Value.Check(GoogleWorkspaceCardSchema, card)).toBe(true);
+      expect(Value.Check(CardSchema, card)).toBe(true);
+    });
+  });
 });
+
 
