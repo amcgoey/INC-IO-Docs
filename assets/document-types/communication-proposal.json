@@ -73,8 +73,7 @@
       },
       "direction": {
         "widget": "selectionInput",
-        "label": "Direction",
-        "onChange": true
+        "label": "Direction"
       },
       "description": {
         "widget": "textInput",

@@ -44,7 +44,6 @@
         "required": false
       }
     ],
-
     "identity": {
       "id": "{{contact}}-{{date}}-{{direction.key}}-{{description}}",
       "idDocument": "{{contact}}-{{date}}-{{direction.key}}-{{description}}",
@@ -82,8 +81,7 @@
       },
       "direction": {
         "widget": "selectionInput",
-        "label": "Direction",
-        "onChange": true
+        "label": "Direction"
       },
       "description": {
         "widget": "textInput",
@@ -92,7 +90,14 @@
       "incomingNotes": {
         "widget": "textInput",
         "label": "Incoming Notes",
-        "showIf": { "==": [{ "var": "data.direction" }, "IN"] }
+        "showIf": {
+          "==": [
+            {
+              "var": "data.direction"
+            },
+            "IN"
+          ]
+        }
       }
     },
     "events": {
