@@ -14,7 +14,10 @@ export type { WorkspaceUiBuilderPort };
 import type { DocumentService } from '../features/document/domain';
 import type { DocumentSpaceService } from '../features/document-space/domain';
 import type { DocumentSchemaRegistryPort, SchemaQueryPort } from '../features/document/ports';
-import { translateUiViewToNavigationAction } from '../infrastructure/workspace-addon/translator';
+import {
+  translateUiViewToNavigationAction,
+  translateUiViewToUpdateCardAction,
+} from '../infrastructure/workspace-addon/translator';
 import { createSchemaDrivenUiWiring, type RawManifestProviderPort } from './schema-driven-ui.wiring';
 
 export interface WorkspaceFeatureWiringOptions {
@@ -55,6 +58,8 @@ export function wireWorkspaceFeature(
           viewId: request.viewId,
           ...(request.documentTypeKey !== undefined ? { documentTypeKey: request.documentTypeKey } : {}),
           ...(request.validationErrors !== undefined ? { validationErrors: request.validationErrors } : {}),
+          ...(request.formData !== undefined ? { formData: request.formData } : {}),
+          ...(request.hiddenFields !== undefined ? { hiddenFields: request.hiddenFields } : {}),
           ...(request.selectionState !== undefined
             ? {
                 selectionState: {
@@ -65,6 +70,9 @@ export function wireWorkspaceFeature(
               }
             : {}),
         });
+        if (request.isUpdateCard) {
+          return translateUiViewToUpdateCardAction(view);
+        }
         return translateUiViewToNavigationAction(view);
       },
     };
@@ -79,6 +87,7 @@ export function wireWorkspaceFeature(
     documentSpaceService: options.documentSpaceService,
     configProvider: options.configProvider,
     processCardOrchestrator,
+    manifestProvider: options.manifestProvider,
   });
 }
 

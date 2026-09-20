@@ -78,6 +78,9 @@ export interface WorkspaceExecutionContext {
   traceId?: string | undefined;
   selectedItems?: WorkspaceDriveSelectedItem[] | undefined;
   validationErrors?: string[] | undefined;
+  formData?: Record<string, unknown> | undefined;
+  actionName?: string | undefined;
+  parameters?: Record<string, string> | undefined;
   rawEvent?: unknown;
 }
 
@@ -105,6 +108,25 @@ export function extractWorkspaceExecutionContext(
     }
   }
 
+  let formData: Record<string, unknown> | undefined;
+  if (event.commonEventObject?.formInputs) {
+    formData = {};
+    for (const [key, val] of Object.entries(event.commonEventObject.formInputs)) {
+      if (val && typeof val === 'object' && 'stringInputs' in val) {
+        const stringInputs = (val as { stringInputs?: { value?: unknown[] } })['stringInputs'];
+        formData[key] = stringInputs?.value?.[0] ?? '';
+      } else {
+        formData[key] = val;
+      }
+    }
+  }
+
+  const actionName =
+    event.commonEventObject?.parameters?.action ??
+    (payload && typeof payload === 'object' && 'commonEventObject' in payload
+      ? (payload as { commonEventObject?: { invokedFunction?: string } }).commonEventObject?.invokedFunction
+      : undefined);
+
   return {
     userOAuthToken: typeof userOAuthToken === 'string' ? userOAuthToken : undefined,
     userEmail: typeof event.userEmail === 'string' ? event.userEmail : undefined,
@@ -113,6 +135,9 @@ export function extractWorkspaceExecutionContext(
     traceId,
     selectedItems: event.drive?.selectedItems,
     validationErrors,
+    formData,
+    actionName,
+    parameters: event.commonEventObject?.parameters,
     rawEvent: payload,
   };
 }

@@ -173,6 +173,146 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     expect(body.action.navigations[0].pushCard.sections).toHaveLength(1);
     expect(body.action.navigations[0].pushCard.sections[0].header).toBe('Document Type');
   });
+
+  it('interaction loop: programmatically navigates cascading dropdowns and form changes via simulated JSON Logic roundtrips', async () => {
+    // 1. Initial trigger
+    const initialResponse = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/drive-items-selected',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        drive: {
+          selectedItems: [{ id: 'drive-file-999', title: 'Q3_Financial_Review.pdf' }],
+        },
+      },
+    });
+    expect(initialResponse.statusCode).toBe(200);
+
+    // 2. Simulate onFormChange roundtrip: user selects direction 'Incoming' and enters contact
+    const changeResponse = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/on-form-change',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        commonEventObject: {
+          parameters: {
+            action: 'onFormChange',
+          },
+          formInputs: {
+            SelectDocumentType: { stringInputs: { value: ['communication-project'] } },
+            contact: { stringInputs: { value: ['John Doe'] } },
+            direction: { stringInputs: { value: ['IN'] } },
+          },
+        },
+        drive: {
+          selectedItems: [{ id: 'drive-file-999', title: 'Q3_Financial_Review.pdf' }],
+        },
+      },
+    });
+
+    expect(changeResponse.statusCode).toBe(200);
+    const changeBody = JSON.parse(changeResponse.payload);
+    expect(Value.Check(GoogleWorkspaceActionResponseSchema, changeBody)).toBe(true);
+    expect(changeBody.action?.navigations).toBeDefined();
+
+    const updateCard = changeBody.action.navigations[0].updateCard;
+    expect(updateCard).toBeDefined();
+    expect(updateCard.header.title).toBe('INC-IO Engine');
+
+    // Document Data section must reflect updated values
+    const dataSection = updateCard.sections.find(
+      (s: { header?: string }) => s.header === 'Document Data'
+    );
+    expect(dataSection).toBeDefined();
+
+    const contactWidget = dataSection.widgets.find(
+      (w: { textInput?: { name: string } }) => w.textInput?.name === 'contact'
+    );
+    expect(contactWidget?.textInput?.value).toBe('John Doe');
+
+    const directionWidget = dataSection.widgets.find(
+      (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'direction'
+    );
+    expect(directionWidget?.selectionInput).toBeDefined();
+    const incomingItem = directionWidget?.selectionInput?.items.find(
+      (item: { value: string }) => item.value === 'IN'
+    );
+    expect(incomingItem?.selected).toBe(true);
+  });
+
+  it('mutation & error rendering: drives flow to final Process submission testing both failure and success paths', async () => {
+    // 1. Failure Path: submitting with invalid / incomplete document data renders validation errors inline
+    const failureResponse = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/action',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        commonEventObject: {
+          parameters: {
+            action: 'processDocument',
+          },
+          formInputs: {
+            SelectDocumentType: { stringInputs: { value: ['communication-project'] } },
+            // contact, date, direction, description are required but missing
+          },
+        },
+        drive: {
+          selectedItems: [{ id: 'drive-file-999', title: 'Q3_Financial_Review.pdf' }],
+        },
+      },
+    });
+
+    expect(failureResponse.statusCode).toBe(200);
+    const failureBody = JSON.parse(failureResponse.payload);
+    expect(Value.Check(GoogleWorkspaceActionResponseSchema, failureBody)).toBe(true);
+
+    // Assert that validationErrors re-render inline error messages via Status Message Block
+    const errorCard = failureBody.action.navigations[0].updateCard ?? failureBody.action.navigations[0].pushCard;
+    expect(errorCard).toBeDefined();
+    const statusSection = errorCard.sections.find(
+      (s: { widgets: Array<{ textParagraph?: { text: string } }> }) =>
+        s.widgets?.[0]?.textParagraph?.text?.includes('failed') ||
+        s.widgets?.[0]?.textParagraph?.text?.includes('validation') ||
+        s.widgets?.[0]?.textParagraph?.text?.includes('required')
+    );
+    expect(statusSection).toBeDefined();
+
+    // 2. Success Path: submitting with valid document data routes to domain and returns success notification
+    const successResponse = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/action',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        commonEventObject: {
+          parameters: {
+            action: 'processDocument',
+          },
+          formInputs: {
+            SelectDocumentType: { stringInputs: { value: ['communication-project'] } },
+            contact: { stringInputs: { value: ['Acme Corp'] } },
+            date: { stringInputs: { value: ['260920'] } },
+            direction: { stringInputs: { value: ['IN'] } },
+            description: { stringInputs: { value: ['Project Kickoff'] } },
+          },
+        },
+        drive: {
+          selectedItems: [{ id: 'drive-file-999', title: 'Q3_Financial_Review.pdf' }],
+        },
+      },
+    });
+
+    expect(successResponse.statusCode).toBe(200);
+    const successBody = JSON.parse(successResponse.payload);
+    expect(successBody.action?.notification?.text).toBe('Document processed successfully');
+  });
 });
 
 

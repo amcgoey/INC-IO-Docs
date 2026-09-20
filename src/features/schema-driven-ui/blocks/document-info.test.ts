@@ -151,7 +151,7 @@ describe('Document Info Block', () => {
       expect(w0).toBeDefined();
       expect(w0?.label).toBe('Preferred Name');
       expect(w0?.items).toEqual([{ text: 'Johnny', value: 'johnny' }]);
-      expect(w0?.onChangeAction).toEqual({ action: 'firstNameChanged' });
+      expect(w0?.onChangeAction).toEqual({ action: 'onFormChange' });
 
       // Widget 2: placeholder mapped to hintText and string onChange
       const w2 = section.widgets[2].textInput;
@@ -227,7 +227,7 @@ describe('Document Info Block', () => {
       expect(section.widgets[2].selectionInput?.name).toBe('direction');
       expect(section.widgets[2].selectionInput?.label).toBe('Direction');
       expect(section.widgets[2].selectionInput?.onChangeAction).toEqual({
-        action: 'directionChanged',
+        action: 'onFormChange',
       });
 
       // 4. description: textInput
@@ -268,6 +268,43 @@ describe('Document Info Block', () => {
         { text: 'High Priority', value: 'high' },
         { text: 'Low Priority', value: 'low' },
       ]);
+    });
+
+    it('injects formData values into widgets and filters out hiddenFields', () => {
+      const schema: AbstractDataSchema = {
+        fields: [
+          { key: 'title', type: 'string' },
+          { key: 'status', type: 'string', options: ['OPEN', 'CLOSED'] },
+          { key: 'internalNotes', type: 'string' },
+        ],
+      };
+
+      const section = buildDocumentInfoSection(schema, undefined, {
+        formData: {
+          title: 'Existing Title',
+          status: 'CLOSED',
+          internalNotes: 'Secret',
+        },
+        hiddenFields: ['internalNotes'],
+      });
+
+      expect(section.widgets).toHaveLength(2);
+
+      // 1. title has value from formData
+      expect(section.widgets[0].textInput?.name).toBe('title');
+      expect(section.widgets[0].textInput?.value).toBe('Existing Title');
+
+      // 2. status has matching item selected
+      expect(section.widgets[1].selectionInput?.name).toBe('status');
+      const items = section.widgets[1].selectionInput?.items;
+      expect(items?.find((i) => i.value === 'CLOSED')?.selected).toBe(true);
+      expect(items?.find((i) => i.value === 'OPEN')?.selected).toBe(false);
+
+      // 3. internalNotes is omitted because it is in hiddenFields
+      const widgetNames = section.widgets.map(
+        (w) => w.textInput?.name ?? w.selectionInput?.name
+      );
+      expect(widgetNames).not.toContain('internalNotes');
     });
   });
 });

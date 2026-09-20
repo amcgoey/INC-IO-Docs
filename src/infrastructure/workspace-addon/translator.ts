@@ -3,6 +3,7 @@ import { Value } from '@sinclair/typebox/value';
 import {
   buildCard,
   buildNavigationAction,
+  buildUpdateCardNavigationAction,
   type GoogleWorkspaceCard,
   type GoogleWorkspaceHeader,
   type GoogleWorkspaceSection,
@@ -386,4 +387,12 @@ export function translateUiViewToWorkspaceCard(payload: unknown): GoogleWorkspac
 export function translateUiViewToNavigationAction(payload: unknown): GoogleWorkspaceActionResponse {
   const card = translateUiViewToWorkspaceCard(payload);
   return buildNavigationAction(card);
+}
+
+/**
+ * Translates an abstract UiView model into a GoogleWorkspaceActionResponse updateCard navigation action.
+ */
+export function translateUiViewToUpdateCardAction(payload: unknown): GoogleWorkspaceActionResponse {
+  const card = translateUiViewToWorkspaceCard(payload);
+  return buildUpdateCardNavigationAction(card);
 }

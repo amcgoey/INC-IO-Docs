@@ -309,5 +309,165 @@ describe('Workspace Feature Routes', () => {
       expect(body.action.navigations[0].pushCard.header.title).toBe('Schema-Driven Card');
     });
   });
+
+  describe('POST /workspace/on-form-change', () => {
+    it('evaluates form change, computes JSON logic, and returns an updated card from orchestrator', async () => {
+      const formServer = createHttpServer();
+      const mockOrchestrator = {
+        generateCard: vi.fn().mockResolvedValue({
+          action: { navigations: [{ updateCard: { header: { title: 'Updated Card' }, sections: [] } }] },
+        }),
+      };
+      const mockManifestProvider = {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: {
+            'communication-project': {
+              documentSchema: {
+                fields: [{ key: 'contact' }, { key: 'computedField' }],
+              },
+              documentUiSchema: {
+                layout: ['contact', 'computedField'],
+                fields: {
+                  computedField: {
+                    computeValue: { cat: [{ var: 'data.contact' }, ' - Verified'] },
+                  },
+                },
+              },
+            },
+          },
+        }),
+      };
+
+      registerWorkspaceFeatureRoutes(formServer, {
+        authVerifier: mockAuthVerifier,
+        uiBuilder: mockUiBuilder,
+        processCardOrchestrator: mockOrchestrator,
+        manifestProvider: mockManifestProvider,
+      });
+
+      const response = await formServer.inject({
+        method: 'POST',
+        url: '/workspace/on-form-change',
+        headers: {
+          authorization: 'Bearer valid-token',
+        },
+        payload: {
+          commonEventObject: {
+            formInputs: {
+              SelectDocumentType: { stringInputs: { value: ['communication-project'] } },
+              contact: { stringInputs: { value: ['Alice'] } },
+            },
+            parameters: {
+              action: 'onFormChange',
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockOrchestrator.generateCard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          viewId: 'drive-document-process-card',
+          documentTypeKey: 'communication-project',
+          formData: expect.objectContaining({
+            contact: 'Alice',
+            computedField: 'Alice - Verified',
+          }),
+          isUpdateCard: true,
+        })
+      );
+      const body = JSON.parse(response.payload);
+      expect(body.action.navigations[0].updateCard.header.title).toBe('Updated Card');
+    });
+  });
+
+  describe('POST /workspace/action', () => {
+    it('executes processDocument on success and returns a toast notification', async () => {
+      const actionServer = createHttpServer();
+      registerWorkspaceFeatureRoutes(actionServer, {
+        authVerifier: mockAuthVerifier,
+        uiBuilder: mockUiBuilder,
+        documentService: mockDocumentService,
+      });
+
+      const response = await actionServer.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-token',
+        },
+        payload: {
+          commonEventObject: {
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentType: { stringInputs: { value: ['communication-project'] } },
+              contact: { stringInputs: { value: ['Bob'] } },
+            },
+          },
+          drive: {
+            selectedItems: [{ id: 'file-123', title: 'contract.pdf' }],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockDocumentService.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'communication-project',
+          data: { contact: 'Bob' },
+        }),
+        'onSubmit',
+        expect.anything()
+      );
+      const body = JSON.parse(response.payload);
+      expect(body.action.notification.text).toBe('Document processed successfully');
+    });
+
+    it('passes validation errors back to processCardOrchestrator when processDocument fails', async () => {
+      const actionServer = createHttpServer();
+      const failingDocService: WorkspaceDocumentRunnerPort = {
+        processDocument: vi.fn().mockRejectedValue(new Error('Validation failed: contact is required')),
+      };
+      const mockOrchestrator = {
+        generateCard: vi.fn().mockResolvedValue({
+          action: { navigations: [{ updateCard: { header: { title: 'Card with Errors' }, sections: [] } }] },
+        }),
+      };
+
+      registerWorkspaceFeatureRoutes(actionServer, {
+        authVerifier: mockAuthVerifier,
+        uiBuilder: mockUiBuilder,
+        documentService: failingDocService,
+        processCardOrchestrator: mockOrchestrator,
+      });
+
+      const response = await actionServer.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-token',
+        },
+        payload: {
+          commonEventObject: {
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentType: { stringInputs: { value: ['communication-project'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockOrchestrator.generateCard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          validationErrors: ['Validation failed: contact is required'],
+        })
+      );
+    });
+  });
 });
 

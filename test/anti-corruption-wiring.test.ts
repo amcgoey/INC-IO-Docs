@@ -71,7 +71,7 @@ describe('Anti-Corruption Wiring Integration', () => {
 
     // 2. Verify all 4 blocks are represented in the translated sections
     expect(typedResponse.action?.navigations).toBeDefined();
-    const pushCard = typedResponse.action!.navigations![0].pushCard;
+    const pushCard = typedResponse.action!.navigations![0].pushCard!;
     expect(pushCard).toBeDefined();
     expect(pushCard.header.title).toBe('INC-IO Engine');
     expect(pushCard.header.subtitle).toBe('Process Document');

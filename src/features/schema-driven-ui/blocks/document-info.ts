@@ -13,6 +13,8 @@ import type {
 
 export interface DocumentInfoOptions {
   sectionHeader?: string | undefined;
+  formData?: Record<string, unknown> | undefined;
+  hiddenFields?: string[] | undefined;
 }
 
 export function camelCaseToTitleCase(str: string): string {
@@ -37,12 +39,14 @@ interface WidgetBuilderContext {
   uiField: UiField | undefined;
   customProps: StandardWidgetCustomProps;
   onChangeAction: unknown | undefined;
+  formValue: unknown | undefined;
+  dataSchema?: AbstractDataSchema | undefined;
 }
 
 type WidgetBuilder = (ctx: WidgetBuilderContext) => UiViewWidget;
 
 const widgetBuilders: Record<string, WidgetBuilder> = {
-  selectionInput: ({ field, label, customProps, onChangeAction }) => {
+  selectionInput: ({ field, label, customProps, onChangeAction, formValue, dataSchema }) => {
     let defaultItems: SelectionItem[] = [];
     if (Array.isArray(field.options)) {
       defaultItems = field.options.map((opt) => {
@@ -58,22 +62,54 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
         }
         return { text: String(opt), value: String(opt) };
       });
+    } else if (
+      field.options &&
+      typeof field.options === 'object' &&
+      'source' in field.options &&
+      dataSchema?.options
+    ) {
+      const sourceKey = (field.options as { source: string }).source;
+      const rawTuples = dataSchema.options[sourceKey];
+      if (Array.isArray(rawTuples)) {
+        defaultItems = rawTuples.map((tuple) => {
+          if (typeof tuple === 'object' && tuple !== null) {
+            const t = tuple as { key?: unknown; name?: unknown; text?: unknown; value?: unknown };
+            const text = String(t.name ?? t.text ?? t.key ?? t.value);
+            const value = String(t.key ?? t.value ?? t.name ?? t.text);
+            return { text, value };
+          }
+          return { text: String(tuple), value: String(tuple) };
+        });
+      }
     }
+
+    const baseItems = customProps.items ?? defaultItems;
+    const items =
+      formValue !== undefined
+        ? baseItems.map((item) => ({
+            ...item,
+            selected: String(item.value) === String(formValue),
+          }))
+        : baseItems;
 
     return {
       selectionInput: {
         name: field.key,
         label,
         type: customProps.type ?? 'DROPDOWN',
-        items: customProps.items ?? defaultItems,
+        items,
         ...(onChangeAction ? { onChangeAction } : {}),
       },
     };
   },
-  textInput: ({ field, label, customProps, onChangeAction }) => {
+  textInput: ({ field, label, customProps, onChangeAction, formValue }) => {
     const hintText = customProps.placeholder ?? customProps.hintText;
     const value =
-      field.defaultValue !== undefined ? String(field.defaultValue) : customProps.value;
+      formValue !== undefined
+        ? String(formValue)
+        : field.defaultValue !== undefined
+          ? String(field.defaultValue)
+          : customProps.value;
 
     return {
       textInput: {
@@ -93,10 +129,13 @@ export function buildDocumentInfoSection(
   options?: DocumentInfoOptions | undefined
 ): UiViewSection {
   const widgets: UiViewWidget[] = [];
-  const layout =
+  const rawLayout =
     uiSchema?.layout && uiSchema.layout.length > 0
       ? uiSchema.layout
       : dataSchema.fields.map((f) => f.key);
+
+  const hiddenSet = new Set(options?.hiddenFields ?? []);
+  const layout = rawLayout.filter((key) => !hiddenSet.has(key));
 
   const fieldMap = new Map<string, AbstractDataField>();
   for (const field of dataSchema.fields) {
@@ -118,7 +157,7 @@ export function buildDocumentInfoSection(
       typeof uiField?.onChange === 'string'
         ? { action: uiField.onChange }
         : uiField?.onChange === true
-          ? { action: `${field.key}Changed` }
+          ? { action: 'onFormChange' }
           : undefined;
 
     const builder = widgetBuilders[widgetType] ?? widgetBuilders.textInput;
@@ -129,6 +168,8 @@ export function buildDocumentInfoSection(
         uiField,
         customProps,
         onChangeAction,
+        formValue: options?.formData?.[field.key],
+        dataSchema,
       })
     );
   }

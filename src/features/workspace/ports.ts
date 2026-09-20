@@ -135,9 +135,12 @@ export interface WorkspaceUiBuilderPort {
 
 export interface WorkspaceProcessCardRequest {
   viewId: string;
-  documentTypeKey?: string;
-  selectionState?: DocumentSelectionState;
-  validationErrors?: string[];
+  documentTypeKey?: string | undefined;
+  selectionState?: DocumentSelectionState | undefined;
+  validationErrors?: string[] | undefined;
+  formData?: Record<string, unknown> | undefined;
+  hiddenFields?: string[] | undefined;
+  isUpdateCard?: boolean | undefined;
 }
 
 export interface WorkspaceProcessCardOrchestratorPort {

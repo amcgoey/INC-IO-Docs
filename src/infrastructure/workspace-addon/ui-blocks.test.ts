@@ -5,6 +5,7 @@ import {
   buildStatusMessageBlock,
   buildCard,
   buildNavigationAction,
+  buildUpdateCardNavigationAction,
   buildErrorCard,
   buildDocumentTypeSelectionBlock,
   CardSchema,
@@ -153,6 +154,23 @@ describe('Workspace Add-on UI Blocks', () => {
           navigations: [
             {
               pushCard: card,
+            },
+          ],
+        },
+      });
+    });
+  });
+
+  describe('buildUpdateCardNavigationAction', () => {
+    it('wraps a card in standard updateCard navigation action', () => {
+      const card = { header: { title: 'Card' }, sections: [] };
+      const action = buildUpdateCardNavigationAction(card);
+
+      expect(action).toEqual({
+        action: {
+          navigations: [
+            {
+              updateCard: card,
             },
           ],
         },

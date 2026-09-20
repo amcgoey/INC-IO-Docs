@@ -24,6 +24,8 @@ export const GenerateViewRequestSchema = Type.Object({
   documentTypeKey: Type.Optional(Type.String({ minLength: 1 })),
   selectionState: Type.Optional(SelectionStateSchema),
   validationErrors: Type.Optional(Type.Array(Type.String())),
+  formData: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  hiddenFields: Type.Optional(Type.Array(Type.String())),
 });
 
 export type GenerateViewRequest = Static<typeof GenerateViewRequestSchema>;
@@ -40,6 +42,7 @@ export type AbstractDataField = Static<typeof AbstractDataFieldSchema>;
 
 export const AbstractDataSchema = Type.Object({
   fields: Type.Array(AbstractDataFieldSchema),
+  options: Type.Optional(Type.Record(Type.String(), Type.Array(Type.Unknown()))),
 });
 export type AbstractDataSchema = Static<typeof AbstractDataSchema>;
 

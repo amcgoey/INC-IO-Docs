@@ -3,6 +3,7 @@ import { Value } from '@sinclair/typebox/value';
 import {
   translateUiViewToWorkspaceCard,
   translateUiViewToNavigationAction,
+  translateUiViewToUpdateCardAction,
   AbstractUiViewSchema,
 } from './translator';
 import { GoogleWorkspaceCardSchema } from './ui-blocks';
@@ -276,6 +277,21 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
     const navAction = translateUiViewToNavigationAction(view);
     expect(navAction.action?.navigations).toBeDefined();
     expect(navAction.action.navigations?.[0]?.pushCard?.header?.title).toBe('Nav Card');
+  });
+
+  it('translates abstract UiView to Google Workspace updateCard navigation action', () => {
+    const view = {
+      header: { title: 'Update Card' },
+      sections: [
+        {
+          widgets: [{ textParagraph: { text: 'Updated content' } }],
+        },
+      ],
+    };
+
+    const updateAction = translateUiViewToUpdateCardAction(view);
+    expect(updateAction.action?.navigations).toBeDefined();
+    expect(updateAction.action.navigations?.[0]?.updateCard?.header?.title).toBe('Update Card');
   });
 
   it('throws descriptive error if input is invalid according to AbstractUiViewSchema', () => {

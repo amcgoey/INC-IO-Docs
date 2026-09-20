@@ -123,7 +123,8 @@ export const GoogleWorkspaceCardSchema = Type.Object({
 export type GoogleWorkspaceCard = Static<typeof GoogleWorkspaceCardSchema>;
 
 export const GoogleWorkspaceNavigationSchema = Type.Object({
-  pushCard: GoogleWorkspaceCardSchema,
+  pushCard: Type.Optional(GoogleWorkspaceCardSchema),
+  updateCard: Type.Optional(GoogleWorkspaceCardSchema),
 });
 
 export type GoogleWorkspaceNavigation = Static<typeof GoogleWorkspaceNavigationSchema>;
@@ -292,6 +293,18 @@ export function buildNavigationAction(card: GoogleWorkspaceCard): GoogleWorkspac
       navigations: [
         {
           pushCard: card,
+        },
+      ],
+    },
+  };
+}
+
+export function buildUpdateCardNavigationAction(card: GoogleWorkspaceCard): GoogleWorkspaceActionResponse {
+  return {
+    action: {
+      navigations: [
+        {
+          updateCard: card,
         },
       ],
     },
