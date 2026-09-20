@@ -62,10 +62,11 @@ describe('Anti-Corruption Wiring Integration', () => {
 
     // 1. Verify that the output satisfies the infrastructure-defined Google Workspace Action Response schema
     expect(Value.Check(GoogleWorkspaceActionResponseSchema, actionResponse)).toBe(true);
+    const typedResponse = actionResponse as import('../src/infrastructure/workspace-addon/ui-blocks').GoogleWorkspaceActionResponse;
 
     // 2. Verify all 4 blocks are represented in the translated sections
-    expect(actionResponse.action?.navigations).toBeDefined();
-    const pushCard = actionResponse.action!.navigations![0].pushCard;
+    expect(typedResponse.action?.navigations).toBeDefined();
+    const pushCard = typedResponse.action!.navigations![0].pushCard;
     expect(pushCard).toBeDefined();
     expect(pushCard.header.title).toBe('INC-IO Engine');
     expect(pushCard.header.subtitle).toBe('Process Document');

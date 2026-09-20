@@ -94,8 +94,7 @@ export function registerWorkspaceFeatureRoutes(
   } = opts;
 
   const prepareDriveDocumentProcessCardContext = async (
-    context: WorkspaceExecutionContext,
-    validationErrors?: string[]
+    context: WorkspaceExecutionContext
   ) => {
     const wsConfig = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
 
@@ -166,7 +165,6 @@ export function registerWorkspaceFeatureRoutes(
         viewId: 'drive-document-process-card',
         documentTypeKey: selectedDocType,
         selectionState: selectionContext,
-        ...(validationErrors && validationErrors.length > 0 ? { validationErrors } : {}),
       });
     }
 
@@ -185,14 +183,9 @@ export function registerWorkspaceFeatureRoutes(
           request.body,
           traceHeader
         );
-        const bodyObj = request.body as { validationErrors?: string[] } | undefined;
-        const validationErrors = Array.isArray(bodyObj?.validationErrors)
-          ? bodyObj.validationErrors
-          : undefined;
-
         return {
           status: 200,
-          body: await prepareDriveDocumentProcessCardContext(context, validationErrors),
+          body: await prepareDriveDocumentProcessCardContext(context),
         };
       } catch (error) {
         return {

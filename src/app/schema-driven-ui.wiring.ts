@@ -9,7 +9,6 @@ import {
 import { translateUiViewToNavigationAction } from '../infrastructure/workspace-addon/translator';
 import { ensureEvaluationOrder } from '../infrastructure/validation/json-logic-graph';
 import type { GenerateViewRequest } from '../features/schema-driven-ui/ports';
-import type { GoogleWorkspaceActionResponse } from '../infrastructure/workspace-addon/ui-blocks';
 
 export type { RawManifestProviderPort };
 
@@ -22,7 +21,7 @@ export interface SchemaDrivenUiWiring {
   schemaDrivenUiService: SchemaDrivenUiService;
   generateWorkspaceProcessCard: (
     request: GenerateViewRequest
-  ) => Promise<GoogleWorkspaceActionResponse>;
+  ) => Promise<unknown>;
 }
 
 export function createSchemaDrivenUiWiring(
@@ -47,7 +46,7 @@ export function createSchemaDrivenUiWiring(
     schemaDrivenUiService: service,
     generateWorkspaceProcessCard: async (
       request: GenerateViewRequest
-    ): Promise<GoogleWorkspaceActionResponse> => {
+    ): Promise<unknown> => {
       const view = await service.generateView(request);
       return translateUiViewToNavigationAction(view);
     },

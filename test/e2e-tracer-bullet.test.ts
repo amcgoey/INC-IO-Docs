@@ -111,45 +111,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     expect(adminSection.collapsible).toBe(true);
   });
 
-  it('supports the Status Message Block when validation errors are present in a raw trigger', async () => {
-    const rawTriggerWithErrors = {
-      authorizationEventObject: {
-        userOAuthToken: 'ya29.sample-token',
-      },
-      drive: {
-        selectedItems: [
-          {
-            id: 'drive-file-999',
-            title: 'Q3_Financial_Review.pdf',
-          },
-        ],
-      },
-      validationErrors: ['Contact field is mandatory', 'Date format must be yyMMdd'],
-    };
 
-    const response = await app.server.inject({
-      method: 'POST',
-      url: '/workspace/drive-items-selected',
-      headers: {
-        authorization: 'Bearer valid-jwt-token',
-      },
-      payload: rawTriggerWithErrors,
-    });
-
-    expect(response.statusCode).toBe(200);
-    const body = JSON.parse(response.payload);
-    expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
-    expect(body.action?.navigations).toBeDefined();
-
-    const pushCard = body.action!.navigations![0].pushCard;
-    expect(pushCard.sections[0].widgets[0].textParagraph?.text).toContain('Contact field is mandatory');
-    expect(pushCard.sections[0].widgets[0].textParagraph?.text).toContain('Date format must be yyMMdd');
-
-    // Document Type Selection, Document Info, and Admin blocks remain present alongside Status Message Block
-    expect(pushCard.sections[1].header).toBe('Document Type');
-    expect(pushCard.sections[2].header).toBe('Document Data');
-    expect(pushCard.sections[3].header).toBe('Admin');
-  });
 
   it('leaves other flows untouched by continuing to use legacy card builder on /workspace/homepage trigger', async () => {
     const response = await app.server.inject({
