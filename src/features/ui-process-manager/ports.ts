@@ -1,20 +1,19 @@
 import { Type, type Static } from '@sinclair/typebox';
+import {
+  UiSelectionItemSchema,
+  type UiSelectionItem,
+  UiSelectionStateSchema,
+  type UiSelectionState,
+  type UiProcessSpaceType,
+} from './domain';
 
-// --- Selection & Context DTOs ---
-
-export const UiSelectionItemSchema = Type.Object({
-  text: Type.String(),
-  value: Type.String(),
-  selected: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
-});
-export type UiSelectionItem = Static<typeof UiSelectionItemSchema>;
-
-export const UiSelectionStateSchema = Type.Object({
-  spaceTypes: Type.Array(UiSelectionItemSchema),
-  spaces: Type.Array(Type.String()),
-  documentTypes: Type.Array(UiSelectionItemSchema),
-});
-export type UiSelectionState = Static<typeof UiSelectionStateSchema>;
+export {
+  UiSelectionItemSchema,
+  type UiSelectionItem,
+  UiSelectionStateSchema,
+  type UiSelectionState,
+  type UiProcessSpaceType,
+};
 
 export const UiProcessEventContextSchema = Type.Object({
   actionName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
@@ -45,11 +44,6 @@ export interface UiProcessConfigProviderPort {
   } | undefined>;
 }
 
-export interface UiProcessSpaceType {
-  id: string;
-  displayName: string;
-  spaceSchema: { allowedDocumentTypes: string[] };
-}
 
 export interface UiProcessSpaceCollection {
   type?: UiProcessSpaceType | undefined;

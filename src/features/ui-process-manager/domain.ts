@@ -1,8 +1,24 @@
-import type {
-  UiSelectionState,
-  UiSelectionItem,
-  UiProcessSpaceType,
-} from './ports';
+import { Type, type Static } from '@sinclair/typebox';
+
+export const UiSelectionItemSchema = Type.Object({
+  text: Type.String(),
+  value: Type.String(),
+  selected: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+});
+export type UiSelectionItem = Static<typeof UiSelectionItemSchema>;
+
+export const UiSelectionStateSchema = Type.Object({
+  spaceTypes: Type.Array(UiSelectionItemSchema),
+  spaces: Type.Array(Type.String()),
+  documentTypes: Type.Array(UiSelectionItemSchema),
+});
+export type UiSelectionState = Static<typeof UiSelectionStateSchema>;
+
+export interface UiProcessSpaceType {
+  id: string;
+  displayName: string;
+  spaceSchema: { allowedDocumentTypes: string[] };
+}
 
 export interface ProcessUiStateConfig {
   defaultDocumentType?: string | undefined;

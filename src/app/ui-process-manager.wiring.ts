@@ -69,6 +69,8 @@ export function createUiProcessManagerWiring(
     },
   };
 
+  let cachedDocTypes: Array<{ key: string; name?: string | undefined; displayName?: string | undefined }> | undefined;
+
   const manifestPort: UiProcessManifestPort = {
     async resolveDocumentTypeKey(nameOrKey: string): Promise<string | undefined> {
       const all = await this.getAllDocumentTypes();
@@ -78,28 +80,43 @@ export function createUiProcessManagerWiring(
       return found?.key ?? nameOrKey;
     },
     async getAllDocumentTypes(): Promise<Array<{ key: string; name?: string | undefined; displayName?: string | undefined }>> {
+      if (cachedDocTypes) {
+        return cachedDocTypes;
+      }
+
       const raw = (await options.manifestProvider.getRawManifest()) as
-        | { documentTypes?: string[] }
+        | { documentTypes?: string[] | Record<string, { name?: string; displayName?: string }> }
         | undefined;
-      const docTypePaths = raw?.documentTypes ?? [];
       const result: Array<{ key: string; name?: string | undefined; displayName?: string | undefined }> = [];
 
-      for (const relPath of docTypePaths) {
-        try {
-          const parsed = (await options.manifestProvider.readParsedSchema(relPath)) as
-            | { key?: string; name?: string; displayName?: string }
-            | undefined;
-          if (parsed?.key) {
-            result.push({
-              key: parsed.key,
-              name: parsed.name,
-              displayName: parsed.displayName,
-            });
+      if (Array.isArray(raw?.documentTypes)) {
+        for (const relPath of raw.documentTypes) {
+          try {
+            const parsed = (await options.manifestProvider.readParsedSchema(relPath)) as
+              | { key?: string; name?: string; displayName?: string }
+              | undefined;
+            if (parsed?.key) {
+              result.push({
+                key: parsed.key,
+                name: parsed.name,
+                displayName: parsed.displayName,
+              });
+            }
+          } catch {
+            // ignore unreadable/invalid schemas
           }
-        } catch {
-          // ignore unreadable/invalid schemas
+        }
+      } else if (raw?.documentTypes && typeof raw.documentTypes === 'object') {
+        for (const [key, def] of Object.entries(raw.documentTypes)) {
+          result.push({
+            key,
+            name: def?.name,
+            displayName: def?.displayName,
+          });
         }
       }
+
+      cachedDocTypes = result;
       return result;
     },
   };

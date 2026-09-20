@@ -123,8 +123,8 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       SelectDocumentSpace: 'Project Main',
       SelectDocumentType: 'invoice-project',
     });
-    expect(result.request.formData.contact).toBeUndefined();
-    expect(result.request.formData.date).toBeUndefined();
+    expect(result.request.formData?.contact).toBeUndefined();
+    expect(result.request.formData?.date).toBeUndefined();
   });
 
   it('translates human-readable names into backend keys in the write model', async () => {
@@ -148,6 +148,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
     };
 
     expect(result.request.documentTypeKey).toBe('communication-project');
-    expect(result.request.formData.SelectDocumentType).toBe('communication-project');
+    expect(result.request.formData?.SelectDocumentType).toBe('communication-project');
   });
 });
