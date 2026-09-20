@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ManifestAdapter, type RawManifestProviderPort } from './manifest.adapter';
+import { ManifestAdapter } from './manifest.adapter';
+import type { RawManifestProviderPort } from '../ports';
 
 describe('ManifestAdapter', () => {
   it('resolves document type key when mapping exists in manifest array', async () => {

@@ -1,7 +1,5 @@
 import type { UiProcessManifestPort, RawManifestProviderPort } from '../ports';
 
-export type { RawManifestProviderPort };
-
 interface RawDocDef {
   key: string;
   name?: string | undefined;
@@ -41,25 +39,23 @@ export class ManifestAdapter implements UiProcessManifestPort {
     if (Array.isArray(raw.documentTypes)) {
       for (const relPath of raw.documentTypes) {
         try {
-          if (this.manifestProvider.readParsedSchema) {
-            const parsed = (await this.manifestProvider.readParsedSchema(relPath)) as
-              | {
-                  key?: string;
-                  name?: string;
-                  displayName?: string;
-                  documentSchema?: unknown;
-                  documentUiSchema?: unknown;
-                }
-              | undefined;
-            if (parsed?.key) {
-              result.push({
-                key: parsed.key,
-                name: parsed.name,
-                displayName: parsed.displayName,
-                documentSchema: parsed.documentSchema,
-                documentUiSchema: parsed.documentUiSchema,
-              });
-            }
+          const parsed = (await this.manifestProvider.readParsedSchema(relPath)) as
+            | {
+                key?: string;
+                name?: string;
+                displayName?: string;
+                documentSchema?: unknown;
+                documentUiSchema?: unknown;
+              }
+            | undefined;
+          if (parsed?.key) {
+            result.push({
+              key: parsed.key,
+              name: parsed.name,
+              displayName: parsed.displayName,
+              documentSchema: parsed.documentSchema,
+              documentUiSchema: parsed.documentUiSchema,
+            });
           }
         } catch {
           // ignore unreadable/invalid schemas

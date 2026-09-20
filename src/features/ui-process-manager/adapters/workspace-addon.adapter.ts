@@ -64,12 +64,18 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       }
     }
 
-    const renderErrorCard = async (validationErrors: string[]) => {
+    const renderCard = async (options: {
+      formData?: Record<string, unknown> | undefined;
+      validationErrors?: string[] | undefined;
+      isUpdateCard?: boolean | undefined;
+      hiddenFields?: string[] | undefined;
+    }) => {
       const state = evaluateProcessUiState({
         context: {
           ...context,
-          validationErrors,
-          isUpdateCard: true,
+          ...(options.formData !== undefined ? { formData: options.formData } : {}),
+          ...(options.validationErrors ? { validationErrors: options.validationErrors } : {}),
+          ...(options.isUpdateCard ? { isUpdateCard: true } : {}),
         },
         resolvedDocumentTypeKey,
         resolvedSpaceType: currentSpaceType,
@@ -83,10 +89,14 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         documentTypeKey: state.documentTypeKey,
         selectionState: state.selectionState,
         formData: state.formData,
-        isUpdateCard: true,
-        validationErrors: state.validationErrors,
+        isUpdateCard: state.isUpdateCard,
+        ...(options.hiddenFields !== undefined ? { hiddenFields: options.hiddenFields } : {}),
+        ...(state.validationErrors ? { validationErrors: state.validationErrors } : {}),
       });
     };
+
+    const renderErrorCard = async (validationErrors: string[]) =>
+      renderCard({ validationErrors, isUpdateCard: true });
 
     if (actionName === 'processDocument') {
       const selectedSpace = context.formData?.SelectDocumentSpace as string | undefined;
@@ -150,27 +160,10 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       }
     }
 
-    const state = evaluateProcessUiState({
-      context: {
-        ...context,
-        formData: evaluatedFormData,
-        ...(actionName === 'onFormChange' ? { isUpdateCard: true } : {}),
-      },
-      resolvedDocumentTypeKey,
-      resolvedSpaceType: currentSpaceType,
-      config: mappedConfig,
-      spaceTypes,
-      collectionSpaces,
-    });
-
-    return await viewGenerator.generateCard({
-      viewId: state.viewId,
-      documentTypeKey: state.documentTypeKey,
-      selectionState: state.selectionState,
-      formData: state.formData,
-      isUpdateCard: state.isUpdateCard,
-      ...(hiddenFields !== undefined ? { hiddenFields } : {}),
-      ...(state.validationErrors ? { validationErrors: state.validationErrors } : {}),
+    return await renderCard({
+      formData: evaluatedFormData,
+      hiddenFields,
+      isUpdateCard: actionName === 'onFormChange',
     });
   }
 }
