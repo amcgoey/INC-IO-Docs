@@ -44,6 +44,40 @@ export const AbstractUiSuggestionsSchema = Type.Object({
   items: Type.Array(AbstractUiSuggestionItemSchema),
 });
 
+export const AbstractUiActionParameterSchema = Type.Object({
+  key: Type.String(),
+  value: Type.String(),
+});
+
+export type AbstractUiActionParameter = Static<typeof AbstractUiActionParameterSchema>;
+
+export const AbstractUiActionSchema = Type.Union([
+  Type.String(),
+  Type.Object(
+    {
+      function: Type.String(),
+      parameters: Type.Optional(Type.Array(AbstractUiActionParameterSchema)),
+      loadIndicator: Type.Optional(Type.String()),
+    },
+    { additionalProperties: true }
+  ),
+]);
+
+export type AbstractUiAction = Static<typeof AbstractUiActionSchema>;
+
+export const AbstractUiOnClickSchema = Type.Union([
+  AbstractUiActionSchema,
+  Type.Object(
+    {
+      action: Type.Optional(Type.Union([AbstractUiActionSchema, Type.Record(Type.String(), Type.Unknown())])),
+      openLink: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+    },
+    { additionalProperties: true }
+  ),
+]);
+
+export type AbstractUiOnClick = Static<typeof AbstractUiOnClickSchema>;
+
 export const AbstractUiViewWidgetSchema = Type.Object(
   {
     type: Type.Optional(Type.String()),
@@ -63,7 +97,7 @@ export const AbstractUiViewWidgetSchema = Type.Object(
           hintText: Type.Optional(Type.String()),
           value: Type.Optional(Type.String()),
           initialSuggestions: Type.Optional(AbstractUiSuggestionsSchema),
-          onChangeAction: Type.Optional(Type.Unknown()),
+          onChangeAction: Type.Optional(AbstractUiActionSchema),
         },
         { additionalProperties: false }
       )
@@ -75,7 +109,7 @@ export const AbstractUiViewWidgetSchema = Type.Object(
           label: Type.Optional(Type.String()),
           type: Type.Optional(Type.String()),
           items: Type.Optional(Type.Array(AbstractUiSelectionItemSchema)),
-          onChangeAction: Type.Optional(Type.Unknown()),
+          onChangeAction: Type.Optional(AbstractUiActionSchema),
         },
         { additionalProperties: false }
       )
@@ -87,7 +121,7 @@ export const AbstractUiViewWidgetSchema = Type.Object(
             Type.Object(
               {
                 text: Type.String(),
-                onClick: Type.Optional(Type.Unknown()),
+                onClick: Type.Optional(AbstractUiOnClickSchema),
               },
               { additionalProperties: false }
             )
@@ -315,7 +349,7 @@ export function translateUiViewToWorkspaceCard(payload: unknown): GoogleWorkspac
     return section;
   });
 
-  return buildCard(header, sections, view.evaluationOrder);
+  return buildCard(header, sections);
 }
 
 /**

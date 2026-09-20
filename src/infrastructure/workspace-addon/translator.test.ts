@@ -81,7 +81,7 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
       imageType: 'SQUARE',
     });
 
-    expect(card.evaluationOrder).toEqual(['invoiceNumber', 'vendorCategory']);
+    expect(card.evaluationOrder).toBeUndefined();
 
     expect(card.sections).toHaveLength(1);
     const section = card.sections[0];
@@ -324,5 +324,51 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
     };
 
     expect(Value.Check(AbstractUiViewSchema, validSample)).toBe(true);
+  });
+
+  it('validates various action formats (string, structured object, openLink) and rejects invalid action types', () => {
+    const viewWithOpenLink = {
+      sections: [
+        {
+          widgets: [
+            {
+              buttonList: {
+                buttons: [
+                  {
+                    text: 'Open Docs',
+                    onClick: {
+                      openLink: { url: 'https://example.com/docs' },
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(Value.Check(AbstractUiViewSchema, viewWithOpenLink)).toBe(true);
+    const card = translateUiViewToWorkspaceCard(viewWithOpenLink);
+    expect(card.sections[0].widgets[0].buttonList?.buttons[0].onClick).toEqual({
+      openLink: { url: 'https://example.com/docs' },
+    });
+
+    const invalidActionView = {
+      sections: [
+        {
+          widgets: [
+            {
+              textInput: {
+                name: 'invalidInput',
+                onChangeAction: 12345, // invalid type: number
+              },
+            },
+          ],
+        },
+      ],
+    };
+    expect(Value.Check(AbstractUiViewSchema, invalidActionView)).toBe(false);
+    expect(() => translateUiViewToWorkspaceCard(invalidActionView)).toThrow('Invalid UiView');
   });
 });
