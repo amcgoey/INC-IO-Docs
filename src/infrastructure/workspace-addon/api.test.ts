@@ -3,14 +3,12 @@ import { createHttpServer } from '../http';
 import {
   registerWorkspaceAddonRoutes,
   type WorkspaceAuthVerifierPort,
-  type WorkspaceDocumentRunnerPort,
-  type WorkspaceProcessCardOrchestratorPort,
+  type WorkspaceUiOrchestratorPort,
 } from './api';
 
 describe('Workspace Add-on Infrastructure API', () => {
   let mockAuthVerifier: WorkspaceAuthVerifierPort;
-  let mockDocumentService: WorkspaceDocumentRunnerPort;
-  let mockOrchestrator: WorkspaceProcessCardOrchestratorPort;
+  let mockUiOrchestrator: WorkspaceUiOrchestratorPort;
 
   beforeEach(() => {
     mockAuthVerifier = {
@@ -25,15 +23,8 @@ describe('Workspace Add-on Infrastructure API', () => {
       }),
     };
 
-    mockDocumentService = {
-      processDocument: vi.fn().mockResolvedValue({
-        success: true,
-        outputs: [{ status: 'success' }],
-      }),
-    };
-
-    mockOrchestrator = {
-      generateCard: vi.fn().mockResolvedValue({
+    mockUiOrchestrator = {
+      processUiEvent: vi.fn().mockResolvedValue({
         action: {
           navigations: [
             {
@@ -53,6 +44,7 @@ describe('Workspace Add-on Infrastructure API', () => {
       const server = createHttpServer();
       registerWorkspaceAddonRoutes(server, {
         authVerifier: mockAuthVerifier,
+        uiOrchestrator: mockUiOrchestrator,
       });
 
       const response = await server.inject({
@@ -70,6 +62,7 @@ describe('Workspace Add-on Infrastructure API', () => {
       const server = createHttpServer();
       registerWorkspaceAddonRoutes(server, {
         authVerifier: mockAuthVerifier,
+        uiOrchestrator: mockUiOrchestrator,
       });
 
       const response = await server.inject({
@@ -86,11 +79,11 @@ describe('Workspace Add-on Infrastructure API', () => {
       expect(body.message).toBe('Invalid token signature');
     });
 
-    it('delegates to processCardOrchestrator when valid token provided', async () => {
+    it('delegates to uiOrchestrator when valid token provided', async () => {
       const server = createHttpServer();
       registerWorkspaceAddonRoutes(server, {
         authVerifier: mockAuthVerifier,
-        processCardOrchestrator: mockOrchestrator,
+        uiOrchestrator: mockUiOrchestrator,
       });
 
       const response = await server.inject({
@@ -107,9 +100,9 @@ describe('Workspace Add-on Infrastructure API', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(mockOrchestrator.generateCard).toHaveBeenCalledWith(
+      expect(mockUiOrchestrator.processUiEvent).toHaveBeenCalledWith(
         expect.objectContaining({
-          viewId: 'drive-document-process-card',
+          selectedItems: [{ id: 'file-123', title: 'sample.pdf' }],
         })
       );
       const body = JSON.parse(response.payload);
@@ -118,13 +111,13 @@ describe('Workspace Add-on Infrastructure API', () => {
 
     it('returns 200 with native error card when process throws an unexpected error', async () => {
       const server = createHttpServer();
-      const faultyOrchestrator: WorkspaceProcessCardOrchestratorPort = {
-        generateCard: vi.fn().mockRejectedValue(new Error('Rendering pipeline failed')),
+      const faultyOrchestrator: WorkspaceUiOrchestratorPort = {
+        processUiEvent: vi.fn().mockRejectedValue(new Error('Rendering pipeline failed')),
       };
 
       registerWorkspaceAddonRoutes(server, {
         authVerifier: mockAuthVerifier,
-        processCardOrchestrator: faultyOrchestrator,
+        uiOrchestrator: faultyOrchestrator,
       });
 
       const response = await server.inject({
@@ -149,7 +142,7 @@ describe('Workspace Add-on Infrastructure API', () => {
       const server = createHttpServer();
       registerWorkspaceAddonRoutes(server, {
         authVerifier: mockAuthVerifier,
-        processCardOrchestrator: mockOrchestrator,
+        uiOrchestrator: mockUiOrchestrator,
       });
 
       const response = await server.inject({
@@ -161,15 +154,15 @@ describe('Workspace Add-on Infrastructure API', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(mockOrchestrator.generateCard).toHaveBeenCalled();
+      expect(mockUiOrchestrator.processUiEvent).toHaveBeenCalled();
     });
   });
 
   describe('POST /workspace/on-form-change', () => {
-    it('evaluates form change and returns an updated card from orchestrator', async () => {
+    it('blindly routes form change event to uiOrchestrator', async () => {
       const server = createHttpServer();
-      const updateOrchestrator: WorkspaceProcessCardOrchestratorPort = {
-        generateCard: vi.fn().mockResolvedValue({
+      const updateOrchestrator: WorkspaceUiOrchestratorPort = {
+        processUiEvent: vi.fn().mockResolvedValue({
           action: {
             navigations: [
               {
@@ -183,16 +176,9 @@ describe('Workspace Add-on Infrastructure API', () => {
         }),
       };
 
-      const mockEvaluateFormChange = vi.fn().mockReturnValue({
-        computedData: { contact: 'Alice', computedField: 'Alice - Computed' },
-        hiddenFields: [],
-        disabledFields: [],
-      });
-
       registerWorkspaceAddonRoutes(server, {
         authVerifier: mockAuthVerifier,
-        processCardOrchestrator: updateOrchestrator,
-        evaluateFormChange: mockEvaluateFormChange,
+        uiOrchestrator: updateOrchestrator,
       });
 
       const response = await server.inject({
@@ -215,11 +201,13 @@ describe('Workspace Add-on Infrastructure API', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(updateOrchestrator.generateCard).toHaveBeenCalledWith(
+      expect(updateOrchestrator.processUiEvent).toHaveBeenCalledWith(
         expect.objectContaining({
-          viewId: 'drive-document-process-card',
-          documentTypeKey: 'communication-project',
-          isUpdateCard: true,
+          actionName: 'onFormChange',
+          formData: {
+            SelectDocumentType: 'communication-project',
+            contact: 'Alice',
+          },
         })
       );
       const body = JSON.parse(response.payload);
@@ -228,11 +216,21 @@ describe('Workspace Add-on Infrastructure API', () => {
   });
 
   describe('POST /workspace/action', () => {
-    it('executes processDocument on success and returns a notification', async () => {
+    it('blindly routes processDocument action to uiOrchestrator', async () => {
       const server = createHttpServer();
+      const actionOrchestrator: WorkspaceUiOrchestratorPort = {
+        processUiEvent: vi.fn().mockResolvedValue({
+          action: {
+            notification: {
+              text: 'Document processed successfully',
+            },
+          },
+        }),
+      };
+
       registerWorkspaceAddonRoutes(server, {
         authVerifier: mockAuthVerifier,
-        documentService: mockDocumentService,
+        uiOrchestrator: actionOrchestrator,
       });
 
       const response = await server.inject({
@@ -258,54 +256,18 @@ describe('Workspace Add-on Infrastructure API', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(mockDocumentService.processDocument).toHaveBeenCalledWith(
+      expect(actionOrchestrator.processUiEvent).toHaveBeenCalledWith(
         expect.objectContaining({
-          type: 'communication-project',
-          data: { contact: 'Bob' },
-        }),
-        'onSubmit',
-        expect.anything()
+          actionName: 'processDocument',
+          formData: {
+            SelectDocumentType: 'communication-project',
+            contact: 'Bob',
+          },
+          selectedItems: [{ id: 'file-123', title: 'contract.pdf' }],
+        })
       );
       const body = JSON.parse(response.payload);
       expect(body.action.notification.text).toBe('Document processed successfully');
-    });
-
-    it('passes validation errors back to processCardOrchestrator when processDocument fails', async () => {
-      const server = createHttpServer();
-      const failingDocService: WorkspaceDocumentRunnerPort = {
-        processDocument: vi.fn().mockRejectedValue(new Error('Validation failed: missing contact')),
-      };
-
-      registerWorkspaceAddonRoutes(server, {
-        authVerifier: mockAuthVerifier,
-        documentService: failingDocService,
-        processCardOrchestrator: mockOrchestrator,
-      });
-
-      const response = await server.inject({
-        method: 'POST',
-        url: '/workspace/action',
-        headers: {
-          authorization: 'Bearer valid-token',
-        },
-        payload: {
-          commonEventObject: {
-            parameters: {
-              action: 'processDocument',
-            },
-            formInputs: {
-              SelectDocumentType: { stringInputs: { value: ['communication-project'] } },
-            },
-          },
-        },
-      });
-
-      expect(response.statusCode).toBe(200);
-      expect(mockOrchestrator.generateCard).toHaveBeenCalledWith(
-        expect.objectContaining({
-          validationErrors: ['Validation failed: missing contact'],
-        })
-      );
     });
   });
 });

@@ -5,23 +5,36 @@ import type {
   UiProcessConfigProviderPort,
   UiProcessManifestPort,
   UiProcessViewGeneratorPort,
+  UiProcessDocumentRunnerPort,
+  UiProcessFormEvaluatorPort,
 } from '../ports';
 import { evaluateProcessUiState, resolveSpaceType } from '../domain';
 
 export interface WorkspaceAddonAdapterOptions {
   spaceProvider: UiProcessSpaceProviderPort;
-  configProvider?: UiProcessConfigProviderPort;
-  manifestPort?: UiProcessManifestPort;
+  configProvider?: UiProcessConfigProviderPort | undefined;
+  manifestPort?: UiProcessManifestPort | undefined;
   viewGenerator: UiProcessViewGeneratorPort;
+  documentRunner?: UiProcessDocumentRunnerPort | undefined;
+  formEvaluator?: UiProcessFormEvaluatorPort | undefined;
 }
+
 
 export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
   constructor(private readonly options: WorkspaceAddonAdapterOptions) {}
 
   async processUiEvent(context: UiProcessEventContext): Promise<unknown> {
-    const { spaceProvider, configProvider, manifestPort, viewGenerator } = this.options;
+    const { spaceProvider, configProvider, manifestPort, viewGenerator, documentRunner, formEvaluator } =
+      this.options;
 
+    const actionName = context.actionName ?? context.parameters?.action;
     const config = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
+    const mappedConfig = {
+      ...(config?.defaultDocumentType ? { defaultDocumentType: config.defaultDocumentType } : {}),
+      ...(config?.defaultDocumentSpaceType
+        ? { defaultDocumentSpaceType: config.defaultDocumentSpaceType }
+        : {}),
+    };
     const spaceTypes = spaceProvider.getAllTypes();
 
     const currentSpaceType = resolveSpaceType(context.formData, config);
@@ -51,15 +64,101 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       }
     }
 
+    if (actionName === 'processDocument') {
+      const selectedSpace = context.formData?.SelectDocumentSpace as string | undefined;
+      const data: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(context.formData ?? {})) {
+        if (!k.startsWith('SelectDocument')) {
+          data[k] = v;
+        }
+      }
+
+      const selectedItem = context.selectedItems?.[0];
+      const execContext = {
+        ...(context.userOAuthToken ? { credentials: { oauthToken: context.userOAuthToken } } : {}),
+        ...(selectedItem?.id ? { resources: { primaryTargetId: selectedItem.id } } : {}),
+      };
+
+      const renderErrorCard = async (validationErrors: string[]) => {
+        const state = evaluateProcessUiState({
+          context: {
+            ...context,
+            validationErrors,
+            isUpdateCard: true,
+          },
+          resolvedDocumentTypeKey,
+          config: mappedConfig,
+          spaceTypes,
+          collectionSpaces,
+        });
+
+        return await viewGenerator.generateCard({
+          viewId: state.viewId,
+          documentTypeKey: state.documentTypeKey,
+          selectionState: state.selectionState,
+          formData: state.formData,
+          isUpdateCard: true,
+          validationErrors: state.validationErrors,
+        });
+      };
+
+      try {
+        if (documentRunner) {
+          const result = await documentRunner.processDocument(
+            {
+              type: resolvedDocumentTypeKey ?? 'default',
+              data,
+              ...(selectedSpace ? { space: selectedSpace } : {}),
+            },
+            'onSubmit',
+            execContext
+          );
+
+          if (result && result.success === false) {
+            const validationErrors =
+              result.errors ??
+              (result.error ? [result.error] : ['Document validation failed']);
+            return await renderErrorCard(validationErrors);
+          }
+        }
+
+        return {
+          action: {
+            notification: {
+              text: 'Document processed successfully',
+            },
+          },
+        };
+      } catch (error) {
+        const validationErrors = [error instanceof Error ? error.message : 'Document processing failed'];
+        return await renderErrorCard(validationErrors);
+      }
+
+    }
+
+    let evaluatedFormData = context.formData;
+    let hiddenFields: string[] | undefined;
+    if (actionName === 'onFormChange' && formEvaluator) {
+      try {
+        const evaluation = await formEvaluator.evaluate(
+          context.formData ?? {},
+          resolvedDocumentTypeKey
+        );
+        evaluatedFormData = evaluation.computedData;
+        hiddenFields = evaluation.hiddenFields;
+      } catch (e) {
+        console.warn('Form change evaluation failed:', e);
+      }
+    }
+
     const state = evaluateProcessUiState({
-      context,
-      resolvedDocumentTypeKey,
-      config: {
-        ...(config?.defaultDocumentType ? { defaultDocumentType: config.defaultDocumentType } : {}),
-        ...(config?.defaultDocumentSpaceType
-          ? { defaultDocumentSpaceType: config.defaultDocumentSpaceType }
-          : {}),
+      context: {
+        ...context,
+        formData: evaluatedFormData,
+        ...(actionName === 'onFormChange' ? { isUpdateCard: true } : {}),
       },
+      resolvedDocumentTypeKey,
+      config: mappedConfig,
       spaceTypes,
       collectionSpaces,
     });
@@ -70,7 +169,9 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       selectionState: state.selectionState,
       formData: state.formData,
       isUpdateCard: state.isUpdateCard,
+      ...(hiddenFields !== undefined ? { hiddenFields } : {}),
       ...(state.validationErrors ? { validationErrors: state.validationErrors } : {}),
     });
   }
 }
+

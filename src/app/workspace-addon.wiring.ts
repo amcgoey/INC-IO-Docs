@@ -2,8 +2,7 @@ import {
   registerWorkspaceAddonRoutes,
   type WorkspaceAuthVerifierPort,
   type WorkspaceConfigProviderPort,
-  type WorkspaceProcessCardOrchestratorPort,
-  type WorkspaceProcessCardRequest,
+  type WorkspaceUiOrchestratorPort,
 } from '../infrastructure/workspace-addon/api';
 import { GoogleJwtVerifier } from '../infrastructure/workspace-addon/jwt-verifier';
 import { evaluateFormChange } from '../infrastructure/workspace-addon/json-logic-evaluator';
@@ -12,25 +11,26 @@ import type { DocumentService } from '../features/document/domain';
 import type { DocumentSpaceService } from '../features/document-space/domain';
 import type { UiView } from '../features/schema-driven-ui/domain';
 import {
-  translateUiViewToNavigationAction,
-  translateUiViewToUpdateCardAction,
   type AbstractUiView,
   type AbstractUiViewWidget,
   type AbstractUiAction,
 } from '../infrastructure/workspace-addon/translator';
-import { createSchemaDrivenUiWiring, type RawManifestProviderPort } from './schema-driven-ui.wiring';
+import { createUiProcessManagerWiring } from './ui-process-manager.wiring';
+import type { RawManifestProviderPort } from './schema-driven-ui.wiring';
+
 
 export interface WorkspaceAddonWiringOptions {
   server: HttpServer;
-  documentService: DocumentService;
+  documentService?: DocumentService | undefined;
   documentSpaceService?: DocumentSpaceService | undefined;
   authVerifier?: WorkspaceAuthVerifierPort | undefined;
   configProvider?: WorkspaceConfigProviderPort | undefined;
   manifestProvider?: RawManifestProviderPort | undefined;
-  processCardOrchestrator?: WorkspaceProcessCardOrchestratorPort | undefined;
+  uiOrchestrator?: WorkspaceUiOrchestratorPort | undefined;
 }
 
-function mapSelectionItems(items: Array<{ text: string; value: string; selected?: boolean | undefined }>) {
+
+export function mapSelectionItems(items: Array<{ text: string; value: string; selected?: boolean | undefined }>) {
   return items.map((item) => ({
     text: item.text,
     value: item.value,
@@ -143,56 +143,32 @@ export function wireWorkspaceAddonRoutes(
 ): void {
   const authVerifier: WorkspaceAuthVerifierPort = options.authVerifier ?? new GoogleJwtVerifier();
 
-  let processCardOrchestrator = options.processCardOrchestrator;
-  if (!processCardOrchestrator && options.manifestProvider) {
-    const schemaDrivenUi = createSchemaDrivenUiWiring({
-      manifestProvider: options.manifestProvider,
-    });
-    processCardOrchestrator = {
-      async generateCard(request: WorkspaceProcessCardRequest) {
-        const view = await schemaDrivenUi.schemaDrivenUiService.generateView({
-          viewId: request.viewId,
-          ...(request.documentTypeKey !== undefined ? { documentTypeKey: request.documentTypeKey } : {}),
-          ...(request.validationErrors !== undefined ? { validationErrors: request.validationErrors } : {}),
-          ...(request.formData !== undefined ? { formData: request.formData } : {}),
-          ...(request.hiddenFields !== undefined ? { hiddenFields: request.hiddenFields } : {}),
-          ...(request.selectionState !== undefined
-            ? {
-                selectionState: {
-                  spaces: request.selectionState.spaces,
-                  spaceTypes: mapSelectionItems(request.selectionState.spaceTypes),
-                  documentTypes: mapSelectionItems(request.selectionState.documentTypes),
-                },
-              }
-            : {}),
-        });
-        const mappedView = mapUiViewToAbstractUiView(view);
-        if (request.isUpdateCard) {
-          return translateUiViewToUpdateCardAction(mappedView);
-        }
-        return translateUiViewToNavigationAction(mappedView);
-      },
+  let uiOrchestrator = options.uiOrchestrator;
+  if (!uiOrchestrator) {
+    const manifestProvider: RawManifestProviderPort = options.manifestProvider ?? {
+      getRawManifest: async () => ({}),
+      readParsedSchema: async () => undefined,
     };
+    const documentSpaceService: DocumentSpaceService = options.documentSpaceService ?? ({
+      getAllTypes: () => [],
+      getCollection: async () => ({ spaces: [] }),
+    } as unknown as DocumentSpaceService);
+
+    const uiProcessWiring = createUiProcessManagerWiring({
+      configProvider: options.configProvider,
+      documentSpaceService,
+      manifestProvider,
+      documentService: options.documentService,
+      evaluateFormChange,
+    });
+    uiOrchestrator = uiProcessWiring.orchestrator;
   }
 
   registerWorkspaceAddonRoutes(options.server, {
     authVerifier,
-    documentService: options.documentService
-      ? {
-          processDocument: (payload, eventName, context) => {
-            const selectedItem = context?.selectedItems?.[0];
-            const execContext = {
-              ...(context?.userOAuthToken ? { credentials: { oauthToken: context.userOAuthToken } } : {}),
-              ...(selectedItem?.id ? { resources: { primaryTargetId: selectedItem.id } } : {}),
-            };
-            return options.documentService.processDocument(payload, eventName, execContext);
-          },
-        }
-      : undefined,
-    documentSpaceService: options.documentSpaceService,
-    configProvider: options.configProvider,
-    processCardOrchestrator,
-    manifestProvider: options.manifestProvider,
-    evaluateFormChange,
+    uiOrchestrator,
   });
 }
+
+
+

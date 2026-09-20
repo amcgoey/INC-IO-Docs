@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { createUiProcessManagerWiring } from './ui-process-manager.wiring';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import type { DocumentSpaceService } from '../features/document-space/domain';
+import type { DocumentService } from '../features/document/domain';
 import type { RawManifestProviderPort } from './schema-driven-ui.wiring';
+
 import type {
   GoogleWorkspaceActionResponse,
   GoogleWorkspaceSection,
@@ -212,4 +214,87 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       selected: true,
     });
   });
+
+  it('handles processDocument through wired documentService returning notification on success', async () => {
+    const mockDocService = {
+      processDocument: vi.fn().mockResolvedValue({
+        success: true,
+        outputs: [{ id: 'doc-123' }],
+      }),
+    } as unknown as DocumentService;
+
+    const wiring = createUiProcessManagerWiring({
+      configProvider: mockConfigProvider,
+      documentSpaceService: mockDocumentSpaceService,
+      manifestProvider: mockManifestProvider,
+      documentService: mockDocService,
+    });
+
+    const simulatedContext: WorkspaceExecutionContext = {
+      actionName: 'processDocument',
+      formData: {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentSpace: 'Project Alpha',
+        SelectDocumentType: 'Communication Project',
+        contact: 'Alice Corp',
+        date: '260920',
+      },
+      userOAuthToken: 'test-oauth-token',
+      selectedItems: [{ id: 'file-123' }],
+    };
+
+    const response = (await wiring.orchestrator.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
+
+    expect(mockDocService.processDocument).toHaveBeenCalledWith(
+      {
+        type: 'communication-project',
+        space: 'Project Alpha',
+        data: {
+          contact: 'Alice Corp',
+          date: '260920',
+        },
+      },
+      'onSubmit',
+      {
+        credentials: { oauthToken: 'test-oauth-token' },
+        resources: { primaryTargetId: 'file-123' },
+      }
+    );
+
+    expect(response.action?.notification?.text).toBe('Document processed successfully');
+  });
+
+  it('handles processDocument failure through wired documentService returning error card with validation errors', async () => {
+    const mockDocService = {
+      processDocument: vi.fn().mockResolvedValue({
+        success: false,
+        errors: ['Missing required field: contact'],
+      }),
+    } as unknown as DocumentService;
+
+    const wiring = createUiProcessManagerWiring({
+      configProvider: mockConfigProvider,
+      documentSpaceService: mockDocumentSpaceService,
+      manifestProvider: mockManifestProvider,
+      documentService: mockDocService,
+    });
+
+    const simulatedContext: WorkspaceExecutionContext = {
+      actionName: 'processDocument',
+      formData: {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentType: 'communication-project',
+      },
+    };
+
+    const response = (await wiring.orchestrator.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
+
+    expect(response.action?.navigations?.[0]?.updateCard).toBeDefined();
+    const updateCard = response.action!.navigations![0].updateCard!;
+    const statusSection = updateCard.sections?.find((s: GoogleWorkspaceSection) =>
+      s.widgets?.some((w) => w.textParagraph?.text?.includes('Missing required field: contact'))
+    );
+    expect(statusSection).toBeDefined();
+  });
 });
+

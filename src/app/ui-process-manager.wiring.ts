@@ -1,5 +1,6 @@
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/api';
 import type { DocumentSpaceService } from '../features/document-space/domain';
+import type { DocumentService } from '../features/document/domain';
 import {
   WorkspaceAddonAdapter,
   type UiProcessSpaceProviderPort,
@@ -7,6 +8,8 @@ import {
   type UiProcessManifestPort,
   type UiProcessViewGeneratorPort,
   type UiProcessCardRequest,
+  type UiProcessDocumentRunnerPort,
+  type UiProcessFormEvaluatorPort,
 } from '../features/ui-process-manager';
 import {
   createSchemaDrivenUiWiring,
@@ -17,25 +20,87 @@ import {
   translateUiViewToNavigationAction,
   translateUiViewToUpdateCardAction,
 } from '../infrastructure/workspace-addon/translator';
-import { mapUiViewToAbstractUiView } from './workspace-addon.wiring';
+import {
+  mapUiViewToAbstractUiView,
+  mapSelectionItems,
+} from './workspace-addon.wiring';
+
+export type FormChangeEvaluator = (
+  formData: Record<string, unknown>,
+  docSchema?: unknown,
+  uiSchema?: unknown
+) => {
+  computedData: Record<string, unknown>;
+  hiddenFields: string[];
+  disabledFields: string[];
+};
 
 export interface UiProcessManagerWiringOptions {
   configProvider?: WorkspaceConfigProviderPort | undefined;
   documentSpaceService: DocumentSpaceService;
   manifestProvider: RawManifestProviderPort;
   schemaDrivenUiService?: SchemaDrivenUiService | undefined;
+  documentService?: DocumentService | undefined;
+  evaluateFormChange?: FormChangeEvaluator | undefined;
 }
 
 export interface UiProcessManagerWiring {
   orchestrator: WorkspaceAddonAdapter;
 }
 
-function mapSelectionItems(items: Array<{ text: string; value: string; selected?: boolean | undefined }>) {
-  return items.map((item) => ({
-    text: item.text,
-    value: item.value,
-    ...(item.selected !== undefined ? { selected: item.selected } : {}),
-  }));
+async function getDocAndUiSchemas(
+  manifestProvider: RawManifestProviderPort,
+  documentTypeKey?: string
+): Promise<{ docSchema?: unknown; uiSchema?: unknown }> {
+  if (!documentTypeKey) {
+    return {};
+  }
+  const rawManifest = (await manifestProvider.getRawManifest()) as
+    | { documentTypes?: string[] | Record<string, { documentSchema?: unknown; documentUiSchema?: unknown }> }
+    | undefined;
+
+  if (!rawManifest) {
+    return {};
+  }
+
+  if (
+    rawManifest.documentTypes &&
+    !Array.isArray(rawManifest.documentTypes) &&
+    typeof rawManifest.documentTypes === 'object'
+  ) {
+    const docDef = (
+      rawManifest.documentTypes as Record<
+        string,
+        { documentSchema?: unknown; documentUiSchema?: unknown }
+      >
+    )[documentTypeKey];
+    if (docDef) {
+      return {
+        docSchema: docDef.documentSchema,
+        uiSchema: docDef.documentUiSchema,
+      };
+    }
+  }
+
+  if (Array.isArray(rawManifest.documentTypes) && manifestProvider.readParsedSchema) {
+    for (const relPath of rawManifest.documentTypes) {
+      try {
+        const rawDoc = (await manifestProvider.readParsedSchema(relPath)) as
+          | { key?: string; documentSchema?: unknown; documentUiSchema?: unknown }
+          | undefined;
+        if (rawDoc?.key === documentTypeKey) {
+          return {
+            docSchema: rawDoc.documentSchema,
+            uiSchema: rawDoc.documentUiSchema,
+          };
+        }
+      } catch {
+        // ignore unreadable schemas
+      }
+    }
+  }
+
+  return {};
 }
 
 export function createUiProcessManagerWiring(
@@ -148,11 +213,33 @@ export function createUiProcessManagerWiring(
     },
   };
 
+  const documentRunner: UiProcessDocumentRunnerPort | undefined = options.documentService
+    ? {
+        processDocument: async (payload, eventName, context) => {
+          return options.documentService!.processDocument(payload, eventName, context);
+        },
+      }
+    : undefined;
+
+  const formEvaluator: UiProcessFormEvaluatorPort | undefined = options.evaluateFormChange
+    ? {
+        evaluate: async (formData: Record<string, unknown>, documentTypeKey?: string) => {
+          const { docSchema, uiSchema } = await getDocAndUiSchemas(
+            options.manifestProvider,
+            documentTypeKey
+          );
+          return options.evaluateFormChange!(formData, docSchema, uiSchema);
+        },
+      }
+    : undefined;
+
   const orchestrator = new WorkspaceAddonAdapter({
     spaceProvider,
     configProvider,
     manifestPort,
     viewGenerator,
+    documentRunner,
+    formEvaluator,
   });
 
   return {

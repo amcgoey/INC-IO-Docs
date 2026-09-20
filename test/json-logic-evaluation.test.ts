@@ -3,10 +3,13 @@ import { createHttpServer } from '../src/infrastructure/http';
 import {
   registerWorkspaceAddonRoutes,
   type WorkspaceAuthVerifierPort,
-  type WorkspaceProcessCardOrchestratorPort,
-  type WorkspaceProcessCardRequest,
 } from '../src/infrastructure/workspace-addon/api';
 import { evaluateFormChange } from '../src/infrastructure/workspace-addon/json-logic-evaluator';
+import {
+  WorkspaceAddonAdapter,
+  type UiProcessCardRequest,
+  type UiProcessViewGeneratorPort,
+} from '../src/features/ui-process-manager';
 
 describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
   it('tests onFormChange handler in isolation to ensure it correctly executes computeEvaluationOrder for partial roundtrips', async () => {
@@ -16,8 +19,8 @@ describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
       verifyToken: vi.fn().mockResolvedValue({ isValid: true, payload: { email: 'user@example.com' } }),
     };
 
-    let capturedRequest: WorkspaceProcessCardRequest | undefined;
-    const mockOrchestrator: WorkspaceProcessCardOrchestratorPort = {
+    let capturedRequest: UiProcessCardRequest | undefined;
+    const mockViewGenerator: UiProcessViewGeneratorPort = {
       generateCard: vi.fn().mockImplementation(async (request) => {
         capturedRequest = request;
         return {
@@ -34,6 +37,7 @@ describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
         };
       }),
     };
+
 
     // Provide a manifest with a dependency DAG:
     // grandTotal depends on tax and subtotal; tax depends on subtotal.
@@ -80,11 +84,21 @@ describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
       }),
     };
 
+    const uiOrchestrator = new WorkspaceAddonAdapter({
+      spaceProvider: { getAllTypes: () => [], getCollection: async () => ({ spaces: [] }) },
+      viewGenerator: mockViewGenerator,
+      formEvaluator: {
+        evaluate: async (formData) => {
+          const raw = await mockManifestProvider.getRawManifest();
+          const docDef = raw.documentTypes['invoice-doc'];
+          return evaluateFormChange(formData, docDef.documentSchema, docDef.documentUiSchema);
+        },
+      },
+    });
+
     registerWorkspaceAddonRoutes(server, {
       authVerifier: mockAuthVerifier,
-      processCardOrchestrator: mockOrchestrator,
-      manifestProvider: mockManifestProvider,
-      evaluateFormChange,
+      uiOrchestrator,
     });
 
     const response = await server.inject({
@@ -108,7 +122,8 @@ describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(mockOrchestrator.generateCard).toHaveBeenCalledTimes(1);
+    expect(mockViewGenerator.generateCard).toHaveBeenCalledTimes(1);
+
     expect(capturedRequest).toBeDefined();
     expect(capturedRequest?.isUpdateCard).toBe(true);
     expect(capturedRequest?.documentTypeKey).toBe('invoice-doc');

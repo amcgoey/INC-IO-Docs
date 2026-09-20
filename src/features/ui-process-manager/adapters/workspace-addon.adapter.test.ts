@@ -191,4 +191,181 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
     expect(result.request.documentTypeKey).toBe('communication-proposal');
     expect(result.request.formData?.SelectDocumentType).toBe('communication-proposal');
   });
+
+  describe('processDocument action handling', () => {
+    it('executes documentRunner and returns notification on success', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({
+          success: true,
+          outputs: [{ status: 'success' }],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        viewGenerator: mockViewGenerator,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Main',
+          SelectDocumentType: 'communication-project',
+          contact: 'Acme Corp',
+          date: '260920',
+        },
+        userOAuthToken: 'test-oauth-token',
+        selectedItems: [{ id: 'drive-item-123', title: 'File.pdf' }],
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        {
+          type: 'communication-project',
+          space: 'Project Main',
+          data: {
+            contact: 'Acme Corp',
+            date: '260920',
+          },
+        },
+        'onSubmit',
+        {
+          credentials: { oauthToken: 'test-oauth-token' },
+          resources: { primaryTargetId: 'drive-item-123' },
+        }
+      );
+
+      expect(response).toEqual({
+        action: {
+          notification: {
+            text: 'Document processed successfully',
+          },
+        },
+      });
+    });
+
+    it('re-renders card with validationErrors when documentRunner reports failure', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({
+          success: false,
+          errors: ['Contact is required'],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        viewGenerator: mockViewGenerator,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentType: 'communication-project',
+        },
+      };
+
+      const response = (await adapter.processUiEvent(context)) as {
+        renderedCard: boolean;
+        request: UiProcessCardRequest;
+      };
+
+      expect(response.renderedCard).toBe(true);
+      expect(response.request.isUpdateCard).toBe(true);
+      expect(response.request.validationErrors).toEqual(['Contact is required']);
+    });
+
+    it('re-renders card with error message in validationErrors when documentRunner throws', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockRejectedValue(new Error('Connection timed out')),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        viewGenerator: mockViewGenerator,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentType: 'communication-project',
+        },
+      };
+
+      const response = (await adapter.processUiEvent(context)) as {
+        renderedCard: boolean;
+        request: UiProcessCardRequest;
+      };
+
+      expect(response.renderedCard).toBe(true);
+      expect(response.request.isUpdateCard).toBe(true);
+      expect(response.request.validationErrors).toEqual(['Connection timed out']);
+    });
+  });
+
+  describe('onFormChange action handling', () => {
+    it('evaluates form change using formEvaluator and updates formData and hiddenFields', async () => {
+      const mockFormEvaluator = {
+        evaluate: vi.fn().mockResolvedValue({
+          computedData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentType: 'communication-project',
+            contact: 'Alice',
+            computedSummary: 'Alice - Projects',
+          },
+          hiddenFields: ['internalNotes'],
+          disabledFields: [],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        viewGenerator: mockViewGenerator,
+        formEvaluator: mockFormEvaluator,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'onFormChange',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentType: 'communication-project',
+          contact: 'Alice',
+        },
+      };
+
+      const response = (await adapter.processUiEvent(context)) as {
+        renderedCard: boolean;
+        request: UiProcessCardRequest;
+      };
+
+      expect(mockFormEvaluator.evaluate).toHaveBeenCalledWith(
+        context.formData,
+        'communication-project'
+      );
+      expect(response.renderedCard).toBe(true);
+      expect(response.request.isUpdateCard).toBe(true);
+      expect(response.request.formData).toEqual({
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentType: 'communication-project',
+        contact: 'Alice',
+        computedSummary: 'Alice - Projects',
+      });
+      expect(response.request.hiddenFields).toEqual(['internalNotes']);
+    });
+  });
 });
+
