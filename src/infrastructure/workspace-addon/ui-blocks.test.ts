@@ -128,6 +128,10 @@ describe('Workspace Add-on UI Blocks', () => {
       expect(Value.Check(CardSchema, card)).toBe(true);
     });
 
+    it('ensures GoogleWorkspaceCardSchema does not define evaluationOrder property', () => {
+      expect('evaluationOrder' in GoogleWorkspaceCardSchema.properties).toBe(false);
+    });
+
     it('throws an error if no valid sections are provided', () => {
       const header = buildTitleBlock({ title: 'Card Title' });
       expect(() => buildCard(header, [])).toThrow(

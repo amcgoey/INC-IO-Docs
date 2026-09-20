@@ -81,7 +81,7 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
       imageType: 'SQUARE',
     });
 
-    expect(card.evaluationOrder).toBeUndefined();
+    expect('evaluationOrder' in card).toBe(false);
 
     expect(card.sections).toHaveLength(1);
     const section = card.sections[0];
@@ -326,8 +326,8 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
     expect(Value.Check(AbstractUiViewSchema, validSample)).toBe(true);
   });
 
-  it('validates various action formats (string, structured object, openLink) and rejects invalid action types', () => {
-    const viewWithOpenLink = {
+  it('validates strictly typed action formats (string, structured object) and rejects invalid action types', () => {
+    const viewWithStructuredAction = {
       sections: [
         {
           widgets: [
@@ -335,9 +335,13 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
               buttonList: {
                 buttons: [
                   {
-                    text: 'Open Docs',
+                    text: 'Execute Task',
                     onClick: {
-                      openLink: { url: 'https://example.com/docs' },
+                      action: {
+                        function: 'onExecuteTask',
+                        parameters: [{ key: 'taskId', value: '123' }],
+                        loadIndicator: 'NONE',
+                      },
                     },
                   },
                 ],
@@ -348,10 +352,14 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
       ],
     };
 
-    expect(Value.Check(AbstractUiViewSchema, viewWithOpenLink)).toBe(true);
-    const card = translateUiViewToWorkspaceCard(viewWithOpenLink);
+    expect(Value.Check(AbstractUiViewSchema, viewWithStructuredAction)).toBe(true);
+    const card = translateUiViewToWorkspaceCard(viewWithStructuredAction);
     expect(card.sections[0].widgets[0].buttonList?.buttons[0].onClick).toEqual({
-      openLink: { url: 'https://example.com/docs' },
+      action: {
+        function: 'onExecuteTask',
+        parameters: [{ key: 'taskId', value: '123' }],
+        loadIndicator: 'NONE',
+      },
     });
 
     const invalidActionView = {
@@ -370,5 +378,22 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
     };
     expect(Value.Check(AbstractUiViewSchema, invalidActionView)).toBe(false);
     expect(() => translateUiViewToWorkspaceCard(invalidActionView)).toThrow('Invalid UiView');
+
+    const invalidSelectionTypeView = {
+      sections: [
+        {
+          widgets: [
+            {
+              selectionInput: {
+                name: 'invalidSelection',
+                type: 'INVALID_TYPE', // must be DROPDOWN, CHECK_BOX, or RADIO_BUTTON
+              },
+            },
+          ],
+        },
+      ],
+    };
+    expect(Value.Check(AbstractUiViewSchema, invalidSelectionTypeView)).toBe(false);
+    expect(() => translateUiViewToWorkspaceCard(invalidSelectionTypeView)).toThrow('Invalid UiView');
   });
 });

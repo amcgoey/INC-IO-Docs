@@ -22,67 +22,69 @@ export const GoogleWorkspaceHeaderSchema = Type.Object({
 
 export type GoogleWorkspaceHeader = Static<typeof GoogleWorkspaceHeaderSchema>;
 
-export const TextParagraphWidgetSchema = Type.Object({
+export const GoogleWorkspaceTextParagraphWidgetSchema = Type.Object({
   textParagraph: Type.Object({
     text: Type.String(),
   }),
 });
 
-export type TextParagraphWidget = Static<typeof TextParagraphWidgetSchema>;
+export type GoogleWorkspaceTextParagraphWidget = Static<typeof GoogleWorkspaceTextParagraphWidgetSchema>;
 
-export const ActionParameterSchema = Type.Object({
+export const GoogleWorkspaceActionParameterSchema = Type.Object({
   key: Type.String(),
   value: Type.String(),
 });
 
-export const ActionSchema = Type.Object({
+export type GoogleWorkspaceActionParameter = Static<typeof GoogleWorkspaceActionParameterSchema>;
+
+export const GoogleWorkspaceActionSchema = Type.Object({
   function: Type.String(),
-  parameters: Type.Optional(Type.Array(ActionParameterSchema)),
+  parameters: Type.Optional(Type.Array(GoogleWorkspaceActionParameterSchema)),
   loadIndicator: Type.Optional(Type.Union([Type.Literal('SPINNER'), Type.Literal('NONE')])),
 });
 
-export type Action = Static<typeof ActionSchema>;
+export type GoogleWorkspaceAction = Static<typeof GoogleWorkspaceActionSchema>;
 
-export const SelectionItemSchema = Type.Object({
+export const GoogleWorkspaceSelectionItemSchema = Type.Object({
   text: Type.String(),
   value: Type.String(),
   selected: Type.Optional(Type.Boolean()),
 });
 
-export type SelectionItem = Static<typeof SelectionItemSchema>;
+export type GoogleWorkspaceSelectionItem = Static<typeof GoogleWorkspaceSelectionItemSchema>;
 
-export const SelectionInputSchema = Type.Object({
+export const GoogleWorkspaceSelectionInputSchema = Type.Object({
   name: Type.String(),
   label: Type.Optional(Type.String()),
   type: Type.Union([Type.Literal('DROPDOWN'), Type.Literal('CHECK_BOX'), Type.Literal('RADIO_BUTTON')]),
-  items: Type.Array(SelectionItemSchema),
-  onChangeAction: Type.Optional(ActionSchema),
+  items: Type.Array(GoogleWorkspaceSelectionItemSchema),
+  onChangeAction: Type.Optional(GoogleWorkspaceActionSchema),
 });
 
-export type SelectionInput = Static<typeof SelectionInputSchema>;
+export type GoogleWorkspaceSelectionInput = Static<typeof GoogleWorkspaceSelectionInputSchema>;
 
-export const SuggestionItemSchema = Type.Object({
+export const GoogleWorkspaceSuggestionItemSchema = Type.Object({
   text: Type.String()
 });
 
-export type SuggestionItem = Static<typeof SuggestionItemSchema>;
+export type GoogleWorkspaceSuggestionItem = Static<typeof GoogleWorkspaceSuggestionItemSchema>;
 
-export const SuggestionsSchema = Type.Object({
-  items: Type.Array(SuggestionItemSchema)
+export const GoogleWorkspaceSuggestionsSchema = Type.Object({
+  items: Type.Array(GoogleWorkspaceSuggestionItemSchema)
 });
 
-export type Suggestions = Static<typeof SuggestionsSchema>;
+export type GoogleWorkspaceSuggestions = Static<typeof GoogleWorkspaceSuggestionsSchema>;
 
-export const TextInputSchema = Type.Object({
+export const GoogleWorkspaceTextInputSchema = Type.Object({
   name: Type.String(),
   label: Type.Optional(Type.String()),
   hintText: Type.Optional(Type.String()),
   value: Type.Optional(Type.String()),
-  initialSuggestions: Type.Optional(SuggestionsSchema),
-  onChangeAction: Type.Optional(ActionSchema),
+  initialSuggestions: Type.Optional(GoogleWorkspaceSuggestionsSchema),
+  onChangeAction: Type.Optional(GoogleWorkspaceActionSchema),
 });
 
-export type TextInput = Static<typeof TextInputSchema>;
+export type GoogleWorkspaceTextInput = Static<typeof GoogleWorkspaceTextInputSchema>;
 
 export const GoogleWorkspaceWidgetSchema = Type.Object({
   textParagraph: Type.Optional(
@@ -106,8 +108,8 @@ export const GoogleWorkspaceWidgetSchema = Type.Object({
       Type.Undefined(),
     ])
   ),
-  selectionInput: Type.Optional(SelectionInputSchema),
-  textInput: Type.Optional(TextInputSchema),
+  selectionInput: Type.Optional(GoogleWorkspaceSelectionInputSchema),
+  textInput: Type.Optional(GoogleWorkspaceTextInputSchema),
 });
 
 export type GoogleWorkspaceWidget = Static<typeof GoogleWorkspaceWidgetSchema>;
@@ -124,7 +126,6 @@ export type GoogleWorkspaceSection = Static<typeof GoogleWorkspaceSectionSchema>
 export const GoogleWorkspaceCardSchema = Type.Object({
   header: GoogleWorkspaceHeaderSchema,
   sections: Type.Array(GoogleWorkspaceSectionSchema),
-  evaluationOrder: Type.Optional(Type.Array(Type.String())),
 });
 
 export type GoogleWorkspaceCard = Static<typeof GoogleWorkspaceCardSchema>;
@@ -141,15 +142,15 @@ export const GoogleWorkspaceNotificationSchema = Type.Object({
 
 export type GoogleWorkspaceNotification = Static<typeof GoogleWorkspaceNotificationSchema>;
 
-export const GoogleWorkspaceActionSchema = Type.Object({
+export const GoogleWorkspaceActionResponseActionSchema = Type.Object({
   navigations: Type.Optional(Type.Union([Type.Array(GoogleWorkspaceNavigationSchema), Type.Undefined()])),
   notification: Type.Optional(Type.Union([GoogleWorkspaceNotificationSchema, Type.Undefined()])),
 });
 
-export type GoogleWorkspaceAction = Static<typeof GoogleWorkspaceActionSchema>;
+export type GoogleWorkspaceActionResponseAction = Static<typeof GoogleWorkspaceActionResponseActionSchema>;
 
 export const GoogleWorkspaceActionResponseSchema = Type.Object({
-  action: GoogleWorkspaceActionSchema,
+  action: GoogleWorkspaceActionResponseActionSchema,
 });
 
 export type GoogleWorkspaceActionResponse = Static<typeof GoogleWorkspaceActionResponseSchema>;
@@ -199,7 +200,7 @@ export function buildCard(
   header: GoogleWorkspaceHeader,
   sections: (GoogleWorkspaceSection | null | undefined)[],
   evaluationOrder?: string[]
-): GoogleWorkspaceCard {
+): GoogleWorkspaceCard & { evaluationOrder?: string[] } {
   const validSections = sections.filter(
     (s): s is GoogleWorkspaceSection => s !== null && s !== undefined
   );
@@ -208,7 +209,7 @@ export function buildCard(
     throw new Error('A Google Workspace Add-on card must contain at least one valid section.');
   }
 
-  const card: GoogleWorkspaceCard = {
+  const card: GoogleWorkspaceCard & { evaluationOrder?: string[] } = {
     header,
     sections: validSections,
   };
@@ -258,7 +259,7 @@ export function buildDocumentTypeSelectionBlock(options: {
     },
   });
 
-  const spaceTextInput: TextInput = {
+  const spaceTextInput: GoogleWorkspaceTextInput = {
     name: 'SelectDocumentSpace',
     label: 'Document Space',
   };
@@ -341,10 +342,10 @@ export const CardSectionSchema = GoogleWorkspaceSectionSchema;
 export type CardSection = GoogleWorkspaceSection;
 
 export const CardSchema = GoogleWorkspaceCardSchema;
-export type Card = GoogleWorkspaceCard;
+export type Card = GoogleWorkspaceCard & { evaluationOrder?: string[] };
 
 export const UiCardSchema = GoogleWorkspaceCardSchema;
-export type UiCard = GoogleWorkspaceCard;
+export type UiCard = GoogleWorkspaceCard & { evaluationOrder?: string[] };
 
 export const CardNavigationSchema = GoogleWorkspaceNavigationSchema;
 export type CardNavigation = GoogleWorkspaceNavigation;
@@ -352,9 +353,33 @@ export type CardNavigation = GoogleWorkspaceNavigation;
 export const CardNotificationSchema = GoogleWorkspaceNotificationSchema;
 export type CardNotification = GoogleWorkspaceNotification;
 
-export const CardActionSchema = GoogleWorkspaceActionSchema;
-export type CardAction = GoogleWorkspaceAction;
+export const CardActionSchema = GoogleWorkspaceActionResponseActionSchema;
+export type CardAction = GoogleWorkspaceActionResponseAction;
 
 export const CardActionResponseSchema = GoogleWorkspaceActionResponseSchema;
 export type CardActionResponse = GoogleWorkspaceActionResponse;
+
+export const ActionParameterSchema = GoogleWorkspaceActionParameterSchema;
+export type ActionParameter = GoogleWorkspaceActionParameter;
+
+export const ActionSchema = GoogleWorkspaceActionSchema;
+export type Action = GoogleWorkspaceAction;
+
+export const SelectionItemSchema = GoogleWorkspaceSelectionItemSchema;
+export type SelectionItem = GoogleWorkspaceSelectionItem;
+
+export const SelectionInputSchema = GoogleWorkspaceSelectionInputSchema;
+export type SelectionInput = GoogleWorkspaceSelectionInput;
+
+export const SuggestionItemSchema = GoogleWorkspaceSuggestionItemSchema;
+export type SuggestionItem = GoogleWorkspaceSuggestionItem;
+
+export const SuggestionsSchema = GoogleWorkspaceSuggestionsSchema;
+export type Suggestions = GoogleWorkspaceSuggestions;
+
+export const TextInputSchema = GoogleWorkspaceTextInputSchema;
+export type TextInput = GoogleWorkspaceTextInput;
+
+export const TextParagraphWidgetSchema = GoogleWorkspaceTextParagraphWidgetSchema;
+export type TextParagraphWidget = GoogleWorkspaceTextParagraphWidget;
 

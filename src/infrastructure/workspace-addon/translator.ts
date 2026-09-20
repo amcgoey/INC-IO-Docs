@@ -8,10 +8,10 @@ import {
   type GoogleWorkspaceSection,
   type GoogleWorkspaceWidget,
   type GoogleWorkspaceActionResponse,
-  type Action,
-  type TextInput,
-  type SelectionInput,
-  type SelectionItem,
+  type GoogleWorkspaceAction,
+  type GoogleWorkspaceTextInput,
+  type GoogleWorkspaceSelectionInput,
+  type GoogleWorkspaceSelectionItem,
 } from './ui-blocks';
 
 // --- Local Boundary Contract Schema (Adheres to Rule 2: No imports from features/) ---
@@ -57,7 +57,9 @@ export const AbstractUiActionSchema = Type.Union([
     {
       function: Type.String(),
       parameters: Type.Optional(Type.Array(AbstractUiActionParameterSchema)),
-      loadIndicator: Type.Optional(Type.String()),
+      loadIndicator: Type.Optional(
+        Type.Union([Type.Literal('SPINNER'), Type.Literal('NONE')])
+      ),
     },
     { additionalProperties: true }
   ),
@@ -69,10 +71,9 @@ export const AbstractUiOnClickSchema = Type.Union([
   AbstractUiActionSchema,
   Type.Object(
     {
-      action: Type.Optional(Type.Union([AbstractUiActionSchema, Type.Record(Type.String(), Type.Unknown())])),
-      openLink: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+      action: Type.Optional(AbstractUiActionSchema),
     },
-    { additionalProperties: true }
+    { additionalProperties: false }
   ),
 ]);
 
@@ -107,7 +108,13 @@ export const AbstractUiViewWidgetSchema = Type.Object(
         {
           name: Type.String(),
           label: Type.Optional(Type.String()),
-          type: Type.Optional(Type.String()),
+          type: Type.Optional(
+            Type.Union([
+              Type.Literal('DROPDOWN'),
+              Type.Literal('CHECK_BOX'),
+              Type.Literal('RADIO_BUTTON'),
+            ])
+          ),
           items: Type.Optional(Type.Array(AbstractUiSelectionItemSchema)),
           onChangeAction: Type.Optional(AbstractUiActionSchema),
         },
@@ -177,7 +184,7 @@ function validateOrThrow<T extends TSchema>(
   }
 }
 
-function normalizeAction(action: unknown): Action | undefined {
+function normalizeAction(action: unknown): GoogleWorkspaceAction | undefined {
   if (!action) {
     return undefined;
   }
@@ -188,38 +195,42 @@ function normalizeAction(action: unknown): Action | undefined {
     };
   }
   if (typeof action === 'object' && action !== null && 'function' in action) {
-    const act = action as Record<string, unknown>;
-    const normalized: Action = {
-      function: String(act.function),
+    const actionRecord = action as Record<string, unknown>;
+    const normalized: GoogleWorkspaceAction = {
+      function: String(actionRecord.function),
       loadIndicator:
-        act.loadIndicator === 'NONE' || act.loadIndicator === 'SPINNER'
-          ? act.loadIndicator
+        actionRecord.loadIndicator === 'NONE' || actionRecord.loadIndicator === 'SPINNER'
+          ? actionRecord.loadIndicator
           : 'SPINNER',
     };
-    if (Array.isArray(act.parameters)) {
-      normalized.parameters = act.parameters as { key: string; value: string }[];
+    if (Array.isArray(actionRecord.parameters)) {
+      normalized.parameters = actionRecord.parameters as { key: string; value: string }[];
     }
     return normalized;
   }
   return undefined;
 }
 
-function normalizeButtonOnClick(onClick: unknown): unknown {
+function normalizeButtonOnClick(
+  onClick: unknown
+): { action?: GoogleWorkspaceAction } | undefined {
   if (!onClick) {
     return undefined;
   }
   if (
     typeof onClick === 'object' &&
     onClick !== null &&
-    ('action' in onClick || 'openLink' in onClick)
+    'action' in onClick
   ) {
-    return onClick;
+    const obj = onClick as { action?: unknown };
+    const action = normalizeAction(obj.action);
+    return action ? { action } : undefined;
   }
   const action = normalizeAction(onClick);
   if (action) {
     return { action };
   }
-  return onClick;
+  return undefined;
 }
 
 // --- Deep Module Public Interface ---
@@ -260,7 +271,7 @@ export function translateUiViewToWorkspaceCard(payload: unknown): GoogleWorkspac
       }
 
       if (w.textInput) {
-        const textInput: TextInput = {
+        const textInput: GoogleWorkspaceTextInput = {
           name: w.textInput.name,
         };
         if (w.textInput.label !== undefined) {
@@ -288,12 +299,12 @@ export function translateUiViewToWorkspaceCard(payload: unknown): GoogleWorkspac
             ? w.selectionInput.type
             : 'DROPDOWN';
 
-        const selectionInput: SelectionInput = {
+        const selectionInput: GoogleWorkspaceSelectionInput = {
           name: w.selectionInput.name,
           type: selectionType,
           items:
             w.selectionInput.items?.map((item) => {
-              const itemObj: SelectionItem = {
+              const itemObj: GoogleWorkspaceSelectionItem = {
                 text: item.text,
                 value: item.value,
               };
@@ -316,7 +327,7 @@ export function translateUiViewToWorkspaceCard(payload: unknown): GoogleWorkspac
       if (w.buttonList) {
         widget.buttonList = {
           buttons: w.buttonList.buttons.map((btn) => {
-            const buttonObj: { text: string; onClick?: unknown } = {
+            const buttonObj: { text: string; onClick?: { action?: GoogleWorkspaceAction } } = {
               text: btn.text,
             };
             if (btn.onClick !== undefined) {
