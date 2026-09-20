@@ -160,6 +160,23 @@ describe('Document Info Block', () => {
       expect(w2?.onChangeAction).toEqual({ action: 'customAgeChanged' });
     });
 
+    it('omits onChangeAction when onChange is explicitly false or undefined', () => {
+      const uiSchema: UiSchema = {
+        fields: {
+          firstName: {
+            onChange: false,
+          },
+          age: {
+            // onChange is undefined
+          },
+        },
+      };
+
+      const section = buildDocumentInfoSection(mockDataSchema, uiSchema);
+      expect(section.widgets[0].textInput?.onChangeAction).toBeUndefined();
+      expect(section.widgets[2].textInput?.onChangeAction).toBeUndefined();
+    });
+
     it('operates predictably with undefined uiSchema', () => {
       const section = buildDocumentInfoSection(mockDataSchema);
       expect(Value.Check(UiViewSectionSchema, section)).toBe(true);

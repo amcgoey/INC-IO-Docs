@@ -115,11 +115,11 @@ export function buildDocumentInfoSection(
     const customProps = (uiField?.props as StandardWidgetCustomProps | undefined) ?? {};
 
     const onChangeAction =
-      uiField?.onChange !== undefined
-        ? typeof uiField.onChange === 'string'
-          ? { action: uiField.onChange }
-          : { action: `${field.key}Changed` }
-        : undefined;
+      typeof uiField?.onChange === 'string'
+        ? { action: uiField.onChange }
+        : uiField?.onChange === true
+          ? { action: `${field.key}Changed` }
+          : undefined;
 
     const builder = widgetBuilders[widgetType] ?? widgetBuilders.textInput;
     widgets.push(
