@@ -79,73 +79,90 @@ export const AbstractUiOnClickSchema = Type.Union([
 
 export type AbstractUiOnClick = Static<typeof AbstractUiOnClickSchema>;
 
-export const AbstractUiViewWidgetSchema = Type.Object(
+export const AbstractUiViewTextParagraphWidgetSchema = Type.Object(
   {
-    textParagraph: Type.Optional(
-      Type.Object(
-        {
-          text: Type.String(),
-        },
-        { additionalProperties: false }
-      )
-    ),
-    textInput: Type.Optional(
-      Type.Object(
-        {
-          name: Type.String(),
-          label: Type.Optional(Type.String()),
-          hintText: Type.Optional(Type.String()),
-          value: Type.Optional(Type.String()),
-          initialSuggestions: Type.Optional(AbstractUiSuggestionsSchema),
-          onChangeAction: Type.Optional(AbstractUiActionSchema),
-        },
-        { additionalProperties: false }
-      )
-    ),
-    selectionInput: Type.Optional(
-      Type.Object(
-        {
-          name: Type.String(),
-          label: Type.Optional(Type.String()),
-          type: Type.Optional(
-            Type.Union([
-              Type.Literal('DROPDOWN'),
-              Type.Literal('CHECK_BOX'),
-              Type.Literal('RADIO_BUTTON'),
-            ])
-          ),
-          items: Type.Optional(Type.Array(AbstractUiSelectionItemSchema)),
-          onChangeAction: Type.Optional(AbstractUiActionSchema),
-        },
-        { additionalProperties: false }
-      )
-    ),
-    buttonList: Type.Optional(
-      Type.Object(
-        {
-          buttons: Type.Array(
-            Type.Object(
-              {
-                text: Type.String(),
-                onClick: Type.Optional(AbstractUiOnClickSchema),
-              },
-              { additionalProperties: false }
-            )
-          ),
-        },
-        { additionalProperties: false }
-      )
+    textParagraph: Type.Object(
+      {
+        text: Type.String(),
+      },
+      { additionalProperties: false }
     ),
   },
   { additionalProperties: false }
 );
+
+export const AbstractUiViewTextInputWidgetSchema = Type.Object(
+  {
+    textInput: Type.Object(
+      {
+        name: Type.String(),
+        label: Type.Optional(Type.String()),
+        hintText: Type.Optional(Type.String()),
+        value: Type.Optional(Type.String()),
+        initialSuggestions: Type.Optional(AbstractUiSuggestionsSchema),
+        onChangeAction: Type.Optional(AbstractUiActionSchema),
+      },
+      { additionalProperties: false }
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export const AbstractUiViewSelectionInputWidgetSchema = Type.Object(
+  {
+    selectionInput: Type.Object(
+      {
+        name: Type.String(),
+        label: Type.Optional(Type.String()),
+        type: Type.Optional(
+          Type.Union([
+            Type.Literal('DROPDOWN'),
+            Type.Literal('CHECK_BOX'),
+            Type.Literal('RADIO_BUTTON'),
+          ])
+        ),
+        items: Type.Optional(Type.Array(AbstractUiSelectionItemSchema)),
+        onChangeAction: Type.Optional(AbstractUiActionSchema),
+      },
+      { additionalProperties: false }
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export const AbstractUiViewButtonListWidgetSchema = Type.Object(
+  {
+    buttonList: Type.Object(
+      {
+        buttons: Type.Array(
+          Type.Object(
+            {
+              text: Type.String(),
+              onClick: Type.Optional(AbstractUiOnClickSchema),
+            },
+            { additionalProperties: false }
+          )
+        ),
+      },
+      { additionalProperties: false }
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export const AbstractUiViewWidgetSchema = Type.Union([
+  AbstractUiViewTextParagraphWidgetSchema,
+  AbstractUiViewTextInputWidgetSchema,
+  AbstractUiViewSelectionInputWidgetSchema,
+  AbstractUiViewButtonListWidgetSchema,
+]);
 
 export type AbstractUiViewWidget = Static<typeof AbstractUiViewWidgetSchema>;
 
 export const AbstractUiViewSectionSchema = Type.Object(
   {
     header: Type.Optional(Type.String()),
-    widgets: Type.Array(AbstractUiViewWidgetSchema),
+    widgets: Type.Array(AbstractUiViewWidgetSchema, { minItems: 1 }),
     collapsible: Type.Optional(Type.Boolean()),
     uncollapsibleWidgetsCount: Type.Optional(Type.Number()),
   },
@@ -211,15 +228,15 @@ function normalizeButtonOnClick(
   if (!onClick) {
     return undefined;
   }
-  if (typeof onClick === 'string' || 'function' in onClick) {
-    const action = normalizeAction(onClick);
-    return action ? { action } : undefined;
-  }
-  if ('action' in onClick) {
-    const action = normalizeAction(onClick.action);
-    return action ? { action } : undefined;
-  }
-  return undefined;
+  const rawAction =
+    typeof onClick === 'string' || 'function' in onClick
+      ? onClick
+      : 'action' in onClick
+        ? onClick.action
+        : undefined;
+
+  const action = normalizeAction(rawAction);
+  return action ? { action } : undefined;
 }
 
 // --- Deep Module Public Interface ---
@@ -253,13 +270,13 @@ export function translateUiViewToWorkspaceCard(payload: unknown): GoogleWorkspac
     const widgets: GoogleWorkspaceWidget[] = sec.widgets.map((w) => {
       const widget: GoogleWorkspaceWidget = {};
 
-      if (w.textParagraph) {
+      if ('textParagraph' in w) {
         widget.textParagraph = {
           text: w.textParagraph.text,
         };
       }
 
-      if (w.textInput) {
+      if ('textInput' in w) {
         const textInput: GoogleWorkspaceTextInput = {
           name: w.textInput.name,
         };
@@ -282,7 +299,7 @@ export function translateUiViewToWorkspaceCard(payload: unknown): GoogleWorkspac
         widget.textInput = textInput;
       }
 
-      if (w.selectionInput) {
+      if ('selectionInput' in w) {
         const selectionType = w.selectionInput.type ?? 'DROPDOWN';
 
         const selectionInput: GoogleWorkspaceSelectionInput = {
@@ -310,7 +327,7 @@ export function translateUiViewToWorkspaceCard(payload: unknown): GoogleWorkspac
         widget.selectionInput = selectionInput;
       }
 
-      if (w.buttonList) {
+      if ('buttonList' in w) {
         widget.buttonList = {
           buttons: w.buttonList.buttons.map((btn) => {
             const buttonObj: { text: string; onClick?: { action?: GoogleWorkspaceAction } } = {

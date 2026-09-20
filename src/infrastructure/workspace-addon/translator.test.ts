@@ -301,6 +301,47 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
     ).toThrow('Invalid UiView');
   });
 
+  it('rejects section with empty widgets array at boundary', () => {
+    expect(() =>
+      translateUiViewToWorkspaceCard({
+        sections: [
+          {
+            widgets: [],
+          },
+        ],
+      })
+    ).toThrow('Invalid UiView');
+  });
+
+  it('rejects empty widget object {} at boundary', () => {
+    expect(() =>
+      translateUiViewToWorkspaceCard({
+        sections: [
+          {
+            widgets: [{}],
+          },
+        ],
+      })
+    ).toThrow('Invalid UiView');
+  });
+
+  it('rejects overloaded multi-key widget object at boundary', () => {
+    expect(() =>
+      translateUiViewToWorkspaceCard({
+        sections: [
+          {
+            widgets: [
+              {
+                textParagraph: { text: 'Title' },
+                textInput: { name: 'email' },
+              },
+            ],
+          },
+        ],
+      })
+    ).toThrow('Invalid UiView');
+  });
+
   it('matches the AbstractUiViewSchema with valid UiView structures', () => {
     const validSample = {
       header: {

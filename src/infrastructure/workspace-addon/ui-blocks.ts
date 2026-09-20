@@ -1,16 +1,5 @@
 import { Type, type Static } from '@sinclair/typebox';
 
-export const GoogleWorkspaceHeaderOptionsSchema = Type.Object({
-  title: Type.String(),
-  subtitle: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
-  imageUrl: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
-  imageType: Type.Optional(
-    Type.Union([Type.Literal('SQUARE'), Type.Literal('CIRCLE'), Type.Undefined()])
-  ),
-});
-
-export type GoogleWorkspaceHeaderOptions = Static<typeof GoogleWorkspaceHeaderOptionsSchema>;
-
 export const GoogleWorkspaceHeaderSchema = Type.Object({
   title: Type.String(),
   subtitle: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
@@ -21,6 +10,9 @@ export const GoogleWorkspaceHeaderSchema = Type.Object({
 });
 
 export type GoogleWorkspaceHeader = Static<typeof GoogleWorkspaceHeaderSchema>;
+
+export const GoogleWorkspaceHeaderOptionsSchema = GoogleWorkspaceHeaderSchema;
+export type GoogleWorkspaceHeaderOptions = GoogleWorkspaceHeader;
 
 export const GoogleWorkspaceTextParagraphWidgetSchema = Type.Object({
   textParagraph: Type.Object({
