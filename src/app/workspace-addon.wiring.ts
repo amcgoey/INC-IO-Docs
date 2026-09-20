@@ -63,7 +63,7 @@ function mapUiAction(
   };
 }
 
-function mapUiViewToAbstractUiView(view: UiView): AbstractUiView {
+export function mapUiViewToAbstractUiView(view: UiView): AbstractUiView {
   return {
     ...(view.id !== undefined ? { id: view.id } : {}),
     ...(view.header !== undefined

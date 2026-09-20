@@ -10,6 +10,7 @@ describe('ManifestUiAdapter', () => {
       if (relPath === './doc-a.json') {
         return {
           key: 'doc-a',
+          name: 'Doc A Name',
           documentSchema: {
             fields: [
               { key: 'field1', type: 'string' },
@@ -87,5 +88,26 @@ describe('ManifestUiAdapter', () => {
     const docSchema = await adapter.getDocumentSchema('doc-b');
 
     expect(docSchema).toBeUndefined();
+  });
+
+  it('retrieves display name for known document type when name is provided', async () => {
+    const adapter = new ManifestUiAdapter(mockManifest);
+    const displayName = await adapter.getDisplayName?.('doc-a');
+
+    expect(displayName).toBe('Doc A Name');
+  });
+
+  it('returns key as fallback if name is not provided', async () => {
+    const adapter = new ManifestUiAdapter(mockManifest);
+    const displayName = await adapter.getDisplayName?.('doc-b');
+
+    expect(displayName).toBe('doc-b');
+  });
+
+  it('returns undefined for non-existent document type', async () => {
+    const adapter = new ManifestUiAdapter(mockManifest);
+    const displayName = await adapter.getDisplayName?.('non-existent');
+
+    expect(displayName).toBeUndefined();
   });
 });

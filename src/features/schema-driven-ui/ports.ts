@@ -62,6 +62,10 @@ export interface UiManifestPort {
   getDocumentSchema(documentTypeKey: string): Promise<AbstractDataSchema | undefined>;
 }
 
+export interface DocumentTypeDisplayNameResolverPort {
+  getDisplayName(documentTypeKey: string): Promise<string | undefined>;
+}
+
 export interface UiViewAdapterContext extends GenerateViewRequest {
   uiSchema?: UiSchema | undefined;
   documentSchema?: AbstractDataSchema | undefined;

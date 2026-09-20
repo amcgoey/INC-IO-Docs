@@ -1,6 +1,6 @@
 import type { TSchema, Static } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import type { UiManifestPort } from '../ports';
+import type { UiManifestPort, DocumentTypeDisplayNameResolverPort } from '../ports';
 import { AbstractDataSchema } from '../ports';
 import { UiSchema } from '../domain';
 
@@ -16,11 +16,13 @@ export type EvaluationOrderEnsurer = (
 
 export type RawDocumentTypeSchema = {
   key?: string;
+  name?: string;
+  displayName?: string;
   documentSchema?: unknown;
   documentUiSchema?: unknown;
 };
 
-export class ManifestUiAdapter implements UiManifestPort {
+export class ManifestUiAdapter implements UiManifestPort, DocumentTypeDisplayNameResolverPort {
   constructor(
     private readonly manifestProvider: RawManifestProviderPort,
     private readonly evaluationOrderEnsurer?: EvaluationOrderEnsurer
@@ -72,5 +74,13 @@ export class ManifestUiAdapter implements UiManifestPort {
   async getDocumentSchema(documentTypeKey: string): Promise<AbstractDataSchema | undefined> {
     const rawDoc = await this.findRawDoc(documentTypeKey);
     return this.cleanAndCheck(rawDoc?.documentSchema, AbstractDataSchema);
+  }
+
+  async getDisplayName(documentTypeKey: string): Promise<string | undefined> {
+    const rawDoc = await this.findRawDoc(documentTypeKey);
+    if (!rawDoc) {
+      return undefined;
+    }
+    return rawDoc.name ?? rawDoc.displayName ?? rawDoc.key;
   }
 }

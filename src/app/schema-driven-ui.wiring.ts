@@ -27,7 +27,7 @@ export function createSchemaDrivenUiWiring(
       ensureEvaluationOrder<UiSchema>(uiSchema, docSchema) ?? uiSchema);
 
   const manifestAdapter = new ManifestUiAdapter(options.manifestProvider, ensurer);
-  const workspaceAddonAdapter = new WorkspaceAddonAdapter();
+  const workspaceAddonAdapter = new WorkspaceAddonAdapter(manifestAdapter);
   const service = new SchemaDrivenUiService(manifestAdapter, [workspaceAddonAdapter]);
 
   return {
