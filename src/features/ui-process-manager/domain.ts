@@ -77,15 +77,6 @@ function filterFormData(
   return result;
 }
 
-/**
- * Strips all keys from formData that do not belong to the selection state
- * (keys not starting with 'SelectDocument').
- */
-export function retainSelectionState(
-  formData?: Record<string, unknown>
-): Record<string, unknown> {
-  return filterFormData(formData, (key) => key.startsWith('SelectDocument'));
-}
 
 /**
  * Extracts data fields from formData by stripping selection state keys

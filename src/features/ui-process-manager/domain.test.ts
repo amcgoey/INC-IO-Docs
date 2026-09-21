@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  retainSelectionState,
   extractDocumentData,
   translateDocumentType,
   resolveSpaceType,
@@ -10,38 +9,6 @@ import {
 } from './domain';
 
 describe('ui-process-manager domain', () => {
-  describe('retainSelectionState', () => {
-    it('clears all non-SelectDocument keys from formData and retains selection state', () => {
-      const formData = {
-        SelectDocumentSpaceType: 'projects',
-        SelectDocumentSpace: 'Project Alpha',
-        SelectDocumentType: 'communication-project',
-        contact: 'John Doe',
-        date: '260920',
-        direction: 'IN',
-        description: 'Call with client',
-        incomingNotes: 'Follow up required',
-      };
-
-      const result = retainSelectionState(formData);
-
-      expect(result).toEqual({
-        SelectDocumentSpaceType: 'projects',
-        SelectDocumentSpace: 'Project Alpha',
-        SelectDocumentType: 'communication-project',
-      });
-      expect(result).not.toHaveProperty('contact');
-      expect(result).not.toHaveProperty('date');
-      expect(result).not.toHaveProperty('direction');
-      expect(result).not.toHaveProperty('description');
-      expect(result).not.toHaveProperty('incomingNotes');
-    });
-
-    it('returns empty object when formData is undefined or empty', () => {
-      expect(retainSelectionState(undefined)).toEqual({});
-      expect(retainSelectionState({})).toEqual({});
-    });
-  });
 
   describe('extractDocumentData', () => {
     it('extracts only non-SelectDocument keys from formData', () => {
