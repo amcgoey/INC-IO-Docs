@@ -117,6 +117,43 @@ export function resolveSpaceType(
 }
 
 /**
+ * Resolves the active document type from form data, context parameters, or configuration fallback.
+ */
+export function resolveDocumentType(
+  formData?: Record<string, unknown>,
+  config?: ProcessUiStateConfig,
+  activeSpaceType?: string,
+  parameters?: Record<string, string>
+): string | undefined {
+  if (formData?.SelectDocumentType && typeof formData.SelectDocumentType === 'string') {
+    return formData.SelectDocumentType;
+  }
+
+  const spaceType = activeSpaceType ?? (formData ? resolveSpaceType(formData, config) : undefined);
+  if (
+    spaceType &&
+    formData?.[`SelectDocumentType_${spaceType}`] &&
+    typeof formData[`SelectDocumentType_${spaceType}`] === 'string'
+  ) {
+    return formData[`SelectDocumentType_${spaceType}`] as string;
+  }
+
+  if (formData) {
+    for (const [key, value] of Object.entries(formData)) {
+      if (key.startsWith('SelectDocumentType_') && typeof value === 'string') {
+        return value;
+      }
+    }
+  }
+
+  if (parameters?.documentTypeKey) {
+    return parameters.documentTypeKey;
+  }
+
+  return config?.defaultDocumentType;
+}
+
+/**
  * Pure domain state evaluation for CQRS UI Orchestration.
  * Enforces:
  * 1. UI reload (isUpdateCard) on Space Type change.
@@ -142,9 +179,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   // If resolvedDocumentTypeKey is already provided by orchestrator translation, use it;
   // otherwise fallback to rawSelectedDocType and nameToKeyMap translation if provided
   const rawSelectedDocType =
-    (effectiveFormData.SelectDocumentType as string | undefined) ??
-    context.parameters?.documentTypeKey ??
-    input.config?.defaultDocumentType;
+    resolveDocumentType(effectiveFormData, input.config, currentSpaceType, context.parameters);
 
   let currentDocTypeKey =
     input.resolvedDocumentTypeKey ??

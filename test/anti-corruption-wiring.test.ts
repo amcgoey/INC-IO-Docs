@@ -14,6 +14,7 @@ import {
   getDocumentTypeWidgetName,
   getDocumentSpaceWidgetName,
 } from '../src/features/schema-driven-ui/blocks/document-type-selection';
+import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
 
 describe('Anti-Corruption Wiring Integration', () => {
   const mockManifestProvider: RawManifestProviderPort = {
@@ -98,9 +99,13 @@ describe('Anti-Corruption Wiring Integration', () => {
     // Section 3: Document data
     expect(pushCard.sections[2].header).toBe('Document Data');
     expect(pushCard.sections[2].widgets).toHaveLength(3);
-    expect(pushCard.sections[2].widgets[0].textInput?.name).toBe('title');
+    expect(pushCard.sections[2].widgets[0].textInput?.name).toBe(
+      getDocumentInfoWidgetName('title', 'contract-doc')
+    );
     expect(pushCard.sections[2].widgets[0].textInput?.label).toBe('Contract Title');
-    expect(pushCard.sections[2].widgets[1].textInput?.name).toBe('amount');
+    expect(pushCard.sections[2].widgets[1].textInput?.name).toBe(
+      getDocumentInfoWidgetName('amount', 'contract-doc')
+    );
     expect(pushCard.sections[2].widgets[1].textInput?.label).toBe('Total Amount');
     expect(pushCard.sections[2].widgets[2].buttonList?.buttons).toEqual([
       {

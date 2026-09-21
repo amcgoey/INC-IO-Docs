@@ -42,6 +42,7 @@ const WORKSPACE_ADDON_VIEW_SCHEMA: readonly SectionProducer[] = [
           sectionHeader: 'Document Data',
           formData: context.formData,
           hiddenFields: context.hiddenFields,
+          documentTypeKey: context.documentTypeKey,
           ...(context.documentTypeKey ? { onProcessAction: { action: 'processDocument' } } : {}),
         })
       : undefined,

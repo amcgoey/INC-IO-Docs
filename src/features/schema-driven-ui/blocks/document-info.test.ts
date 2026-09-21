@@ -6,6 +6,7 @@ import {
   camelCaseToTitleCase,
   inferDefaultWidget,
   buildDocumentInfoSection,
+  getDocumentInfoWidgetName,
 } from './document-info';
 
 describe('Document Info Block', () => {
@@ -398,6 +399,61 @@ describe('Document Info Block', () => {
       expect(section.widgets).toHaveLength(1);
       expect(section.widgets[0].textInput).toBeDefined();
       expect(section.widgets.some((w) => w.buttonList !== undefined)).toBe(false);
+    });
+
+    it('suffixes widget input names with documentTypeKey when provided', () => {
+      const schema: AbstractDataSchema = {
+        fields: [
+          { key: 'contact', type: 'string' },
+          { key: 'status', type: 'string', options: ['Draft', 'Final'] },
+        ],
+      };
+
+      const section = buildDocumentInfoSection(schema, undefined, {
+        documentTypeKey: 'communication-project',
+      });
+
+      expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+      expect(section.widgets).toHaveLength(2);
+      expect(section.widgets[0].textInput?.name).toBe('contact_communication-project');
+      expect(section.widgets[1].selectionInput?.name).toBe('status_communication-project');
+    });
+
+    it('retrieves formValue from formData using either unsuffixed key or suffixed key', () => {
+      const schema: AbstractDataSchema = {
+        fields: [
+          { key: 'contact', type: 'string' },
+          { key: 'amount', type: 'string' },
+        ],
+      };
+
+      const section = buildDocumentInfoSection(schema, undefined, {
+        documentTypeKey: 'communication-project',
+        formData: {
+          contact: 'Acme Corp',
+          'amount_communication-project': '500',
+        },
+      });
+
+      expect(section.widgets[0].textInput?.value).toBe('Acme Corp');
+      expect(section.widgets[1].textInput?.value).toBe('500');
+    });
+  });
+
+  describe('getDocumentInfoWidgetName', () => {
+    it('appends documentTypeKey suffix when provided', () => {
+      expect(getDocumentInfoWidgetName('contact', 'communication-project')).toBe(
+        'contact_communication-project'
+      );
+      expect(getDocumentInfoWidgetName('description', 'invoice-project')).toBe(
+        'description_invoice-project'
+      );
+    });
+
+    it('returns field key unchanged when documentTypeKey is not provided', () => {
+      expect(getDocumentInfoWidgetName('contact')).toBe('contact');
+      expect(getDocumentInfoWidgetName('contact', undefined)).toBe('contact');
+      expect(getDocumentInfoWidgetName('contact', '')).toBe('contact');
     });
   });
 });

@@ -4,6 +4,7 @@ import {
   extractDocumentData,
   translateDocumentType,
   resolveSpaceType,
+  resolveDocumentType,
   evaluateProcessUiState,
   type ProcessUiStateInput,
 } from './domain';
@@ -108,6 +109,68 @@ describe('ui-process-manager domain', () => {
     it('falls back to projects when neither formData nor config provides it', () => {
       expect(resolveSpaceType(undefined, undefined)).toBe('projects');
       expect(resolveSpaceType({}, {})).toBe('projects');
+    });
+  });
+
+  describe('resolveDocumentType', () => {
+    it('returns document type from formData.SelectDocumentType when present', () => {
+      const result = resolveDocumentType(
+        { SelectDocumentType: 'invoice-project' },
+        { defaultDocumentType: 'communication-project' }
+      );
+      expect(result).toBe('invoice-project');
+    });
+
+    it('returns document type from suffixed SelectDocumentType_<spaceType> matching activeSpaceType', () => {
+      const result = resolveDocumentType(
+        {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentType_projects: 'communication-project',
+          SelectDocumentType_proposals: 'communication-proposal',
+        },
+        undefined,
+        'projects'
+      );
+      expect(result).toBe('communication-project');
+    });
+
+    it('resolves activeSpaceType from formData when activeSpaceType is not passed', () => {
+      const result = resolveDocumentType({
+        SelectDocumentSpaceType: 'proposals',
+        SelectDocumentType_projects: 'communication-project',
+        SelectDocumentType_proposals: 'communication-proposal',
+      });
+      expect(result).toBe('communication-proposal');
+    });
+
+    it('returns document type from any SelectDocumentType_ key when spaceType is not matched', () => {
+      const result = resolveDocumentType({
+        SelectDocumentType_custom: 'custom-doc-type',
+      });
+      expect(result).toBe('custom-doc-type');
+    });
+
+    it('returns document type from parameters.documentTypeKey when not in formData', () => {
+      const result = resolveDocumentType(
+        {},
+        { defaultDocumentType: 'default-doc' },
+        undefined,
+        { documentTypeKey: 'param-doc-type' }
+      );
+      expect(result).toBe('param-doc-type');
+    });
+
+    it('falls back to config defaultDocumentType when not in formData or parameters', () => {
+      const result = resolveDocumentType(
+        {},
+        { defaultDocumentType: 'default-doc' }
+      );
+      expect(result).toBe('default-doc');
+    });
+
+    it('returns undefined when neither formData, parameters, nor config provides document type', () => {
+      expect(resolveDocumentType(undefined, undefined)).toBeUndefined();
+      expect(resolveDocumentType({}, {})).toBeUndefined();
     });
   });
 

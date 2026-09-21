@@ -17,6 +17,11 @@ export interface DocumentInfoOptions {
   formData?: Record<string, unknown> | undefined;
   hiddenFields?: string[] | undefined;
   onProcessAction?: UiViewAction | string | undefined;
+  documentTypeKey?: string | undefined;
+}
+
+export function getDocumentInfoWidgetName(fieldKey: string, documentTypeKey?: string): string {
+  return documentTypeKey ? `${fieldKey}_${documentTypeKey}` : fieldKey;
 }
 
 export function camelCaseToTitleCase(str: string): string {
@@ -40,6 +45,7 @@ import { withOnChangeAction } from './common';
 interface WidgetBuilderContext {
   field: AbstractDataField;
   label: string;
+  widgetName: string;
   uiField: UiField | undefined;
   customProps: StandardWidgetCustomProps;
   onChangeAction: UiViewAction | undefined;
@@ -94,7 +100,7 @@ export function extractSelectionItems(
 }
 
 const widgetBuilders: Record<string, WidgetBuilder> = {
-  selectionInput: ({ field, label, customProps, onChangeAction, formValue, dataSchema }) => {
+  selectionInput: ({ field, label, widgetName, customProps, onChangeAction, formValue, dataSchema }) => {
     const baseItems = extractSelectionItems(field, customProps, dataSchema);
     const resolvedValue = formValue !== undefined ? formValue : field.defaultValue;
     const items =
@@ -108,7 +114,7 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
     return {
       selectionInput: withOnChangeAction(
         {
-          name: field.key,
+          name: widgetName,
           label,
           type: customProps.type ?? 'DROPDOWN',
           items,
@@ -117,7 +123,7 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
       ),
     };
   },
-  textInput: ({ field, label, customProps, onChangeAction, formValue, dataSchema }) => {
+  textInput: ({ field, label, widgetName, customProps, onChangeAction, formValue, dataSchema }) => {
     const hintText = customProps.placeholder ?? customProps.hintText;
     const value =
       formValue !== undefined
@@ -131,7 +137,7 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
     return {
       textInput: withOnChangeAction(
         {
-          name: field.key,
+          name: widgetName,
           label,
           ...(hintText !== undefined ? { hintText } : {}),
           ...(value !== undefined ? { value } : {}),
@@ -180,15 +186,21 @@ export function buildDocumentInfoSection(
           ? { action: 'onFormChange' }
           : undefined;
 
+    const widgetName = getDocumentInfoWidgetName(field.key, options?.documentTypeKey);
+    const formValue =
+      options?.formData?.[field.key] ??
+      (options?.documentTypeKey ? options?.formData?.[widgetName] : undefined);
+
     const builder = widgetBuilders[widgetType] ?? widgetBuilders.textInput;
     widgets.push(
       builder({
         field,
         label,
+        widgetName,
         uiField,
         customProps,
         onChangeAction,
-        formValue: options?.formData?.[field.key],
+        formValue,
         dataSchema,
       })
     );

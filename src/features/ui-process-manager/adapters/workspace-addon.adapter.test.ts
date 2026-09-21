@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { WorkspaceAddonAdapter } from './workspace-addon.adapter';
+import { WorkspaceAddonAdapter, normalizeFormData } from './workspace-addon.adapter';
 import type {
   UiProcessSpaceProviderPort,
   UiProcessConfigProviderPort,
@@ -204,6 +204,89 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
     expect(result.request.formData?.SelectDocumentSpace_proposals).toBe('Proposal Beta');
   });
 
+  it('normalizes dynamic <field>_<activeDocumentType> keys to standard <field> in formData', async () => {
+    const adapter = new WorkspaceAddonAdapter({
+      spaceProvider: mockSpaceProvider,
+      configProvider: mockConfigProvider,
+      manifestPort: mockManifestPort,
+      viewGenerator: mockViewGenerator,
+    });
+
+    const context: UiProcessEventContext = {
+      formData: {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentType_projects: 'communication-project',
+        'contact_communication-project': 'Acme Corp',
+        'notes_communication-project': 'Important notes',
+      },
+    };
+
+    const result = (await adapter.processUiEvent(context)) as {
+      renderedCard: boolean;
+      request: UiProcessCardRequest;
+    };
+
+    expect(result.request.formData?.contact).toBe('Acme Corp');
+    expect(result.request.formData?.notes).toBe('Important notes');
+    expect(result.request.formData).not.toHaveProperty('contact_communication-project');
+    expect(result.request.formData).not.toHaveProperty('notes_communication-project');
+  });
+
+  it('leaves inactive <field>_<inactiveDocumentType> keys untouched in formData', async () => {
+    const adapter = new WorkspaceAddonAdapter({
+      spaceProvider: mockSpaceProvider,
+      configProvider: mockConfigProvider,
+      manifestPort: mockManifestPort,
+      viewGenerator: mockViewGenerator,
+    });
+
+    const context: UiProcessEventContext = {
+      formData: {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentType_projects: 'communication-project',
+        'contact_communication-project': 'Active Contact',
+        'contact_invoice-project': 'Inactive Invoice Contact',
+      },
+    };
+
+    const result = (await adapter.processUiEvent(context)) as {
+      renderedCard: boolean;
+      request: UiProcessCardRequest;
+    };
+
+    expect(result.request.formData?.contact).toBe('Active Contact');
+    expect(result.request.formData).not.toHaveProperty('contact_communication-project');
+    expect(result.request.formData?.['contact_invoice-project']).toBe('Inactive Invoice Contact');
+  });
+
+  describe('normalizeFormData unit tests', () => {
+    it('normalizes space and active document type suffixes, leaving inactive suffixes untouched', () => {
+      const raw = {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentSpace_projects: 'Active Space',
+        SelectDocumentSpace_proposals: 'Inactive Space',
+        SelectDocumentType_projects: 'communication-project',
+        'contact_communication-project': 'Alice',
+        'contact_proposal-doc': 'Bob',
+      };
+
+      const normalized = normalizeFormData(raw, 'projects', 'communication-project');
+
+      expect(normalized).toEqual({
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentSpace: 'Active Space',
+        SelectDocumentSpace_proposals: 'Inactive Space',
+        SelectDocumentType: 'communication-project',
+        contact: 'Alice',
+        'contact_proposal-doc': 'Bob',
+      });
+    });
+
+    it('handles undefined formData gracefully', () => {
+      expect(normalizeFormData(undefined)).toBeUndefined();
+    });
+  });
+
   it('translates human-readable names into backend keys in the write model', async () => {
     const adapter = new WorkspaceAddonAdapter({
       spaceProvider: mockSpaceProvider,
@@ -357,6 +440,46 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
         expect.objectContaining({
           space: 'Project Suffixed',
+        }),
+        'onSubmit',
+        expect.any(Object)
+      );
+    });
+
+    it('executes documentRunner with data from dynamically suffixed <field>_<activeDocumentType>', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({
+          success: true,
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        viewGenerator: mockViewGenerator,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Suffixed',
+          SelectDocumentType_projects: 'communication-project',
+          'contact_communication-project': 'Acme Suffixed',
+          'contact_invoice-project': 'Inactive Invoice Contact',
+        },
+      };
+
+      await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          space: 'Project Suffixed',
+          data: expect.objectContaining({
+            contact: 'Acme Suffixed',
+          }),
         }),
         'onSubmit',
         expect.any(Object)

@@ -9,6 +9,7 @@ import {
   getDocumentTypeWidgetName,
   getDocumentSpaceWidgetName,
 } from '../src/features/schema-driven-ui/blocks/document-type-selection';
+import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
 
 describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
   let app: AppInstance;
@@ -100,10 +101,18 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
       (w: { textInput?: { name: string }; selectionInput?: { name: string } }) =>
         w.textInput?.name ?? w.selectionInput?.name
     );
-    expect(fieldNames).toContain('contact');
-    expect(fieldNames).toContain('date');
-    expect(fieldNames).toContain('direction');
-    expect(fieldNames).toContain('description');
+    expect(fieldNames).toContain(
+      getDocumentInfoWidgetName('contact', 'communication-project')
+    );
+    expect(fieldNames).toContain(
+      getDocumentInfoWidgetName('date', 'communication-project')
+    );
+    expect(fieldNames).toContain(
+      getDocumentInfoWidgetName('direction', 'communication-project')
+    );
+    expect(fieldNames).toContain(
+      getDocumentInfoWidgetName('description', 'communication-project')
+    );
 
     // Block 3: Document Admin Block
     const adminSection = sections.find(
@@ -206,8 +215,8 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
           },
           formInputs: {
             [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
-            contact: { stringInputs: { value: ['John Doe'] } },
-            direction: { stringInputs: { value: ['OT'] } },
+            [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['John Doe'] } },
+            [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['OT'] } },
           },
         },
         drive: {
@@ -230,7 +239,8 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
 
     // Verify incomingNotes is dynamically hidden when direction === 'OT'
     const notesWidget1 = dataSection1.widgets.find(
-      (w: { textInput?: { name: string } }) => w.textInput?.name === 'incomingNotes'
+      (w: { textInput?: { name: string } }) =>
+        w.textInput?.name === getDocumentInfoWidgetName('incomingNotes', 'communication-project')
     );
     expect(notesWidget1).toBeUndefined();
 
@@ -249,8 +259,8 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
           },
           formInputs: {
             [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
-            contact: { stringInputs: { value: ['John Doe'] } },
-            direction: { stringInputs: { value: ['IN'] } },
+            [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['John Doe'] } },
+            [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
           },
         },
         drive: {
@@ -268,12 +278,14 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
 
     // Verify incomingNotes is now dynamically visible
     const notesWidget2 = dataSection2.widgets.find(
-      (w: { textInput?: { name: string } }) => w.textInput?.name === 'incomingNotes'
+      (w: { textInput?: { name: string } }) =>
+        w.textInput?.name === getDocumentInfoWidgetName('incomingNotes', 'communication-project')
     );
     expect(notesWidget2).toBeDefined();
 
     const directionWidget2 = dataSection2.widgets.find(
-      (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'direction'
+      (w: { selectionInput?: { name: string } }) =>
+        w.selectionInput?.name === getDocumentInfoWidgetName('direction', 'communication-project')
     );
     expect(directionWidget2?.selectionInput).toBeDefined();
     const incomingItem = directionWidget2?.selectionInput?.items.find(

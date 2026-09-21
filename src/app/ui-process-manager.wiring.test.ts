@@ -14,6 +14,7 @@ import {
   getDocumentTypeWidgetName,
   getDocumentSpaceWidgetName,
 } from '../features/schema-driven-ui/blocks/document-type-selection';
+import { getDocumentInfoWidgetName } from '../features/schema-driven-ui/blocks/document-info';
 
 describe('ui-process-manager.wiring (CQRS Loop)', () => {
   const mockManifestProvider: RawManifestProviderPort = {
@@ -337,7 +338,8 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
     // 2. Verify contact textInput with onChange: true is routed to /workspace/on-form-change
     const dataSection = pushCard.sections?.find((s: GoogleWorkspaceSection) => s.header === 'Document Data');
     const contactWidget = dataSection?.widgets?.find(
-      (w: GoogleWorkspaceWidget) => w.textInput?.name === 'contact'
+      (w: GoogleWorkspaceWidget) =>
+        w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-project')
     )?.textInput;
     expect(contactWidget?.onChangeAction).toEqual({
       function: '/workspace/on-form-change',

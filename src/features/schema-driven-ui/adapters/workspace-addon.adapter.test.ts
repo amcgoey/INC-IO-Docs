@@ -105,6 +105,34 @@ describe('WorkspaceAddonAdapter', () => {
     assertValidUiView(view);
   });
 
+  it('namespaces document data widget names with documentTypeKey when provided in context', async () => {
+    const context = createContext({
+      documentTypeKey: 'invoice-doc',
+      documentSchema: {
+        fields: [
+          { key: 'invoiceNumber', type: 'string' },
+          { key: 'totalAmount', type: 'number' },
+        ],
+      },
+      uiSchema: {
+        layout: ['invoiceNumber', 'totalAmount'],
+        fields: {
+          invoiceNumber: { label: 'Invoice #' },
+          totalAmount: { label: 'Total ($)' },
+        },
+      },
+    });
+
+    const view = await adapter.composeView(context);
+    expect(view.sections).toHaveLength(2);
+    const infoSection = view.sections[0];
+    expect(infoSection.header).toBe('Document Data');
+    expect(infoSection.widgets).toHaveLength(3); // 2 inputs + Process Document button
+    expect(infoSection.widgets[0].textInput?.name).toBe('invoiceNumber_invoice-doc');
+    expect(infoSection.widgets[1].textInput?.name).toBe('totalAmount_invoice-doc');
+    assertValidUiView(view);
+  });
+
   it('propagates evaluationOrder from uiSchema to the UiView root', async () => {
     const context = createContext({
       uiSchema: {
@@ -194,7 +222,7 @@ describe('WorkspaceAddonAdapter', () => {
     const infoSection = view.sections[0];
     expect(infoSection.header).toBe('Document Data');
     expect(infoSection.widgets).toHaveLength(2);
-    expect(infoSection.widgets[0].textInput?.name).toBe('invoiceNumber');
+    expect(infoSection.widgets[0].textInput?.name).toBe('invoiceNumber_invoice');
     expect(infoSection.widgets[1].buttonList?.buttons).toEqual([
       { text: 'Process Document', onClick: { action: 'processDocument' } },
     ]);
