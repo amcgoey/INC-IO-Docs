@@ -23,15 +23,17 @@ export interface WorkspaceAddonAdapterOptions {
 export function normalizeFormData(
   formData?: Record<string, unknown>,
   activeSpaceType?: string,
-  activeDocumentType?: string
+  activeDocumentType?: string,
+  config?: ProcessUiStateConfig
 ): Record<string, unknown> | undefined {
   if (!formData) {
     return formData;
   }
-  const spaceType = activeSpaceType ?? resolveSpaceType(formData);
+  const spaceType = activeSpaceType ?? resolveSpaceType(formData, config);
   const activeSpaceKey = spaceType ? `SelectDocumentSpace_${spaceType}` : undefined;
+  const activeDocTypeSelectorKey = spaceType ? `SelectDocumentType_${spaceType}` : undefined;
 
-  const docType = activeDocumentType ?? resolveDocumentType(formData, undefined, spaceType);
+  const docType = activeDocumentType ?? resolveDocumentType(formData, config, spaceType);
   const docTypeSuffix = docType ? `_${docType}` : undefined;
 
   const normalized: Record<string, unknown> = {};
@@ -39,7 +41,7 @@ export function normalizeFormData(
 
   for (const [key, value] of Object.entries(formData)) {
     let targetKey = key;
-    if (key.startsWith('SelectDocumentType_')) {
+    if (activeDocTypeSelectorKey ? key === activeDocTypeSelectorKey : key.startsWith('SelectDocumentType_')) {
       targetKey = 'SelectDocumentType';
     } else if (activeSpaceKey && key === activeSpaceKey) {
       targetKey = 'SelectDocumentSpace';
@@ -85,10 +87,18 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       }
     }
 
+    const mappedConfig = {
+      ...(config?.defaultDocumentType ? { defaultDocumentType: config.defaultDocumentType } : {}),
+      ...(config?.defaultDocumentSpaceType
+        ? { defaultDocumentSpaceType: config.defaultDocumentSpaceType }
+        : {}),
+    };
+
     const normalizedFormData = normalizeFormData(
       context.formData,
       currentSpaceType,
-      resolvedDocumentTypeKey
+      resolvedDocumentTypeKey,
+      mappedConfig
     );
     const normalizedContext: UiProcessEventContext =
       normalizedFormData !== context.formData
@@ -96,12 +106,6 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         : context;
 
     const actionName = normalizedContext.actionName ?? normalizedContext.parameters?.action;
-    const mappedConfig = {
-      ...(config?.defaultDocumentType ? { defaultDocumentType: config.defaultDocumentType } : {}),
-      ...(config?.defaultDocumentSpaceType
-        ? { defaultDocumentSpaceType: config.defaultDocumentSpaceType }
-        : {}),
-    };
     const spaceTypes = spaceProvider.getAllTypes();
 
     let collectionSpaces: string[] = [];

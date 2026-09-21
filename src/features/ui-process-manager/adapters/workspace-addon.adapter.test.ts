@@ -266,6 +266,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         SelectDocumentSpace_projects: 'Active Space',
         SelectDocumentSpace_proposals: 'Inactive Space',
         SelectDocumentType_projects: 'communication-project',
+        SelectDocumentType_proposals: 'communication-proposal',
         'contact_communication-project': 'Alice',
         'contact_proposal-doc': 'Bob',
       };
@@ -277,6 +278,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         SelectDocumentSpace: 'Active Space',
         SelectDocumentSpace_proposals: 'Inactive Space',
         SelectDocumentType: 'communication-project',
+        SelectDocumentType_proposals: 'communication-proposal',
         contact: 'Alice',
         'contact_proposal-doc': 'Bob',
       });
