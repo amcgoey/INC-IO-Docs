@@ -5,7 +5,10 @@ import { createApp, type AppInstance } from '../src/app/server';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
 import { GoogleWorkspaceActionResponseSchema } from '../src/infrastructure/workspace-addon/ui-blocks';
-import { getDocumentTypeWidgetName } from '../src/features/schema-driven-ui/blocks/document-type-selection';
+import {
+  getDocumentTypeWidgetName,
+  getDocumentSpaceWidgetName,
+} from '../src/features/schema-driven-ui/blocks/document-type-selection';
 
 describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
   let app: AppInstance;
@@ -85,7 +88,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     expect(docTypeSection).toBeDefined();
     expect(docTypeSection.widgets).toHaveLength(3);
     expect(docTypeSection.widgets[0].selectionInput?.name).toBe('SelectDocumentSpaceType');
-    expect(docTypeSection.widgets[1].textInput?.name).toBe('SelectDocumentSpace');
+    expect(docTypeSection.widgets[1].textInput?.name).toBe(getDocumentSpaceWidgetName('projects'));
     expect(docTypeSection.widgets[2].selectionInput?.name).toBe(getDocumentTypeWidgetName('projects'));
 
     // Block 2: Document Info Block (rendered from communication-project.json)

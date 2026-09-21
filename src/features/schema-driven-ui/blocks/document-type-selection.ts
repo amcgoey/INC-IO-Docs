@@ -27,6 +27,12 @@ function buildDropdownWidget(
   };
 }
 
+export const DOCUMENT_SPACE_WIDGET_PREFIX = 'SelectDocumentSpace_';
+
+export function getDocumentSpaceWidgetName(spaceType?: string): string {
+  return `${DOCUMENT_SPACE_WIDGET_PREFIX}${spaceType ?? 'default'}`;
+}
+
 export const DOCUMENT_TYPE_WIDGET_PREFIX = 'SelectDocumentType_';
 
 export function getDocumentTypeWidgetName(spaceType?: string): string {
@@ -48,19 +54,19 @@ export function buildDocumentTypeSelectionSection(
     )
   );
 
+  const currentSpaceType = selectionState.spaceTypes.find((t) => t.selected)?.value ?? 'default';
+
   const spaceValue = selectionState.spaces.length > 0 ? selectionState.spaces[0] : undefined;
   const spaceAutocomplete = selectionState.spaces.map((space) => ({ text: space, value: space }));
   widgets.push({
     textInput: {
-      name: 'SelectDocumentSpace',
+      name: getDocumentSpaceWidgetName(currentSpaceType),
       label: 'Document Space',
       hintText: 'Enter document space',
       ...(spaceValue !== undefined ? { value: spaceValue } : {}),
       ...(spaceAutocomplete.length > 0 ? { autocomplete: spaceAutocomplete } : {}),
     },
   });
-
-  const currentSpaceType = selectionState.spaceTypes.find((t) => t.selected)?.value ?? 'default';
   
   widgets.push(
     buildDropdownWidget(

@@ -5,9 +5,21 @@ import type { SelectionState } from '../ports';
 import {
   buildDocumentTypeSelectionSection,
   getDocumentTypeWidgetName,
+  getDocumentSpaceWidgetName,
 } from './document-type-selection';
 
 describe('Document Type Selection Block', () => {
+  describe('getDocumentSpaceWidgetName', () => {
+    it('generates dynamic widget name based on given space type', () => {
+      expect(getDocumentSpaceWidgetName('projects')).toBe('SelectDocumentSpace_projects');
+      expect(getDocumentSpaceWidgetName('proposals')).toBe('SelectDocumentSpace_proposals');
+    });
+
+    it('falls back to default when space type is omitted or undefined', () => {
+      expect(getDocumentSpaceWidgetName()).toBe('SelectDocumentSpace_default');
+    });
+  });
+
   describe('getDocumentTypeWidgetName', () => {
     it('generates dynamic widget name based on given space type', () => {
       expect(getDocumentTypeWidgetName('projects')).toBe('SelectDocumentType_projects');
@@ -48,7 +60,7 @@ describe('Document Type Selection Block', () => {
     // Widget 2: SelectDocumentSpace (TextInput)
     const spaceWidget = section.widgets[1];
     expect(spaceWidget.textInput).toBeDefined();
-    expect(spaceWidget.textInput?.name).toBe('SelectDocumentSpace');
+    expect(spaceWidget.textInput?.name).toBe(getDocumentSpaceWidgetName('projects'));
     expect(spaceWidget.textInput?.label).toBe('Document Space');
     expect(spaceWidget.textInput?.value).toBe('proj-alpha');
     expect(spaceWidget.textInput?.autocomplete).toEqual([

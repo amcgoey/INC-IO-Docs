@@ -154,6 +154,56 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
     expect(result.request.formData).not.toHaveProperty('SelectDocumentType_projects');
   });
 
+  it('normalizes dynamic SelectDocumentSpace_<activeSpaceType> keys to standard SelectDocumentSpace in formData', async () => {
+    const adapter = new WorkspaceAddonAdapter({
+      spaceProvider: mockSpaceProvider,
+      configProvider: mockConfigProvider,
+      manifestPort: mockManifestPort,
+      viewGenerator: mockViewGenerator,
+    });
+
+    const context: UiProcessEventContext = {
+      formData: {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentSpace_projects: 'Project Alpha',
+      },
+    };
+
+    const result = (await adapter.processUiEvent(context)) as {
+      renderedCard: boolean;
+      request: UiProcessCardRequest;
+    };
+
+    expect(result.request.formData?.SelectDocumentSpace).toBe('Project Alpha');
+    expect(result.request.formData).not.toHaveProperty('SelectDocumentSpace_projects');
+  });
+
+  it('leaves inactive SelectDocumentSpace_<inactiveSpaceType> keys untouched in formData', async () => {
+    const adapter = new WorkspaceAddonAdapter({
+      spaceProvider: mockSpaceProvider,
+      configProvider: mockConfigProvider,
+      manifestPort: mockManifestPort,
+      viewGenerator: mockViewGenerator,
+    });
+
+    const context: UiProcessEventContext = {
+      formData: {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentSpace_projects: 'Project Alpha',
+        SelectDocumentSpace_proposals: 'Proposal Beta',
+      },
+    };
+
+    const result = (await adapter.processUiEvent(context)) as {
+      renderedCard: boolean;
+      request: UiProcessCardRequest;
+    };
+
+    expect(result.request.formData?.SelectDocumentSpace).toBe('Project Alpha');
+    expect(result.request.formData).not.toHaveProperty('SelectDocumentSpace_projects');
+    expect(result.request.formData?.SelectDocumentSpace_proposals).toBe('Proposal Beta');
+  });
+
   it('translates human-readable names into backend keys in the write model', async () => {
     const adapter = new WorkspaceAddonAdapter({
       spaceProvider: mockSpaceProvider,
@@ -274,6 +324,43 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           },
         },
       });
+    });
+
+    it('executes documentRunner with space from dynamically suffixed SelectDocumentSpace_<activeSpaceType>', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({
+          success: true,
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        viewGenerator: mockViewGenerator,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Suffixed',
+          SelectDocumentSpace_proposals: 'Inactive Proposal Space',
+          SelectDocumentType: 'communication-project',
+          contact: 'Acme Corp',
+        },
+      };
+
+      await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          space: 'Project Suffixed',
+        }),
+        'onSubmit',
+        expect.any(Object)
+      );
     });
 
     it('re-renders card with validationErrors when documentRunner reports failure', async () => {

@@ -10,7 +10,10 @@ import type {
   GoogleWorkspaceSection,
   GoogleWorkspaceWidget,
 } from '../infrastructure/workspace-addon/ui-blocks';
-import { getDocumentTypeWidgetName } from '../features/schema-driven-ui/blocks/document-type-selection';
+import {
+  getDocumentTypeWidgetName,
+  getDocumentSpaceWidgetName,
+} from '../features/schema-driven-ui/blocks/document-type-selection';
 
 describe('ui-process-manager.wiring (CQRS Loop)', () => {
   const mockManifestProvider: RawManifestProviderPort = {
@@ -214,6 +217,11 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       value: 'communication-project',
       selected: true,
     });
+
+    const spaceWidget = selectionSection?.widgets?.find(
+      (w: GoogleWorkspaceWidget) => w.textInput?.name === getDocumentSpaceWidgetName('projects')
+    )?.textInput;
+    expect(spaceWidget).toBeDefined();
   });
 
   it('handles processDocument through wired documentService returning notification on success', async () => {

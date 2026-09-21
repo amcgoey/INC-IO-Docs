@@ -20,15 +20,24 @@ export interface WorkspaceAddonAdapterOptions {
 }
 
 
-function normalizeFormData(
-  formData?: Record<string, unknown>
+export function normalizeFormData(
+  formData?: Record<string, unknown>,
+  activeSpaceType?: string
 ): Record<string, unknown> | undefined {
   if (!formData) {
     return formData;
   }
+  const spaceType = activeSpaceType ?? resolveSpaceType(formData);
+  const activeSpaceKey = spaceType ? `SelectDocumentSpace_${spaceType}` : undefined;
+
   const normalized: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(formData)) {
-    const targetKey = key.startsWith('SelectDocumentType_') ? 'SelectDocumentType' : key;
+    let targetKey = key;
+    if (key.startsWith('SelectDocumentType_')) {
+      targetKey = 'SelectDocumentType';
+    } else if (activeSpaceKey && key === activeSpaceKey) {
+      targetKey = 'SelectDocumentSpace';
+    }
     normalized[targetKey] = value;
   }
   return normalized;
@@ -41,14 +50,16 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     const { spaceProvider, configProvider, manifestPort, viewGenerator, documentRunner, formEvaluator } =
       this.options;
 
-    const normalizedFormData = normalizeFormData(context.formData);
+    const config = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
+    const currentSpaceType = resolveSpaceType(context.formData, config);
+
+    const normalizedFormData = normalizeFormData(context.formData, currentSpaceType);
     const normalizedContext: UiProcessEventContext =
       normalizedFormData !== context.formData
         ? { ...context, formData: normalizedFormData }
         : context;
 
     const actionName = normalizedContext.actionName ?? normalizedContext.parameters?.action;
-    const config = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
     const mappedConfig = {
       ...(config?.defaultDocumentType ? { defaultDocumentType: config.defaultDocumentType } : {}),
       ...(config?.defaultDocumentSpaceType
@@ -56,8 +67,6 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         : {}),
     };
     const spaceTypes = spaceProvider.getAllTypes();
-
-    const currentSpaceType = resolveSpaceType(normalizedContext.formData, config);
 
     let collectionSpaces: string[] = [];
     try {
