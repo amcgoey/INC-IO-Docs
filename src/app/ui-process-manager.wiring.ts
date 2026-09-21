@@ -1,5 +1,5 @@
 import type { DocumentSpaceService } from '../features/document-space/domain';
-import type { DocumentService } from '../features/document/domain';
+import type { InjectedDocumentService } from './document.wiring';
 import {
   WorkspaceAddonAdapter,
   ManifestAdapter,
@@ -142,7 +142,7 @@ export interface UiProcessManagerWiringOptions {
   documentSpaceService: DocumentSpaceService;
   manifestProvider: RawManifestProviderPort;
   schemaDrivenUiService?: SchemaDrivenUiService | undefined;
-  documentService?: DocumentService | undefined;
+  documentService?: InjectedDocumentService | undefined;
   evaluateFormChange?: FormChangeEvaluator | undefined;
 }
 

@@ -3,15 +3,19 @@ import { createHttpServer, type HttpServer } from '../infrastructure/http';
 import { AppManifestProvider } from '../infrastructure/manifest/app-manifest-provider';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
-import { createDocumentFeatureWiring, wireDocumentServicesAndRoutes } from './document.wiring';
+import {
+  createDocumentFeatureWiring,
+  wireDocumentServicesAndRoutes,
+  type InjectedDocumentService,
+} from './document.wiring';
 import { createDocumentSpaceFeatureWiring } from './document-space.wiring';
 import { wireWorkspaceAddonRoutes } from './workspace-addon.wiring';
 
-import type { DocumentService } from '../features/document/domain';
 import type { DocumentSpaceService } from '../features/document-space/domain';
 import type {
   RawManifestProviderPort as SpaceRawManifestProviderPort,
   DocumentSpaceUiSchemaQueryPort,
+  DocumentSpaceStoragePort,
 } from '../features/document-space/ports';
 import type {
   ActivityDispatcherPort,
@@ -40,7 +44,10 @@ export interface AppOptions {
   templateEvaluator?: TemplateEvaluatorPort | undefined;
   authVerifier?: WorkspaceAuthVerifierPort | undefined;
   driveService?: DriveServicePort | undefined;
+  storageAdapter?: DocumentSpaceStoragePort | undefined;
+  documentSpaceStoragePort?: DocumentSpaceStoragePort | undefined;
   documentSpaceService?: DocumentSpaceService | undefined;
+  documentService?: InjectedDocumentService | undefined;
   authorizationUrl?: string | undefined;
   logger?: boolean | undefined;
   skipSpaceValidation?: boolean | undefined;
@@ -48,7 +55,7 @@ export interface AppOptions {
 
 export interface AppInstance {
   server: HttpServer;
-  documentService: DocumentService;
+  documentService: InjectedDocumentService;
   documentSpaceService: DocumentSpaceService;
   documentSchemaRegistry: DocumentSchemaRegistryPort;
   documentSpaceUiSchemaQuery?: DocumentSpaceUiSchemaQueryPort | undefined;
@@ -109,11 +116,14 @@ export function createApp(options?: AppOptions): AppInstance {
     templateEvaluator,
     driveService: options?.driveService,
     activityEngine: options?.activityEngine,
+    documentService: options?.documentService,
   });
 
+  const storageAdapter = options?.storageAdapter ?? options?.documentSpaceStoragePort;
   const documentSpaceWiring = createDocumentSpaceFeatureWiring({
     rawManifestProvider: manifestProvider ?? defaultSpaceRawManifestProvider,
-    driveClient,
+    storageAdapter,
+    driveClient: storageAdapter ? undefined : driveClient,
   });
   const documentSpaceService =
     options?.documentSpaceService ??
@@ -129,7 +139,10 @@ export function createApp(options?: AppOptions): AppInstance {
   });
 
   const initialize = async () => {
-    await documentService.initialize();
+    const maybeDocService = documentService as { initialize?: unknown };
+    if (typeof maybeDocService.initialize === 'function') {
+      await (maybeDocService as { initialize: () => Promise<unknown> }).initialize();
+    }
     await documentSpaceService.initialize();
     const shouldSkipValidation =
       options?.skipSpaceValidation ??

@@ -6,7 +6,7 @@ import {
 import { GoogleJwtVerifier } from '../infrastructure/workspace-addon/jwt-verifier';
 import { evaluateFormChange } from '../infrastructure/workspace-addon/json-logic-evaluator';
 import type { HttpServer } from '../infrastructure/http';
-import type { DocumentService } from '../features/document/domain';
+import type { InjectedDocumentService } from './document.wiring';
 import type { DocumentSpaceService } from '../features/document-space/domain';
 import { createUiProcessManagerWiring } from './ui-process-manager.wiring';
 import type { RawManifestProviderPort } from '../features/ui-process-manager';
@@ -14,7 +14,7 @@ import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-ad
 
 export interface WorkspaceAddonWiringOptions {
   server: HttpServer;
-  documentService?: DocumentService | undefined;
+  documentService?: InjectedDocumentService | undefined;
   documentSpaceService?: DocumentSpaceService | undefined;
   authVerifier?: WorkspaceAuthVerifierPort | undefined;
   configProvider?: WorkspaceConfigProviderPort | undefined;

@@ -6,10 +6,15 @@ import type {
   ActivityDispatcherPort,
   AppConfigurationProviderPort,
   RawManifestProviderPort,
+  DocumentServicePort,
 } from '../features/document/ports';
 import { ensureEvaluationOrder } from '../infrastructure/validation/json-logic-graph';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import { DocumentService } from '../features/document/domain';
+
+export type InjectedDocumentService =
+  | DocumentService
+  | (DocumentServicePort & { initialize?: unknown });
 import { DriveServiceAdapter } from '../features/document/adapters/drive-service-adapter';
 import { DriveActivityHandler } from '../features/document/adapters/drive-activity-handler';
 import { ActivityEngine } from '../features/document/adapters/activity-engine';
@@ -52,21 +57,31 @@ export interface WireDocumentServicesOptions {
   templateEvaluator: TemplateEvaluatorPort;
   driveService?: DriveServicePort | undefined;
   activityEngine?: ActivityDispatcherPort | undefined;
+  documentService?: InjectedDocumentService | undefined;
 }
 
-export function wireDocumentServicesAndRoutes(options: WireDocumentServicesOptions): DocumentService {
-  const driveService: DriveServicePort =
-    options.driveService ??
-    new DriveServiceAdapter(options.driveClient);
+export function wireDocumentServicesAndRoutes(
+  options: WireDocumentServicesOptions
+): InjectedDocumentService {
+  let documentService = options.documentService;
+  if (!documentService) {
+    const driveService: DriveServicePort =
+      options.driveService ?? new DriveServiceAdapter(options.driveClient);
 
-  const driveActivityHandler = new DriveActivityHandler(driveService, {
-    configProvider: options.configProvider,
-  });
-  
-  const activityEngine = options.activityEngine ?? new ActivityEngine([driveActivityHandler]);
-  const documentService = new DocumentService(activityEngine, options.documentSchemaRegistry, options.templateEvaluator);
+    const driveActivityHandler = new DriveActivityHandler(driveService, {
+      configProvider: options.configProvider,
+    });
 
-  registerDocumentFeatureRoutes(options.server, { 
+    const activityEngine =
+      options.activityEngine ?? new ActivityEngine([driveActivityHandler]);
+    documentService = new DocumentService(
+      activityEngine,
+      options.documentSchemaRegistry,
+      options.templateEvaluator
+    );
+  }
+
+  registerDocumentFeatureRoutes(options.server, {
     service: documentService,
   });
 

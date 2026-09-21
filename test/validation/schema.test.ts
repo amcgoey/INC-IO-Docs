@@ -141,7 +141,7 @@ describe('DocumentType JSON files schema validation', () => {
     }
   });
 
-  it('should have defaultValue: OT on direction field for communication schemas', async () => {
+  it('should have defaultValue: IN on direction field for communication schemas', async () => {
     const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
     const manifestProvider = new AppManifestProvider({ manifestPath });
     const adapter = new DocumentSchemaRegistryAdapter(
@@ -155,7 +155,7 @@ describe('DocumentType JSON files schema validation', () => {
       expect(docType).toBeDefined();
       const directionField = docType!.documentSchema.fields.find((f) => f.key === 'direction');
       expect(directionField).toBeDefined();
-      expect(directionField?.defaultValue).toBe('OT');
+      expect(directionField?.defaultValue).toBe('IN');
     }
   });
 });
