@@ -138,7 +138,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
 
     // Verify Document Type defaulted to communication-proposal (first allowed type for proposals)
     const docTypeDropdown = selectionSection?.widgets?.find(
-      (w: GoogleWorkspaceWidget) => w.selectionInput?.name === 'SelectDocumentType'
+      (w: GoogleWorkspaceWidget) => w.selectionInput?.name === 'SelectDocumentType_proposals'
     )?.selectionInput;
     expect(docTypeDropdown).toBeDefined();
     expect(docTypeDropdown?.items).toHaveLength(1);
@@ -203,7 +203,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
     const pushCard = response.action!.navigations![0].pushCard!;
     const selectionSection = pushCard.sections?.find((s: GoogleWorkspaceSection) => s.header === 'Document Type');
     const docTypeDropdown = selectionSection?.widgets?.find(
-      (w: GoogleWorkspaceWidget) => w.selectionInput?.name === 'SelectDocumentType'
+      (w: GoogleWorkspaceWidget) => w.selectionInput?.name === 'SelectDocumentType_projects'
     )?.selectionInput;
 
     expect(docTypeDropdown).toBeDefined();

@@ -54,9 +54,11 @@ export function buildDocumentTypeSelectionSection(
     },
   });
 
+  const currentSpaceType = selectionState.spaceTypes.find((t) => t.selected)?.value ?? 'default';
+  
   widgets.push(
     buildDropdownWidget(
-      'SelectDocumentType',
+      `SelectDocumentType_${currentSpaceType}`,
       'Document Type',
       selectionState.documentTypes,
       options?.onDocumentTypeChangeAction

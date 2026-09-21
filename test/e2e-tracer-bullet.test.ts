@@ -85,7 +85,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     expect(docTypeSection.widgets).toHaveLength(3);
     expect(docTypeSection.widgets[0].selectionInput?.name).toBe('SelectDocumentSpaceType');
     expect(docTypeSection.widgets[1].textInput?.name).toBe('SelectDocumentSpace');
-    expect(docTypeSection.widgets[2].selectionInput?.name).toBe('SelectDocumentType');
+    expect(docTypeSection.widgets[2].selectionInput?.name).toBe('SelectDocumentType_projects');
 
     // Block 2: Document Info Block (rendered from communication-project.json)
     const docInfoSection = sections.find(
@@ -280,18 +280,18 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     // 4. Simulate onFormChange roundtrip 3: user changes the Document Space Type cascading selection dropdown to 'proposals'
     const changeResponse3 = await app.server.inject({
       method: 'POST',
-      url: '/workspace/on-form-change',
+      url: '/workspace/action',
       headers: {
         authorization: 'Bearer valid-jwt-token',
       },
       payload: {
         commonEventObject: {
           parameters: {
-            action: 'onFormChange',
+            action: 'onSpaceTypeChange',
           },
           formInputs: {
             SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
-            SelectDocumentType: { stringInputs: { value: ['communication-proposal'] } },
+            SelectDocumentType: { stringInputs: { value: ['communication-project'] } },
           },
         },
         drive: {
@@ -315,7 +315,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     expect(selectedSpaceType?.selected).toBe(true);
 
     const docTypeWidget3 = docTypeSection3.widgets.find(
-      (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'SelectDocumentType'
+      (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'SelectDocumentType_proposals'
     );
     const selectedProposalItem = docTypeWidget3?.selectionInput?.items.find(
       (item: { value: string }) => item.value === 'communication-proposal'

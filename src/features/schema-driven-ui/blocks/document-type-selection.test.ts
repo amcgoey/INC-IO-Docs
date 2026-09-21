@@ -45,7 +45,7 @@ describe('Document Type Selection Block', () => {
     // Widget 3: SelectDocumentType (Dropdown)
     const docTypeWidget = section.widgets[2];
     expect(docTypeWidget.selectionInput).toBeDefined();
-    expect(docTypeWidget.selectionInput?.name).toBe('SelectDocumentType');
+    expect(docTypeWidget.selectionInput?.name).toBe('SelectDocumentType_projects');
     expect(docTypeWidget.selectionInput?.label).toBe('Document Type');
     expect(docTypeWidget.selectionInput?.type).toBe('DROPDOWN');
     expect(docTypeWidget.selectionInput?.items).toEqual(selectionState.documentTypes);
