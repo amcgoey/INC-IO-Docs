@@ -589,9 +589,9 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
         expect.objectContaining({
           space: 'Project Suffixed',
-          data: expect.objectContaining({
+          data: {
             contact: 'Acme Suffixed',
-          }),
+          },
         }),
         'onSubmit',
         expect.any(Object)

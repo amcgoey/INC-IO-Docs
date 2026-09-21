@@ -78,14 +78,34 @@ function filterFormData(
 }
 
 
+export interface ExtractDocumentDataOptions {
+  activeDocumentType?: string | undefined;
+  knownDocumentTypes?: string[] | undefined;
+}
+
 /**
  * Extracts data fields from formData by stripping selection state keys
- * (keys starting with 'SelectDocument').
+ * (keys starting with 'SelectDocument') and pruning inactive document type keys.
  */
 export function extractDocumentData(
-  formData?: Record<string, unknown>
+  formData?: Record<string, unknown>,
+  options?: ExtractDocumentDataOptions
 ): Record<string, unknown> {
-  return filterFormData(formData, (key) => !key.startsWith('SelectDocument'));
+  const { knownDocumentTypes, activeDocumentType } = options ?? {};
+
+  return filterFormData(formData, (key) => {
+    if (key.startsWith('SelectDocument')) {
+      return false;
+    }
+    if (knownDocumentTypes && knownDocumentTypes.length > 0) {
+      for (const docType of knownDocumentTypes) {
+        if (docType !== activeDocumentType && key.endsWith(`_${docType}`)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  });
 }
 
 /**

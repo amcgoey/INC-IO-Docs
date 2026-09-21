@@ -37,6 +37,28 @@ describe('ui-process-manager domain', () => {
       expect(extractDocumentData(undefined)).toEqual({});
       expect(extractDocumentData({})).toEqual({});
     });
+
+    it('strips inactive document type suffixed keys when options are provided', () => {
+      const formData = {
+        SelectDocumentSpace: 'Alpha',
+        contact: 'John Doe',
+        date: '260920',
+        'invoiceNumber_invoice-project': 'INV-999',
+        'proposalTitle_communication-proposal': 'Proposal A',
+      };
+
+      const result = extractDocumentData(formData, {
+        activeDocumentType: 'communication-project',
+        knownDocumentTypes: ['communication-project', 'invoice-project', 'communication-proposal'],
+      });
+
+      expect(result).toEqual({
+        contact: 'John Doe',
+        date: '260920',
+      });
+      expect(result).not.toHaveProperty('invoiceNumber_invoice-project');
+      expect(result).not.toHaveProperty('proposalTitle_communication-proposal');
+    });
   });
 
   describe('translateDocumentType', () => {

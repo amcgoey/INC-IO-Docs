@@ -341,7 +341,13 @@ export class DocumentService implements DocumentServicePort {
 
     // Anti-Corruption Layer: Context Enrichment & Fallback Tuple Synthesis
     const rawData = document.data as { [key: string]: unknown };
-    const enrichedData: { [key: string]: unknown } = { ...rawData };
+    const schemaFieldKeys = new Set(documentType.documentSchema.fields.map((f) => f.key));
+    const enrichedData: { [key: string]: unknown } = {};
+    for (const [key, value] of Object.entries(rawData)) {
+      if (schemaFieldKeys.has(key)) {
+        enrichedData[key] = value;
+      }
+    }
 
     for (const field of documentType.documentSchema.fields) {
       if (field.options) {

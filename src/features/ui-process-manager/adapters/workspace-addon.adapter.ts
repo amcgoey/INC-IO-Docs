@@ -160,7 +160,16 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
     if (actionName === 'processDocument') {
       const selectedSpace = normalizedContext.formData?.SelectDocumentSpace as string | undefined;
-      const data = extractDocumentData(normalizedContext.formData);
+      const allDocTypes = Array.from(
+        new Set([
+          ...spaceTypes.flatMap((st) => st.spaceSchema.allowedDocumentTypes),
+          ...(resolvedDocumentTypeKey ? [resolvedDocumentTypeKey] : []),
+        ])
+      );
+      const data = extractDocumentData(normalizedContext.formData, {
+        activeDocumentType: resolvedDocumentTypeKey,
+        knownDocumentTypes: allDocTypes,
+      });
 
       const selectedItem = normalizedContext.selectedItems?.[0];
       const execContext = {

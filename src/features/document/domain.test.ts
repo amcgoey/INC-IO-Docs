@@ -341,7 +341,11 @@ describe('Document domain', () => {
     const result = await service.processDocument(documentWithInactiveKeys, 'onSubmit');
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data).toEqual(documentWithInactiveKeys);
+      expect(result.data?.data).toEqual({
+        title: 'Foundation Plan',
+      });
+      expect(result.data?.data).not.toHaveProperty('inactive_field_other_type');
+      expect(result.data?.data).not.toHaveProperty('invoiceNumber_invoice-project');
     }
   });
 
