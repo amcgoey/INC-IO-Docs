@@ -20,6 +20,20 @@ export interface WorkspaceAddonAdapterOptions {
 }
 
 
+function normalizeFormData(
+  formData?: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  if (!formData) {
+    return formData;
+  }
+  const normalized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(formData)) {
+    const targetKey = key.startsWith('SelectDocumentType_') ? 'SelectDocumentType' : key;
+    normalized[targetKey] = value;
+  }
+  return normalized;
+}
+
 export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
   constructor(private readonly options: WorkspaceAddonAdapterOptions) {}
 
@@ -27,7 +41,13 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     const { spaceProvider, configProvider, manifestPort, viewGenerator, documentRunner, formEvaluator } =
       this.options;
 
-    const actionName = context.actionName ?? context.parameters?.action;
+    const normalizedFormData = normalizeFormData(context.formData);
+    const normalizedContext: UiProcessEventContext =
+      normalizedFormData !== context.formData
+        ? { ...context, formData: normalizedFormData }
+        : context;
+
+    const actionName = normalizedContext.actionName ?? normalizedContext.parameters?.action;
     const config = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
     const mappedConfig = {
       ...(config?.defaultDocumentType ? { defaultDocumentType: config.defaultDocumentType } : {}),
@@ -37,7 +57,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     };
     const spaceTypes = spaceProvider.getAllTypes();
 
-    const currentSpaceType = resolveSpaceType(context.formData, config);
+    const currentSpaceType = resolveSpaceType(normalizedContext.formData, config);
 
     let collectionSpaces: string[] = [];
     try {
@@ -48,8 +68,8 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     }
 
     const rawSelectedDocType =
-      (context.formData?.SelectDocumentType as string | undefined) ??
-      context.parameters?.documentTypeKey ??
+      (normalizedContext.formData?.SelectDocumentType as string | undefined) ??
+      normalizedContext.parameters?.documentTypeKey ??
       config?.defaultDocumentType;
 
     let resolvedDocumentTypeKey = rawSelectedDocType;
@@ -72,7 +92,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     }) => {
       const state = evaluateProcessUiState({
         context: {
-          ...context,
+          ...normalizedContext,
           ...(options.formData !== undefined ? { formData: options.formData } : {}),
           ...(options.validationErrors ? { validationErrors: options.validationErrors } : {}),
           ...(options.isUpdateCard ? { isUpdateCard: true } : {}),
@@ -99,12 +119,12 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       renderCard({ validationErrors, isUpdateCard: true });
 
     if (actionName === 'processDocument') {
-      const selectedSpace = context.formData?.SelectDocumentSpace as string | undefined;
-      const data = extractDocumentData(context.formData);
+      const selectedSpace = normalizedContext.formData?.SelectDocumentSpace as string | undefined;
+      const data = extractDocumentData(normalizedContext.formData);
 
-      const selectedItem = context.selectedItems?.[0];
+      const selectedItem = normalizedContext.selectedItems?.[0];
       const execContext = {
-        ...(context.userOAuthToken ? { credentials: { oauthToken: context.userOAuthToken } } : {}),
+        ...(normalizedContext.userOAuthToken ? { credentials: { oauthToken: normalizedContext.userOAuthToken } } : {}),
         ...(selectedItem?.id ? { resources: { primaryTargetId: selectedItem.id } } : {}),
       };
 
@@ -142,12 +162,12 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
     }
 
-    let evaluatedFormData = context.formData;
+    let evaluatedFormData = normalizedContext.formData;
     let hiddenFields: string[] | undefined;
     if (actionName === 'onFormChange' && formEvaluator) {
       try {
         const evaluation = await formEvaluator.evaluate(
-          context.formData ?? {},
+          normalizedContext.formData ?? {},
           resolvedDocumentTypeKey
         );
         evaluatedFormData = evaluation.computedData;

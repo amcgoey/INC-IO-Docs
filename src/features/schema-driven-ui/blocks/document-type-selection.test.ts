@@ -2,9 +2,23 @@ import { describe, it, expect } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { UiViewSectionSchema } from '../domain';
 import type { SelectionState } from '../ports';
-import { buildDocumentTypeSelectionSection } from './document-type-selection';
+import {
+  buildDocumentTypeSelectionSection,
+  getDocumentTypeWidgetName,
+} from './document-type-selection';
 
 describe('Document Type Selection Block', () => {
+  describe('getDocumentTypeWidgetName', () => {
+    it('generates dynamic widget name based on given space type', () => {
+      expect(getDocumentTypeWidgetName('projects')).toBe('SelectDocumentType_projects');
+      expect(getDocumentTypeWidgetName('proposals')).toBe('SelectDocumentType_proposals');
+    });
+
+    it('falls back to default when space type is omitted or undefined', () => {
+      expect(getDocumentTypeWidgetName()).toBe('SelectDocumentType_default');
+    });
+  });
+
   it('maps SelectionState with spaceTypes, spaces, and documentTypes into valid UiViewSection', () => {
     const selectionState: SelectionState = {
       spaceTypes: [
@@ -45,7 +59,7 @@ describe('Document Type Selection Block', () => {
     // Widget 3: SelectDocumentType (Dropdown)
     const docTypeWidget = section.widgets[2];
     expect(docTypeWidget.selectionInput).toBeDefined();
-    expect(docTypeWidget.selectionInput?.name).toBe('SelectDocumentType_projects');
+    expect(docTypeWidget.selectionInput?.name).toBe(getDocumentTypeWidgetName('projects'));
     expect(docTypeWidget.selectionInput?.label).toBe('Document Type');
     expect(docTypeWidget.selectionInput?.type).toBe('DROPDOWN');
     expect(docTypeWidget.selectionInput?.items).toEqual(selectionState.documentTypes);

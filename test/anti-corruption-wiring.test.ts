@@ -10,6 +10,7 @@ import type { HttpServer, RouteDefinition } from '../src/infrastructure/http';
 import type { DocumentService } from '../src/features/document/domain';
 import { translateUiViewToNavigationAction } from '../src/infrastructure/workspace-addon/translator';
 import { GoogleWorkspaceActionResponseSchema } from '../src/infrastructure/workspace-addon/ui-blocks';
+import { getDocumentTypeWidgetName } from '../src/features/schema-driven-ui/blocks/document-type-selection';
 
 describe('Anti-Corruption Wiring Integration', () => {
   const mockManifestProvider: RawManifestProviderPort = {
@@ -88,7 +89,7 @@ describe('Anti-Corruption Wiring Integration', () => {
     expect(pushCard.sections[1].widgets[1].textInput?.initialSuggestions).toEqual({
       items: [{ text: 'Corp Contracts' }],
     });
-    expect(pushCard.sections[1].widgets[2].selectionInput?.name).toBe('SelectDocumentType_legal');
+    expect(pushCard.sections[1].widgets[2].selectionInput?.name).toBe(getDocumentTypeWidgetName('legal'));
 
 
     // Section 3: Document data

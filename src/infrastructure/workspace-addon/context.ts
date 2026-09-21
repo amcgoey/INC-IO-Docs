@@ -86,11 +86,12 @@ export function extractWorkspaceExecutionContext(
   if (event.commonEventObject?.formInputs) {
     formData = {};
     for (const [key, val] of Object.entries(event.commonEventObject.formInputs)) {
+      const normalizedKey = key.startsWith('SelectDocumentType_') ? 'SelectDocumentType' : key;
       if (val && typeof val === 'object' && 'stringInputs' in val) {
         const stringInputs = (val as { stringInputs?: { value?: unknown[] } })['stringInputs'];
-        formData[key] = stringInputs?.value?.[0] ?? '';
+        formData[normalizedKey] = stringInputs?.value?.[0] ?? '';
       } else {
-        formData[key] = val;
+        formData[normalizedKey] = val;
       }
     }
   }

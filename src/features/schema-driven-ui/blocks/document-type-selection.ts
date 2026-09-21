@@ -27,6 +27,12 @@ function buildDropdownWidget(
   };
 }
 
+export const DOCUMENT_TYPE_WIDGET_PREFIX = 'SelectDocumentType_';
+
+export function getDocumentTypeWidgetName(spaceType?: string): string {
+  return `${DOCUMENT_TYPE_WIDGET_PREFIX}${spaceType ?? 'default'}`;
+}
+
 export function buildDocumentTypeSelectionSection(
   selectionState: SelectionState,
   options?: DocumentTypeSelectionOptions
@@ -58,7 +64,7 @@ export function buildDocumentTypeSelectionSection(
   
   widgets.push(
     buildDropdownWidget(
-      `SelectDocumentType_${currentSpaceType}`,
+      getDocumentTypeWidgetName(currentSpaceType),
       'Document Type',
       selectionState.documentTypes,
       options?.onDocumentTypeChangeAction

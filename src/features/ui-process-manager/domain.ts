@@ -143,7 +143,6 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   // otherwise fallback to rawSelectedDocType and nameToKeyMap translation if provided
   const rawSelectedDocType =
     (effectiveFormData.SelectDocumentType as string | undefined) ??
-    (effectiveFormData[`SelectDocumentType_${currentSpaceType}`] as string | undefined) ??
     context.parameters?.documentTypeKey ??
     input.config?.defaultDocumentType;
 

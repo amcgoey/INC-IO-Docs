@@ -129,6 +129,31 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
     expect(result.request.formData?.date).toBeUndefined();
   });
 
+  it('normalizes dynamic SelectDocumentType_ keys to standard SelectDocumentType in formData', async () => {
+    const adapter = new WorkspaceAddonAdapter({
+      spaceProvider: mockSpaceProvider,
+      configProvider: mockConfigProvider,
+      manifestPort: mockManifestPort,
+      viewGenerator: mockViewGenerator,
+    });
+
+    const context: UiProcessEventContext = {
+      formData: {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentType_projects: 'communication-project',
+      },
+    };
+
+    const result = (await adapter.processUiEvent(context)) as {
+      renderedCard: boolean;
+      request: UiProcessCardRequest;
+    };
+
+    expect(result.request.documentTypeKey).toBe('communication-project');
+    expect(result.request.formData?.SelectDocumentType).toBe('communication-project');
+    expect(result.request.formData).not.toHaveProperty('SelectDocumentType_projects');
+  });
+
   it('translates human-readable names into backend keys in the write model', async () => {
     const adapter = new WorkspaceAddonAdapter({
       spaceProvider: mockSpaceProvider,

@@ -39,6 +39,33 @@ describe('Workspace Add-on Context', () => {
       expect(context.traceId).toBe('trace-123');
     });
 
+    it('normalizes dynamic SelectDocumentType_ keys to standard SelectDocumentType in formData', () => {
+      const rawPayload = {
+        commonEventObject: {
+          formInputs: {
+            SelectDocumentType_projects: {
+              stringInputs: {
+                value: ['communication-project'],
+              },
+            },
+            title: {
+              stringInputs: {
+                value: ['Project Brief'],
+              },
+            },
+          },
+        },
+      };
+
+      const context = extractWorkspaceExecutionContext(rawPayload);
+
+      expect(context.formData).toEqual({
+        SelectDocumentType: 'communication-project',
+        title: 'Project Brief',
+      });
+      expect(context.formData).not.toHaveProperty('SelectDocumentType_projects');
+    });
+
     it('extracts validationErrors array when present in parameters', () => {
       const rawPayload = {
         commonEventObject: {

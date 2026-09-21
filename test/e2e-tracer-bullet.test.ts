@@ -5,6 +5,7 @@ import { createApp, type AppInstance } from '../src/app/server';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
 import { GoogleWorkspaceActionResponseSchema } from '../src/infrastructure/workspace-addon/ui-blocks';
+import { getDocumentTypeWidgetName } from '../src/features/schema-driven-ui/blocks/document-type-selection';
 
 describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
   let app: AppInstance;
@@ -85,7 +86,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     expect(docTypeSection.widgets).toHaveLength(3);
     expect(docTypeSection.widgets[0].selectionInput?.name).toBe('SelectDocumentSpaceType');
     expect(docTypeSection.widgets[1].textInput?.name).toBe('SelectDocumentSpace');
-    expect(docTypeSection.widgets[2].selectionInput?.name).toBe('SelectDocumentType_projects');
+    expect(docTypeSection.widgets[2].selectionInput?.name).toBe(getDocumentTypeWidgetName('projects'));
 
     // Block 2: Document Info Block (rendered from communication-project.json)
     const docInfoSection = sections.find(
@@ -201,7 +202,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
             action: 'onFormChange',
           },
           formInputs: {
-            SelectDocumentType: { stringInputs: { value: ['communication-project'] } },
+            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
             contact: { stringInputs: { value: ['John Doe'] } },
             direction: { stringInputs: { value: ['OT'] } },
           },
@@ -244,7 +245,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
             action: 'onFormChange',
           },
           formInputs: {
-            SelectDocumentType: { stringInputs: { value: ['communication-project'] } },
+            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
             contact: { stringInputs: { value: ['John Doe'] } },
             direction: { stringInputs: { value: ['IN'] } },
           },
@@ -291,7 +292,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
           },
           formInputs: {
             SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
-            SelectDocumentType: { stringInputs: { value: ['communication-project'] } },
+            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
           },
         },
         drive: {
@@ -315,7 +316,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     expect(selectedSpaceType?.selected).toBe(true);
 
     const docTypeWidget3 = docTypeSection3.widgets.find(
-      (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'SelectDocumentType_proposals'
+      (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === getDocumentTypeWidgetName('proposals')
     );
     const selectedProposalItem = docTypeWidget3?.selectionInput?.items.find(
       (item: { value: string }) => item.value === 'communication-proposal'
@@ -337,7 +338,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
             action: 'processDocument',
           },
           formInputs: {
-            SelectDocumentType: { stringInputs: { value: ['communication-project'] } },
+            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
             // contact, date, direction, description are required but missing
           },
         },
@@ -375,7 +376,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
             action: 'processDocument',
           },
           formInputs: {
-            SelectDocumentType: { stringInputs: { value: ['communication-project'] } },
+            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
             contact: { stringInputs: { value: ['Acme Corp'] } },
             date: { stringInputs: { value: ['260920'] } },
             direction: { stringInputs: { value: ['IN'] } },
