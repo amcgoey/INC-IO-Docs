@@ -158,6 +158,15 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         w.textInput?.name === getDocumentInfoWidgetName('proposalId', 'communication-proposal')
     );
     expect(proposalIdWidget).toBeDefined();
+    expect(proposalIdWidget?.textInput?.value).toBeUndefined();
+
+    // Verify previously entered 'contact' field was cleared and not present
+    const contactWidget = dataSection?.widgets?.find(
+      (w: GoogleWorkspaceWidget) =>
+        w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-project') ||
+        w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-proposal')
+    );
+    expect(contactWidget).toBeUndefined();
   });
 
   it('retains DocumentInfo segment of formData when Document Type changes', async () => {

@@ -293,4 +293,268 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
+
+  describe('Form Change Behaviors (onSpaceTypeChange & onDocumentTypeChange)', () => {
+    it('executes onSpaceTypeChange, clears all document info section fields, and defaults Document Type to first allowed type', async () => {
+      const spaceChangePayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'onSpaceTypeChange',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: {
+              stringInputs: { value: ['proposals'] },
+            },
+            [getDocumentTypeWidgetName('projects')]: {
+              stringInputs: { value: ['communication-project'] },
+            },
+            [getDocumentSpaceWidgetName('projects')]: {
+              stringInputs: { value: ['Active Projects'] },
+            },
+            // Document info fields entered previously under 'projects' / 'communication-project'
+            [getDocumentInfoWidgetName('contact', 'communication-project')]: {
+              stringInputs: { value: ['Acme Corp'] },
+            },
+            [getDocumentInfoWidgetName('date', 'communication-project')]: {
+              stringInputs: { value: ['260921'] },
+            },
+            [getDocumentInfoWidgetName('direction', 'communication-project')]: {
+              stringInputs: { value: ['OT'] },
+            },
+            [getDocumentInfoWidgetName('description', 'communication-project')]: {
+              stringInputs: { value: ['Initial Discussion'] },
+            },
+            [getDocumentInfoWidgetName('incomingNotes', 'communication-project')]: {
+              stringInputs: { value: ['Notes from call'] },
+            },
+          },
+        },
+      };
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+        },
+        payload: spaceChangePayload,
+      });
+
+      // 1. Assert status code and schema
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+
+      // 2. Assert updateCard UI reload
+      const updateCard = body.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+
+      const sections = updateCard.sections;
+
+      // 3. Assert Document Type Selection Section
+      const docTypeSection = sections.find(
+        (s: { header?: string }) => s.header === 'Document Type'
+      );
+      expect(docTypeSection).toBeDefined();
+
+      const spaceTypeWidget = docTypeSection.widgets.find(
+        (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'SelectDocumentSpaceType'
+      );
+      const selectedSpaceItem = spaceTypeWidget?.selectionInput?.items.find(
+        (item: { value: string; selected?: boolean }) => item.value === 'proposals'
+      );
+      expect(selectedSpaceItem?.selected).toBe(true);
+
+      // Assert Document Space widget updated for proposals
+      const spaceWidget = docTypeSection.widgets.find(
+        (w: { textInput?: { name: string } }) => w.textInput?.name === getDocumentSpaceWidgetName('proposals')
+      );
+      expect(spaceWidget).toBeDefined();
+
+      // Assert Document Type defaults to first allowed type for proposals (communication-proposal)
+      const docTypeWidget = docTypeSection.widgets.find(
+        (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === getDocumentTypeWidgetName('proposals')
+      );
+      expect(docTypeWidget).toBeDefined();
+      expect(docTypeWidget?.selectionInput?.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ value: 'communication-proposal', selected: true }),
+        ])
+      );
+
+      // 4. Assert Document Data Section and explicit data clearance
+      const docDataSection = sections.find(
+        (s: { header?: string }) => s.header === 'Document Data'
+      );
+      expect(docDataSection).toBeDefined();
+
+      // Check fields for the newly active document type (communication-proposal)
+      const contactWidget = docDataSection.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-proposal')
+      );
+      expect(contactWidget).toBeDefined();
+      expect(contactWidget?.textInput?.value).toBeUndefined();
+
+      const dateWidget = docDataSection.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-proposal')
+      );
+      expect(dateWidget).toBeDefined();
+      expect(dateWidget?.textInput?.value).toBeUndefined();
+
+      const descriptionWidget = docDataSection.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('description', 'communication-proposal')
+      );
+      expect(descriptionWidget).toBeDefined();
+      expect(descriptionWidget?.textInput?.value).toBeUndefined();
+
+      // Direction should default to schema defaultValue ('IN') rather than previous entered value ('OT')
+      const directionWidget = docDataSection.widgets.find(
+        (w: { selectionInput?: { name: string } }) =>
+          w.selectionInput?.name === getDocumentInfoWidgetName('direction', 'communication-proposal')
+      );
+      expect(directionWidget).toBeDefined();
+      const selectedDirectionItem = directionWidget?.selectionInput?.items.find(
+        (item: { value: string; selected?: boolean }) => item.value === 'IN'
+      );
+      expect(selectedDirectionItem?.selected).toBe(true);
+
+      // Verify old document type fields are not present
+      const oldFields = docDataSection.widgets.filter(
+        (w: { textInput?: { name: string }; selectionInput?: { name: string } }) => {
+          const name = w.textInput?.name ?? w.selectionInput?.name ?? '';
+          return name.endsWith('_communication-project');
+        }
+      );
+      expect(oldFields).toHaveLength(0);
+
+      // 5. Explicitly prove NO real network calls occurred
+      expect(driveNetworkSpy).not.toHaveBeenCalled();
+      expect(oauthNetworkSpy).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('executes onDocumentTypeChange, retains Document Info fields, and triggers updateCard', async () => {
+      const docTypeChangePayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'onDocumentTypeChange',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: {
+              stringInputs: { value: ['projects'] },
+            },
+            [getDocumentTypeWidgetName('projects')]: {
+              stringInputs: { value: ['communication-project'] },
+            },
+            [getDocumentSpaceWidgetName('projects')]: {
+              stringInputs: { value: ['Active Projects'] },
+            },
+            [getDocumentInfoWidgetName('contact', 'communication-project')]: {
+              stringInputs: { value: ['Acme Corp'] },
+            },
+            [getDocumentInfoWidgetName('date', 'communication-project')]: {
+              stringInputs: { value: ['260921'] },
+            },
+            [getDocumentInfoWidgetName('direction', 'communication-project')]: {
+              stringInputs: { value: ['OT'] },
+            },
+            [getDocumentInfoWidgetName('description', 'communication-project')]: {
+              stringInputs: { value: ['Project Kickoff'] },
+            },
+            [getDocumentInfoWidgetName('incomingNotes', 'communication-project')]: {
+              stringInputs: { value: ['Initial notes'] },
+            },
+          },
+        },
+      };
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+        },
+        payload: docTypeChangePayload,
+      });
+
+      // 1. Assert status code and schema
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+
+      // 2. Assert updateCard UI reload
+      const updateCard = body.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+
+      const sections = updateCard.sections;
+
+      // 3. Assert Document Type Selection Section
+      const docTypeSection = sections.find(
+        (s: { header?: string }) => s.header === 'Document Type'
+      );
+      expect(docTypeSection).toBeDefined();
+
+      const docTypeWidget = docTypeSection.widgets.find(
+        (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === getDocumentTypeWidgetName('projects')
+      );
+      expect(docTypeWidget).toBeDefined();
+      const selectedDocTypeItem = docTypeWidget?.selectionInput?.items.find(
+        (item: { value: string; selected?: boolean }) => item.value === 'communication-project'
+      );
+      expect(selectedDocTypeItem?.selected).toBe(true);
+
+      // 4. Assert Document Data Section retains form data
+      const docDataSection = sections.find(
+        (s: { header?: string }) => s.header === 'Document Data'
+      );
+      expect(docDataSection).toBeDefined();
+
+      const contactWidget = docDataSection.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-project')
+      );
+      expect(contactWidget?.textInput?.value).toBe('Acme Corp');
+
+      const dateWidget = docDataSection.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-project')
+      );
+      expect(dateWidget?.textInput?.value).toBe('260921');
+
+      const directionWidget = docDataSection.widgets.find(
+        (w: { selectionInput?: { name: string } }) =>
+          w.selectionInput?.name === getDocumentInfoWidgetName('direction', 'communication-project')
+      );
+      const selectedDirectionItem = directionWidget?.selectionInput?.items.find(
+        (item: { value: string; selected?: boolean }) => item.value === 'OT'
+      );
+      expect(selectedDirectionItem?.selected).toBe(true);
+
+      const descriptionWidget = docDataSection.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('description', 'communication-project')
+      );
+      expect(descriptionWidget?.textInput?.value).toBe('Project Kickoff');
+
+      const incomingNotesWidget = docDataSection.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('incomingNotes', 'communication-project')
+      );
+      expect(incomingNotesWidget?.textInput?.value).toBe('Initial notes');
+
+      // 5. Explicitly prove NO real network calls occurred
+      expect(driveNetworkSpy).not.toHaveBeenCalled();
+      expect(oauthNetworkSpy).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
 });

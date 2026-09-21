@@ -90,9 +90,8 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
     expect(result.request.formData).toEqual({
       SelectDocumentSpaceType: 'proposals',
       SelectDocumentType: 'communication-proposal',
-      contact: 'Alice',
     });
-    expect(result.request.formData?.contact).toBe('Alice');
+    expect(result.request.formData?.contact).toBeUndefined();
   });
 
   it('retains DocumentInfo segment of formData when Document Type changes', async () => {
