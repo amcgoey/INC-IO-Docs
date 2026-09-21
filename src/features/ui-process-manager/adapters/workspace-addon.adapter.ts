@@ -7,13 +7,13 @@ import type {
   UiProcessViewGeneratorPort,
   UiProcessDocumentRunnerPort,
   UiProcessFormEvaluatorPort,
+  UiStateResolutionContext,
 } from '../ports';
 import {
   evaluateProcessUiState,
   resolveSpaceType,
   resolveDocumentType,
   extractDocumentData,
-  type ProcessUiStateConfig,
 } from '../domain';
 
 export interface WorkspaceAddonAdapterOptions {
@@ -27,27 +27,26 @@ export interface WorkspaceAddonAdapterOptions {
 
 
 export function normalizeFormData(
-  formData?: Record<string, unknown>,
-  activeSpaceType?: string,
-  activeDocumentType?: string,
-  config?: ProcessUiStateConfig
+  context?: UiStateResolutionContext
 ): Record<string, unknown> | undefined {
-  if (!formData) {
-    return formData;
+  if (!context?.formData) {
+    return context?.formData;
   }
-  const spaceType = activeSpaceType ?? resolveSpaceType(formData, config);
+  const spaceType = context.activeSpaceType ?? resolveSpaceType(context);
   const activeSpaceKey = spaceType ? `SelectDocumentSpace_${spaceType}` : undefined;
   const activeDocTypeSelectorKey = spaceType ? `SelectDocumentType_${spaceType}` : undefined;
 
-  const docType = activeDocumentType ?? resolveDocumentType(formData, config, spaceType);
+  const docType =
+    context.activeDocumentType ??
+    resolveDocumentType({ ...context, activeSpaceType: spaceType });
   const docTypeSuffix = docType ? `_${docType}` : undefined;
 
   const normalized: Record<string, unknown> = {};
   const strippedKeys = new Set<string>();
 
-  for (const [key, value] of Object.entries(formData)) {
+  for (const [key, value] of Object.entries(context.formData)) {
     let targetKey = key;
-    if (activeDocTypeSelectorKey ? key === activeDocTypeSelectorKey : key.startsWith('SelectDocumentType_')) {
+    if (activeDocTypeSelectorKey && key === activeDocTypeSelectorKey) {
       targetKey = 'SelectDocumentType';
     } else if (activeSpaceKey && key === activeSpaceKey) {
       targetKey = 'SelectDocumentSpace';
@@ -75,11 +74,15 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       this.options;
 
     const config = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
-    const currentSpaceType = resolveSpaceType(context.formData, config);
+    const currentSpaceType = resolveSpaceType({ formData: context.formData, config });
 
     const rawSelectedDocType =
-      resolveDocumentType(context.formData, config, currentSpaceType, context.parameters) ??
-      config?.defaultDocumentType;
+      resolveDocumentType({
+        formData: context.formData,
+        config,
+        activeSpaceType: currentSpaceType,
+        parameters: context.parameters,
+      }) ?? config?.defaultDocumentType;
 
     let resolvedDocumentTypeKey = rawSelectedDocType;
     if (rawSelectedDocType && manifestPort) {
@@ -93,19 +96,12 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       }
     }
 
-    const mappedConfig = {
-      ...(config?.defaultDocumentType ? { defaultDocumentType: config.defaultDocumentType } : {}),
-      ...(config?.defaultDocumentSpaceType
-        ? { defaultDocumentSpaceType: config.defaultDocumentSpaceType }
-        : {}),
-    };
-
-    const normalizedFormData = normalizeFormData(
-      context.formData,
-      currentSpaceType,
-      resolvedDocumentTypeKey,
-      mappedConfig
-    );
+    const normalizedFormData = normalizeFormData({
+      formData: context.formData,
+      activeSpaceType: currentSpaceType,
+      activeDocumentType: resolvedDocumentTypeKey,
+      config,
+    });
     const normalizedContext: UiProcessEventContext =
       normalizedFormData !== context.formData
         ? { ...context, formData: normalizedFormData }
@@ -137,7 +133,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         },
         resolvedDocumentTypeKey,
         resolvedSpaceType: currentSpaceType,
-        config: mappedConfig,
+        config,
         spaceTypes,
         collectionSpaces,
       });

@@ -20,10 +20,20 @@ export interface UiProcessSpaceType {
   spaceSchema: { allowedDocumentTypes: string[] };
 }
 
-export interface ProcessUiStateConfig {
-  defaultDocumentType?: string | undefined;
-  defaultDocumentSpaceType?: string | undefined;
-}
+export const ProcessUiStateConfigSchema = Type.Object({
+  defaultDocumentType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  defaultDocumentSpaceType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type ProcessUiStateConfig = Static<typeof ProcessUiStateConfigSchema>;
+
+export const UiStateResolutionContextSchema = Type.Object({
+  formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
+  config: Type.Optional(Type.Union([ProcessUiStateConfigSchema, Type.Undefined()])),
+  activeSpaceType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  activeDocumentType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  parameters: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
+});
+export type UiStateResolutionContext = Static<typeof UiStateResolutionContextSchema>;
 
 export interface ProcessUiStateEvent {
   actionName?: string | undefined;
@@ -103,46 +113,38 @@ export function translateDocumentType(
 }
 
 /**
- * Resolves the active space type from form data or configuration fallback.
+ * Resolves the active space type from context form data or configuration fallback.
  */
-export function resolveSpaceType(
-  formData?: Record<string, unknown>,
-  config?: ProcessUiStateConfig
-): string {
+export function resolveSpaceType(context?: UiStateResolutionContext): string {
   return (
-    (formData?.SelectDocumentSpaceType as string | undefined) ??
-    config?.defaultDocumentSpaceType ??
+    (context?.formData?.SelectDocumentSpaceType as string | undefined) ??
+    context?.config?.defaultDocumentSpaceType ??
     'projects'
   );
 }
 
 /**
- * Resolves the active document type from form data, context parameters, or configuration fallback.
+ * Resolves the active document type from context form data, parameters, or configuration fallback.
  */
-export function resolveDocumentType(
-  formData?: Record<string, unknown>,
-  config?: ProcessUiStateConfig,
-  activeSpaceType?: string,
-  parameters?: Record<string, string>
-): string | undefined {
-  if (formData?.SelectDocumentType && typeof formData.SelectDocumentType === 'string') {
-    return formData.SelectDocumentType;
+export function resolveDocumentType(context?: UiStateResolutionContext): string | undefined {
+  if (context?.formData?.SelectDocumentType && typeof context.formData.SelectDocumentType === 'string') {
+    return context.formData.SelectDocumentType;
   }
 
-  const spaceType = activeSpaceType ?? (formData ? resolveSpaceType(formData, config) : undefined);
+  const spaceType = context?.activeSpaceType ?? (context?.formData ? resolveSpaceType(context) : undefined);
   if (
     spaceType &&
-    formData?.[`SelectDocumentType_${spaceType}`] &&
-    typeof formData[`SelectDocumentType_${spaceType}`] === 'string'
+    context?.formData?.[`SelectDocumentType_${spaceType}`] &&
+    typeof context.formData[`SelectDocumentType_${spaceType}`] === 'string'
   ) {
-    return formData[`SelectDocumentType_${spaceType}`] as string;
+    return context.formData[`SelectDocumentType_${spaceType}`] as string;
   }
 
-  if (parameters?.documentTypeKey) {
-    return parameters.documentTypeKey;
+  if (context?.parameters?.documentTypeKey) {
+    return context.parameters.documentTypeKey;
   }
 
-  return config?.defaultDocumentType;
+  return context?.config?.defaultDocumentType;
 }
 
 /**
@@ -160,7 +162,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const isDocTypeChange = action === 'onDocumentTypeChange';
 
   const currentSpaceType =
-    input.resolvedSpaceType ?? resolveSpaceType(context.formData, input.config);
+    input.resolvedSpaceType ?? resolveSpaceType({ formData: context.formData, config: input.config });
 
   const selectedSpaceTypeObj = input.spaceTypes.find((t) => t.id === currentSpaceType);
   const allowedDocumentTypes = selectedSpaceTypeObj?.spaceSchema.allowedDocumentTypes ?? [];
@@ -171,7 +173,12 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   // If resolvedDocumentTypeKey is already provided by orchestrator translation, use it;
   // otherwise fallback to rawSelectedDocType and nameToKeyMap translation if provided
   const rawSelectedDocType =
-    resolveDocumentType(effectiveFormData, input.config, currentSpaceType, context.parameters);
+    resolveDocumentType({
+      formData: effectiveFormData,
+      config: input.config,
+      activeSpaceType: currentSpaceType,
+      parameters: context.parameters,
+    });
 
   let currentDocTypeKey =
     input.resolvedDocumentTypeKey ??

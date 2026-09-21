@@ -271,7 +271,11 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         'contact_proposal-doc': 'Bob',
       };
 
-      const normalized = normalizeFormData(raw, 'projects', 'communication-project');
+      const normalized = normalizeFormData({
+        formData: raw,
+        activeSpaceType: 'projects',
+        activeDocumentType: 'communication-project',
+      });
 
       expect(normalized).toEqual({
         SelectDocumentSpaceType: 'projects',
@@ -284,8 +288,33 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       });
     });
 
+    it('does not normalize SelectDocumentType_<space> from inactive spaces', () => {
+      const raw = {
+        SelectDocumentSpaceType: 'proposals',
+        SelectDocumentType_projects: 'communication-project',
+        SelectDocumentType_proposals: 'communication-proposal',
+      };
+      const normalized = normalizeFormData({ formData: raw });
+      expect(normalized).toEqual({
+        SelectDocumentSpaceType: 'proposals',
+        SelectDocumentType: 'communication-proposal',
+        SelectDocumentType_projects: 'communication-project',
+      });
+    });
+
+    it('does not normalize SelectDocumentType_<space> when active space cannot be determined', () => {
+      const raw = {
+        SelectDocumentType_projects: 'communication-project',
+      };
+      const normalized = normalizeFormData({ formData: raw, activeSpaceType: '' });
+      expect(normalized).toEqual({
+        SelectDocumentType_projects: 'communication-project',
+      });
+    });
+
     it('handles undefined formData gracefully', () => {
-      expect(normalizeFormData(undefined)).toBeUndefined();
+      expect(normalizeFormData()).toBeUndefined();
+      expect(normalizeFormData({ formData: undefined })).toBeUndefined();
     });
   });
 

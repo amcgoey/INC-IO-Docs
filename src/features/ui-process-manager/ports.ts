@@ -5,6 +5,10 @@ import {
   UiSelectionStateSchema,
   type UiSelectionState,
   type UiProcessSpaceType,
+  ProcessUiStateConfigSchema,
+  type ProcessUiStateConfig,
+  UiStateResolutionContextSchema,
+  type UiStateResolutionContext,
 } from './domain';
 
 export {
@@ -13,6 +17,10 @@ export {
   UiSelectionStateSchema,
   type UiSelectionState,
   type UiProcessSpaceType,
+  ProcessUiStateConfigSchema,
+  type ProcessUiStateConfig,
+  UiStateResolutionContextSchema,
+  type UiStateResolutionContext,
 };
 
 export const UiProcessEventContextSchema = Type.Object({
@@ -50,10 +58,7 @@ export type UiProcessCardRequest = Static<typeof UiProcessCardRequestSchema>;
 // --- Driven Ports ---
 
 export interface UiProcessConfigProviderPort {
-  getWorkspaceConfig(): Promise<{
-    defaultDocumentType?: string | undefined;
-    defaultDocumentSpaceType?: string | undefined;
-  } | undefined>;
+  getWorkspaceConfig(): Promise<ProcessUiStateConfig | undefined>;
 }
 
 export interface UiProcessSpaceCollection {
