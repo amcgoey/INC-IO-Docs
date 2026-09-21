@@ -143,11 +143,11 @@ describe('ui-process-manager domain', () => {
       expect(result).toBe('communication-proposal');
     });
 
-    it('returns document type from any SelectDocumentType_ key when spaceType is not matched', () => {
+    it('ignores SelectDocumentType_ keys from inactive spaces to prevent cross-pollination', () => {
       const result = resolveDocumentType({
         SelectDocumentType_custom: 'custom-doc-type',
       });
-      expect(result).toBe('custom-doc-type');
+      expect(result).toBeUndefined();
     });
 
     it('returns document type from parameters.documentTypeKey when not in formData', () => {

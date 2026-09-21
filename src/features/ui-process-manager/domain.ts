@@ -138,14 +138,6 @@ export function resolveDocumentType(
     return formData[`SelectDocumentType_${spaceType}`] as string;
   }
 
-  if (formData) {
-    for (const [key, value] of Object.entries(formData)) {
-      if (key.startsWith('SelectDocumentType_') && typeof value === 'string') {
-        return value;
-      }
-    }
-  }
-
   if (parameters?.documentTypeKey) {
     return parameters.documentTypeKey;
   }
