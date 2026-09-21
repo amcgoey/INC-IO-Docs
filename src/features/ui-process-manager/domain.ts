@@ -127,7 +127,7 @@ export function resolveSpaceType(context?: UiStateResolutionContext): string {
  * Resolves the active document type from context form data, parameters, or configuration fallback.
  */
 export function resolveDocumentType(context?: UiStateResolutionContext): string | undefined {
-  const spaceType = context?.activeSpaceType ?? (context?.formData ? resolveSpaceType(context) : undefined);
+  const spaceType = context?.activeSpaceType ?? resolveSpaceType(context);
   if (
     spaceType &&
     context?.formData?.[`SelectDocumentType_${spaceType}`] &&
@@ -167,7 +167,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const selectedSpaceTypeObj = input.spaceTypes.find((t) => t.id === currentSpaceType);
   const allowedDocumentTypes = selectedSpaceTypeObj?.spaceSchema.allowedDocumentTypes ?? [];
 
-  let effectiveFormData: Record<string, unknown> = { ...(context.formData ?? {}) };
+  let effectiveFormData: Record<string, unknown> = { ...context.formData };
   const isUpdateCard = Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange);
 
   // If resolvedDocumentTypeKey is already provided by orchestrator translation, use it;

@@ -53,7 +53,8 @@ export function normalizeFormData(
     } else if (
       docTypeSuffix &&
       key.endsWith(docTypeSuffix) &&
-      !key.startsWith('SelectDocument')
+      !key.startsWith('SelectDocumentType_') &&
+      !key.startsWith('SelectDocumentSpace_')
     ) {
       targetKey = key.slice(0, -docTypeSuffix.length);
       strippedKeys.add(targetKey);
@@ -82,7 +83,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         config,
         activeSpaceType: currentSpaceType,
         parameters: context.parameters,
-      }) ?? config?.defaultDocumentType;
+      });
 
     let resolvedDocumentTypeKey = rawSelectedDocType;
     if (rawSelectedDocType && manifestPort) {
