@@ -96,11 +96,12 @@ export function extractSelectionItems(
 const widgetBuilders: Record<string, WidgetBuilder> = {
   selectionInput: ({ field, label, customProps, onChangeAction, formValue, dataSchema }) => {
     const baseItems = extractSelectionItems(field, customProps, dataSchema);
+    const resolvedValue = formValue !== undefined ? formValue : field.defaultValue;
     const items =
-      formValue !== undefined
+      resolvedValue !== undefined
         ? baseItems.map((item) => ({
             ...item,
-            selected: String(item.value) === String(formValue),
+            selected: String(item.value) === String(resolvedValue),
           }))
         : baseItems;
 
@@ -174,9 +175,9 @@ export function buildDocumentInfoSection(
 
     const onChangeAction: UiViewAction | undefined =
       typeof uiField?.onChange === 'string'
-        ? { action: uiField.onChange }
+        ? { action: '/workspace/action', parameters: { action: uiField.onChange } }
         : uiField?.onChange === true
-          ? { action: 'onFormChange' }
+          ? { action: '/workspace/on-form-change', parameters: { action: 'onFormChange' } }
           : undefined;
 
     const builder = widgetBuilders[widgetType] ?? widgetBuilders.textInput;

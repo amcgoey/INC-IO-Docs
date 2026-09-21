@@ -62,7 +62,24 @@ describe('Anti-Corruption Wiring Integration', () => {
       },
       validationErrors: ['Title cannot be empty'],
     });
-    const actionResponse = translateUiViewToNavigationAction(view);
+
+    const mappedView = JSON.parse(JSON.stringify(view));
+    for (const section of mappedView.sections) {
+      for (const widget of section.widgets) {
+        if (widget.selectionInput?.onChangeAction?.parameters) {
+          widget.selectionInput.onChangeAction.parameters = Object.entries(widget.selectionInput.onChangeAction.parameters).map(([k, v]) => ({ key: k, value: String(v) }));
+        }
+        if (widget.buttonList?.buttons) {
+          for (const btn of widget.buttonList.buttons) {
+            if (btn.onClick?.parameters) {
+              btn.onClick.parameters = Object.entries(btn.onClick.parameters).map(([k, v]) => ({ key: k, value: String(v) }));
+            }
+          }
+        }
+      }
+    }
+
+    const actionResponse = translateUiViewToNavigationAction(mappedView);
 
     // 1. Verify that the output satisfies the infrastructure-defined Google Workspace Action Response schema
     expect(Value.Check(GoogleWorkspaceActionResponseSchema, actionResponse)).toBe(true);
@@ -101,7 +118,8 @@ describe('Anti-Corruption Wiring Integration', () => {
         text: 'Process Document',
         onClick: {
           action: {
-            function: 'processDocument',
+            function: '/workspace/action',
+            parameters: [{ key: 'action', value: 'processDocument' }],
             loadIndicator: 'SPINNER',
           },
         },

@@ -243,12 +243,15 @@ function normalizeButtonOnClick(
   if (!onClick) {
     return undefined;
   }
-  const rawAction =
-    typeof onClick === 'string' || 'function' in onClick
-      ? onClick
-      : 'action' in onClick
-        ? onClick.action
-        : undefined;
+  let rawAction: AbstractUiAction | undefined;
+
+  if (typeof onClick === 'string') {
+    rawAction = onClick;
+  } else if ('function' in onClick || ('action' in onClick && typeof onClick.action === 'string')) {
+    rawAction = onClick as AbstractUiAction;
+  } else if ('action' in onClick && typeof onClick.action === 'object') {
+    rawAction = onClick.action as AbstractUiAction;
+  }
 
   const action = normalizeAction(rawAction);
   return action ? { action } : undefined;
