@@ -5,6 +5,7 @@ import {
   type RawManifestProviderPort,
 } from '../src/app/schema-driven-ui.wiring';
 import { wireWorkspaceAddonRoutes } from '../src/app/workspace-addon.wiring';
+import { mapUiViewToWorkspaceUiView } from '../src/app/ui-process-manager.wiring';
 import type { HttpServer, RouteDefinition } from '../src/infrastructure/http';
 import type { DocumentService } from '../src/features/document/domain';
 import { translateUiViewToNavigationAction } from '../src/infrastructure/workspace-addon/translator';
@@ -63,23 +64,7 @@ describe('Anti-Corruption Wiring Integration', () => {
       validationErrors: ['Title cannot be empty'],
     });
 
-    const mappedView = JSON.parse(JSON.stringify(view));
-    for (const section of mappedView.sections) {
-      for (const widget of section.widgets) {
-        if (widget.selectionInput?.onChangeAction?.parameters) {
-          widget.selectionInput.onChangeAction.parameters = Object.entries(widget.selectionInput.onChangeAction.parameters).map(([k, v]) => ({ key: k, value: String(v) }));
-        }
-        if (widget.buttonList?.buttons) {
-          for (const btn of widget.buttonList.buttons) {
-            if (btn.onClick?.parameters) {
-              btn.onClick.parameters = Object.entries(btn.onClick.parameters).map(([k, v]) => ({ key: k, value: String(v) }));
-            }
-          }
-        }
-      }
-    }
-
-    const actionResponse = translateUiViewToNavigationAction(mappedView);
+    const actionResponse = translateUiViewToNavigationAction(mapUiViewToWorkspaceUiView(view));
 
     // 1. Verify that the output satisfies the infrastructure-defined Google Workspace Action Response schema
     expect(Value.Check(GoogleWorkspaceActionResponseSchema, actionResponse)).toBe(true);

@@ -70,12 +70,10 @@ describe('WorkspaceAddonAdapter', () => {
     expect(selectionSection.header).toBe('Document Type');
     expect(selectionSection.widgets).toHaveLength(3);
     expect(selectionSection.widgets[0].selectionInput?.onChangeAction).toEqual({
-      action: '/workspace/action',
-      parameters: { action: 'onSpaceTypeChange' },
+      action: 'onSpaceTypeChange',
     });
     expect(selectionSection.widgets[2].selectionInput?.onChangeAction).toEqual({
-      action: '/workspace/action',
-      parameters: { action: 'onDocumentTypeChange' },
+      action: 'onDocumentTypeChange',
     });
     assertValidUiView(view);
   });
@@ -198,7 +196,7 @@ describe('WorkspaceAddonAdapter', () => {
     expect(infoSection.widgets).toHaveLength(2);
     expect(infoSection.widgets[0].textInput?.name).toBe('invoiceNumber');
     expect(infoSection.widgets[1].buttonList?.buttons).toEqual([
-      { text: 'Process Document', onClick: { action: '/workspace/action', parameters: { action: 'processDocument' } } },
+      { text: 'Process Document', onClick: { action: 'processDocument' } },
     ]);
 
     const adminSection = view.sections[1];

@@ -175,9 +175,9 @@ export function buildDocumentInfoSection(
 
     const onChangeAction: UiViewAction | undefined =
       typeof uiField?.onChange === 'string'
-        ? { action: '/workspace/action', parameters: { action: uiField.onChange } }
+        ? { action: uiField.onChange }
         : uiField?.onChange === true
-          ? { action: '/workspace/on-form-change', parameters: { action: 'onFormChange' } }
+          ? { action: 'onFormChange' }
           : undefined;
 
     const builder = widgetBuilders[widgetType] ?? widgetBuilders.textInput;

@@ -30,8 +30,8 @@ const WORKSPACE_ADDON_VIEW_SCHEMA: readonly SectionProducer[] = [
   (context) =>
     context.selectionState
       ? buildDocumentTypeSelectionSection(context.selectionState, {
-          onSpaceTypeChangeAction: { action: '/workspace/action', parameters: { action: 'onSpaceTypeChange' } },
-          onDocumentTypeChangeAction: { action: '/workspace/action', parameters: { action: 'onDocumentTypeChange' } },
+          onSpaceTypeChangeAction: { action: 'onSpaceTypeChange' },
+          onDocumentTypeChangeAction: { action: 'onDocumentTypeChange' },
         })
       : undefined,
 
@@ -42,7 +42,7 @@ const WORKSPACE_ADDON_VIEW_SCHEMA: readonly SectionProducer[] = [
           sectionHeader: 'Document Data',
           formData: context.formData,
           hiddenFields: context.hiddenFields,
-          ...(context.documentTypeKey ? { onProcessAction: { action: '/workspace/action', parameters: { action: 'processDocument' } } } : {}),
+          ...(context.documentTypeKey ? { onProcessAction: { action: 'processDocument' } } : {}),
         })
       : undefined,
 

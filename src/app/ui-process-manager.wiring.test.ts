@@ -39,7 +39,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           documentUiSchema: {
             layout: ['contact', 'date'],
             fields: {
-              contact: { widget: 'textInput', label: 'Contact' },
+              contact: { widget: 'textInput', label: 'Contact', onChange: true },
               date: { widget: 'textInput', label: 'Date' },
             },
           },
@@ -296,5 +296,59 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
     );
     expect(statusSection).toBeDefined();
   });
+
+  it('correctly routes onFormChange actions to /workspace/on-form-change and standard actions to /workspace/action in generated navigation cards', async () => {
+    const wiring = createUiProcessManagerWiring({
+      configProvider: mockConfigProvider,
+      documentSpaceService: mockDocumentSpaceService,
+      manifestProvider: mockManifestProvider,
+    });
+
+    const simulatedContext: WorkspaceExecutionContext = {
+      formData: {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentType: 'communication-project',
+      },
+    };
+
+    const response = (await wiring.orchestrator.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
+    const pushCard = response.action!.navigations![0].pushCard!;
+
+    // 1. Verify onSpaceTypeChange on selectionInput is routed to /workspace/action
+    const docTypeSection = pushCard.sections?.find((s: GoogleWorkspaceSection) => s.header === 'Document Type');
+    const spaceTypeWidget = docTypeSection?.widgets?.find(
+      (w: GoogleWorkspaceWidget) => w.selectionInput?.name === 'SelectDocumentSpaceType'
+    )?.selectionInput;
+    expect(spaceTypeWidget?.onChangeAction).toEqual({
+      function: '/workspace/action',
+      parameters: [{ key: 'action', value: 'onSpaceTypeChange' }],
+      loadIndicator: 'SPINNER',
+    });
+
+    // 2. Verify contact textInput with onChange: true is routed to /workspace/on-form-change
+    const dataSection = pushCard.sections?.find((s: GoogleWorkspaceSection) => s.header === 'Document Data');
+    const contactWidget = dataSection?.widgets?.find(
+      (w: GoogleWorkspaceWidget) => w.textInput?.name === 'contact'
+    )?.textInput;
+    expect(contactWidget?.onChangeAction).toEqual({
+      function: '/workspace/on-form-change',
+      parameters: [{ key: 'action', value: 'onFormChange' }],
+      loadIndicator: 'SPINNER',
+    });
+
+    // 3. Verify processDocument button is routed to /workspace/action
+    const buttonListWidget = dataSection?.widgets?.find(
+      (w: GoogleWorkspaceWidget) => w.buttonList !== undefined
+    )?.buttonList;
+    const processButton = buttonListWidget?.buttons.find((b) => b.text === 'Process Document');
+    expect(processButton?.onClick).toEqual({
+      action: {
+        function: '/workspace/action',
+        parameters: [{ key: 'action', value: 'processDocument' }],
+        loadIndicator: 'SPINNER',
+      },
+    });
+  });
 });
+
 

@@ -10,6 +10,7 @@ import {
   type GoogleWorkspaceWidget,
   type GoogleWorkspaceActionResponse,
   type GoogleWorkspaceAction,
+  type GoogleWorkspaceActionParameter,
   type GoogleWorkspaceTextInput,
   type GoogleWorkspaceSelectionInput,
   type GoogleWorkspaceSelectionItem,
@@ -17,7 +18,7 @@ import {
 
 // --- Local Boundary Contract Schema (Adheres to Rule 2: No imports from features/) ---
 
-export const AbstractUiViewHeaderSchema = Type.Object(
+export const UiViewHeaderSchema = Type.Object(
   {
     title: Type.String({ minLength: 1 }),
     subtitle: Type.Optional(Type.String()),
@@ -29,69 +30,38 @@ export const AbstractUiViewHeaderSchema = Type.Object(
   { additionalProperties: false }
 );
 
-export type AbstractUiViewHeader = Static<typeof AbstractUiViewHeaderSchema>;
+export type UiViewHeader = Static<typeof UiViewHeaderSchema>;
 
-export const AbstractUiSelectionItemSchema = Type.Object({
+export const UiSelectionItemSchema = Type.Object({
   text: Type.String(),
   value: Type.String(),
   selected: Type.Optional(Type.Boolean()),
 });
 
-export const AbstractUiSuggestionItemSchema = Type.Object({
+export const UiSuggestionItemSchema = Type.Object({
   text: Type.String(),
 });
 
-export const AbstractUiSuggestionsSchema = Type.Object({
-  items: Type.Array(AbstractUiSuggestionItemSchema),
+export const UiSuggestionsSchema = Type.Object({
+  items: Type.Array(UiSuggestionItemSchema),
 });
 
-export const AbstractUiActionParameterSchema = Type.Object({
-  key: Type.String(),
-  value: Type.String(),
-});
+export const UiActionSchema = Type.Object(
+  {
+    action: Type.String(),
+    route: Type.String(),
+    parameters: Type.Optional(Type.Record(Type.String(), Type.String())),
+  },
+  { additionalProperties: false }
+);
 
-export type AbstractUiActionParameter = Static<typeof AbstractUiActionParameterSchema>;
+export type UiAction = Static<typeof UiActionSchema>;
 
-export const AbstractUiActionSchema = Type.Union([
-  Type.String(),
-  Type.Object(
-    {
-      function: Type.String(),
-      parameters: Type.Optional(Type.Array(AbstractUiActionParameterSchema)),
-      loadIndicator: Type.Optional(
-        Type.Union([Type.Literal('SPINNER'), Type.Literal('NONE')])
-      ),
-    },
-    { additionalProperties: false }
-  ),
-  Type.Object(
-    {
-      action: Type.String(),
-      parameters: Type.Optional(Type.Array(AbstractUiActionParameterSchema)),
-      loadIndicator: Type.Optional(
-        Type.Union([Type.Literal('SPINNER'), Type.Literal('NONE')])
-      ),
-    },
-    { additionalProperties: false }
-  ),
-]);
+export const UiOnClickSchema = UiActionSchema;
 
+export type UiOnClick = Static<typeof UiOnClickSchema>;
 
-export type AbstractUiAction = Static<typeof AbstractUiActionSchema>;
-
-export const AbstractUiOnClickSchema = Type.Union([
-  AbstractUiActionSchema,
-  Type.Object(
-    {
-      action: Type.Optional(AbstractUiActionSchema),
-    },
-    { additionalProperties: false }
-  ),
-]);
-
-export type AbstractUiOnClick = Static<typeof AbstractUiOnClickSchema>;
-
-export const AbstractUiViewTextParagraphWidgetSchema = Type.Object(
+export const UiViewTextParagraphWidgetSchema = Type.Object(
   {
     textParagraph: Type.Object(
       {
@@ -103,7 +73,7 @@ export const AbstractUiViewTextParagraphWidgetSchema = Type.Object(
   { additionalProperties: false }
 );
 
-export const AbstractUiViewTextInputWidgetSchema = Type.Object(
+export const UiViewTextInputWidgetSchema = Type.Object(
   {
     textInput: Type.Object(
       {
@@ -111,9 +81,9 @@ export const AbstractUiViewTextInputWidgetSchema = Type.Object(
         label: Type.Optional(Type.String()),
         hintText: Type.Optional(Type.String()),
         value: Type.Optional(Type.String()),
-        initialSuggestions: Type.Optional(AbstractUiSuggestionsSchema),
-        autocomplete: Type.Optional(Type.Array(AbstractUiSelectionItemSchema)),
-        onChangeAction: Type.Optional(AbstractUiActionSchema),
+        initialSuggestions: Type.Optional(UiSuggestionsSchema),
+        autocomplete: Type.Optional(Type.Array(UiSelectionItemSchema)),
+        onChangeAction: Type.Optional(UiActionSchema),
       },
       { additionalProperties: false }
     ),
@@ -121,7 +91,7 @@ export const AbstractUiViewTextInputWidgetSchema = Type.Object(
   { additionalProperties: false }
 );
 
-export const AbstractUiViewSelectionInputWidgetSchema = Type.Object(
+export const UiViewSelectionInputWidgetSchema = Type.Object(
   {
     selectionInput: Type.Object(
       {
@@ -134,8 +104,8 @@ export const AbstractUiViewSelectionInputWidgetSchema = Type.Object(
             Type.Literal('RADIO_BUTTON'),
           ])
         ),
-        items: Type.Optional(Type.Array(AbstractUiSelectionItemSchema)),
-        onChangeAction: Type.Optional(AbstractUiActionSchema),
+        items: Type.Optional(Type.Array(UiSelectionItemSchema)),
+        onChangeAction: Type.Optional(UiActionSchema),
       },
       { additionalProperties: false }
     ),
@@ -143,7 +113,7 @@ export const AbstractUiViewSelectionInputWidgetSchema = Type.Object(
   { additionalProperties: false }
 );
 
-export const AbstractUiViewButtonListWidgetSchema = Type.Object(
+export const UiViewButtonListWidgetSchema = Type.Object(
   {
     buttonList: Type.Object(
       {
@@ -151,7 +121,7 @@ export const AbstractUiViewButtonListWidgetSchema = Type.Object(
           Type.Object(
             {
               text: Type.String(),
-              onClick: Type.Optional(AbstractUiOnClickSchema),
+              onClick: Type.Optional(UiOnClickSchema),
             },
             { additionalProperties: false }
           )
@@ -163,38 +133,38 @@ export const AbstractUiViewButtonListWidgetSchema = Type.Object(
   { additionalProperties: false }
 );
 
-export const AbstractUiViewWidgetSchema = Type.Union([
-  AbstractUiViewTextParagraphWidgetSchema,
-  AbstractUiViewTextInputWidgetSchema,
-  AbstractUiViewSelectionInputWidgetSchema,
-  AbstractUiViewButtonListWidgetSchema,
+export const UiViewWidgetSchema = Type.Union([
+  UiViewTextParagraphWidgetSchema,
+  UiViewTextInputWidgetSchema,
+  UiViewSelectionInputWidgetSchema,
+  UiViewButtonListWidgetSchema,
 ]);
 
-export type AbstractUiViewWidget = Static<typeof AbstractUiViewWidgetSchema>;
+export type UiViewWidget = Static<typeof UiViewWidgetSchema>;
 
-export const AbstractUiViewSectionSchema = Type.Object(
+export const UiViewSectionSchema = Type.Object(
   {
     header: Type.Optional(Type.String()),
-    widgets: Type.Array(AbstractUiViewWidgetSchema, { minItems: 1 }),
+    widgets: Type.Array(UiViewWidgetSchema, { minItems: 1 }),
     collapsible: Type.Optional(Type.Boolean()),
     uncollapsibleWidgetsCount: Type.Optional(Type.Number()),
   },
   { additionalProperties: false }
 );
 
-export type AbstractUiViewSection = Static<typeof AbstractUiViewSectionSchema>;
+export type UiViewSection = Static<typeof UiViewSectionSchema>;
 
-export const AbstractUiViewSchema = Type.Object(
+export const UiViewSchema = Type.Object(
   {
     id: Type.Optional(Type.String()),
-    header: Type.Optional(AbstractUiViewHeaderSchema),
-    sections: Type.Array(AbstractUiViewSectionSchema, { minItems: 1 }),
+    header: Type.Optional(UiViewHeaderSchema),
+    sections: Type.Array(UiViewSectionSchema, { minItems: 1 }),
     evaluationOrder: Type.Optional(Type.Array(Type.String())),
   },
   { additionalProperties: false }
 );
 
-export type AbstractUiView = Static<typeof AbstractUiViewSchema>;
+export type UiView = Static<typeof UiViewSchema>;
 
 // --- Validation Helpers ---
 
@@ -214,52 +184,46 @@ function validateOrThrow<T extends TSchema>(
 }
 
 function normalizeAction(
-  action: AbstractUiAction | undefined
+  action: UiAction | undefined
 ): GoogleWorkspaceAction | undefined {
   if (!action) {
     return undefined;
   }
-  if (typeof action === 'string') {
-    return {
-      function: action,
-      loadIndicator: 'SPINNER',
-    };
-  }
-  const funcName = 'function' in action ? action.function : action.action;
-  const normalized: GoogleWorkspaceAction = {
-    function: funcName,
-    loadIndicator: action.loadIndicator ?? 'SPINNER',
-  };
-  if (action.parameters !== undefined) {
-    normalized.parameters = action.parameters;
-  }
-  return normalized;
 
+  const funcName = action.route;
+
+  const parameters: GoogleWorkspaceActionParameter[] = [
+    { key: 'action', value: action.action },
+  ];
+
+  if (action.parameters) {
+    for (const [key, value] of Object.entries(action.parameters)) {
+      if (key !== 'action' && value !== undefined && value !== null) {
+        parameters.push({ key, value: String(value) });
+      }
+    }
+  }
+
+  return {
+    function: funcName,
+    parameters,
+    loadIndicator: 'SPINNER',
+  };
 }
 
 function normalizeButtonOnClick(
-  onClick: AbstractUiOnClick | undefined
+  onClick: UiOnClick | undefined
 ): { action?: GoogleWorkspaceAction } | undefined {
   if (!onClick) {
     return undefined;
   }
-  let rawAction: AbstractUiAction | undefined;
-
-  if (typeof onClick === 'string') {
-    rawAction = onClick;
-  } else if ('function' in onClick || ('action' in onClick && typeof onClick.action === 'string')) {
-    rawAction = onClick as AbstractUiAction;
-  } else if ('action' in onClick && typeof onClick.action === 'object') {
-    rawAction = onClick.action as AbstractUiAction;
-  }
-
-  const action = normalizeAction(rawAction);
+  const action = normalizeAction(onClick);
   return action ? { action } : undefined;
 }
 
 function applyCommonInputProps<T extends { label?: string; onChangeAction?: GoogleWorkspaceAction }>(
   target: T,
-  source: { label?: string; onChangeAction?: AbstractUiAction }
+  source: { label?: string; onChangeAction?: UiAction }
 ): void {
   if (source.label !== undefined) {
     target.label = source.label;
@@ -273,14 +237,14 @@ function applyCommonInputProps<T extends { label?: string; onChangeAction?: Goog
 // --- Deep Module Public Interface ---
 
 /**
- * Translates an abstract UiView model into a concrete GoogleWorkspaceCard structure.
- * Validates the input payload against the boundary contract and maps abstract widgets
+ * Translates an adapter UiView model into a concrete GoogleWorkspaceCard structure.
+ * Validates the input payload against the boundary contract and maps adapter widgets
  * to Google Workspace Card JSON formats.
  */
 export function translateUiViewToWorkspaceCard(payload: unknown): GoogleWorkspaceCard {
-  validateOrThrow(AbstractUiViewSchema, payload, 'Invalid UiView');
+  validateOrThrow(UiViewSchema, payload, 'Invalid UiView');
 
-  const view = payload as AbstractUiView;
+  const view = payload as UiView;
 
   // Map header (or fallback to default header)
   const header: GoogleWorkspaceHeader = {
@@ -390,7 +354,7 @@ export function translateUiViewToWorkspaceCard(payload: unknown): GoogleWorkspac
 }
 
 /**
- * Translates an abstract UiView model into a GoogleWorkspaceActionResponse navigation action.
+ * Translates an adapter UiView model into a GoogleWorkspaceActionResponse navigation action.
  */
 export function translateUiViewToNavigationAction(payload: unknown): GoogleWorkspaceActionResponse {
   const card = translateUiViewToWorkspaceCard(payload);
@@ -398,7 +362,7 @@ export function translateUiViewToNavigationAction(payload: unknown): GoogleWorks
 }
 
 /**
- * Translates an abstract UiView model into a GoogleWorkspaceActionResponse updateCard navigation action.
+ * Translates an adapter UiView model into a GoogleWorkspaceActionResponse updateCard navigation action.
  */
 export function translateUiViewToUpdateCardAction(payload: unknown): GoogleWorkspaceActionResponse {
   const card = translateUiViewToWorkspaceCard(payload);

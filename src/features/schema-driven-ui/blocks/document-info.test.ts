@@ -151,13 +151,13 @@ describe('Document Info Block', () => {
       expect(w0).toBeDefined();
       expect(w0?.label).toBe('Preferred Name');
       expect(w0?.items).toEqual([{ text: 'Johnny', value: 'johnny', selected: false }]);
-      expect(w0?.onChangeAction).toEqual({ action: '/workspace/on-form-change', parameters: { action: 'onFormChange' } });
+      expect(w0?.onChangeAction).toEqual({ action: 'onFormChange' });
 
       // Widget 2: placeholder mapped to hintText and string onChange
       const w2 = section.widgets[2].textInput;
       expect(w2).toBeDefined();
       expect(w2?.hintText).toBe('Enter age in years');
-      expect(w2?.onChangeAction).toEqual({ action: '/workspace/action', parameters: { action: 'customAgeChanged' } });
+      expect(w2?.onChangeAction).toEqual({ action: 'customAgeChanged' });
     });
 
     it('omits onChangeAction when onChange is explicitly false or undefined', () => {
@@ -227,8 +227,7 @@ describe('Document Info Block', () => {
       expect(section.widgets[2].selectionInput?.name).toBe('direction');
       expect(section.widgets[2].selectionInput?.label).toBe('Direction');
       expect(section.widgets[2].selectionInput?.onChangeAction).toEqual({
-        action: '/workspace/on-form-change',
-        parameters: { action: 'onFormChange' },
+        action: 'onFormChange',
       });
 
       // 4. description: textInput

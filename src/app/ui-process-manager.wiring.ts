@@ -22,9 +22,9 @@ import type {
 import {
   translateUiViewToNavigationAction,
   translateUiViewToUpdateCardAction,
-  type AbstractUiView,
-  type AbstractUiViewWidget,
-  type AbstractUiAction,
+  type UiView as WorkspaceUiView,
+  type UiViewWidget,
+  type UiAction,
 } from '../infrastructure/workspace-addon/translator';
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
 import type { FormChangeEvaluatorFn as FormChangeEvaluator } from '../features/ui-process-manager';
@@ -39,32 +39,27 @@ function mapSelectionItems(
   }));
 }
 
-function mapActionParameters(
-  parameters?: Record<string, unknown> | undefined
-): Array<{ key: string; value: string }> | undefined {
-  if (!parameters) {
-    return undefined;
-  }
-  return Object.entries(parameters).map(([key, value]) => ({
-    key,
-    value: String(value),
-  }));
-}
-
 function mapUiAction(
   action?: { action: string; parameters?: Record<string, unknown> | undefined } | undefined
-): AbstractUiAction | undefined {
+): UiAction | undefined {
   if (!action) {
     return undefined;
   }
-  const params = mapActionParameters(action.parameters);
+  const parameters: Record<string, string> | undefined = action.parameters
+    ? Object.fromEntries(
+        Object.entries(action.parameters)
+          .filter(([, v]) => v !== undefined && v !== null)
+          .map(([k, v]) => [k, String(v)])
+      )
+    : undefined;
   return {
     action: action.action,
-    ...(params !== undefined ? { parameters: params } : {}),
+    route: action.action === 'onFormChange' ? '/workspace/on-form-change' : '/workspace/action',
+    ...(parameters !== undefined ? { parameters } : {}),
   };
 }
 
-function mapUiViewToAbstractUiView(view: UiView): AbstractUiView {
+export function mapUiViewToWorkspaceUiView(view: UiView): WorkspaceUiView {
   return {
     ...(view.id !== undefined ? { id: view.id } : {}),
     ...(view.header !== undefined
@@ -84,7 +79,7 @@ function mapUiViewToAbstractUiView(view: UiView): AbstractUiView {
         ? { uncollapsibleWidgetsCount: section.uncollapsibleWidgetsCount }
         : {}),
       widgets: section.widgets
-        .map((widget): AbstractUiViewWidget | undefined => {
+        .map((widget): UiViewWidget | undefined => {
           if (widget.textParagraph) {
             return { textParagraph: { text: widget.textParagraph.text } };
           }
@@ -96,6 +91,9 @@ function mapUiViewToAbstractUiView(view: UiView): AbstractUiView {
                 ...(widget.textInput.label !== undefined ? { label: widget.textInput.label } : {}),
                 ...(widget.textInput.hintText !== undefined ? { hintText: widget.textInput.hintText } : {}),
                 ...(widget.textInput.value !== undefined ? { value: widget.textInput.value } : {}),
+                ...(widget.textInput.autocomplete !== undefined
+                  ? { autocomplete: mapSelectionItems(widget.textInput.autocomplete) }
+                  : {}),
                 ...(mappedAction !== undefined ? { onChangeAction: mappedAction } : {}),
               },
             };
@@ -133,7 +131,7 @@ function mapUiViewToAbstractUiView(view: UiView): AbstractUiView {
           }
           return undefined;
         })
-        .filter((w): w is AbstractUiViewWidget => w !== undefined),
+        .filter((w): w is UiViewWidget => w !== undefined),
     })),
     ...(view.evaluationOrder !== undefined ? { evaluationOrder: view.evaluationOrder } : {}),
   };
@@ -204,7 +202,7 @@ export function createUiProcessManagerWiring(
           : {}),
       });
 
-      const mappedView = mapUiViewToAbstractUiView(view);
+      const mappedView = mapUiViewToWorkspaceUiView(view);
       if (request.isUpdateCard) {
         return translateUiViewToUpdateCardAction(mappedView);
       }

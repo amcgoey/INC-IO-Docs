@@ -4,7 +4,7 @@ import {
   translateUiViewToWorkspaceCard,
   translateUiViewToNavigationAction,
   translateUiViewToUpdateCardAction,
-  AbstractUiViewSchema,
+  UiViewSchema,
 } from './translator';
 import { GoogleWorkspaceCardSchema } from './ui-blocks';
 
@@ -35,7 +35,7 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
                 label: 'Invoice #',
                 hintText: 'e.g. INV-10023',
                 value: 'INV-10023',
-                onChangeAction: 'onInvoiceNumberChange',
+                onChangeAction: { action: 'onInvoiceNumberChange', route: '/workspace/action' },
               },
             },
             {
@@ -48,8 +48,8 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
                   { text: 'Hardware', value: 'hardware' },
                 ],
                 onChangeAction: {
-                  function: 'onVendorCategoryChange',
-                  loadIndicator: 'SPINNER',
+                  action: 'onVendorCategoryChange',
+                  route: '/workspace/action',
                 },
               },
             },
@@ -59,7 +59,8 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
                   {
                     text: 'Process Invoice',
                     onClick: {
-                      function: 'onProcessInvoice',
+                      action: 'onProcessInvoice',
+                      route: '/workspace/action',
                     },
                   },
                 ],
@@ -99,7 +100,7 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
       },
     });
 
-    // Widget 2: textInput with string action converted to object
+    // Widget 2: textInput with action converted to object
     expect(section.widgets[1]).toEqual({
       textInput: {
         name: 'invoiceNumber',
@@ -107,7 +108,8 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
         hintText: 'e.g. INV-10023',
         value: 'INV-10023',
         onChangeAction: {
-          function: 'onInvoiceNumberChange',
+          function: '/workspace/action',
+          parameters: [{ key: 'action', value: 'onInvoiceNumberChange' }],
           loadIndicator: 'SPINNER',
         },
       },
@@ -124,7 +126,8 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
           { text: 'Hardware', value: 'hardware' },
         ],
         onChangeAction: {
-          function: 'onVendorCategoryChange',
+          function: '/workspace/action',
+          parameters: [{ key: 'action', value: 'onVendorCategoryChange' }],
           loadIndicator: 'SPINNER',
         },
       },
@@ -138,7 +141,8 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
             text: 'Process Invoice',
             onClick: {
               action: {
-                function: 'onProcessInvoice',
+                function: '/workspace/action',
+                parameters: [{ key: 'action', value: 'onProcessInvoice' }],
                 loadIndicator: 'SPINNER',
               },
             },
@@ -148,7 +152,7 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
     });
   });
 
-  it('normalizes string button onClick to GoogleWorkspaceAction', () => {
+  it('normalizes button onClick to GoogleWorkspaceAction', () => {
     const view = {
       sections: [
         {
@@ -158,7 +162,7 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
                 buttons: [
                   {
                     text: 'Submit',
-                    onClick: 'handleSubmit',
+                    onClick: { action: 'handleSubmit', route: '/workspace/action' },
                   },
                 ],
               },
@@ -171,10 +175,54 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
     const card = translateUiViewToWorkspaceCard(view);
     expect(card.sections[0].widgets[0].buttonList?.buttons[0].onClick).toEqual({
       action: {
-        function: 'handleSubmit',
+        function: '/workspace/action',
+        parameters: [{ key: 'action', value: 'handleSubmit' }],
         loadIndicator: 'SPINNER',
       },
     });
+  });
+
+  it('translates action with route property to the specified function', () => {
+    const view = {
+      sections: [
+        {
+          widgets: [
+            {
+              textInput: {
+                name: 'amount',
+                onChangeAction: { action: 'onFormChange', route: '/workspace/on-form-change' },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const card = translateUiViewToWorkspaceCard(view);
+    expect(card.sections[0].widgets[0].textInput?.onChangeAction).toEqual({
+      function: '/workspace/on-form-change',
+      parameters: [{ key: 'action', value: 'onFormChange' }],
+      loadIndicator: 'SPINNER',
+    });
+  });
+
+  it('rejects action when route is omitted', () => {
+    const view = {
+      sections: [
+        {
+          widgets: [
+            {
+              textInput: {
+                name: 'amount',
+                onChangeAction: { action: 'customAction' },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(() => translateUiViewToWorkspaceCard(view)).toThrow('Invalid UiView');
   });
 
   it('translates textInput with initialSuggestions', () => {
@@ -320,7 +368,7 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
     expect(updateAction.action.navigations?.[0]?.updateCard?.header?.title).toBe('Update Card');
   });
 
-  it('throws descriptive error if input is invalid according to AbstractUiViewSchema', () => {
+  it('throws descriptive error if input is invalid according to AdapterUiViewSchema', () => {
     expect(() => translateUiViewToWorkspaceCard(null)).toThrow('Invalid UiView');
     expect(() => translateUiViewToWorkspaceCard({})).toThrow('Invalid UiView');
     expect(() => translateUiViewToWorkspaceCard({ sections: 'invalid' })).toThrow('Invalid UiView');
@@ -384,7 +432,7 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
     ).toThrow('Invalid UiView');
   });
 
-  it('matches the AbstractUiViewSchema with valid UiView structures', () => {
+  it('matches the AdapterUiViewSchema with valid UiView structures', () => {
     const validSample = {
       header: {
         title: 'Title',
@@ -406,10 +454,10 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
       evaluationOrder: ['a'],
     };
 
-    expect(Value.Check(AbstractUiViewSchema, validSample)).toBe(true);
+    expect(Value.Check(UiViewSchema, validSample)).toBe(true);
   });
 
-  it('validates strictly typed action formats (string, structured object) and rejects invalid action types', () => {
+  it('validates strictly typed action formats and rejects invalid action types', () => {
     const viewWithStructuredAction = {
       sections: [
         {
@@ -420,11 +468,9 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
                   {
                     text: 'Execute Task',
                     onClick: {
-                      action: {
-                        function: 'onExecuteTask',
-                        parameters: [{ key: 'taskId', value: '123' }],
-                        loadIndicator: 'NONE',
-                      },
+                      action: 'onExecuteTask',
+                      route: '/workspace/action',
+                      parameters: { taskId: '123' },
                     },
                   },
                 ],
@@ -435,15 +481,43 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
       ],
     };
 
-    expect(Value.Check(AbstractUiViewSchema, viewWithStructuredAction)).toBe(true);
+    expect(Value.Check(UiViewSchema, viewWithStructuredAction)).toBe(true);
     const card = translateUiViewToWorkspaceCard(viewWithStructuredAction);
     expect(card.sections[0].widgets[0].buttonList?.buttons[0].onClick).toEqual({
       action: {
-        function: 'onExecuteTask',
-        parameters: [{ key: 'taskId', value: '123' }],
-        loadIndicator: 'NONE',
+        function: '/workspace/action',
+        parameters: [
+          { key: 'action', value: 'onExecuteTask' },
+          { key: 'taskId', value: '123' },
+        ],
+        loadIndicator: 'SPINNER',
       },
     });
+
+    const invalidParametersView = {
+      sections: [
+        {
+          widgets: [
+            {
+              buttonList: {
+                buttons: [
+                  {
+                    text: 'Execute Task',
+                    onClick: {
+                      action: 'onExecuteTask',
+                      route: '/workspace/action',
+                      parameters: { taskId: 123 }, // non-string value violates Defect 1 fix
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    expect(Value.Check(UiViewSchema, invalidParametersView)).toBe(false);
+    expect(() => translateUiViewToWorkspaceCard(invalidParametersView)).toThrow('Invalid UiView');
 
     const invalidActionView = {
       sections: [
@@ -459,7 +533,7 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
         },
       ],
     };
-    expect(Value.Check(AbstractUiViewSchema, invalidActionView)).toBe(false);
+    expect(Value.Check(UiViewSchema, invalidActionView)).toBe(false);
     expect(() => translateUiViewToWorkspaceCard(invalidActionView)).toThrow('Invalid UiView');
 
     const invalidSelectionTypeView = {
@@ -476,7 +550,7 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
         },
       ],
     };
-    expect(Value.Check(AbstractUiViewSchema, invalidSelectionTypeView)).toBe(false);
+    expect(Value.Check(UiViewSchema, invalidSelectionTypeView)).toBe(false);
     expect(() => translateUiViewToWorkspaceCard(invalidSelectionTypeView)).toThrow('Invalid UiView');
   });
 });
