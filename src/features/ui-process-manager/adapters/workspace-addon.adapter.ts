@@ -7,13 +7,13 @@ import type {
   UiProcessViewGeneratorPort,
   UiProcessDocumentRunnerPort,
   UiProcessFormEvaluatorPort,
-  UiStateResolutionContext,
 } from '../ports';
 import {
   evaluateProcessUiState,
   resolveSpaceType,
   resolveDocumentType,
   extractDocumentData,
+  type UiStateResolutionContext,
 } from '../domain';
 
 export interface WorkspaceAddonAdapterOptions {
@@ -27,7 +27,8 @@ export interface WorkspaceAddonAdapterOptions {
 
 
 export function normalizeFormData(
-  context?: UiStateResolutionContext
+  context?: UiStateResolutionContext,
+  activeDocumentType?: string
 ): Record<string, unknown> | undefined {
   if (!context?.formData) {
     return context?.formData;
@@ -37,7 +38,7 @@ export function normalizeFormData(
   const activeDocTypeSelectorKey = spaceType ? `SelectDocumentType_${spaceType}` : undefined;
 
   const docType =
-    context.activeDocumentType ??
+    activeDocumentType ??
     resolveDocumentType({ ...context, activeSpaceType: spaceType });
   const docTypeSuffix = docType ? `_${docType}` : undefined;
 
@@ -97,12 +98,14 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       }
     }
 
-    const normalizedFormData = normalizeFormData({
-      formData: context.formData,
-      activeSpaceType: currentSpaceType,
-      activeDocumentType: resolvedDocumentTypeKey,
-      config,
-    });
+    const normalizedFormData = normalizeFormData(
+      {
+        formData: context.formData,
+        activeSpaceType: currentSpaceType,
+        config,
+      },
+      resolvedDocumentTypeKey
+    );
     const normalizedContext: UiProcessEventContext =
       normalizedFormData !== context.formData
         ? { ...context, formData: normalizedFormData }

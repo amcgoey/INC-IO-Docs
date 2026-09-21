@@ -271,11 +271,13 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         'contact_proposal-doc': 'Bob',
       };
 
-      const normalized = normalizeFormData({
-        formData: raw,
-        activeSpaceType: 'projects',
-        activeDocumentType: 'communication-project',
-      });
+      const normalized = normalizeFormData(
+        {
+          formData: raw,
+          activeSpaceType: 'projects',
+        },
+        'communication-project'
+      );
 
       expect(normalized).toEqual({
         SelectDocumentSpaceType: 'projects',

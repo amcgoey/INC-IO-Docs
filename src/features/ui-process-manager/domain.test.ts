@@ -147,6 +147,18 @@ describe('ui-process-manager domain', () => {
       expect(result).toBe('active-space-doc-type');
     });
 
+    it('respects empty string selection for active space without falling back to stale unsuffixed key or default config', () => {
+      const result = resolveDocumentType({
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentType: 'stale-doc-type',
+          SelectDocumentType_projects: '',
+        },
+        config: { defaultDocumentType: 'default-doc' },
+      });
+      expect(result).toBe('');
+    });
+
     it('resolves activeSpaceType from formData when activeSpaceType is not passed', () => {
       const result = resolveDocumentType({
         formData: {

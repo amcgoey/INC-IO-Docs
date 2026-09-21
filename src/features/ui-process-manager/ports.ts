@@ -7,8 +7,6 @@ import {
   type UiProcessSpaceType,
   ProcessUiStateConfigSchema,
   type ProcessUiStateConfig,
-  UiStateResolutionContextSchema,
-  type UiStateResolutionContext,
 } from './domain';
 
 export {
@@ -19,8 +17,6 @@ export {
   type UiProcessSpaceType,
   ProcessUiStateConfigSchema,
   type ProcessUiStateConfig,
-  UiStateResolutionContextSchema,
-  type UiStateResolutionContext,
 };
 
 export const UiProcessEventContextSchema = Type.Object({

@@ -30,7 +30,6 @@ export const UiStateResolutionContextSchema = Type.Object({
   formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
   config: Type.Optional(Type.Union([ProcessUiStateConfigSchema, Type.Undefined()])),
   activeSpaceType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
-  activeDocumentType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   parameters: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
 });
 export type UiStateResolutionContext = Static<typeof UiStateResolutionContextSchema>;
@@ -130,13 +129,16 @@ export function resolveDocumentType(context?: UiStateResolutionContext): string 
   const spaceType = context?.activeSpaceType ?? resolveSpaceType(context);
   if (
     spaceType &&
-    context?.formData?.[`SelectDocumentType_${spaceType}`] &&
+    context?.formData?.[`SelectDocumentType_${spaceType}`] !== undefined &&
     typeof context.formData[`SelectDocumentType_${spaceType}`] === 'string'
   ) {
     return context.formData[`SelectDocumentType_${spaceType}`] as string;
   }
 
-  if (context?.formData?.SelectDocumentType && typeof context.formData.SelectDocumentType === 'string') {
+  if (
+    context?.formData?.SelectDocumentType !== undefined &&
+    typeof context.formData.SelectDocumentType === 'string'
+  ) {
     return context.formData.SelectDocumentType;
   }
 
