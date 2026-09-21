@@ -8,7 +8,13 @@ import type {
   UiProcessDocumentRunnerPort,
   UiProcessFormEvaluatorPort,
 } from '../ports';
-import { evaluateProcessUiState, resolveSpaceType, resolveDocumentType, extractDocumentData } from '../domain';
+import {
+  evaluateProcessUiState,
+  resolveSpaceType,
+  resolveDocumentType,
+  extractDocumentData,
+  type ProcessUiStateConfig,
+} from '../domain';
 
 export interface WorkspaceAddonAdapterOptions {
   spaceProvider: UiProcessSpaceProviderPort;
