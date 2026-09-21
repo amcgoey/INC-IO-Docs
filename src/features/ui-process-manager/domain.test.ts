@@ -269,8 +269,8 @@ describe('ui-process-manager domain', () => {
             SelectDocumentSpaceType: 'projects',
             SelectDocumentSpace: 'Project Alpha',
             SelectDocumentType: 'invoice-project',
-            contact_communication_project: 'Jane Doe',
-            date_communication_project: '260920',
+            'contact_communication-project': 'Jane Doe',
+            'date_communication-project': '260920',
           },
         },
         config: {
@@ -284,8 +284,8 @@ describe('ui-process-manager domain', () => {
 
       const invoiceState = evaluateProcessUiState(toggleToInvoice);
       expect(invoiceState.documentTypeKey).toBe('invoice-project');
-      expect(invoiceState.formData.contact_communication_project).toBe('Jane Doe');
-      expect(invoiceState.formData.date_communication_project).toBe('260920');
+      expect(invoiceState.formData['contact_communication-project']).toBe('Jane Doe');
+      expect(invoiceState.formData['date_communication-project']).toBe('260920');
 
       // Step 2: User fills invoice-project data and toggles back to communication-project
       const toggleBackToComm: ProcessUiStateInput = {
@@ -294,7 +294,7 @@ describe('ui-process-manager domain', () => {
           formData: {
             ...invoiceState.formData,
             SelectDocumentType: 'communication-project',
-            invoiceNumber_invoice_project: 'INV-1001',
+            'invoiceNumber_invoice-project': 'INV-1001',
           },
         },
         config: {
@@ -308,9 +308,9 @@ describe('ui-process-manager domain', () => {
 
       const commState = evaluateProcessUiState(toggleBackToComm);
       expect(commState.documentTypeKey).toBe('communication-project');
-      expect(commState.formData.contact_communication_project).toBe('Jane Doe');
-      expect(commState.formData.date_communication_project).toBe('260920');
-      expect(commState.formData.invoiceNumber_invoice_project).toBe('INV-1001');
+      expect(commState.formData['contact_communication-project']).toBe('Jane Doe');
+      expect(commState.formData['date_communication-project']).toBe('260920');
+      expect(commState.formData['invoiceNumber_invoice-project']).toBe('INV-1001');
     });
 
     it('translates human-readable names in formData to backend keys', () => {

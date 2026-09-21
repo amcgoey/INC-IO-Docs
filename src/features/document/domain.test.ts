@@ -334,7 +334,7 @@ describe('Document domain', () => {
       data: {
         title: 'Foundation Plan',
         inactive_field_other_type: 'should be ignored',
-        invoiceNumber_invoice_project: 'INV-999',
+        'invoiceNumber_invoice-project': 'INV-999',
       },
     };
 
