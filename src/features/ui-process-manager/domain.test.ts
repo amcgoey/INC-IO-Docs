@@ -136,6 +136,17 @@ describe('ui-process-manager domain', () => {
       expect(result).toBe('communication-project');
     });
 
+    it('prioritizes active space suffixed SelectDocumentType_<spaceType> over stale unsuffixed SelectDocumentType', () => {
+      const result = resolveDocumentType({
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentType: 'stale-doc-type',
+          SelectDocumentType_projects: 'active-space-doc-type',
+        },
+      });
+      expect(result).toBe('active-space-doc-type');
+    });
+
     it('resolves activeSpaceType from formData when activeSpaceType is not passed', () => {
       const result = resolveDocumentType({
         formData: {

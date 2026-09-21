@@ -127,10 +127,6 @@ export function resolveSpaceType(context?: UiStateResolutionContext): string {
  * Resolves the active document type from context form data, parameters, or configuration fallback.
  */
 export function resolveDocumentType(context?: UiStateResolutionContext): string | undefined {
-  if (context?.formData?.SelectDocumentType && typeof context.formData.SelectDocumentType === 'string') {
-    return context.formData.SelectDocumentType;
-  }
-
   const spaceType = context?.activeSpaceType ?? (context?.formData ? resolveSpaceType(context) : undefined);
   if (
     spaceType &&
@@ -138,6 +134,10 @@ export function resolveDocumentType(context?: UiStateResolutionContext): string 
     typeof context.formData[`SelectDocumentType_${spaceType}`] === 'string'
   ) {
     return context.formData[`SelectDocumentType_${spaceType}`] as string;
+  }
+
+  if (context?.formData?.SelectDocumentType && typeof context.formData.SelectDocumentType === 'string') {
+    return context.formData.SelectDocumentType;
   }
 
   if (context?.parameters?.documentTypeKey) {
