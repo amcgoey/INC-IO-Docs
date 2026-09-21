@@ -49,8 +49,10 @@ export function normalizeFormData(
     let targetKey = key;
     if (activeDocTypeSelectorKey && key === activeDocTypeSelectorKey) {
       targetKey = 'SelectDocumentType';
+      strippedKeys.add(targetKey);
     } else if (activeSpaceKey && key === activeSpaceKey) {
       targetKey = 'SelectDocumentSpace';
+      strippedKeys.add(targetKey);
     } else if (
       docTypeSuffix &&
       key.endsWith(docTypeSuffix) &&

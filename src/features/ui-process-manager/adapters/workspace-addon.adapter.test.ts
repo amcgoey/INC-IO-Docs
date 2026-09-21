@@ -318,6 +318,32 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(normalizeFormData()).toBeUndefined();
       expect(normalizeFormData({ formData: undefined })).toBeUndefined();
     });
+
+    it('prioritizes active selector keys over stale unsuffixed keys regardless of object key order', () => {
+      // Case 1: active suffixed keys appear before stale unsuffixed keys
+      const rawSuffixedFirst = {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentSpace_projects: 'active-space',
+        SelectDocumentType_projects: 'active-type',
+        SelectDocumentSpace: 'stale-space',
+        SelectDocumentType: 'stale-type',
+      };
+      const normalized1 = normalizeFormData({ formData: rawSuffixedFirst, activeSpaceType: 'projects' });
+      expect(normalized1?.SelectDocumentSpace).toBe('active-space');
+      expect(normalized1?.SelectDocumentType).toBe('active-type');
+
+      // Case 2: stale unsuffixed keys appear before active suffixed keys
+      const rawStaleFirst = {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentSpace: 'stale-space',
+        SelectDocumentType: 'stale-type',
+        SelectDocumentSpace_projects: 'active-space',
+        SelectDocumentType_projects: 'active-type',
+      };
+      const normalized2 = normalizeFormData({ formData: rawStaleFirst, activeSpaceType: 'projects' });
+      expect(normalized2?.SelectDocumentSpace).toBe('active-space');
+      expect(normalized2?.SelectDocumentType).toBe('active-type');
+    });
   });
 
   it('translates human-readable names into backend keys in the write model', async () => {
