@@ -61,6 +61,25 @@ export interface ProcessUiStateOutput {
   validationErrors?: string[] | undefined;
 }
 
+export const SELECTION_KEY_PREFIX = 'SelectDocument';
+export const SELECT_DOCUMENT_SPACE_TYPE_KEY = 'SelectDocumentSpaceType';
+export const SELECT_DOCUMENT_SPACE_KEY = 'SelectDocumentSpace';
+export const SELECT_DOCUMENT_TYPE_KEY = 'SelectDocumentType';
+export const SELECT_DOCUMENT_SPACE_PREFIX = `${SELECT_DOCUMENT_SPACE_KEY}_`;
+export const SELECT_DOCUMENT_TYPE_PREFIX = `${SELECT_DOCUMENT_TYPE_KEY}_`;
+
+export function getSpaceSelectorKey(spaceType: string): string {
+  return `${SELECT_DOCUMENT_SPACE_PREFIX}${spaceType}`;
+}
+
+export function getDocTypeSelectorKey(spaceType: string): string {
+  return `${SELECT_DOCUMENT_TYPE_PREFIX}${spaceType}`;
+}
+
+export function isSelectionKey(key: string): boolean {
+  return key.startsWith(SELECTION_KEY_PREFIX);
+}
+
 function filterFormData(
   formData: Record<string, unknown> | undefined,
   predicate: (key: string) => boolean
@@ -85,7 +104,7 @@ function filterFormData(
 export function extractDocumentData(
   formData?: Record<string, unknown>
 ): Record<string, unknown> {
-  return filterFormData(formData, (key) => !key.startsWith('SelectDocument'));
+  return filterFormData(formData, (key) => !isSelectionKey(key));
 }
 
 /**
@@ -107,7 +126,7 @@ export function translateDocumentType(
  */
 export function resolveSpaceType(context?: UiStateResolutionContext): string {
   return (
-    (context?.formData?.SelectDocumentSpaceType as string | undefined) ??
+    (context?.formData?.[SELECT_DOCUMENT_SPACE_TYPE_KEY] as string | undefined) ??
     context?.config?.defaultDocumentSpaceType ??
     'projects'
   );
@@ -118,19 +137,21 @@ export function resolveSpaceType(context?: UiStateResolutionContext): string {
  */
 export function resolveDocumentType(context?: UiStateResolutionContext): string | undefined {
   const spaceType = context?.activeSpaceType ?? resolveSpaceType(context);
-  if (
-    spaceType &&
-    context?.formData?.[`SelectDocumentType_${spaceType}`] !== undefined &&
-    typeof context.formData[`SelectDocumentType_${spaceType}`] === 'string'
-  ) {
-    return context.formData[`SelectDocumentType_${spaceType}`] as string;
+  if (spaceType) {
+    const spaceSelectorKey = getDocTypeSelectorKey(spaceType);
+    if (
+      context?.formData?.[spaceSelectorKey] !== undefined &&
+      typeof context.formData[spaceSelectorKey] === 'string'
+    ) {
+      return context.formData[spaceSelectorKey] as string;
+    }
   }
 
   if (
-    context?.formData?.SelectDocumentType !== undefined &&
-    typeof context.formData.SelectDocumentType === 'string'
+    context?.formData?.[SELECT_DOCUMENT_TYPE_KEY] !== undefined &&
+    typeof context.formData[SELECT_DOCUMENT_TYPE_KEY] === 'string'
   ) {
-    return context.formData.SelectDocumentType;
+    return context.formData[SELECT_DOCUMENT_TYPE_KEY] as string;
   }
 
   if (context?.parameters?.documentTypeKey) {
@@ -161,19 +182,19 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const allowedDocumentTypes = selectedSpaceTypeObj?.spaceSchema.allowedDocumentTypes ?? [];
 
   const effectiveFormData: Record<string, unknown> = isSpaceTypeChange
-    ? filterFormData(context.formData, (key) => key.startsWith('SelectDocument'))
+    ? filterFormData(context.formData, isSelectionKey)
     : { ...context.formData };
 
   if (isSpaceTypeChange) {
     for (const key of Object.keys(effectiveFormData)) {
       if (
-        key.startsWith('SelectDocumentSpace_') &&
-        key !== `SelectDocumentSpace_${currentSpaceType}`
+        key.startsWith(SELECT_DOCUMENT_SPACE_PREFIX) &&
+        key !== getSpaceSelectorKey(currentSpaceType)
       ) {
         delete effectiveFormData[key];
       } else if (
-        key.startsWith('SelectDocumentType_') &&
-        key !== `SelectDocumentType_${currentSpaceType}`
+        key.startsWith(SELECT_DOCUMENT_TYPE_PREFIX) &&
+        key !== getDocTypeSelectorKey(currentSpaceType)
       ) {
         delete effectiveFormData[key];
       }
@@ -200,7 +221,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   }
 
   if (isSpaceTypeChange || isDocTypeChange) {
-    effectiveFormData.SelectDocumentSpaceType = currentSpaceType;
+    effectiveFormData[SELECT_DOCUMENT_SPACE_TYPE_KEY] = currentSpaceType;
   }
 
   // If still unassigned or invalid, fallback to first allowed or default
@@ -209,7 +230,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   }
 
   if (currentDocTypeKey) {
-    effectiveFormData.SelectDocumentType = currentDocTypeKey;
+    effectiveFormData[SELECT_DOCUMENT_TYPE_KEY] = currentDocTypeKey;
   }
 
   const spaceTypes: UiSelectionItem[] = input.spaceTypes.map((t) => ({

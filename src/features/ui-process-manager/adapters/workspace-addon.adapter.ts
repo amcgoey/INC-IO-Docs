@@ -13,6 +13,12 @@ import {
   resolveSpaceType,
   resolveDocumentType,
   extractDocumentData,
+  getSpaceSelectorKey,
+  getDocTypeSelectorKey,
+  SELECT_DOCUMENT_SPACE_KEY,
+  SELECT_DOCUMENT_TYPE_KEY,
+  SELECT_DOCUMENT_SPACE_PREFIX,
+  SELECT_DOCUMENT_TYPE_PREFIX,
   type UiStateResolutionContext,
 } from '../domain';
 
@@ -34,8 +40,8 @@ export function normalizeFormData(
     return context?.formData;
   }
   const spaceType = context.activeSpaceType ?? resolveSpaceType(context);
-  const activeSpaceKey = spaceType ? `SelectDocumentSpace_${spaceType}` : undefined;
-  const activeDocTypeSelectorKey = spaceType ? `SelectDocumentType_${spaceType}` : undefined;
+  const activeSpaceKey = spaceType ? getSpaceSelectorKey(spaceType) : undefined;
+  const activeDocTypeSelectorKey = spaceType ? getDocTypeSelectorKey(spaceType) : undefined;
 
   const docType =
     activeDocumentType ??
@@ -48,16 +54,16 @@ export function normalizeFormData(
   for (const [key, value] of Object.entries(context.formData)) {
     let targetKey = key;
     if (activeDocTypeSelectorKey && key === activeDocTypeSelectorKey) {
-      targetKey = 'SelectDocumentType';
+      targetKey = SELECT_DOCUMENT_TYPE_KEY;
       strippedKeys.add(targetKey);
     } else if (activeSpaceKey && key === activeSpaceKey) {
-      targetKey = 'SelectDocumentSpace';
+      targetKey = SELECT_DOCUMENT_SPACE_KEY;
       strippedKeys.add(targetKey);
     } else if (
       docTypeSuffix &&
       key.endsWith(docTypeSuffix) &&
-      !key.startsWith('SelectDocumentType_') &&
-      !key.startsWith('SelectDocumentSpace_')
+      !key.startsWith(SELECT_DOCUMENT_TYPE_PREFIX) &&
+      !key.startsWith(SELECT_DOCUMENT_SPACE_PREFIX)
     ) {
       targetKey = key.slice(0, -docTypeSuffix.length);
       strippedKeys.add(targetKey);
