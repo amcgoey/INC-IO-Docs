@@ -222,7 +222,7 @@ describe('ui-process-manager domain', () => {
       'Communication Proposal': 'communication-proposal',
     };
 
-    it('defaults document type to the first allowed type and sets isUpdateCard when Space Type changes', () => {
+    it('defaults document type to the first allowed type and retains form data when Space Type changes', () => {
       const input: ProcessUiStateInput = {
         context: {
           actionName: 'onSpaceTypeChange',
@@ -248,14 +248,16 @@ describe('ui-process-manager domain', () => {
       // Must default Document Type to first allowed type in proposals
       expect(state.documentTypeKey).toBe('communication-proposal');
       expect(state.formData.SelectDocumentType).toBe('communication-proposal');
-      // Must clear DocumentInfo segment because document type effectively changed
+      // Must retain form data entered previously
       expect(state.formData).toEqual({
         SelectDocumentSpaceType: 'proposals',
         SelectDocumentType: 'communication-proposal',
+        contact: 'Jane',
       });
+      expect(state.formData.contact).toBe('Jane');
     });
 
-    it('explicitly clears DocumentInfo segment and triggers isUpdateCard when Document Type changes', () => {
+    it('retains form data and triggers isUpdateCard when Document Type changes', () => {
       const input: ProcessUiStateInput = {
         context: {
           actionName: 'onDocumentTypeChange',
@@ -284,8 +286,64 @@ describe('ui-process-manager domain', () => {
         SelectDocumentSpaceType: 'projects',
         SelectDocumentSpace: 'Project Alpha',
         SelectDocumentType: 'invoice-project',
+        contact: 'Jane',
+        date: '260920',
       });
-      expect(state.formData.contact).toBeUndefined();
+      expect(state.formData.contact).toBe('Jane');
+      expect(state.formData.date).toBe('260920');
+    });
+
+    it('retains inactive document type form inputs across type toggles', () => {
+      // Step 1: User fills communication-project data and toggles to invoice-project
+      const toggleToInvoice: ProcessUiStateInput = {
+        context: {
+          actionName: 'onDocumentTypeChange',
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace: 'Project Alpha',
+            SelectDocumentType: 'invoice-project',
+            contact_communication_project: 'Jane Doe',
+            date_communication_project: '260920',
+          },
+        },
+        config: {
+          defaultDocumentSpaceType: 'projects',
+          defaultDocumentType: 'communication-project',
+        },
+        spaceTypes: sampleSpaceTypes,
+        collectionSpaces: ['Project Alpha'],
+        nameToKeyMap: sampleNameMap,
+      };
+
+      const invoiceState = evaluateProcessUiState(toggleToInvoice);
+      expect(invoiceState.documentTypeKey).toBe('invoice-project');
+      expect(invoiceState.formData.contact_communication_project).toBe('Jane Doe');
+      expect(invoiceState.formData.date_communication_project).toBe('260920');
+
+      // Step 2: User fills invoice-project data and toggles back to communication-project
+      const toggleBackToComm: ProcessUiStateInput = {
+        context: {
+          actionName: 'onDocumentTypeChange',
+          formData: {
+            ...invoiceState.formData,
+            SelectDocumentType: 'communication-project',
+            invoiceNumber_invoice_project: 'INV-1001',
+          },
+        },
+        config: {
+          defaultDocumentSpaceType: 'projects',
+          defaultDocumentType: 'communication-project',
+        },
+        spaceTypes: sampleSpaceTypes,
+        collectionSpaces: ['Project Alpha'],
+        nameToKeyMap: sampleNameMap,
+      };
+
+      const commState = evaluateProcessUiState(toggleBackToComm);
+      expect(commState.documentTypeKey).toBe('communication-project');
+      expect(commState.formData.contact_communication_project).toBe('Jane Doe');
+      expect(commState.formData.date_communication_project).toBe('260920');
+      expect(commState.formData.invoiceNumber_invoice_project).toBe('INV-1001');
     });
 
     it('translates human-readable names in formData to backend keys', () => {

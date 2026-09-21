@@ -154,7 +154,7 @@ export function resolveDocumentType(context?: UiStateResolutionContext): string 
  * Enforces:
  * 1. UI reload (isUpdateCard) on Space Type change.
  * 2. Defaulting Document Type to first allowed type when Space Type changes.
- * 3. Clearing DocumentInfo segment of formData on Document Type or Space Type change.
+ * 3. Retains formData across Document Type or Space Type change.
  * 4. Consolidates selection state and translation into effective form data.
  */
 export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiStateOutput {
@@ -169,7 +169,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const selectedSpaceTypeObj = input.spaceTypes.find((t) => t.id === currentSpaceType);
   const allowedDocumentTypes = selectedSpaceTypeObj?.spaceSchema.allowedDocumentTypes ?? [];
 
-  let effectiveFormData: Record<string, unknown> = { ...context.formData };
+  const effectiveFormData: Record<string, unknown> = { ...context.formData };
   const isUpdateCard = Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange);
 
   // If resolvedDocumentTypeKey is already provided by orchestrator translation, use it;
@@ -191,7 +191,6 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   }
 
   if (isSpaceTypeChange || isDocTypeChange) {
-    effectiveFormData = retainSelectionState(effectiveFormData);
     effectiveFormData.SelectDocumentSpaceType = currentSpaceType;
   }
 

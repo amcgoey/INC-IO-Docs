@@ -150,14 +150,17 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
     expect(docTypeDropdown?.items?.[0].value).toBe('communication-proposal');
     expect(docTypeDropdown?.items?.[0].text).toBe('Communication Proposal');
 
-    // Find Document Data Section to assert DocumentInfo segment was cleared
+    // Find Document Data Section to assert DocumentInfo segment renders active document type widgets
     const dataSection = updateCard.sections?.find((s: GoogleWorkspaceSection) => s.header === 'Document Data');
     expect(dataSection).toBeDefined();
-    const contactWidget = dataSection?.widgets?.find((w: GoogleWorkspaceWidget) => w.textInput?.name === 'contact');
-    expect(contactWidget?.textInput?.value).toBeUndefined();
+    const proposalIdWidget = dataSection?.widgets?.find(
+      (w: GoogleWorkspaceWidget) =>
+        w.textInput?.name === getDocumentInfoWidgetName('proposalId', 'communication-proposal')
+    );
+    expect(proposalIdWidget).toBeDefined();
   });
 
-  it('explicitly clears DocumentInfo segment of formData when Document Type changes', async () => {
+  it('retains DocumentInfo segment of formData when Document Type changes', async () => {
     const wiring = createUiProcessManagerWiring({
       configProvider: mockConfigProvider,
       documentSpaceService: mockDocumentSpaceService,
@@ -170,8 +173,8 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         SelectDocumentSpaceType: 'projects',
         SelectDocumentSpace: 'Project Alpha',
         SelectDocumentType: 'communication-project',
-        contact: 'Old Contact Value',
-        date: '260920',
+        [getDocumentInfoWidgetName('contact', 'communication-project')]: 'Entered Contact Value',
+        [getDocumentInfoWidgetName('date', 'communication-project')]: '260920',
       },
     };
 
@@ -181,11 +184,17 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
     const dataSection = updateCard.sections?.find((s: GoogleWorkspaceSection) => s.header === 'Document Data');
     expect(dataSection).toBeDefined();
 
-    // Form data must be cleared of old values
-    const contactWidget = dataSection?.widgets?.find((w: GoogleWorkspaceWidget) => w.textInput?.name === 'contact');
-    const dateWidget = dataSection?.widgets?.find((w: GoogleWorkspaceWidget) => w.textInput?.name === 'date');
-    expect(contactWidget?.textInput?.value).toBeUndefined();
-    expect(dateWidget?.textInput?.value).toBeUndefined();
+    // Form data must be retained for the document type
+    const contactWidget = dataSection?.widgets?.find(
+      (w: GoogleWorkspaceWidget) =>
+        w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-project')
+    );
+    const dateWidget = dataSection?.widgets?.find(
+      (w: GoogleWorkspaceWidget) =>
+        w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-project')
+    );
+    expect(contactWidget?.textInput?.value).toBe('Entered Contact Value');
+    expect(dateWidget?.textInput?.value).toBe('260920');
   });
 
   it('translates human-readable names into backend keys in write model and resolves display names in read model', async () => {

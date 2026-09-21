@@ -90,10 +90,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
     expect(result.request.formData).toEqual({
       SelectDocumentSpaceType: 'proposals',
       SelectDocumentType: 'communication-proposal',
+      contact: 'Alice',
     });
+    expect(result.request.formData?.contact).toBe('Alice');
   });
 
-  it('explicitly clears DocumentInfo segment of formData when Document Type changes', async () => {
+  it('retains DocumentInfo segment of formData when Document Type changes', async () => {
     const adapter = new WorkspaceAddonAdapter({
       spaceProvider: mockSpaceProvider,
       configProvider: mockConfigProvider,
@@ -124,9 +126,60 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       SelectDocumentSpaceType: 'projects',
       SelectDocumentSpace: 'Project Main',
       SelectDocumentType: 'invoice-project',
+      contact: 'Bob',
+      date: '260920',
     });
-    expect(result.request.formData?.contact).toBeUndefined();
-    expect(result.request.formData?.date).toBeUndefined();
+    expect(result.request.formData?.contact).toBe('Bob');
+    expect(result.request.formData?.date).toBe('260920');
+  });
+
+  it('retains inactive form data across document type toggles and restores entered data when switching back', async () => {
+    const adapter = new WorkspaceAddonAdapter({
+      spaceProvider: mockSpaceProvider,
+      configProvider: mockConfigProvider,
+      manifestPort: mockManifestPort,
+      viewGenerator: mockViewGenerator,
+    });
+
+    // 1. User is on communication-project, inputs contact, then switches to invoice-project
+    const switchContext1: UiProcessEventContext = {
+      actionName: 'onDocumentTypeChange',
+      formData: {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentSpace_projects: 'Project Main',
+        SelectDocumentType_projects: 'invoice-project',
+        'contact_communication-project': 'Alice from Comm',
+      },
+    };
+
+    const result1 = (await adapter.processUiEvent(switchContext1)) as {
+      renderedCard: boolean;
+      request: UiProcessCardRequest;
+    };
+
+    expect(result1.request.documentTypeKey).toBe('invoice-project');
+    // Inactive field contact_communication-project should still be in formData
+    expect(result1.request.formData?.['contact_communication-project']).toBe('Alice from Comm');
+
+    // 2. User fills invoice-project data, and switches back to communication-project
+    const switchContext2: UiProcessEventContext = {
+      actionName: 'onDocumentTypeChange',
+      formData: {
+        ...result1.request.formData,
+        SelectDocumentType_projects: 'communication-project',
+        'invoiceNumber_invoice-project': 'INV-555',
+      },
+    };
+
+    const result2 = (await adapter.processUiEvent(switchContext2)) as {
+      renderedCard: boolean;
+      request: UiProcessCardRequest;
+    };
+
+    expect(result2.request.documentTypeKey).toBe('communication-project');
+    // Active field is normalized to contact, while inactive invoice field is preserved
+    expect(result2.request.formData?.contact).toBe('Alice from Comm');
+    expect(result2.request.formData?.['invoiceNumber_invoice-project']).toBe('INV-555');
   });
 
   it('normalizes dynamic SelectDocumentType_ keys to standard SelectDocumentType in formData', async () => {

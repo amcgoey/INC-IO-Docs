@@ -284,6 +284,67 @@ describe('Document domain', () => {
     });
   });
 
+  it('processDocument safely ignores unused or inactive keys in data payload', async () => {
+    const mockDispatcher: ActivityDispatcherPort = {
+      dispatch: vi.fn().mockResolvedValue(undefined),
+    };
+    const mockDocumentTypes: DocumentType[] = [
+      {
+        key: 'submittal',
+        name: 'Submittal Document',
+        documentSchema: {
+          fields: [
+            {
+              key: 'title',
+              name: 'Title',
+              type: 'string',
+              required: true,
+            },
+          ],
+        },
+        documentUiSchema: {
+          events: {
+            onSubmit: {
+              catchAllWorkflow: 'SubmitSubmittalWorkflow',
+            },
+          },
+        },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'SubmitSubmittalWorkflow',
+              activitySequence: [
+                {
+                  type: 'LOG_DOCUMENT',
+                  payload: { document: { title: 'Foundation Plan' } },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ];
+    const registryWithSubmittal = createCustomRegistry(mockDocumentTypes);
+    const service = new DocumentService(mockDispatcher, registryWithSubmittal, defaultEvaluator);
+    await service.initialize();
+
+    const documentWithInactiveKeys: Document = {
+      id: 'rec-123',
+      type: 'submittal',
+      data: {
+        title: 'Foundation Plan',
+        inactive_field_other_type: 'should be ignored',
+        invoiceNumber_invoice_project: 'INV-999',
+      },
+    };
+
+    const result = await service.processDocument(documentWithInactiveKeys, 'onSubmit');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual(documentWithInactiveKeys);
+    }
+  });
+
   it('processDocument returns failure when dynamic field validation fails against compiled schema', async () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
