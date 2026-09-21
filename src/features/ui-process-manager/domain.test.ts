@@ -38,7 +38,7 @@ describe('ui-process-manager domain', () => {
       expect(extractDocumentData({})).toEqual({});
     });
 
-    it('strips inactive document type suffixed keys when options are provided', () => {
+    it('preserves inactive suffixed keys for core domain ACL to sanitize', () => {
       const formData = {
         SelectDocumentSpace: 'Alpha',
         contact: 'John Doe',
@@ -47,17 +47,15 @@ describe('ui-process-manager domain', () => {
         'proposalTitle_communication-proposal': 'Proposal A',
       };
 
-      const result = extractDocumentData(formData, {
-        activeDocumentType: 'communication-project',
-        knownDocumentTypes: ['communication-project', 'invoice-project', 'communication-proposal'],
-      });
+      const result = extractDocumentData(formData);
 
       expect(result).toEqual({
         contact: 'John Doe',
         date: '260920',
+        'invoiceNumber_invoice-project': 'INV-999',
+        'proposalTitle_communication-proposal': 'Proposal A',
       });
-      expect(result).not.toHaveProperty('invoiceNumber_invoice-project');
-      expect(result).not.toHaveProperty('proposalTitle_communication-proposal');
+      expect(result).not.toHaveProperty('SelectDocumentSpace');
     });
   });
 

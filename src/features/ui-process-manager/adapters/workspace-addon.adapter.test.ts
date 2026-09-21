@@ -591,6 +591,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           space: 'Project Suffixed',
           data: {
             contact: 'Acme Suffixed',
+            'contact_invoice-project': 'Inactive Invoice Contact',
           },
         }),
         'onSubmit',
