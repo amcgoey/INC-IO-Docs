@@ -354,5 +354,232 @@ describe('ui-process-manager domain', () => {
       expect(state.documentTypeKey).toBe('communication-project');
       expect(state.formData.SelectDocumentType).toBe('communication-project');
     });
+
+    describe('fallback behaviors when domain state is invalid or missing', () => {
+      it('falls back to the first allowed type of the active space when an invalid SelectDocumentType string is passed in formData', () => {
+        const input: ProcessUiStateInput = {
+          context: {
+            formData: {
+              SelectDocumentSpaceType: 'projects',
+              SelectDocumentType: 'completely-invalid-type',
+            },
+          },
+          config: {
+            defaultDocumentSpaceType: 'projects',
+          },
+          spaceTypes: sampleSpaceTypes,
+          collectionSpaces: [],
+          nameToKeyMap: sampleNameMap,
+        };
+
+        const state = evaluateProcessUiState(input);
+
+        // Must resolve to first allowed type of 'projects'
+        expect(state.documentTypeKey).toBe('communication-project');
+        expect(state.formData.SelectDocumentType).toBe('communication-project');
+        expect(state.selectionState.documentTypes).toHaveLength(2);
+        expect(state.selectionState.documentTypes[0]).toEqual({
+          text: 'communication-project',
+          value: 'communication-project',
+          selected: true,
+        });
+        expect(state.selectionState.documentTypes[1]).toEqual({
+          text: 'invoice-project',
+          value: 'invoice-project',
+          selected: false,
+        });
+      });
+
+      it('falls back to the first allowed type when SelectDocumentType is valid for another space but not the active space', () => {
+        // 'communication-project' is valid in 'projects', but NOT in 'proposals' (which only allows 'communication-proposal')
+        const input: ProcessUiStateInput = {
+          context: {
+            formData: {
+              SelectDocumentSpaceType: 'proposals',
+              SelectDocumentType: 'communication-project',
+            },
+          },
+          spaceTypes: sampleSpaceTypes,
+          collectionSpaces: [],
+          nameToKeyMap: sampleNameMap,
+        };
+
+        const state = evaluateProcessUiState(input);
+
+        expect(state.documentTypeKey).toBe('communication-proposal');
+        expect(state.formData.SelectDocumentType).toBe('communication-proposal');
+        expect(state.selectionState.documentTypes).toHaveLength(1);
+        expect(state.selectionState.documentTypes[0]).toEqual({
+          text: 'communication-proposal',
+          value: 'communication-proposal',
+          selected: true,
+        });
+      });
+
+      it('falls back to the first allowed type when an invalid document type is passed in suffixed SelectDocumentType_<spaceType>', () => {
+        const input: ProcessUiStateInput = {
+          context: {
+            formData: {
+              SelectDocumentSpaceType: 'projects',
+              SelectDocumentType_projects: 'nonexistent-doc-type',
+            },
+          },
+          spaceTypes: sampleSpaceTypes,
+          collectionSpaces: [],
+          nameToKeyMap: sampleNameMap,
+        };
+
+        const state = evaluateProcessUiState(input);
+
+        expect(state.documentTypeKey).toBe('communication-project');
+        expect(state.formData.SelectDocumentType).toBe('communication-project');
+        expect(state.selectionState.documentTypes[0].selected).toBe(true);
+      });
+
+      it('falls back to the first allowed type when an invalid document type is passed in parameters.documentTypeKey', () => {
+        const input: ProcessUiStateInput = {
+          context: {
+            formData: {
+              SelectDocumentSpaceType: 'projects',
+            },
+            parameters: {
+              documentTypeKey: 'invalid-from-param',
+            },
+          },
+          spaceTypes: sampleSpaceTypes,
+          collectionSpaces: [],
+          nameToKeyMap: sampleNameMap,
+        };
+
+        const state = evaluateProcessUiState(input);
+
+        expect(state.documentTypeKey).toBe('communication-project');
+        expect(state.formData.SelectDocumentType).toBe('communication-project');
+      });
+
+      it('falls back to the first allowed type when resolvedDocumentTypeKey is invalid for the active space', () => {
+        const input: ProcessUiStateInput = {
+          context: {
+            formData: {
+              SelectDocumentSpaceType: 'projects',
+            },
+          },
+          resolvedDocumentTypeKey: 'invalid-resolved-key',
+          spaceTypes: sampleSpaceTypes,
+          collectionSpaces: [],
+          nameToKeyMap: sampleNameMap,
+        };
+
+        const state = evaluateProcessUiState(input);
+
+        expect(state.documentTypeKey).toBe('communication-project');
+        expect(state.formData.SelectDocumentType).toBe('communication-project');
+      });
+
+      it('asserts exact behavior when a Space Type has no allowedDocumentTypes and no doc type is provided', () => {
+        const emptySpaceTypes = [
+          {
+            id: 'empty-space',
+            displayName: 'Empty Space',
+            spaceSchema: { allowedDocumentTypes: [] },
+          },
+        ];
+
+        // Case A: with config defaultDocumentType
+        const inputWithConfig: ProcessUiStateInput = {
+          context: {
+            formData: {
+              SelectDocumentSpaceType: 'empty-space',
+            },
+          },
+          config: {
+            defaultDocumentType: 'communication-project',
+          },
+          spaceTypes: emptySpaceTypes,
+          collectionSpaces: [],
+        };
+
+        const stateWithConfig = evaluateProcessUiState(inputWithConfig);
+        expect(stateWithConfig.selectionState.documentTypes).toEqual([]);
+        expect(stateWithConfig.documentTypeKey).toBe('communication-project');
+        expect(stateWithConfig.formData.SelectDocumentType).toBe('communication-project');
+
+        // Case B: without config defaultDocumentType
+        const inputWithoutConfig: ProcessUiStateInput = {
+          context: {
+            formData: {
+              SelectDocumentSpaceType: 'empty-space',
+            },
+          },
+          spaceTypes: emptySpaceTypes,
+          collectionSpaces: [],
+        };
+
+        const stateWithoutConfig = evaluateProcessUiState(inputWithoutConfig);
+        expect(stateWithoutConfig.selectionState.documentTypes).toEqual([]);
+        expect(stateWithoutConfig.documentTypeKey).toBe('');
+      });
+
+      it('asserts exact behavior when a Space Type has no allowedDocumentTypes and a doc type is provided', () => {
+        const emptySpaceTypes = [
+          {
+            id: 'empty-space',
+            displayName: 'Empty Space',
+            spaceSchema: { allowedDocumentTypes: [] },
+          },
+        ];
+
+        const input: ProcessUiStateInput = {
+          context: {
+            formData: {
+              SelectDocumentSpaceType: 'empty-space',
+              SelectDocumentType: 'custom-type',
+            },
+          },
+          spaceTypes: emptySpaceTypes,
+          collectionSpaces: [],
+        };
+
+        const state = evaluateProcessUiState(input);
+        expect(state.selectionState.documentTypes).toEqual([]);
+        expect(state.documentTypeKey).toBe('custom-type');
+        expect(state.formData.SelectDocumentType).toBe('custom-type');
+      });
+
+      it('gracefully handles missing space type by treating allowedDocumentTypes as empty', () => {
+        const input: ProcessUiStateInput = {
+          context: {
+            formData: {
+              SelectDocumentSpaceType: 'nonexistent-space',
+            },
+          },
+          config: {
+            defaultDocumentType: 'communication-project',
+          },
+          spaceTypes: sampleSpaceTypes,
+          collectionSpaces: [],
+        };
+
+        const state = evaluateProcessUiState(input);
+        expect(state.selectionState.documentTypes).toEqual([]);
+        expect(state.documentTypeKey).toBe('communication-project');
+      });
+
+      it('defaults space and document type when context formData is empty or undefined', () => {
+        const input: ProcessUiStateInput = {
+          context: {},
+          spaceTypes: sampleSpaceTypes,
+          collectionSpaces: [],
+        };
+
+        const state = evaluateProcessUiState(input);
+        // Default space should be 'projects'
+        expect(state.documentTypeKey).toBe('communication-project');
+        expect(state.formData.SelectDocumentType).toBe('communication-project');
+        expect(state.selectionState.documentTypes).toHaveLength(2);
+        expect(state.selectionState.documentTypes[0].selected).toBe(true);
+      });
+    });
   });
 });
+
