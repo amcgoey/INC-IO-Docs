@@ -123,7 +123,7 @@ async function runE2E(): Promise<void> {
 
   console.log(`Sending synthetic HTTP POST to /workspace/action for fileId: ${fileId}...`);
 
-  const response = await injectWorkspaceRequest(app, {
+  const response = await injectWorkspaceRequest(app.server, {
     method: 'POST',
     url: '/workspace/action',
     headers: {

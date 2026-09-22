@@ -4,13 +4,11 @@ export const DEFAULT_WORKSPACE_TEST_HOST = 'workspace-addon.test';
 export const DEFAULT_WORKSPACE_TEST_PROTO = 'https';
 export const DEFAULT_WORKSPACE_BASE_URL = `${DEFAULT_WORKSPACE_TEST_PROTO}://${DEFAULT_WORKSPACE_TEST_HOST}`;
 
-export interface InjectableTarget {
+export interface WorkspaceRequestTarget {
   inject(options: InjectOptions): Promise<InjectResult>;
 }
 
-export type WorkspaceRequestTarget =
-  | { server: InjectableTarget }
-  | InjectableTarget;
+export type InjectableTarget = WorkspaceRequestTarget;
 
 export interface WorkspaceRequestOptions extends InjectOptions {
   /**
@@ -39,8 +37,10 @@ export async function injectWorkspaceRequest(
   target: WorkspaceRequestTarget,
   options: WorkspaceRequestOptions
 ): Promise<InjectResult> {
+  const { baseUrl, headers: originalHeaders, ...injectOptions } = options;
+
   const headers: Record<string, string | string[] | undefined> = {
-    ...(options.headers ?? {}),
+    ...(originalHeaders ?? {}),
   };
 
   const hasHostOrAuthority =
@@ -50,14 +50,17 @@ export async function injectWorkspaceRequest(
     let host = DEFAULT_WORKSPACE_TEST_HOST;
     let proto = DEFAULT_WORKSPACE_TEST_PROTO;
 
-    const rawBaseUrl = options.baseUrl ?? process.env.APP_BASE_URL;
+    const rawBaseUrl = baseUrl ?? process.env.APP_BASE_URL;
     if (rawBaseUrl && rawBaseUrl.trim() !== '') {
       try {
         const parsed = new URL(rawBaseUrl.trim());
         host = parsed.host;
         proto = parsed.protocol.replace(':', '');
-      } catch {
-        // Fallback to standard test defaults if invalid URL
+      } catch (err) {
+        throw new Error(
+          `Invalid base URL provided for workspace request injection: "${rawBaseUrl}". Expected a valid URL (e.g. "https://example.com").`,
+          { cause: err }
+        );
       }
     }
 
@@ -67,12 +70,8 @@ export async function injectWorkspaceRequest(
     }
   }
 
-  const finalOptions: InjectOptions = {
-    ...options,
+  return target.inject({
+    ...injectOptions,
     headers,
-  };
-  delete (finalOptions as { baseUrl?: string }).baseUrl;
-
-  const server = 'server' in target ? target.server : target;
-  return server.inject(finalOptions);
+  });
 }

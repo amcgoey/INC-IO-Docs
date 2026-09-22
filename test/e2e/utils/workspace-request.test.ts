@@ -164,20 +164,25 @@ describe('injectWorkspaceRequest Test Utility', () => {
     expect(passedOptions.headers?.host).toBe(DEFAULT_WORKSPACE_TEST_HOST);
   });
 
-  it('dispatches to target.server.inject when target has server property (AppInstance)', async () => {
+  it('throws a descriptive error when baseUrl or APP_BASE_URL is invalid', async () => {
     const mockInject = vi.fn().mockResolvedValue({ statusCode: 200 } as InjectResult);
-    const target: WorkspaceRequestTarget = {
-      server: {
-        inject: mockInject,
-      },
-    };
+    const target: WorkspaceRequestTarget = { inject: mockInject };
 
-    await injectWorkspaceRequest(target, {
-      method: 'GET',
-      url: '/health',
-    });
+    await expect(
+      injectWorkspaceRequest(target, {
+        method: 'POST',
+        url: '/workspace/action',
+        baseUrl: 'invalid-url-not-a-valid-uri',
+      })
+    ).rejects.toThrow('Invalid base URL provided for workspace request injection: "invalid-url-not-a-valid-uri"');
 
-    expect(mockInject).toHaveBeenCalledTimes(1);
+    process.env.APP_BASE_URL = 'http://:not-valid';
+    await expect(
+      injectWorkspaceRequest(target, {
+        method: 'POST',
+        url: '/workspace/action',
+      })
+    ).rejects.toThrow('Invalid base URL provided for workspace request injection: "http://:not-valid"');
   });
 
   it('does not mutate caller-provided headers object', async () => {

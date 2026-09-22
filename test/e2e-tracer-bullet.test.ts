@@ -58,7 +58,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
       },
     };
 
-    const response = await injectWorkspaceRequest(app, {
+    const response = await injectWorkspaceRequest(app.server, {
       method: 'POST',
       url: '/workspace/drive-items-selected',
       headers: {
@@ -142,7 +142,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
       },
     };
 
-    const response = await injectWorkspaceRequest(app, {
+    const response = await injectWorkspaceRequest(app.server, {
       method: 'POST',
       url: '/workspace/drive-items-selected',
       headers: {
@@ -168,7 +168,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
   });
 
   it('renders schema-driven process card on /workspace/homepage trigger', async () => {
-    const response = await injectWorkspaceRequest(app, {
+    const response = await injectWorkspaceRequest(app.server, {
       method: 'POST',
       url: '/workspace/homepage',
       headers: {
@@ -186,7 +186,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
 
   it('interaction loop: programmatically navigates cascading dropdowns and form changes via simulated JSON Logic roundtrips', async () => {
     // 1. Initial trigger
-    const initialResponse = await injectWorkspaceRequest(app, {
+    const initialResponse = await injectWorkspaceRequest(app.server, {
       method: 'POST',
       url: '/workspace/drive-items-selected',
       headers: {
@@ -203,7 +203,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     // 2. Simulate onFormChange roundtrip 1: user selects direction 'Outgoing' ('OT')
     // Dynamic rule: incomingNotes showIf: { '==': [{ var: 'data.direction' }, 'IN'] }
     // When direction is 'OT', incomingNotes must be dynamically hidden.
-    const changeResponse1 = await injectWorkspaceRequest(app, {
+    const changeResponse1 = await injectWorkspaceRequest(app.server, {
       method: 'POST',
       url: '/workspace/on-form-change',
       headers: {
@@ -247,7 +247,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
 
     // 3. Simulate onFormChange roundtrip 2: user toggles cascading dropdown direction to 'Incoming' ('IN')
     // Dynamic rule evaluates: incomingNotes showIf evaluates to true, revealing the field!
-    const changeResponse2 = await injectWorkspaceRequest(app, {
+    const changeResponse2 = await injectWorkspaceRequest(app.server, {
       method: 'POST',
       url: '/workspace/on-form-change',
       headers: {
@@ -299,7 +299,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     expect(incomingItem?.selected).toBe(true);
 
     // 4. Simulate onFormChange roundtrip 3: user changes the Document Space Type cascading selection dropdown to 'proposals'
-    const changeResponse3 = await injectWorkspaceRequest(app, {
+    const changeResponse3 = await injectWorkspaceRequest(app.server, {
       method: 'POST',
       url: '/workspace/action',
       headers: {
@@ -346,7 +346,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
 
   it('mutation & error rendering: drives flow to final Process submission testing both failure and success paths', async () => {
     // 1. Failure Path: submitting with invalid / incomplete document data renders validation errors inline
-    const failureResponse = await injectWorkspaceRequest(app, {
+    const failureResponse = await injectWorkspaceRequest(app.server, {
       method: 'POST',
       url: '/workspace/action',
       headers: {
@@ -384,7 +384,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     expect(statusSection).toBeDefined();
 
     // 2. Success Path: submitting with valid document data routes to domain and returns success notification
-    const successResponse = await injectWorkspaceRequest(app, {
+    const successResponse = await injectWorkspaceRequest(app.server, {
       method: 'POST',
       url: '/workspace/action',
       headers: {
