@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
-import { UiViewSectionSchema } from '../domain';
+import { UiViewSectionSchema, UiViewActionSchema } from '../domain';
 import { buildDocumentAdminSection } from './document-admin';
 
 describe('Document Admin Block', () => {
@@ -28,5 +28,17 @@ describe('Document Admin Block', () => {
     expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
     expect(section.header).toBe('Advanced Administration');
     expect(section.collapsible).toBe(true);
+  });
+
+  it('strictly asserts that button actions conform to closed UiViewAction schema', () => {
+    const section = buildDocumentAdminSection();
+    const buttons = section.widgets[0].buttonList?.buttons;
+    expect(buttons).toBeDefined();
+    expect(buttons).toHaveLength(2);
+
+    for (const button of buttons!) {
+      expect(button.onClick).toBeDefined();
+      expect(Value.Check(UiViewActionSchema, button.onClick)).toBe(true);
+    }
   });
 });

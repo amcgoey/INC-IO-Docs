@@ -40,4 +40,29 @@ describe('Status Message Block', () => {
     expect(section?.widgets[0].textParagraph?.text).toBe('Validation failed');
     expect(section?.widgets[1].textParagraph?.text).toBe('Validation Errors:\nInvalid input');
   });
+
+  it('renders only validation errors when message is only whitespace', () => {
+    const section = buildStatusMessageSection({
+      message: '   ',
+      validationErrors: ['Error 1', 'Error 2'],
+    });
+    expect(section).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, section!)).toBe(true);
+    expect(section?.widgets).toHaveLength(1);
+    expect(section?.widgets[0].textParagraph?.text).toBe('Validation Errors:\nError 1\nError 2');
+  });
+
+  it('returns undefined when validationErrors is empty array and message is omitted', () => {
+    expect(buildStatusMessageSection({ validationErrors: [] })).toBeUndefined();
+  });
+
+  it('renders a single validation error cleanly', () => {
+    const section = buildStatusMessageSection({
+      validationErrors: ['Single isolated failure'],
+    });
+    expect(section).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, section!)).toBe(true);
+    expect(section?.widgets).toHaveLength(1);
+    expect(section?.widgets[0].textParagraph?.text).toBe('Validation Errors:\nSingle isolated failure');
+  });
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
-import { UiViewSectionSchema } from '../domain';
+import { UiViewSectionSchema, UiViewActionSchema } from '../domain';
 import type { SelectionState } from '../ports';
 import {
   buildDocumentTypeSelectionSection,
@@ -114,5 +114,86 @@ describe('Document Type Selection Block', () => {
     expect(section.widgets[2].selectionInput?.onChangeAction).toEqual({
       action: 'customDocTypeChange',
     });
+  });
+
+  it('uses explicitly selected spaceType (even if not first) for dynamic widget names', () => {
+    const selectionState: SelectionState = {
+      spaceTypes: [
+        { text: 'Projects', value: 'projects', selected: false },
+        { text: 'Proposals', value: 'proposals', selected: true },
+      ],
+      spaces: ['prop-1'],
+      documentTypes: [{ text: 'Proposal Doc', value: 'proposal-doc' }],
+    };
+
+    const section = buildDocumentTypeSelectionSection(selectionState);
+    expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+    expect(section.widgets[1].textInput?.name).toBe('SelectDocumentSpace_proposals');
+    expect(section.widgets[2].selectionInput?.name).toBe('SelectDocumentType_proposals');
+  });
+
+  it('falls back to default spaceType when no spaceType is marked selected', () => {
+    const selectionState: SelectionState = {
+      spaceTypes: [
+        { text: 'Projects', value: 'projects' },
+        { text: 'Proposals', value: 'proposals' },
+      ],
+      spaces: ['proj-1'],
+      documentTypes: [{ text: 'Project Doc', value: 'project-doc' }],
+    };
+
+    const section = buildDocumentTypeSelectionSection(selectionState);
+    expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+    expect(section.widgets[1].textInput?.name).toBe('SelectDocumentSpace_default');
+    expect(section.widgets[2].selectionInput?.name).toBe('SelectDocumentType_default');
+  });
+
+  it('supports options with only onSpaceTypeChangeAction or only onDocumentTypeChangeAction', () => {
+    const selectionState: SelectionState = {
+      spaceTypes: [{ text: 'Projects', value: 'projects' }],
+      spaces: ['proj-1'],
+      documentTypes: [{ text: 'Project Doc', value: 'project-doc' }],
+    };
+
+    // Only onSpaceTypeChangeAction
+    const sectionSpaceOnly = buildDocumentTypeSelectionSection(selectionState, {
+      onSpaceTypeChangeAction: { action: 'onSpaceChange' },
+    });
+    expect(sectionSpaceOnly.widgets[0].selectionInput?.onChangeAction).toEqual({
+      action: 'onSpaceChange',
+    });
+    expect(sectionSpaceOnly.widgets[2].selectionInput?.onChangeAction).toBeUndefined();
+
+    // Only onDocumentTypeChangeAction
+    const sectionDocOnly = buildDocumentTypeSelectionSection(selectionState, {
+      onDocumentTypeChangeAction: { action: 'onDocChange' },
+    });
+    expect(sectionDocOnly.widgets[0].selectionInput?.onChangeAction).toBeUndefined();
+    expect(sectionDocOnly.widgets[2].selectionInput?.onChangeAction).toEqual({
+      action: 'onDocChange',
+    });
+  });
+
+  it('strictly verifies actions adhere to closed agnostic UiViewAction schema', () => {
+    const selectionState: SelectionState = {
+      spaceTypes: [{ text: 'Projects', value: 'projects' }],
+      spaces: ['proj-1'],
+      documentTypes: [{ text: 'Project Doc', value: 'project-doc' }],
+    };
+
+    const section = buildDocumentTypeSelectionSection(selectionState, {
+      onSpaceTypeChangeAction: { action: 'onSpaceTypeChange' },
+      onDocumentTypeChangeAction: { action: 'onDocumentTypeChange' },
+    });
+
+    const spaceTypeAction = section.widgets[0].selectionInput?.onChangeAction;
+    expect(spaceTypeAction).toBeDefined();
+    expect(Value.Check(UiViewActionSchema, spaceTypeAction)).toBe(true);
+    expect(spaceTypeAction).toEqual({ action: 'onSpaceTypeChange' });
+
+    const docTypeAction = section.widgets[2].selectionInput?.onChangeAction;
+    expect(docTypeAction).toBeDefined();
+    expect(Value.Check(UiViewActionSchema, docTypeAction)).toBe(true);
+    expect(docTypeAction).toEqual({ action: 'onDocumentTypeChange' });
   });
 });

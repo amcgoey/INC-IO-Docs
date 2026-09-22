@@ -1,15 +1,185 @@
 import { describe, it, expect } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
-import { UiViewSectionSchema, type UiSchema } from '../domain';
-import type { AbstractDataSchema, AbstractDataField } from '../ports';
+import { UiViewSectionSchema, UiViewActionSchema, type UiSchema } from '../domain';
+import type { AbstractDataSchema, AbstractDataField, StandardWidgetCustomProps } from '../ports';
 import {
   camelCaseToTitleCase,
   inferDefaultWidget,
   buildDocumentInfoSection,
   getDocumentInfoWidgetName,
+  extractSelectionItems,
 } from './document-info';
 
 describe('Document Info Block', () => {
+  describe('extractSelectionItems', () => {
+    it('returns customProps.items when provided, overriding field.options', () => {
+      const field: AbstractDataField = {
+        key: 'status',
+        type: 'string',
+        options: ['Draft', 'Published'],
+      };
+      const customProps: StandardWidgetCustomProps = {
+        items: [{ text: 'Custom Status', value: 'custom' }],
+      };
+      const result = extractSelectionItems(field, customProps);
+      expect(result).toEqual([{ text: 'Custom Status', value: 'custom' }]);
+    });
+
+    it('maps string array field options to SelectionItems', () => {
+      const field: AbstractDataField = {
+        key: 'priority',
+        type: 'string',
+        options: ['Low', 'Medium', 'High'],
+      };
+      const result = extractSelectionItems(field, {});
+      expect(result).toEqual([
+        { text: 'Low', value: 'Low' },
+        { text: 'Medium', value: 'Medium' },
+        { text: 'High', value: 'High' },
+      ]);
+    });
+
+    it('maps object array field options with text and value', () => {
+      const field: AbstractDataField = {
+        key: 'type',
+        type: 'string',
+        options: [
+          { text: 'Option A', value: 'opt-a' },
+          { text: 'Option B', value: 'opt-b' },
+        ],
+      };
+      const result = extractSelectionItems(field, {});
+      expect(result).toEqual([
+        { text: 'Option A', value: 'opt-a' },
+        { text: 'Option B', value: 'opt-b' },
+      ]);
+    });
+
+    it('maps object array field options with only value, falling back text to String(value)', () => {
+      const field: AbstractDataField = {
+        key: 'code',
+        type: 'string',
+        options: [{ value: 101 }, { value: 'code-202' }],
+      };
+      const result = extractSelectionItems(field, {});
+      expect(result).toEqual([
+        { text: '101', value: '101' },
+        { text: 'code-202', value: 'code-202' },
+      ]);
+    });
+
+    it('maps primitive array options like numbers to SelectionItems', () => {
+      const field: AbstractDataField = {
+        key: 'rating',
+        type: 'number',
+        options: [1, 2, 3],
+      };
+      const result = extractSelectionItems(field, {});
+      expect(result).toEqual([
+        { text: '1', value: '1' },
+        { text: '2', value: '2' },
+        { text: '3', value: '3' },
+      ]);
+    });
+
+    it('resolves options from dataSchema source lookup with name and key tuples', () => {
+      const field: AbstractDataField = {
+        key: 'dept',
+        type: 'string',
+        options: { source: 'departments' },
+      };
+      const dataSchema: AbstractDataSchema = {
+        fields: [field],
+        options: {
+          departments: [
+            { name: 'Engineering', key: 'eng' },
+            { name: 'Human Resources', key: 'hr' },
+          ],
+        },
+      };
+      const result = extractSelectionItems(field, {}, dataSchema);
+      expect(result).toEqual([
+        { text: 'Engineering', value: 'eng' },
+        { text: 'Human Resources', value: 'hr' },
+      ]);
+    });
+
+    it('resolves options from dataSchema source lookup with text and value tuples', () => {
+      const field: AbstractDataField = {
+        key: 'role',
+        type: 'string',
+        options: { source: 'roles' },
+      };
+      const dataSchema: AbstractDataSchema = {
+        fields: [field],
+        options: {
+          roles: [
+            { text: 'Lead', value: 'role-lead' },
+            { text: 'Contributor', value: 'role-contrib' },
+          ],
+        },
+      };
+      const result = extractSelectionItems(field, {}, dataSchema);
+      expect(result).toEqual([
+        { text: 'Lead', value: 'role-lead' },
+        { text: 'Contributor', value: 'role-contrib' },
+      ]);
+    });
+
+    it('resolves options from dataSchema source lookup with primitive tuples', () => {
+      const field: AbstractDataField = {
+        key: 'year',
+        type: 'number',
+        options: { source: 'years' },
+      };
+      const dataSchema: AbstractDataSchema = {
+        fields: [field],
+        options: {
+          years: [2024, 2025, 2026],
+        },
+      };
+      const result = extractSelectionItems(field, {}, dataSchema);
+      expect(result).toEqual([
+        { text: '2024', value: '2024' },
+        { text: '2025', value: '2025' },
+        { text: '2026', value: '2026' },
+      ]);
+    });
+
+    it('returns empty array when dataSchema options does not have source key', () => {
+      const field: AbstractDataField = {
+        key: 'dept',
+        type: 'string',
+        options: { source: 'nonExistent' },
+      };
+      const dataSchema: AbstractDataSchema = {
+        fields: [field],
+        options: {},
+      };
+      const result = extractSelectionItems(field, {}, dataSchema);
+      expect(result).toEqual([]);
+    });
+
+    it('returns empty array when field.options uses source lookup but dataSchema is undefined', () => {
+      const field: AbstractDataField = {
+        key: 'dept',
+        type: 'string',
+        options: { source: 'departments' },
+      };
+      const result = extractSelectionItems(field, {});
+      expect(result).toEqual([]);
+    });
+
+    it('returns empty array when field has no options and customProps.items is undefined', () => {
+      const field: AbstractDataField = {
+        key: 'notes',
+        type: 'string',
+      };
+      const result = extractSelectionItems(field, {});
+      expect(result).toEqual([]);
+    });
+  });
+
   describe('camelCaseToTitleCase', () => {
     it('converts single word camelCase to Title Case', () => {
       expect(camelCaseToTitleCase('status')).toBe('Status');
@@ -437,6 +607,108 @@ describe('Document Info Block', () => {
 
       expect(section.widgets[0].textInput?.value).toBe('Acme Corp');
       expect(section.widgets[1].textInput?.value).toBe('500');
+    });
+
+    it('silently skips layout keys that do not exist in dataSchema.fields', () => {
+      const schema: AbstractDataSchema = {
+        fields: [{ key: 'presentField', type: 'string' }],
+      };
+      const uiSchema: UiSchema = {
+        layout: ['ghostField1', 'presentField', 'ghostField2'],
+      };
+
+      const section = buildDocumentInfoSection(schema, uiSchema);
+      expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+      expect(section.widgets).toHaveLength(1);
+      expect(section.widgets[0].textInput?.name).toBe('presentField');
+    });
+
+    it('infers selectionInput for boolean fields and respects customProps.type', () => {
+      const schema: AbstractDataSchema = {
+        fields: [{ key: 'isUrgent', type: 'boolean' }],
+      };
+      const uiSchema: UiSchema = {
+        fields: {
+          isUrgent: {
+            props: {
+              type: 'RADIO_BUTTON',
+              items: [
+                { text: 'Yes', value: 'true' },
+                { text: 'No', value: 'false' },
+              ],
+            },
+          },
+        },
+      };
+
+      const section = buildDocumentInfoSection(schema, uiSchema);
+      expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+      expect(section.widgets[0].selectionInput).toBeDefined();
+      expect(section.widgets[0].selectionInput?.type).toBe('RADIO_BUTTON');
+      expect(section.widgets[0].selectionInput?.items).toHaveLength(2);
+    });
+
+    it('uses customProps.value for textInput when neither formData nor defaultValue is defined', () => {
+      const schema: AbstractDataSchema = {
+        fields: [{ key: 'templateName', type: 'string' }],
+      };
+      const uiSchema: UiSchema = {
+        fields: {
+          templateName: {
+            props: { value: 'Standard Template' },
+          },
+        },
+      };
+
+      const section = buildDocumentInfoSection(schema, uiSchema);
+      expect(section.widgets[0].textInput?.value).toBe('Standard Template');
+    });
+
+    it('selects item matching defaultValue in selectionInput when formData is absent', () => {
+      const schema: AbstractDataSchema = {
+        fields: [
+          {
+            key: 'status',
+            type: 'string',
+            defaultValue: 'IN_PROGRESS',
+            options: ['DRAFT', 'IN_PROGRESS', 'COMPLETE'],
+          },
+        ],
+      };
+
+      const section = buildDocumentInfoSection(schema);
+      const items = section.widgets[0].selectionInput?.items;
+      expect(items?.find((i) => i.value === 'IN_PROGRESS')?.selected).toBe(true);
+      expect(items?.find((i) => i.value === 'DRAFT')?.selected).toBe(false);
+    });
+
+    it('strictly asserts that generated actions match closed agnostic UiViewAction schema', () => {
+      const schema: AbstractDataSchema = {
+        fields: [{ key: 'title', type: 'string' }],
+      };
+      const uiSchema: UiSchema = {
+        fields: {
+          title: { onChange: true },
+        },
+      };
+
+      const section = buildDocumentInfoSection(schema, uiSchema, {
+        onProcessAction: { action: 'processDocument', parameters: { mode: 'fast' } },
+      });
+
+      expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+
+      // 1. Check onChangeAction on textInput
+      const inputAction = section.widgets[0].textInput?.onChangeAction;
+      expect(inputAction).toBeDefined();
+      expect(Value.Check(UiViewActionSchema, inputAction)).toBe(true);
+      expect(inputAction).toEqual({ action: 'onFormChange' });
+
+      // 2. Check onClick on Process Document button
+      const buttonAction = section.widgets[1].buttonList?.buttons[0].onClick;
+      expect(buttonAction).toBeDefined();
+      expect(Value.Check(UiViewActionSchema, buttonAction)).toBe(true);
+      expect(buttonAction).toEqual({ action: 'processDocument', parameters: { mode: 'fast' } });
     });
   });
 

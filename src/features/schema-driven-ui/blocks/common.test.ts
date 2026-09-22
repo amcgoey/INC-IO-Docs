@@ -19,4 +19,24 @@ describe('withOnChangeAction', () => {
       onChangeAction: action,
     });
   });
+
+  it('attaches onChangeAction with parameters when provided', () => {
+    const props = { name: 'field1', label: 'Field 1' };
+    const action = { action: 'customAction', parameters: { key1: 'value1', key2: 42 } };
+    const result = withOnChangeAction(props, action);
+    expect(result).toEqual({
+      name: 'field1',
+      label: 'Field 1',
+      onChangeAction: action,
+    });
+  });
+
+  it('does not mutate the original props object', () => {
+    const original = { name: 'immutableField' };
+    const action = { action: 'onChange' };
+    const result = withOnChangeAction(original, action);
+    expect(result).not.toBe(original);
+    expect(original).toEqual({ name: 'immutableField' });
+  });
 });
+
