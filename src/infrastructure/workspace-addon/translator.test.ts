@@ -5,8 +5,10 @@ import {
   translateUiViewToNavigationAction,
   translateUiViewToUpdateCardAction,
   UiViewSchema,
+  UiActionSchema,
+  UiOnClickSchema,
 } from './translator';
-import { GoogleWorkspaceCardSchema } from './ui-blocks';
+import { GoogleWorkspaceCardSchema, type GoogleWorkspaceAction } from './ui-blocks';
 
 describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
   it('translates a full complex UiView configuration into a valid GoogleWorkspaceCard', () => {
@@ -552,5 +554,813 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
     };
     expect(Value.Check(UiViewSchema, invalidSelectionTypeView)).toBe(false);
     expect(() => translateUiViewToWorkspaceCard(invalidSelectionTypeView)).toThrow('Invalid UiView');
+  });
+
+  describe('UI Action Translations & Boundary Error Handling (Issue #137)', () => {
+    describe('UiActionSchema and UiOnClickSchema Typebox Contracts', () => {
+      it('validates and accepts compliant action definitions', () => {
+        expect(Value.Check(UiActionSchema, { action: 'submit', route: '/workspace/action' })).toBe(true);
+        expect(
+          Value.Check(UiActionSchema, {
+            action: 'submit',
+            route: '/workspace/action',
+            parameters: {},
+          })
+        ).toBe(true);
+        expect(
+          Value.Check(UiActionSchema, {
+            action: 'submit',
+            route: '/workspace/action',
+            parameters: { id: 'doc-123', mode: 'edit' },
+          })
+        ).toBe(true);
+        // UiOnClickSchema is structurally identical to UiActionSchema
+        expect(Value.Check(UiOnClickSchema, { action: 'click', route: '/workspace/action' })).toBe(true);
+      });
+
+      it('rejects action missing required action property', () => {
+        const missingAction = { route: '/workspace/action' };
+        expect(Value.Check(UiActionSchema, missingAction)).toBe(false);
+        const errors = [...Value.Errors(UiActionSchema, missingAction)];
+        expect(errors.some((e) => e.path === '/action')).toBe(true);
+      });
+
+      it('rejects action missing required route property', () => {
+        const missingRoute = { action: 'onClick' };
+        expect(Value.Check(UiActionSchema, missingRoute)).toBe(false);
+        const errors = [...Value.Errors(UiActionSchema, missingRoute)];
+        expect(errors.some((e) => e.path === '/route')).toBe(true);
+      });
+
+      it('rejects non-string action values', () => {
+        expect(Value.Check(UiActionSchema, { action: 123, route: '/workspace/action' })).toBe(false);
+        expect(Value.Check(UiActionSchema, { action: true, route: '/workspace/action' })).toBe(false);
+        expect(Value.Check(UiActionSchema, { action: null, route: '/workspace/action' })).toBe(false);
+        expect(Value.Check(UiActionSchema, { action: {}, route: '/workspace/action' })).toBe(false);
+        expect(Value.Check(UiActionSchema, { action: ['click'], route: '/workspace/action' })).toBe(false);
+      });
+
+      it('rejects non-string route values', () => {
+        expect(Value.Check(UiActionSchema, { action: 'click', route: 404 })).toBe(false);
+        expect(Value.Check(UiActionSchema, { action: 'click', route: false })).toBe(false);
+        expect(Value.Check(UiActionSchema, { action: 'click', route: null })).toBe(false);
+        expect(Value.Check(UiActionSchema, { action: 'click', route: { path: '/test' } })).toBe(false);
+      });
+
+      it('rejects extraneous properties due to additionalProperties: false', () => {
+        const extraPropAction = {
+          action: 'submit',
+          route: '/workspace/action',
+          unknownField: 'unexpected',
+        };
+        expect(Value.Check(UiActionSchema, extraPropAction)).toBe(false);
+        const errors = [...Value.Errors(UiActionSchema, extraPropAction)];
+        expect(errors.some((e) => e.path === '/unknownField' && e.message.includes('Unexpected property'))).toBe(true);
+      });
+
+      it('rejects non-object parameters', () => {
+        expect(
+          Value.Check(UiActionSchema, { action: 'a', route: 'r', parameters: 'invalid-string' })
+        ).toBe(false);
+        expect(
+          Value.Check(UiActionSchema, { action: 'a', route: 'r', parameters: 42 })
+        ).toBe(false);
+        expect(
+          Value.Check(UiActionSchema, { action: 'a', route: 'r', parameters: true })
+        ).toBe(false);
+        expect(
+          Value.Check(UiActionSchema, { action: 'a', route: 'r', parameters: null })
+        ).toBe(false);
+        expect(
+          Value.Check(UiActionSchema, { action: 'a', route: 'r', parameters: ['array'] })
+        ).toBe(false);
+      });
+
+      it('rejects non-string values within parameters record', () => {
+        expect(
+          Value.Check(UiActionSchema, {
+            action: 'a',
+            route: 'r',
+            parameters: { num: 123 },
+          })
+        ).toBe(false);
+        expect(
+          Value.Check(UiActionSchema, {
+            action: 'a',
+            route: 'r',
+            parameters: { bool: true },
+          })
+        ).toBe(false);
+        expect(
+          Value.Check(UiActionSchema, {
+            action: 'a',
+            route: 'r',
+            parameters: { nil: null },
+          })
+        ).toBe(false);
+        expect(
+          Value.Check(UiActionSchema, {
+            action: 'a',
+            route: 'r',
+            parameters: { nested: { key: 'val' } },
+          })
+        ).toBe(false);
+        expect(
+          Value.Check(UiActionSchema, {
+            action: 'a',
+            route: 'r',
+            parameters: { list: ['a', 'b'] },
+          })
+        ).toBe(false);
+      });
+    });
+
+    describe('Malformed UI Actions in TextInput Widgets', () => {
+      const createTextInputView = (onChangeAction: unknown) => ({
+        sections: [
+          {
+            widgets: [
+              {
+                textInput: {
+                  name: 'testInput',
+                  onChangeAction,
+                },
+              },
+            ],
+          },
+        ],
+      });
+
+      it('rejects primitive values for textInput onChangeAction', () => {
+        expect(() => translateUiViewToWorkspaceCard(createTextInputView('onTextChange'))).toThrow(
+          'Invalid UiView'
+        );
+        expect(() => translateUiViewToWorkspaceCard(createTextInputView(12345))).toThrow(
+          'Invalid UiView'
+        );
+        expect(() => translateUiViewToWorkspaceCard(createTextInputView(true))).toThrow(
+          'Invalid UiView'
+        );
+      });
+
+      it('rejects null or array for textInput onChangeAction', () => {
+        expect(() => translateUiViewToWorkspaceCard(createTextInputView(null))).toThrow(
+          'Invalid UiView'
+        );
+        expect(() => translateUiViewToWorkspaceCard(createTextInputView([]))).toThrow(
+          'Invalid UiView'
+        );
+      });
+
+      it('rejects textInput onChangeAction missing required action or route', () => {
+        expect(() =>
+          translateUiViewToWorkspaceCard(createTextInputView({ route: '/workspace/action' }))
+        ).toThrow('Invalid UiView');
+        expect(() =>
+          translateUiViewToWorkspaceCard(createTextInputView({ action: 'onTextChange' }))
+        ).toThrow('Invalid UiView');
+      });
+
+      it('rejects textInput onChangeAction with extraneous properties', () => {
+        expect(() =>
+          translateUiViewToWorkspaceCard(
+            createTextInputView({
+              action: 'onTextChange',
+              route: '/workspace/action',
+              extraProperty: 'disallowed',
+            })
+          )
+        ).toThrow('Invalid UiView');
+      });
+
+      it('rejects textInput onChangeAction with non-string parameter values', () => {
+        expect(() =>
+          translateUiViewToWorkspaceCard(
+            createTextInputView({
+              action: 'onTextChange',
+              route: '/workspace/action',
+              parameters: { count: 10, isValid: false },
+            })
+          )
+        ).toThrow('Invalid UiView');
+      });
+
+      it('rejects textInput onChangeAction with non-object parameters', () => {
+        expect(() =>
+          translateUiViewToWorkspaceCard(
+            createTextInputView({
+              action: 'onTextChange',
+              route: '/workspace/action',
+              parameters: 'invalid-parameters-string',
+            })
+          )
+        ).toThrow('Invalid UiView');
+      });
+    });
+
+    describe('Malformed UI Actions in SelectionInput Widgets', () => {
+      const createSelectionInputView = (onChangeAction: unknown) => ({
+        sections: [
+          {
+            widgets: [
+              {
+                selectionInput: {
+                  name: 'testSelection',
+                  type: 'DROPDOWN',
+                  items: [{ text: 'Item 1', value: 'item-1' }],
+                  onChangeAction,
+                },
+              },
+            ],
+          },
+        ],
+      });
+
+      it('rejects primitive values for selectionInput onChangeAction', () => {
+        expect(() => translateUiViewToWorkspaceCard(createSelectionInputView('onSelectChange'))).toThrow(
+          'Invalid UiView'
+        );
+        expect(() => translateUiViewToWorkspaceCard(createSelectionInputView(999))).toThrow(
+          'Invalid UiView'
+        );
+        expect(() => translateUiViewToWorkspaceCard(createSelectionInputView(false))).toThrow(
+          'Invalid UiView'
+        );
+      });
+
+      it('rejects null or array for selectionInput onChangeAction', () => {
+        expect(() => translateUiViewToWorkspaceCard(createSelectionInputView(null))).toThrow(
+          'Invalid UiView'
+        );
+        expect(() => translateUiViewToWorkspaceCard(createSelectionInputView([]))).toThrow(
+          'Invalid UiView'
+        );
+      });
+
+      it('rejects selectionInput onChangeAction missing required action or route', () => {
+        expect(() =>
+          translateUiViewToWorkspaceCard(createSelectionInputView({ route: '/workspace/action' }))
+        ).toThrow('Invalid UiView');
+        expect(() =>
+          translateUiViewToWorkspaceCard(createSelectionInputView({ action: 'onSelectChange' }))
+        ).toThrow('Invalid UiView');
+      });
+
+      it('rejects selectionInput onChangeAction with extraneous properties', () => {
+        expect(() =>
+          translateUiViewToWorkspaceCard(
+            createSelectionInputView({
+              action: 'onSelectChange',
+              route: '/workspace/action',
+              unknownFlag: 1,
+            })
+          )
+        ).toThrow('Invalid UiView');
+      });
+
+      it('rejects selectionInput onChangeAction with non-string parameter values', () => {
+        expect(() =>
+          translateUiViewToWorkspaceCard(
+            createSelectionInputView({
+              action: 'onSelectChange',
+              route: '/workspace/action',
+              parameters: { complex: { a: 1 } },
+            })
+          )
+        ).toThrow('Invalid UiView');
+      });
+    });
+
+    describe('Malformed UI Actions in ButtonList Widgets', () => {
+      const createButtonListView = (onClick: unknown) => ({
+        sections: [
+          {
+            widgets: [
+              {
+                buttonList: {
+                  buttons: [
+                    {
+                      text: 'Click Me',
+                      onClick,
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      });
+
+      it('rejects primitive string action name for button onClick', () => {
+        expect(() => translateUiViewToWorkspaceCard(createButtonListView('handleClick'))).toThrow(
+          'Invalid UiView'
+        );
+      });
+
+      it('rejects primitive number or boolean for button onClick', () => {
+        expect(() => translateUiViewToWorkspaceCard(createButtonListView(1))).toThrow(
+          'Invalid UiView'
+        );
+        expect(() => translateUiViewToWorkspaceCard(createButtonListView(true))).toThrow(
+          'Invalid UiView'
+        );
+      });
+
+      it('rejects null or array for button onClick', () => {
+        expect(() => translateUiViewToWorkspaceCard(createButtonListView(null))).toThrow(
+          'Invalid UiView'
+        );
+        expect(() => translateUiViewToWorkspaceCard(createButtonListView([]))).toThrow(
+          'Invalid UiView'
+        );
+      });
+
+      it('rejects button onClick missing action or route', () => {
+        expect(() =>
+          translateUiViewToWorkspaceCard(createButtonListView({ route: '/workspace/action' }))
+        ).toThrow('Invalid UiView');
+        expect(() =>
+          translateUiViewToWorkspaceCard(createButtonListView({ action: 'onButtonClick' }))
+        ).toThrow('Invalid UiView');
+      });
+
+      it('rejects button onClick with extraneous properties', () => {
+        expect(() =>
+          translateUiViewToWorkspaceCard(
+            createButtonListView({
+              action: 'onButtonClick',
+              route: '/workspace/action',
+              debounceMs: 300,
+            })
+          )
+        ).toThrow('Invalid UiView');
+      });
+
+      it('rejects button onClick with non-string parameter values', () => {
+        expect(() =>
+          translateUiViewToWorkspaceCard(
+            createButtonListView({
+              action: 'onButtonClick',
+              route: '/workspace/action',
+              parameters: { ids: [1, 2, 3] },
+            })
+          )
+        ).toThrow('Invalid UiView');
+      });
+    });
+
+    describe('Graceful Handling and Normalization of Action Edge Cases', () => {
+      it('safely ignores duplicate parameter key named "action" and preserves primary action value', () => {
+        const viewWithDuplicateActionParam = {
+          sections: [
+            {
+              widgets: [
+                {
+                  buttonList: {
+                    buttons: [
+                      {
+                        text: 'Test Duplicate Action Key',
+                        onClick: {
+                          action: 'primaryActionName',
+                          route: '/workspace/action',
+                          parameters: {
+                            action: 'attemptedOverrideValue',
+                            docId: 'doc-789',
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const card = translateUiViewToWorkspaceCard(viewWithDuplicateActionParam);
+        const button = card.sections[0].widgets[0].buttonList?.buttons[0];
+        const onClick = button?.onClick as { action?: GoogleWorkspaceAction } | undefined;
+        const actionObj = onClick?.action;
+
+        expect(actionObj?.function).toBe('/workspace/action');
+        // Must contain primaryActionName and not be overwritten or duplicated
+        expect(actionObj?.parameters).toEqual([
+          { key: 'action', value: 'primaryActionName' },
+          { key: 'docId', value: 'doc-789' },
+        ]);
+        const actionParams = actionObj?.parameters?.filter(
+          (p: { key: string; value: string }) => p.key === 'action'
+        );
+        expect(actionParams).toHaveLength(1);
+        expect(actionParams?.[0].value).toBe('primaryActionName');
+      });
+
+      it('gracefully normalizes action with empty parameters object', () => {
+        const view = {
+          sections: [
+            {
+              widgets: [
+                {
+                  textInput: {
+                    name: 'username',
+                    onChangeAction: {
+                      action: 'validateUser',
+                      route: '/workspace/action',
+                      parameters: {},
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const card = translateUiViewToWorkspaceCard(view);
+        expect(card.sections[0].widgets[0].textInput?.onChangeAction).toEqual({
+          function: '/workspace/action',
+          parameters: [{ key: 'action', value: 'validateUser' }],
+          loadIndicator: 'SPINNER',
+        });
+      });
+
+      it('gracefully handles parameter with empty string value without omitting or throwing', () => {
+        const view = {
+          sections: [
+            {
+              widgets: [
+                {
+                  textInput: {
+                    name: 'filter',
+                    onChangeAction: {
+                      action: 'applyFilter',
+                      route: '/workspace/action',
+                      parameters: { query: '' },
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const card = translateUiViewToWorkspaceCard(view);
+        expect(card.sections[0].widgets[0].textInput?.onChangeAction?.parameters).toEqual([
+          { key: 'action', value: 'applyFilter' },
+          { key: 'query', value: '' },
+        ]);
+      });
+
+      it('gracefully handles parameters containing spaces, colons, unicode, and serialized JSON strings', () => {
+        const view = {
+          sections: [
+            {
+              widgets: [
+                {
+                  buttonList: {
+                    buttons: [
+                      {
+                        text: 'Submit Complex',
+                        onClick: {
+                          action: 'processComplex',
+                          route: '/workspace/complex',
+                          parameters: {
+                            'colon:key': 'value with spaces & symbols (#@!)',
+                            unicode: 'こんにちは世界 🚀',
+                            serializedJson: JSON.stringify({ nested: true, count: 42 }),
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const card = translateUiViewToWorkspaceCard(view);
+        const buttonOnClick = card.sections[0].widgets[0].buttonList?.buttons[0].onClick as
+          | { action?: GoogleWorkspaceAction }
+          | undefined;
+        const params = buttonOnClick?.action?.parameters;
+        expect(params).toEqual(
+          expect.arrayContaining([
+            { key: 'action', value: 'processComplex' },
+            { key: 'colon:key', value: 'value with spaces & symbols (#@!)' },
+            { key: 'unicode', value: 'こんにちは世界 🚀' },
+            { key: 'serializedJson', value: '{"nested":true,"count":42}' },
+          ])
+        );
+      });
+
+      it('gracefully translates widgets when actions are omitted', () => {
+        const viewWithoutActions = {
+          sections: [
+            {
+              widgets: [
+                {
+                  textInput: {
+                    name: 'nameOnly',
+                  },
+                },
+                {
+                  selectionInput: {
+                    name: 'selectionOnly',
+                    items: [{ text: 'Opt', value: 'opt' }],
+                  },
+                },
+                {
+                  buttonList: {
+                    buttons: [{ text: 'Button Without OnClick' }],
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const card = translateUiViewToWorkspaceCard(viewWithoutActions);
+        const widgets = card.sections[0].widgets;
+
+        expect(widgets[0].textInput?.onChangeAction).toBeUndefined();
+        expect(widgets[1].selectionInput?.onChangeAction).toBeUndefined();
+        expect(widgets[2].buttonList?.buttons[0].onClick).toBeUndefined();
+      });
+
+      it('translates multiple distinct actions across different widgets and sections cleanly', () => {
+        const multiActionView = {
+          sections: [
+            {
+              header: 'Section 1',
+              widgets: [
+                {
+                  textInput: {
+                    name: 'input1',
+                    onChangeAction: { action: 'act1', route: '/workspace/route1' },
+                  },
+                },
+              ],
+            },
+            {
+              header: 'Section 2',
+              widgets: [
+                {
+                  selectionInput: {
+                    name: 'select2',
+                    onChangeAction: {
+                      action: 'act2',
+                      route: '/workspace/route2',
+                      parameters: { p: 'v' },
+                    },
+                  },
+                },
+                {
+                  buttonList: {
+                    buttons: [
+                      {
+                        text: 'Btn3',
+                        onClick: { action: 'act3', route: '/workspace/route3' },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const card = translateUiViewToWorkspaceCard(multiActionView);
+        expect(card.sections[0].widgets[0].textInput?.onChangeAction?.function).toBe(
+          '/workspace/route1'
+        );
+        expect(card.sections[1].widgets[0].selectionInput?.onChangeAction?.function).toBe(
+          '/workspace/route2'
+        );
+        const buttonOnClick = card.sections[1].widgets[1].buttonList?.buttons[0].onClick as
+          | { action?: GoogleWorkspaceAction }
+          | undefined;
+        expect(buttonOnClick?.action?.function).toBe('/workspace/route3');
+      });
+    });
+
+    describe('Navigation Action & UpdateCard Action Graceful Degradation', () => {
+      const malformedActionView = {
+        sections: [
+          {
+            widgets: [
+              {
+                textInput: {
+                  name: 'brokenInput',
+                  onChangeAction: { invalidActionSchema: true },
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      it('translateUiViewToNavigationAction fails gracefully with descriptive error on malformed UI actions', () => {
+        expect(() => translateUiViewToNavigationAction(malformedActionView)).toThrow(
+          'Invalid UiView'
+        );
+      });
+
+      it('translateUiViewToUpdateCardAction fails gracefully with descriptive error on malformed UI actions', () => {
+        expect(() => translateUiViewToUpdateCardAction(malformedActionView)).toThrow(
+          'Invalid UiView'
+        );
+      });
+
+      it('translateUiViewToNavigationAction fails gracefully with descriptive error on unexpected top-level inputs', () => {
+        expect(() => translateUiViewToNavigationAction(null)).toThrow('Invalid UiView');
+        expect(() => translateUiViewToNavigationAction(undefined)).toThrow('Invalid UiView');
+        expect(() => translateUiViewToNavigationAction(12345)).toThrow('Invalid UiView');
+        expect(() => translateUiViewToNavigationAction('plain-string')).toThrow('Invalid UiView');
+        expect(() => translateUiViewToNavigationAction([])).toThrow('Invalid UiView');
+        expect(() => translateUiViewToNavigationAction({})).toThrow('Invalid UiView');
+        expect(() => translateUiViewToNavigationAction({ sections: [] })).toThrow('Invalid UiView');
+      });
+
+      it('translateUiViewToUpdateCardAction fails gracefully with descriptive error on unexpected top-level inputs', () => {
+        expect(() => translateUiViewToUpdateCardAction(null)).toThrow('Invalid UiView');
+        expect(() => translateUiViewToUpdateCardAction(undefined)).toThrow('Invalid UiView');
+        expect(() => translateUiViewToUpdateCardAction(12345)).toThrow('Invalid UiView');
+        expect(() => translateUiViewToUpdateCardAction('plain-string')).toThrow('Invalid UiView');
+        expect(() => translateUiViewToUpdateCardAction([])).toThrow('Invalid UiView');
+        expect(() => translateUiViewToUpdateCardAction({})).toThrow('Invalid UiView');
+        expect(() => translateUiViewToUpdateCardAction({ sections: [] })).toThrow('Invalid UiView');
+      });
+
+      it('translateUiViewToNavigationAction translates valid actions into pushCard response', () => {
+        const validView = {
+          header: { title: 'Test Navigation' },
+          sections: [
+            {
+              widgets: [
+                {
+                  buttonList: {
+                    buttons: [
+                      {
+                        text: 'Go',
+                        onClick: {
+                          action: 'navigateAction',
+                          route: '/workspace/action',
+                          parameters: { step: '2' },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const navResponse = translateUiViewToNavigationAction(validView);
+        expect(navResponse.action?.navigations).toHaveLength(1);
+        const pushCard = navResponse.action?.navigations?.[0]?.pushCard;
+        expect(pushCard).toBeDefined();
+        expect(pushCard?.header?.title).toBe('Test Navigation');
+        const button = pushCard?.sections[0].widgets[0].buttonList?.buttons[0];
+        const buttonOnClick = button?.onClick as { action?: GoogleWorkspaceAction } | undefined;
+        expect(buttonOnClick?.action?.function).toBe('/workspace/action');
+        expect(buttonOnClick?.action?.parameters).toEqual([
+          { key: 'action', value: 'navigateAction' },
+          { key: 'step', value: '2' },
+        ]);
+      });
+
+      it('translateUiViewToUpdateCardAction translates valid actions into updateCard response', () => {
+        const validView = {
+          header: { title: 'Test Update' },
+          sections: [
+            {
+              widgets: [
+                {
+                  textInput: {
+                    name: 'field',
+                    onChangeAction: {
+                      action: 'updateField',
+                      route: '/workspace/on-form-change',
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const updateResponse = translateUiViewToUpdateCardAction(validView);
+        expect(updateResponse.action?.navigations).toHaveLength(1);
+        const updateCard = updateResponse.action?.navigations?.[0]?.updateCard;
+        expect(updateCard).toBeDefined();
+        expect(updateCard?.header?.title).toBe('Test Update');
+        expect(updateCard?.sections[0].widgets[0].textInput?.onChangeAction).toEqual({
+          function: '/workspace/on-form-change',
+          parameters: [{ key: 'action', value: 'updateField' }],
+          loadIndicator: 'SPINNER',
+        });
+      });
+
+      it('translates CHECK_BOX and RADIO_BUTTON selection inputs with onChangeAction and rejects malformed actions', () => {
+        const checkboxView = {
+          sections: [
+            {
+              widgets: [
+                {
+                  selectionInput: {
+                    name: 'optIn',
+                    type: 'CHECK_BOX',
+                    items: [{ text: 'Yes', value: 'yes', selected: false }],
+                    onChangeAction: {
+                      action: 'onCheckboxToggle',
+                      route: '/workspace/on-form-change',
+                      parameters: { target: 'notifications' },
+                    },
+                  },
+                },
+                {
+                  selectionInput: {
+                    name: 'priority',
+                    type: 'RADIO_BUTTON',
+                    items: [{ text: 'High', value: 'high' }, { text: 'Low', value: 'low' }],
+                    onChangeAction: {
+                      action: 'onPriorityChange',
+                      route: '/workspace/on-form-change',
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const card = translateUiViewToWorkspaceCard(checkboxView);
+        const widgets = card.sections[0].widgets;
+
+        expect(widgets[0].selectionInput?.type).toBe('CHECK_BOX');
+        expect(widgets[0].selectionInput?.onChangeAction).toEqual({
+          function: '/workspace/on-form-change',
+          parameters: [
+            { key: 'action', value: 'onCheckboxToggle' },
+            { key: 'target', value: 'notifications' },
+          ],
+          loadIndicator: 'SPINNER',
+        });
+
+        expect(widgets[1].selectionInput?.type).toBe('RADIO_BUTTON');
+        expect(widgets[1].selectionInput?.onChangeAction).toEqual({
+          function: '/workspace/on-form-change',
+          parameters: [{ key: 'action', value: 'onPriorityChange' }],
+          loadIndicator: 'SPINNER',
+        });
+
+        // Malformed checkbox action rejected
+        const brokenCheckboxView = {
+          sections: [
+            {
+              widgets: [
+                {
+                  selectionInput: {
+                    name: 'optIn',
+                    type: 'CHECK_BOX',
+                    items: [{ text: 'Yes', value: 'yes' }],
+                    onChangeAction: { action: 'onToggle' }, // missing route
+                  },
+                },
+              ],
+            },
+          ],
+        };
+        expect(() => translateUiViewToWorkspaceCard(brokenCheckboxView)).toThrow('Invalid UiView');
+      });
+
+      it('rejects buttonList when any button has a malformed onClick action', () => {
+        const mixedButtonsView = {
+          sections: [
+            {
+              widgets: [
+                {
+                  buttonList: {
+                    buttons: [
+                      {
+                        text: 'Valid Button',
+                        onClick: { action: 'valid', route: '/workspace/action' },
+                      },
+                      {
+                        text: 'Malformed Button',
+                        onClick: { action: 'invalid' }, // missing route
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        expect(() => translateUiViewToWorkspaceCard(mixedButtonsView)).toThrow('Invalid UiView');
+      });
+    });
   });
 });
