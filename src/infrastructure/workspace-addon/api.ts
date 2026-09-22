@@ -65,7 +65,8 @@ export function registerWorkspaceAddonRoutes(
         const traceHeader = request.headers?.['x-cloud-trace-context'] as string | undefined;
         const context: WorkspaceExecutionContext = extractWorkspaceExecutionContext(
           request.body,
-          traceHeader
+          traceHeader,
+          request.headers
         );
         const result = await uiOrchestrator.processUiEvent(context);
         return {

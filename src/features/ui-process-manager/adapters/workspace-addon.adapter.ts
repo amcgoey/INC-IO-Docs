@@ -135,13 +135,18 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         : context;
 
     let collectionSpaces: string[] = [];
-    try {
-      const collection = await spaceProvider.getCollection(currentSpaceType, {
-        auth: normalizedContext.userOAuthToken,
-      });
-      collectionSpaces = collection.spaces.map((s) => s.name);
-    } catch (e) {
-      console.warn(`Could not fetch collection for space type: ${currentSpaceType}`, e);
+    const collectionErrors: string[] = [];
+    if (spaceTypes.length > 0) {
+      try {
+        const collection = await spaceProvider.getCollection(currentSpaceType, {
+          auth: normalizedContext.userOAuthToken,
+        });
+        collectionSpaces = collection.spaces.map((s) => s.name);
+      } catch (e) {
+        console.warn(`Could not fetch collection for space type: ${currentSpaceType}`, e);
+        const errMsg = e instanceof Error ? e.message : `Could not fetch collection for space type: ${currentSpaceType}`;
+        collectionErrors.push(errMsg);
+      }
     }
 
     const renderCard = async (options: {
@@ -150,11 +155,16 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       isUpdateCard?: boolean | undefined;
       hiddenFields?: string[] | undefined;
     }) => {
+      const combinedValidationErrors = [
+        ...(options.validationErrors ?? normalizedContext.validationErrors ?? []),
+        ...collectionErrors,
+      ];
+
       const state = evaluateProcessUiState({
         context: {
           ...normalizedContext,
           ...(options.formData !== undefined ? { formData: options.formData } : {}),
-          ...(options.validationErrors ? { validationErrors: options.validationErrors } : {}),
+          ...(combinedValidationErrors.length > 0 ? { validationErrors: combinedValidationErrors } : {}),
           ...(options.isUpdateCard ? { isUpdateCard: true } : {}),
         },
         resolvedDocumentTypeKey,
@@ -170,6 +180,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         selectionState: state.selectionState,
         formData: state.formData,
         isUpdateCard: state.isUpdateCard,
+        ...(normalizedContext.baseUrl !== undefined ? { baseUrl: normalizedContext.baseUrl } : {}),
         ...(options.hiddenFields !== undefined ? { hiddenFields: options.hiddenFields } : {}),
         ...(state.validationErrors ? { validationErrors: state.validationErrors } : {}),
       });

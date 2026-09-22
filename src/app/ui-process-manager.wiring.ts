@@ -23,6 +23,7 @@ import type {
 import {
   translateUiViewToNavigationAction,
   translateUiViewToUpdateCardAction,
+  resolveActionRoute,
   type UiView as WorkspaceUiView,
   type UiViewWidget,
   type UiAction,
@@ -41,7 +42,8 @@ function mapSelectionItems(
 }
 
 function mapUiAction(
-  action?: { action: string; parameters?: Record<string, unknown> | undefined } | undefined
+  action?: { action: string; parameters?: Record<string, unknown> | undefined } | undefined,
+  baseUrl?: string | undefined
 ): UiAction | undefined {
   if (!action) {
     return undefined;
@@ -53,14 +55,18 @@ function mapUiAction(
           .map(([k, v]) => [k, String(v)])
       )
     : undefined;
+
+  const rawRoute = action.action === 'onFormChange' ? '/workspace/on-form-change' : '/workspace/action';
+  const route = resolveActionRoute(rawRoute, baseUrl);
+
   return {
     action: action.action,
-    route: action.action === 'onFormChange' ? '/workspace/on-form-change' : '/workspace/action',
+    route,
     ...(parameters !== undefined ? { parameters } : {}),
   };
 }
 
-export function mapUiViewToWorkspaceUiView(view: UiView): WorkspaceUiView {
+export function mapUiViewToWorkspaceUiView(view: UiView, baseUrl?: string | undefined): WorkspaceUiView {
   return {
     ...(view.id !== undefined ? { id: view.id } : {}),
     ...(view.header !== undefined
@@ -85,7 +91,7 @@ export function mapUiViewToWorkspaceUiView(view: UiView): WorkspaceUiView {
             return { textParagraph: { text: widget.textParagraph.text } };
           }
           if (widget.textInput) {
-            const mappedAction = mapUiAction(widget.textInput.onChangeAction);
+            const mappedAction = mapUiAction(widget.textInput.onChangeAction, baseUrl);
             return {
               textInput: {
                 name: widget.textInput.name,
@@ -100,7 +106,7 @@ export function mapUiViewToWorkspaceUiView(view: UiView): WorkspaceUiView {
             };
           }
           if (widget.selectionInput) {
-            const mappedAction = mapUiAction(widget.selectionInput.onChangeAction);
+            const mappedAction = mapUiAction(widget.selectionInput.onChangeAction, baseUrl);
             return {
               selectionInput: {
                 name: widget.selectionInput.name,
@@ -121,7 +127,7 @@ export function mapUiViewToWorkspaceUiView(view: UiView): WorkspaceUiView {
             return {
               buttonList: {
                 buttons: widget.buttonList.buttons.map((btn) => {
-                  const mappedOnClick = mapUiAction(btn.onClick);
+                  const mappedOnClick = mapUiAction(btn.onClick, baseUrl);
                   return {
                     text: btn.text,
                     ...(mappedOnClick !== undefined ? { onClick: mappedOnClick } : {}),
@@ -204,11 +210,11 @@ export function createUiProcessManagerWiring(
           : {}),
       });
 
-      const mappedView = mapUiViewToWorkspaceUiView(view);
+      const mappedView = mapUiViewToWorkspaceUiView(view, request.baseUrl);
       if (request.isUpdateCard) {
-        return translateUiViewToUpdateCardAction(mappedView);
+        return translateUiViewToUpdateCardAction(mappedView, { baseUrl: request.baseUrl });
       }
-      return translateUiViewToNavigationAction(mappedView);
+      return translateUiViewToNavigationAction(mappedView, { baseUrl: request.baseUrl });
     },
   };
 

@@ -50,6 +50,7 @@ export interface WorkspaceExecutionContext {
   hostApp?: string | undefined;
   platform?: string | undefined;
   traceId?: string | undefined;
+  baseUrl?: string | undefined;
   selectedItems?: WorkspaceDriveSelectedItem[] | undefined;
   validationErrors?: string[] | undefined;
   formData?: Record<string, unknown> | undefined;
@@ -58,9 +59,51 @@ export interface WorkspaceExecutionContext {
   rawEvent?: unknown;
 }
 
+function getHeader(
+  headers: Record<string, string | string[] | undefined>,
+  name: string
+): string | undefined {
+  const target = name.toLowerCase();
+  for (const [key, val] of Object.entries(headers)) {
+    if (key.toLowerCase() === target) {
+      if (Array.isArray(val)) {
+        return val[0]?.split(',')[0]?.trim();
+      }
+      if (typeof val === 'string') {
+        return val.split(',')[0]?.trim();
+      }
+    }
+  }
+  return undefined;
+}
+
+export function extractBaseUrl(
+  headers?: Record<string, string | string[] | undefined>
+): string | undefined {
+  if (headers) {
+    const proto = getHeader(headers, 'x-forwarded-proto');
+    const forwardedHost = getHeader(headers, 'x-forwarded-host');
+    const host = forwardedHost ?? getHeader(headers, 'host');
+
+    if (proto && host) {
+      return `${proto}://${host}`;
+    }
+    if (forwardedHost) {
+      return `https://${forwardedHost}`;
+    }
+  }
+
+  if (process.env.APP_BASE_URL && process.env.APP_BASE_URL.trim() !== '') {
+    return process.env.APP_BASE_URL.trim().replace(/\/+$/, '');
+  }
+
+  return undefined;
+}
+
 export function extractWorkspaceExecutionContext(
   payload: unknown,
-  traceId?: string
+  traceId?: string,
+  headers?: Record<string, string | string[] | undefined>
 ): WorkspaceExecutionContext {
   const event: Partial<WorkspaceEventPayload> =
     Value.Check(WorkspaceEventPayloadType, payload) ? payload : {};
@@ -107,6 +150,7 @@ export function extractWorkspaceExecutionContext(
     hostApp: event.commonEventObject?.hostApp,
     platform: event.commonEventObject?.platform,
     traceId,
+    baseUrl: extractBaseUrl(headers),
     selectedItems: event.drive?.selectedItems,
     validationErrors,
     formData,

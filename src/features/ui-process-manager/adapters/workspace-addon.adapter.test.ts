@@ -783,5 +783,120 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       });
     });
   });
+
+  describe('baseUrl propagation & Space Collection Failure error display', () => {
+    it('propagates baseUrl from context to viewGenerator.generateCard', async () => {
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        viewGenerator: mockViewGenerator,
+      });
+
+      const context: UiProcessEventContext = {
+        baseUrl: 'https://my-addon.example.com',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentType: 'communication-project',
+        },
+      };
+
+      const result = (await adapter.processUiEvent(context)) as {
+        renderedCard: boolean;
+        request: UiProcessCardRequest;
+      };
+
+      expect(result.request.baseUrl).toBe('https://my-addon.example.com');
+      expect(mockViewGenerator.generateCard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          baseUrl: 'https://my-addon.example.com',
+        })
+      );
+    });
+
+    it('catches spaceProvider.getCollection error, logs warning, and surfaces error in validationErrors for status message', async () => {
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const failingSpaceProvider: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+          },
+        ]),
+        getCollection: vi.fn().mockRejectedValue(new Error('Shared Drive permission denied')),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: failingSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        viewGenerator: mockViewGenerator,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'onSpaceTypeChange',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+        },
+      };
+
+      const result = (await adapter.processUiEvent(context)) as {
+        renderedCard: boolean;
+        request: UiProcessCardRequest;
+      };
+
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        'Could not fetch collection for space type: projects',
+        expect.any(Error)
+      );
+
+      expect(result.request.validationErrors).toEqual(
+        expect.arrayContaining(['Shared Drive permission denied'])
+      );
+
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('combines space collection failure error with existing validationErrors', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const failingSpaceProvider: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+          },
+        ]),
+        getCollection: vi.fn().mockRejectedValue(new Error('Drive network failure')),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: failingSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        viewGenerator: mockViewGenerator,
+      });
+
+      const context: UiProcessEventContext = {
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+        },
+        validationErrors: ['Pre-existing field error'],
+      };
+
+      const result = (await adapter.processUiEvent(context)) as {
+        renderedCard: boolean;
+        request: UiProcessCardRequest;
+      };
+
+      expect(result.request.validationErrors).toEqual([
+        'Pre-existing field error',
+        'Drive network failure',
+      ]);
+    });
+  });
 });
 

@@ -26,6 +26,7 @@ export const UiProcessEventContextSchema = Type.Object({
   validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
   userOAuthToken: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  baseUrl: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   selectedItems: Type.Optional(
     Type.Union([
       Type.Array(
@@ -48,6 +49,7 @@ export const UiProcessCardRequestSchema = Type.Object({
   formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
   hiddenFields: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  baseUrl: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
 });
 export type UiProcessCardRequest = Static<typeof UiProcessCardRequestSchema>;
 

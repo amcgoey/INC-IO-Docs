@@ -1112,4 +1112,150 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       );
     });
   });
+
+  describe('End-to-End Action URL Resolution & Space Collection Errors', () => {
+    it('resolves all action routes to fully-qualified HTTPS URLs when incoming request headers contain x-forwarded-proto and x-forwarded-host', async () => {
+      const triggerPayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        drive: {
+          selectedItems: [
+            {
+              id: 'drive-file-001',
+              title: 'Q4_Strategy_Plan.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        },
+      };
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+          'x-forwarded-proto': 'https',
+          'x-forwarded-host': 'workspace-addon.prod.run.app',
+        },
+        payload: triggerPayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+
+      const pushCard = body.action!.navigations![0].pushCard;
+
+      // 1. Check Document Type Selection dropdown onChangeAction
+      const docTypeSection = findSection(pushCard.sections, 'Document Type');
+      expect(docTypeSection).toBeDefined();
+
+      const spaceTypeWidget = findWidget(docTypeSection, 'SelectDocumentSpaceType');
+      expect(
+        (spaceTypeWidget?.selectionInput as { onChangeAction?: { function: string } })?.onChangeAction?.function
+      ).toBe('https://workspace-addon.prod.run.app/workspace/action');
+
+      const docTypeWidget = findWidget(docTypeSection, getDocumentTypeWidgetName('projects'));
+      expect(
+        (docTypeWidget?.selectionInput as { onChangeAction?: { function: string } })?.onChangeAction?.function
+      ).toBe('https://workspace-addon.prod.run.app/workspace/action');
+
+      // 2. Check Process Document button onClick action
+      const docDataSection = findSection(pushCard.sections, 'Document Data');
+      const processButtonWidget = docDataSection?.widgets.find(
+        (w: WidgetStub & { buttonList?: { buttons: Array<{ text: string; onClick?: { action?: { function?: string } } }> } }) =>
+          w.buttonList?.buttons.some((b) => b.text === 'Process Document')
+      );
+      expect(processButtonWidget).toBeDefined();
+
+      const button = (processButtonWidget as { buttonList: { buttons: Array<{ text: string; onClick?: { action?: { function?: string } } }> } }).buttonList.buttons.find(
+        (b) => b.text === 'Process Document'
+      );
+      expect(button?.onClick?.action?.function).toBe('https://workspace-addon.prod.run.app/workspace/action');
+    });
+
+    it('resolves action routes using process.env.APP_BASE_URL when forwarded headers are not present', async () => {
+      const originalEnv = process.env.APP_BASE_URL;
+      process.env.APP_BASE_URL = 'https://env-addon.internal.net';
+
+      try {
+        const response = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/drive-items-selected',
+          headers: {
+            authorization: 'Bearer valid-e2e-token',
+          },
+          payload: {
+            drive: {
+              selectedItems: [{ id: 'drive-file-001', title: 'File.pdf' }],
+            },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.payload);
+        const pushCard = body.action!.navigations![0].pushCard;
+
+        const docTypeSection = findSection(pushCard.sections, 'Document Type');
+        const spaceTypeWidget = findWidget(docTypeSection, 'SelectDocumentSpaceType');
+        expect(
+          (spaceTypeWidget?.selectionInput as { onChangeAction?: { function: string } })?.onChangeAction?.function
+        ).toBe('https://env-addon.internal.net/workspace/action');
+      } finally {
+        if (originalEnv !== undefined) {
+          process.env.APP_BASE_URL = originalEnv;
+        } else {
+          delete process.env.APP_BASE_URL;
+        }
+      }
+    });
+
+    it('surfaces error in Status Message section when storageAdapter fails to fetch space collection', async () => {
+      mockStorageAdapter.fetchSpaces = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Google Drive 403: Insufficient permissions for shared drive'));
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.sample-e2e-token',
+          },
+          drive: {
+            selectedItems: [{ id: 'drive-file-001', title: 'File.pdf' }],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+
+      const pushCard = body.action!.navigations![0].pushCard;
+
+      // Status Message section should be rendered with the error
+      const statusSection = pushCard.sections.find((s: SectionStub) =>
+        s.widgets.some((w) =>
+          w.textParagraph?.text?.includes('Google Drive 403: Insufficient permissions for shared drive')
+        )
+      );
+      expect(statusSection).toBeDefined();
+      expect(statusSection?.widgets[0]?.textParagraph?.text).toContain('Validation Errors:');
+      expect(statusSection?.widgets[0]?.textParagraph?.text).toContain(
+        'Google Drive 403: Insufficient permissions for shared drive'
+      );
+
+      // Remaining functional sections still render cleanly
+      const docTypeSection = findSection(pushCard.sections, 'Document Type');
+      expect(docTypeSection).toBeDefined();
+
+      const docDataSection = findSection(pushCard.sections, 'Document Data');
+      expect(docDataSection).toBeDefined();
+    });
+  });
 });

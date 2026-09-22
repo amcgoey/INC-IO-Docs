@@ -4,6 +4,7 @@ import {
   translateUiViewToWorkspaceCard,
   translateUiViewToNavigationAction,
   translateUiViewToUpdateCardAction,
+  resolveActionRoute,
   UiViewSchema,
   UiActionSchema,
   UiOnClickSchema,
@@ -1360,6 +1361,145 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
         };
 
         expect(() => translateUiViewToWorkspaceCard(mixedButtonsView)).toThrow('Invalid UiView');
+      });
+    });
+
+    describe('Action URL Resolution with baseUrl', () => {
+      it('resolveActionRoute prepends baseUrl to relative paths and handles slashes cleanly', () => {
+        expect(resolveActionRoute('/workspace/action', 'https://example.com')).toBe(
+          'https://example.com/workspace/action'
+        );
+        expect(resolveActionRoute('workspace/action', 'https://example.com')).toBe(
+          'https://example.com/workspace/action'
+        );
+        expect(resolveActionRoute('/workspace/action', 'https://example.com/')).toBe(
+          'https://example.com/workspace/action'
+        );
+        expect(resolveActionRoute('/workspace/action', 'https://example.com///')).toBe(
+          'https://example.com/workspace/action'
+        );
+      });
+
+      it('resolveActionRoute preserves already fully-qualified HTTPS and HTTP URLs', () => {
+        expect(resolveActionRoute('https://my-host.com/workspace/action', 'https://example.com')).toBe(
+          'https://my-host.com/workspace/action'
+        );
+        expect(resolveActionRoute('http://my-host.com/workspace/action', 'https://example.com')).toBe(
+          'http://my-host.com/workspace/action'
+        );
+      });
+
+      it('resolveActionRoute returns relative route as-is when baseUrl is undefined', () => {
+        expect(resolveActionRoute('/workspace/action', undefined)).toBe('/workspace/action');
+      });
+
+      it('translateUiViewToWorkspaceCard resolves relative routes across all widget actions when baseUrl is provided', () => {
+        const view = {
+          sections: [
+            {
+              widgets: [
+                {
+                  textInput: {
+                    name: 'testInput',
+                    onChangeAction: { action: 'onTextChange', route: '/workspace/on-form-change' },
+                  },
+                },
+                {
+                  selectionInput: {
+                    name: 'testSelection',
+                    type: 'DROPDOWN',
+                    items: [{ text: 'Item 1', value: 'item1' }],
+                    onChangeAction: { action: 'onSelectChange', route: '/workspace/action' },
+                  },
+                },
+                {
+                  buttonList: {
+                    buttons: [
+                      {
+                        text: 'Submit',
+                        onClick: { action: 'onSubmit', route: '/workspace/action' },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const card = translateUiViewToWorkspaceCard(view, { baseUrl: 'https://addon.google.internal' });
+
+        expect(card.sections[0].widgets[0].textInput?.onChangeAction?.function).toBe(
+          'https://addon.google.internal/workspace/on-form-change'
+        );
+        expect(card.sections[0].widgets[1].selectionInput?.onChangeAction?.function).toBe(
+          'https://addon.google.internal/workspace/action'
+        );
+        const btn = card.sections[0].widgets[2].buttonList?.buttons[0];
+        expect((btn?.onClick as { action?: GoogleWorkspaceAction })?.action?.function).toBe(
+          'https://addon.google.internal/workspace/action'
+        );
+      });
+
+      it('translateUiViewToWorkspaceCard supports string baseUrl argument directly', () => {
+        const view = {
+          sections: [
+            {
+              widgets: [
+                {
+                  buttonList: {
+                    buttons: [
+                      {
+                        text: 'Click',
+                        onClick: { action: 'onClick', route: '/workspace/action' },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const card = translateUiViewToWorkspaceCard(view, 'https://addon.direct.com');
+        const btn = card.sections[0].widgets[0].buttonList?.buttons[0];
+        expect((btn?.onClick as { action?: GoogleWorkspaceAction })?.action?.function).toBe(
+          'https://addon.direct.com/workspace/action'
+        );
+      });
+
+      it('translateUiViewToNavigationAction and translateUiViewToUpdateCardAction resolve action routes using baseUrl', () => {
+        const view = {
+          sections: [
+            {
+              widgets: [
+                {
+                  buttonList: {
+                    buttons: [
+                      {
+                        text: 'Action',
+                        onClick: { action: 'onAction', route: '/workspace/action' },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const navAction = translateUiViewToNavigationAction(view, { baseUrl: 'https://addon.nav.com' });
+        const updateAction = translateUiViewToUpdateCardAction(view, { baseUrl: 'https://addon.nav.com' });
+
+        const navBtn = navAction.action?.navigations?.[0]?.pushCard?.sections[0].widgets[0].buttonList?.buttons[0];
+        expect((navBtn?.onClick as { action?: GoogleWorkspaceAction })?.action?.function).toBe(
+          'https://addon.nav.com/workspace/action'
+        );
+
+        const updateBtn = updateAction.action?.navigations?.[0]?.updateCard?.sections[0].widgets[0].buttonList?.buttons[0];
+        expect((updateBtn?.onClick as { action?: GoogleWorkspaceAction })?.action?.function).toBe(
+          'https://addon.nav.com/workspace/action'
+        );
       });
     });
   });
