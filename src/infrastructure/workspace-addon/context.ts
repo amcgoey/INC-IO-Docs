@@ -83,13 +83,20 @@ export function extractBaseUrl(
   if (headers) {
     const proto = getHeader(headers, 'x-forwarded-proto');
     const forwardedHost = getHeader(headers, 'x-forwarded-host');
-    const host = forwardedHost ?? getHeader(headers, 'host');
+    const rawHost = forwardedHost ?? getHeader(headers, 'host');
+    // Ignore synthetic default host 'localhost:80' injected by test runners (light-my-request) when no proxy proto is set
+    const host =
+      rawHost === 'localhost:80' && !proto && !forwardedHost ? undefined : rawHost;
 
     if (proto && host) {
       return `${proto}://${host}`;
     }
-    if (forwardedHost) {
-      return `https://${forwardedHost}`;
+    if (host) {
+      const defaultProto =
+        host.startsWith('localhost') || host.startsWith('127.0.0.1')
+          ? 'http'
+          : 'https';
+      return `${defaultProto}://${host}`;
     }
   }
 

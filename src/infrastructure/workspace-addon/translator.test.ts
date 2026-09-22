@@ -4,7 +4,6 @@ import {
   translateUiViewToWorkspaceCard,
   translateUiViewToNavigationAction,
   translateUiViewToUpdateCardAction,
-  resolveActionRoute,
   UiViewSchema,
   UiActionSchema,
   UiOnClickSchema,
@@ -1364,36 +1363,8 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
       });
     });
 
-    describe('Action URL Resolution with baseUrl', () => {
-      it('resolveActionRoute prepends baseUrl to relative paths and handles slashes cleanly', () => {
-        expect(resolveActionRoute('/workspace/action', 'https://example.com')).toBe(
-          'https://example.com/workspace/action'
-        );
-        expect(resolveActionRoute('workspace/action', 'https://example.com')).toBe(
-          'https://example.com/workspace/action'
-        );
-        expect(resolveActionRoute('/workspace/action', 'https://example.com/')).toBe(
-          'https://example.com/workspace/action'
-        );
-        expect(resolveActionRoute('/workspace/action', 'https://example.com///')).toBe(
-          'https://example.com/workspace/action'
-        );
-      });
-
-      it('resolveActionRoute preserves already fully-qualified HTTPS and HTTP URLs', () => {
-        expect(resolveActionRoute('https://my-host.com/workspace/action', 'https://example.com')).toBe(
-          'https://my-host.com/workspace/action'
-        );
-        expect(resolveActionRoute('http://my-host.com/workspace/action', 'https://example.com')).toBe(
-          'http://my-host.com/workspace/action'
-        );
-      });
-
-      it('resolveActionRoute returns relative route as-is when baseUrl is undefined', () => {
-        expect(resolveActionRoute('/workspace/action', undefined)).toBe('/workspace/action');
-      });
-
-      it('translateUiViewToWorkspaceCard resolves relative routes across all widget actions when baseUrl is provided', () => {
+    describe('Action Route Rendering (Pure Dumb Renderer Contract)', () => {
+      it('uses action.route directly as function name when relative path is provided', () => {
         const view = {
           sections: [
             {
@@ -1404,12 +1375,40 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
                     onChangeAction: { action: 'onTextChange', route: '/workspace/on-form-change' },
                   },
                 },
+              ],
+            },
+          ],
+        };
+
+        const card = translateUiViewToWorkspaceCard(view);
+        expect(card.sections[0].widgets[0].textInput?.onChangeAction?.function).toBe(
+          '/workspace/on-form-change'
+        );
+      });
+
+      it('uses action.route directly as function name when pre-resolved fully-qualified HTTPS URL is provided', () => {
+        const view = {
+          sections: [
+            {
+              widgets: [
+                {
+                  textInput: {
+                    name: 'testInput',
+                    onChangeAction: {
+                      action: 'onTextChange',
+                      route: 'https://addon.google.internal/workspace/on-form-change',
+                    },
+                  },
+                },
                 {
                   selectionInput: {
                     name: 'testSelection',
                     type: 'DROPDOWN',
                     items: [{ text: 'Item 1', value: 'item1' }],
-                    onChangeAction: { action: 'onSelectChange', route: '/workspace/action' },
+                    onChangeAction: {
+                      action: 'onSelectChange',
+                      route: 'https://addon.google.internal/workspace/action',
+                    },
                   },
                 },
                 {
@@ -1417,7 +1416,10 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
                     buttons: [
                       {
                         text: 'Submit',
-                        onClick: { action: 'onSubmit', route: '/workspace/action' },
+                        onClick: {
+                          action: 'onSubmit',
+                          route: 'https://addon.google.internal/workspace/action',
+                        },
                       },
                     ],
                   },
@@ -1427,7 +1429,7 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
           ],
         };
 
-        const card = translateUiViewToWorkspaceCard(view, { baseUrl: 'https://addon.google.internal' });
+        const card = translateUiViewToWorkspaceCard(view);
 
         expect(card.sections[0].widgets[0].textInput?.onChangeAction?.function).toBe(
           'https://addon.google.internal/workspace/on-form-change'
@@ -1441,34 +1443,7 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
         );
       });
 
-      it('translateUiViewToWorkspaceCard supports string baseUrl argument directly', () => {
-        const view = {
-          sections: [
-            {
-              widgets: [
-                {
-                  buttonList: {
-                    buttons: [
-                      {
-                        text: 'Click',
-                        onClick: { action: 'onClick', route: '/workspace/action' },
-                      },
-                    ],
-                  },
-                },
-              ],
-            },
-          ],
-        };
-
-        const card = translateUiViewToWorkspaceCard(view, 'https://addon.direct.com');
-        const btn = card.sections[0].widgets[0].buttonList?.buttons[0];
-        expect((btn?.onClick as { action?: GoogleWorkspaceAction })?.action?.function).toBe(
-          'https://addon.direct.com/workspace/action'
-        );
-      });
-
-      it('translateUiViewToNavigationAction and translateUiViewToUpdateCardAction resolve action routes using baseUrl', () => {
+      it('preserves pre-resolved action routes directly in translateUiViewToNavigationAction and translateUiViewToUpdateCardAction', () => {
         const view = {
           sections: [
             {
@@ -1478,7 +1453,7 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
                     buttons: [
                       {
                         text: 'Action',
-                        onClick: { action: 'onAction', route: '/workspace/action' },
+                        onClick: { action: 'onAction', route: 'https://addon.nav.com/workspace/action' },
                       },
                     ],
                   },
@@ -1488,8 +1463,8 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
           ],
         };
 
-        const navAction = translateUiViewToNavigationAction(view, { baseUrl: 'https://addon.nav.com' });
-        const updateAction = translateUiViewToUpdateCardAction(view, { baseUrl: 'https://addon.nav.com' });
+        const navAction = translateUiViewToNavigationAction(view);
+        const updateAction = translateUiViewToUpdateCardAction(view);
 
         const navBtn = navAction.action?.navigations?.[0]?.pushCard?.sections[0].widgets[0].buttonList?.buttons[0];
         expect((navBtn?.onClick as { action?: GoogleWorkspaceAction })?.action?.function).toBe(

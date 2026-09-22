@@ -1175,6 +1175,107 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       expect(button?.onClick?.action?.function).toBe('https://workspace-addon.prod.run.app/workspace/action');
     });
 
+    it('resolves all action routes to fully-qualified HTTPS URLs during onSpaceTypeChange updateCard response when proxy headers are present', async () => {
+      const spaceChangePayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'onSpaceTypeChange',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: {
+              stringInputs: { value: ['proposals'] },
+            },
+          },
+        },
+      };
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+          'x-forwarded-proto': 'https',
+          'x-forwarded-host': 'workspace-addon.prod.run.app',
+        },
+        payload: spaceChangePayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+
+      const updateCard = body.action!.navigations![0].updateCard;
+      expect(updateCard).toBeDefined();
+
+      // 1. Check Document Type Selection dropdown onChangeAction
+      const docTypeSection = findSection(updateCard.sections, 'Document Type');
+      expect(docTypeSection).toBeDefined();
+
+      const spaceTypeWidget = findWidget(docTypeSection, 'SelectDocumentSpaceType');
+      expect(
+        (spaceTypeWidget?.selectionInput as { onChangeAction?: { function: string } })?.onChangeAction?.function
+      ).toBe('https://workspace-addon.prod.run.app/workspace/action');
+
+      const docTypeWidget = findWidget(docTypeSection, getDocumentTypeWidgetName('proposals'));
+      expect(
+        (docTypeWidget?.selectionInput as { onChangeAction?: { function: string } })?.onChangeAction?.function
+      ).toBe('https://workspace-addon.prod.run.app/workspace/action');
+
+      // 2. Check Document Data section actions (e.g. processDocument button)
+      const docDataSection = findSection(updateCard.sections, 'Document Data');
+      expect(docDataSection).toBeDefined();
+      const buttonWidget = docDataSection?.widgets.find(
+        (w: WidgetStub) => w.buttonList?.buttons.some((b) => b.text === 'Process Document')
+      );
+      expect(buttonWidget).toBeDefined();
+      const processButton = buttonWidget?.buttonList?.buttons.find((b) => b.text === 'Process Document');
+      expect(processButton?.onClick?.action?.function).toBe('https://workspace-addon.prod.run.app/workspace/action');
+    });
+
+    it('resolves action routes using standalone host header during onSpaceTypeChange request', async () => {
+      const spaceChangePayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'onSpaceTypeChange',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: {
+              stringInputs: { value: ['proposals'] },
+            },
+          },
+        },
+      };
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+          host: 'standalone-host.internal.app',
+        },
+        payload: spaceChangePayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+
+      const updateCard = body.action!.navigations![0].updateCard;
+      expect(updateCard).toBeDefined();
+
+      const docTypeSection = findSection(updateCard.sections, 'Document Type');
+      const spaceTypeWidget = findWidget(docTypeSection, 'SelectDocumentSpaceType');
+      expect(
+        (spaceTypeWidget?.selectionInput as { onChangeAction?: { function: string } })?.onChangeAction?.function
+      ).toBe('https://standalone-host.internal.app/workspace/action');
+    });
+
     it('resolves action routes using process.env.APP_BASE_URL when forwarded headers are not present', async () => {
       const originalEnv = process.env.APP_BASE_URL;
       process.env.APP_BASE_URL = 'https://env-addon.internal.net';

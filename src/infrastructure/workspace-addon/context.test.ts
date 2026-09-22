@@ -122,6 +122,55 @@ describe('Workspace Add-on Context', () => {
         expect(context.baseUrl).toBe('https://proxy.example.com');
       });
 
+      it('defaults to https when standalone host header is present without x-forwarded-proto', () => {
+        const headers = {
+          host: 'standalone.example.com',
+        };
+        const context = extractWorkspaceExecutionContext({}, undefined, headers);
+        expect(context.baseUrl).toBe('https://standalone.example.com');
+      });
+
+      it('defaults to http when standalone host is localhost or localhost with port', () => {
+        const headersWithPort = {
+          host: 'localhost:3000',
+        };
+        expect(extractWorkspaceExecutionContext({}, undefined, headersWithPort).baseUrl).toBe(
+          'http://localhost:3000'
+        );
+
+        const headersWithoutPort = {
+          host: 'localhost',
+        };
+        expect(extractWorkspaceExecutionContext({}, undefined, headersWithoutPort).baseUrl).toBe(
+          'http://localhost'
+        );
+      });
+
+      it('defaults to http when standalone host is 127.0.0.1 or 127.0.0.1 with port', () => {
+        const headersWithPort = {
+          host: '127.0.0.1:8080',
+        };
+        expect(extractWorkspaceExecutionContext({}, undefined, headersWithPort).baseUrl).toBe(
+          'http://127.0.0.1:8080'
+        );
+
+        const headersWithoutPort = {
+          host: '127.0.0.1',
+        };
+        expect(extractWorkspaceExecutionContext({}, undefined, headersWithoutPort).baseUrl).toBe(
+          'http://127.0.0.1'
+        );
+      });
+
+      it('prioritizes standalone host header over process.env.APP_BASE_URL', () => {
+        process.env.APP_BASE_URL = 'https://fallback.example.com';
+        const headers = {
+          host: 'standalone-priority.example.com',
+        };
+        const context = extractWorkspaceExecutionContext({}, undefined, headers);
+        expect(context.baseUrl).toBe('https://standalone-priority.example.com');
+      });
+
       it('handles comma-separated multi-proxy headers and trims whitespace', () => {
         const headers = {
           'x-forwarded-proto': 'https, http',

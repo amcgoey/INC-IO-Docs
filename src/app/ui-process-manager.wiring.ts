@@ -23,13 +23,24 @@ import type {
 import {
   translateUiViewToNavigationAction,
   translateUiViewToUpdateCardAction,
-  resolveActionRoute,
   type UiView as WorkspaceUiView,
   type UiViewWidget,
   type UiAction,
 } from '../infrastructure/workspace-addon/translator';
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
 import type { FormChangeEvaluatorFn as FormChangeEvaluator } from '../features/ui-process-manager';
+
+export function resolveActionRoute(route: string, baseUrl?: string): string {
+  if (/^https?:\/\//i.test(route)) {
+    return route;
+  }
+  if (baseUrl) {
+    const cleanBase = baseUrl.replace(/\/+$/, '');
+    const cleanRoute = route.startsWith('/') ? route : `/${route}`;
+    return `${cleanBase}${cleanRoute}`;
+  }
+  return route;
+}
 
 function mapSelectionItems(
   items: Array<{ text: string; value: string; selected?: boolean | undefined }>
@@ -212,9 +223,9 @@ export function createUiProcessManagerWiring(
 
       const mappedView = mapUiViewToWorkspaceUiView(view, request.baseUrl);
       if (request.isUpdateCard) {
-        return translateUiViewToUpdateCardAction(mappedView, { baseUrl: request.baseUrl });
+        return translateUiViewToUpdateCardAction(mappedView);
       }
-      return translateUiViewToNavigationAction(mappedView, { baseUrl: request.baseUrl });
+      return translateUiViewToNavigationAction(mappedView);
     },
   };
 

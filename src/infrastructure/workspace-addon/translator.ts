@@ -183,31 +183,16 @@ function validateOrThrow<T extends TSchema>(
   }
 }
 
-export interface TranslatorOptions {
-  baseUrl?: string | undefined;
-}
-
-export function resolveActionRoute(route: string, baseUrl?: string): string {
-  if (/^https?:\/\//i.test(route)) {
-    return route;
-  }
-  if (baseUrl) {
-    const cleanBase = baseUrl.replace(/\/+$/, '');
-    const cleanRoute = route.startsWith('/') ? route : `/${route}`;
-    return `${cleanBase}${cleanRoute}`;
-  }
-  return route;
-}
+export type TranslatorOptions = Record<string, never>;
 
 function normalizeAction(
-  action: UiAction | undefined,
-  baseUrl?: string | undefined
+  action: UiAction | undefined
 ): GoogleWorkspaceAction | undefined {
   if (!action) {
     return undefined;
   }
 
-  const funcName = resolveActionRoute(action.route, baseUrl);
+  const funcName = action.route;
 
   const parameters: GoogleWorkspaceActionParameter[] = [
     { key: 'action', value: action.action },
@@ -229,25 +214,23 @@ function normalizeAction(
 }
 
 function normalizeButtonOnClick(
-  onClick: UiOnClick | undefined,
-  baseUrl?: string | undefined
+  onClick: UiOnClick | undefined
 ): { action?: GoogleWorkspaceAction } | undefined {
   if (!onClick) {
     return undefined;
   }
-  const action = normalizeAction(onClick, baseUrl);
+  const action = normalizeAction(onClick);
   return action ? { action } : undefined;
 }
 
 function applyCommonInputProps<T extends { label?: string; onChangeAction?: GoogleWorkspaceAction }>(
   target: T,
-  source: { label?: string; onChangeAction?: UiAction },
-  baseUrl?: string | undefined
+  source: { label?: string; onChangeAction?: UiAction }
 ): void {
   if (source.label !== undefined) {
     target.label = source.label;
   }
-  const action = normalizeAction(source.onChangeAction, baseUrl);
+  const action = normalizeAction(source.onChangeAction);
   if (action !== undefined) {
     target.onChangeAction = action;
   }
@@ -261,12 +244,10 @@ function applyCommonInputProps<T extends { label?: string; onChangeAction?: Goog
  * to Google Workspace Card JSON formats.
  */
 export function translateUiViewToWorkspaceCard(
-  payload: unknown,
-  options?: TranslatorOptions | string
+  payload: unknown
 ): GoogleWorkspaceCard {
   validateOrThrow(UiViewSchema, payload, 'Invalid UiView');
 
-  const baseUrl = typeof options === 'string' ? options : options?.baseUrl;
   const view = payload as UiView;
 
   // Map header (or fallback to default header)
@@ -298,7 +279,7 @@ export function translateUiViewToWorkspaceCard(
         const textInput: GoogleWorkspaceTextInput = {
           name: w.textInput.name,
         };
-        applyCommonInputProps(textInput, w.textInput, baseUrl);
+        applyCommonInputProps(textInput, w.textInput);
         if (w.textInput.hintText !== undefined) {
           textInput.hintText = w.textInput.hintText;
         }
@@ -333,7 +314,7 @@ export function translateUiViewToWorkspaceCard(
               return itemObj;
             }) ?? [],
         };
-        applyCommonInputProps(selectionInput, w.selectionInput, baseUrl);
+        applyCommonInputProps(selectionInput, w.selectionInput);
         widget.selectionInput = selectionInput;
       }
 
@@ -344,7 +325,7 @@ export function translateUiViewToWorkspaceCard(
               text: btn.text,
             };
             if (btn.onClick !== undefined) {
-              const normalizedOnClick = normalizeButtonOnClick(btn.onClick, baseUrl);
+              const normalizedOnClick = normalizeButtonOnClick(btn.onClick);
               if (normalizedOnClick !== undefined) {
                 buttonObj.onClick = normalizedOnClick;
               }
@@ -380,10 +361,9 @@ export function translateUiViewToWorkspaceCard(
  * Translates an adapter UiView model into a GoogleWorkspaceActionResponse navigation action.
  */
 export function translateUiViewToNavigationAction(
-  payload: unknown,
-  options?: TranslatorOptions | string
+  payload: unknown
 ): GoogleWorkspaceActionResponse {
-  const card = translateUiViewToWorkspaceCard(payload, options);
+  const card = translateUiViewToWorkspaceCard(payload);
   return buildNavigationAction(card);
 }
 
@@ -391,9 +371,8 @@ export function translateUiViewToNavigationAction(
  * Translates an adapter UiView model into a GoogleWorkspaceActionResponse updateCard navigation action.
  */
 export function translateUiViewToUpdateCardAction(
-  payload: unknown,
-  options?: TranslatorOptions | string
+  payload: unknown
 ): GoogleWorkspaceActionResponse {
-  const card = translateUiViewToWorkspaceCard(payload, options);
+  const card = translateUiViewToWorkspaceCard(payload);
   return buildUpdateCardNavigationAction(card);
 }

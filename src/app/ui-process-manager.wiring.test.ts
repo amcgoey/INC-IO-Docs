@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createUiProcessManagerWiring } from './ui-process-manager.wiring';
+import { createUiProcessManagerWiring, resolveActionRoute } from './ui-process-manager.wiring';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import type { DocumentSpaceService } from '../features/document-space/domain';
 import type { DocumentService } from '../features/document/domain';
@@ -376,6 +376,72 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         parameters: [{ key: 'action', value: 'processDocument' }],
         loadIndicator: 'SPINNER',
       },
+    });
+  });
+
+  describe('resolveActionRoute & baseUrl URL resolution in wiring layer', () => {
+    it('prepends baseUrl to relative paths and handles slashes cleanly', () => {
+      expect(resolveActionRoute('/workspace/action', 'https://example.com')).toBe(
+        'https://example.com/workspace/action'
+      );
+      expect(resolveActionRoute('workspace/action', 'https://example.com')).toBe(
+        'https://example.com/workspace/action'
+      );
+      expect(resolveActionRoute('/workspace/action', 'https://example.com/')).toBe(
+        'https://example.com/workspace/action'
+      );
+      expect(resolveActionRoute('/workspace/action', 'https://example.com///')).toBe(
+        'https://example.com/workspace/action'
+      );
+    });
+
+    it('preserves already fully-qualified HTTPS and HTTP URLs', () => {
+      expect(resolveActionRoute('https://my-host.com/workspace/action', 'https://example.com')).toBe(
+        'https://my-host.com/workspace/action'
+      );
+      expect(resolveActionRoute('http://my-host.com/workspace/action', 'https://example.com')).toBe(
+        'http://my-host.com/workspace/action'
+      );
+    });
+
+    it('returns relative route as-is when baseUrl is undefined', () => {
+      expect(resolveActionRoute('/workspace/action', undefined)).toBe('/workspace/action');
+    });
+
+    it('resolves action URLs to fully-qualified HTTPS URLs when baseUrl is provided in WorkspaceExecutionContext', async () => {
+      const wiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: mockManifestProvider,
+      });
+
+      const simulatedContext: WorkspaceExecutionContext = {
+        baseUrl: 'https://addon.wired.com',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentType: 'communication-project',
+        },
+      };
+
+      const response = (await wiring.orchestrator.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
+      const pushCard = response.action!.navigations![0].pushCard!;
+
+      const docTypeSection = pushCard.sections?.find((s: GoogleWorkspaceSection) => s.header === 'Document Type');
+      const spaceTypeWidget = docTypeSection?.widgets?.find(
+        (w: GoogleWorkspaceWidget) => w.selectionInput?.name === 'SelectDocumentSpaceType'
+      )?.selectionInput;
+      expect(spaceTypeWidget?.onChangeAction?.function).toBe(
+        'https://addon.wired.com/workspace/action'
+      );
+
+      const dataSection = pushCard.sections?.find((s: GoogleWorkspaceSection) => s.header === 'Document Data');
+      const contactWidget = dataSection?.widgets?.find(
+        (w: GoogleWorkspaceWidget) =>
+          w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-project')
+      )?.textInput;
+      expect(contactWidget?.onChangeAction?.function).toBe(
+        'https://addon.wired.com/workspace/on-form-change'
+      );
     });
   });
 });
