@@ -160,7 +160,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
     expect(proposalIdWidget).toBeDefined();
     expect(proposalIdWidget?.textInput?.value).toBeUndefined();
 
-    // Verify previously entered 'contact' field was cleared and not present
+    // Verify previously entered inactive 'contact' widget is not rendered in communication-proposal view
     const contactWidget = dataSection?.widgets?.find(
       (w: GoogleWorkspaceWidget) =>
         w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-project') ||

@@ -15,6 +15,27 @@ import {
 } from '../../src/features/schema-driven-ui/blocks/document-type-selection';
 import { getDocumentInfoWidgetName } from '../../src/features/schema-driven-ui/blocks/document-info';
 
+interface WidgetStub {
+  textInput?: { name: string; value?: string; initialSuggestions?: { items: { text: string }[] } };
+  selectionInput?: { name: string; items: { text?: string; value: string; selected?: boolean }[] };
+}
+
+interface SectionStub {
+  header?: string;
+  collapsible?: boolean;
+  widgets: WidgetStub[];
+}
+
+function findSection(sections: SectionStub[], header: string): SectionStub | undefined {
+  return sections.find((s) => s.header === header);
+}
+
+function findWidget(section: SectionStub | undefined, name: string): WidgetStub | undefined {
+  return section?.widgets.find(
+    (w) => w.textInput?.name === name || w.selectionInput?.name === name
+  );
+}
+
 describe('Workspace Addon UI E2E Test Suite', () => {
   let app: AppInstance;
   let mockAuthVerifier: WorkspaceAuthVerifierPort;
@@ -184,15 +205,11 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       const sections = pushCard.sections;
 
       // Section 1: Document Type selection block
-      const docTypeSection = sections.find(
-        (s: { header?: string }) => s.header === 'Document Type'
-      );
+      const docTypeSection = findSection(sections, 'Document Type');
       expect(docTypeSection).toBeDefined();
-      expect(docTypeSection.widgets).toHaveLength(3);
+      expect(docTypeSection?.widgets).toHaveLength(3);
 
-      const spaceTypeWidget = docTypeSection.widgets.find(
-        (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'SelectDocumentSpaceType'
-      );
+      const spaceTypeWidget = findWidget(docTypeSection, 'SelectDocumentSpaceType');
       expect(spaceTypeWidget?.selectionInput?.items).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ text: 'Projects', value: 'projects' }),
@@ -201,17 +218,13 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       );
 
       // Verify Document Space text input has suggestions populated from mockStorageAdapter
-      const spaceWidget = docTypeSection.widgets.find(
-        (w: { textInput?: { name: string } }) => w.textInput?.name === getDocumentSpaceWidgetName('projects')
-      );
+      const spaceWidget = findWidget(docTypeSection, getDocumentSpaceWidgetName('projects'));
       expect(spaceWidget?.textInput?.initialSuggestions?.items).toEqual([
         { text: 'Active Projects' },
       ]);
 
       // Verify Document Type dropdown contains allowed document types for 'projects' from manifest
-      const docTypeWidget = docTypeSection.widgets.find(
-        (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === getDocumentTypeWidgetName('projects')
-      );
+      const docTypeWidget = findWidget(docTypeSection, getDocumentTypeWidgetName('projects'));
       expect(docTypeWidget?.selectionInput?.items).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ value: 'communication-project' }),
@@ -219,14 +232,11 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       );
 
       // Section 2: Document Data section from communication-project.json
-      const docDataSection = sections.find(
-        (s: { header?: string }) => s.header === 'Document Data'
-      );
+      const docDataSection = findSection(sections, 'Document Data');
       expect(docDataSection).toBeDefined();
 
-      const fieldNames = docDataSection.widgets.map(
-        (w: { textInput?: { name: string }; selectionInput?: { name: string } }) =>
-          w.textInput?.name ?? w.selectionInput?.name
+      const fieldNames = (docDataSection?.widgets ?? []).map(
+        (w) => w.textInput?.name ?? w.selectionInput?.name
       );
       expect(fieldNames).toContain(getDocumentInfoWidgetName('contact', 'communication-project'));
       expect(fieldNames).toContain(getDocumentInfoWidgetName('date', 'communication-project'));
@@ -234,11 +244,9 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       expect(fieldNames).toContain(getDocumentInfoWidgetName('description', 'communication-project'));
 
       // Section 3: Admin collapsible section
-      const adminSection = sections.find(
-        (s: { header?: string }) => s.header === 'Admin'
-      );
+      const adminSection = findSection(sections, 'Admin');
       expect(adminSection).toBeDefined();
-      expect(adminSection.collapsible).toBe(true);
+      expect(adminSection?.collapsible).toBe(true);
 
       // 4. Assert mocks were invoked
       expect(mockAuthVerifier.verifyToken).toHaveBeenCalledWith('Bearer valid-e2e-token');
