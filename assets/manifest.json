@@ -27,7 +27,8 @@
       "displayName": "Projects",
       "spaceSchema": {
         "allowedDocumentTypes": [
-          "communication-project"
+          "communication-project",
+          "communication-proposal"
         ]
       },
       "storageConfig": {
