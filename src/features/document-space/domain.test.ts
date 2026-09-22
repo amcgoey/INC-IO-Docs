@@ -322,7 +322,8 @@ describe('DocumentSpaceService', () => {
       expect(mockStoragePort.fetchSpaces).toHaveBeenCalledTimes(1);
       expect(mockStoragePort.fetchSpaces).toHaveBeenCalledWith(
         sampleProjectSpaceType.storageConfig,
-        'project'
+        'project',
+        undefined
       );
 
       expect(collection).toEqual({

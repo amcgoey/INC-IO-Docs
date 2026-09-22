@@ -57,6 +57,10 @@ export interface UiProcessConfigProviderPort {
   getWorkspaceConfig(): Promise<ProcessUiStateConfig | undefined>;
 }
 
+export interface UiProcessAuthOptions {
+  auth?: string | undefined;
+}
+
 export interface UiProcessSpaceCollection {
   type?: UiProcessSpaceType | undefined;
   spaces: Array<{ id: string; name: string }>;
@@ -64,7 +68,7 @@ export interface UiProcessSpaceCollection {
 
 export interface UiProcessSpaceProviderPort {
   getAllTypes(): UiProcessSpaceType[];
-  getCollection(typeId: string, options?: { auth?: string | undefined }): Promise<UiProcessSpaceCollection>;
+  getCollection(typeId: string, options?: UiProcessAuthOptions): Promise<UiProcessSpaceCollection>;
 }
 
 export interface RawManifestProviderPort {

@@ -40,10 +40,13 @@ describe('GoogleDriveStorageAdapter', () => {
       const spaces = await adapter.fetchSpaces(baseConfig, 'project');
 
       expect(mockDriveClient.listSharedDrives).toHaveBeenCalledTimes(1);
-      expect(mockDriveClient.listSharedDrives).toHaveBeenCalledWith({
-        pageSize: 100,
-        pageToken: undefined,
-      });
+      expect(mockDriveClient.listSharedDrives).toHaveBeenCalledWith(
+        {
+          pageSize: 100,
+          pageToken: undefined,
+        },
+        undefined
+      );
 
       expect(spaces).toHaveLength(2);
       expect(spaces).toEqual([
@@ -79,14 +82,22 @@ describe('GoogleDriveStorageAdapter', () => {
       const spaces = await adapter.fetchSpaces(baseConfig, 'project');
 
       expect(mockDriveClient.listSharedDrives).toHaveBeenCalledTimes(2);
-      expect(mockDriveClient.listSharedDrives).toHaveBeenNthCalledWith(1, {
-        pageSize: 100,
-        pageToken: undefined,
-      });
-      expect(mockDriveClient.listSharedDrives).toHaveBeenNthCalledWith(2, {
-        pageSize: 100,
-        pageToken: 'token-page-2',
-      });
+      expect(mockDriveClient.listSharedDrives).toHaveBeenNthCalledWith(
+        1,
+        {
+          pageSize: 100,
+          pageToken: undefined,
+        },
+        undefined
+      );
+      expect(mockDriveClient.listSharedDrives).toHaveBeenNthCalledWith(
+        2,
+        {
+          pageSize: 100,
+          pageToken: 'token-page-2',
+        },
+        undefined
+      );
 
       expect(spaces).toHaveLength(2);
       expect(spaces.map((s) => s.id)).toEqual(['d-1', 'd-2']);
@@ -122,14 +133,22 @@ describe('GoogleDriveStorageAdapter', () => {
 
       expect(spaces).toHaveLength(150);
       expect(mockDriveClient.listSharedDrives).toHaveBeenCalledTimes(2);
-      expect(mockDriveClient.listSharedDrives).toHaveBeenNthCalledWith(1, {
-        pageSize: 100,
-        pageToken: undefined,
-      });
-      expect(mockDriveClient.listSharedDrives).toHaveBeenNthCalledWith(2, {
-        pageSize: 50,
-        pageToken: 'page-2',
-      });
+      expect(mockDriveClient.listSharedDrives).toHaveBeenNthCalledWith(
+        1,
+        {
+          pageSize: 100,
+          pageToken: undefined,
+        },
+        undefined
+      );
+      expect(mockDriveClient.listSharedDrives).toHaveBeenNthCalledWith(
+        2,
+        {
+          pageSize: 50,
+          pageToken: 'page-2',
+        },
+        undefined
+      );
     });
 
     it('enforces default paginationLimit of 500 when not specified', async () => {
@@ -194,12 +213,15 @@ describe('GoogleDriveStorageAdapter', () => {
 
       const spaces = await adapter.fetchSpaces(baseConfig, 'proposal');
 
-      expect(mockDriveClient.listFolders).toHaveBeenCalledWith({
-        parentFolderId: 'parent-folder-123',
-        sharedDriveId: 'shared-drive-456',
-        pageSize: 100,
-        pageToken: undefined,
-      });
+      expect(mockDriveClient.listFolders).toHaveBeenCalledWith(
+        {
+          parentFolderId: 'parent-folder-123',
+          sharedDriveId: 'shared-drive-456',
+          pageSize: 100,
+          pageToken: undefined,
+        },
+        undefined
+      );
 
       expect(spaces).toHaveLength(2);
       expect(spaces).toEqual([
@@ -243,18 +265,26 @@ describe('GoogleDriveStorageAdapter', () => {
       );
 
       expect(mockDriveClient.listFolders).toHaveBeenCalledTimes(2);
-      expect(mockDriveClient.listFolders).toHaveBeenNthCalledWith(1, {
-        parentFolderId: 'parent-folder-123',
-        sharedDriveId: undefined,
-        pageSize: 10,
-        pageToken: undefined,
-      });
-      expect(mockDriveClient.listFolders).toHaveBeenNthCalledWith(2, {
-        parentFolderId: 'parent-folder-123',
-        sharedDriveId: undefined,
-        pageSize: 9,
-        pageToken: 'token-f2',
-      });
+      expect(mockDriveClient.listFolders).toHaveBeenNthCalledWith(
+        1,
+        {
+          parentFolderId: 'parent-folder-123',
+          sharedDriveId: undefined,
+          pageSize: 10,
+          pageToken: undefined,
+        },
+        undefined
+      );
+      expect(mockDriveClient.listFolders).toHaveBeenNthCalledWith(
+        2,
+        {
+          parentFolderId: 'parent-folder-123',
+          sharedDriveId: undefined,
+          pageSize: 9,
+          pageToken: 'token-f2',
+        },
+        undefined
+      );
       expect(spaces).toHaveLength(2);
     });
 
@@ -279,22 +309,31 @@ describe('GoogleDriveStorageAdapter', () => {
         'proposal'
       );
 
-      expect(mockDriveClient.listSharedDrives).toHaveBeenCalledWith({
-        pageSize: 100,
-        pageToken: undefined,
-      });
-      expect(mockDriveClient.searchFiles).toHaveBeenCalledWith({
-        targetName: 'My Folder',
-        exactMatch: true,
-        sharedDriveId: 'resolved-drive-id',
-        mimeTypes: ['application/vnd.google-apps.folder'],
-      });
-      expect(mockDriveClient.listFolders).toHaveBeenCalledWith({
-        parentFolderId: 'resolved-folder-id',
-        sharedDriveId: 'resolved-drive-id',
-        pageSize: 100,
-        pageToken: undefined,
-      });
+      expect(mockDriveClient.listSharedDrives).toHaveBeenCalledWith(
+        {
+          pageSize: 100,
+          pageToken: undefined,
+        },
+        undefined
+      );
+      expect(mockDriveClient.searchFiles).toHaveBeenCalledWith(
+        {
+          targetName: 'My Folder',
+          exactMatch: true,
+          sharedDriveId: 'resolved-drive-id',
+          mimeTypes: ['application/vnd.google-apps.folder'],
+        },
+        undefined
+      );
+      expect(mockDriveClient.listFolders).toHaveBeenCalledWith(
+        {
+          parentFolderId: 'resolved-folder-id',
+          sharedDriveId: 'resolved-drive-id',
+          pageSize: 100,
+          pageToken: undefined,
+        },
+        undefined
+      );
       expect(spaces).toHaveLength(1);
       expect(spaces[0].id).toBe('folder-1');
     });

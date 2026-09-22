@@ -1,14 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import { WorkspaceAddonAdapter } from '../src/features/ui-process-manager/adapters/workspace-addon.adapter';
-import { GoogleDriveStorageAdapter, type DriveStorageClientPort } from '../src/features/document-space/adapters/google-drive-storage-adapter';
+import { GoogleDriveStorageAdapter, type DriveStorageClientPort, type DriveAuthOptions } from '../src/features/document-space/adapters/google-drive-storage-adapter';
 import { DocumentSpaceService } from '../src/features/document-space/domain';
-import type { UiProcessSpaceProviderPort, UiProcessViewGeneratorPort } from '../src/features/ui-process-manager/ports';
+import type { UiProcessSpaceProviderPort, UiProcessViewGeneratorPort, UiProcessAuthOptions } from '../src/features/ui-process-manager/ports';
 import { GoogleDriveApiError } from '../src/infrastructure/drive/drive-client';
 
 describe('Document Space Type Change - Auth Propagation Reproduction', () => {
   it('forwards userOAuthToken to spaceProvider.getCollection and driveClient when space type changes', async () => {
     // Mock DriveStorageClientPort that enforces authentication like Google Drive in production
-    const listSharedDrivesMock = vi.fn().mockImplementation((_options?: unknown, driveOptions?: { auth?: string }) => {
+    const listSharedDrivesMock = vi.fn().mockImplementation((_options?: unknown, driveOptions?: DriveAuthOptions) => {
       if (!driveOptions?.auth) {
         throw new GoogleDriveApiError(
           'Google Drive API error in listSharedDrives: Request is missing required authentication credential.',
@@ -50,7 +50,7 @@ describe('Document Space Type Change - Auth Propagation Reproduction', () => {
 
     const spaceProvider: UiProcessSpaceProviderPort = {
       getAllTypes: () => documentSpaceService.getAllTypes(),
-      getCollection: (typeId: string, options?: { auth?: string }) =>
+      getCollection: (typeId: string, options?: UiProcessAuthOptions) =>
         documentSpaceService.getCollection(typeId, options),
     };
 

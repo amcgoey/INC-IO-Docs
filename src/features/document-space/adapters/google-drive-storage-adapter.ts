@@ -7,7 +7,7 @@ import {
   type StorageContextConfig,
   type StorageLocation,
 } from '../domain';
-import type { DocumentSpaceStoragePort } from '../ports';
+import type { DocumentSpaceStoragePort, SpaceAuthOptions } from '../ports';
 import { DriveNameResolver } from './drive-name-resolver';
 
 export { DriveNameResolver };
@@ -32,13 +32,17 @@ export const FoldersStorageConfigSchema = Type.Object({
 
 export type FoldersStorageConfig = Static<typeof FoldersStorageConfigSchema>;
 
+export interface DriveAuthOptions {
+  auth?: string | undefined;
+}
+
 export interface DriveStorageClientPort {
   listSharedDrives(
     options?: {
       pageSize?: number | undefined;
       pageToken?: string | undefined;
     },
-    driveOptions?: { auth?: string | undefined }
+    driveOptions?: DriveAuthOptions
   ): Promise<{
     drives: Array<{ id: string; name: string }>;
     nextPageToken?: string | undefined;
@@ -51,7 +55,7 @@ export interface DriveStorageClientPort {
       pageSize?: number | undefined;
       pageToken?: string | undefined;
     },
-    driveOptions?: { auth?: string | undefined }
+    driveOptions?: DriveAuthOptions
   ): Promise<{
     folders: Array<{ id: string; name: string }>;
     nextPageToken?: string | undefined;
@@ -65,7 +69,7 @@ export interface DriveStorageClientPort {
       mimeTypes?: string[] | undefined;
       expectedParentPathNames?: string[] | undefined;
     },
-    options?: { auth?: string | undefined }
+    options?: DriveAuthOptions
   ): Promise<Array<{ id: string; name: string; mimeType?: string | undefined }>>;
 }
 
@@ -124,7 +128,7 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
   async fetchSpaces(
     config: StorageContextConfig,
     typeId: string,
-    options?: { auth?: string | undefined }
+    options?: SpaceAuthOptions
   ): Promise<DocumentSpace[]> {
     if (config['fetchMethod'] === 'shared_drives') {
       if (!Value.Check(SharedDrivesStorageConfigSchema, config)) {
@@ -143,7 +147,7 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
             pageSize,
             ...(pageToken !== undefined ? { pageToken } : {}),
           },
-          ...(options !== undefined ? [options] : [])
+          options
         );
         return {
           items: res.drives,
@@ -192,7 +196,7 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
               : {}),
             ...(pageToken !== undefined ? { pageToken } : {}),
           },
-          ...(options !== undefined ? [options] : [])
+          options
         );
         return {
           items: res.folders,

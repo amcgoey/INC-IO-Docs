@@ -11,6 +11,7 @@ import {
   type UiProcessDocumentRunnerPort,
   type UiProcessFormEvaluatorPort,
   type RawManifestProviderPort,
+  type UiProcessAuthOptions,
 } from '../features/ui-process-manager';
 import {
   createSchemaDrivenUiWiring,
@@ -162,7 +163,7 @@ export function createUiProcessManagerWiring(
 
   const spaceProvider: UiProcessSpaceProviderPort = {
     getAllTypes: () => options.documentSpaceService.getAllTypes(),
-    getCollection: (typeId: string, opts?: { auth?: string | undefined }) =>
+    getCollection: (typeId: string, opts?: UiProcessAuthOptions) =>
       options.documentSpaceService.getCollection(typeId, opts),
   };
 

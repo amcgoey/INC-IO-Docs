@@ -122,11 +122,15 @@ export type EvaluationOrderEnsurer = <
   schemaOrKeys?: SchemaOrKeys
 ) => (T & { evaluationOrder?: string[] }) | undefined;
 
+export interface SpaceAuthOptions {
+  auth?: string | undefined;
+}
+
 export interface DocumentSpaceStoragePort {
   fetchSpaces(
     config: StorageContextConfig,
     typeId: string,
-    options?: { auth?: string | undefined }
+    options?: SpaceAuthOptions
   ): Promise<DocumentSpace[]>;
   resolveStorageLocation(abstractStorageId: string): Promise<StorageLocation>;
 }

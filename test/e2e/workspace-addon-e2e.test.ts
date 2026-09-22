@@ -262,7 +262,8 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       expect(mockAuthVerifier.verifyToken).toHaveBeenCalledWith('Bearer valid-e2e-token');
       expect(mockStorageAdapter.fetchSpaces).toHaveBeenCalledWith(
         expect.objectContaining({ fetchMethod: 'shared_drives' }),
-        'projects'
+        'projects',
+        undefined
       );
 
       // 5. Explicitly prove NO real network calls occurred
