@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance, type Mock } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { OAuth2Client } from 'google-auth-library';
 import { createApp, type AppInstance } from '../../src/app/server';
@@ -8,7 +8,12 @@ import { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
 import type { WorkspaceAuthVerifierPort } from '../../src/infrastructure/workspace-addon/api';
 import type { DocumentSpaceStoragePort } from '../../src/features/document-space/ports';
 import type { DriveServicePort, DocumentServicePort } from '../../src/features/document/ports';
-import { GoogleWorkspaceActionResponseSchema } from '../../src/infrastructure/workspace-addon/ui-blocks';
+import {
+  GoogleWorkspaceActionResponseSchema,
+  GoogleWorkspaceCardSchema,
+  GoogleWorkspaceHeaderSchema,
+  GoogleWorkspaceSectionSchema,
+} from '../../src/infrastructure/workspace-addon/ui-blocks';
 import {
   getDocumentTypeWidgetName,
   getDocumentSpaceWidgetName,
@@ -16,8 +21,10 @@ import {
 import { getDocumentInfoWidgetName } from '../../src/features/schema-driven-ui/blocks/document-info';
 
 interface WidgetStub {
+  textParagraph?: { text?: string };
   textInput?: { name: string; value?: string; initialSuggestions?: { items: { text: string }[] } };
-  selectionInput?: { name: string; items: { text?: string; value: string; selected?: boolean }[] };
+  selectionInput?: { name: string; type?: string; items: { text?: string; value: string; selected?: boolean }[] };
+  buttonList?: { buttons: Array<{ text: string; onClick?: { action?: { function?: string; parameters?: Array<{ key: string; value: string }> } } }> };
 }
 
 interface SectionStub {
@@ -41,7 +48,10 @@ describe('Workspace Addon UI E2E Test Suite', () => {
   let mockAuthVerifier: WorkspaceAuthVerifierPort;
   let mockStorageAdapter: DocumentSpaceStoragePort;
   let mockDriveService: DriveServicePort;
-  let mockDocumentService: DocumentServicePort & { initialize: ReturnType<typeof vi.fn> };
+  let mockDocumentService: DocumentServicePort & {
+    initialize: ReturnType<typeof vi.fn>;
+    processDocument: Mock<DocumentServicePort['processDocument']>;
+  };
 
   let driveNetworkSpy: MockInstance;
   let oauthNetworkSpy: MockInstance;
@@ -705,6 +715,400 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       expect(driveNetworkSpy).not.toHaveBeenCalled();
       expect(oauthNetworkSpy).not.toHaveBeenCalled();
       expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Document Processing & Action Schema Conformance (processDocument)', () => {
+    const baseProcessInputs = () => ({
+      SelectDocumentSpaceType: {
+        stringInputs: { value: ['projects'] },
+      },
+      [getDocumentSpaceWidgetName('projects')]: {
+        stringInputs: { value: ['Active Projects'] },
+      },
+      [getDocumentInfoWidgetName('contact', 'communication-project')]: {
+        stringInputs: { value: ['Acme Corp'] },
+      },
+      [getDocumentInfoWidgetName('date', 'communication-project')]: {
+        stringInputs: { value: ['260921'] },
+      },
+      [getDocumentInfoWidgetName('direction', 'communication-project')]: {
+        stringInputs: { value: ['IN'] },
+      },
+      [getDocumentInfoWidgetName('description', 'communication-project')]: {
+        stringInputs: { value: ['E2E Test Execution'] },
+      },
+    });
+
+    it('executes processDocument action successfully, maps human-readable document type to canonical backend key, asserts mocked service call, and returns schema-compliant success notification', async () => {
+      const processPayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        drive: {
+          selectedItems: [
+            {
+              id: 'drive-file-001',
+              title: 'Q4_Strategy_Plan.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'processDocument',
+          },
+          formInputs: {
+            ...baseProcessInputs(),
+            // Human-readable document type display name from manifest
+            [getDocumentTypeWidgetName('projects')]: {
+              stringInputs: { value: ['Communication Project'] },
+            },
+          },
+        },
+      };
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+        },
+        payload: processPayload,
+      });
+
+      // 1. Assert status code
+      expect(response.statusCode).toBe(200);
+
+      const body = JSON.parse(response.payload);
+
+      // 2. Structurally validate against GoogleWorkspaceActionResponse JSON schema
+      expect([...Value.Errors(GoogleWorkspaceActionResponseSchema, body)]).toHaveLength(0);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+
+      // 3. Verify response includes success notification action
+      expect(body).toEqual({
+        action: {
+          notification: {
+            text: 'Document processed successfully',
+          },
+        },
+      });
+
+      // 4. Assert that the documentService mock is called with the correct backend key mapped from the UI payload
+      expect(mockDocumentService.processDocument).toHaveBeenCalledWith(
+        {
+          type: 'communication-project', // Canonical backend key strictly mapped from 'Communication Project'
+          space: 'Active Projects',
+          data: {
+            contact: 'Acme Corp',
+            date: '260921',
+            direction: 'IN',
+            description: 'E2E Test Execution',
+          },
+        },
+        'onSubmit',
+        {
+          credentials: { oauthToken: 'ya29.sample-e2e-token' },
+          resources: { primaryTargetId: 'drive-file-001' },
+        }
+      );
+
+      // 5. Explicitly prove NO real network calls occurred
+      expect(driveNetworkSpy).not.toHaveBeenCalled();
+      expect(oauthNetworkSpy).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('executes processDocument action when payload passes canonical document type key directly', async () => {
+      const processPayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        drive: {
+          selectedItems: [
+            {
+              id: 'drive-file-002',
+              title: 'Proposal_Draft.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'processDocument',
+          },
+          formInputs: {
+            ...baseProcessInputs(),
+            [getDocumentTypeWidgetName('projects')]: {
+              stringInputs: { value: ['communication-project'] },
+            },
+          },
+        },
+      };
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+        },
+        payload: processPayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+
+      expect([...Value.Errors(GoogleWorkspaceActionResponseSchema, body)]).toHaveLength(0);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification?.text).toBe('Document processed successfully');
+
+      expect(mockDocumentService.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'communication-project',
+          space: 'Active Projects',
+        }),
+        'onSubmit',
+        expect.objectContaining({
+          resources: { primaryTargetId: 'drive-file-002' },
+        })
+      );
+    });
+
+    it('handles document processing validation errors, returning an updateCard that structurally adheres to schema with Document Type selection block and error feedback', async () => {
+      mockDocumentService.processDocument.mockResolvedValueOnce({
+        success: false,
+        errors: ['Contact name is required', 'Date format invalid'],
+      });
+
+      const processPayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'processDocument',
+          },
+          formInputs: {
+            ...baseProcessInputs(),
+            [getDocumentTypeWidgetName('projects')]: {
+              stringInputs: { value: ['communication-project'] },
+            },
+          },
+        },
+      };
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+        },
+        payload: processPayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+
+      // Structurally validate full action response against schema
+      expect([...Value.Errors(GoogleWorkspaceActionResponseSchema, body)]).toHaveLength(0);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+
+      // Verify updateCard navigation action
+      const updateCard = body.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+
+      // Structurally validate every field of updateCard against GoogleWorkspaceCardSchema
+      expect([...Value.Errors(GoogleWorkspaceCardSchema, updateCard)]).toHaveLength(0);
+      expect(Value.Check(GoogleWorkspaceCardSchema, updateCard)).toBe(true);
+
+      // Validate header against GoogleWorkspaceHeaderSchema
+      expect([...Value.Errors(GoogleWorkspaceHeaderSchema, updateCard.header)]).toHaveLength(0);
+      expect(Value.Check(GoogleWorkspaceHeaderSchema, updateCard.header)).toBe(true);
+      expect(updateCard.header.title).toBe('INC-IO Engine');
+
+      // Validate every section conforms to GoogleWorkspaceSectionSchema
+      for (const section of updateCard.sections) {
+        expect([...Value.Errors(GoogleWorkspaceSectionSchema, section)]).toHaveLength(0);
+        expect(Value.Check(GoogleWorkspaceSectionSchema, section)).toBe(true);
+      }
+
+      // Assert Document Type selection block is present and structurally intact
+      const docTypeSection = findSection(updateCard.sections, 'Document Type');
+      expect(docTypeSection).toBeDefined();
+      expect(docTypeSection?.widgets).toHaveLength(3);
+
+      const spaceTypeWidget = findWidget(docTypeSection, 'SelectDocumentSpaceType');
+      expect(spaceTypeWidget?.selectionInput?.type).toBe('DROPDOWN');
+      expect(spaceTypeWidget?.selectionInput?.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ text: 'Projects', value: 'projects', selected: true }),
+        ])
+      );
+
+      const spaceWidget = findWidget(docTypeSection, getDocumentSpaceWidgetName('projects'));
+      expect(spaceWidget?.textInput?.name).toBe('SelectDocumentSpace_projects');
+
+      const docTypeWidget = findWidget(docTypeSection, getDocumentTypeWidgetName('projects'));
+      expect(docTypeWidget?.selectionInput?.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ value: 'communication-project', selected: true }),
+        ])
+      );
+
+      // Assert validation error feedback is rendered
+      const errorSection = updateCard.sections.find((s: SectionStub) =>
+        s.widgets.some((w) => w.textParagraph?.text?.includes('Validation Errors:'))
+      );
+      expect(errorSection).toBeDefined();
+      const errorWidget = errorSection?.widgets.find((w: WidgetStub) =>
+        w.textParagraph?.text?.includes('Validation Errors:')
+      );
+      expect(errorWidget?.textParagraph?.text).toContain('Contact name is required');
+      expect(errorWidget?.textParagraph?.text).toContain('Date format invalid');
+
+      // Verify zero real network calls occurred
+      expect(driveNetworkSpy).not.toHaveBeenCalled();
+      expect(oauthNetworkSpy).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('handles document processing exceptions gracefully, returning an updateCard with error message adhering to schema', async () => {
+      mockDocumentService.processDocument.mockRejectedValueOnce(
+        new Error('Document processing pipeline failure')
+      );
+
+      const processPayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'processDocument',
+          },
+          formInputs: {
+            ...baseProcessInputs(),
+            [getDocumentTypeWidgetName('projects')]: {
+              stringInputs: { value: ['communication-project'] },
+            },
+          },
+        },
+      };
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+        },
+        payload: processPayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+
+      expect([...Value.Errors(GoogleWorkspaceActionResponseSchema, body)]).toHaveLength(0);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+
+      const updateCard = body.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+      expect([...Value.Errors(GoogleWorkspaceCardSchema, updateCard)]).toHaveLength(0);
+      expect(Value.Check(GoogleWorkspaceCardSchema, updateCard)).toBe(true);
+
+      const errorSection = updateCard.sections.find((s: SectionStub) =>
+        s.widgets.some((w) => w.textParagraph?.text?.includes('Document processing pipeline failure'))
+      );
+      expect(errorSection).toBeDefined();
+    });
+
+    it('structurally validates pushCard action from drive-items-selected against schema, confirming every field of Document Type selection block and card output adheres strictly', async () => {
+      const triggerPayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        drive: {
+          selectedItems: [
+            {
+              id: 'drive-file-001',
+              title: 'Q4_Strategy_Plan.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        },
+      };
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+        },
+        payload: triggerPayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+
+      // 1. Structurally validate whole response against GoogleWorkspaceActionResponseSchema
+      expect([...Value.Errors(GoogleWorkspaceActionResponseSchema, body)]).toHaveLength(0);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+
+      // 2. Structurally validate pushCard against GoogleWorkspaceCardSchema
+      const pushCard = body.action?.navigations?.[0]?.pushCard;
+      expect(pushCard).toBeDefined();
+      expect([...Value.Errors(GoogleWorkspaceCardSchema, pushCard)]).toHaveLength(0);
+      expect(Value.Check(GoogleWorkspaceCardSchema, pushCard)).toBe(true);
+
+      // 3. Structurally validate card header
+      expect([...Value.Errors(GoogleWorkspaceHeaderSchema, pushCard.header)]).toHaveLength(0);
+      expect(Value.Check(GoogleWorkspaceHeaderSchema, pushCard.header)).toBe(true);
+
+      // 4. Structurally validate every section
+      for (const section of pushCard.sections) {
+        expect([...Value.Errors(GoogleWorkspaceSectionSchema, section)]).toHaveLength(0);
+        expect(Value.Check(GoogleWorkspaceSectionSchema, section)).toBe(true);
+      }
+
+      // 5. Validate Document Type selection block
+      const docTypeSection = findSection(pushCard.sections, 'Document Type');
+      expect(docTypeSection).toBeDefined();
+      expect(docTypeSection?.widgets).toHaveLength(3);
+
+      const spaceTypeWidget = findWidget(docTypeSection, 'SelectDocumentSpaceType');
+      expect(spaceTypeWidget?.selectionInput?.type).toBe('DROPDOWN');
+      expect(spaceTypeWidget?.selectionInput?.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ text: 'Projects', value: 'projects', selected: true }),
+          expect.objectContaining({ text: 'Proposals', value: 'proposals' }),
+        ])
+      );
+
+      const spaceWidget = findWidget(docTypeSection, getDocumentSpaceWidgetName('projects'));
+      expect(spaceWidget?.textInput?.name).toBe('SelectDocumentSpace_projects');
+
+      const docTypeWidget = findWidget(docTypeSection, getDocumentTypeWidgetName('projects'));
+      expect(docTypeWidget?.selectionInput?.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ value: 'communication-project', selected: true }),
+        ])
+      );
+
+      // 6. Verify Process Document action button is present and points to processDocument action
+      const docDataSection = pushCard.sections.find((s: SectionStub) => s.header === 'Document Data');
+      expect(docDataSection).toBeDefined();
+      const processButtonWidget = docDataSection?.widgets.find(
+        (w: WidgetStub & { buttonList?: { buttons: Array<{ text: string; onClick?: { action?: { function?: string; parameters?: Array<{ key: string; value: string }> } } }> } }) =>
+          w.buttonList?.buttons.some((b) => b.text === 'Process Document')
+      );
+      expect(processButtonWidget).toBeDefined();
+
+      const button = (processButtonWidget as { buttonList: { buttons: Array<{ text: string; onClick?: { action?: { function?: string; parameters?: Array<{ key: string; value: string }> } } }> } }).buttonList.buttons.find(
+        (b) => b.text === 'Process Document'
+      );
+      expect(button?.onClick?.action?.function).toBe('/workspace/action');
+      expect(button?.onClick?.action?.parameters).toEqual(
+        expect.arrayContaining([{ key: 'action', value: 'processDocument' }])
+      );
     });
   });
 });
