@@ -45,6 +45,12 @@ export type WorkspaceEventPayload = Static<typeof WorkspaceEventPayloadType>;
 
 export const AppBaseUrlEnvSchema = Type.Optional(Type.String({ minLength: 1 }));
 
+export const WorkspaceRequestHeadersSchema = Type.Record(
+  Type.String(),
+  Type.Union([Type.String(), Type.Array(Type.String()), Type.Undefined()])
+);
+
+export type WorkspaceRequestHeaders = Static<typeof WorkspaceRequestHeadersSchema>;
 
 export interface WorkspaceExecutionContext {
   userOAuthToken?: string | undefined;
@@ -65,18 +71,9 @@ function getHeader(
   headers: Record<string, string | string[] | undefined>,
   name: string
 ): string | undefined {
-  const target = name.toLowerCase();
-  for (const [key, val] of Object.entries(headers)) {
-    if (key.toLowerCase() === target) {
-      if (Array.isArray(val)) {
-        return val[0]?.split(',')[0]?.trim();
-      }
-      if (typeof val === 'string') {
-        return val.split(',')[0]?.trim();
-      }
-    }
-  }
-  return undefined;
+  const val = headers[name.toLowerCase()];
+  const normalized = Array.isArray(val) ? val[0] : val;
+  return typeof normalized === 'string' ? normalized.split(',')[0]?.trim() : undefined;
 }
 
 export function extractBaseUrl(
@@ -117,10 +114,13 @@ export function extractBaseUrl(
 export function extractWorkspaceExecutionContext(
   payload: unknown,
   traceId?: string,
-  headers?: Record<string, string | string[] | undefined>
+  rawHeaders?: unknown
 ): WorkspaceExecutionContext {
   const event: Partial<WorkspaceEventPayload> =
     Value.Check(WorkspaceEventPayloadType, payload) ? payload : {};
+
+  const headers: Record<string, string | string[] | undefined> =
+    Value.Check(WorkspaceRequestHeadersSchema, rawHeaders) ? rawHeaders : {};
 
   const userOAuthToken =
     event.authorizationEventObject?.userOAuthToken ?? event.userOAuthToken;

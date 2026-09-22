@@ -1,8 +1,10 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { Value } from '@sinclair/typebox/value';
 import {
   extractWorkspaceExecutionContext,
   findLatestFileLocator,
   AppBaseUrlEnvSchema,
+  WorkspaceRequestHeadersSchema,
 } from './context';
 
 describe('Workspace Add-on Context', () => {
@@ -209,6 +211,25 @@ describe('Workspace Add-on Context', () => {
 
       it('validates environment variable boundary against AppBaseUrlEnvSchema', () => {
         expect(AppBaseUrlEnvSchema).toBeDefined();
+      });
+
+      it('validates headers boundary against WorkspaceRequestHeadersSchema', () => {
+        expect(WorkspaceRequestHeadersSchema).toBeDefined();
+        expect(Value.Check(WorkspaceRequestHeadersSchema, { host: 'example.com' })).toBe(true);
+        expect(
+          Value.Check(WorkspaceRequestHeadersSchema, {
+            'x-forwarded-proto': ['https'],
+            'x-custom': undefined,
+          })
+        ).toBe(true);
+        expect(Value.Check(WorkspaceRequestHeadersSchema, { host: 123 })).toBe(false);
+        expect(Value.Check(WorkspaceRequestHeadersSchema, 'not-an-object')).toBe(false);
+        expect(Value.Check(WorkspaceRequestHeadersSchema, null)).toBe(false);
+      });
+
+      it('falls back gracefully when invalid rawHeaders are passed to extractWorkspaceExecutionContext', () => {
+        const context = extractWorkspaceExecutionContext({}, undefined, { host: 123 } as unknown);
+        expect(context.baseUrl).toBeUndefined();
       });
     });
   });
