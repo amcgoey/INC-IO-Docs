@@ -47,35 +47,31 @@ export async function injectWorkspaceRequest(
     hasHeader(headers, 'host') || hasHeader(headers, 'authority');
 
   if (!hasHostOrAuthority) {
+    let host = DEFAULT_WORKSPACE_TEST_HOST;
+    let proto = DEFAULT_WORKSPACE_TEST_PROTO;
+
     const rawBaseUrl = options.baseUrl ?? process.env.APP_BASE_URL;
     if (rawBaseUrl && rawBaseUrl.trim() !== '') {
       try {
         const parsed = new URL(rawBaseUrl.trim());
-        headers.host = parsed.host;
-        if (!hasHeader(headers, 'x-forwarded-proto')) {
-          headers['x-forwarded-proto'] = parsed.protocol.replace(':', '');
-        }
+        host = parsed.host;
+        proto = parsed.protocol.replace(':', '');
       } catch {
-        headers.host = DEFAULT_WORKSPACE_TEST_HOST;
-        if (!hasHeader(headers, 'x-forwarded-proto')) {
-          headers['x-forwarded-proto'] = DEFAULT_WORKSPACE_TEST_PROTO;
-        }
+        // Fallback to standard test defaults if invalid URL
       }
-    } else {
-      headers.host = DEFAULT_WORKSPACE_TEST_HOST;
-      if (!hasHeader(headers, 'x-forwarded-proto')) {
-        headers['x-forwarded-proto'] = DEFAULT_WORKSPACE_TEST_PROTO;
-      }
+    }
+
+    headers.host = host;
+    if (!hasHeader(headers, 'x-forwarded-proto')) {
+      headers['x-forwarded-proto'] = proto;
     }
   }
 
   const finalOptions: InjectOptions = {
-    method: options.method,
-    url: options.url,
-    ...(options.payload !== undefined ? { payload: options.payload } : {}),
-    ...(options.query !== undefined ? { query: options.query } : {}),
+    ...options,
     headers,
   };
+  delete (finalOptions as { baseUrl?: string }).baseUrl;
 
   const server = 'server' in target ? target.server : target;
   return server.inject(finalOptions);
