@@ -123,7 +123,11 @@ export type EvaluationOrderEnsurer = <
 ) => (T & { evaluationOrder?: string[] }) | undefined;
 
 export interface DocumentSpaceStoragePort {
-  fetchSpaces(config: StorageContextConfig, typeId: string): Promise<DocumentSpace[]>;
+  fetchSpaces(
+    config: StorageContextConfig,
+    typeId: string,
+    options?: { auth?: string | undefined }
+  ): Promise<DocumentSpace[]>;
   resolveStorageLocation(abstractStorageId: string): Promise<StorageLocation>;
 }
 

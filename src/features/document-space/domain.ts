@@ -90,11 +90,15 @@ export class DocumentSpaceService {
     return Array.from(this.spaceTypes.values());
   }
 
-  async getCollection(typeId: string): Promise<DocumentSpaceCollection> {
+  async getCollection(
+    typeId: string,
+    options?: { auth?: string | undefined }
+  ): Promise<DocumentSpaceCollection> {
     const spaceType = this.getType(typeId);
     const spaces = await this.storagePort.fetchSpaces(
       spaceType.storageConfig,
-      spaceType.id
+      spaceType.id,
+      ...(options !== undefined ? [options] : [])
     );
 
     return {

@@ -136,7 +136,9 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
     let collectionSpaces: string[] = [];
     try {
-      const collection = await spaceProvider.getCollection(currentSpaceType);
+      const collection = await spaceProvider.getCollection(currentSpaceType, {
+        auth: normalizedContext.userOAuthToken,
+      });
       collectionSpaces = collection.spaces.map((s) => s.name);
     } catch (e) {
       console.warn(`Could not fetch collection for space type: ${currentSpaceType}`, e);

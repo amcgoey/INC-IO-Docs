@@ -3,13 +3,19 @@ import type { DriveStorageClientPort } from './google-drive-storage-adapter';
 export class DriveNameResolver {
   constructor(private readonly driveClient: DriveStorageClientPort) {}
 
-  async resolveSharedDriveId(sharedDriveName: string): Promise<string> {
+  async resolveSharedDriveId(
+    sharedDriveName: string,
+    options?: { auth?: string | undefined }
+  ): Promise<string> {
     let drivePageToken: string | undefined;
     do {
-      const res = await this.driveClient.listSharedDrives({
-        pageSize: 100,
-        pageToken: drivePageToken,
-      });
+      const res = await this.driveClient.listSharedDrives(
+        {
+          pageSize: 100,
+          pageToken: drivePageToken,
+        },
+        ...(options !== undefined ? [options] : [])
+      );
       const drive = res.drives.find((d) => d.name === sharedDriveName);
       if (drive) {
         return drive.id;
@@ -22,19 +28,23 @@ export class DriveNameResolver {
 
   async resolveParentFolderId(
     parentFolderName: string,
-    sharedDriveId?: string
+    sharedDriveId?: string,
+    options?: { auth?: string | undefined }
   ): Promise<string> {
     if (!this.driveClient.searchFiles) {
       throw new Error(
         'driveClient.searchFiles is not implemented on the provided DriveStorageClientPort'
       );
     }
-    const files = await this.driveClient.searchFiles({
-      targetName: parentFolderName,
-      exactMatch: true,
-      sharedDriveId,
-      mimeTypes: ['application/vnd.google-apps.folder'],
-    });
+    const files = await this.driveClient.searchFiles(
+      {
+        targetName: parentFolderName,
+        exactMatch: true,
+        sharedDriveId,
+        mimeTypes: ['application/vnd.google-apps.folder'],
+      },
+      ...(options !== undefined ? [options] : [])
+    );
     if (files.length === 0) {
       throw new Error(`Parent folder not found with name: ${parentFolderName}`);
     }

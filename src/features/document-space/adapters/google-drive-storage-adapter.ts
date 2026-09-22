@@ -33,20 +33,26 @@ export const FoldersStorageConfigSchema = Type.Object({
 export type FoldersStorageConfig = Static<typeof FoldersStorageConfigSchema>;
 
 export interface DriveStorageClientPort {
-  listSharedDrives(options?: {
-    pageSize?: number | undefined;
-    pageToken?: string | undefined;
-  }): Promise<{
+  listSharedDrives(
+    options?: {
+      pageSize?: number | undefined;
+      pageToken?: string | undefined;
+    },
+    driveOptions?: { auth?: string | undefined }
+  ): Promise<{
     drives: Array<{ id: string; name: string }>;
     nextPageToken?: string | undefined;
   }>;
 
-  listFolders(options: {
-    parentFolderId?: string | undefined;
-    sharedDriveId?: string | undefined;
-    pageSize?: number | undefined;
-    pageToken?: string | undefined;
-  }): Promise<{
+  listFolders(
+    options: {
+      parentFolderId?: string | undefined;
+      sharedDriveId?: string | undefined;
+      pageSize?: number | undefined;
+      pageToken?: string | undefined;
+    },
+    driveOptions?: { auth?: string | undefined }
+  ): Promise<{
     folders: Array<{ id: string; name: string }>;
     nextPageToken?: string | undefined;
   }>;
@@ -117,7 +123,8 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
 
   async fetchSpaces(
     config: StorageContextConfig,
-    typeId: string
+    typeId: string,
+    options?: { auth?: string | undefined }
   ): Promise<DocumentSpace[]> {
     if (config['fetchMethod'] === 'shared_drives') {
       if (!Value.Check(SharedDrivesStorageConfigSchema, config)) {
@@ -131,10 +138,13 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
       }
 
       return fetchWithPagination(limit, typeId, async (pageSize, pageToken) => {
-        const res = await this.driveClient.listSharedDrives({
-          pageSize,
-          ...(pageToken !== undefined ? { pageToken } : {}),
-        });
+        const res = await this.driveClient.listSharedDrives(
+          {
+            pageSize,
+            ...(pageToken !== undefined ? { pageToken } : {}),
+          },
+          ...(options !== undefined ? [options] : [])
+        );
         return {
           items: res.drives,
           nextPageToken: res.nextPageToken,
@@ -156,7 +166,8 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
       let resolvedSharedDriveId = typedConfig.sharedDriveId;
       if (!resolvedSharedDriveId && typedConfig.sharedDriveName) {
         resolvedSharedDriveId = await this.nameResolver.resolveSharedDriveId(
-          typedConfig.sharedDriveName
+          typedConfig.sharedDriveName,
+          options
         );
       }
 
@@ -164,21 +175,25 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
       if (!resolvedParentFolderId && typedConfig.parentFolderName) {
         resolvedParentFolderId = await this.nameResolver.resolveParentFolderId(
           typedConfig.parentFolderName,
-          resolvedSharedDriveId
+          resolvedSharedDriveId,
+          options
         );
       }
 
       return fetchWithPagination(limit, typeId, async (pageSize, pageToken) => {
-        const res = await this.driveClient.listFolders({
-          pageSize,
-          ...(resolvedParentFolderId !== undefined
-            ? { parentFolderId: resolvedParentFolderId }
-            : {}),
-          ...(resolvedSharedDriveId !== undefined
-            ? { sharedDriveId: resolvedSharedDriveId }
-            : {}),
-          ...(pageToken !== undefined ? { pageToken } : {}),
-        });
+        const res = await this.driveClient.listFolders(
+          {
+            pageSize,
+            ...(resolvedParentFolderId !== undefined
+              ? { parentFolderId: resolvedParentFolderId }
+              : {}),
+            ...(resolvedSharedDriveId !== undefined
+              ? { sharedDriveId: resolvedSharedDriveId }
+              : {}),
+            ...(pageToken !== undefined ? { pageToken } : {}),
+          },
+          ...(options !== undefined ? [options] : [])
+        );
         return {
           items: res.folders,
           nextPageToken: res.nextPageToken,

@@ -162,7 +162,8 @@ export function createUiProcessManagerWiring(
 
   const spaceProvider: UiProcessSpaceProviderPort = {
     getAllTypes: () => options.documentSpaceService.getAllTypes(),
-    getCollection: (typeId: string) => options.documentSpaceService.getCollection(typeId),
+    getCollection: (typeId: string, opts?: { auth?: string | undefined }) =>
+      options.documentSpaceService.getCollection(typeId, opts),
   };
 
   const configProvider: UiProcessConfigProviderPort = {

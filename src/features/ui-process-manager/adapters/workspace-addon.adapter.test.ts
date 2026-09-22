@@ -747,6 +747,41 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(response.request.isUpdateCard).toBe(true);
       expect(response.request.validationErrors).toEqual(['Rule syntax error']);
     });
+
+    it('passes userOAuthToken as auth option to spaceProvider.getCollection', async () => {
+      const getCollectionMock = vi.fn().mockResolvedValue({ spaces: [{ id: 's-1', name: 'Space One' }] });
+      const customSpaceProvider: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+          },
+        ]),
+        getCollection: getCollectionMock,
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: customSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        viewGenerator: mockViewGenerator,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'onSpaceTypeChange',
+        userOAuthToken: 'test-user-oauth-token',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+        },
+      };
+
+      await adapter.processUiEvent(context);
+
+      expect(getCollectionMock).toHaveBeenCalledWith('projects', {
+        auth: 'test-user-oauth-token',
+      });
+    });
   });
 });
 
