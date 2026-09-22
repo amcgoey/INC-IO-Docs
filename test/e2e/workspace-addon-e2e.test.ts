@@ -295,8 +295,8 @@ describe('Workspace Addon UI E2E Test Suite', () => {
   });
 
   describe('Form Change Behaviors (onSpaceTypeChange & onDocumentTypeChange)', () => {
-    it('executes onSpaceTypeChange, clears all document info section fields, and defaults Document Type to first allowed type', async () => {
-      const spaceChangePayload = {
+    it('executes onSpaceTypeChange, ensures no field input collisions on new document type via dynamic suffixes, and retains all previous data when toggling back', async () => {
+      const spaceChangeToProposalsPayload = {
         authorizationEventObject: {
           userOAuthToken: 'ya29.sample-e2e-token',
         },
@@ -314,7 +314,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
             [getDocumentSpaceWidgetName('projects')]: {
               stringInputs: { value: ['Active Projects'] },
             },
-            // Document info fields entered previously under 'projects' / 'communication-project'
+            // Document info fields entered under 'projects' / 'communication-project'
             [getDocumentInfoWidgetName('contact', 'communication-project')]: {
               stringInputs: { value: ['Acme Corp'] },
             },
@@ -334,106 +334,198 @@ describe('Workspace Addon UI E2E Test Suite', () => {
         },
       };
 
-      const response = await app.server.inject({
+      const response1 = await app.server.inject({
         method: 'POST',
         url: '/workspace/action',
         headers: {
           authorization: 'Bearer valid-e2e-token',
         },
-        payload: spaceChangePayload,
+        payload: spaceChangeToProposalsPayload,
       });
 
       // 1. Assert status code and schema
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(response1.statusCode).toBe(200);
+      const body1 = JSON.parse(response1.payload);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body1)).toBe(true);
 
       // 2. Assert updateCard UI reload
-      const updateCard = body.action?.navigations?.[0]?.updateCard;
-      expect(updateCard).toBeDefined();
+      const updateCard1 = body1.action?.navigations?.[0]?.updateCard;
+      expect(updateCard1).toBeDefined();
 
-      const sections = updateCard.sections;
+      const sections1 = updateCard1.sections;
 
       // 3. Assert Document Type Selection Section
-      const docTypeSection = sections.find(
+      const docTypeSection1 = sections1.find(
         (s: { header?: string }) => s.header === 'Document Type'
       );
-      expect(docTypeSection).toBeDefined();
+      expect(docTypeSection1).toBeDefined();
 
-      const spaceTypeWidget = docTypeSection.widgets.find(
+      const spaceTypeWidget1 = docTypeSection1.widgets.find(
         (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'SelectDocumentSpaceType'
       );
-      const selectedSpaceItem = spaceTypeWidget?.selectionInput?.items.find(
+      const selectedSpaceItem1 = spaceTypeWidget1?.selectionInput?.items.find(
         (item: { value: string; selected?: boolean }) => item.value === 'proposals'
       );
-      expect(selectedSpaceItem?.selected).toBe(true);
+      expect(selectedSpaceItem1?.selected).toBe(true);
 
       // Assert Document Space widget updated for proposals
-      const spaceWidget = docTypeSection.widgets.find(
+      const spaceWidget1 = docTypeSection1.widgets.find(
         (w: { textInput?: { name: string } }) => w.textInput?.name === getDocumentSpaceWidgetName('proposals')
       );
-      expect(spaceWidget).toBeDefined();
+      expect(spaceWidget1).toBeDefined();
 
       // Assert Document Type defaults to first allowed type for proposals (communication-proposal)
-      const docTypeWidget = docTypeSection.widgets.find(
+      const docTypeWidget1 = docTypeSection1.widgets.find(
         (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === getDocumentTypeWidgetName('proposals')
       );
-      expect(docTypeWidget).toBeDefined();
-      expect(docTypeWidget?.selectionInput?.items).toEqual(
+      expect(docTypeWidget1).toBeDefined();
+      expect(docTypeWidget1?.selectionInput?.items).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ value: 'communication-proposal', selected: true }),
         ])
       );
 
-      // 4. Assert Document Data Section and explicit data clearance
-      const docDataSection = sections.find(
+      // 4. Assert Document Data Section: dynamic suffixes ensure no collisions for communication-proposal
+      const docDataSection1 = sections1.find(
         (s: { header?: string }) => s.header === 'Document Data'
       );
-      expect(docDataSection).toBeDefined();
+      expect(docDataSection1).toBeDefined();
 
-      // Check fields for the newly active document type (communication-proposal)
-      const contactWidget = docDataSection.widgets.find(
+      // Check fields for the newly active document type (communication-proposal) are clean (no collision from communication-project)
+      const contactWidget1 = docDataSection1.widgets.find(
         (w: { textInput?: { name: string } }) =>
           w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-proposal')
       );
-      expect(contactWidget).toBeDefined();
-      expect(contactWidget?.textInput?.value).toBeUndefined();
+      expect(contactWidget1).toBeDefined();
+      expect(contactWidget1?.textInput?.value).toBeUndefined();
 
-      const dateWidget = docDataSection.widgets.find(
+      const dateWidget1 = docDataSection1.widgets.find(
         (w: { textInput?: { name: string } }) =>
           w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-proposal')
       );
-      expect(dateWidget).toBeDefined();
-      expect(dateWidget?.textInput?.value).toBeUndefined();
+      expect(dateWidget1).toBeDefined();
+      expect(dateWidget1?.textInput?.value).toBeUndefined();
 
-      const descriptionWidget = docDataSection.widgets.find(
+      const descriptionWidget1 = docDataSection1.widgets.find(
         (w: { textInput?: { name: string } }) =>
           w.textInput?.name === getDocumentInfoWidgetName('description', 'communication-proposal')
       );
-      expect(descriptionWidget).toBeDefined();
-      expect(descriptionWidget?.textInput?.value).toBeUndefined();
+      expect(descriptionWidget1).toBeDefined();
+      expect(descriptionWidget1?.textInput?.value).toBeUndefined();
 
       // Direction should default to schema defaultValue ('IN') rather than previous entered value ('OT')
-      const directionWidget = docDataSection.widgets.find(
+      const directionWidget1 = docDataSection1.widgets.find(
         (w: { selectionInput?: { name: string } }) =>
           w.selectionInput?.name === getDocumentInfoWidgetName('direction', 'communication-proposal')
       );
-      expect(directionWidget).toBeDefined();
-      const selectedDirectionItem = directionWidget?.selectionInput?.items.find(
+      expect(directionWidget1).toBeDefined();
+      const selectedDirectionItem1 = directionWidget1?.selectionInput?.items.find(
         (item: { value: string; selected?: boolean }) => item.value === 'IN'
       );
-      expect(selectedDirectionItem?.selected).toBe(true);
+      expect(selectedDirectionItem1?.selected).toBe(true);
 
-      // Verify old document type fields are not present
-      const oldFields = docDataSection.widgets.filter(
+      // Verify old document type widgets are not rendered in proposal view
+      const oldFields1 = docDataSection1.widgets.filter(
         (w: { textInput?: { name: string }; selectionInput?: { name: string } }) => {
           const name = w.textInput?.name ?? w.selectionInput?.name ?? '';
           return name.endsWith('_communication-project');
         }
       );
-      expect(oldFields).toHaveLength(0);
+      expect(oldFields1).toHaveLength(0);
 
-      // 5. Explicitly prove NO real network calls occurred
+      // 5. Toggle back to 'projects': all previous form data must be fully retained and restored
+      const spaceChangeBackToProjectsPayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'onSpaceTypeChange',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: {
+              stringInputs: { value: ['projects'] },
+            },
+            [getDocumentTypeWidgetName('proposals')]: {
+              stringInputs: { value: ['communication-proposal'] },
+            },
+            [getDocumentSpaceWidgetName('proposals')]: {
+              stringInputs: { value: ['Client Proposals'] },
+            },
+            // Include previously retained communication-project fields in the client submission
+            [getDocumentInfoWidgetName('contact', 'communication-project')]: {
+              stringInputs: { value: ['Acme Corp'] },
+            },
+            [getDocumentInfoWidgetName('date', 'communication-project')]: {
+              stringInputs: { value: ['260921'] },
+            },
+            [getDocumentInfoWidgetName('direction', 'communication-project')]: {
+              stringInputs: { value: ['OT'] },
+            },
+            [getDocumentInfoWidgetName('description', 'communication-project')]: {
+              stringInputs: { value: ['Initial Discussion'] },
+            },
+            [getDocumentInfoWidgetName('incomingNotes', 'communication-project')]: {
+              stringInputs: { value: ['Notes from call'] },
+            },
+          },
+        },
+      };
+
+      const response2 = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+        },
+        payload: spaceChangeBackToProjectsPayload,
+      });
+
+      expect(response2.statusCode).toBe(200);
+      const body2 = JSON.parse(response2.payload);
+      const updateCard2 = body2.action?.navigations?.[0]?.updateCard;
+      expect(updateCard2).toBeDefined();
+
+      const docDataSection2 = updateCard2.sections.find(
+        (s: { header?: string }) => s.header === 'Document Data'
+      );
+      expect(docDataSection2).toBeDefined();
+
+      // Verify all retained communication-project fields are faithfully restored
+      const contactWidget2 = docDataSection2.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-project')
+      );
+      expect(contactWidget2?.textInput?.value).toBe('Acme Corp');
+
+      const dateWidget2 = docDataSection2.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-project')
+      );
+      expect(dateWidget2?.textInput?.value).toBe('260921');
+
+      const directionWidget2 = docDataSection2.widgets.find(
+        (w: { selectionInput?: { name: string } }) =>
+          w.selectionInput?.name === getDocumentInfoWidgetName('direction', 'communication-project')
+      );
+      const selectedDirectionItem2 = directionWidget2?.selectionInput?.items.find(
+        (item: { value: string; selected?: boolean }) => item.value === 'OT'
+      );
+      expect(selectedDirectionItem2?.selected).toBe(true);
+
+      const descriptionWidget2 = docDataSection2.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('description', 'communication-project')
+      );
+      expect(descriptionWidget2?.textInput?.value).toBe('Initial Discussion');
+
+      const incomingNotesWidget2 = docDataSection2.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('incomingNotes', 'communication-project')
+      );
+      expect(incomingNotesWidget2?.textInput?.value).toBe('Notes from call');
+
+      // 6. Explicitly prove NO real network calls occurred throughout
       expect(driveNetworkSpy).not.toHaveBeenCalled();
       expect(oauthNetworkSpy).not.toHaveBeenCalled();
       expect(fetchSpy).not.toHaveBeenCalled();

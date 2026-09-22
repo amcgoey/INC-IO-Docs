@@ -85,14 +85,22 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
     const config = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
     const currentSpaceType = resolveSpaceType({ formData: context.formData, config });
+    const actionName = context.actionName ?? context.parameters?.action;
+    const isSpaceTypeChange = actionName === 'onSpaceTypeChange';
+
+    const spaceTypes = spaceProvider.getAllTypes();
+    const activeSpaceObj = spaceTypes.find((t) => t.id === currentSpaceType);
+    const allowedDocTypes = activeSpaceObj?.spaceSchema.allowedDocumentTypes ?? [];
 
     const rawSelectedDocType =
-      resolveDocumentType({
-        formData: context.formData,
-        config,
-        activeSpaceType: currentSpaceType,
-        parameters: context.parameters,
-      });
+      isSpaceTypeChange && allowedDocTypes.length > 0
+        ? allowedDocTypes[0]
+        : resolveDocumentType({
+            formData: context.formData,
+            config,
+            activeSpaceType: currentSpaceType,
+            parameters: context.parameters,
+          });
 
     let resolvedDocumentTypeKey = rawSelectedDocType;
     if (rawSelectedDocType && manifestPort) {
@@ -104,6 +112,13 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       } catch (e) {
         console.warn(`Could not resolve document type key for: ${rawSelectedDocType}`, e);
       }
+    }
+
+    if (
+      !resolvedDocumentTypeKey ||
+      (allowedDocTypes.length > 0 && !allowedDocTypes.includes(resolvedDocumentTypeKey))
+    ) {
+      resolvedDocumentTypeKey = allowedDocTypes[0] ?? resolvedDocumentTypeKey;
     }
 
     const normalizedFormData = normalizeFormData(
@@ -118,9 +133,6 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       normalizedFormData !== context.formData
         ? { ...context, formData: normalizedFormData }
         : context;
-
-    const actionName = normalizedContext.actionName ?? normalizedContext.parameters?.action;
-    const spaceTypes = spaceProvider.getAllTypes();
 
     let collectionSpaces: string[] = [];
     try {

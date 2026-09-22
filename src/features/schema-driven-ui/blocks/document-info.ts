@@ -188,8 +188,8 @@ export function buildDocumentInfoSection(
 
     const widgetName = getDocumentInfoWidgetName(field.key, options?.documentTypeKey);
     const formValue =
-      options?.formData?.[field.key] ??
-      (options?.documentTypeKey ? options?.formData?.[widgetName] : undefined);
+      (options?.documentTypeKey ? options?.formData?.[widgetName] : undefined) ??
+      options?.formData?.[field.key];
 
     const builder = widgetBuilders[widgetType] ?? widgetBuilders.textInput;
     widgets.push(

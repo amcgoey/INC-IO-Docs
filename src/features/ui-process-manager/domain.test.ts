@@ -209,7 +209,7 @@ describe('ui-process-manager domain', () => {
       'Communication Proposal': 'communication-proposal',
     };
 
-    it('defaults document type to the first allowed type and clears document info fields when Space Type changes', () => {
+    it('defaults document type to the first allowed type and retains form data when Space Type changes', () => {
       const input: ProcessUiStateInput = {
         context: {
           actionName: 'onSpaceTypeChange',
@@ -235,12 +235,13 @@ describe('ui-process-manager domain', () => {
       // Must default Document Type to first allowed type in proposals
       expect(state.documentTypeKey).toBe('communication-proposal');
       expect(state.formData.SelectDocumentType).toBe('communication-proposal');
-      // Must clear document info fields entered previously
+      // Must retain form data entered previously
       expect(state.formData).toEqual({
         SelectDocumentSpaceType: 'proposals',
         SelectDocumentType: 'communication-proposal',
+        contact: 'Jane',
       });
-      expect(state.formData.contact).toBeUndefined();
+      expect(state.formData.contact).toBe('Jane');
     });
 
     it('retains form data and triggers isUpdateCard when Document Type changes', () => {
