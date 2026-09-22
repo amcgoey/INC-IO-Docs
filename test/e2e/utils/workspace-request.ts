@@ -8,8 +8,6 @@ export interface WorkspaceRequestTarget {
   inject(options: InjectOptions): Promise<InjectResult>;
 }
 
-export type InjectableTarget = WorkspaceRequestTarget;
-
 export interface WorkspaceRequestOptions extends InjectOptions {
   /**
    * Optional explicit base URL to derive host and protocol from.
