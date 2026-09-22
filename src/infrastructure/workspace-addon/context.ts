@@ -43,6 +43,8 @@ export const WorkspaceEventPayloadType = Type.Object({
 
 export type WorkspaceEventPayload = Static<typeof WorkspaceEventPayloadType>;
 
+export const AppBaseUrlEnvSchema = Type.Optional(Type.String({ minLength: 1 }));
+
 
 export interface WorkspaceExecutionContext {
   userOAuthToken?: string | undefined;
@@ -100,8 +102,13 @@ export function extractBaseUrl(
     }
   }
 
-  if (process.env.APP_BASE_URL && process.env.APP_BASE_URL.trim() !== '') {
-    return process.env.APP_BASE_URL.trim().replace(/\/+$/, '');
+  const envBaseUrl = process.env.APP_BASE_URL;
+  if (
+    Value.Check(AppBaseUrlEnvSchema, envBaseUrl) &&
+    envBaseUrl !== undefined &&
+    envBaseUrl.trim() !== ''
+  ) {
+    return envBaseUrl.trim().replace(/\/+$/, '');
   }
 
   return undefined;

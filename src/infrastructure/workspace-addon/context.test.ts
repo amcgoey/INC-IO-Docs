@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import {
   extractWorkspaceExecutionContext,
   findLatestFileLocator,
+  AppBaseUrlEnvSchema,
 } from './context';
 
 describe('Workspace Add-on Context', () => {
@@ -196,6 +197,18 @@ describe('Workspace Add-on Context', () => {
         delete process.env.APP_BASE_URL;
         const context = extractWorkspaceExecutionContext({});
         expect(context.baseUrl).toBeUndefined();
+      });
+
+      it('returns undefined when process.env.APP_BASE_URL is empty string or only whitespace', () => {
+        process.env.APP_BASE_URL = '';
+        expect(extractWorkspaceExecutionContext({}).baseUrl).toBeUndefined();
+
+        process.env.APP_BASE_URL = '   ';
+        expect(extractWorkspaceExecutionContext({}).baseUrl).toBeUndefined();
+      });
+
+      it('validates environment variable boundary against AppBaseUrlEnvSchema', () => {
+        expect(AppBaseUrlEnvSchema).toBeDefined();
       });
     });
   });

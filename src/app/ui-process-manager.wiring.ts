@@ -31,13 +31,21 @@ import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-ad
 import type { FormChangeEvaluatorFn as FormChangeEvaluator } from '../features/ui-process-manager';
 
 export function resolveActionRoute(route: string, baseUrl?: string): string {
-  if (/^https?:\/\//i.test(route)) {
-    return route;
+  try {
+    // If already an absolute URL (e.g., starts with http:// or https://), return as-is
+    const parsed = new URL(route);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString();
+    }
+  } catch {
+    // Not an absolute URL, continue to resolve with baseUrl
   }
   if (baseUrl) {
-    const cleanBase = baseUrl.replace(/\/+$/, '');
-    const cleanRoute = route.startsWith('/') ? route : `/${route}`;
-    return `${cleanBase}${cleanRoute}`;
+    try {
+      return new URL(route, baseUrl).toString();
+    } catch {
+      // Fallback to route if URL construction fails
+    }
   }
   return route;
 }

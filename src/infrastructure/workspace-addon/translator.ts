@@ -183,8 +183,6 @@ function validateOrThrow<T extends TSchema>(
   }
 }
 
-export type TranslatorOptions = Record<string, never>;
-
 function normalizeAction(
   action: UiAction | undefined
 ): GoogleWorkspaceAction | undefined {
