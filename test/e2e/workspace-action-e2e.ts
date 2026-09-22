@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { OAuth2Client } from 'google-auth-library';
 import { createApp, type AppOptions } from '../../src/app/server';
+import { injectWorkspaceRequest } from './utils/workspace-request';
 import { AppManifestProvider } from '../../src/infrastructure/manifest/app-manifest-provider';
 
 function loadEnvFile(): void {
@@ -122,7 +123,7 @@ async function runE2E(): Promise<void> {
 
   console.log(`Sending synthetic HTTP POST to /workspace/action for fileId: ${fileId}...`);
 
-  const response = await app.server.inject({
+  const response = await injectWorkspaceRequest(app, {
     method: 'POST',
     url: '/workspace/action',
     headers: {

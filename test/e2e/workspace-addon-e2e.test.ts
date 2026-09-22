@@ -3,6 +3,10 @@ import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance, typ
 import { Value } from '@sinclair/typebox/value';
 import { OAuth2Client } from 'google-auth-library';
 import { createApp, type AppInstance } from '../../src/app/server';
+import {
+  injectWorkspaceRequest,
+  DEFAULT_WORKSPACE_BASE_URL,
+} from './utils/workspace-request';
 import { AppManifestProvider } from '../../src/infrastructure/manifest/app-manifest-provider';
 import { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
 import type { WorkspaceAuthVerifierPort } from '../../src/infrastructure/workspace-addon/api';
@@ -188,7 +192,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
         },
       };
 
-      const response = await app.server.inject({
+      const response = await injectWorkspaceRequest(app, {
         method: 'POST',
         url: '/workspace/drive-items-selected',
         headers: {
@@ -273,7 +277,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
     });
 
     it('executes POST /workspace/homepage with server.inject and proves zero network calls', async () => {
-      const response = await app.server.inject({
+      const response = await injectWorkspaceRequest(app, {
         method: 'POST',
         url: '/workspace/homepage',
         headers: {
@@ -294,7 +298,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
     });
 
     it('rejects unauthorized requests with 401 without making external network calls', async () => {
-      const response = await app.server.inject({
+      const response = await injectWorkspaceRequest(app, {
         method: 'POST',
         url: '/workspace/drive-items-selected',
         headers: {
@@ -356,7 +360,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
         },
       };
 
-      const response1 = await app.server.inject({
+      const response1 = await injectWorkspaceRequest(app, {
         method: 'POST',
         url: '/workspace/action',
         headers: {
@@ -479,7 +483,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
         },
       };
 
-      const response2 = await app.server.inject({
+      const response2 = await injectWorkspaceRequest(app, {
         method: 'POST',
         url: '/workspace/action',
         headers: {
@@ -563,7 +567,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
         },
       };
 
-      const response1 = await app.server.inject({
+      const response1 = await injectWorkspaceRequest(app, {
         method: 'POST',
         url: '/workspace/action',
         headers: {
@@ -659,7 +663,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
         },
       };
 
-      const response2 = await app.server.inject({
+      const response2 = await injectWorkspaceRequest(app, {
         method: 'POST',
         url: '/workspace/action',
         headers: {
@@ -769,7 +773,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
         },
       };
 
-      const response = await app.server.inject({
+      const response = await injectWorkspaceRequest(app, {
         method: 'POST',
         url: '/workspace/action',
         headers: {
@@ -848,7 +852,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
         },
       };
 
-      const response = await app.server.inject({
+      const response = await injectWorkspaceRequest(app, {
         method: 'POST',
         url: '/workspace/action',
         headers: {
@@ -899,7 +903,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
         },
       };
 
-      const response = await app.server.inject({
+      const response = await injectWorkspaceRequest(app, {
         method: 'POST',
         url: '/workspace/action',
         headers: {
@@ -996,7 +1000,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
         },
       };
 
-      const response = await app.server.inject({
+      const response = await injectWorkspaceRequest(app, {
         method: 'POST',
         url: '/workspace/action',
         headers: {
@@ -1038,7 +1042,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
         },
       };
 
-      const response = await app.server.inject({
+      const response = await injectWorkspaceRequest(app, {
         method: 'POST',
         url: '/workspace/drive-items-selected',
         headers: {
@@ -1106,7 +1110,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       const button = (processButtonWidget as { buttonList: { buttons: Array<{ text: string; onClick?: { action?: { function?: string; parameters?: Array<{ key: string; value: string }> } } }> } }).buttonList.buttons.find(
         (b) => b.text === 'Process Document'
       );
-      expect(button?.onClick?.action?.function).toBe('/workspace/action');
+      expect(button?.onClick?.action?.function).toBe(`${DEFAULT_WORKSPACE_BASE_URL}/workspace/action`);
       expect(button?.onClick?.action?.parameters).toEqual(
         expect.arrayContaining([{ key: 'action', value: 'processDocument' }])
       );
@@ -1130,7 +1134,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
         },
       };
 
-      const response = await app.server.inject({
+      const response = await injectWorkspaceRequest(app, {
         method: 'POST',
         url: '/workspace/drive-items-selected',
         headers: {
@@ -1192,7 +1196,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
         },
       };
 
-      const response = await app.server.inject({
+      const response = await injectWorkspaceRequest(app, {
         method: 'POST',
         url: '/workspace/action',
         headers: {
@@ -1252,7 +1256,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
         },
       };
 
-      const response = await app.server.inject({
+      const response = await injectWorkspaceRequest(app, {
         method: 'POST',
         url: '/workspace/action',
         headers: {
@@ -1281,7 +1285,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       process.env.APP_BASE_URL = 'https://env-addon.internal.net';
 
       try {
-        const response = await app.server.inject({
+        const response = await injectWorkspaceRequest(app, {
           method: 'POST',
           url: '/workspace/drive-items-selected',
           headers: {
@@ -1317,7 +1321,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
         .fn()
         .mockRejectedValueOnce(new Error('Google Drive 403: Insufficient permissions for shared drive'));
 
-      const response = await app.server.inject({
+      const response = await injectWorkspaceRequest(app, {
         method: 'POST',
         url: '/workspace/drive-items-selected',
         headers: {
