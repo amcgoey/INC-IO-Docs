@@ -46,7 +46,7 @@ export function wireWorkspaceAddonRoutes(
       documentService: options.documentService,
       evaluateFormChange,
     });
-    uiOrchestrator = uiProcessWiring.orchestrator;
+    uiOrchestrator = uiProcessWiring.requestScopedWrapper;
   }
 
   registerWorkspaceAddonRoutes(options.server, {

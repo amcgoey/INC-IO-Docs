@@ -1,10 +1,10 @@
 import type {
   UiProcessOrchestratorPort,
   UiProcessEventContext,
+  UiProcessResult,
   UiProcessSpaceProviderPort,
   UiProcessConfigProviderPort,
   UiProcessManifestPort,
-  UiProcessViewGeneratorPort,
   UiProcessDocumentRunnerPort,
   UiProcessFormEvaluatorPort,
 } from '../ports';
@@ -26,7 +26,6 @@ export interface WorkspaceAddonAdapterOptions {
   spaceProvider: UiProcessSpaceProviderPort;
   configProvider?: UiProcessConfigProviderPort | undefined;
   manifestPort?: UiProcessManifestPort | undefined;
-  viewGenerator: UiProcessViewGeneratorPort;
   documentRunner?: UiProcessDocumentRunnerPort | undefined;
   formEvaluator?: UiProcessFormEvaluatorPort | undefined;
 }
@@ -79,8 +78,8 @@ export function normalizeFormData(
 export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
   constructor(private readonly options: WorkspaceAddonAdapterOptions) {}
 
-  async processUiEvent(context: UiProcessEventContext): Promise<unknown> {
-    const { spaceProvider, configProvider, manifestPort, viewGenerator, documentRunner, formEvaluator } =
+  async processUiEvent(context: UiProcessEventContext): Promise<UiProcessResult> {
+    const { spaceProvider, configProvider, manifestPort, documentRunner, formEvaluator } =
       this.options;
 
     const config = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
@@ -149,12 +148,12 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       }
     }
 
-    const renderCard = async (options: {
+    const createRenderResult = (options: {
       formData?: Record<string, unknown> | undefined;
       validationErrors?: string[] | undefined;
       isUpdateCard?: boolean | undefined;
       hiddenFields?: string[] | undefined;
-    }) => {
+    }): UiProcessResult => {
       const combinedValidationErrors = [
         ...(options.validationErrors ?? normalizedContext.validationErrors ?? []),
         ...collectionErrors,
@@ -174,20 +173,20 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         collectionSpaces,
       });
 
-      return await viewGenerator.generateCard({
+      return {
+        type: 'render',
         viewId: state.viewId,
         documentTypeKey: state.documentTypeKey,
         selectionState: state.selectionState,
         formData: state.formData,
         isUpdateCard: state.isUpdateCard,
-        ...(normalizedContext.baseUrl !== undefined ? { baseUrl: normalizedContext.baseUrl } : {}),
         ...(options.hiddenFields !== undefined ? { hiddenFields: options.hiddenFields } : {}),
         ...(state.validationErrors ? { validationErrors: state.validationErrors } : {}),
-      });
+      };
     };
 
-    const renderErrorCard = async (validationErrors: string[]) =>
-      renderCard({ validationErrors, isUpdateCard: true });
+    const createErrorRenderResult = (validationErrors: string[]): UiProcessResult =>
+      createRenderResult({ validationErrors, isUpdateCard: true });
 
     if (actionName === 'processDocument') {
       const selectedSpace = normalizedContext.formData?.SelectDocumentSpace as string | undefined;
@@ -215,20 +214,17 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
             const validationErrors =
               result.errors ??
               (result.error ? [result.error] : ['Document validation failed']);
-            return await renderErrorCard(validationErrors);
+            return createErrorRenderResult(validationErrors);
           }
         }
 
         return {
-          action: {
-            notification: {
-              text: 'Document processed successfully',
-            },
-          },
+          type: 'notification',
+          text: 'Document processed successfully',
         };
       } catch (error) {
         const validationErrors = [error instanceof Error ? error.message : 'Document processing failed'];
-        return await renderErrorCard(validationErrors);
+        return createErrorRenderResult(validationErrors);
       }
 
     }
@@ -245,13 +241,13 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         hiddenFields = evaluation.hiddenFields;
       } catch (e) {
         console.warn('Form change evaluation failed:', e);
-        return await renderErrorCard([
+        return createErrorRenderResult([
           e instanceof Error ? e.message : 'Form change evaluation failed',
         ]);
       }
     }
 
-    return await renderCard({
+    return createRenderResult({
       formData: evaluatedFormData,
       hiddenFields,
       isUpdateCard: actionName === 'onFormChange',

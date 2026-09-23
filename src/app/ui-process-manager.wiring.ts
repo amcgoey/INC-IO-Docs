@@ -4,15 +4,17 @@ import {
   WorkspaceAddonAdapter,
   ManifestAdapter,
   FormEvaluatorAdapter,
+  type UiProcessOrchestratorPort,
+  type UiProcessEventContext,
+  type UiProcessResult,
   type UiProcessSpaceProviderPort,
   type UiProcessConfigProviderPort,
-  type UiProcessViewGeneratorPort,
-  type UiProcessCardRequest,
   type UiProcessDocumentRunnerPort,
   type UiProcessFormEvaluatorPort,
   type RawManifestProviderPort,
   type UiProcessAuthOptions,
 } from '../features/ui-process-manager';
+import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import {
   createSchemaDrivenUiWiring,
 } from './schema-driven-ui.wiring';
@@ -172,8 +174,72 @@ export interface UiProcessManagerWiringOptions {
   evaluateFormChange?: FormChangeEvaluator | undefined;
 }
 
+export interface RequestScopedUiWrapper {
+  (context: WorkspaceExecutionContext): Promise<unknown>;
+  processUiEvent(context: WorkspaceExecutionContext): Promise<unknown>;
+}
+
+export function createUiProcessRequestWrapper(
+  orchestrator: UiProcessOrchestratorPort,
+  schemaDrivenUiService: SchemaDrivenUiService
+): RequestScopedUiWrapper {
+  const handler = async (context: WorkspaceExecutionContext): Promise<unknown> => {
+    const eventContext: UiProcessEventContext = {
+      actionName: context.actionName,
+      formData: context.formData,
+      parameters: context.parameters,
+      validationErrors: context.validationErrors,
+      userOAuthToken: context.userOAuthToken,
+      selectedItems: context.selectedItems?.map((item) => ({
+        id: item.id,
+        title: item.title,
+      })),
+    };
+
+    const intent: UiProcessResult = await orchestrator.processUiEvent(eventContext);
+
+    if (intent.type === 'notification') {
+      return {
+        action: {
+          notification: {
+            text: intent.text,
+          },
+        },
+      };
+    }
+
+    const view = await schemaDrivenUiService.generateView({
+      viewId: intent.viewId,
+      ...(intent.documentTypeKey !== undefined ? { documentTypeKey: intent.documentTypeKey } : {}),
+      ...(intent.validationErrors !== undefined ? { validationErrors: intent.validationErrors } : {}),
+      ...(intent.formData !== undefined ? { formData: intent.formData } : {}),
+      ...(intent.hiddenFields !== undefined ? { hiddenFields: intent.hiddenFields } : {}),
+      ...(intent.selectionState !== undefined
+        ? {
+            selectionState: {
+              spaces: intent.selectionState.spaces,
+              spaceTypes: mapSelectionItems(intent.selectionState.spaceTypes),
+              documentTypes: mapSelectionItems(intent.selectionState.documentTypes),
+            },
+          }
+        : {}),
+    });
+
+    const mappedView = mapUiViewToWorkspaceUiView(view, context.baseUrl);
+    if (intent.isUpdateCard) {
+      return translateUiViewToUpdateCardAction(mappedView);
+    }
+    return translateUiViewToNavigationAction(mappedView);
+  };
+
+  const wrapper = handler as RequestScopedUiWrapper;
+  wrapper.processUiEvent = handler;
+  return wrapper;
+}
+
 export interface UiProcessManagerWiring {
   orchestrator: WorkspaceAddonAdapter;
+  requestScopedWrapper: RequestScopedUiWrapper;
 }
 
 export function createUiProcessManagerWiring(
@@ -210,33 +276,6 @@ export function createUiProcessManagerWiring(
 
   const manifestPort = new ManifestAdapter(options.manifestProvider);
 
-  const viewGenerator: UiProcessViewGeneratorPort = {
-    async generateCard(request: UiProcessCardRequest) {
-      const view = await schemaDrivenUi.schemaDrivenUiService.generateView({
-        viewId: request.viewId,
-        ...(request.documentTypeKey !== undefined ? { documentTypeKey: request.documentTypeKey } : {}),
-        ...(request.validationErrors !== undefined ? { validationErrors: request.validationErrors } : {}),
-        ...(request.formData !== undefined ? { formData: request.formData } : {}),
-        ...(request.hiddenFields !== undefined ? { hiddenFields: request.hiddenFields } : {}),
-        ...(request.selectionState !== undefined
-          ? {
-              selectionState: {
-                spaces: request.selectionState.spaces,
-                spaceTypes: mapSelectionItems(request.selectionState.spaceTypes),
-                documentTypes: mapSelectionItems(request.selectionState.documentTypes),
-              },
-            }
-          : {}),
-      });
-
-      const mappedView = mapUiViewToWorkspaceUiView(view, request.baseUrl);
-      if (request.isUpdateCard) {
-        return translateUiViewToUpdateCardAction(mappedView);
-      }
-      return translateUiViewToNavigationAction(mappedView);
-    },
-  };
-
   const documentRunner: UiProcessDocumentRunnerPort | undefined = options.documentService
     ? {
         processDocument: async (payload, eventName, context) => {
@@ -253,12 +292,17 @@ export function createUiProcessManagerWiring(
     spaceProvider,
     configProvider,
     manifestPort,
-    viewGenerator,
     documentRunner,
     formEvaluator,
   });
 
+  const requestScopedWrapper = createUiProcessRequestWrapper(
+    orchestrator,
+    schemaDrivenUi.schemaDrivenUiService
+  );
+
   return {
     orchestrator,
+    requestScopedWrapper,
   };
 }

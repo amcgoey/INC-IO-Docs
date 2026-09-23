@@ -16,9 +16,11 @@ export interface WorkspaceUiOrchestratorPort {
   processUiEvent(context: WorkspaceExecutionContext): Promise<unknown>;
 }
 
+export type WorkspaceUiHandler = (context: WorkspaceExecutionContext) => Promise<unknown>;
+
 export interface WorkspaceAddonApiOptions {
   authVerifier: WorkspaceAuthVerifierPort;
-  uiOrchestrator: WorkspaceUiOrchestratorPort;
+  uiOrchestrator: WorkspaceUiOrchestratorPort | WorkspaceUiHandler;
   appBaseUrl?: string | undefined;
 }
 
@@ -70,7 +72,11 @@ export function registerWorkspaceAddonRoutes(
           request.headers,
           appBaseUrl
         );
-        const result = await uiOrchestrator.processUiEvent(context);
+        const handler =
+          typeof uiOrchestrator === 'function'
+            ? uiOrchestrator
+            : (ctx: WorkspaceExecutionContext) => uiOrchestrator.processUiEvent(ctx);
+        const result = await handler(context);
         return {
           status: 200,
           body: result,

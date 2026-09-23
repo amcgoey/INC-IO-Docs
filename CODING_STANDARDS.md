@@ -40,3 +40,7 @@ The structure balances **Locality** (feature-first) with **Leverage** (shared, d
    - **Guarded Read**: Route queries through `domain.ts` to enforce business rules before returning data.
      - *Use when*: The read must enforce domain invariants, compute derived fields, or apply role-based data masking.
      - *Switch to Fast-Track when*: The domain method degrades into a pure pass-through that solely returns the port's output without applying logic.
+6. **CQRS Orchestration Boundaries:** Command modules (e.g., UI Process Manager) must remain decoupled from Read modules (e.g., Schema Driven UI).
+   - **Intent Payloads**: Command modules must strictly act as command handlers, evaluating state and returning validated domain intent payloads (e.g., `UiProcessResultSchema` specifying a render request or notification intent) rather than directly invoking a Read module or returning rendered infrastructure-specific views.
+   - **Application Layer Coordination**: A higher-level coordinator/request wrapper in the application wiring layer (`src/app/`) intercepts the intent payload. If the intent is a render request, the coordinator dispatches a Query to the Read module and handles infrastructure translation.
+   - **Infrastructure Context Isolation**: Request-scoped infrastructure context (such as HTTP routing URL bases) must never leak into feature/domain ports. The application wiring layer binds request-scoped infrastructure context into the infrastructure views during translation.

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { WorkspaceAddonAdapter } from '../src/features/ui-process-manager/adapters/workspace-addon.adapter';
 import { GoogleDriveStorageAdapter, type DriveStorageClientPort, type DriveAuthOptions } from '../src/features/document-space/adapters/google-drive-storage-adapter';
 import { DocumentSpaceService } from '../src/features/document-space/domain';
-import type { UiProcessSpaceProviderPort, UiProcessViewGeneratorPort, UiProcessAuthOptions } from '../src/features/ui-process-manager/ports';
+import type { UiProcessSpaceProviderPort, UiProcessAuthOptions } from '../src/features/ui-process-manager/ports';
 import { GoogleDriveApiError } from '../src/infrastructure/drive/drive-client';
 
 describe('Document Space Type Change - Auth Propagation Reproduction', () => {
@@ -54,21 +54,12 @@ describe('Document Space Type Change - Auth Propagation Reproduction', () => {
         documentSpaceService.getCollection(typeId, options),
     };
 
-    let generatedCardOptions: unknown;
-    const viewGenerator: UiProcessViewGeneratorPort = {
-      generateCard: vi.fn().mockImplementation((opts) => {
-        generatedCardOptions = opts;
-        return Promise.resolve({ card: opts });
-      }),
-    };
-
     const adapter = new WorkspaceAddonAdapter({
       spaceProvider,
-      viewGenerator,
     });
 
     // Simulate Workspace Addon sending onSpaceTypeChange with userOAuthToken
-    await adapter.processUiEvent({
+    const result = await adapter.processUiEvent({
       actionName: 'onSpaceTypeChange',
       userOAuthToken: 'ya29.valid-user-oauth-token',
       formData: {
@@ -82,9 +73,10 @@ describe('Document Space Type Change - Auth Propagation Reproduction', () => {
       expect.objectContaining({ auth: 'ya29.valid-user-oauth-token' })
     );
 
-    // And generated card selectionState should contain the retrieved spaces
-    expect(generatedCardOptions).toEqual(
+    // And generated intent selectionState should contain the retrieved spaces
+    expect(result).toEqual(
       expect.objectContaining({
+        type: 'render',
         selectionState: expect.objectContaining({
           spaces: ['Project Drive 1'],
         }),

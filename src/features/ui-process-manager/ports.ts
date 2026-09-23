@@ -26,13 +26,12 @@ export const UiProcessEventContextSchema = Type.Object({
   validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
   userOAuthToken: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
-  baseUrl: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   selectedItems: Type.Optional(
     Type.Union([
       Type.Array(
         Type.Object({
-          id: Type.Optional(Type.String()),
-          title: Type.Optional(Type.String()),
+          id: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+          title: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
         })
       ),
       Type.Undefined(),
@@ -41,17 +40,29 @@ export const UiProcessEventContextSchema = Type.Object({
 });
 export type UiProcessEventContext = Static<typeof UiProcessEventContextSchema>;
 
-export const UiProcessCardRequestSchema = Type.Object({
+export const UiProcessRenderResultSchema = Type.Object({
+  type: Type.Literal('render'),
   viewId: Type.String({ minLength: 1 }),
   documentTypeKey: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   selectionState: Type.Optional(Type.Union([UiSelectionStateSchema, Type.Undefined()])),
-  validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
   hiddenFields: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
-  baseUrl: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
 });
-export type UiProcessCardRequest = Static<typeof UiProcessCardRequestSchema>;
+export type UiProcessRenderResult = Static<typeof UiProcessRenderResultSchema>;
+
+export const UiProcessNotificationResultSchema = Type.Object({
+  type: Type.Literal('notification'),
+  text: Type.String({ minLength: 1 }),
+});
+export type UiProcessNotificationResult = Static<typeof UiProcessNotificationResultSchema>;
+
+export const UiProcessResultSchema = Type.Union([
+  UiProcessRenderResultSchema,
+  UiProcessNotificationResultSchema,
+]);
+export type UiProcessResult = Static<typeof UiProcessResultSchema>;
 
 // --- Driven Ports ---
 
@@ -84,10 +95,6 @@ export interface UiProcessManifestPort {
   getDocumentTypeSchemas(key: string): Promise<{ docSchema?: unknown; uiSchema?: unknown }>;
 }
 
-export interface UiProcessViewGeneratorPort {
-  generateCard(request: UiProcessCardRequest): Promise<unknown>;
-}
-
 export interface UiProcessDocumentExecutionResult {
   success: boolean;
   errors?: string[] | undefined;
@@ -118,6 +125,6 @@ export interface UiProcessFormEvaluatorPort {
 // --- Driving Port ---
 
 export interface UiProcessOrchestratorPort {
-  processUiEvent(context: UiProcessEventContext): Promise<unknown>;
+  processUiEvent(context: UiProcessEventContext): Promise<UiProcessResult>;
 }
 

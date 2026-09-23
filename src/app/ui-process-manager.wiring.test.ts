@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createUiProcessManagerWiring, resolveActionRoute } from './ui-process-manager.wiring';
+import {
+  createUiProcessManagerWiring,
+  resolveActionRoute,
+  createUiProcessRequestWrapper,
+} from './ui-process-manager.wiring';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import type { DocumentSpaceService } from '../features/document-space/domain';
 import type { DocumentService } from '../features/document/domain';
@@ -131,7 +135,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       },
     };
 
-    const response = (await wiring.orchestrator.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
+    const response = (await wiring.requestScopedWrapper.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
 
     // Assert updateCard is returned (UI reload)
     expect(response.action?.navigations?.[0]?.updateCard).toBeDefined();
@@ -187,7 +191,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       },
     };
 
-    const response = (await wiring.orchestrator.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
+    const response = (await wiring.requestScopedWrapper.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
 
     const updateCard = response.action!.navigations![0].updateCard!;
     const dataSection = updateCard.sections?.find((s: GoogleWorkspaceSection) => s.header === 'Document Data');
@@ -221,7 +225,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       },
     };
 
-    const response = (await wiring.orchestrator.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
+    const response = (await wiring.requestScopedWrapper.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
 
     const pushCard = response.action!.navigations![0].pushCard!;
     const selectionSection = pushCard.sections?.find((s: GoogleWorkspaceSection) => s.header === 'Document Type');
@@ -271,7 +275,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       selectedItems: [{ id: 'file-123' }],
     };
 
-    const response = (await wiring.orchestrator.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
+    const response = (await wiring.requestScopedWrapper.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
 
     expect(mockDocService.processDocument).toHaveBeenCalledWith(
       {
@@ -315,7 +319,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       },
     };
 
-    const response = (await wiring.orchestrator.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
+    const response = (await wiring.requestScopedWrapper.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
 
     expect(response.action?.navigations?.[0]?.updateCard).toBeDefined();
     const updateCard = response.action!.navigations![0].updateCard!;
@@ -339,7 +343,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       },
     };
 
-    const response = (await wiring.orchestrator.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
+    const response = (await wiring.requestScopedWrapper.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
     const pushCard = response.action!.navigations![0].pushCard!;
 
     // 1. Verify onSpaceTypeChange on selectionInput is routed to /workspace/action
@@ -423,7 +427,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         },
       };
 
-      const response = (await wiring.orchestrator.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
+      const response = (await wiring.requestScopedWrapper.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
       const pushCard = response.action!.navigations![0].pushCard!;
 
       const docTypeSection = pushCard.sections?.find((s: GoogleWorkspaceSection) => s.header === 'Document Type');
@@ -441,6 +445,103 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       )?.textInput;
       expect(contactWidget?.onChangeAction?.function).toBe(
         'https://addon.wired.com/workspace/on-form-change'
+      );
+    });
+  });
+
+  describe('createUiProcessRequestWrapper (CQRS Request-Scoped Wrapper)', () => {
+    it('intercepts notification intent and translates into infrastructure notification JSON', async () => {
+      const mockOrchestrator = {
+        processUiEvent: vi.fn().mockResolvedValue({
+          type: 'notification',
+          text: 'Operation completed successfully',
+        }),
+      };
+      const mockSchemaDrivenUi = {
+        generateView: vi.fn(),
+      } as unknown as SchemaDrivenUiService;
+
+      const wrapper = createUiProcessRequestWrapper(mockOrchestrator, mockSchemaDrivenUi);
+
+      const context: WorkspaceExecutionContext = {
+        actionName: 'processDocument',
+        formData: { some: 'value' },
+        baseUrl: 'https://example.com',
+      };
+
+      const result = await wrapper(context);
+
+      expect(mockOrchestrator.processUiEvent).toHaveBeenCalledWith({
+        actionName: 'processDocument',
+        formData: { some: 'value' },
+        parameters: undefined,
+        validationErrors: undefined,
+        userOAuthToken: undefined,
+        selectedItems: undefined,
+      });
+      expect(mockSchemaDrivenUi.generateView).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        action: {
+          notification: {
+            text: 'Operation completed successfully',
+          },
+        },
+      });
+    });
+
+    it('intercepts render intent, queries SchemaDrivenUi read module, and translates with baseUrl', async () => {
+      const mockOrchestrator = {
+        processUiEvent: vi.fn().mockResolvedValue({
+          type: 'render',
+          viewId: 'test-view',
+          documentTypeKey: 'doc-type-1',
+          formData: { field1: 'val1' },
+          isUpdateCard: true,
+        }),
+      };
+      const mockSchemaDrivenUi = {
+        generateView: vi.fn().mockResolvedValue({
+          id: 'rendered-view',
+          sections: [
+            {
+              header: 'Section 1',
+              widgets: [
+                {
+                  textInput: {
+                    name: 'field1',
+                    onChangeAction: { action: 'onFormChange' },
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      } as unknown as SchemaDrivenUiService;
+
+      const wrapper = createUiProcessRequestWrapper(mockOrchestrator, mockSchemaDrivenUi);
+
+      const context: WorkspaceExecutionContext = {
+        baseUrl: 'https://my-host.internal',
+        formData: { field1: 'val1' },
+      };
+
+      const result = (await wrapper(context)) as GoogleWorkspaceActionResponse;
+
+      expect(mockOrchestrator.processUiEvent).toHaveBeenCalled();
+      expect(mockSchemaDrivenUi.generateView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          viewId: 'test-view',
+          documentTypeKey: 'doc-type-1',
+          formData: { field1: 'val1' },
+        })
+      );
+
+      // Verify updateCard returned and baseUrl applied to action routes
+      expect(result.action.navigations?.[0]?.updateCard).toBeDefined();
+      const updateCard = result.action.navigations![0].updateCard!;
+      const widget = updateCard.sections[0].widgets[0];
+      expect(widget.textInput?.onChangeAction?.function).toBe(
+        'https://my-host.internal/workspace/on-form-change'
       );
     });
   });

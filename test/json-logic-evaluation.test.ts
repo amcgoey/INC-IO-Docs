@@ -7,9 +7,9 @@ import {
 import { evaluateFormChange } from '../src/infrastructure/workspace-addon/json-logic-evaluator';
 import {
   WorkspaceAddonAdapter,
-  type UiProcessCardRequest,
-  type UiProcessViewGeneratorPort,
+  type UiProcessRenderResult,
 } from '../src/features/ui-process-manager';
+import type { WorkspaceExecutionContext } from '../src/infrastructure/workspace-addon/context';
 
 describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
   it('tests onFormChange handler in isolation to ensure it correctly executes computeEvaluationOrder for partial roundtrips', async () => {
@@ -19,24 +19,7 @@ describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
       verifyToken: vi.fn().mockResolvedValue({ isValid: true, payload: { email: 'user@example.com' } }),
     };
 
-    let capturedRequest: UiProcessCardRequest | undefined;
-    const mockViewGenerator: UiProcessViewGeneratorPort = {
-      generateCard: vi.fn().mockImplementation(async (request) => {
-        capturedRequest = request;
-        return {
-          action: {
-            navigations: [
-              {
-                updateCard: {
-                  header: { title: 'INC-IO Engine', subtitle: 'Process Document' },
-                  sections: [],
-                },
-              },
-            ],
-          },
-        };
-      }),
-    };
+    let capturedResult: UiProcessRenderResult | undefined;
 
 
     // Provide a manifest with a dependency DAG:
@@ -84,9 +67,8 @@ describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
       }),
     };
 
-    const uiOrchestrator = new WorkspaceAddonAdapter({
+    const adapter = new WorkspaceAddonAdapter({
       spaceProvider: { getAllTypes: () => [], getCollection: async () => ({ spaces: [] }) },
-      viewGenerator: mockViewGenerator,
       formEvaluator: {
         evaluate: async (formData) => {
           const raw = await mockManifestProvider.getRawManifest();
@@ -95,6 +77,27 @@ describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
         },
       },
     });
+
+    const uiOrchestrator = {
+      async processUiEvent(context: WorkspaceExecutionContext) {
+        const result = await adapter.processUiEvent(context);
+        if (result.type === 'render') {
+          capturedResult = result;
+        }
+        return {
+          action: {
+            navigations: [
+              {
+                updateCard: {
+                  header: { title: 'INC-IO Engine', subtitle: 'Process Document' },
+                  sections: [],
+                },
+              },
+            ],
+          },
+        };
+      },
+    };
 
     registerWorkspaceAddonRoutes(server, {
       authVerifier: mockAuthVerifier,
@@ -122,15 +125,14 @@ describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(mockViewGenerator.generateCard).toHaveBeenCalledTimes(1);
 
-    expect(capturedRequest).toBeDefined();
-    expect(capturedRequest?.isUpdateCard).toBe(true);
-    expect(capturedRequest?.documentTypeKey).toBe('invoice-doc');
+    expect(capturedResult).toBeDefined();
+    expect(capturedResult?.isUpdateCard).toBe(true);
+    expect(capturedResult?.documentTypeKey).toBe('invoice-doc');
 
     // Assert computed values:
     // quantity=5, unitPrice=20 -> subtotal=100 -> tax=10 -> grandTotal=110
-    expect(capturedRequest?.formData).toEqual({
+    expect(capturedResult?.formData).toEqual({
       SelectDocumentType: 'invoice-doc',
       quantity: '5',
       unitPrice: '20',
@@ -141,6 +143,6 @@ describe('Integration: JSON Logic Evaluation (onFormChange)', () => {
 
     // Assert JSON Logic showIf evaluation:
     // tax is 10 (!= 0), so taxExemptNotes should be hidden
-    expect(capturedRequest?.hiddenFields).toContain('taxExemptNotes');
+    expect(capturedResult?.hiddenFields).toContain('taxExemptNotes');
   });
 });

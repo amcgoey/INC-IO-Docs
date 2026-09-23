@@ -1,13 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
+import { Value } from '@sinclair/typebox/value';
 import { WorkspaceAddonAdapter, normalizeFormData } from './workspace-addon.adapter';
-import type {
-  UiProcessSpaceProviderPort,
-  UiProcessConfigProviderPort,
-  UiProcessManifestPort,
-  UiProcessViewGeneratorPort,
-  UiProcessEventContext,
-  UiProcessCardRequest,
-  UiProcessFormEvaluatorPort,
+import {
+  UiProcessResultSchema,
+  type UiProcessSpaceProviderPort,
+  type UiProcessConfigProviderPort,
+  type UiProcessManifestPort,
+  type UiProcessEventContext,
+  type UiProcessRenderResult,
+  type UiProcessFormEvaluatorPort,
 } from '../ports';
 
 describe('WorkspaceAddonAdapter in ui-process-manager', () => {
@@ -55,19 +56,11 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
     getDocumentTypeSchemas: vi.fn().mockResolvedValue({}),
   };
 
-  const mockViewGenerator: UiProcessViewGeneratorPort = {
-    generateCard: vi.fn().mockImplementation(async (request) => ({
-      renderedCard: true,
-      request,
-    })),
-  };
-
   it('triggers UI reload and defaults Document Type to first allowed when Space Type changes', async () => {
     const adapter = new WorkspaceAddonAdapter({
       spaceProvider: mockSpaceProvider,
       configProvider: mockConfigProvider,
       manifestPort: mockManifestPort,
-      viewGenerator: mockViewGenerator,
     });
 
     const context: UiProcessEventContext = {
@@ -79,20 +72,19 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       },
     };
 
-    const result = (await adapter.processUiEvent(context)) as {
-      renderedCard: boolean;
-      request: UiProcessCardRequest;
-    };
+    const result = await adapter.processUiEvent(context);
 
-    expect(result.renderedCard).toBe(true);
-    expect(result.request.isUpdateCard).toBe(true);
-    expect(result.request.documentTypeKey).toBe('communication-proposal');
-    expect(result.request.formData).toEqual({
+    expect(Value.Check(UiProcessResultSchema, result)).toBe(true);
+    expect(result.type).toBe('render');
+    const renderResult = result as UiProcessRenderResult;
+    expect(renderResult.isUpdateCard).toBe(true);
+    expect(renderResult.documentTypeKey).toBe('communication-proposal');
+    expect(renderResult.formData).toEqual({
       SelectDocumentSpaceType: 'proposals',
       SelectDocumentType: 'communication-proposal',
       contact: 'Alice',
     });
-    expect(result.request.formData?.contact).toBe('Alice');
+    expect(renderResult.formData?.contact).toBe('Alice');
   });
 
   it('retains DocumentInfo segment of formData when Document Type changes', async () => {
@@ -100,7 +92,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       spaceProvider: mockSpaceProvider,
       configProvider: mockConfigProvider,
       manifestPort: mockManifestPort,
-      viewGenerator: mockViewGenerator,
     });
 
     const context: UiProcessEventContext = {
@@ -114,23 +105,22 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       },
     };
 
-    const result = (await adapter.processUiEvent(context)) as {
-      renderedCard: boolean;
-      request: UiProcessCardRequest;
-    };
+    const result = await adapter.processUiEvent(context);
 
-    expect(result.renderedCard).toBe(true);
-    expect(result.request.isUpdateCard).toBe(true);
-    expect(result.request.documentTypeKey).toBe('invoice-project');
-    expect(result.request.formData).toEqual({
+    expect(Value.Check(UiProcessResultSchema, result)).toBe(true);
+    expect(result.type).toBe('render');
+    const renderResult = result as UiProcessRenderResult;
+    expect(renderResult.isUpdateCard).toBe(true);
+    expect(renderResult.documentTypeKey).toBe('invoice-project');
+    expect(renderResult.formData).toEqual({
       SelectDocumentSpaceType: 'projects',
       SelectDocumentSpace: 'Project Main',
       SelectDocumentType: 'invoice-project',
       contact: 'Bob',
       date: '260920',
     });
-    expect(result.request.formData?.contact).toBe('Bob');
-    expect(result.request.formData?.date).toBe('260920');
+    expect(renderResult.formData?.contact).toBe('Bob');
+    expect(renderResult.formData?.date).toBe('260920');
   });
 
   it('retains inactive form data across document type toggles and restores entered data when switching back', async () => {
@@ -138,7 +128,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       spaceProvider: mockSpaceProvider,
       configProvider: mockConfigProvider,
       manifestPort: mockManifestPort,
-      viewGenerator: mockViewGenerator,
     });
 
     // 1. User is on communication-project, inputs contact, then switches to invoice-project
@@ -152,34 +141,34 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       },
     };
 
-    const result1 = (await adapter.processUiEvent(switchContext1)) as {
-      renderedCard: boolean;
-      request: UiProcessCardRequest;
-    };
+    const result1 = await adapter.processUiEvent(switchContext1);
+    expect(Value.Check(UiProcessResultSchema, result1)).toBe(true);
+    expect(result1.type).toBe('render');
+    const renderResult1 = result1 as UiProcessRenderResult;
 
-    expect(result1.request.documentTypeKey).toBe('invoice-project');
+    expect(renderResult1.documentTypeKey).toBe('invoice-project');
     // Inactive field contact_communication-project should still be in formData
-    expect(result1.request.formData?.['contact_communication-project']).toBe('Alice from Comm');
+    expect(renderResult1.formData?.['contact_communication-project']).toBe('Alice from Comm');
 
     // 2. User fills invoice-project data, and switches back to communication-project
     const switchContext2: UiProcessEventContext = {
       actionName: 'onDocumentTypeChange',
       formData: {
-        ...result1.request.formData,
+        ...renderResult1.formData,
         SelectDocumentType_projects: 'communication-project',
         'invoiceNumber_invoice-project': 'INV-555',
       },
     };
 
-    const result2 = (await adapter.processUiEvent(switchContext2)) as {
-      renderedCard: boolean;
-      request: UiProcessCardRequest;
-    };
+    const result2 = await adapter.processUiEvent(switchContext2);
+    expect(Value.Check(UiProcessResultSchema, result2)).toBe(true);
+    expect(result2.type).toBe('render');
+    const renderResult2 = result2 as UiProcessRenderResult;
 
-    expect(result2.request.documentTypeKey).toBe('communication-project');
+    expect(renderResult2.documentTypeKey).toBe('communication-project');
     // Active field is normalized to contact, while inactive invoice field is preserved
-    expect(result2.request.formData?.contact).toBe('Alice from Comm');
-    expect(result2.request.formData?.['invoiceNumber_invoice-project']).toBe('INV-555');
+    expect(renderResult2.formData?.contact).toBe('Alice from Comm');
+    expect(renderResult2.formData?.['invoiceNumber_invoice-project']).toBe('INV-555');
   });
 
   it('normalizes dynamic SelectDocumentType_ keys to standard SelectDocumentType in formData', async () => {
@@ -187,7 +176,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       spaceProvider: mockSpaceProvider,
       configProvider: mockConfigProvider,
       manifestPort: mockManifestPort,
-      viewGenerator: mockViewGenerator,
     });
 
     const context: UiProcessEventContext = {
@@ -197,14 +185,14 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       },
     };
 
-    const result = (await adapter.processUiEvent(context)) as {
-      renderedCard: boolean;
-      request: UiProcessCardRequest;
-    };
+    const result = await adapter.processUiEvent(context);
+    expect(Value.Check(UiProcessResultSchema, result)).toBe(true);
+    expect(result.type).toBe('render');
+    const renderResult = result as UiProcessRenderResult;
 
-    expect(result.request.documentTypeKey).toBe('communication-project');
-    expect(result.request.formData?.SelectDocumentType).toBe('communication-project');
-    expect(result.request.formData).not.toHaveProperty('SelectDocumentType_projects');
+    expect(renderResult.documentTypeKey).toBe('communication-project');
+    expect(renderResult.formData?.SelectDocumentType).toBe('communication-project');
+    expect(renderResult.formData).not.toHaveProperty('SelectDocumentType_projects');
   });
 
   it('normalizes dynamic SelectDocumentSpace_<activeSpaceType> keys to standard SelectDocumentSpace in formData', async () => {
@@ -212,7 +200,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       spaceProvider: mockSpaceProvider,
       configProvider: mockConfigProvider,
       manifestPort: mockManifestPort,
-      viewGenerator: mockViewGenerator,
     });
 
     const context: UiProcessEventContext = {
@@ -222,13 +209,13 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       },
     };
 
-    const result = (await adapter.processUiEvent(context)) as {
-      renderedCard: boolean;
-      request: UiProcessCardRequest;
-    };
+    const result = await adapter.processUiEvent(context);
+    expect(Value.Check(UiProcessResultSchema, result)).toBe(true);
+    expect(result.type).toBe('render');
+    const renderResult = result as UiProcessRenderResult;
 
-    expect(result.request.formData?.SelectDocumentSpace).toBe('Project Alpha');
-    expect(result.request.formData).not.toHaveProperty('SelectDocumentSpace_projects');
+    expect(renderResult.formData?.SelectDocumentSpace).toBe('Project Alpha');
+    expect(renderResult.formData).not.toHaveProperty('SelectDocumentSpace_projects');
   });
 
   it('leaves inactive SelectDocumentSpace_<inactiveSpaceType> keys untouched in formData', async () => {
@@ -236,7 +223,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       spaceProvider: mockSpaceProvider,
       configProvider: mockConfigProvider,
       manifestPort: mockManifestPort,
-      viewGenerator: mockViewGenerator,
     });
 
     const context: UiProcessEventContext = {
@@ -247,14 +233,14 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       },
     };
 
-    const result = (await adapter.processUiEvent(context)) as {
-      renderedCard: boolean;
-      request: UiProcessCardRequest;
-    };
+    const result = await adapter.processUiEvent(context);
+    expect(Value.Check(UiProcessResultSchema, result)).toBe(true);
+    expect(result.type).toBe('render');
+    const renderResult = result as UiProcessRenderResult;
 
-    expect(result.request.formData?.SelectDocumentSpace).toBe('Project Alpha');
-    expect(result.request.formData).not.toHaveProperty('SelectDocumentSpace_projects');
-    expect(result.request.formData?.SelectDocumentSpace_proposals).toBe('Proposal Beta');
+    expect(renderResult.formData?.SelectDocumentSpace).toBe('Project Alpha');
+    expect(renderResult.formData).not.toHaveProperty('SelectDocumentSpace_projects');
+    expect(renderResult.formData?.SelectDocumentSpace_proposals).toBe('Proposal Beta');
   });
 
   it('normalizes dynamic <field>_<activeDocumentType> keys to standard <field> in formData', async () => {
@@ -262,7 +248,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       spaceProvider: mockSpaceProvider,
       configProvider: mockConfigProvider,
       manifestPort: mockManifestPort,
-      viewGenerator: mockViewGenerator,
     });
 
     const context: UiProcessEventContext = {
@@ -274,15 +259,15 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       },
     };
 
-    const result = (await adapter.processUiEvent(context)) as {
-      renderedCard: boolean;
-      request: UiProcessCardRequest;
-    };
+    const result = await adapter.processUiEvent(context);
+    expect(Value.Check(UiProcessResultSchema, result)).toBe(true);
+    expect(result.type).toBe('render');
+    const renderResult = result as UiProcessRenderResult;
 
-    expect(result.request.formData?.contact).toBe('Acme Corp');
-    expect(result.request.formData?.notes).toBe('Important notes');
-    expect(result.request.formData).not.toHaveProperty('contact_communication-project');
-    expect(result.request.formData).not.toHaveProperty('notes_communication-project');
+    expect(renderResult.formData?.contact).toBe('Acme Corp');
+    expect(renderResult.formData?.notes).toBe('Important notes');
+    expect(renderResult.formData).not.toHaveProperty('contact_communication-project');
+    expect(renderResult.formData).not.toHaveProperty('notes_communication-project');
   });
 
   it('leaves inactive <field>_<inactiveDocumentType> keys untouched in formData', async () => {
@@ -290,7 +275,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       spaceProvider: mockSpaceProvider,
       configProvider: mockConfigProvider,
       manifestPort: mockManifestPort,
-      viewGenerator: mockViewGenerator,
     });
 
     const context: UiProcessEventContext = {
@@ -302,14 +286,14 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       },
     };
 
-    const result = (await adapter.processUiEvent(context)) as {
-      renderedCard: boolean;
-      request: UiProcessCardRequest;
-    };
+    const result = await adapter.processUiEvent(context);
+    expect(Value.Check(UiProcessResultSchema, result)).toBe(true);
+    expect(result.type).toBe('render');
+    const renderResult = result as UiProcessRenderResult;
 
-    expect(result.request.formData?.contact).toBe('Active Contact');
-    expect(result.request.formData).not.toHaveProperty('contact_communication-project');
-    expect(result.request.formData?.['contact_invoice-project']).toBe('Inactive Invoice Contact');
+    expect(renderResult.formData?.contact).toBe('Active Contact');
+    expect(renderResult.formData).not.toHaveProperty('contact_communication-project');
+    expect(renderResult.formData?.['contact_invoice-project']).toBe('Inactive Invoice Contact');
   });
 
   describe('normalizeFormData unit tests', () => {
@@ -404,7 +388,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       spaceProvider: mockSpaceProvider,
       configProvider: mockConfigProvider,
       manifestPort: mockManifestPort,
-      viewGenerator: mockViewGenerator,
     });
 
     const context: UiProcessEventContext = {
@@ -414,13 +397,13 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       },
     };
 
-    const result = (await adapter.processUiEvent(context)) as {
-      renderedCard: boolean;
-      request: UiProcessCardRequest;
-    };
+    const result = await adapter.processUiEvent(context);
+    expect(Value.Check(UiProcessResultSchema, result)).toBe(true);
+    expect(result.type).toBe('render');
+    const renderResult = result as UiProcessRenderResult;
 
-    expect(result.request.documentTypeKey).toBe('communication-project');
-    expect(result.request.formData?.SelectDocumentType).toBe('communication-project');
+    expect(renderResult.documentTypeKey).toBe('communication-project');
+    expect(renderResult.formData?.SelectDocumentType).toBe('communication-project');
   });
 
   it('resolves human-readable names using manifestPort.resolveDocumentTypeKey', async () => {
@@ -445,7 +428,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         getCollection: vi.fn().mockResolvedValue({ spaces: [] }),
       },
       manifestPort: customManifestPort,
-      viewGenerator: mockViewGenerator,
     });
 
     const context: UiProcessEventContext = {
@@ -455,14 +437,14 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       },
     };
 
-    const result = (await adapter.processUiEvent(context)) as {
-      renderedCard: boolean;
-      request: UiProcessCardRequest;
-    };
+    const result = await adapter.processUiEvent(context);
+    expect(Value.Check(UiProcessResultSchema, result)).toBe(true);
+    expect(result.type).toBe('render');
+    const renderResult = result as UiProcessRenderResult;
 
     expect(customManifestPort.resolveDocumentTypeKey).toHaveBeenCalledWith('Human Readable Proposal');
-    expect(result.request.documentTypeKey).toBe('communication-proposal');
-    expect(result.request.formData?.SelectDocumentType).toBe('communication-proposal');
+    expect(renderResult.documentTypeKey).toBe('communication-proposal');
+    expect(renderResult.formData?.SelectDocumentType).toBe('communication-proposal');
   });
 
   describe('processDocument action handling', () => {
@@ -477,7 +459,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         spaceProvider: mockSpaceProvider,
         configProvider: mockConfigProvider,
         manifestPort: mockManifestPort,
-        viewGenerator: mockViewGenerator,
         documentRunner: mockDocumentRunner,
       });
 
@@ -512,12 +493,10 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         }
       );
 
+      expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
       expect(response).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
-          },
-        },
+        type: 'notification',
+        text: 'Document processed successfully',
       });
     });
 
@@ -532,7 +511,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         spaceProvider: mockSpaceProvider,
         configProvider: mockConfigProvider,
         manifestPort: mockManifestPort,
-        viewGenerator: mockViewGenerator,
         documentRunner: mockDocumentRunner,
       });
 
@@ -569,7 +547,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         spaceProvider: mockSpaceProvider,
         configProvider: mockConfigProvider,
         manifestPort: mockManifestPort,
-        viewGenerator: mockViewGenerator,
         documentRunner: mockDocumentRunner,
       });
 
@@ -611,7 +588,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         spaceProvider: mockSpaceProvider,
         configProvider: mockConfigProvider,
         manifestPort: mockManifestPort,
-        viewGenerator: mockViewGenerator,
         documentRunner: mockDocumentRunner,
       });
 
@@ -623,14 +599,13 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         },
       };
 
-      const response = (await adapter.processUiEvent(context)) as {
-        renderedCard: boolean;
-        request: UiProcessCardRequest;
-      };
+      const response = await adapter.processUiEvent(context);
+      expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
+      expect(response.type).toBe('render');
+      const renderResult = response as UiProcessRenderResult;
 
-      expect(response.renderedCard).toBe(true);
-      expect(response.request.isUpdateCard).toBe(true);
-      expect(response.request.validationErrors).toEqual(['Contact is required']);
+      expect(renderResult.isUpdateCard).toBe(true);
+      expect(renderResult.validationErrors).toEqual(['Contact is required']);
     });
 
     it('re-renders card with error message in validationErrors when documentRunner throws', async () => {
@@ -642,7 +617,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         spaceProvider: mockSpaceProvider,
         configProvider: mockConfigProvider,
         manifestPort: mockManifestPort,
-        viewGenerator: mockViewGenerator,
         documentRunner: mockDocumentRunner,
       });
 
@@ -654,14 +628,13 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         },
       };
 
-      const response = (await adapter.processUiEvent(context)) as {
-        renderedCard: boolean;
-        request: UiProcessCardRequest;
-      };
+      const response = await adapter.processUiEvent(context);
+      expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
+      expect(response.type).toBe('render');
+      const renderResult = response as UiProcessRenderResult;
 
-      expect(response.renderedCard).toBe(true);
-      expect(response.request.isUpdateCard).toBe(true);
-      expect(response.request.validationErrors).toEqual(['Connection timed out']);
+      expect(renderResult.isUpdateCard).toBe(true);
+      expect(renderResult.validationErrors).toEqual(['Connection timed out']);
     });
   });
 
@@ -684,7 +657,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         spaceProvider: mockSpaceProvider,
         configProvider: mockConfigProvider,
         manifestPort: mockManifestPort,
-        viewGenerator: mockViewGenerator,
         formEvaluator: mockFormEvaluator,
       });
 
@@ -697,24 +669,23 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         },
       };
 
-      const response = (await adapter.processUiEvent(context)) as {
-        renderedCard: boolean;
-        request: UiProcessCardRequest;
-      };
+      const response = await adapter.processUiEvent(context);
+      expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
+      expect(response.type).toBe('render');
+      const renderResult = response as UiProcessRenderResult;
 
       expect(mockFormEvaluator.evaluate).toHaveBeenCalledWith(
         context.formData,
         'communication-project'
       );
-      expect(response.renderedCard).toBe(true);
-      expect(response.request.isUpdateCard).toBe(true);
-      expect(response.request.formData).toEqual({
+      expect(renderResult.isUpdateCard).toBe(true);
+      expect(renderResult.formData).toEqual({
         SelectDocumentSpaceType: 'projects',
         SelectDocumentType: 'communication-project',
         contact: 'Alice',
         computedSummary: 'Alice - Projects',
       });
-      expect(response.request.hiddenFields).toEqual(['internalNotes']);
+      expect(renderResult.hiddenFields).toEqual(['internalNotes']);
     });
 
     it('renders error card when formEvaluator throws an error on onFormChange', async () => {
@@ -726,7 +697,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         spaceProvider: mockSpaceProvider,
         configProvider: mockConfigProvider,
         manifestPort: mockManifestPort,
-        viewGenerator: mockViewGenerator,
         formEvaluator: failingFormEvaluator,
       });
 
@@ -738,14 +708,13 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         },
       };
 
-      const response = (await adapter.processUiEvent(context)) as {
-        renderedCard: boolean;
-        request: UiProcessCardRequest;
-      };
+      const response = await adapter.processUiEvent(context);
+      expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
+      expect(response.type).toBe('render');
+      const renderResult = response as UiProcessRenderResult;
 
-      expect(response.renderedCard).toBe(true);
-      expect(response.request.isUpdateCard).toBe(true);
-      expect(response.request.validationErrors).toEqual(['Rule syntax error']);
+      expect(renderResult.isUpdateCard).toBe(true);
+      expect(renderResult.validationErrors).toEqual(['Rule syntax error']);
     });
 
     it('passes userOAuthToken as auth option to spaceProvider.getCollection', async () => {
@@ -765,7 +734,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         spaceProvider: customSpaceProvider,
         configProvider: mockConfigProvider,
         manifestPort: mockManifestPort,
-        viewGenerator: mockViewGenerator,
       });
 
       const context: UiProcessEventContext = {
@@ -784,34 +752,25 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
     });
   });
 
-  describe('baseUrl propagation & Space Collection Failure error display', () => {
-    it('propagates baseUrl from context to viewGenerator.generateCard', async () => {
+  describe('Space Collection Failure error display & schema adherence', () => {
+    it('returns a render intent conforming to UiProcessResultSchema without requiring baseUrl', async () => {
       const adapter = new WorkspaceAddonAdapter({
         spaceProvider: mockSpaceProvider,
         configProvider: mockConfigProvider,
         manifestPort: mockManifestPort,
-        viewGenerator: mockViewGenerator,
       });
 
       const context: UiProcessEventContext = {
-        baseUrl: 'https://my-addon.example.com',
         formData: {
           SelectDocumentSpaceType: 'projects',
           SelectDocumentType: 'communication-project',
         },
       };
 
-      const result = (await adapter.processUiEvent(context)) as {
-        renderedCard: boolean;
-        request: UiProcessCardRequest;
-      };
-
-      expect(result.request.baseUrl).toBe('https://my-addon.example.com');
-      expect(mockViewGenerator.generateCard).toHaveBeenCalledWith(
-        expect.objectContaining({
-          baseUrl: 'https://my-addon.example.com',
-        })
-      );
+      const result = await adapter.processUiEvent(context);
+      expect(Value.Check(UiProcessResultSchema, result)).toBe(true);
+      expect(result.type).toBe('render');
+      expect((result as Record<string, unknown>).baseUrl).toBeUndefined();
     });
 
     it('catches spaceProvider.getCollection error, logs warning, and surfaces error in validationErrors for status message', async () => {
@@ -832,7 +791,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         spaceProvider: failingSpaceProvider,
         configProvider: mockConfigProvider,
         manifestPort: mockManifestPort,
-        viewGenerator: mockViewGenerator,
       });
 
       const context: UiProcessEventContext = {
@@ -842,17 +800,17 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         },
       };
 
-      const result = (await adapter.processUiEvent(context)) as {
-        renderedCard: boolean;
-        request: UiProcessCardRequest;
-      };
+      const result = await adapter.processUiEvent(context);
+      expect(Value.Check(UiProcessResultSchema, result)).toBe(true);
+      expect(result.type).toBe('render');
+      const renderResult = result as UiProcessRenderResult;
 
       expect(consoleWarnSpy).toHaveBeenCalledWith(
         'Could not fetch collection for space type: projects',
         expect.any(Error)
       );
 
-      expect(result.request.validationErrors).toEqual(
+      expect(renderResult.validationErrors).toEqual(
         expect.arrayContaining(['Shared Drive permission denied'])
       );
 
@@ -877,7 +835,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         spaceProvider: failingSpaceProvider,
         configProvider: mockConfigProvider,
         manifestPort: mockManifestPort,
-        viewGenerator: mockViewGenerator,
       });
 
       const context: UiProcessEventContext = {
@@ -887,12 +844,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         validationErrors: ['Pre-existing field error'],
       };
 
-      const result = (await adapter.processUiEvent(context)) as {
-        renderedCard: boolean;
-        request: UiProcessCardRequest;
-      };
+      const result = await adapter.processUiEvent(context);
+      expect(Value.Check(UiProcessResultSchema, result)).toBe(true);
+      expect(result.type).toBe('render');
+      const renderResult = result as UiProcessRenderResult;
 
-      expect(result.request.validationErrors).toEqual([
+      expect(renderResult.validationErrors).toEqual([
         'Pre-existing field error',
         'Drive network failure',
       ]);
