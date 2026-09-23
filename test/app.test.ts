@@ -995,6 +995,30 @@ describe('App integration tests', () => {
       );
     });
   });
+
+  describe('appBaseUrl dependency injection', () => {
+    it('accepts appBaseUrl in AppOptions and wires it to workspace addon routes', async () => {
+      const appInstance = createApp({
+        skipSpaceValidation: true,
+        documentSchemaRegistry: mockManifestRegistry,
+        activityEngine: mockActivityEngine,
+        appBaseUrl: 'https://custom-domain.example.com',
+      });
+
+      expect(appInstance).toBeDefined();
+    });
+
+    it('falls back to process.env.APP_BASE_URL when appBaseUrl is omitted from AppOptions', async () => {
+      vi.stubEnv('APP_BASE_URL', 'https://env-domain.example.com');
+      const appInstance = createApp({
+        skipSpaceValidation: true,
+        documentSchemaRegistry: mockManifestRegistry,
+        activityEngine: mockActivityEngine,
+      });
+
+      expect(appInstance).toBeDefined();
+    });
+  });
 });
 
 

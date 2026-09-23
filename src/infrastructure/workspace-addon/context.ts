@@ -77,15 +77,13 @@ function getHeader(
 }
 
 export function extractBaseUrl(
-  headers?: Record<string, string | string[] | undefined>
+  headers?: Record<string, string | string[] | undefined>,
+  appBaseUrl?: string
 ): string | undefined {
   if (headers) {
     const proto = getHeader(headers, 'x-forwarded-proto');
     const forwardedHost = getHeader(headers, 'x-forwarded-host');
-    const rawHost = forwardedHost ?? getHeader(headers, 'host');
-    // Ignore synthetic default host 'localhost:80' injected by test runners (light-my-request) when no proxy proto is set
-    const host =
-      rawHost === 'localhost:80' && !proto && !forwardedHost ? undefined : rawHost;
+    const host = forwardedHost ?? getHeader(headers, 'host');
 
     if (proto && host) {
       return `${proto}://${host}`;
@@ -99,13 +97,12 @@ export function extractBaseUrl(
     }
   }
 
-  const envBaseUrl = process.env.APP_BASE_URL;
   if (
-    Value.Check(AppBaseUrlEnvSchema, envBaseUrl) &&
-    envBaseUrl !== undefined &&
-    envBaseUrl.trim() !== ''
+    Value.Check(AppBaseUrlEnvSchema, appBaseUrl) &&
+    appBaseUrl !== undefined &&
+    appBaseUrl.trim() !== ''
   ) {
-    return envBaseUrl.trim().replace(/\/+$/, '');
+    return appBaseUrl.trim().replace(/\/+$/, '');
   }
 
   return undefined;
@@ -114,7 +111,8 @@ export function extractBaseUrl(
 export function extractWorkspaceExecutionContext(
   payload: unknown,
   traceId?: string,
-  rawHeaders?: unknown
+  rawHeaders?: unknown,
+  appBaseUrl?: string
 ): WorkspaceExecutionContext {
   const event: Partial<WorkspaceEventPayload> =
     Value.Check(WorkspaceEventPayloadType, payload) ? payload : {};
@@ -164,7 +162,7 @@ export function extractWorkspaceExecutionContext(
     hostApp: event.commonEventObject?.hostApp,
     platform: event.commonEventObject?.platform,
     traceId,
-    baseUrl: extractBaseUrl(headers),
+    baseUrl: extractBaseUrl(headers, appBaseUrl),
     selectedItems: event.drive?.selectedItems,
     validationErrors,
     formData,

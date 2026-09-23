@@ -20,6 +20,7 @@ export interface WorkspaceAddonWiringOptions {
   configProvider?: WorkspaceConfigProviderPort | undefined;
   manifestProvider?: RawManifestProviderPort | undefined;
   uiOrchestrator?: WorkspaceUiOrchestratorPort | undefined;
+  appBaseUrl?: string | undefined;
 }
 
 export function wireWorkspaceAddonRoutes(
@@ -51,6 +52,7 @@ export function wireWorkspaceAddonRoutes(
   registerWorkspaceAddonRoutes(options.server, {
     authVerifier,
     uiOrchestrator: uiOrchestrator!,
+    appBaseUrl: options.appBaseUrl,
   });
 }
 

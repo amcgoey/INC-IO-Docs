@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createHttpServer } from '../http';
+import { createHttpServer, type HttpServer, type HttpHandler } from '../http';
 import {
   registerWorkspaceAddonRoutes,
   type WorkspaceAuthVerifierPort,
@@ -107,6 +107,43 @@ describe('Workspace Add-on Infrastructure API', () => {
       );
       const body = JSON.parse(response.payload);
       expect(body.action.navigations[0].pushCard.header.title).toBe('Test Card');
+    });
+
+    it('injects appBaseUrl into WorkspaceExecutionContext when host headers are omitted', async () => {
+      const routes: Record<string, HttpHandler> = {};
+      const mockServer = {
+        registerRoute: vi.fn().mockImplementation((route) => {
+          routes[route.url] = route.handler;
+        }),
+        start: vi.fn(),
+        close: vi.fn(),
+        inject: vi.fn(),
+      } as unknown as HttpServer;
+
+      registerWorkspaceAddonRoutes(mockServer, {
+        authVerifier: mockAuthVerifier,
+        uiOrchestrator: mockUiOrchestrator,
+        appBaseUrl: 'https://injected.example.com',
+      });
+
+      const handler = routes['/workspace/drive-items-selected'];
+      const response = await handler({
+        headers: {
+          authorization: 'Bearer valid-token',
+        },
+        body: {
+          drive: {
+            selectedItems: [{ id: 'file-123', title: 'sample.pdf' }],
+          },
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockUiOrchestrator.processUiEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          baseUrl: 'https://injected.example.com',
+        })
+      );
     });
 
     it('returns 200 with native error card when process throws an unexpected error', async () => {

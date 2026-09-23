@@ -19,6 +19,7 @@ export interface WorkspaceUiOrchestratorPort {
 export interface WorkspaceAddonApiOptions {
   authVerifier: WorkspaceAuthVerifierPort;
   uiOrchestrator: WorkspaceUiOrchestratorPort;
+  appBaseUrl?: string | undefined;
 }
 
 function withAuthentication(
@@ -57,7 +58,7 @@ export function registerWorkspaceAddonRoutes(
   router: HttpServer,
   opts: WorkspaceAddonApiOptions
 ): void {
-  const { authVerifier, uiOrchestrator } = opts;
+  const { authVerifier, uiOrchestrator, appBaseUrl } = opts;
 
   const handleUiRoute = (endpointName: string) =>
     withAuthentication(authVerifier, async (request) => {
@@ -66,7 +67,8 @@ export function registerWorkspaceAddonRoutes(
         const context: WorkspaceExecutionContext = extractWorkspaceExecutionContext(
           request.body,
           traceHeader,
-          request.headers
+          request.headers,
+          appBaseUrl
         );
         const result = await uiOrchestrator.processUiEvent(context);
         return {

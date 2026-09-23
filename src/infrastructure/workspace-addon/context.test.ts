@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import {
   extractWorkspaceExecutionContext,
+  extractBaseUrl,
   findLatestFileLocator,
   AppBaseUrlEnvSchema,
   WorkspaceRequestHeadersSchema,
@@ -149,6 +150,16 @@ describe('Workspace Add-on Context', () => {
         );
       });
 
+      it('defaults to http when standalone host is localhost:80 without proxy proto', () => {
+        const headers = {
+          host: 'localhost:80',
+        };
+        expect(extractWorkspaceExecutionContext({}, undefined, headers).baseUrl).toBe(
+          'http://localhost:80'
+        );
+        expect(extractBaseUrl(headers)).toBe('http://localhost:80');
+      });
+
       it('defaults to http when standalone host is 127.0.0.1 or 127.0.0.1 with port', () => {
         const headersWithPort = {
           host: '127.0.0.1:8080',
@@ -165,12 +176,16 @@ describe('Workspace Add-on Context', () => {
         );
       });
 
-      it('prioritizes standalone host header over process.env.APP_BASE_URL', () => {
-        process.env.APP_BASE_URL = 'https://fallback.example.com';
+      it('prioritizes standalone host header over injected appBaseUrl', () => {
         const headers = {
           host: 'standalone-priority.example.com',
         };
-        const context = extractWorkspaceExecutionContext({}, undefined, headers);
+        const context = extractWorkspaceExecutionContext(
+          {},
+          undefined,
+          headers,
+          'https://fallback.example.com'
+        );
         expect(context.baseUrl).toBe('https://standalone-priority.example.com');
       });
 
@@ -183,30 +198,50 @@ describe('Workspace Add-on Context', () => {
         expect(context.baseUrl).toBe('https://first-proxy.example.com');
       });
 
-      it('falls back to process.env.APP_BASE_URL when headers are absent', () => {
-        process.env.APP_BASE_URL = 'https://fallback.example.com';
-        const context = extractWorkspaceExecutionContext({});
+      it('falls back to injected appBaseUrl when headers are absent', () => {
+        const context = extractWorkspaceExecutionContext(
+          {},
+          undefined,
+          undefined,
+          'https://fallback.example.com'
+        );
         expect(context.baseUrl).toBe('https://fallback.example.com');
+        expect(extractBaseUrl(undefined, 'https://fallback.example.com')).toBe(
+          'https://fallback.example.com'
+        );
       });
 
-      it('strips trailing slashes from process.env.APP_BASE_URL', () => {
-        process.env.APP_BASE_URL = 'https://fallback.example.com///';
-        const context = extractWorkspaceExecutionContext({});
+      it('strips trailing slashes from injected appBaseUrl', () => {
+        const context = extractWorkspaceExecutionContext(
+          {},
+          undefined,
+          undefined,
+          'https://fallback.example.com///'
+        );
         expect(context.baseUrl).toBe('https://fallback.example.com');
+        expect(extractBaseUrl(undefined, 'https://fallback.example.com///')).toBe(
+          'https://fallback.example.com'
+        );
       });
 
-      it('returns undefined when headers and process.env.APP_BASE_URL are absent', () => {
-        delete process.env.APP_BASE_URL;
+      it('returns undefined when headers and injected appBaseUrl are absent', () => {
         const context = extractWorkspaceExecutionContext({});
         expect(context.baseUrl).toBeUndefined();
+        expect(extractBaseUrl()).toBeUndefined();
       });
 
-      it('returns undefined when process.env.APP_BASE_URL is empty string or only whitespace', () => {
-        process.env.APP_BASE_URL = '';
-        expect(extractWorkspaceExecutionContext({}).baseUrl).toBeUndefined();
+      it('returns undefined when injected appBaseUrl is empty string or only whitespace', () => {
+        expect(extractWorkspaceExecutionContext({}, undefined, undefined, '').baseUrl).toBeUndefined();
+        expect(extractWorkspaceExecutionContext({}, undefined, undefined, '   ').baseUrl).toBeUndefined();
+        expect(extractBaseUrl(undefined, '')).toBeUndefined();
+        expect(extractBaseUrl(undefined, '   ')).toBeUndefined();
+      });
 
-        process.env.APP_BASE_URL = '   ';
-        expect(extractWorkspaceExecutionContext({}).baseUrl).toBeUndefined();
+      it('does not read process.env.APP_BASE_URL directly', () => {
+        process.env.APP_BASE_URL = 'https://ambient-env.example.com';
+        const context = extractWorkspaceExecutionContext({});
+        expect(context.baseUrl).toBeUndefined();
+        expect(extractBaseUrl()).toBeUndefined();
       });
 
       it('validates environment variable boundary against AppBaseUrlEnvSchema', () => {

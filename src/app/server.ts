@@ -51,6 +51,7 @@ export interface AppOptions {
   authorizationUrl?: string | undefined;
   logger?: boolean | undefined;
   skipSpaceValidation?: boolean | undefined;
+  appBaseUrl?: string | undefined;
 }
 
 export interface AppInstance {
@@ -129,6 +130,8 @@ export function createApp(options?: AppOptions): AppInstance {
     options?.documentSpaceService ??
     documentSpaceWiring.documentSpaceService;
 
+  const appBaseUrl = options?.appBaseUrl ?? process.env.APP_BASE_URL;
+
   wireWorkspaceAddonRoutes({
     server,
     documentService,
@@ -136,6 +139,7 @@ export function createApp(options?: AppOptions): AppInstance {
     authVerifier: options?.authVerifier,
     configProvider: manifestProvider,
     manifestProvider,
+    appBaseUrl,
   });
 
   const initialize = async () => {
