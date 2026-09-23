@@ -7,6 +7,7 @@ import {
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import type { DocumentSpaceService } from '../features/document-space/domain';
 import type { DocumentService } from '../features/document/domain';
+import type { SchemaDrivenUiService } from '../features/schema-driven-ui/domain';
 import type { RawManifestProviderPort } from './schema-driven-ui.wiring';
 
 import type {
