@@ -4,6 +4,7 @@ import { HandlebarsAdapter } from '../src/infrastructure/template-engine/handleb
 import { StructuredLogActivity } from '../src/features/document/adapters/structured-log-activity';
 import { ActivityEngine } from '../src/features/document/adapters/activity-engine';
 import type { DocumentSchemaRegistryPort } from '../src/features/document/ports';
+import { CompiledSchemaRegistry } from '../src/features/document/adapters/compiled-schema-registry';
 
 describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
   let documentService: DocumentService;
@@ -152,7 +153,9 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     handlebarsAdapter = new HandlebarsAdapter();
     structuredLogActivity = new StructuredLogActivity();
     activityEngine = new ActivityEngine([structuredLogActivity]);
-    documentService = new DocumentService(activityEngine, mockRegistry, handlebarsAdapter);
+    const compiledRegistry = new CompiledSchemaRegistry(mockRegistry);
+    await compiledRegistry.initialize();
+    documentService = new DocumentService(activityEngine, mockRegistry, handlebarsAdapter, compiledRegistry);
 
     await documentService.initialize();
   });

@@ -22,6 +22,7 @@ import type {
   AppConfigurationProviderPort,
   DriveServicePort,
   DocumentSchemaRegistryPort,
+  CompiledSchemaRegistryPort,
   TemplateEvaluatorPort,
   RawManifestProviderPort,
 } from '../features/document/ports';
@@ -40,6 +41,7 @@ export interface AppOptions {
   manifestProvider?: CompositeManifestProvider | undefined;
   manifestPath?: string | undefined;
   documentSchemaRegistry?: DocumentSchemaRegistryPort | undefined;
+  compiledSchemaRegistry?: CompiledSchemaRegistryPort | undefined;
   activityEngine?: ActivityDispatcherPort | undefined;
   templateEvaluator?: TemplateEvaluatorPort | undefined;
   authVerifier?: WorkspaceAuthVerifierPort | undefined;
@@ -59,6 +61,7 @@ export interface AppInstance {
   documentService: InjectedDocumentService;
   documentSpaceService: DocumentSpaceService;
   documentSchemaRegistry: DocumentSchemaRegistryPort;
+  compiledSchemaRegistry?: CompiledSchemaRegistryPort | undefined;
   documentSpaceUiSchemaQuery?: DocumentSpaceUiSchemaQueryPort | undefined;
   initialize: () => Promise<void>;
   start: (port?: number, host?: string) => Promise<void>;
@@ -85,14 +88,18 @@ export function createApp(options?: AppOptions): AppInstance {
 
   let documentSchemaRegistry: DocumentSchemaRegistryPort | undefined =
     options?.documentSchemaRegistry;
+  let compiledSchemaRegistry: CompiledSchemaRegistryPort | undefined =
+    options?.compiledSchemaRegistry;
 
   if (manifestProvider) {
     const documentWiring = createDocumentFeatureWiring({
       manifestProvider,
       templateEvaluator,
       documentSchemaRegistry: options?.documentSchemaRegistry,
+      compiledSchemaRegistry: options?.compiledSchemaRegistry,
     });
     documentSchemaRegistry = documentWiring.documentSchemaRegistry;
+    compiledSchemaRegistry = documentWiring.compiledSchemaRegistry;
   }
 
   if (!documentSchemaRegistry) {
@@ -118,6 +125,7 @@ export function createApp(options?: AppOptions): AppInstance {
     driveService: options?.driveService,
     activityEngine: options?.activityEngine,
     documentService: options?.documentService,
+    compiledSchemaRegistry,
   });
 
   const storageAdapter = options?.storageAdapter ?? options?.documentSpaceStoragePort;
@@ -143,6 +151,9 @@ export function createApp(options?: AppOptions): AppInstance {
   });
 
   const initialize = async () => {
+    if (compiledSchemaRegistry) {
+      await compiledSchemaRegistry.initialize();
+    }
     const maybeDocService = documentService as { initialize?: unknown };
     if (typeof maybeDocService.initialize === 'function') {
       await (maybeDocService as { initialize: () => Promise<unknown> }).initialize();
@@ -169,6 +180,7 @@ export function createApp(options?: AppOptions): AppInstance {
     documentService,
     documentSpaceService,
     documentSchemaRegistry,
+    compiledSchemaRegistry,
     documentSpaceUiSchemaQuery: documentSpaceWiring.documentSpaceUiSchemaQuery,
     initialize,
     start,

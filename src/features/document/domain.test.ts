@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
+import { Type, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import { TypeCompiler } from '@sinclair/typebox/compiler';
 import {
   DocumentService,
   DocumentModel,
@@ -23,6 +25,8 @@ import {
   formatValidationErrors,
   validateManifestTemplates,
   walkTemplates,
+  buildDocumentTypeSchema,
+  buildFieldSchema,
   type Activity,
   type ActivityOutput,
   type FileLocator,
@@ -39,6 +43,7 @@ import {
   type ActivityDispatcherPort,
   type ExecutionContext,
   type DocumentSchemaRegistryPort,
+  type CompiledSchemaRegistryPort,
   type TemplateEvaluationContext,
   type TemplateEvaluatorPort,
 } from './ports';
@@ -58,6 +63,45 @@ describe('Document domain', () => {
     validate: vi.fn().mockReturnValue(true),
     evaluate: vi.fn().mockImplementation((template: string) => template),
   };
+
+  const createMockCompiledRegistry = (
+    registry?: DocumentSchemaRegistryPort
+  ): CompiledSchemaRegistryPort => {
+    const compiledMap = new Map<string, { Check: (data: unknown) => boolean; Schema: () => TSchema }>();
+    return {
+      initialize: vi.fn().mockImplementation(async () => {
+        if (registry) {
+          const types = await registry.loadAll();
+          for (const t of types) {
+            const schema = buildDocumentTypeSchema(t);
+            const compiled = TypeCompiler.Compile(schema);
+            compiledMap.set(t.key, compiled);
+          }
+        }
+      }),
+      get: vi.fn().mockImplementation((key: string) => {
+        return (
+          compiledMap.get(key) ?? {
+            Check: () => true,
+            Schema: () => Type.Object({}),
+          }
+        );
+      }),
+    };
+  };
+
+  const createDocumentService = (
+    dispatcher: ActivityDispatcherPort,
+    registry: DocumentSchemaRegistryPort,
+    evaluator: TemplateEvaluatorPort,
+    compiledRegistry?: CompiledSchemaRegistryPort
+  ): DocumentService =>
+    new DocumentService(
+      dispatcher,
+      registry,
+      evaluator,
+      compiledRegistry ?? createMockCompiledRegistry(registry)
+    );
 
   it('should export DocumentModel schema', () => {
     expect(DocumentModel).toBeDefined();
@@ -255,7 +299,7 @@ describe('Document domain', () => {
       },
     ];
     const registryWithSubmittal = createCustomRegistry(mockDocumentTypes);
-    const service = new DocumentService(mockDispatcher, registryWithSubmittal, defaultEvaluator);
+    const service = createDocumentService(mockDispatcher, registryWithSubmittal, defaultEvaluator);
     await service.initialize();
 
     const validDocument: Document = {
@@ -325,7 +369,7 @@ describe('Document domain', () => {
       },
     ];
     const registryWithSubmittal = createCustomRegistry(mockDocumentTypes);
-    const service = new DocumentService(mockDispatcher, registryWithSubmittal, defaultEvaluator);
+    const service = createDocumentService(mockDispatcher, registryWithSubmittal, defaultEvaluator);
     await service.initialize();
 
     const documentWithInactiveKeys: Document = {
@@ -370,7 +414,7 @@ describe('Document domain', () => {
       },
     ];
     const registryWithSubmittal = createCustomRegistry(mockDocumentTypes);
-    const service = new DocumentService(mockDispatcher, registryWithSubmittal, defaultEvaluator);
+    const service = createDocumentService(mockDispatcher, registryWithSubmittal, defaultEvaluator);
     await service.initialize();
 
     const missingRequiredField = {
@@ -390,7 +434,7 @@ describe('Document domain', () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
-    const service = new DocumentService(mockDispatcher, mockRegistry, defaultEvaluator);
+    const service = createDocumentService(mockDispatcher, mockRegistry, defaultEvaluator);
     await service.initialize();
 
     const unknownTypeDocument = {
@@ -429,7 +473,7 @@ describe('Document domain', () => {
     const registryWithInvalid: DocumentSchemaRegistryPort = {
       loadAll: vi.fn().mockResolvedValue(invalidDocumentTypes),
     };
-    const service = new DocumentService(mockDispatcher, registryWithInvalid, defaultEvaluator);
+    const service = createDocumentService(mockDispatcher, registryWithInvalid, defaultEvaluator);
 
     await expect(service.initialize()).rejects.toThrow(
       /Unsupported field type 'unknown'/
@@ -440,7 +484,7 @@ describe('Document domain', () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
-    const service = new DocumentService(mockDispatcher, mockRegistry, defaultEvaluator);
+    const service = createDocumentService(mockDispatcher, mockRegistry, defaultEvaluator);
     await service.initialize();
 
     const invalidDocument = {
@@ -459,7 +503,7 @@ describe('Document domain', () => {
     const mockDispatcher: ActivityDispatcherPort = {
       dispatch: vi.fn(),
     };
-    const service = new DocumentService(mockDispatcher, mockRegistry, defaultEvaluator);
+    const service = createDocumentService(mockDispatcher, mockRegistry, defaultEvaluator);
     await service.initialize();
 
     const resultUndefined = await service.processDocument(undefined);
@@ -469,6 +513,114 @@ describe('Document domain', () => {
     const resultNull = await service.processDocument(null);
     expect(resultNull.success).toBe(false);
     expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+  });
+
+  describe('DocumentService CompiledSchemaRegistry integration', () => {
+    it('accepts an injected CompiledSchemaRegistry instance and delegates schema lookups without calling TypeCompiler.Compile per-request', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn(),
+      };
+      const submittalType: DocumentType = {
+        key: 'submittal',
+        name: 'Submittal Document',
+        documentSchema: {
+          fields: [
+            {
+              key: 'title',
+              name: 'Title',
+              type: 'string',
+              required: true,
+            },
+          ],
+        },
+      };
+
+      const customRegistry = createCustomRegistry([submittalType]);
+      const mockCompiled = {
+        Check: vi.fn().mockReturnValue(true),
+        Schema: vi.fn().mockReturnValue(Type.Object({})),
+      };
+      const mockCompiledRegistry: CompiledSchemaRegistryPort = {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        get: vi.fn().mockReturnValue(mockCompiled),
+      };
+
+      const compileSpy = vi.spyOn(TypeCompiler, 'Compile');
+
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        defaultEvaluator,
+        mockCompiledRegistry
+      );
+      await service.initialize();
+
+      expect(compileSpy).toHaveBeenCalledTimes(0);
+
+      const validDoc: Document = {
+        id: 'doc-1',
+        type: 'submittal',
+        data: { title: 'Test Document' },
+      };
+
+      const result = await service.processDocument(validDoc);
+      expect(result.success).toBe(true);
+
+      // Verify TypeCompiler.Compile was not called on per-request processDocument
+      expect(compileSpy).not.toHaveBeenCalled();
+    });
+
+    it('works with a mocked CompiledSchemaRegistryPort', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn(),
+      };
+      const submittalType: DocumentType = {
+        key: 'submittal',
+        name: 'Submittal Document',
+        documentSchema: {
+          fields: [
+            {
+              key: 'title',
+              name: 'Title',
+              type: 'string',
+              required: true,
+            },
+          ],
+        },
+      };
+
+      const mockCompiledSchema = {
+        Check: vi.fn().mockReturnValue(true),
+        Schema: vi.fn().mockReturnValue(Type.Object({})),
+      } as unknown as ReturnType<CompiledSchemaRegistryPort['get']>;
+
+      const mockRegistryWithTypes = createCustomRegistry([submittalType]);
+      const mockCompiledRegistry: CompiledSchemaRegistryPort = {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        get: vi.fn().mockReturnValue(mockCompiledSchema),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        mockRegistryWithTypes,
+        defaultEvaluator,
+        mockCompiledRegistry
+      );
+      await service.initialize();
+
+      expect(mockCompiledRegistry.initialize).toHaveBeenCalledTimes(1);
+      expect(mockRegistryWithTypes.loadAll).toHaveBeenCalledTimes(1);
+
+      const validDoc: Document = {
+        id: 'doc-1',
+        type: 'submittal',
+        data: { title: 'Test Document' },
+      };
+
+      const result = await service.processDocument(validDoc);
+      expect(result.success).toBe(true);
+      expect(mockCompiledRegistry.get).toHaveBeenCalledWith('submittal');
+    });
   });
 
   it('exports DocumentTypeSchema and validates valid DocumentType definitions', () => {
@@ -894,7 +1046,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -992,7 +1144,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -1050,7 +1202,7 @@ describe('Document domain', () => {
         },
       ];
       const customRegistry = createCustomRegistry(mockDocumentTypes);
-      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -1124,7 +1276,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, evaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, evaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -1191,7 +1343,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       await service.processDocument({
@@ -1265,7 +1417,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -1338,7 +1490,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       await service.processDocument({
@@ -1393,7 +1545,7 @@ describe('Document domain', () => {
         },
       ];
       const customRegistry = createCustomRegistry(mockDocumentTypes);
-      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
       const validDocument: Document = {
@@ -1444,7 +1596,7 @@ describe('Document domain', () => {
         },
       ];
       const customRegistry = createCustomRegistry(mockDocumentTypes);
-      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
       const invalidDocument = {
@@ -1495,7 +1647,7 @@ describe('Document domain', () => {
         },
       ];
       const customRegistry = createCustomRegistry(mockDocumentTypes);
-      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
       // Omitting optional lookup field
@@ -1562,7 +1714,7 @@ describe('Document domain', () => {
         },
       ];
       const customRegistry = createCustomRegistry(mockDocumentTypes);
-      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
       const documentWithMissingSourceVal = {
@@ -1611,7 +1763,7 @@ describe('Document domain', () => {
         },
       ];
       const customRegistry = createCustomRegistry(mockDocumentTypes);
-      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
       // Accepts standard option from list and enriches to matched tuple
@@ -1682,7 +1834,7 @@ describe('Document domain', () => {
         },
       ];
       const customRegistry = createCustomRegistry(mockDocumentTypes);
-      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
       const invalidTypeDocument = {
@@ -1764,7 +1916,7 @@ describe('Document domain', () => {
         },
       ];
       const customRegistry = createCustomRegistry(mockDocumentTypes);
-      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -1837,7 +1989,7 @@ describe('Document domain', () => {
         },
       ];
       const customRegistry = createCustomRegistry(mockDocumentTypes);
-      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -1943,7 +2095,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       // Test with matched direction tuple and synthesized deliveryMethod fallback tuple
@@ -2166,7 +2318,7 @@ describe('Document domain', () => {
       const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -2207,7 +2359,7 @@ describe('Document domain', () => {
       const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -2241,7 +2393,7 @@ describe('Document domain', () => {
       const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -2275,7 +2427,7 @@ describe('Document domain', () => {
       const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -2303,7 +2455,7 @@ describe('Document domain', () => {
       const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -2340,7 +2492,7 @@ describe('Document domain', () => {
       const customRegistry: DocumentSchemaRegistryPort = {
         loadAll: vi.fn().mockResolvedValue([mockWorkflowDocumentType]),
       };
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -2455,7 +2607,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -2607,7 +2759,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -2747,7 +2899,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -2821,7 +2973,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -2915,7 +3067,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -2982,7 +3134,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -3035,7 +3187,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -3139,7 +3291,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -3228,7 +3380,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -3312,7 +3464,7 @@ describe('Document domain', () => {
           return undefined;
         }),
       };
-      const service = new DocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -3389,7 +3541,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -3484,7 +3636,7 @@ describe('Document domain', () => {
         }),
       };
 
-      const service = new DocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
       const inputDocument: Document = {
@@ -4087,6 +4239,62 @@ describe('Document domain', () => {
       expect(error).toBeInstanceOf(FileNotFoundError);
       expect(error.name).toBe('FileNotFoundError');
       expect(error.message).toBe('File not found');
+    });
+  });
+
+  describe('buildFieldSchema and buildDocumentTypeSchema', () => {
+    it('compiles fields with allowUserInput: false into Literals or Union of Literals', () => {
+      const docType: DocumentType = {
+        key: 'test',
+        name: 'Test',
+        documentSchema: {
+          fields: [
+            {
+              key: 'category',
+              name: 'Category',
+              type: 'string',
+              required: true,
+              options: {
+                source: 'categories',
+                key: 'val',
+                name: 'label',
+                allowUserInput: false,
+              },
+            },
+          ],
+          options: {
+            categories: [
+              { val: 'A', label: 'Alpha' },
+              { val: 'B', label: 'Beta' },
+            ],
+          },
+        },
+      };
+
+      const schema = buildDocumentTypeSchema(docType);
+      const compiled = TypeCompiler.Compile(schema);
+
+      expect(compiled.Check({ category: 'A' })).toBe(true);
+      expect(compiled.Check({ category: 'B' })).toBe(true);
+      expect(compiled.Check({ category: 'C' })).toBe(false);
+    });
+
+    it('builds optional string field via buildFieldSchema', () => {
+      const fieldSchema = buildFieldSchema(
+        {
+          key: 'notes',
+          name: 'Notes',
+          type: 'string',
+          required: false,
+        },
+        { fields: [] },
+        'test'
+      );
+
+      const compiled = TypeCompiler.Compile(Type.Object({ notes: fieldSchema }));
+      expect(compiled.Check({})).toBe(true);
+      expect(compiled.Check({ notes: 'hello' })).toBe(true);
+      expect(compiled.Check({ notes: 123 })).toBe(false);
     });
   });
 });

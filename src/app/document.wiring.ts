@@ -7,10 +7,12 @@ import type {
   AppConfigurationProviderPort,
   RawManifestProviderPort,
   DocumentServicePort,
+  CompiledSchemaRegistryPort,
 } from '../features/document/ports';
 import { ensureEvaluationOrder } from '../infrastructure/validation/json-logic-graph';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import { DocumentService } from '../features/document/domain';
+import { CompiledSchemaRegistry } from '../features/document/adapters/compiled-schema-registry';
 
 export type InjectedDocumentService =
   | DocumentService
@@ -26,10 +28,19 @@ export interface DocumentFeatureWiringOptions {
   manifestProvider: RawManifestProviderPort;
   templateEvaluator?: TemplateEvaluatorPort | undefined;
   documentSchemaRegistry?: DocumentSchemaRegistryPort | undefined;
+  compiledSchemaRegistry?: CompiledSchemaRegistryPort | undefined;
 }
 
 export interface DocumentFeatureWiring {
   documentSchemaRegistry: DocumentSchemaRegistryPort;
+  compiledSchemaRegistry: CompiledSchemaRegistryPort;
+}
+
+function resolveCompiledSchemaRegistry(
+  documentSchemaRegistry: DocumentSchemaRegistryPort,
+  override?: CompiledSchemaRegistryPort
+): CompiledSchemaRegistryPort {
+  return override ?? new CompiledSchemaRegistry(documentSchemaRegistry);
 }
 
 export function createDocumentFeatureWiring(
@@ -43,9 +54,14 @@ export function createDocumentFeatureWiring(
       templateEvaluator,
       ensureEvaluationOrder
     );
+  const compiledSchemaRegistry = resolveCompiledSchemaRegistry(
+    documentSchemaRegistry,
+    options.compiledSchemaRegistry
+  );
 
   return {
     documentSchemaRegistry,
+    compiledSchemaRegistry,
   };
 }
 
@@ -58,6 +74,7 @@ export interface WireDocumentServicesOptions {
   driveService?: DriveServicePort | undefined;
   activityEngine?: ActivityDispatcherPort | undefined;
   documentService?: InjectedDocumentService | undefined;
+  compiledSchemaRegistry?: CompiledSchemaRegistryPort | undefined;
 }
 
 export function wireDocumentServicesAndRoutes(
@@ -74,10 +91,17 @@ export function wireDocumentServicesAndRoutes(
 
     const activityEngine =
       options.activityEngine ?? new ActivityEngine([driveActivityHandler]);
+
+    const compiledSchemaRegistry = resolveCompiledSchemaRegistry(
+      options.documentSchemaRegistry,
+      options.compiledSchemaRegistry
+    );
+
     documentService = new DocumentService(
       activityEngine,
       options.documentSchemaRegistry,
-      options.templateEvaluator
+      options.templateEvaluator,
+      compiledSchemaRegistry
     );
   }
 

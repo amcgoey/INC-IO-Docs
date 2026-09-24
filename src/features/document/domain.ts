@@ -7,6 +7,7 @@ import type {
   ExecutionContext,
   TemplateEvaluationContext,
   TemplateEvaluatorPort,
+  CompiledSchemaRegistryPort,
 } from './ports';
 
 export function formatValidationErrors<T extends TSchema>(schema: T, value: unknown): string[] {
@@ -196,42 +197,6 @@ const IDENTITY_SCHEMA_TO_DOCUMENT_FIELD_MAPPING = {
   idGroup: 'idGroup',
 } as const;
 
-function compileFieldSchema(field: DocumentField, documentSchema: DocumentSchema, documentTypeKey: string): TSchema {
-  let fieldSchema: TSchema;
-  if (field.type === 'string') {
-    if (field.options && !field.options.allowUserInput) {
-      // nosemgrep: domain-pass-through-read
-      const { source, key } = field.options;
-      const optionTuples = documentSchema.options?.[source] ?? [];
-      const uniqueKeys = Array.from(
-        new Set(
-          optionTuples
-            .map((tuple) => tuple[key])
-            .filter((val): val is string => typeof val === 'string')
-        )
-      );
-      const literals = uniqueKeys.map((val) => Type.Literal(val));
-      if (literals.length === 0) {
-        fieldSchema = Type.Never();
-      } else if (literals.length === 1) {
-        fieldSchema = literals[0];
-      } else {
-        fieldSchema = Type.Union(literals);
-      }
-    } else {
-      fieldSchema = Type.String();
-    }
-  } else {
-    throw new Error(`Unsupported field type '${field.type}' in DocumentType '${documentTypeKey}'`);
-  }
-
-  if (!field.required) {
-    fieldSchema = Type.Optional(fieldSchema);
-  }
-
-  return fieldSchema;
-}
-
 function matchFieldValue(value: unknown, expected: string): boolean {
   if (value === undefined || value === null) {
     return false;
@@ -285,27 +250,71 @@ function resolvePayloadTemplates(
   return value;
 }
 
+export function buildFieldSchema(
+  field: DocumentField,
+  documentSchema: DocumentSchema,
+  documentTypeKey: string
+): TSchema {
+  let fieldSchema: TSchema;
+  if (field.type === 'string') {
+    if (field.options && !field.options.allowUserInput) {
+      // nosemgrep: domain-pass-through-read
+      const { source, key } = field.options;
+      const optionTuples = documentSchema.options?.[source] ?? [];
+      const uniqueKeys = Array.from(
+        new Set(
+          optionTuples
+            .map((tuple) => tuple[key])
+            .filter((val): val is string => typeof val === 'string')
+        )
+      );
+      const literals = uniqueKeys.map((val) => Type.Literal(val));
+      if (literals.length === 0) {
+        fieldSchema = Type.Never();
+      } else if (literals.length === 1) {
+        fieldSchema = literals[0];
+      } else {
+        fieldSchema = Type.Union(literals);
+      }
+    } else {
+      fieldSchema = Type.String();
+    }
+  } else {
+    throw new Error(`Unsupported field type '${field.type}' in DocumentType '${documentTypeKey}'`);
+  }
+
+  if (!field.required) {
+    fieldSchema = Type.Optional(fieldSchema);
+  }
+
+  return fieldSchema;
+}
+
+export function buildDocumentTypeSchema(documentType: DocumentType): TSchema {
+  const properties: Record<string, TSchema> = {};
+  for (const field of documentType.documentSchema.fields) {
+    properties[field.key] = buildFieldSchema(
+      field,
+      documentType.documentSchema,
+      documentType.key
+    );
+  }
+  return Type.Object(properties);
+}
+
 export class DocumentService implements DocumentServicePort {
   private documentTypes: DocumentType[] = [];
-  private compiledSchemas = new Map<string, TSchema>();
 
   constructor(
     private readonly dispatcher: ActivityDispatcherPort,
     private readonly documentSchemaRegistry: DocumentSchemaRegistryPort,
     private readonly templateEvaluator: TemplateEvaluatorPort,
+    private readonly compiledSchemaRegistry: CompiledSchemaRegistryPort
   ) {}
 
   async initialize(): Promise<void> {
+    await this.compiledSchemaRegistry.initialize();
     this.documentTypes = await this.documentSchemaRegistry.loadAll();
-    this.compiledSchemas.clear();
-
-    for (const documentType of this.documentTypes) {
-      const properties: { [key: string]: TSchema } = {};
-      for (const field of documentType.documentSchema.fields) {
-        properties[field.key] = compileFieldSchema(field, documentType.documentSchema, documentType.key);
-      }
-      this.compiledSchemas.set(documentType.key, Type.Object(properties));
-    }
   }
 
   async processDocument(
@@ -323,16 +332,16 @@ export class DocumentService implements DocumentServicePort {
 
     const document = payload;
     const documentType = this.documentTypes.find((rt) => rt.key === document.type);
-    const schema = this.compiledSchemas.get(document.type);
-    if (!schema || !documentType) {
+    const compiled = this.compiledSchemaRegistry.get(document.type);
+    if (!compiled || !documentType) {
       return {
         success: false,
         errors: [`Unknown document type: ${document.type}`],
       };
     }
 
-    if (!Value.Check(schema, document.data)) {
-      const errors = formatValidationErrors(schema, document.data);
+    if (!compiled.Check(document.data)) {
+      const errors = formatValidationErrors(compiled.Schema(), document.data);
       return {
         success: false,
         errors: errors.length > 0 ? errors : ['Invalid document data payload'],

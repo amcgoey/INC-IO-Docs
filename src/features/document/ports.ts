@@ -1,4 +1,5 @@
-import { Type, type Static } from '@sinclair/typebox';
+import { Type, type Static, type TSchema } from '@sinclair/typebox';
+import type { TypeCheck } from '@sinclair/typebox/compiler';
 import {
   UiEventType,
   UiEventRuleType,
@@ -132,6 +133,11 @@ export interface DocumentServicePort {
 
 export interface DocumentSchemaRegistryPort {
   loadAll(): Promise<DocumentType[]>;
+}
+
+export interface CompiledSchemaRegistryPort {
+  initialize(): Promise<void>;
+  get(key: string): TypeCheck<TSchema> | undefined;
 }
 
 export interface RawManifestProviderPort {
