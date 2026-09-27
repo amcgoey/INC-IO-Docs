@@ -545,6 +545,266 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         'https://my-host.internal/workspace/on-form-change'
       );
     });
+
+    it('supports asynchronous resolver functions for per-request instantiation', async () => {
+      const mockOrchestrator = {
+        processUiEvent: vi.fn().mockResolvedValue({
+          type: 'notification',
+          text: 'Resolved per-request',
+        }),
+      };
+      const mockSchemaDrivenUi = {} as unknown as SchemaDrivenUiService;
+
+      const orchestratorResolver = vi.fn().mockResolvedValue(mockOrchestrator);
+      const schemaUiResolver = vi.fn().mockResolvedValue(mockSchemaDrivenUi);
+
+      const wrapper = createUiProcessRequestWrapper(orchestratorResolver, schemaUiResolver);
+
+      const context: WorkspaceExecutionContext = {
+        actionName: 'customAction',
+        userOAuthToken: 'token-resolver-test',
+      };
+
+      const result = await wrapper(context);
+
+      expect(orchestratorResolver).toHaveBeenCalledWith(context);
+      expect(mockOrchestrator.processUiEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userOAuthToken: 'token-resolver-test',
+        })
+      );
+      expect(result).toEqual({
+        action: {
+          notification: {
+            text: 'Resolved per-request',
+          },
+        },
+      });
+    });
+  });
+
+  describe('Request-scoped wiring and concurrency token isolation', () => {
+    it('isolates OAuth tokens and execution context across concurrent requests using createDocumentService', async () => {
+      interface TrackedService {
+        token?: string | undefined;
+        targetId?: string | undefined;
+        mockProcessDocument: ReturnType<typeof vi.fn>;
+      }
+
+      const trackedServices: TrackedService[] = [];
+
+      const createDocumentService = vi.fn(async (context: WorkspaceExecutionContext) => {
+        // Asynchronous delay simulating per-request client/adapter instantiation
+        await new Promise((resolve) => setTimeout(resolve, Math.random() * 20 + 5));
+
+        const mockProcessDocument = vi.fn(async (payload, eventName, execContext) => {
+          await new Promise((resolve) => setTimeout(resolve, Math.random() * 15 + 5));
+          return {
+            success: true,
+            outputs: [{ id: execContext?.resources?.primaryTargetId }],
+          };
+        });
+
+        const service = {
+          processDocument: mockProcessDocument,
+        } as unknown as DocumentService;
+
+        trackedServices.push({
+          token: context.userOAuthToken,
+          targetId: context.selectedItems?.[0]?.id,
+          mockProcessDocument,
+        });
+
+        return service;
+      });
+
+      const wiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: mockManifestProvider,
+        createDocumentService,
+      });
+
+      const req1: WorkspaceExecutionContext = {
+        actionName: 'processDocument',
+        userOAuthToken: 'token-user-alpha',
+        selectedItems: [{ id: 'file-target-alpha' }],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Alpha',
+          SelectDocumentType: 'communication-project',
+          contact: 'Alpha Contact',
+          date: '260901',
+        },
+      };
+
+      const req2: WorkspaceExecutionContext = {
+        actionName: 'processDocument',
+        userOAuthToken: 'token-user-beta',
+        selectedItems: [{ id: 'file-target-beta' }],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Alpha',
+          SelectDocumentType: 'communication-project',
+          contact: 'Beta Contact',
+          date: '260902',
+        },
+      };
+
+      const req3: WorkspaceExecutionContext = {
+        actionName: 'processDocument',
+        userOAuthToken: 'token-user-gamma',
+        selectedItems: [{ id: 'file-target-gamma' }],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Alpha',
+          SelectDocumentType: 'communication-project',
+          contact: 'Gamma Contact',
+          date: '260903',
+        },
+      };
+
+      // Launch all 3 requests simultaneously
+      const [res1, res2, res3] = (await Promise.all([
+        wiring.requestScopedWrapper.processUiEvent(req1),
+        wiring.requestScopedWrapper.processUiEvent(req2),
+        wiring.requestScopedWrapper.processUiEvent(req3),
+      ])) as GoogleWorkspaceActionResponse[];
+
+      // All requests must succeed
+      expect(res1.action?.notification?.text).toBe('Document processed successfully');
+      expect(res2.action?.notification?.text).toBe('Document processed successfully');
+      expect(res3.action?.notification?.text).toBe('Document processed successfully');
+
+      // createDocumentService factory was invoked exactly 3 times
+      expect(createDocumentService).toHaveBeenCalledTimes(3);
+
+      // Verify each factory invocation received isolated request context
+      const alphaTracked = trackedServices.find((s) => s.token === 'token-user-alpha');
+      const betaTracked = trackedServices.find((s) => s.token === 'token-user-beta');
+      const gammaTracked = trackedServices.find((s) => s.token === 'token-user-gamma');
+
+      expect(alphaTracked).toBeDefined();
+      expect(alphaTracked?.targetId).toBe('file-target-alpha');
+      expect(alphaTracked?.mockProcessDocument).toHaveBeenCalledTimes(1);
+      expect(alphaTracked?.mockProcessDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ contact: 'Alpha Contact', date: '260901' }),
+        }),
+        'onSubmit',
+        {
+          credentials: { oauthToken: 'token-user-alpha' },
+          resources: { primaryTargetId: 'file-target-alpha' },
+        }
+      );
+
+      expect(betaTracked).toBeDefined();
+      expect(betaTracked?.targetId).toBe('file-target-beta');
+      expect(betaTracked?.mockProcessDocument).toHaveBeenCalledTimes(1);
+      expect(betaTracked?.mockProcessDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ contact: 'Beta Contact', date: '260902' }),
+        }),
+        'onSubmit',
+        {
+          credentials: { oauthToken: 'token-user-beta' },
+          resources: { primaryTargetId: 'file-target-beta' },
+        }
+      );
+
+      expect(gammaTracked).toBeDefined();
+      expect(gammaTracked?.targetId).toBe('file-target-gamma');
+      expect(gammaTracked?.mockProcessDocument).toHaveBeenCalledTimes(1);
+      expect(gammaTracked?.mockProcessDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ contact: 'Gamma Contact', date: '260903' }),
+        }),
+        'onSubmit',
+        {
+          credentials: { oauthToken: 'token-user-gamma' },
+          resources: { primaryTargetId: 'file-target-gamma' },
+        }
+      );
+    });
+
+    it('isolates request-scoped DocumentSpaceService instances across concurrent requests', async () => {
+      const spaceCalls: Array<{ token?: string | undefined }> = [];
+
+      const createDocumentSpaceService = vi.fn(async (context: WorkspaceExecutionContext) => {
+        await new Promise((resolve) => setTimeout(resolve, Math.random() * 15 + 5));
+
+        return {
+          getAllTypes: () => [
+            {
+              id: 'projects',
+              displayName: 'Projects',
+              spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+              storageConfig: {},
+            },
+          ],
+          getCollection: vi.fn(async () => {
+            spaceCalls.push({ token: context.userOAuthToken });
+            return {
+              type: {
+                id: 'projects',
+                displayName: 'Projects',
+                spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+              },
+              spaces: [{ id: `space-${context.userOAuthToken}`, name: `Space for ${context.userOAuthToken}` }],
+            };
+          }),
+        } as unknown as DocumentSpaceService;
+      });
+
+      const wiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        createDocumentSpaceService,
+        manifestProvider: mockManifestProvider,
+      });
+
+      const reqA: WorkspaceExecutionContext = {
+        actionName: 'onSpaceTypeChange',
+        userOAuthToken: 'token-client-A',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentType: 'communication-project',
+        },
+      };
+
+      const reqB: WorkspaceExecutionContext = {
+        actionName: 'onSpaceTypeChange',
+        userOAuthToken: 'token-client-B',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentType: 'communication-project',
+        },
+      };
+
+      const [resA, resB] = (await Promise.all([
+        wiring.requestScopedWrapper.processUiEvent(reqA),
+        wiring.requestScopedWrapper.processUiEvent(reqB),
+      ])) as GoogleWorkspaceActionResponse[];
+
+      expect(resA.action?.navigations?.[0]?.updateCard).toBeDefined();
+      expect(resB.action?.navigations?.[0]?.updateCard).toBeDefined();
+
+      expect(createDocumentSpaceService).toHaveBeenCalledTimes(2);
+      expect(createDocumentSpaceService).toHaveBeenCalledWith(reqA);
+      expect(createDocumentSpaceService).toHaveBeenCalledWith(reqB);
+
+      expect(spaceCalls).toEqual(
+        expect.arrayContaining([{ token: 'token-client-A' }, { token: 'token-client-B' }])
+      );
+    });
+
+    it('throws error on startup if neither documentSpaceService nor createDocumentSpaceService is provided', () => {
+      expect(() =>
+        createUiProcessManagerWiring({
+          configProvider: mockConfigProvider,
+          manifestProvider: mockManifestProvider,
+        })
+      ).toThrow(/Either documentSpaceService or createDocumentSpaceService must be provided/);
+    });
   });
 });
 

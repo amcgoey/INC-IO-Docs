@@ -127,8 +127,28 @@ function extractErrorName(error: unknown): string | undefined {
   return undefined;
 }
 
+export interface DriveServiceAdapterOptions {
+  preAuthenticated?: boolean | undefined;
+}
+
 export class DriveServiceAdapter implements DriveServicePort {
-  constructor(private readonly driveClient: DriveClientPort) {}
+  private readonly preAuthenticated: boolean;
+
+  constructor(
+    private readonly driveClient: DriveClientPort,
+    options?: DriveServiceAdapterOptions
+  ) {
+    this.preAuthenticated = options?.preAuthenticated ?? false;
+  }
+
+  private resolveOperationOptions<T extends DriveServiceOptions | undefined>(
+    options?: T
+  ): T | undefined {
+    if (this.preAuthenticated) {
+      return undefined;
+    }
+    return options;
+  }
 
   private translateError(operation: string, error: unknown): never {
     if (error instanceof DriveServiceError) {
@@ -172,7 +192,10 @@ export class DriveServiceAdapter implements DriveServicePort {
     options?: DriveServiceOptions
   ): Promise<DriveFileResult> {
     try {
-      const metadata = await this.driveClient.getFile(fileId, options);
+      const metadata = await this.driveClient.getFile(
+        fileId,
+        this.resolveOperationOptions(options)
+      );
       return mapMetadataToResult(metadata);
     } catch (error) {
       this.translateError('getFile', error);
@@ -188,7 +211,7 @@ export class DriveServiceAdapter implements DriveServicePort {
       const metadata = await this.driveClient.findOrCreateFolder(
         parentId,
         folderName,
-        options
+        this.resolveOperationOptions(options)
       );
       return mapMetadataToResult(metadata);
     } catch (error) {
@@ -205,7 +228,7 @@ export class DriveServiceAdapter implements DriveServicePort {
       const metadata = await this.driveClient.move(
         fileId,
         targetFolderId,
-        options
+        this.resolveOperationOptions(options)
       );
       return mapMetadataToResult(metadata);
     } catch (error) {
@@ -222,7 +245,7 @@ export class DriveServiceAdapter implements DriveServicePort {
       const metadata = await this.driveClient.rename(
         fileId,
         newName,
-        options
+        this.resolveOperationOptions(options)
       );
       return mapMetadataToResult(metadata);
     } catch (error) {
@@ -239,7 +262,7 @@ export class DriveServiceAdapter implements DriveServicePort {
       const metadata = await this.driveClient.duplicate(
         fileId,
         duplicateOptions,
-        options
+        this.resolveOperationOptions(options)
       );
       return mapMetadataToResult(metadata);
     } catch (error) {
@@ -252,7 +275,10 @@ export class DriveServiceAdapter implements DriveServicePort {
     options?: DriveServiceOptions
   ): Promise<DriveFileResult[]> {
     try {
-      const results = await this.driveClient.searchFiles(query, options);
+      const results = await this.driveClient.searchFiles(
+        query,
+        this.resolveOperationOptions(options)
+      );
       return results.map(mapMetadataToResult);
     } catch (error) {
       this.translateError('searchFiles', error);
@@ -264,7 +290,10 @@ export class DriveServiceAdapter implements DriveServicePort {
     options?: DriveServiceOptions
   ): Promise<Uint8Array> {
     try {
-      return await this.driveClient.downloadAsBuffer(fileId, options);
+      return await this.driveClient.downloadAsBuffer(
+        fileId,
+        this.resolveOperationOptions(options)
+      );
     } catch (error) {
       this.translateError('downloadAsBuffer', error);
     }
@@ -279,7 +308,7 @@ export class DriveServiceAdapter implements DriveServicePort {
       const metadata = await this.driveClient.saveBuffer(
         content,
         saveOptions,
-        options
+        this.resolveOperationOptions(options)
       );
       return mapMetadataToResult(metadata);
     } catch (error) {
@@ -296,7 +325,7 @@ export class DriveServiceAdapter implements DriveServicePort {
       const metadata = await this.driveClient.uploadStream(
         stream,
         saveOptions,
-        options
+        this.resolveOperationOptions(options)
       );
       return mapMetadataToResult(metadata);
     } catch (error) {

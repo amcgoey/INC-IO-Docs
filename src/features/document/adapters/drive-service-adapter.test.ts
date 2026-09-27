@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DriveServiceAdapter, type DriveClientPort } from './drive-service-adapter';
 import { DriveServiceError, AmbiguousPathSpecError } from '../ports';
 
@@ -545,6 +545,90 @@ describe('DriveServiceAdapter', () => {
         );
       }
     );
+  });
+
+  describe('pre-authenticated client (token-free network calls)', () => {
+    let preAuthClient: DriveClientPort;
+    let preAuthAdapter: DriveServiceAdapter;
+
+    beforeEach(() => {
+      preAuthClient = {
+        getFile: vi.fn().mockResolvedValue({ id: 'file-1', name: 'File 1' }),
+        findOrCreateFolder: vi.fn().mockResolvedValue({ id: 'f-1', name: 'Folder 1' }),
+        move: vi.fn().mockResolvedValue({ id: 'file-1', name: 'File 1' }),
+        rename: vi.fn().mockResolvedValue({ id: 'file-1', name: 'Renamed' }),
+        duplicate: vi.fn().mockResolvedValue({ id: 'file-2', name: 'Copy' }),
+        searchFiles: vi.fn().mockResolvedValue([{ id: 'file-1', name: 'File 1' }]),
+        downloadAsBuffer: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
+        saveBuffer: vi.fn().mockResolvedValue({ id: 'file-1', name: 'File 1' }),
+        uploadStream: vi.fn().mockResolvedValue({ id: 'file-1', name: 'File 1' }),
+      };
+      preAuthAdapter = new DriveServiceAdapter(preAuthClient, {
+        preAuthenticated: true,
+      });
+    });
+
+    it('delegates getFile without auth options even when auth is passed', async () => {
+      await preAuthAdapter.getFile('file-1', { auth: 'legacy-token' });
+      expect(preAuthClient.getFile).toHaveBeenCalledWith('file-1', undefined);
+    });
+
+    it('delegates findOrCreateFolder without auth options even when auth is passed', async () => {
+      await preAuthAdapter.findOrCreateFolder('root', 'Folder 1', { auth: 'legacy-token' });
+      expect(preAuthClient.findOrCreateFolder).toHaveBeenCalledWith('root', 'Folder 1', undefined);
+    });
+
+    it('delegates move without auth options even when auth is passed', async () => {
+      await preAuthAdapter.move('file-1', 'folder-target', { auth: 'legacy-token' });
+      expect(preAuthClient.move).toHaveBeenCalledWith('file-1', 'folder-target', undefined);
+    });
+
+    it('delegates rename without auth options even when auth is passed', async () => {
+      await preAuthAdapter.rename('file-1', 'Renamed', { auth: 'legacy-token' });
+      expect(preAuthClient.rename).toHaveBeenCalledWith('file-1', 'Renamed', undefined);
+    });
+
+    it('delegates duplicate without auth options even when auth is passed', async () => {
+      await preAuthAdapter.duplicate('file-1', { newName: 'Copy' }, { auth: 'legacy-token' });
+      expect(preAuthClient.duplicate).toHaveBeenCalledWith('file-1', { newName: 'Copy' }, undefined);
+    });
+
+    it('delegates searchFiles without auth options even when auth is passed', async () => {
+      await preAuthAdapter.searchFiles({ targetName: 'search-target' }, { auth: 'legacy-token' });
+      expect(preAuthClient.searchFiles).toHaveBeenCalledWith({ targetName: 'search-target' }, undefined);
+    });
+
+    it('delegates downloadAsBuffer without auth options even when auth is passed', async () => {
+      await preAuthAdapter.downloadAsBuffer('file-1', { auth: 'legacy-token' });
+      expect(preAuthClient.downloadAsBuffer).toHaveBeenCalledWith('file-1', undefined);
+    });
+
+    it('delegates saveBuffer without auth options even when auth is passed', async () => {
+      await preAuthAdapter.saveBuffer(
+        new Uint8Array([1, 2]),
+        { action: 'create', targetFolderId: 'folder-1', name: 'Saved' },
+        { auth: 'legacy-token' }
+      );
+      expect(preAuthClient.saveBuffer).toHaveBeenCalledWith(
+        new Uint8Array([1, 2]),
+        { action: 'create', targetFolderId: 'folder-1', name: 'Saved' },
+        undefined
+      );
+    });
+
+    it('delegates uploadStream without auth options even when auth is passed', async () => {
+      const stream = new ReadableStream<Uint8Array>();
+      await preAuthAdapter.uploadStream(
+        stream,
+        { action: 'create', targetFolderId: 'folder-1', name: 'Stream' },
+        { auth: 'legacy-token' }
+      );
+      expect(preAuthClient.uploadStream).toHaveBeenCalledWith(
+        stream,
+        { action: 'create', targetFolderId: 'folder-1', name: 'Stream' },
+        undefined
+      );
+    });
   });
 });
 

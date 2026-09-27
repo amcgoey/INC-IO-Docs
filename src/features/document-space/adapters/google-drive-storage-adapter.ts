@@ -115,14 +115,38 @@ async function fetchWithPagination(
   return spaces;
 }
 
+export interface GoogleDriveStorageAdapterOptions {
+  nameResolver?: DriveNameResolver | undefined;
+  preAuthenticated?: boolean | undefined;
+}
+
 export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
   private readonly nameResolver: DriveNameResolver;
+  private readonly preAuthenticated: boolean;
 
   constructor(
     private readonly driveClient: DriveStorageClientPort,
-    nameResolver?: DriveNameResolver
+    nameResolverOrOptions?: DriveNameResolver | GoogleDriveStorageAdapterOptions,
+    options?: GoogleDriveStorageAdapterOptions
   ) {
-    this.nameResolver = nameResolver ?? new DriveNameResolver(driveClient);
+    if (
+      nameResolverOrOptions &&
+      typeof (nameResolverOrOptions as DriveNameResolver).resolveSharedDriveId === 'function'
+    ) {
+      this.nameResolver = nameResolverOrOptions as DriveNameResolver;
+      this.preAuthenticated = options?.preAuthenticated ?? false;
+    } else {
+      const opts = nameResolverOrOptions as GoogleDriveStorageAdapterOptions | undefined;
+      this.nameResolver = opts?.nameResolver ?? new DriveNameResolver(driveClient);
+      this.preAuthenticated = opts?.preAuthenticated ?? options?.preAuthenticated ?? false;
+    }
+  }
+
+  private resolveAuthOptions(options?: SpaceAuthOptions): SpaceAuthOptions | undefined {
+    if (this.preAuthenticated) {
+      return undefined;
+    }
+    return options;
   }
 
   async fetchSpaces(
@@ -147,7 +171,7 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
             pageSize,
             ...(pageToken !== undefined ? { pageToken } : {}),
           },
-          options
+          this.resolveAuthOptions(options)
         );
         return {
           items: res.drives,
@@ -171,7 +195,7 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
       if (!resolvedSharedDriveId && typedConfig.sharedDriveName) {
         resolvedSharedDriveId = await this.nameResolver.resolveSharedDriveId(
           typedConfig.sharedDriveName,
-          options
+          this.resolveAuthOptions(options)
         );
       }
 
@@ -180,7 +204,7 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
         resolvedParentFolderId = await this.nameResolver.resolveParentFolderId(
           typedConfig.parentFolderName,
           resolvedSharedDriveId,
-          options
+          this.resolveAuthOptions(options)
         );
       }
 
@@ -196,7 +220,7 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
               : {}),
             ...(pageToken !== undefined ? { pageToken } : {}),
           },
-          options
+          this.resolveAuthOptions(options)
         );
         return {
           items: res.folders,

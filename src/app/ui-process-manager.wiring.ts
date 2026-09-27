@@ -165,14 +165,42 @@ export function mapUiViewToWorkspaceUiView(view: UiView, baseUrl?: string | unde
   };
 }
 
+export type DocumentSpaceServiceFactory = (
+  context: WorkspaceExecutionContext
+) => DocumentSpaceService | Promise<DocumentSpaceService>;
+
+export type DocumentServiceFactory = (
+  context: WorkspaceExecutionContext
+) => InjectedDocumentService | Promise<InjectedDocumentService>;
+
+export type SchemaDrivenUiServiceFactory = (
+  context: WorkspaceExecutionContext
+) => SchemaDrivenUiService | Promise<SchemaDrivenUiService>;
+
+export type UiProcessOrchestratorFactory = (
+  context: WorkspaceExecutionContext
+) => UiProcessOrchestratorPort | Promise<UiProcessOrchestratorPort>;
+
 export interface UiProcessManagerWiringOptions {
   configProvider?: WorkspaceConfigProviderPort | undefined;
-  documentSpaceService: DocumentSpaceService;
+  documentSpaceService?: DocumentSpaceService | undefined;
+  createDocumentSpaceService?: DocumentSpaceServiceFactory | undefined;
   manifestProvider: RawManifestProviderPort;
   schemaDrivenUiService?: SchemaDrivenUiService | undefined;
+  createSchemaDrivenUiService?: SchemaDrivenUiServiceFactory | undefined;
   documentService?: InjectedDocumentService | undefined;
+  createDocumentService?: DocumentServiceFactory | undefined;
   evaluateFormChange?: FormChangeEvaluator | undefined;
+  createOrchestrator?: UiProcessOrchestratorFactory | undefined;
 }
+
+export type UiProcessOrchestratorResolver = (
+  context: WorkspaceExecutionContext
+) => Promise<UiProcessOrchestratorPort> | UiProcessOrchestratorPort;
+
+export type SchemaDrivenUiServiceResolver = (
+  context: WorkspaceExecutionContext
+) => Promise<SchemaDrivenUiService> | SchemaDrivenUiService;
 
 export interface RequestScopedUiWrapper {
   (context: WorkspaceExecutionContext): Promise<unknown>;
@@ -180,10 +208,17 @@ export interface RequestScopedUiWrapper {
 }
 
 export function createUiProcessRequestWrapper(
-  orchestrator: UiProcessOrchestratorPort,
-  schemaDrivenUiService: SchemaDrivenUiService
+  orchestrator: UiProcessOrchestratorPort | UiProcessOrchestratorResolver,
+  schemaDrivenUiService: SchemaDrivenUiService | SchemaDrivenUiServiceResolver
 ): RequestScopedUiWrapper {
   const handler = async (context: WorkspaceExecutionContext): Promise<unknown> => {
+    const orchestratorInstance =
+      typeof orchestrator === 'function' ? await orchestrator(context) : orchestrator;
+    const schemaDrivenUiInstance =
+      typeof schemaDrivenUiService === 'function'
+        ? await schemaDrivenUiService(context)
+        : schemaDrivenUiService;
+
     const eventContext: UiProcessEventContext = {
       actionName: context.actionName,
       formData: context.formData,
@@ -196,7 +231,7 @@ export function createUiProcessRequestWrapper(
       })),
     };
 
-    const intent: UiProcessResult = await orchestrator.processUiEvent(eventContext);
+    const intent: UiProcessResult = await orchestratorInstance.processUiEvent(eventContext);
 
     if (intent.type === 'notification') {
       return {
@@ -208,7 +243,7 @@ export function createUiProcessRequestWrapper(
       };
     }
 
-    const view = await schemaDrivenUiService.generateView({
+    const view = await schemaDrivenUiInstance.generateView({
       viewId: intent.viewId,
       ...(intent.documentTypeKey !== undefined ? { documentTypeKey: intent.documentTypeKey } : {}),
       ...(intent.validationErrors !== undefined ? { validationErrors: intent.validationErrors } : {}),
@@ -245,18 +280,18 @@ export interface UiProcessManagerWiring {
 export function createUiProcessManagerWiring(
   options: UiProcessManagerWiringOptions
 ): UiProcessManagerWiring {
+  if (!options.documentSpaceService && !options.createDocumentSpaceService) {
+    throw new Error(
+      'Either documentSpaceService or createDocumentSpaceService must be provided to createUiProcessManagerWiring'
+    );
+  }
+
   const schemaDrivenUi =
     options.schemaDrivenUiService !== undefined
       ? { schemaDrivenUiService: options.schemaDrivenUiService }
       : createSchemaDrivenUiWiring({
           manifestProvider: options.manifestProvider,
         });
-
-  const spaceProvider: UiProcessSpaceProviderPort = {
-    getAllTypes: () => options.documentSpaceService.getAllTypes(),
-    getCollection: (typeId: string, opts?: UiProcessAuthOptions) =>
-      options.documentSpaceService.getCollection(typeId, opts),
-  };
 
   const configProvider: UiProcessConfigProviderPort = {
     getWorkspaceConfig: async () => {
@@ -276,7 +311,23 @@ export function createUiProcessManagerWiring(
 
   const manifestPort = new ManifestAdapter(options.manifestProvider);
 
-  const documentRunner: UiProcessDocumentRunnerPort | undefined = options.documentService
+  const formEvaluator: UiProcessFormEvaluatorPort | undefined = options.evaluateFormChange
+    ? new FormEvaluatorAdapter(manifestPort, options.evaluateFormChange)
+    : undefined;
+
+  const fallbackSpaceProvider: UiProcessSpaceProviderPort = {
+    getAllTypes: () => (options.documentSpaceService ? options.documentSpaceService.getAllTypes() : []),
+    getCollection: (typeId: string, opts?: UiProcessAuthOptions) => {
+      if (!options.documentSpaceService) {
+        throw new Error(
+          'documentSpaceService was not provided at startup; use requestScopedWrapper with createDocumentSpaceService'
+        );
+      }
+      return options.documentSpaceService.getCollection(typeId, opts);
+    },
+  };
+
+  const fallbackDocumentRunner: UiProcessDocumentRunnerPort | undefined = options.documentService
     ? {
         processDocument: async (payload, eventName, context) => {
           return options.documentService!.processDocument(payload, eventName, context);
@@ -284,21 +335,67 @@ export function createUiProcessManagerWiring(
       }
     : undefined;
 
-  const formEvaluator: UiProcessFormEvaluatorPort | undefined = options.evaluateFormChange
-    ? new FormEvaluatorAdapter(manifestPort, options.evaluateFormChange)
-    : undefined;
-
   const orchestrator = new WorkspaceAddonAdapter({
-    spaceProvider,
+    spaceProvider: fallbackSpaceProvider,
     configProvider,
     manifestPort,
-    documentRunner,
+    documentRunner: fallbackDocumentRunner,
     formEvaluator,
   });
 
+  const orchestratorResolver: UiProcessOrchestratorResolver = async (
+    context: WorkspaceExecutionContext
+  ): Promise<UiProcessOrchestratorPort> => {
+    if (options.createOrchestrator) {
+      return options.createOrchestrator(context);
+    }
+
+    if (!options.createDocumentSpaceService && !options.createDocumentService) {
+      return orchestrator;
+    }
+
+    const docSpaceService = options.createDocumentSpaceService
+      ? await options.createDocumentSpaceService(context)
+      : options.documentSpaceService;
+
+    const docService = options.createDocumentService
+      ? await options.createDocumentService(context)
+      : options.documentService;
+
+    const reqSpaceProvider: UiProcessSpaceProviderPort = {
+      getAllTypes: () => (docSpaceService ? docSpaceService.getAllTypes() : []),
+      getCollection: (typeId: string, opts?: UiProcessAuthOptions) => {
+        if (!docSpaceService) {
+          throw new Error('DocumentSpaceService not provided');
+        }
+        return docSpaceService.getCollection(typeId, opts);
+      },
+    };
+
+    const reqDocumentRunner: UiProcessDocumentRunnerPort | undefined = docService
+      ? {
+          processDocument: async (payload, eventName, docContext) => {
+            return docService.processDocument(payload, eventName, docContext);
+          },
+        }
+      : undefined;
+
+    return new WorkspaceAddonAdapter({
+      spaceProvider: reqSpaceProvider,
+      configProvider,
+      manifestPort,
+      documentRunner: reqDocumentRunner,
+      formEvaluator,
+    });
+  };
+
+  const schemaDrivenUiOrResolver: SchemaDrivenUiService | SchemaDrivenUiServiceResolver = options.createSchemaDrivenUiService
+    ? (context: WorkspaceExecutionContext) => options.createSchemaDrivenUiService!(context)
+    : schemaDrivenUi.schemaDrivenUiService;
+
   const requestScopedWrapper = createUiProcessRequestWrapper(
-    orchestrator,
-    schemaDrivenUi.schemaDrivenUiService
+    orchestratorResolver,
+    schemaDrivenUiOrResolver
   );
 
   return {
