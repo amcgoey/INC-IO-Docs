@@ -358,16 +358,8 @@ export function createUiProcessManagerWiring(
       ? await options.createDocumentSpaceService(context)
       : options.documentSpaceService;
 
-    const hasTarget = Boolean(
-      context.selectedItems?.[0]?.id ??
-      context.parameters?.primaryTargetId ??
-      context.parameters?.fileId ??
-      (context.formData?.fileId as string | undefined) ??
-      (context as Record<string, unknown>).primaryTargetId
-    );
-
     let docService = options.documentService;
-    if (options.createDocumentService && hasTarget) {
+    if (options.createDocumentService) {
       docService = await options.createDocumentService(context);
     }
 

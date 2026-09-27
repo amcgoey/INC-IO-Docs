@@ -94,15 +94,13 @@ describe('Document domain', () => {
     dispatcher: ActivityDispatcherPort,
     registry: DocumentSchemaRegistryPort,
     evaluator: TemplateEvaluatorPort,
-    compiledRegistry?: CompiledSchemaRegistryPort,
-    primaryTargetId = 'default-primary-target-id'
+    compiledRegistry?: CompiledSchemaRegistryPort
   ): DocumentService =>
     new DocumentService(
       dispatcher,
       registry,
       evaluator,
-      compiledRegistry ?? createMockCompiledRegistry(registry),
-      primaryTargetId
+      compiledRegistry ?? createMockCompiledRegistry(registry)
     );
 
   it('should export DocumentModel schema', () => {
@@ -625,42 +623,7 @@ describe('Document domain', () => {
     });
   });
 
-  describe('DocumentService primaryTargetId fail-fast validation', () => {
-    const mockDispatcher: ActivityDispatcherPort = {
-      dispatch: vi.fn().mockResolvedValue({ success: true }),
-    };
 
-    it.each([
-      ['missing (undefined)', undefined],
-      ['null', null],
-      ['empty string', ''],
-      ['whitespace-only string', '   \t\n  '],
-      ['number (not a string)', 12345],
-      ['object (not a string)', { id: 'target' }],
-    ])('throws if primaryTargetId is %s upon instantiation', (_desc, invalidTargetId) => {
-      expect(
-        () =>
-          new DocumentService(
-            mockDispatcher,
-            mockRegistry,
-            defaultEvaluator,
-            createMockCompiledRegistry(),
-            invalidTargetId as unknown as string
-          )
-      ).toThrow(/DocumentService: primaryTargetId must be a non-empty string/);
-    });
-
-    it('successfully instantiates when primaryTargetId is valid', () => {
-      const service = new DocumentService(
-        mockDispatcher,
-        mockRegistry,
-        defaultEvaluator,
-        createMockCompiledRegistry(),
-        'valid-target-id-456'
-      );
-      expect(service).toBeDefined();
-    });
-  });
 
   it('exports DocumentTypeSchema and validates valid DocumentType definitions', () => {
     expect(DocumentTypeSchema).toBeDefined();

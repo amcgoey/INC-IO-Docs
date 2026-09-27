@@ -97,24 +97,7 @@ describe('document.wiring', () => {
       expect(service2).toBeInstanceOf(DocumentService);
     });
 
-    it('fails-fast (throws) if primaryTargetId cannot be resolved from context', async () => {
-      const compiledRegistry = new CompiledSchemaRegistry(mockSchemaRegistry);
-      await compiledRegistry.initialize();
 
-      const factory = createDocumentServiceFactory({
-        documentSchemaRegistry: mockSchemaRegistry,
-        templateEvaluator: mockEvaluator,
-        compiledSchemaRegistry: compiledRegistry,
-      });
-
-      const emptyContext: WorkspaceExecutionContext = {
-        actionName: 'processDocument',
-      };
-
-      await expect(factory(emptyContext)).rejects.toThrow(
-        /DocumentService: primaryTargetId must be a non-empty string/
-      );
-    });
 
     it('passes the CompiledSchemaRegistry singleton into DocumentService without duplicate compilation', async () => {
       const compiledRegistry = new CompiledSchemaRegistry(mockSchemaRegistry);

@@ -111,8 +111,7 @@ export function createDocumentServiceFactory(
       activityEngine,
       options.documentSchemaRegistry,
       options.templateEvaluator,
-      options.compiledSchemaRegistry,
-      primaryTargetId!
+      options.compiledSchemaRegistry
     );
 
     await service.initialize();
@@ -161,8 +160,7 @@ export function wireDocumentServicesAndRoutes(
       activityEngine,
       options.documentSchemaRegistry,
       options.templateEvaluator,
-      compiledSchemaRegistry,
-      options.primaryTargetId ?? 'system-default'
+      compiledSchemaRegistry
     );
   }
 

@@ -309,17 +309,8 @@ export class DocumentService implements DocumentServicePort {
     private readonly dispatcher: ActivityDispatcherPort,
     private readonly documentSchemaRegistry: DocumentSchemaRegistryPort,
     private readonly templateEvaluator: TemplateEvaluatorPort,
-    private readonly compiledSchemaRegistry: CompiledSchemaRegistryPort,
-    private readonly primaryTargetId: string
-  ) {
-    if (
-      !primaryTargetId ||
-      typeof primaryTargetId !== 'string' ||
-      primaryTargetId.trim().length === 0
-    ) {
-      throw new Error('DocumentService: primaryTargetId must be a non-empty string');
-    }
-  }
+    private readonly compiledSchemaRegistry: CompiledSchemaRegistryPort
+  ) {}
 
   async initialize(): Promise<void> {
     await this.compiledSchemaRegistry.initialize();

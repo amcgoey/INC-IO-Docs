@@ -159,8 +159,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
       activityEngine,
       mockRegistry,
       handlebarsAdapter,
-      compiledRegistry,
-      'test-target-id'
+      compiledRegistry
     );
 
     await documentService.initialize();
