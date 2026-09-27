@@ -1,4 +1,5 @@
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
+import { Value } from '@sinclair/typebox/value';
 import type { TypeCheck } from '@sinclair/typebox/compiler';
 import {
   UiEventType,
@@ -269,5 +270,22 @@ export interface DriveServicePort {
   ): Promise<DriveFileResult>;
 }
 
+export const PrimaryTargetIdSchema = Type.String({
+  minLength: 1,
+  pattern: '^.*\\S+.*$',
+});
 
+export type PrimaryTargetId = Static<typeof PrimaryTargetIdSchema>;
 
+export function validatePrimaryTargetId(
+  targetId: unknown,
+  callerName: string
+): string | undefined {
+  if (targetId === undefined) {
+    return undefined;
+  }
+  if (!Value.Check(PrimaryTargetIdSchema, targetId)) {
+    throw new Error(`${callerName}: primaryTargetId must be a non-empty string`);
+  }
+  return targetId as string;
+}

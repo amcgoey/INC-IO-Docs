@@ -4,6 +4,7 @@ import {
   AmbiguousPathSpecError,
   DriveServiceError,
   FileNotFoundError,
+  validatePrimaryTargetId,
   type ActivityHandler,
   type AppConfigurationProviderPort,
   type DriveSearchQuery,
@@ -26,12 +27,14 @@ export class DriveActivityHandler implements ActivityHandler {
     private readonly driveService: DriveServicePort,
     options?: DriveActivityHandlerOptions
   ) {
-    if (options?.primaryTargetId !== undefined) {
-      if (typeof options.primaryTargetId !== 'string' || options.primaryTargetId.trim() === '') {
-        throw new Error('DriveActivityHandler: primaryTargetId must be a non-empty string');
-      }
-    }
-    this.options = options ?? {};
+    const validatedTargetId = validatePrimaryTargetId(
+      options?.primaryTargetId,
+      'DriveActivityHandler'
+    );
+    this.options = {
+      ...(options ?? {}),
+      ...(validatedTargetId !== undefined ? { primaryTargetId: validatedTargetId } : {}),
+    };
   }
 
   canHandle(activity: Activity): boolean {

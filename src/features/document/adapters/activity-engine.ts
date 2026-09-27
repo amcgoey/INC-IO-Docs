@@ -1,5 +1,10 @@
 import type { Activity, ActivityOutput } from '../domain';
-import type { ActivityDispatcherPort, ActivityHandler, ExecutionContext } from '../ports';
+import {
+  validatePrimaryTargetId,
+  type ActivityDispatcherPort,
+  type ActivityHandler,
+  type ExecutionContext,
+} from '../ports';
 
 export interface ActivityEngineOptions {
   primaryTargetId?: string | undefined;
@@ -12,12 +17,7 @@ export class ActivityEngine implements ActivityDispatcherPort {
     private readonly handlers: ActivityHandler[] = [],
     options?: ActivityEngineOptions
   ) {
-    if (options?.primaryTargetId !== undefined) {
-      if (typeof options.primaryTargetId !== 'string' || options.primaryTargetId.trim() === '') {
-        throw new Error('ActivityEngine: primaryTargetId must be a non-empty string');
-      }
-      this.primaryTargetId = options.primaryTargetId;
-    }
+    this.primaryTargetId = validatePrimaryTargetId(options?.primaryTargetId, 'ActivityEngine');
   }
 
   async dispatch(
