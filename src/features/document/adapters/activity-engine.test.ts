@@ -166,23 +166,14 @@ describe('ActivityEngine driven adapter', () => {
       );
     });
 
-    it('injects primaryTargetId into dispatch execution context when initialized with string', async () => {
-      const mockHandler: ActivityHandler = {
-        canHandle: vi.fn(() => true),
-        handle: vi.fn().mockResolvedValue(undefined),
-      };
-
-      const engine = new ActivityEngine([mockHandler], 'target-item-str');
-      const activity: Activity = { type: 'MOVE_FILE', payload: {} };
-
-      await engine.dispatch(activity);
-
-      expect(mockHandler.handle).toHaveBeenCalledWith(
-        activity,
-        expect.objectContaining({
-          resources: { primaryTargetId: 'target-item-str' },
-        })
-      );
+    it.each([
+      ['empty string', ''],
+      ['whitespace-only string', '   \t\n  '],
+      ['number (not a string)', 12345 as unknown as string],
+    ])('throws fail-fast error if primaryTargetId is %s', (_desc, invalidTargetId) => {
+      expect(
+        () => new ActivityEngine([], { primaryTargetId: invalidTargetId })
+      ).toThrow(/ActivityEngine: primaryTargetId must be a non-empty string/);
     });
 
     it('preserves existing primaryTargetId if already supplied in context resources', async () => {

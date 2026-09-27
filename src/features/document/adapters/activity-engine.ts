@@ -10,11 +10,12 @@ export class ActivityEngine implements ActivityDispatcherPort {
 
   constructor(
     private readonly handlers: ActivityHandler[] = [],
-    options?: ActivityEngineOptions | string
+    options?: ActivityEngineOptions
   ) {
-    if (typeof options === 'string') {
-      this.primaryTargetId = options;
-    } else if (options && typeof options === 'object') {
+    if (options?.primaryTargetId !== undefined) {
+      if (typeof options.primaryTargetId !== 'string' || options.primaryTargetId.trim() === '') {
+        throw new Error('ActivityEngine: primaryTargetId must be a non-empty string');
+      }
       this.primaryTargetId = options.primaryTargetId;
     }
   }

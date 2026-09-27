@@ -496,18 +496,14 @@ describe('DriveActivityHandler', () => {
         expect(mockDriveService.move).toHaveBeenCalledWith('injected-file-opt-999', 'testmove-folder-id', undefined);
       });
 
-      it('uses primaryTargetId injected via string constructor argument when not in payload or context', async () => {
-        const injectedHandler = new DriveActivityHandler(mockDriveService, 'injected-file-str-888');
-        const activity: Activity = {
-          type: 'MOVE_DRIVE_FILE',
-          payload: { folderName: 'CustomFolder' },
-        };
-
-        const result = await injectedHandler.handle(activity);
-
-        expect(result.success).toBe(true);
-        expect(mockDriveService.getFile).toHaveBeenCalledWith('injected-file-str-888', undefined);
-        expect(mockDriveService.move).toHaveBeenCalledWith('injected-file-str-888', 'testmove-folder-id', undefined);
+      it.each([
+        ['empty string', ''],
+        ['whitespace-only string', '   \t\n  '],
+        ['number (not a string)', 12345 as unknown as string],
+      ])('throws fail-fast error if primaryTargetId is %s', (_desc, invalidTargetId) => {
+        expect(
+          () => new DriveActivityHandler(mockDriveService, { primaryTargetId: invalidTargetId })
+        ).toThrow(/DriveActivityHandler: primaryTargetId must be a non-empty string/);
       });
 
       it('prefers payload fileId over injected primaryTargetId', async () => {

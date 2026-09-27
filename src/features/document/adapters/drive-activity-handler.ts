@@ -24,13 +24,14 @@ export class DriveActivityHandler implements ActivityHandler {
 
   constructor(
     private readonly driveService: DriveServicePort,
-    options?: DriveActivityHandlerOptions | string
+    options?: DriveActivityHandlerOptions
   ) {
-    if (typeof options === 'string') {
-      this.options = { primaryTargetId: options };
-    } else {
-      this.options = options ?? {};
+    if (options?.primaryTargetId !== undefined) {
+      if (typeof options.primaryTargetId !== 'string' || options.primaryTargetId.trim() === '') {
+        throw new Error('DriveActivityHandler: primaryTargetId must be a non-empty string');
+      }
     }
+    this.options = options ?? {};
   }
 
   canHandle(activity: Activity): boolean {
