@@ -101,9 +101,7 @@ export function createDocumentServiceFactory(
       primaryTargetId,
     });
 
-    const activityEngine = new ActivityEngine([driveActivityHandler], {
-      primaryTargetId,
-    });
+    const activityEngine = new ActivityEngine([driveActivityHandler]);
 
     const service = new DocumentService(
       activityEngine,
@@ -145,9 +143,7 @@ export function wireDocumentServicesAndRoutes(
 
     const activityEngine =
       options.activityEngine ??
-      new ActivityEngine([driveActivityHandler], {
-        primaryTargetId: options.primaryTargetId,
-      });
+      new ActivityEngine([driveActivityHandler]);
 
     const compiledSchemaRegistry = resolveCompiledSchemaRegistry(
       options.documentSchemaRegistry,

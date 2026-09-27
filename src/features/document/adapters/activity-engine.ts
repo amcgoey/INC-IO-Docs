@@ -1,23 +1,8 @@
 import type { Activity, ActivityOutput } from '../domain';
-import {
-  validatePrimaryTargetId,
-  type ActivityDispatcherPort,
-  type ActivityHandler,
-} from '../ports';
-
-export interface ActivityEngineOptions {
-  primaryTargetId?: string | undefined;
-}
+import type { ActivityDispatcherPort, ActivityHandler } from '../ports';
 
 export class ActivityEngine implements ActivityDispatcherPort {
-  private readonly primaryTargetId?: string | undefined;
-
-  constructor(
-    private readonly handlers: ActivityHandler[] = [],
-    options?: ActivityEngineOptions
-  ) {
-    this.primaryTargetId = validatePrimaryTargetId(options?.primaryTargetId, 'ActivityEngine');
-  }
+  constructor(private readonly handlers: ActivityHandler[] = []) {}
 
   async dispatch(
     activity: Activity

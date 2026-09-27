@@ -131,16 +131,4 @@ describe('ActivityEngine driven adapter', () => {
     const result = await engine.dispatch(activity);
     expect(result).toEqual(expectedOutput);
   });
-
-  describe('primaryTargetId validation', () => {
-    it.each([
-      ['empty string', ''],
-      ['whitespace-only string', '   \t\n  '],
-      ['number (not a string)', 12345 as unknown as string],
-    ])('throws fail-fast error if primaryTargetId is %s', (_desc, invalidTargetId) => {
-      expect(
-        () => new ActivityEngine([], { primaryTargetId: invalidTargetId })
-      ).toThrow(/ActivityEngine: primaryTargetId must be a non-empty string/);
-    });
-  });
 });
