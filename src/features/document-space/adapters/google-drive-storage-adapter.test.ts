@@ -564,23 +564,22 @@ describe('GoogleDriveStorageAdapter', () => {
       expect(spaces[0].id).toBe('f-1');
     });
 
-    it('supports (client, nameResolver, options) 3-arg constructor overload with preAuthenticated: true', async () => {
+    it('supports custom nameResolver and preAuthenticated via GoogleDriveStorageAdapterOptions', async () => {
       const customNameResolver = {
         resolveSharedDriveId: vi.fn().mockResolvedValue('custom-drive-id'),
         resolveParentFolderId: vi.fn().mockResolvedValue('custom-folder-id'),
       };
 
-      const threeArgAdapter = new GoogleDriveStorageAdapter(
-        mockDriveClient,
-        customNameResolver as unknown as import('./drive-name-resolver').DriveNameResolver,
-        { preAuthenticated: true }
-      );
+      const customOptionsAdapter = new GoogleDriveStorageAdapter(mockDriveClient, {
+        nameResolver: customNameResolver as unknown as import('./drive-name-resolver').DriveNameResolver,
+        preAuthenticated: true,
+      });
 
       vi.mocked(mockDriveClient.listFolders).mockResolvedValueOnce({
         folders: [{ id: 'folder-custom', name: 'Custom' }],
       });
 
-      await threeArgAdapter.fetchSpaces(
+      await customOptionsAdapter.fetchSpaces(
         {
           provider: 'google_drive',
           fetchMethod: 'folders',

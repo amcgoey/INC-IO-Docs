@@ -568,66 +568,77 @@ describe('DriveServiceAdapter', () => {
       });
     });
 
-    it('delegates getFile without auth options even when auth is passed', async () => {
-      await preAuthAdapter.getFile('file-1', { auth: 'legacy-token' });
-      expect(preAuthClient.getFile).toHaveBeenCalledWith('file-1', undefined);
-    });
-
-    it('delegates findOrCreateFolder without auth options even when auth is passed', async () => {
-      await preAuthAdapter.findOrCreateFolder('root', 'Folder 1', { auth: 'legacy-token' });
-      expect(preAuthClient.findOrCreateFolder).toHaveBeenCalledWith('root', 'Folder 1', undefined);
-    });
-
-    it('delegates move without auth options even when auth is passed', async () => {
-      await preAuthAdapter.move('file-1', 'folder-target', { auth: 'legacy-token' });
-      expect(preAuthClient.move).toHaveBeenCalledWith('file-1', 'folder-target', undefined);
-    });
-
-    it('delegates rename without auth options even when auth is passed', async () => {
-      await preAuthAdapter.rename('file-1', 'Renamed', { auth: 'legacy-token' });
-      expect(preAuthClient.rename).toHaveBeenCalledWith('file-1', 'Renamed', undefined);
-    });
-
-    it('delegates duplicate without auth options even when auth is passed', async () => {
-      await preAuthAdapter.duplicate('file-1', { newName: 'Copy' }, { auth: 'legacy-token' });
-      expect(preAuthClient.duplicate).toHaveBeenCalledWith('file-1', { newName: 'Copy' }, undefined);
-    });
-
-    it('delegates searchFiles without auth options even when auth is passed', async () => {
-      await preAuthAdapter.searchFiles({ targetName: 'search-target' }, { auth: 'legacy-token' });
-      expect(preAuthClient.searchFiles).toHaveBeenCalledWith({ targetName: 'search-target' }, undefined);
-    });
-
-    it('delegates downloadAsBuffer without auth options even when auth is passed', async () => {
-      await preAuthAdapter.downloadAsBuffer('file-1', { auth: 'legacy-token' });
-      expect(preAuthClient.downloadAsBuffer).toHaveBeenCalledWith('file-1', undefined);
-    });
-
-    it('delegates saveBuffer without auth options even when auth is passed', async () => {
-      await preAuthAdapter.saveBuffer(
-        new Uint8Array([1, 2]),
-        { action: 'create', targetFolderId: 'folder-1', name: 'Saved' },
-        { auth: 'legacy-token' }
-      );
-      expect(preAuthClient.saveBuffer).toHaveBeenCalledWith(
-        new Uint8Array([1, 2]),
-        { action: 'create', targetFolderId: 'folder-1', name: 'Saved' },
-        undefined
-      );
-    });
-
-    it('delegates uploadStream without auth options even when auth is passed', async () => {
-      const stream = new ReadableStream<Uint8Array>();
-      await preAuthAdapter.uploadStream(
-        stream,
-        { action: 'create', targetFolderId: 'folder-1', name: 'Stream' },
-        { auth: 'legacy-token' }
-      );
-      expect(preAuthClient.uploadStream).toHaveBeenCalledWith(
-        stream,
-        { action: 'create', targetFolderId: 'folder-1', name: 'Stream' },
-        undefined
-      );
+    it.each([
+      {
+        operation: 'getFile',
+        call: (adapter: DriveServiceAdapter) => adapter.getFile('file-1', { auth: 'legacy-token' }),
+        assertClientCall: (client: DriveClientPort) => expect(client.getFile).toHaveBeenCalledWith('file-1', undefined),
+      },
+      {
+        operation: 'findOrCreateFolder',
+        call: (adapter: DriveServiceAdapter) => adapter.findOrCreateFolder('root', 'Folder 1', { auth: 'legacy-token' }),
+        assertClientCall: (client: DriveClientPort) => expect(client.findOrCreateFolder).toHaveBeenCalledWith('root', 'Folder 1', undefined),
+      },
+      {
+        operation: 'move',
+        call: (adapter: DriveServiceAdapter) => adapter.move('file-1', 'folder-target', { auth: 'legacy-token' }),
+        assertClientCall: (client: DriveClientPort) => expect(client.move).toHaveBeenCalledWith('file-1', 'folder-target', undefined),
+      },
+      {
+        operation: 'rename',
+        call: (adapter: DriveServiceAdapter) => adapter.rename('file-1', 'Renamed', { auth: 'legacy-token' }),
+        assertClientCall: (client: DriveClientPort) => expect(client.rename).toHaveBeenCalledWith('file-1', 'Renamed', undefined),
+      },
+      {
+        operation: 'duplicate',
+        call: (adapter: DriveServiceAdapter) => adapter.duplicate('file-1', { newName: 'Copy' }, { auth: 'legacy-token' }),
+        assertClientCall: (client: DriveClientPort) => expect(client.duplicate).toHaveBeenCalledWith('file-1', { newName: 'Copy' }, undefined),
+      },
+      {
+        operation: 'searchFiles',
+        call: (adapter: DriveServiceAdapter) => adapter.searchFiles({ targetName: 'search-target' }, { auth: 'legacy-token' }),
+        assertClientCall: (client: DriveClientPort) => expect(client.searchFiles).toHaveBeenCalledWith({ targetName: 'search-target' }, undefined),
+      },
+      {
+        operation: 'downloadAsBuffer',
+        call: (adapter: DriveServiceAdapter) => adapter.downloadAsBuffer('file-1', { auth: 'legacy-token' }),
+        assertClientCall: (client: DriveClientPort) => expect(client.downloadAsBuffer).toHaveBeenCalledWith('file-1', undefined),
+      },
+      {
+        operation: 'saveBuffer',
+        call: (adapter: DriveServiceAdapter) =>
+          adapter.saveBuffer(
+            new Uint8Array([1, 2]),
+            { action: 'create', targetFolderId: 'folder-1', name: 'Saved' },
+            { auth: 'legacy-token' }
+          ),
+        assertClientCall: (client: DriveClientPort) =>
+          expect(client.saveBuffer).toHaveBeenCalledWith(
+            new Uint8Array([1, 2]),
+            { action: 'create', targetFolderId: 'folder-1', name: 'Saved' },
+            undefined
+          ),
+      },
+      {
+        operation: 'uploadStream',
+        call: (adapter: DriveServiceAdapter) => {
+          const stream = new ReadableStream<Uint8Array>();
+          return adapter.uploadStream(
+            stream,
+            { action: 'create', targetFolderId: 'folder-1', name: 'Stream' },
+            { auth: 'legacy-token' }
+          );
+        },
+        assertClientCall: (client: DriveClientPort) =>
+          expect(client.uploadStream).toHaveBeenCalledWith(
+            expect.anything(),
+            { action: 'create', targetFolderId: 'folder-1', name: 'Stream' },
+            undefined
+          ),
+      },
+    ])('delegates $operation without auth options when pre-authenticated', async ({ call, assertClientCall }) => {
+      await call(preAuthAdapter);
+      assertClientCall(preAuthClient);
     });
   });
 });

@@ -126,20 +126,10 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
 
   constructor(
     private readonly driveClient: DriveStorageClientPort,
-    nameResolverOrOptions?: DriveNameResolver | GoogleDriveStorageAdapterOptions,
     options?: GoogleDriveStorageAdapterOptions
   ) {
-    if (
-      nameResolverOrOptions &&
-      typeof (nameResolverOrOptions as DriveNameResolver).resolveSharedDriveId === 'function'
-    ) {
-      this.nameResolver = nameResolverOrOptions as DriveNameResolver;
-      this.preAuthenticated = options?.preAuthenticated ?? false;
-    } else {
-      const opts = nameResolverOrOptions as GoogleDriveStorageAdapterOptions | undefined;
-      this.nameResolver = opts?.nameResolver ?? new DriveNameResolver(driveClient);
-      this.preAuthenticated = opts?.preAuthenticated ?? options?.preAuthenticated ?? false;
-    }
+    this.nameResolver = options?.nameResolver ?? new DriveNameResolver(driveClient);
+    this.preAuthenticated = options?.preAuthenticated ?? false;
   }
 
   private resolveAuthOptions(options?: SpaceAuthOptions): SpaceAuthOptions | undefined {
