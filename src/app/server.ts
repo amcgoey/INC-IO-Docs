@@ -142,12 +142,18 @@ export function createApp(options?: AppOptions): AppInstance {
 
   wireWorkspaceAddonRoutes({
     server,
-    documentService,
-    documentSpaceService,
+    documentService: options?.documentService,
+    documentSpaceService: options?.documentSpaceService,
     authVerifier: options?.authVerifier,
     configProvider: manifestProvider,
     manifestProvider,
     appBaseUrl,
+    compiledSchemaRegistry,
+    documentSchemaRegistry,
+    templateEvaluator,
+    driveClient,
+    documentSpaceRegistry: documentSpaceWiring.documentSpaceRegistry,
+    storageAdapter,
   });
 
   const initialize = async () => {

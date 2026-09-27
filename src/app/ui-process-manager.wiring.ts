@@ -358,9 +358,18 @@ export function createUiProcessManagerWiring(
       ? await options.createDocumentSpaceService(context)
       : options.documentSpaceService;
 
-    const docService = options.createDocumentService
-      ? await options.createDocumentService(context)
-      : options.documentService;
+    const hasTarget = Boolean(
+      context.selectedItems?.[0]?.id ??
+      context.parameters?.primaryTargetId ??
+      context.parameters?.fileId ??
+      (context.formData?.fileId as string | undefined) ??
+      (context as Record<string, unknown>).primaryTargetId
+    );
+
+    let docService = options.documentService;
+    if (options.createDocumentService && hasTarget) {
+      docService = await options.createDocumentService(context);
+    }
 
     const reqSpaceProvider: UiProcessSpaceProviderPort = {
       getAllTypes: () => (docSpaceService ? docSpaceService.getAllTypes() : []),
@@ -372,13 +381,16 @@ export function createUiProcessManagerWiring(
       },
     };
 
-    const reqDocumentRunner: UiProcessDocumentRunnerPort | undefined = docService
-      ? {
-          processDocument: async (payload, eventName, docContext) => {
-            return docService.processDocument(payload, eventName, docContext);
-          },
-        }
-      : undefined;
+    const reqDocumentRunner: UiProcessDocumentRunnerPort | undefined =
+      docService || options.createDocumentService
+        ? {
+            processDocument: async (payload, eventName, docContext) => {
+              const activeDocService =
+                docService ?? (await options.createDocumentService!(context));
+              return activeDocService.processDocument(payload, eventName, docContext);
+            },
+          }
+        : undefined;
 
     return new WorkspaceAddonAdapter({
       spaceProvider: reqSpaceProvider,

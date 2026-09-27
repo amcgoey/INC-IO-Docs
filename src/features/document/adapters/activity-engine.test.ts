@@ -145,4 +145,64 @@ describe('ActivityEngine driven adapter', () => {
     const result = await engine.dispatch(activity);
     expect(result).toEqual(expectedOutput);
   });
+
+  describe('primaryTargetId injection', () => {
+    it('injects primaryTargetId into dispatch execution context when initialized with options', async () => {
+      const mockHandler: ActivityHandler = {
+        canHandle: vi.fn(() => true),
+        handle: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const engine = new ActivityEngine([mockHandler], { primaryTargetId: 'target-item-abc' });
+      const activity: Activity = { type: 'MOVE_FILE', payload: {} };
+
+      await engine.dispatch(activity);
+
+      expect(mockHandler.handle).toHaveBeenCalledWith(
+        activity,
+        expect.objectContaining({
+          resources: { primaryTargetId: 'target-item-abc' },
+        })
+      );
+    });
+
+    it('injects primaryTargetId into dispatch execution context when initialized with string', async () => {
+      const mockHandler: ActivityHandler = {
+        canHandle: vi.fn(() => true),
+        handle: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const engine = new ActivityEngine([mockHandler], 'target-item-str');
+      const activity: Activity = { type: 'MOVE_FILE', payload: {} };
+
+      await engine.dispatch(activity);
+
+      expect(mockHandler.handle).toHaveBeenCalledWith(
+        activity,
+        expect.objectContaining({
+          resources: { primaryTargetId: 'target-item-str' },
+        })
+      );
+    });
+
+    it('preserves existing primaryTargetId if already supplied in context resources', async () => {
+      const mockHandler: ActivityHandler = {
+        canHandle: vi.fn(() => true),
+        handle: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const engine = new ActivityEngine([mockHandler], { primaryTargetId: 'default-target' });
+      const activity: Activity = { type: 'MOVE_FILE', payload: {} };
+      const context = { resources: { primaryTargetId: 'override-target' } };
+
+      await engine.dispatch(activity, context);
+
+      expect(mockHandler.handle).toHaveBeenCalledWith(
+        activity,
+        expect.objectContaining({
+          resources: { primaryTargetId: 'override-target' },
+        })
+      );
+    });
+  });
 });

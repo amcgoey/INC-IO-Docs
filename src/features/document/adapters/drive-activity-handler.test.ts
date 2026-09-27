@@ -478,6 +478,53 @@ describe('DriveActivityHandler', () => {
         await expect(handler.handle(activity)).rejects.toBeInstanceOf(DriveServiceError);
       });
     });
+
+    describe('primaryTargetId constructor injection', () => {
+      it('uses primaryTargetId injected via options when not in payload or context', async () => {
+        const injectedHandler = new DriveActivityHandler(mockDriveService, {
+          primaryTargetId: 'injected-file-opt-999',
+        });
+        const activity: Activity = {
+          type: 'MOVE_DRIVE_FILE',
+          payload: { folderName: 'CustomFolder' },
+        };
+
+        const result = await injectedHandler.handle(activity);
+
+        expect(result.success).toBe(true);
+        expect(mockDriveService.getFile).toHaveBeenCalledWith('injected-file-opt-999', undefined);
+        expect(mockDriveService.move).toHaveBeenCalledWith('injected-file-opt-999', 'testmove-folder-id', undefined);
+      });
+
+      it('uses primaryTargetId injected via string constructor argument when not in payload or context', async () => {
+        const injectedHandler = new DriveActivityHandler(mockDriveService, 'injected-file-str-888');
+        const activity: Activity = {
+          type: 'MOVE_DRIVE_FILE',
+          payload: { folderName: 'CustomFolder' },
+        };
+
+        const result = await injectedHandler.handle(activity);
+
+        expect(result.success).toBe(true);
+        expect(mockDriveService.getFile).toHaveBeenCalledWith('injected-file-str-888', undefined);
+        expect(mockDriveService.move).toHaveBeenCalledWith('injected-file-str-888', 'testmove-folder-id', undefined);
+      });
+
+      it('prefers payload fileId over injected primaryTargetId', async () => {
+        const injectedHandler = new DriveActivityHandler(mockDriveService, {
+          primaryTargetId: 'fallback-file-id',
+        });
+        const activity: Activity = {
+          type: 'MOVE_DRIVE_FILE',
+          payload: { fileId: 'payload-priority-id', folderName: 'CustomFolder' },
+        };
+
+        await injectedHandler.handle(activity);
+
+        expect(mockDriveService.getFile).toHaveBeenCalledWith('payload-priority-id', undefined);
+        expect(mockDriveService.move).toHaveBeenCalledWith('payload-priority-id', 'testmove-folder-id', undefined);
+      });
+    });
   });
 });
 

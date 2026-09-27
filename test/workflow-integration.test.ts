@@ -155,7 +155,13 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     activityEngine = new ActivityEngine([structuredLogActivity]);
     const compiledRegistry = new CompiledSchemaRegistry(mockRegistry);
     await compiledRegistry.initialize();
-    documentService = new DocumentService(activityEngine, mockRegistry, handlebarsAdapter, compiledRegistry);
+    documentService = new DocumentService(
+      activityEngine,
+      mockRegistry,
+      handlebarsAdapter,
+      compiledRegistry,
+      'test-target-id'
+    );
 
     await documentService.initialize();
   });

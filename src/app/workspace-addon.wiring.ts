@@ -6,21 +6,50 @@ import {
 import { GoogleJwtVerifier } from '../infrastructure/workspace-addon/jwt-verifier';
 import { evaluateFormChange } from '../infrastructure/workspace-addon/json-logic-evaluator';
 import type { HttpServer } from '../infrastructure/http';
-import type { InjectedDocumentService } from './document.wiring';
+import {
+  createDocumentServiceFactory,
+  type InjectedDocumentService,
+} from './document.wiring';
+import {
+  createDocumentSpaceServiceFactory,
+} from './document-space.wiring';
 import type { DocumentSpaceService } from '../features/document-space/domain';
-import { createUiProcessManagerWiring } from './ui-process-manager.wiring';
+import {
+  createUiProcessManagerWiring,
+  type DocumentServiceFactory,
+  type DocumentSpaceServiceFactory,
+} from './ui-process-manager.wiring';
 import type { RawManifestProviderPort } from '../features/ui-process-manager';
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
+import type {
+  CompiledSchemaRegistryPort,
+  DocumentSchemaRegistryPort,
+  TemplateEvaluatorPort,
+  AppConfigurationProviderPort,
+} from '../features/document/ports';
+import type { DocumentSpaceManifestRegistryAdapter } from '../features/document-space/adapters/document-space-manifest-registry';
+import type { DocumentSpaceStoragePort } from '../features/document-space/ports';
+import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
+import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 
 export interface WorkspaceAddonWiringOptions {
   server: HttpServer;
   documentService?: InjectedDocumentService | undefined;
+  createDocumentService?: DocumentServiceFactory | undefined;
   documentSpaceService?: DocumentSpaceService | undefined;
+  createDocumentSpaceService?: DocumentSpaceServiceFactory | undefined;
   authVerifier?: WorkspaceAuthVerifierPort | undefined;
-  configProvider?: WorkspaceConfigProviderPort | undefined;
+  configProvider?: (WorkspaceConfigProviderPort & Partial<AppConfigurationProviderPort>) | undefined;
+  driveConfigProvider?: AppConfigurationProviderPort | undefined;
   manifestProvider?: RawManifestProviderPort | undefined;
   uiOrchestrator?: WorkspaceUiOrchestratorPort | undefined;
   appBaseUrl?: string | undefined;
+  compiledSchemaRegistry?: CompiledSchemaRegistryPort | undefined;
+  documentSchemaRegistry?: DocumentSchemaRegistryPort | undefined;
+  templateEvaluator?: TemplateEvaluatorPort | undefined;
+  driveClient?: GoogleDriveClient | undefined;
+  documentSpaceRegistry?: DocumentSpaceManifestRegistryAdapter | undefined;
+  storageAdapter?: DocumentSpaceStoragePort | undefined;
 }
 
 export function wireWorkspaceAddonRoutes(
@@ -34,16 +63,59 @@ export function wireWorkspaceAddonRoutes(
       getRawManifest: async () => ({}),
       readParsedSchema: async () => undefined,
     };
-    const documentSpaceService: DocumentSpaceService = options.documentSpaceService ?? ({
-      getAllTypes: () => [],
-      getCollection: async () => ({ spaces: [] }),
-    } as unknown as DocumentSpaceService);
+
+    const appConfigProvider: AppConfigurationProviderPort | undefined =
+      options.driveConfigProvider ??
+      (options.configProvider &&
+      typeof (options.configProvider as AppConfigurationProviderPort).getDriveConfig === 'function'
+        ? (options.configProvider as AppConfigurationProviderPort)
+        : undefined);
+
+    let createDocumentSpaceService = options.createDocumentSpaceService;
+    if (!createDocumentSpaceService) {
+      if (options.documentSpaceService) {
+        createDocumentSpaceService = () => options.documentSpaceService!;
+      } else if (options.documentSpaceRegistry) {
+        createDocumentSpaceService = createDocumentSpaceServiceFactory({
+          documentSpaceRegistry: options.documentSpaceRegistry,
+          configProvider: appConfigProvider,
+          driveClient: options.driveClient,
+          storageAdapter: options.storageAdapter,
+        });
+      }
+    }
+
+    let createDocumentService = options.createDocumentService;
+    if (!createDocumentService) {
+      if (options.documentService) {
+        createDocumentService = () => options.documentService!;
+      } else if (options.documentSchemaRegistry && options.compiledSchemaRegistry) {
+        createDocumentService = createDocumentServiceFactory({
+          documentSchemaRegistry: options.documentSchemaRegistry,
+          templateEvaluator: options.templateEvaluator ?? new HandlebarsAdapter(),
+          compiledSchemaRegistry: options.compiledSchemaRegistry,
+          configProvider: appConfigProvider,
+          driveClient: options.driveClient,
+        });
+      }
+    }
+
+    const documentSpaceService: DocumentSpaceService | undefined =
+      options.documentSpaceService ??
+      (!createDocumentSpaceService
+        ? ({
+            getAllTypes: () => [],
+            getCollection: async () => ({ spaces: [] }),
+          } as unknown as DocumentSpaceService)
+        : undefined);
 
     const uiProcessWiring = createUiProcessManagerWiring({
       configProvider: options.configProvider,
       documentSpaceService,
+      createDocumentSpaceService,
       manifestProvider,
       documentService: options.documentService,
+      createDocumentService,
       evaluateFormChange,
     });
     uiOrchestrator = uiProcessWiring.requestScopedWrapper;

@@ -22,7 +22,7 @@ import { DriveActivityHandler } from '../features/document/adapters/drive-activi
 import { ActivityEngine } from '../features/document/adapters/activity-engine';
 import { registerDocumentFeatureRoutes } from '../features/document/adapters/api';
 import type { HttpServer } from '../infrastructure/http';
-import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
+import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 
 export interface DocumentFeatureWiringOptions {
   manifestProvider: RawManifestProviderPort;
@@ -65,6 +65,61 @@ export function createDocumentFeatureWiring(
   };
 }
 
+import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
+import type { DocumentServiceFactory } from './ui-process-manager.wiring';
+
+export interface CreateDocumentServiceFactoryOptions {
+  documentSchemaRegistry: DocumentSchemaRegistryPort;
+  templateEvaluator: TemplateEvaluatorPort;
+  compiledSchemaRegistry: CompiledSchemaRegistryPort;
+  configProvider?: AppConfigurationProviderPort | undefined;
+  driveClient?: GoogleDriveClient | undefined;
+}
+
+export function createDocumentServiceFactory(
+  options: CreateDocumentServiceFactoryOptions
+): DocumentServiceFactory {
+  return async (context: WorkspaceExecutionContext): Promise<DocumentService> => {
+    const primaryTargetId =
+      context.selectedItems?.[0]?.id ??
+      context.parameters?.primaryTargetId ??
+      context.parameters?.fileId ??
+      (context.formData?.fileId as string | undefined);
+
+    const driveClient = context.userOAuthToken
+      ? new GoogleDriveClient({
+          auth: context.userOAuthToken,
+          configProvider: options.configProvider,
+        })
+      : options.driveClient ??
+        new GoogleDriveClient({ configProvider: options.configProvider });
+
+    const driveService = new DriveServiceAdapter(driveClient, {
+      preAuthenticated: Boolean(context.userOAuthToken),
+    });
+
+    const driveActivityHandler = new DriveActivityHandler(driveService, {
+      configProvider: options.configProvider,
+      primaryTargetId,
+    });
+
+    const activityEngine = new ActivityEngine([driveActivityHandler], {
+      primaryTargetId,
+    });
+
+    const service = new DocumentService(
+      activityEngine,
+      options.documentSchemaRegistry,
+      options.templateEvaluator,
+      options.compiledSchemaRegistry,
+      primaryTargetId!
+    );
+
+    await service.initialize();
+    return service;
+  };
+}
+
 export interface WireDocumentServicesOptions {
   server: HttpServer;
   driveClient: GoogleDriveClient;
@@ -75,6 +130,7 @@ export interface WireDocumentServicesOptions {
   activityEngine?: ActivityDispatcherPort | undefined;
   documentService?: InjectedDocumentService | undefined;
   compiledSchemaRegistry?: CompiledSchemaRegistryPort | undefined;
+  primaryTargetId?: string | undefined;
 }
 
 export function wireDocumentServicesAndRoutes(
@@ -87,10 +143,14 @@ export function wireDocumentServicesAndRoutes(
 
     const driveActivityHandler = new DriveActivityHandler(driveService, {
       configProvider: options.configProvider,
+      primaryTargetId: options.primaryTargetId,
     });
 
     const activityEngine =
-      options.activityEngine ?? new ActivityEngine([driveActivityHandler]);
+      options.activityEngine ??
+      new ActivityEngine([driveActivityHandler], {
+        primaryTargetId: options.primaryTargetId,
+      });
 
     const compiledSchemaRegistry = resolveCompiledSchemaRegistry(
       options.documentSchemaRegistry,
@@ -101,7 +161,8 @@ export function wireDocumentServicesAndRoutes(
       activityEngine,
       options.documentSchemaRegistry,
       options.templateEvaluator,
-      compiledSchemaRegistry
+      compiledSchemaRegistry,
+      options.primaryTargetId ?? 'system-default'
     );
   }
 

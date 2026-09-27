@@ -16,13 +16,22 @@ export interface DriveActivityHandlerOptions {
   defaultFolderName?: string | undefined;
   fallbackAuth?: string | undefined;
   configProvider?: AppConfigurationProviderPort | undefined;
+  primaryTargetId?: string | undefined;
 }
 
 export class DriveActivityHandler implements ActivityHandler {
+  private readonly options: DriveActivityHandlerOptions;
+
   constructor(
     private readonly driveService: DriveServicePort,
-    private readonly options: DriveActivityHandlerOptions = {}
-  ) {}
+    options?: DriveActivityHandlerOptions | string
+  ) {
+    if (typeof options === 'string') {
+      this.options = { primaryTargetId: options };
+    } else {
+      this.options = options ?? {};
+    }
+  }
 
   canHandle(activity: Activity): boolean {
     return (
@@ -112,6 +121,10 @@ export class DriveActivityHandler implements ActivityHandler {
     context?: ExecutionContext
   ): Promise<ActivityOutput> {
     const { resources, credentials } = context ?? {};
+    const effectiveTargetId = resources?.primaryTargetId ?? this.options.primaryTargetId;
+    const effectiveResources = effectiveTargetId !== undefined
+      ? { ...resources, primaryTargetId: effectiveTargetId }
+      : resources;
     const payload = activity.payload ?? {};
 
     const auth = credentials?.oauthToken ?? this.options.fallbackAuth;
@@ -127,7 +140,7 @@ export class DriveActivityHandler implements ActivityHandler {
         return await this.handleSearch(payload, driveOptions);
       }
 
-      return await this.handleMove(payload, resources, driveOptions);
+      return await this.handleMove(payload, effectiveResources, driveOptions);
     } catch (error) {
       if (
         error instanceof AmbiguousPathSpecError ||
@@ -206,7 +219,7 @@ export class DriveActivityHandler implements ActivityHandler {
 
   private async handleMove(
     payload: Record<string, unknown>,
-    resources?: { primaryTargetId?: string },
+    resources?: { primaryTargetId?: string | undefined } | undefined,
     driveOptions?: DriveServiceOptions
   ): Promise<ActivityOutput> {
     const payloadFileId =
