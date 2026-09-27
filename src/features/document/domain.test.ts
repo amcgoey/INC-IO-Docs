@@ -39,9 +39,7 @@ import {
   AmbiguousPathSpecError,
   AmbiguousFileError,
   FileNotFoundError,
-  ExecutionContextSchema,
   type ActivityDispatcherPort,
-  type ExecutionContext,
   type DocumentSchemaRegistryPort,
   type CompiledSchemaRegistryPort,
   type TemplateEvaluationContext,
@@ -228,28 +226,6 @@ describe('Document domain', () => {
       files: [{ id: 'file-1' }], // missing name
     };
     expect(Value.Check(ActivityOutputType, invalidFiles)).toBe(false);
-  });
-
-  it('should export ExecutionContextSchema and validate valid and invalid execution contexts', () => {
-    expect(ExecutionContextSchema).toBeDefined();
-    const validContext: ExecutionContext = {
-      credentials: { oauthToken: 'ya29.sample-token' },
-      resources: { primaryTargetId: 'file-123' },
-    };
-    expect(Value.Check(ExecutionContextSchema, validContext)).toBe(true);
-
-    const emptyContext: ExecutionContext = {};
-    expect(Value.Check(ExecutionContextSchema, emptyContext)).toBe(true);
-
-    const invalidCreds = {
-      credentials: 'invalid-string',
-    };
-    expect(Value.Check(ExecutionContextSchema, invalidCreds)).toBe(false);
-
-    const invalidResources = {
-      resources: { primaryTargetId: 12345 },
-    };
-    expect(Value.Check(ExecutionContextSchema, invalidResources)).toBe(false);
   });
 
   it('processDocument validates payload, dispatches Activity, and returns success result', async () => {
@@ -2995,7 +2971,7 @@ describe('Document domain', () => {
     });
   });
 
-  describe('Execution Context (ExecutionContext) Propagation & Isolation', () => {
+  describe('Token-free Activity Dispatch & Isolation', () => {
     const testDocumentType: DocumentType = {
       key: 'secureDocument',
       name: 'Secure Document',

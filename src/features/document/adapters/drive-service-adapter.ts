@@ -8,7 +8,7 @@ import {
   type DriveServicePort,
 } from '../ports';
 
-export interface DriveClientFileMetadata {
+interface DriveClientFileMetadata {
   id: string;
   name: string;
   parents?: string[] | undefined;
@@ -16,7 +16,7 @@ export interface DriveClientFileMetadata {
   webViewLink?: string | undefined;
 }
 
-export interface DriveClientSearchParams {
+interface DriveClientSearchParams {
   targetName: string;
   exactMatch?: boolean | undefined;
   sharedDriveId?: string | undefined;
@@ -24,25 +24,25 @@ export interface DriveClientSearchParams {
   expectedParentPathNames?: string[] | undefined;
 }
 
-export interface DriveClientDuplicateOptions {
+interface DriveClientDuplicateOptions {
   newName?: string | undefined;
   targetFolderId?: string | undefined;
 }
 
-export interface DriveClientCreateOptions {
+interface DriveClientCreateOptions {
   action: 'create';
   targetFolderId: string;
   name: string;
   mimeType?: string | undefined;
 }
 
-export interface DriveClientUpdateOptions {
+interface DriveClientUpdateOptions {
   action: 'update';
   fileId: string;
   mimeType?: string | undefined;
 }
 
-export type DriveClientSaveOptions = DriveClientCreateOptions | DriveClientUpdateOptions;
+type DriveClientSaveOptions = DriveClientCreateOptions | DriveClientUpdateOptions;
 
 export interface DriveClientPort {
   getFile(fileId: string): Promise<DriveClientFileMetadata>;

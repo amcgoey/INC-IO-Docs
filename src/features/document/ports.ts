@@ -86,21 +86,6 @@ export const FormSchemaType = Type.Object({
 
 export type FormSchema = Static<typeof FormSchemaType>;
 
-export const ExecutionContextSchema = Type.Object({
-  credentials: Type.Optional(
-    Type.Object({
-      oauthToken: Type.Optional(Type.String()),
-    })
-  ),
-  resources: Type.Optional(
-    Type.Object({
-      primaryTargetId: Type.Optional(Type.String()),
-    })
-  ),
-});
-
-export type ExecutionContext = Static<typeof ExecutionContextSchema>;
-
 export type {
   FileLocator,
   ActivityOutput,
@@ -250,8 +235,6 @@ export const PrimaryTargetIdSchema = Type.String({
   minLength: 1,
   pattern: '^.*\\S+.*$',
 });
-
-export type PrimaryTargetId = Static<typeof PrimaryTargetIdSchema>;
 
 export function validatePrimaryTargetId(
   targetId: unknown,
