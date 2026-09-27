@@ -3039,7 +3039,7 @@ describe('Document domain', () => {
       },
     };
 
-    it('forwards ExecutionContext to ActivityDispatcherPort.dispatch', async () => {
+    it('dispatches Activity to ActivityDispatcherPort.dispatch without context parameter', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -3077,87 +3077,23 @@ describe('Document domain', () => {
         data: { title: 'SecretDoc' },
       };
 
-      const executionContext: ExecutionContext = {
-        credentials: {
-          oauthToken: 'ya29.sensitive-oauth-token',
-        },
-        resources: {
-          primaryTargetId: 'user-12345',
-        },
-      };
-
       const result = await service.processDocument(
         inputDocument,
-        'onSubmit',
-        executionContext
+        'onSubmit'
       );
-
-      expect(result.success).toBe(true);
-      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
-        {
-          type: 'MOVE_FILE',
-          payload: {
-            folder: 'DynamicFolder-SecretDoc',
-            fileTitle: 'SecretDoc',
-          },
-        },
-        executionContext
-      );
-    });
-
-    it('forwards undefined context to ActivityDispatcherPort.dispatch when no context is provided', async () => {
-      const mockDispatcher: ActivityDispatcherPort = {
-        dispatch: vi.fn().mockResolvedValue(undefined),
-      };
-
-      const customRegistry: DocumentSchemaRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue([testDocumentType]),
-      };
-
-      const mockEvaluator: TemplateEvaluatorPort = {
-        validate: vi.fn().mockReturnValue(true),
-        evaluate: vi.fn().mockImplementation((template: string, ctx: { [key: string]: unknown }) => {
-          if (template === 'PREFIX-{{title}}') return `PREFIX-${ctx.title}`;
-          if (template === 'ID-{{title}}') return `ID-${ctx.title}`;
-          if (template === 'DynamicFolder-{{Document.data.title}}') {
-            const document = ctx.Document as Document;
-            return `DynamicFolder-${document.data.title}`;
-          }
-          if (template === '{{StorageContext.folder}}') {
-            const storageCtx = ctx.StorageContext as { folder: string };
-            return storageCtx.folder;
-          }
-          if (template === '{{Document.data.title}}') {
-            const document = ctx.Document as Document;
-            return document.data.title as string;
-          }
-          return template;
-        }),
-      };
-
-      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
-      await service.initialize();
-
-      const inputDocument: Document = {
-        type: 'secureDocument',
-        data: { title: 'PublicDoc' },
-      };
-
-      const result = await service.processDocument(inputDocument, 'onSubmit');
 
       expect(result.success).toBe(true);
       expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
         type: 'MOVE_FILE',
         payload: {
-          folder: 'DynamicFolder-PublicDoc',
-          fileTitle: 'PublicDoc',
+          folder: 'DynamicFolder-SecretDoc',
+          fileTitle: 'SecretDoc',
         },
       });
     });
 
-    it('strictly isolates TemplateEvaluatorPort evaluation context from ExecutionContext', async () => {
+    it('isolates TemplateEvaluatorPort evaluation context from external authentication parameters', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -3197,19 +3133,12 @@ describe('Document domain', () => {
         data: { title: 'SensitiveDocument' },
       };
 
-      const sensitiveContext: ExecutionContext = {
-        credentials: {
-          oauthToken: 'SUPER_SECRET_OAUTH_TOKEN_NEVER_EXPOSE',
-        },
-      };
-
       await service.processDocument(
         inputDocument,
-        'onSubmit',
-        sensitiveContext
+        'onSubmit'
       );
 
-      // Verify that none of the evaluation contexts passed to mockEvaluator.evaluate contain sensitiveContext keys or values
+      // Verify that none of the evaluation contexts passed to mockEvaluator.evaluate contain sensitive keys
       expect(capturedContexts.length).toBeGreaterThan(0);
       for (const evalCtx of capturedContexts) {
         expect(evalCtx).not.toHaveProperty('credentials');

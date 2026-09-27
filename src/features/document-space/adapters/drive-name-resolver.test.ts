@@ -27,13 +27,10 @@ describe('DriveNameResolver', () => {
       const result = await resolver.resolveSharedDriveId('Target Drive');
 
       expect(result).toBe('drive-2');
-      expect(mockDriveClient.listSharedDrives).toHaveBeenCalledWith(
-        {
-          pageSize: 100,
-          pageToken: undefined,
-        },
-        undefined
-      );
+      expect(mockDriveClient.listSharedDrives).toHaveBeenCalledWith({
+        pageSize: 100,
+        pageToken: undefined,
+      });
     });
 
     it('paginates through multiple pages until found', async () => {
@@ -50,14 +47,10 @@ describe('DriveNameResolver', () => {
 
       expect(result).toBe('drive-2');
       expect(mockDriveClient.listSharedDrives).toHaveBeenCalledTimes(2);
-      expect(mockDriveClient.listSharedDrives).toHaveBeenNthCalledWith(
-        2,
-        {
-          pageSize: 100,
-          pageToken: 'page-2-token',
-        },
-        undefined
-      );
+      expect(mockDriveClient.listSharedDrives).toHaveBeenNthCalledWith(2, {
+        pageSize: 100,
+        pageToken: 'page-2-token',
+      });
     });
 
     it('throws when shared drive is not found', async () => {
@@ -80,15 +73,12 @@ describe('DriveNameResolver', () => {
       const result = await resolver.resolveParentFolderId('Proposals', 'drive-1');
 
       expect(result).toBe('folder-123');
-      expect(mockDriveClient.searchFiles).toHaveBeenCalledWith(
-        {
-          targetName: 'Proposals',
-          exactMatch: true,
-          sharedDriveId: 'drive-1',
-          mimeTypes: ['application/vnd.google-apps.folder'],
-        },
-        undefined
-      );
+      expect(mockDriveClient.searchFiles).toHaveBeenCalledWith({
+        targetName: 'Proposals',
+        exactMatch: true,
+        sharedDriveId: 'drive-1',
+        mimeTypes: ['application/vnd.google-apps.folder'],
+      });
     });
 
     it('throws error when searchFiles is not implemented on client', async () => {

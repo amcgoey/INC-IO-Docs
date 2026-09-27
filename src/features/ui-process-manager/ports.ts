@@ -25,7 +25,6 @@ export const UiProcessEventContextSchema = Type.Object({
   parameters: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
   validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
-  userOAuthToken: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   selectedItems: Type.Optional(
     Type.Union([
       Type.Array(
@@ -70,10 +69,6 @@ export interface UiProcessConfigProviderPort {
   getWorkspaceConfig(): Promise<ProcessUiStateConfig | undefined>;
 }
 
-export interface UiProcessAuthOptions {
-  auth?: string | undefined;
-}
-
 export interface UiProcessSpaceCollection {
   type?: UiProcessSpaceType | undefined;
   spaces: Array<{ id: string; name: string }>;
@@ -81,7 +76,7 @@ export interface UiProcessSpaceCollection {
 
 export interface UiProcessSpaceProviderPort {
   getAllTypes(): UiProcessSpaceType[];
-  getCollection(typeId: string, options?: UiProcessAuthOptions): Promise<UiProcessSpaceCollection>;
+  getCollection(typeId: string): Promise<UiProcessSpaceCollection>;
 }
 
 export interface RawManifestProviderPort {
@@ -104,8 +99,7 @@ export interface UiProcessDocumentExecutionResult {
 export interface UiProcessDocumentRunnerPort {
   processDocument(
     payload: { type: string; data: Record<string, unknown>; space?: string },
-    eventName: string,
-    context?: { credentials?: { oauthToken?: string }; resources?: { primaryTargetId?: string } }
+    eventName: string
   ): Promise<UiProcessDocumentExecutionResult>;
 }
 

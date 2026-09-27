@@ -471,7 +471,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           contact: 'Acme Corp',
           date: '260920',
         },
-        userOAuthToken: 'test-oauth-token',
         selectedItems: [{ id: 'drive-item-123', title: 'File.pdf' }],
       };
 
@@ -486,11 +485,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
             date: '260920',
           },
         },
-        'onSubmit',
-        {
-          credentials: { oauthToken: 'test-oauth-token' },
-          resources: { primaryTargetId: 'drive-item-123' },
-        }
+        'onSubmit'
       );
 
       expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
@@ -531,8 +526,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         expect.objectContaining({
           space: 'Project Suffixed',
         }),
-        'onSubmit',
-        expect.any(Object)
+        'onSubmit'
       );
     });
 
@@ -571,8 +565,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
             'contact_invoice-project': 'Inactive Invoice Contact',
           },
         }),
-        'onSubmit',
-        expect.any(Object)
+        'onSubmit'
       );
     });
 
@@ -717,7 +710,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(renderResult.validationErrors).toEqual(['Rule syntax error']);
     });
 
-    it('passes userOAuthToken as auth option to spaceProvider.getCollection', async () => {
+    it('calls spaceProvider.getCollection with selected space type on onSpaceTypeChange', async () => {
       const getCollectionMock = vi.fn().mockResolvedValue({ spaces: [{ id: 's-1', name: 'Space One' }] });
       const customSpaceProvider: UiProcessSpaceProviderPort = {
         getAllTypes: vi.fn().mockReturnValue([
@@ -738,7 +731,6 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
 
       const context: UiProcessEventContext = {
         actionName: 'onSpaceTypeChange',
-        userOAuthToken: 'test-user-oauth-token',
         formData: {
           SelectDocumentSpaceType: 'projects',
         },
@@ -746,9 +738,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
 
       await adapter.processUiEvent(context);
 
-      expect(getCollectionMock).toHaveBeenCalledWith('projects', {
-        auth: 'test-user-oauth-token',
-      });
+      expect(getCollectionMock).toHaveBeenCalledWith('projects');
     });
   });
 

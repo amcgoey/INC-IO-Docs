@@ -287,11 +287,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           date: '260920',
         },
       },
-      'onSubmit',
-      {
-        credentials: { oauthToken: 'test-oauth-token' },
-        resources: { primaryTargetId: 'file-123' },
-      }
+      'onSubmit'
     );
 
     expect(response.action?.notification?.text).toBe('Document processed successfully');
@@ -570,7 +566,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       expect(orchestratorResolver).toHaveBeenCalledWith(context);
       expect(mockOrchestrator.processUiEvent).toHaveBeenCalledWith(
         expect.objectContaining({
-          userOAuthToken: 'token-resolver-test',
+          actionName: 'customAction',
         })
       );
       expect(result).toEqual({
@@ -597,11 +593,11 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         // Asynchronous delay simulating per-request client/adapter instantiation
         await new Promise((resolve) => setTimeout(resolve, Math.random() * 20 + 5));
 
-        const mockProcessDocument = vi.fn(async (payload, eventName, execContext) => {
+        const mockProcessDocument = vi.fn(async () => {
           await new Promise((resolve) => setTimeout(resolve, Math.random() * 15 + 5));
           return {
             success: true,
-            outputs: [{ id: execContext?.resources?.primaryTargetId }],
+            outputs: [{ id: context.selectedItems?.[0]?.id }],
           };
         });
 
@@ -691,11 +687,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         expect.objectContaining({
           data: expect.objectContaining({ contact: 'Alpha Contact', date: '260901' }),
         }),
-        'onSubmit',
-        {
-          credentials: { oauthToken: 'token-user-alpha' },
-          resources: { primaryTargetId: 'file-target-alpha' },
-        }
+        'onSubmit'
       );
 
       expect(betaTracked).toBeDefined();
@@ -705,11 +697,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         expect.objectContaining({
           data: expect.objectContaining({ contact: 'Beta Contact', date: '260902' }),
         }),
-        'onSubmit',
-        {
-          credentials: { oauthToken: 'token-user-beta' },
-          resources: { primaryTargetId: 'file-target-beta' },
-        }
+        'onSubmit'
       );
 
       expect(gammaTracked).toBeDefined();
@@ -719,11 +707,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         expect.objectContaining({
           data: expect.objectContaining({ contact: 'Gamma Contact', date: '260903' }),
         }),
-        'onSubmit',
-        {
-          credentials: { oauthToken: 'token-user-gamma' },
-          resources: { primaryTargetId: 'file-target-gamma' },
-        }
+        'onSubmit'
       );
     });
 

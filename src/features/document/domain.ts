@@ -4,7 +4,6 @@ import type {
   ActivityDispatcherPort,
   DocumentSchemaRegistryPort,
   DocumentServicePort,
-  ExecutionContext,
   TemplateEvaluationContext,
   TemplateEvaluatorPort,
   CompiledSchemaRegistryPort,
@@ -319,8 +318,7 @@ export class DocumentService implements DocumentServicePort {
 
   async processDocument(
     payload?: unknown,
-    eventName?: string,
-    context?: ExecutionContext
+    eventName?: string
   ): Promise<ProcessDocumentResult> {
     if (!Value.Check(DocumentModel, payload)) {
       const errors = formatValidationErrors(DocumentModel, payload);
@@ -496,9 +494,7 @@ export class DocumentService implements DocumentServicePort {
         payload: resolvedPayload,
       };
 
-      const output = (context !== undefined
-        ? await this.dispatcher.dispatch(resolvedActivity, context)
-        : await this.dispatcher.dispatch(resolvedActivity)) as ActivityOutput | void;
+      const output = (await this.dispatcher.dispatch(resolvedActivity)) as ActivityOutput | void;
 
       resolvedActivities.push(resolvedActivity);
 

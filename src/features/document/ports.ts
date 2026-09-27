@@ -111,23 +111,20 @@ export type {
 export interface ActivityHandler {
   canHandle(activity: Activity): boolean;
   handle(
-    activity: Activity,
-    context?: ExecutionContext
+    activity: Activity
   ): Promise<ActivityOutput | void> | ActivityOutput | void;
 }
 
 export interface ActivityDispatcherPort {
   dispatch(
-    activity: Activity,
-    context?: ExecutionContext
+    activity: Activity
   ): Promise<ActivityOutput | void> | ActivityOutput | void;
 }
 
 export interface DocumentServicePort {
   processDocument(
     payload?: unknown,
-    eventName?: string,
-    context?: ExecutionContext
+    eventName?: string
   ): Promise<ProcessDocumentResult>;
 }
 
@@ -228,45 +225,24 @@ export interface DriveContentUpdateOptions {
 
 export type DriveContentSaveOptions = DriveContentCreateOptions | DriveContentUpdateOptions;
 
-export interface DriveServiceOptions {
-  auth?: string | undefined;
-}
-
 export interface DriveServicePort {
-  getFile(fileId: string, options?: DriveServiceOptions): Promise<DriveFileResult>;
-  findOrCreateFolder(parentId: string, folderName: string, options?: DriveServiceOptions): Promise<DriveFileResult>;
-  move(
-    fileId: string,
-    targetFolderId: string,
-    options?: DriveServiceOptions
-  ): Promise<DriveFileResult>;
-  rename(
-    fileId: string,
-    newName: string,
-    options?: DriveServiceOptions
-  ): Promise<DriveFileResult>;
+  getFile(fileId: string): Promise<DriveFileResult>;
+  findOrCreateFolder(parentId: string, folderName: string): Promise<DriveFileResult>;
+  move(fileId: string, targetFolderId: string): Promise<DriveFileResult>;
+  rename(fileId: string, newName: string): Promise<DriveFileResult>;
   duplicate(
     fileId: string,
-    duplicateOptions?: DriveDuplicateOptions,
-    options?: DriveServiceOptions
+    duplicateOptions?: DriveDuplicateOptions
   ): Promise<DriveFileResult>;
-  searchFiles(
-    query: DriveSearchQuery,
-    options?: DriveServiceOptions
-  ): Promise<DriveFileResult[]>;
-  downloadAsBuffer(
-    fileId: string,
-    options?: DriveServiceOptions
-  ): Promise<Uint8Array>;
+  searchFiles(query: DriveSearchQuery): Promise<DriveFileResult[]>;
+  downloadAsBuffer(fileId: string): Promise<Uint8Array>;
   saveBuffer(
     content: Uint8Array,
-    saveOptions: DriveContentSaveOptions,
-    options?: DriveServiceOptions
+    saveOptions: DriveContentSaveOptions
   ): Promise<DriveFileResult>;
   uploadStream(
     stream: ReadableStream<Uint8Array>,
-    saveOptions: DriveContentSaveOptions,
-    options?: DriveServiceOptions
+    saveOptions: DriveContentSaveOptions
   ): Promise<DriveFileResult>;
 }
 

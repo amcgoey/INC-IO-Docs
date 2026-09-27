@@ -266,8 +266,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       expect(mockAuthVerifier.verifyToken).toHaveBeenCalledWith('Bearer valid-e2e-token');
       expect(mockStorageAdapter.fetchSpaces).toHaveBeenCalledWith(
         expect.objectContaining({ fetchMethod: 'shared_drives' }),
-        'projects',
-        undefined
+        'projects'
       );
 
       // 5. Explicitly prove NO real network calls occurred
@@ -812,11 +811,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
             description: 'E2E Test Execution',
           },
         },
-        'onSubmit',
-        {
-          credentials: { oauthToken: 'ya29.sample-e2e-token' },
-          resources: { primaryTargetId: 'drive-file-001' },
-        }
+        'onSubmit'
       );
 
       // 5. Explicitly prove NO real network calls occurred
@@ -873,10 +868,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
           type: 'communication-project',
           space: 'Active Projects',
         }),
-        'onSubmit',
-        expect.objectContaining({
-          resources: { primaryTargetId: 'drive-file-002' },
-        })
+        'onSubmit'
       );
     });
 

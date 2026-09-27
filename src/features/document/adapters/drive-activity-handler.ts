@@ -8,14 +8,11 @@ import {
   type ActivityHandler,
   type AppConfigurationProviderPort,
   type DriveSearchQuery,
-  type DriveServiceOptions,
   type DriveServicePort,
-  type ExecutionContext,
 } from '../ports';
 
 export interface DriveActivityHandlerOptions {
   defaultFolderName?: string | undefined;
-  fallbackAuth?: string | undefined;
   configProvider?: AppConfigurationProviderPort | undefined;
   primaryTargetId?: string | undefined;
 }
@@ -121,18 +118,9 @@ export class DriveActivityHandler implements ActivityHandler {
   }
 
   async handle(
-    activity: Activity,
-    context?: ExecutionContext
+    activity: Activity
   ): Promise<ActivityOutput> {
-    const { resources, credentials } = context ?? {};
-    const effectiveTargetId = resources?.primaryTargetId ?? this.options.primaryTargetId;
-    const effectiveResources = effectiveTargetId !== undefined
-      ? { ...resources, primaryTargetId: effectiveTargetId }
-      : resources;
     const payload = activity.payload ?? {};
-
-    const auth = credentials?.oauthToken ?? this.options.fallbackAuth;
-    const driveOptions = auth ? { auth } : undefined;
 
     const isSearchActivity =
       activity.type === 'SEARCH_DRIVE_FILE' ||
@@ -141,10 +129,10 @@ export class DriveActivityHandler implements ActivityHandler {
 
     try {
       if (isSearchActivity) {
-        return await this.handleSearch(payload, driveOptions);
+        return await this.handleSearch(payload);
       }
 
-      return await this.handleMove(payload, effectiveResources, driveOptions);
+      return await this.handleMove(payload);
     } catch (error) {
       if (
         error instanceof AmbiguousPathSpecError ||
@@ -168,8 +156,7 @@ export class DriveActivityHandler implements ActivityHandler {
   }
 
   private async handleSearch(
-    payload: Record<string, unknown>,
-    driveOptions?: DriveServiceOptions
+    payload: Record<string, unknown>
   ): Promise<ActivityOutput> {
     const query = this.extractSearchQuery(payload);
     if (!query) {
@@ -177,7 +164,7 @@ export class DriveActivityHandler implements ActivityHandler {
     }
 
     try {
-      const results = await this.driveService.searchFiles(query, driveOptions);
+      const results = await this.driveService.searchFiles(query);
 
       if (results.length === 0) {
         throw new FileNotFoundError(`FileNotFoundError: File not found for target '${query.targetName}'`);
@@ -222,19 +209,17 @@ export class DriveActivityHandler implements ActivityHandler {
   }
 
   private async handleMove(
-    payload: Record<string, unknown>,
-    resources?: { primaryTargetId?: string | undefined } | undefined,
-    driveOptions?: DriveServiceOptions
+    payload: Record<string, unknown>
   ): Promise<ActivityOutput> {
     const payloadFileId =
       typeof payload.fileId === 'string' ? payload.fileId : undefined;
-    let fileId = payloadFileId ?? resources?.primaryTargetId;
+    let fileId = payloadFileId ?? this.options.primaryTargetId;
 
     if (!fileId) {
       const searchQuery = this.extractSearchQuery(payload);
       if (searchQuery) {
         try {
-          const results = await this.driveService.searchFiles(searchQuery, driveOptions);
+          const results = await this.driveService.searchFiles(searchQuery);
           if (results.length === 0) {
             throw new FileNotFoundError(`FileNotFoundError: File not found for target '${searchQuery.targetName}'`);
           }
@@ -280,10 +265,10 @@ export class DriveActivityHandler implements ActivityHandler {
         : defaultTargetName;
 
     try {
-      const file = await this.driveService.getFile(fileId, driveOptions);
+      const file = await this.driveService.getFile(fileId);
       const currentParentId = file.parents?.[0] ?? 'root';
-      const targetFolder = await this.driveService.findOrCreateFolder(currentParentId, folderName, driveOptions);
-      const movedFile = await this.driveService.move(fileId, targetFolder.id, driveOptions);
+      const targetFolder = await this.driveService.findOrCreateFolder(currentParentId, folderName);
+      const movedFile = await this.driveService.move(fileId, targetFolder.id);
 
       const mimeType = movedFile.mimeType ?? file.mimeType;
       const uri = movedFile.webViewLink ?? file.webViewLink;

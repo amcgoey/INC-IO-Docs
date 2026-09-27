@@ -79,9 +79,7 @@ export function createDocumentSpaceServiceFactory(
           })
         : options.driveClient ??
           new GoogleDriveClient({ configProvider: options.configProvider });
-      storageAdapter = new GoogleDriveStorageAdapter(driveClient, {
-        preAuthenticated: Boolean(context.userOAuthToken),
-      });
+      storageAdapter = new GoogleDriveStorageAdapter(driveClient);
     }
 
     const service = new DocumentSpaceService(

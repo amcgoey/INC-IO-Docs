@@ -3,7 +3,6 @@ import {
   validatePrimaryTargetId,
   type ActivityDispatcherPort,
   type ActivityHandler,
-  type ExecutionContext,
 } from '../ports';
 
 export interface ActivityEngineOptions {
@@ -21,21 +20,11 @@ export class ActivityEngine implements ActivityDispatcherPort {
   }
 
   async dispatch(
-    activity: Activity,
-    context?: ExecutionContext
+    activity: Activity
   ): Promise<ActivityOutput | void> {
     const handler = this.handlers.find((h) => h.canHandle(activity));
     if (handler) {
-      const effectiveContext: ExecutionContext | undefined = this.primaryTargetId
-        ? {
-            ...context,
-            resources: {
-              ...context?.resources,
-              primaryTargetId: context?.resources?.primaryTargetId ?? this.primaryTargetId,
-            },
-          }
-        : context;
-      return handler.handle(activity, effectiveContext);
+      return handler.handle(activity);
     }
 
     console.log(`Executing activity: ${activity.type}`, activity.payload);

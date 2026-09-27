@@ -17,6 +17,10 @@ describe('DriveServiceAdapter', () => {
 
   const adapter = new DriveServiceAdapter(mockDriveClient);
 
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   describe('getFile', () => {
     it('returns mapped file result on success', async () => {
       (mockDriveClient.getFile as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -115,7 +119,7 @@ describe('DriveServiceAdapter', () => {
         mimeType: 'application/pdf',
         webViewLink: 'https://link',
       });
-      expect(mockDriveClient.rename).toHaveBeenCalledWith('file-1', 'renamed.pdf', undefined);
+      expect(mockDriveClient.rename).toHaveBeenCalledWith('file-1', 'renamed.pdf');
     });
 
     it('translates external errors to DriveServiceError', async () => {
@@ -152,8 +156,7 @@ describe('DriveServiceAdapter', () => {
       });
       expect(mockDriveClient.duplicate).toHaveBeenCalledWith(
         'file-1',
-        { newName: 'copied.pdf', targetFolderId: 'folder-1' },
-        undefined
+        { newName: 'copied.pdf', targetFolderId: 'folder-1' }
       );
     });
 
@@ -250,11 +253,9 @@ describe('DriveServiceAdapter', () => {
         mockBuffer
       );
 
-      const res = await adapter.downloadAsBuffer('file-123', { auth: 'token-abc' });
+      const res = await adapter.downloadAsBuffer('file-123');
       expect(res).toBe(mockBuffer);
-      expect(mockDriveClient.downloadAsBuffer).toHaveBeenCalledWith('file-123', {
-        auth: 'token-abc',
-      });
+      expect(mockDriveClient.downloadAsBuffer).toHaveBeenCalledWith('file-123');
     });
 
     it('translates external errors to DriveServiceError', async () => {
@@ -310,8 +311,7 @@ describe('DriveServiceAdapter', () => {
           name: 'Saved.pdf',
           targetFolderId: 'folder-123',
           mimeType: 'application/pdf',
-        },
-        { auth: 'token-abc' }
+        }
       );
 
       expect(res).toEqual({
@@ -328,8 +328,7 @@ describe('DriveServiceAdapter', () => {
           name: 'Saved.pdf',
           targetFolderId: 'folder-123',
           mimeType: 'application/pdf',
-        },
-        { auth: 'token-abc' }
+        }
       );
     });
 
@@ -361,8 +360,7 @@ describe('DriveServiceAdapter', () => {
           action: 'update',
           fileId: 'existing-id',
           mimeType: 'application/pdf',
-        },
-        undefined
+        }
       );
     });
 
@@ -440,8 +438,7 @@ describe('DriveServiceAdapter', () => {
           name: 'Streamed.pdf',
           targetFolderId: 'folder-123',
           mimeType: 'application/pdf',
-        },
-        { auth: 'token-abc' }
+        }
       );
 
       expect(res).toEqual({
@@ -458,8 +455,7 @@ describe('DriveServiceAdapter', () => {
           name: 'Streamed.pdf',
           targetFolderId: 'folder-123',
           mimeType: 'application/pdf',
-        },
-        { auth: 'token-abc' }
+        }
       );
     });
 
@@ -492,8 +488,7 @@ describe('DriveServiceAdapter', () => {
           action: 'update',
           fileId: 'existing-stream-id',
           mimeType: 'application/pdf',
-        },
-        undefined
+        }
       );
     });
 
@@ -545,101 +540,6 @@ describe('DriveServiceAdapter', () => {
         );
       }
     );
-  });
-
-  describe('pre-authenticated client (token-free network calls)', () => {
-    let preAuthClient: DriveClientPort;
-    let preAuthAdapter: DriveServiceAdapter;
-
-    beforeEach(() => {
-      preAuthClient = {
-        getFile: vi.fn().mockResolvedValue({ id: 'file-1', name: 'File 1' }),
-        findOrCreateFolder: vi.fn().mockResolvedValue({ id: 'f-1', name: 'Folder 1' }),
-        move: vi.fn().mockResolvedValue({ id: 'file-1', name: 'File 1' }),
-        rename: vi.fn().mockResolvedValue({ id: 'file-1', name: 'Renamed' }),
-        duplicate: vi.fn().mockResolvedValue({ id: 'file-2', name: 'Copy' }),
-        searchFiles: vi.fn().mockResolvedValue([{ id: 'file-1', name: 'File 1' }]),
-        downloadAsBuffer: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
-        saveBuffer: vi.fn().mockResolvedValue({ id: 'file-1', name: 'File 1' }),
-        uploadStream: vi.fn().mockResolvedValue({ id: 'file-1', name: 'File 1' }),
-      };
-      preAuthAdapter = new DriveServiceAdapter(preAuthClient, {
-        preAuthenticated: true,
-      });
-    });
-
-    it.each([
-      {
-        operation: 'getFile',
-        call: (adapter: DriveServiceAdapter) => adapter.getFile('file-1', { auth: 'legacy-token' }),
-        assertClientCall: (client: DriveClientPort) => expect(client.getFile).toHaveBeenCalledWith('file-1', undefined),
-      },
-      {
-        operation: 'findOrCreateFolder',
-        call: (adapter: DriveServiceAdapter) => adapter.findOrCreateFolder('root', 'Folder 1', { auth: 'legacy-token' }),
-        assertClientCall: (client: DriveClientPort) => expect(client.findOrCreateFolder).toHaveBeenCalledWith('root', 'Folder 1', undefined),
-      },
-      {
-        operation: 'move',
-        call: (adapter: DriveServiceAdapter) => adapter.move('file-1', 'folder-target', { auth: 'legacy-token' }),
-        assertClientCall: (client: DriveClientPort) => expect(client.move).toHaveBeenCalledWith('file-1', 'folder-target', undefined),
-      },
-      {
-        operation: 'rename',
-        call: (adapter: DriveServiceAdapter) => adapter.rename('file-1', 'Renamed', { auth: 'legacy-token' }),
-        assertClientCall: (client: DriveClientPort) => expect(client.rename).toHaveBeenCalledWith('file-1', 'Renamed', undefined),
-      },
-      {
-        operation: 'duplicate',
-        call: (adapter: DriveServiceAdapter) => adapter.duplicate('file-1', { newName: 'Copy' }, { auth: 'legacy-token' }),
-        assertClientCall: (client: DriveClientPort) => expect(client.duplicate).toHaveBeenCalledWith('file-1', { newName: 'Copy' }, undefined),
-      },
-      {
-        operation: 'searchFiles',
-        call: (adapter: DriveServiceAdapter) => adapter.searchFiles({ targetName: 'search-target' }, { auth: 'legacy-token' }),
-        assertClientCall: (client: DriveClientPort) => expect(client.searchFiles).toHaveBeenCalledWith({ targetName: 'search-target' }, undefined),
-      },
-      {
-        operation: 'downloadAsBuffer',
-        call: (adapter: DriveServiceAdapter) => adapter.downloadAsBuffer('file-1', { auth: 'legacy-token' }),
-        assertClientCall: (client: DriveClientPort) => expect(client.downloadAsBuffer).toHaveBeenCalledWith('file-1', undefined),
-      },
-      {
-        operation: 'saveBuffer',
-        call: (adapter: DriveServiceAdapter) =>
-          adapter.saveBuffer(
-            new Uint8Array([1, 2]),
-            { action: 'create', targetFolderId: 'folder-1', name: 'Saved' },
-            { auth: 'legacy-token' }
-          ),
-        assertClientCall: (client: DriveClientPort) =>
-          expect(client.saveBuffer).toHaveBeenCalledWith(
-            new Uint8Array([1, 2]),
-            { action: 'create', targetFolderId: 'folder-1', name: 'Saved' },
-            undefined
-          ),
-      },
-      {
-        operation: 'uploadStream',
-        call: (adapter: DriveServiceAdapter) => {
-          const stream = new ReadableStream<Uint8Array>();
-          return adapter.uploadStream(
-            stream,
-            { action: 'create', targetFolderId: 'folder-1', name: 'Stream' },
-            { auth: 'legacy-token' }
-          );
-        },
-        assertClientCall: (client: DriveClientPort) =>
-          expect(client.uploadStream).toHaveBeenCalledWith(
-            expect.anything(),
-            { action: 'create', targetFolderId: 'folder-1', name: 'Stream' },
-            undefined
-          ),
-      },
-    ])('delegates $operation without auth options when pre-authenticated', async ({ call, assertClientCall }) => {
-      await call(preAuthAdapter);
-      assertClientCall(preAuthClient);
-    });
   });
 });
 

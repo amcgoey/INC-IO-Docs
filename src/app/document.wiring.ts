@@ -94,9 +94,7 @@ export function createDocumentServiceFactory(
       : options.driveClient ??
         new GoogleDriveClient({ configProvider: options.configProvider });
 
-    const driveService = new DriveServiceAdapter(driveClient, {
-      preAuthenticated: Boolean(context.userOAuthToken),
-    });
+    const driveService = new DriveServiceAdapter(driveClient);
 
     const driveActivityHandler = new DriveActivityHandler(driveService, {
       configProvider: options.configProvider,

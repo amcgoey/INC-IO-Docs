@@ -78,20 +78,16 @@ describe('DriveActivityHandler', () => {
         },
       };
 
-      const context = { credentials: { oauthToken: 'ya29.mock-token' } };
+      const output = await handler.handle(activity);
 
-      const output = await handler.handle(activity, context);
-
-      expect(mockDriveService.getFile).toHaveBeenCalledWith('file-123', { auth: 'ya29.mock-token' });
+      expect(mockDriveService.getFile).toHaveBeenCalledWith('file-123');
       expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
         'folder-parent-xyz',
-        'Unfiled',
-        { auth: 'ya29.mock-token' }
+        'Unfiled'
       );
       expect(mockDriveService.move).toHaveBeenCalledWith(
         'file-123',
-        'testmove-folder-id',
-        { auth: 'ya29.mock-token' }
+        'testmove-folder-id'
       );
 
       expect(output).toEqual({
@@ -107,29 +103,25 @@ describe('DriveActivityHandler', () => {
       });
     });
 
-    it('extracts fileId from context resources primaryTargetId when not in payload', async () => {
+    it('extracts fileId from options primaryTargetId when not in payload', async () => {
+      const handlerWithTarget = new DriveActivityHandler(mockDriveService, {
+        primaryTargetId: 'selected-file-789',
+      });
       const activity: Activity = {
         type: 'MOVE_DRIVE_FILE',
         payload: {},
       };
 
-      const context = {
-        credentials: { oauthToken: 'ya29.token-abc' },
-        resources: { primaryTargetId: 'selected-file-789' },
-      };
+      await handlerWithTarget.handle(activity);
 
-      await handler.handle(activity, context);
-
-      expect(mockDriveService.getFile).toHaveBeenCalledWith('selected-file-789', { auth: 'ya29.token-abc' });
+      expect(mockDriveService.getFile).toHaveBeenCalledWith('selected-file-789');
       expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
         'folder-parent-xyz',
-        'Unfiled',
-        { auth: 'ya29.token-abc' }
+        'Unfiled'
       );
       expect(mockDriveService.move).toHaveBeenCalledWith(
         'selected-file-789',
-        'testmove-folder-id',
-        { auth: 'ya29.token-abc' }
+        'testmove-folder-id'
       );
     });
 
@@ -139,7 +131,7 @@ describe('DriveActivityHandler', () => {
         payload: {},
       };
 
-      await expect(handler.handle(activity, {})).rejects.toThrow(
+      await expect(handler.handle(activity)).rejects.toThrow(
         /No fileId found in activity payload or execution context/
       );
     });
@@ -159,11 +151,10 @@ describe('DriveActivityHandler', () => {
 
       await handler.handle(activity);
 
-      expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith('root', 'Unfiled', undefined);
+      expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith('root', 'Unfiled');
       expect(mockDriveService.move).toHaveBeenCalledWith(
         'root-file-123',
-        'testmove-folder-id',
-        undefined
+        'testmove-folder-id'
       );
     });
 
@@ -194,8 +185,7 @@ describe('DriveActivityHandler', () => {
       expect(mockConfigProvider.getDriveConfig).toHaveBeenCalled();
       expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
         'folder-parent-xyz',
-        'ManifestFolder',
-        undefined
+        'ManifestFolder'
       );
       expect(output.files?.[0]?.parentName).toBe('ManifestFolder');
     });
@@ -220,8 +210,7 @@ describe('DriveActivityHandler', () => {
 
       expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
         'folder-parent-xyz',
-        'PayloadFolder',
-        undefined
+        'PayloadFolder'
       );
     });
 
@@ -325,8 +314,7 @@ describe('DriveActivityHandler', () => {
           },
         };
 
-        const context = { credentials: { oauthToken: 'ya29.search-token' } };
-        const output = await handler.handle(activity, context);
+        const output = await handler.handle(activity);
 
         expect(mockDriveService.searchFiles).toHaveBeenCalledWith(
           {
@@ -335,8 +323,7 @@ describe('DriveActivityHandler', () => {
             exactMatch: true,
             sharedDriveId: 'shared-drive-001',
             mimeTypes: ['application/pdf'],
-          },
-          { auth: 'ya29.search-token' }
+          }
         );
 
         expect(output).toEqual({
@@ -381,16 +368,10 @@ describe('DriveActivityHandler', () => {
 
         const output = await handler.handle(activity);
 
-        expect(mockDriveService.searchFiles).toHaveBeenCalledWith(
-          {
-            targetName: 'Summary.xlsx',
-            expectedParentPathNames: ['1Admin', 'Communication', 'ClientA'],
-            exactMatch: undefined,
-            sharedDriveId: undefined,
-            mimeTypes: undefined,
-          },
-          undefined
-        );
+        expect(mockDriveService.searchFiles).toHaveBeenCalledWith({
+          targetName: 'Summary.xlsx',
+          expectedParentPathNames: ['1Admin', 'Communication', 'ClientA'],
+        });
 
         expect(output.success).toBe(true);
         expect(output.files?.[0]?.id).toBe('found-file-789');
@@ -492,8 +473,8 @@ describe('DriveActivityHandler', () => {
         const result = await injectedHandler.handle(activity);
 
         expect(result.success).toBe(true);
-        expect(mockDriveService.getFile).toHaveBeenCalledWith('injected-file-opt-999', undefined);
-        expect(mockDriveService.move).toHaveBeenCalledWith('injected-file-opt-999', 'testmove-folder-id', undefined);
+        expect(mockDriveService.getFile).toHaveBeenCalledWith('injected-file-opt-999');
+        expect(mockDriveService.move).toHaveBeenCalledWith('injected-file-opt-999', 'testmove-folder-id');
       });
 
       it.each([
@@ -517,8 +498,8 @@ describe('DriveActivityHandler', () => {
 
         await injectedHandler.handle(activity);
 
-        expect(mockDriveService.getFile).toHaveBeenCalledWith('payload-priority-id', undefined);
-        expect(mockDriveService.move).toHaveBeenCalledWith('payload-priority-id', 'testmove-folder-id', undefined);
+        expect(mockDriveService.getFile).toHaveBeenCalledWith('payload-priority-id');
+        expect(mockDriveService.move).toHaveBeenCalledWith('payload-priority-id', 'testmove-folder-id');
       });
     });
   });

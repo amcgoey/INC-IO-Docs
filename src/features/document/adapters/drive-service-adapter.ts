@@ -5,7 +5,6 @@ import {
   type DriveDuplicateOptions,
   type DriveFileResult,
   type DriveSearchQuery,
-  type DriveServiceOptions,
   type DriveServicePort,
 } from '../ports';
 
@@ -45,52 +44,33 @@ export interface DriveClientUpdateOptions {
 
 export type DriveClientSaveOptions = DriveClientCreateOptions | DriveClientUpdateOptions;
 
-export interface DriveClientOperationOptions {
-  auth?: string | undefined;
-}
-
 export interface DriveClientPort {
-  getFile(
-    fileId: string,
-    options?: DriveClientOperationOptions
-  ): Promise<DriveClientFileMetadata>;
+  getFile(fileId: string): Promise<DriveClientFileMetadata>;
   findOrCreateFolder(
     parentId: string,
-    folderName: string,
-    options?: DriveClientOperationOptions
+    folderName: string
   ): Promise<DriveClientFileMetadata>;
   move(
     fileId: string,
-    targetFolderId: string,
-    options?: DriveClientOperationOptions
+    targetFolderId: string
   ): Promise<DriveClientFileMetadata>;
   rename(
     fileId: string,
-    newName: string,
-    options?: DriveClientOperationOptions
+    newName: string
   ): Promise<DriveClientFileMetadata>;
   duplicate(
     fileId: string,
-    duplicateOptions?: DriveClientDuplicateOptions,
-    options?: DriveClientOperationOptions
+    duplicateOptions?: DriveClientDuplicateOptions
   ): Promise<DriveClientFileMetadata>;
-  searchFiles(
-    params: DriveClientSearchParams,
-    options?: DriveClientOperationOptions
-  ): Promise<DriveClientFileMetadata[]>;
-  downloadAsBuffer(
-    fileId: string,
-    options?: DriveClientOperationOptions
-  ): Promise<Uint8Array>;
+  searchFiles(params: DriveClientSearchParams): Promise<DriveClientFileMetadata[]>;
+  downloadAsBuffer(fileId: string): Promise<Uint8Array>;
   saveBuffer(
     content: Uint8Array,
-    saveOptions: DriveClientSaveOptions,
-    options?: DriveClientOperationOptions
+    saveOptions: DriveClientSaveOptions
   ): Promise<DriveClientFileMetadata>;
   uploadStream(
     stream: ReadableStream<Uint8Array>,
-    saveOptions: DriveClientSaveOptions,
-    options?: DriveClientOperationOptions
+    saveOptions: DriveClientSaveOptions
   ): Promise<DriveClientFileMetadata>;
 }
 
@@ -127,28 +107,8 @@ function extractErrorName(error: unknown): string | undefined {
   return undefined;
 }
 
-export interface DriveServiceAdapterOptions {
-  preAuthenticated?: boolean | undefined;
-}
-
 export class DriveServiceAdapter implements DriveServicePort {
-  private readonly preAuthenticated: boolean;
-
-  constructor(
-    private readonly driveClient: DriveClientPort,
-    options?: DriveServiceAdapterOptions
-  ) {
-    this.preAuthenticated = options?.preAuthenticated ?? false;
-  }
-
-  private resolveOperationOptions<T extends DriveServiceOptions | undefined>(
-    options?: T
-  ): T | undefined {
-    if (this.preAuthenticated) {
-      return undefined;
-    }
-    return options;
-  }
+  constructor(private readonly driveClient: DriveClientPort) {}
 
   private translateError(operation: string, error: unknown): never {
     if (error instanceof DriveServiceError) {
@@ -187,15 +147,9 @@ export class DriveServiceAdapter implements DriveServicePort {
     });
   }
 
-  async getFile(
-    fileId: string,
-    options?: DriveServiceOptions
-  ): Promise<DriveFileResult> {
+  async getFile(fileId: string): Promise<DriveFileResult> {
     try {
-      const metadata = await this.driveClient.getFile(
-        fileId,
-        this.resolveOperationOptions(options)
-      );
+      const metadata = await this.driveClient.getFile(fileId);
       return mapMetadataToResult(metadata);
     } catch (error) {
       this.translateError('getFile', error);
@@ -204,14 +158,12 @@ export class DriveServiceAdapter implements DriveServicePort {
 
   async findOrCreateFolder(
     parentId: string,
-    folderName: string,
-    options?: DriveServiceOptions
+    folderName: string
   ): Promise<DriveFileResult> {
     try {
       const metadata = await this.driveClient.findOrCreateFolder(
         parentId,
-        folderName,
-        this.resolveOperationOptions(options)
+        folderName
       );
       return mapMetadataToResult(metadata);
     } catch (error) {
@@ -221,14 +173,12 @@ export class DriveServiceAdapter implements DriveServicePort {
 
   async move(
     fileId: string,
-    targetFolderId: string,
-    options?: DriveServiceOptions
+    targetFolderId: string
   ): Promise<DriveFileResult> {
     try {
       const metadata = await this.driveClient.move(
         fileId,
-        targetFolderId,
-        this.resolveOperationOptions(options)
+        targetFolderId
       );
       return mapMetadataToResult(metadata);
     } catch (error) {
@@ -238,14 +188,12 @@ export class DriveServiceAdapter implements DriveServicePort {
 
   async rename(
     fileId: string,
-    newName: string,
-    options?: DriveServiceOptions
+    newName: string
   ): Promise<DriveFileResult> {
     try {
       const metadata = await this.driveClient.rename(
         fileId,
-        newName,
-        this.resolveOperationOptions(options)
+        newName
       );
       return mapMetadataToResult(metadata);
     } catch (error) {
@@ -255,14 +203,12 @@ export class DriveServiceAdapter implements DriveServicePort {
 
   async duplicate(
     fileId: string,
-    duplicateOptions?: DriveDuplicateOptions,
-    options?: DriveServiceOptions
+    duplicateOptions?: DriveDuplicateOptions
   ): Promise<DriveFileResult> {
     try {
       const metadata = await this.driveClient.duplicate(
         fileId,
-        duplicateOptions,
-        this.resolveOperationOptions(options)
+        duplicateOptions
       );
       return mapMetadataToResult(metadata);
     } catch (error) {
@@ -270,30 +216,18 @@ export class DriveServiceAdapter implements DriveServicePort {
     }
   }
 
-  async searchFiles(
-    query: DriveSearchQuery,
-    options?: DriveServiceOptions
-  ): Promise<DriveFileResult[]> {
+  async searchFiles(query: DriveSearchQuery): Promise<DriveFileResult[]> {
     try {
-      const results = await this.driveClient.searchFiles(
-        query,
-        this.resolveOperationOptions(options)
-      );
+      const results = await this.driveClient.searchFiles(query);
       return results.map(mapMetadataToResult);
     } catch (error) {
       this.translateError('searchFiles', error);
     }
   }
 
-  async downloadAsBuffer(
-    fileId: string,
-    options?: DriveServiceOptions
-  ): Promise<Uint8Array> {
+  async downloadAsBuffer(fileId: string): Promise<Uint8Array> {
     try {
-      return await this.driveClient.downloadAsBuffer(
-        fileId,
-        this.resolveOperationOptions(options)
-      );
+      return await this.driveClient.downloadAsBuffer(fileId);
     } catch (error) {
       this.translateError('downloadAsBuffer', error);
     }
@@ -301,14 +235,12 @@ export class DriveServiceAdapter implements DriveServicePort {
 
   async saveBuffer(
     content: Uint8Array,
-    saveOptions: DriveContentSaveOptions,
-    options?: DriveServiceOptions
+    saveOptions: DriveContentSaveOptions
   ): Promise<DriveFileResult> {
     try {
       const metadata = await this.driveClient.saveBuffer(
         content,
-        saveOptions,
-        this.resolveOperationOptions(options)
+        saveOptions
       );
       return mapMetadataToResult(metadata);
     } catch (error) {
@@ -318,14 +250,12 @@ export class DriveServiceAdapter implements DriveServicePort {
 
   async uploadStream(
     stream: ReadableStream<Uint8Array>,
-    saveOptions: DriveContentSaveOptions,
-    options?: DriveServiceOptions
+    saveOptions: DriveContentSaveOptions
   ): Promise<DriveFileResult> {
     try {
       const metadata = await this.driveClient.uploadStream(
         stream,
-        saveOptions,
-        this.resolveOperationOptions(options)
+        saveOptions
       );
       return mapMetadataToResult(metadata);
     } catch (error) {

@@ -1,11 +1,10 @@
-import type { DriveStorageClientPort, DriveAuthOptions } from './google-drive-storage-adapter';
+import type { DriveStorageClientPort } from './google-drive-storage-adapter';
 
 export class DriveNameResolver {
   constructor(private readonly driveClient: DriveStorageClientPort) {}
 
   async resolveSharedDriveId(
-    sharedDriveName: string,
-    options?: DriveAuthOptions
+    sharedDriveName: string
   ): Promise<string> {
     let drivePageToken: string | undefined;
     do {
@@ -13,8 +12,7 @@ export class DriveNameResolver {
         {
           pageSize: 100,
           pageToken: drivePageToken,
-        },
-        options
+        }
       );
       const drive = res.drives.find((d) => d.name === sharedDriveName);
       if (drive) {
@@ -28,8 +26,7 @@ export class DriveNameResolver {
 
   async resolveParentFolderId(
     parentFolderName: string,
-    sharedDriveId?: string,
-    options?: DriveAuthOptions
+    sharedDriveId?: string
   ): Promise<string> {
     if (!this.driveClient.searchFiles) {
       throw new Error(
@@ -42,8 +39,7 @@ export class DriveNameResolver {
         exactMatch: true,
         sharedDriveId,
         mimeTypes: ['application/vnd.google-apps.folder'],
-      },
-      options
+      }
     );
     if (files.length === 0) {
       throw new Error(`Parent folder not found with name: ${parentFolderName}`);

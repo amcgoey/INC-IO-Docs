@@ -12,7 +12,6 @@ import {
   type UiProcessDocumentRunnerPort,
   type UiProcessFormEvaluatorPort,
   type RawManifestProviderPort,
-  type UiProcessAuthOptions,
 } from '../features/ui-process-manager';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import {
@@ -224,7 +223,6 @@ export function createUiProcessRequestWrapper(
       formData: context.formData,
       parameters: context.parameters,
       validationErrors: context.validationErrors,
-      userOAuthToken: context.userOAuthToken,
       selectedItems: context.selectedItems?.map((item) => ({
         id: item.id,
         title: item.title,
@@ -317,20 +315,20 @@ export function createUiProcessManagerWiring(
 
   const fallbackSpaceProvider: UiProcessSpaceProviderPort = {
     getAllTypes: () => (options.documentSpaceService ? options.documentSpaceService.getAllTypes() : []),
-    getCollection: (typeId: string, opts?: UiProcessAuthOptions) => {
+    getCollection: (typeId: string) => {
       if (!options.documentSpaceService) {
         throw new Error(
           'documentSpaceService was not provided at startup; use requestScopedWrapper with createDocumentSpaceService'
         );
       }
-      return options.documentSpaceService.getCollection(typeId, opts);
+      return options.documentSpaceService.getCollection(typeId);
     },
   };
 
   const fallbackDocumentRunner: UiProcessDocumentRunnerPort | undefined = options.documentService
     ? {
-        processDocument: async (payload, eventName, context) => {
-          return options.documentService!.processDocument(payload, eventName, context);
+        processDocument: async (payload, eventName) => {
+          return options.documentService!.processDocument(payload, eventName);
         },
       }
     : undefined;
@@ -365,21 +363,21 @@ export function createUiProcessManagerWiring(
 
     const reqSpaceProvider: UiProcessSpaceProviderPort = {
       getAllTypes: () => (docSpaceService ? docSpaceService.getAllTypes() : []),
-      getCollection: (typeId: string, opts?: UiProcessAuthOptions) => {
+      getCollection: (typeId: string) => {
         if (!docSpaceService) {
           throw new Error('DocumentSpaceService not provided');
         }
-        return docSpaceService.getCollection(typeId, opts);
+        return docSpaceService.getCollection(typeId);
       },
     };
 
     const reqDocumentRunner: UiProcessDocumentRunnerPort | undefined =
       docService || options.createDocumentService
         ? {
-            processDocument: async (payload, eventName, docContext) => {
+            processDocument: async (payload, eventName) => {
               const activeDocService =
                 docService ?? (await options.createDocumentService!(context));
-              return activeDocService.processDocument(payload, eventName, docContext);
+              return activeDocService.processDocument(payload, eventName);
             },
           }
         : undefined;

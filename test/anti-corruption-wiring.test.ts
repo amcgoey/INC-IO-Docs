@@ -171,7 +171,7 @@ describe('Anti-Corruption Wiring Integration', () => {
     expect(body.action.navigations[0].pushCard.header.title).toBe('INC-IO Engine');
   });
 
-  it('maps WorkspaceExecutionContext to Document ExecutionContext through the anonymous documentService adapter', async () => {
+  it('delegates to documentService through the anonymous documentService adapter', async () => {
     const routes: RouteDefinition[] = [];
     const mockServer = {
       registerRoute: (route: RouteDefinition) => {
@@ -224,11 +224,7 @@ describe('Anti-Corruption Wiring Integration', () => {
       expect.objectContaining({
         type: 'contract-doc',
       }),
-      'onSubmit',
-      {
-        credentials: { oauthToken: 'ya29.sample-token' },
-        resources: { primaryTargetId: 'drive-file-789' },
-      }
+      'onSubmit'
     );
   });
 });

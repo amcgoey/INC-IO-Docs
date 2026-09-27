@@ -26,19 +26,6 @@ describe('ActivityEngine driven adapter', () => {
     expect(consoleSpy).toHaveBeenCalledWith('Executing activity: LOG_DOCUMENT', activity.payload);
   });
 
-  it('accepts execution context parameter during dispatch and logs to console when no handlers match', async () => {
-    const engine = new ActivityEngine();
-    const activity: Activity = {
-      type: 'LOG_DOCUMENT',
-      payload: { document: { id: 'rec-1' } },
-    };
-    const context = { credentials: { oauthToken: 'secret-token-xyz' } };
-
-    await engine.dispatch(activity, context);
-
-    expect(consoleSpy).toHaveBeenCalledWith('Executing activity: LOG_DOCUMENT', activity.payload);
-  });
-
   it('delegates activity dispatch to matching ActivityHandler', async () => {
     const mockHandler: ActivityHandler = {
       canHandle: vi.fn((act: Activity) => act.type === 'DRIVE_MOVE_FILE'),
@@ -50,12 +37,11 @@ describe('ActivityEngine driven adapter', () => {
       type: 'DRIVE_MOVE_FILE',
       payload: { fileId: 'file-123', destinationFolderId: 'folder-456' },
     };
-    const context = { credentials: { oauthToken: 'auth-token-123' } };
 
-    await engine.dispatch(activity, context);
+    await engine.dispatch(activity);
 
     expect(mockHandler.canHandle).toHaveBeenCalledWith(activity);
-    expect(mockHandler.handle).toHaveBeenCalledWith(activity, context);
+    expect(mockHandler.handle).toHaveBeenCalledWith(activity);
   });
 
   it('routes to the first matching handler in priority order when multiple handlers exist', async () => {
@@ -77,7 +63,7 @@ describe('ActivityEngine driven adapter', () => {
     await engine.dispatch(activity);
 
     expect(firstHandler.canHandle).toHaveBeenCalledWith(activity);
-    expect(firstHandler.handle).toHaveBeenCalledWith(activity, undefined);
+    expect(firstHandler.handle).toHaveBeenCalledWith(activity);
     expect(secondHandler.canHandle).not.toHaveBeenCalled();
     expect(secondHandler.handle).not.toHaveBeenCalled();
   });
@@ -103,7 +89,7 @@ describe('ActivityEngine driven adapter', () => {
     expect(firstHandler.canHandle).toHaveBeenCalledWith(activity);
     expect(firstHandler.handle).not.toHaveBeenCalled();
     expect(secondHandler.canHandle).toHaveBeenCalledWith(activity);
-    expect(secondHandler.handle).toHaveBeenCalledWith(activity, undefined);
+    expect(secondHandler.handle).toHaveBeenCalledWith(activity);
   });
 
   it('falls back to console.log when configured handlers cannot handle the activity', async () => {
@@ -146,26 +132,7 @@ describe('ActivityEngine driven adapter', () => {
     expect(result).toEqual(expectedOutput);
   });
 
-  describe('primaryTargetId injection', () => {
-    it('injects primaryTargetId into dispatch execution context when initialized with options', async () => {
-      const mockHandler: ActivityHandler = {
-        canHandle: vi.fn(() => true),
-        handle: vi.fn().mockResolvedValue(undefined),
-      };
-
-      const engine = new ActivityEngine([mockHandler], { primaryTargetId: 'target-item-abc' });
-      const activity: Activity = { type: 'MOVE_FILE', payload: {} };
-
-      await engine.dispatch(activity);
-
-      expect(mockHandler.handle).toHaveBeenCalledWith(
-        activity,
-        expect.objectContaining({
-          resources: { primaryTargetId: 'target-item-abc' },
-        })
-      );
-    });
-
+  describe('primaryTargetId validation', () => {
     it.each([
       ['empty string', ''],
       ['whitespace-only string', '   \t\n  '],
@@ -174,26 +141,6 @@ describe('ActivityEngine driven adapter', () => {
       expect(
         () => new ActivityEngine([], { primaryTargetId: invalidTargetId })
       ).toThrow(/ActivityEngine: primaryTargetId must be a non-empty string/);
-    });
-
-    it('preserves existing primaryTargetId if already supplied in context resources', async () => {
-      const mockHandler: ActivityHandler = {
-        canHandle: vi.fn(() => true),
-        handle: vi.fn().mockResolvedValue(undefined),
-      };
-
-      const engine = new ActivityEngine([mockHandler], { primaryTargetId: 'default-target' });
-      const activity: Activity = { type: 'MOVE_FILE', payload: {} };
-      const context = { resources: { primaryTargetId: 'override-target' } };
-
-      await engine.dispatch(activity, context);
-
-      expect(mockHandler.handle).toHaveBeenCalledWith(
-        activity,
-        expect.objectContaining({
-          resources: { primaryTargetId: 'override-target' },
-        })
-      );
     });
   });
 });

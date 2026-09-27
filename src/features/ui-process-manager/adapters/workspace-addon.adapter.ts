@@ -136,9 +136,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     let collectionSpaces: string[] = [];
     const collectionErrors: string[] = [];
     try {
-      const collection = await spaceProvider.getCollection(currentSpaceType, {
-        auth: normalizedContext.userOAuthToken,
-      });
+      const collection = await spaceProvider.getCollection(currentSpaceType);
       collectionSpaces = collection.spaces.map((s) => s.name);
     } catch (e) {
       console.warn(`Could not fetch collection for space type: ${currentSpaceType}`, e);
@@ -192,12 +190,6 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       const selectedSpace = normalizedContext.formData?.SelectDocumentSpace as string | undefined;
       const data = extractDocumentData(normalizedContext.formData);
 
-      const selectedItem = normalizedContext.selectedItems?.[0];
-      const execContext = {
-        ...(normalizedContext.userOAuthToken ? { credentials: { oauthToken: normalizedContext.userOAuthToken } } : {}),
-        ...(selectedItem?.id ? { resources: { primaryTargetId: selectedItem.id } } : {}),
-      };
-
       try {
         if (documentRunner) {
           const result = await documentRunner.processDocument(
@@ -206,8 +198,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
               data,
               ...(selectedSpace ? { space: selectedSpace } : {}),
             },
-            'onSubmit',
-            execContext
+            'onSubmit'
           );
 
           if (result && result.success === false) {

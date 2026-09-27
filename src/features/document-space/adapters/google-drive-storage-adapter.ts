@@ -7,7 +7,7 @@ import {
   type StorageContextConfig,
   type StorageLocation,
 } from '../domain';
-import type { DocumentSpaceStoragePort, SpaceAuthOptions } from '../ports';
+import type { DocumentSpaceStoragePort } from '../ports';
 import { DriveNameResolver } from './drive-name-resolver';
 
 export { DriveNameResolver };
@@ -32,17 +32,12 @@ export const FoldersStorageConfigSchema = Type.Object({
 
 export type FoldersStorageConfig = Static<typeof FoldersStorageConfigSchema>;
 
-export interface DriveAuthOptions {
-  auth?: string | undefined;
-}
-
 export interface DriveStorageClientPort {
   listSharedDrives(
     options?: {
       pageSize?: number | undefined;
       pageToken?: string | undefined;
-    },
-    driveOptions?: DriveAuthOptions
+    }
   ): Promise<{
     drives: Array<{ id: string; name: string }>;
     nextPageToken?: string | undefined;
@@ -54,8 +49,7 @@ export interface DriveStorageClientPort {
       sharedDriveId?: string | undefined;
       pageSize?: number | undefined;
       pageToken?: string | undefined;
-    },
-    driveOptions?: DriveAuthOptions
+    }
   ): Promise<{
     folders: Array<{ id: string; name: string }>;
     nextPageToken?: string | undefined;
@@ -68,8 +62,7 @@ export interface DriveStorageClientPort {
       sharedDriveId?: string | undefined;
       mimeTypes?: string[] | undefined;
       expectedParentPathNames?: string[] | undefined;
-    },
-    options?: DriveAuthOptions
+    }
   ): Promise<Array<{ id: string; name: string; mimeType?: string | undefined }>>;
 }
 
@@ -117,32 +110,21 @@ async function fetchWithPagination(
 
 export interface GoogleDriveStorageAdapterOptions {
   nameResolver?: DriveNameResolver | undefined;
-  preAuthenticated?: boolean | undefined;
 }
 
 export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
   private readonly nameResolver: DriveNameResolver;
-  private readonly preAuthenticated: boolean;
 
   constructor(
     private readonly driveClient: DriveStorageClientPort,
     options?: GoogleDriveStorageAdapterOptions
   ) {
     this.nameResolver = options?.nameResolver ?? new DriveNameResolver(driveClient);
-    this.preAuthenticated = options?.preAuthenticated ?? false;
-  }
-
-  private resolveAuthOptions(options?: SpaceAuthOptions): SpaceAuthOptions | undefined {
-    if (this.preAuthenticated) {
-      return undefined;
-    }
-    return options;
   }
 
   async fetchSpaces(
     config: StorageContextConfig,
-    typeId: string,
-    options?: SpaceAuthOptions
+    typeId: string
   ): Promise<DocumentSpace[]> {
     if (config['fetchMethod'] === 'shared_drives') {
       if (!Value.Check(SharedDrivesStorageConfigSchema, config)) {
@@ -156,13 +138,10 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
       }
 
       return fetchWithPagination(limit, typeId, async (pageSize, pageToken) => {
-        const res = await this.driveClient.listSharedDrives(
-          {
-            pageSize,
-            ...(pageToken !== undefined ? { pageToken } : {}),
-          },
-          this.resolveAuthOptions(options)
-        );
+        const res = await this.driveClient.listSharedDrives({
+          pageSize,
+          pageToken,
+        });
         return {
           items: res.drives,
           nextPageToken: res.nextPageToken,
@@ -184,8 +163,7 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
       let resolvedSharedDriveId = typedConfig.sharedDriveId;
       if (!resolvedSharedDriveId && typedConfig.sharedDriveName) {
         resolvedSharedDriveId = await this.nameResolver.resolveSharedDriveId(
-          typedConfig.sharedDriveName,
-          this.resolveAuthOptions(options)
+          typedConfig.sharedDriveName
         );
       }
 
@@ -193,25 +171,17 @@ export class GoogleDriveStorageAdapter implements DocumentSpaceStoragePort {
       if (!resolvedParentFolderId && typedConfig.parentFolderName) {
         resolvedParentFolderId = await this.nameResolver.resolveParentFolderId(
           typedConfig.parentFolderName,
-          resolvedSharedDriveId,
-          this.resolveAuthOptions(options)
+          resolvedSharedDriveId
         );
       }
 
       return fetchWithPagination(limit, typeId, async (pageSize, pageToken) => {
-        const res = await this.driveClient.listFolders(
-          {
-            pageSize,
-            ...(resolvedParentFolderId !== undefined
-              ? { parentFolderId: resolvedParentFolderId }
-              : {}),
-            ...(resolvedSharedDriveId !== undefined
-              ? { sharedDriveId: resolvedSharedDriveId }
-              : {}),
-            ...(pageToken !== undefined ? { pageToken } : {}),
-          },
-          this.resolveAuthOptions(options)
-        );
+        const res = await this.driveClient.listFolders({
+          parentFolderId: resolvedParentFolderId,
+          sharedDriveId: resolvedSharedDriveId,
+          pageSize,
+          pageToken,
+        });
         return {
           items: res.folders,
           nextPageToken: res.nextPageToken,

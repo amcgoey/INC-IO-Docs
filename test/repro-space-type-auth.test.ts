@@ -1,32 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
-import { WorkspaceAddonAdapter } from '../src/features/ui-process-manager/adapters/workspace-addon.adapter';
-import { GoogleDriveStorageAdapter, type DriveStorageClientPort, type DriveAuthOptions } from '../src/features/document-space/adapters/google-drive-storage-adapter';
+import { GoogleDriveStorageAdapter, type DriveStorageClientPort } from '../src/features/document-space/adapters/google-drive-storage-adapter';
 import { DocumentSpaceService } from '../src/features/document-space/domain';
-import type { UiProcessSpaceProviderPort, UiProcessAuthOptions } from '../src/features/ui-process-manager/ports';
-import { GoogleDriveApiError } from '../src/infrastructure/drive/drive-client';
+import { createUiProcessManagerWiring } from '../src/app/ui-process-manager.wiring';
 
-describe('Document Space Type Change - Auth Propagation Reproduction', () => {
-  it('forwards userOAuthToken to spaceProvider.getCollection and driveClient when space type changes', async () => {
-    // Mock DriveStorageClientPort that enforces authentication like Google Drive in production
-    const listSharedDrivesMock = vi.fn().mockImplementation((_options?: unknown, driveOptions?: DriveAuthOptions) => {
-      if (!driveOptions?.auth) {
-        throw new GoogleDriveApiError(
-          'Google Drive API error in listSharedDrives: Request is missing required authentication credential.',
-          { statusCode: 401 }
-        );
-      }
-      return Promise.resolve({
-        drives: [{ id: 'drive-1', name: 'Project Drive 1' }],
-        nextPageToken: undefined,
-      });
+describe('Document Space Type Change - Auth Propagation via Request-Scoped Wiring', () => {
+  it('instantiates pre-authenticated client and executes pure domain calls when space type changes', async () => {
+    const listSharedDrivesMock = vi.fn().mockResolvedValue({
+      drives: [{ id: 'drive-1', name: 'Project Drive 1' }],
+      nextPageToken: undefined,
     });
 
-    const mockDriveClient: DriveStorageClientPort = {
-      listSharedDrives: listSharedDrivesMock,
-      listFolders: vi.fn(),
-    };
-
-    const storageAdapter = new GoogleDriveStorageAdapter(mockDriveClient);
+    const createPreAuthenticatedDriveClient = vi.fn((token: string): DriveStorageClientPort => {
+      expect(token).toBe('ya29.valid-user-oauth-token');
+      return {
+        listSharedDrives: listSharedDrivesMock,
+        listFolders: vi.fn(),
+      };
+    });
 
     const manifestRegistryMock = {
       getDocumentSpaceTypes: vi.fn().mockResolvedValue([
@@ -43,23 +33,45 @@ describe('Document Space Type Change - Auth Propagation Reproduction', () => {
           },
         },
       ]),
+      getManifest: vi.fn().mockResolvedValue({
+        documentTypes: {
+          'project-report': {
+            displayName: 'Project Report',
+            schema: {},
+          },
+        },
+      }),
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: {
+          'project-report': {
+            displayName: 'Project Report',
+            schema: {},
+          },
+        },
+      }),
+      readParsedSchema: vi.fn(),
     };
 
-    const documentSpaceService = new DocumentSpaceService(manifestRegistryMock, storageAdapter);
-    await documentSpaceService.initialize();
-
-    const spaceProvider: UiProcessSpaceProviderPort = {
-      getAllTypes: () => documentSpaceService.getAllTypes(),
-      getCollection: (typeId: string, options?: UiProcessAuthOptions) =>
-        documentSpaceService.getCollection(typeId, options),
+    const schemaDrivenUiServiceMock = {
+      generateView: vi.fn().mockResolvedValue({
+        id: 'card-1',
+        sections: [{ widgets: [{ textParagraph: { text: 'Hello' } }] }],
+      }),
     };
 
-    const adapter = new WorkspaceAddonAdapter({
-      spaceProvider,
+    const wiring = createUiProcessManagerWiring({
+      manifestProvider: manifestRegistryMock,
+      schemaDrivenUiService: schemaDrivenUiServiceMock as unknown as import('../src/features/schema-driven-ui/domain').SchemaDrivenUiService,
+      createDocumentSpaceService: async (context) => {
+        const driveClient = createPreAuthenticatedDriveClient(context.userOAuthToken!);
+        const storageAdapter = new GoogleDriveStorageAdapter(driveClient);
+        const svc = new DocumentSpaceService(manifestRegistryMock, storageAdapter);
+        await svc.initialize();
+        return svc;
+      },
     });
 
-    // Simulate Workspace Addon sending onSpaceTypeChange with userOAuthToken
-    const result = await adapter.processUiEvent({
+    const result = await wiring.requestScopedWrapper({
       actionName: 'onSpaceTypeChange',
       userOAuthToken: 'ya29.valid-user-oauth-token',
       formData: {
@@ -67,20 +79,11 @@ describe('Document Space Type Change - Auth Propagation Reproduction', () => {
       },
     });
 
-    // We expect listSharedDrives to have received the auth token
-    expect(listSharedDrivesMock).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ auth: 'ya29.valid-user-oauth-token' })
-    );
-
-    // And generated intent selectionState should contain the retrieved spaces
-    expect(result).toEqual(
-      expect.objectContaining({
-        type: 'render',
-        selectionState: expect.objectContaining({
-          spaces: ['Project Drive 1'],
-        }),
-      })
-    );
+    expect(createPreAuthenticatedDriveClient).toHaveBeenCalledWith('ya29.valid-user-oauth-token');
+    expect(listSharedDrivesMock).toHaveBeenCalledWith({
+      pageSize: 100,
+      pageToken: undefined,
+    });
+    expect(result).toBeDefined();
   });
 });

@@ -3,7 +3,6 @@ import { Value } from '@sinclair/typebox/value';
 import type {
   DocumentSpaceManifestRegistryPort,
   DocumentSpaceStoragePort,
-  SpaceAuthOptions,
 } from './ports';
 
 export const SpaceSchemaConfigSchema = Type.Object({
@@ -92,14 +91,12 @@ export class DocumentSpaceService {
   }
 
   async getCollection(
-    typeId: string,
-    options?: SpaceAuthOptions
+    typeId: string
   ): Promise<DocumentSpaceCollection> {
     const spaceType = this.getType(typeId);
     const spaces = await this.storagePort.fetchSpaces(
       spaceType.storageConfig,
-      spaceType.id,
-      options
+      spaceType.id
     );
 
     return {

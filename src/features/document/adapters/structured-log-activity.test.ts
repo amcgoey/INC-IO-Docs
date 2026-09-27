@@ -20,20 +20,6 @@ describe('StructuredLogActivity driven adapter', () => {
     consoleSpy.mockRestore();
   });
 
-  it('accepts execution context parameter during handle', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const adapter = new StructuredLogActivity();
-    const activity: Activity = {
-      type: 'LOG_DOCUMENT',
-      payload: { test: 123 },
-    };
-    const context = { credentials: { oauthToken: 'sample-oauth-token' } };
-
-    await adapter.handle(activity, context);
-
-    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(activity.payload));
-    consoleSpy.mockRestore();
-  });
 
   it('canHandle returns true for LOG_DOCUMENT and STRUCTURED_LOG, false for others', () => {
     const adapter = new StructuredLogActivity();
