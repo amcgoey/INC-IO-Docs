@@ -4,6 +4,12 @@ import type {
   OptionsFetcherContext,
   OptionsFetcherPort,
 } from '../features/schema-driven-ui/ports';
+import type {
+  DocumentDynamicValidationPort,
+  DynamicValidationContext,
+  DynamicValidationQuery,
+  DynamicValidationResult,
+} from '../features/document/ports';
 
 export interface DynamicOptionsDriveClient {
   listFolders(options?: {
@@ -11,6 +17,7 @@ export interface DynamicOptionsDriveClient {
     sharedDriveId?: string | undefined;
     pageSize?: number | undefined;
     pageToken?: string | undefined;
+    name?: string | undefined;
   }): Promise<{
     folders: Array<{ id: string; name: string }>;
     nextPageToken?: string | undefined;
@@ -27,7 +34,7 @@ const PLACEHOLDER_MISSING_SPACE: DynamicOptionItem[] = [
   { text: 'Select a Space first', value: '' },
 ];
 
-export class DynamicOptionsAdapter implements OptionsFetcherPort {
+export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynamicValidationPort {
   private readonly timeoutMs: number;
 
   constructor(
@@ -199,5 +206,134 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort {
     } while (pageToken && items.length < maxItems);
 
     return items;
+  }
+
+  async validateExistence(
+    queries: DynamicValidationQuery[],
+    context: DynamicValidationContext
+  ): Promise<Record<string, DynamicValidationResult>> {
+    const results: Record<string, DynamicValidationResult> = {};
+
+    if (!context.spaceId) {
+      for (const query of queries) {
+        results[query.sourceKey] = {
+          isValid: false,
+          errorMessage: 'Option not found.',
+        };
+      }
+      return results;
+    }
+
+    const spaceId = context.spaceId;
+
+    const settledQueries = await Promise.allSettled(
+      queries.map(async (query) => {
+        const result = await this.validateQueryWithTimeout(query, spaceId);
+        return { sourceKey: query.sourceKey, result };
+      })
+    );
+
+    for (const settled of settledQueries) {
+      if (settled.status === 'fulfilled') {
+        results[settled.value.sourceKey] = settled.value.result;
+      }
+    }
+
+    // Ensure all queries have an entry
+    for (const query of queries) {
+      if (!results[query.sourceKey]) {
+        results[query.sourceKey] = {
+          isValid: false,
+          errorMessage: 'Option not found.',
+        };
+      }
+    }
+
+    return results;
+  }
+
+  private async validateQueryWithTimeout(
+    query: DynamicValidationQuery,
+    spaceId: string
+  ): Promise<DynamicValidationResult> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(
+          new Error(`Dynamic option validation timed out after ${this.timeoutMs}ms`)
+        );
+      }, this.timeoutMs);
+    });
+
+    try {
+      return await Promise.race([
+        this.executeValidationQuery(query, spaceId),
+        timeoutPromise,
+      ]);
+    } catch {
+      return {
+        isValid: false,
+        errorMessage: 'Option not found.',
+      };
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  }
+
+  private async executeValidationQuery(
+    query: DynamicValidationQuery,
+    spaceId: string
+  ): Promise<DynamicValidationResult> {
+    const provider = query.config.provider;
+    const method = query.config.method;
+
+    if (provider !== 'google_drive' || method !== 'list_folders') {
+      return {
+        isValid: false,
+        errorMessage: 'Option not found.',
+      };
+    }
+
+    const relativePath =
+      typeof query.config.relativePath === 'string'
+        ? query.config.relativePath.trim()
+        : '';
+
+    const targetFolderId = await this.resolveTargetFolder(spaceId, relativePath);
+    if (!targetFolderId) {
+      return {
+        isValid: false,
+        errorMessage: 'Option not found.',
+      };
+    }
+
+    const result = await this.driveClient.listFolders({
+      parentFolderId: targetFolderId,
+      name: query.valueToValidate,
+    });
+
+    const matchingFolders = result.folders.filter(
+      (f) => f.name === query.valueToValidate
+    );
+
+    if (matchingFolders.length === 1) {
+      return { isValid: true };
+    }
+
+    if (matchingFolders.length === 0) {
+      return {
+        isValid: false,
+        errorMessage: 'Option not found.',
+      };
+    }
+
+    return {
+      isValid: false,
+      errorMessage:
+        'Multiple folders found with this name. Please resolve this ambiguity in Google Drive manually.',
+    };
   }
 }

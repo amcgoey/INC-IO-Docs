@@ -7,6 +7,8 @@ import type {
   TemplateEvaluationContext,
   TemplateEvaluatorPort,
   CompiledSchemaRegistryPort,
+  DocumentDynamicValidationPort,
+  DynamicValidationQuery,
 } from './ports';
 
 export function formatValidationErrors<T extends TSchema>(schema: T, value: unknown): string[] {
@@ -325,7 +327,8 @@ export class DocumentService implements DocumentServicePort {
     private readonly dispatcher: ActivityDispatcherPort,
     private readonly documentSchemaRegistry: DocumentSchemaRegistryPort,
     private readonly templateEvaluator: TemplateEvaluatorPort,
-    private readonly compiledSchemaRegistry: CompiledSchemaRegistryPort
+    private readonly compiledSchemaRegistry: CompiledSchemaRegistryPort,
+    private readonly dynamicValidator?: DocumentDynamicValidationPort
   ) {}
 
   async initialize(): Promise<void> {
@@ -363,8 +366,57 @@ export class DocumentService implements DocumentServicePort {
       };
     }
 
-    // Anti-Corruption Layer: Context Enrichment & Fallback Tuple Synthesis
     const rawData = document.data as { [key: string]: unknown };
+
+    if (this.dynamicValidator) {
+      const dynamicQueries: DynamicValidationQuery[] = [];
+
+      for (const field of documentType.documentSchema.fields) {
+        if (
+          field.options &&
+          'dynamicConfig' in field.options &&
+          field.options.dynamicConfig &&
+          typeof field.options.dynamicConfig === 'object'
+        ) {
+          const rawValue = rawData[field.key];
+          if (typeof rawValue === 'string' && rawValue.trim().length > 0) {
+            dynamicQueries.push({
+              sourceKey: field.options.source,
+              config: field.options.dynamicConfig as Record<string, unknown>,
+              valueToValidate: rawValue,
+            });
+          }
+        }
+      }
+
+      if (dynamicQueries.length > 0) {
+        const spaceId = document.space?.abstractStorageId ?? document.space?.id;
+        const validationResults = await this.dynamicValidator.validateExistence(
+          dynamicQueries,
+          {
+            ...(spaceId !== undefined ? { spaceId } : {}),
+            formData: rawData,
+          }
+        );
+
+        const dynamicErrors: string[] = [];
+        for (const query of dynamicQueries) {
+          const result = validationResults[query.sourceKey];
+          if (result && !result.isValid) {
+            dynamicErrors.push(result.errorMessage ?? 'Option not found.');
+          }
+        }
+
+        if (dynamicErrors.length > 0) {
+          return {
+            success: false,
+            errors: dynamicErrors,
+          };
+        }
+      }
+    }
+
+    // Anti-Corruption Layer: Context Enrichment & Fallback Tuple Synthesis
     const schemaFieldKeys = new Set(documentType.documentSchema.fields.map((f) => f.key));
     const enrichedData: { [key: string]: unknown } = {};
     for (const [key, value] of Object.entries(rawData)) {

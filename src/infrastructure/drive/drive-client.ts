@@ -72,6 +72,7 @@ export interface DriveListFoldersOptions {
   sharedDriveId?: string | undefined;
   pageSize?: number | undefined;
   pageToken?: string | undefined;
+  name?: string | undefined;
 }
 
 export interface DriveListFoldersResult {
@@ -865,6 +866,11 @@ export class GoogleDriveClient {
       if (options?.parentFolderId) {
         const escapedParent = escapeDriveQuery(options.parentFolderId);
         clauses.push(`'${escapedParent}' in parents`);
+      }
+
+      if (options?.name) {
+        const escapedName = escapeDriveQuery(options.name);
+        clauses.push(`name = '${escapedName}'`);
       }
 
       const q = clauses.join(' and ');

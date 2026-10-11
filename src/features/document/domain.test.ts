@@ -44,6 +44,7 @@ import {
   type CompiledSchemaRegistryPort,
   type TemplateEvaluationContext,
   type TemplateEvaluatorPort,
+  type DocumentDynamicValidationPort,
 } from './ports';
 
 
@@ -92,13 +93,15 @@ describe('Document domain', () => {
     dispatcher: ActivityDispatcherPort,
     registry: DocumentSchemaRegistryPort,
     evaluator: TemplateEvaluatorPort,
-    compiledRegistry?: CompiledSchemaRegistryPort
+    compiledRegistry?: CompiledSchemaRegistryPort,
+    dynamicValidator?: DocumentDynamicValidationPort
   ): DocumentService =>
     new DocumentService(
       dispatcher,
       registry,
       evaluator,
-      compiledRegistry ?? createMockCompiledRegistry(registry)
+      compiledRegistry ?? createMockCompiledRegistry(registry),
+      dynamicValidator
     );
 
   it('should export DocumentModel schema', () => {
@@ -4238,6 +4241,233 @@ describe('Document domain', () => {
       expect(compiled.Check({})).toBe(true);
       expect(compiled.Check({ notes: 'hello' })).toBe(true);
       expect(compiled.Check({ notes: 123 })).toBe(false);
+    });
+  });
+
+  describe('DocumentService dynamic option validation (guarded write)', () => {
+    const dynamicDocType: DocumentType = {
+      key: 'comm-project',
+      name: 'Communication Project',
+      documentSchema: {
+        fields: [
+          {
+            key: 'title',
+            name: 'Title',
+            type: 'string',
+            required: true,
+          },
+          {
+            key: 'contact',
+            name: 'Contact',
+            type: 'string',
+            required: true,
+            options: {
+              source: 'contactFolders',
+              key: 'name',
+              name: 'name',
+              allowUserInput: true,
+              dynamicConfig: {
+                provider: 'google_drive',
+                method: 'list_folders',
+                relativePath: '1 Admin/Communication',
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    it('enforces validation for fields with dynamicConfig and succeeds when valid', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const registry = createCustomRegistry([dynamicDocType]);
+      const compiledRegistry = createMockCompiledRegistry(registry);
+      const dynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn().mockResolvedValue({
+          contactFolders: { isValid: true },
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        compiledRegistry,
+        dynamicValidator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument({
+        type: 'comm-project',
+        data: {
+          title: 'Project Alpha',
+          contact: 'Acme Corp',
+        },
+        space: {
+          id: 'sp-1',
+          typeId: 'projects',
+          name: 'Project 1',
+          abstractStorageId: 'drive-folder-123',
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(dynamicValidator.validateExistence).toHaveBeenCalledWith(
+        [
+          {
+            sourceKey: 'contactFolders',
+            config: {
+              provider: 'google_drive',
+              method: 'list_folders',
+              relativePath: '1 Admin/Communication',
+            },
+            valueToValidate: 'Acme Corp',
+          },
+        ],
+        expect.objectContaining({
+          spaceId: 'drive-folder-123',
+          formData: expect.objectContaining({
+            title: 'Project Alpha',
+            contact: 'Acme Corp',
+          }),
+        })
+      );
+    });
+
+    it('returns error when option is not found', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const registry = createCustomRegistry([dynamicDocType]);
+      const compiledRegistry = createMockCompiledRegistry(registry);
+      const dynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn().mockResolvedValue({
+          contactFolders: { isValid: false, errorMessage: 'Option not found.' },
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        compiledRegistry,
+        dynamicValidator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument({
+        type: 'comm-project',
+        data: {
+          title: 'Project Alpha',
+          contact: 'NonExistent Corp',
+        },
+        space: {
+          id: 'sp-1',
+          typeId: 'projects',
+          name: 'Project 1',
+          abstractStorageId: 'drive-folder-123',
+        },
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors).toContain('Option not found.');
+      }
+    });
+
+    it('returns error when multiple folders found with name', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const registry = createCustomRegistry([dynamicDocType]);
+      const compiledRegistry = createMockCompiledRegistry(registry);
+      const dynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn().mockResolvedValue({
+          contactFolders: {
+            isValid: false,
+            errorMessage:
+              'Multiple folders found with this name. Please resolve this ambiguity in Google Drive manually.',
+          },
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        compiledRegistry,
+        dynamicValidator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument({
+        type: 'comm-project',
+        data: {
+          title: 'Project Alpha',
+          contact: 'Duplicate Corp',
+        },
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors).toContain(
+          'Multiple folders found with this name. Please resolve this ambiguity in Google Drive manually.'
+        );
+      }
+    });
+
+    it('skips validation when field is optional and value is omitted or empty', async () => {
+      const optionalDocType: DocumentType = {
+        key: 'comm-optional',
+        name: 'Communication Optional',
+        documentSchema: {
+          fields: [
+            {
+              key: 'title',
+              name: 'Title',
+              type: 'string',
+              required: true,
+            },
+            {
+              key: 'contact',
+              name: 'Contact',
+              type: 'string',
+              required: false,
+              options: {
+                source: 'contactFolders',
+                key: 'name',
+                name: 'name',
+                allowUserInput: true,
+                dynamicConfig: {
+                  provider: 'google_drive',
+                  method: 'list_folders',
+                },
+              },
+            },
+          ],
+        },
+      };
+
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const registry = createCustomRegistry([optionalDocType]);
+      const compiledRegistry = createMockCompiledRegistry(registry);
+      const dynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn(),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        compiledRegistry,
+        dynamicValidator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument({
+        type: 'comm-optional',
+        data: {
+          title: 'Project Alpha',
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(dynamicValidator.validateExistence).not.toHaveBeenCalled();
     });
   });
 });

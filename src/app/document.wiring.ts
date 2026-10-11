@@ -8,11 +8,13 @@ import type {
   RawManifestProviderPort,
   DocumentServicePort,
   CompiledSchemaRegistryPort,
+  DocumentDynamicValidationPort,
 } from '../features/document/ports';
 import { ensureEvaluationOrder } from '../infrastructure/validation/json-logic-graph';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import { DocumentService } from '../features/document/domain';
 import { CompiledSchemaRegistry } from '../features/document/adapters/compiled-schema-registry';
+import { DynamicOptionsAdapter } from './dynamic-options.adapter';
 
 export type InjectedDocumentService =
   | DocumentService
@@ -74,6 +76,7 @@ export interface CreateDocumentServiceFactoryOptions {
   compiledSchemaRegistry: CompiledSchemaRegistryPort;
   configProvider?: AppConfigurationProviderPort | undefined;
   driveClient?: GoogleDriveClient | undefined;
+  dynamicValidator?: DocumentDynamicValidationPort | undefined;
 }
 
 export function createDocumentServiceFactory(
@@ -103,11 +106,15 @@ export function createDocumentServiceFactory(
 
     const activityEngine = new ActivityEngine([driveActivityHandler]);
 
+    const dynamicValidator =
+      options.dynamicValidator ?? new DynamicOptionsAdapter(driveClient);
+
     const service = new DocumentService(
       activityEngine,
       options.documentSchemaRegistry,
       options.templateEvaluator,
-      options.compiledSchemaRegistry
+      options.compiledSchemaRegistry,
+      dynamicValidator
     );
 
     await service.initialize();
@@ -126,6 +133,7 @@ export interface WireDocumentServicesOptions {
   documentService?: InjectedDocumentService | undefined;
   compiledSchemaRegistry?: CompiledSchemaRegistryPort | undefined;
   primaryTargetId?: string | undefined;
+  dynamicValidator?: DocumentDynamicValidationPort | undefined;
 }
 
 export function wireDocumentServicesAndRoutes(
@@ -150,11 +158,15 @@ export function wireDocumentServicesAndRoutes(
       options.compiledSchemaRegistry
     );
 
+    const dynamicValidator =
+      options.dynamicValidator ?? new DynamicOptionsAdapter(options.driveClient);
+
     documentService = new DocumentService(
       activityEngine,
       options.documentSchemaRegistry,
       options.templateEvaluator,
-      compiledSchemaRegistry
+      compiledSchemaRegistry,
+      dynamicValidator
     );
   }
 

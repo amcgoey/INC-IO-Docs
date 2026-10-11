@@ -145,5 +145,24 @@ describe('document.wiring', () => {
         })
       );
     });
+
+    it('injects custom dynamicValidator when provided', () => {
+      const mockServer: HttpServer = {
+        registerRoute: vi.fn(),
+      } as unknown as HttpServer;
+      const mockDriveClient = {} as unknown as GoogleDriveClient;
+      const mockDynamicValidator = { validateExistence: vi.fn() };
+
+      const service = wireDocumentServicesAndRoutes({
+        server: mockServer,
+        driveClient: mockDriveClient,
+        configProvider: { getDriveConfig: vi.fn().mockResolvedValue(undefined) },
+        documentSchemaRegistry: mockSchemaRegistry,
+        templateEvaluator: mockEvaluator,
+        dynamicValidator: mockDynamicValidator,
+      });
+
+      expect(service).toBeInstanceOf(DocumentService);
+    });
   });
 });

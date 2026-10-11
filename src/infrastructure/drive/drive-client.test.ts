@@ -2371,6 +2371,26 @@ describe('GoogleDriveClient', () => {
       expect(res.folders[0].id).toBe('folder-shared');
     });
 
+    it('filters by exact name and parent folder when provided', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: {
+          files: [{ id: 'folder-exact', name: "Acme O'Reilly" }],
+        },
+      });
+
+      const res = await client.listFolders({
+        parentFolderId: 'parent-123',
+        name: "Acme O'Reilly",
+      });
+
+      expect(mockDrive.files.list).toHaveBeenCalledWith(
+        expect.objectContaining({
+          q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false and 'parent-123' in parents and name = 'Acme O\\'Reilly'",
+        })
+      );
+      expect(res.folders).toEqual([{ id: 'folder-exact', name: "Acme O'Reilly" }]);
+    });
+
     it('wraps API errors in GoogleDriveApiError', async () => {
       (mockDrive.files.list as ReturnType<typeof vi.fn>).mockRejectedValueOnce({
         status: 500,
