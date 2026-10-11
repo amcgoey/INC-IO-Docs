@@ -56,14 +56,13 @@ export function buildDocumentTypeSelectionSection(
 
   const currentSpaceType = selectionState.spaceTypes.find((t) => t.selected)?.value ?? 'default';
 
-  const spaceValue = selectionState.spaces.length > 0 ? selectionState.spaces[0] : undefined;
-  const spaceAutocomplete = selectionState.spaces.map((space) => ({ text: space, value: space }));
+  const sortedSpaces = [...selectionState.spaces].sort((a, b) => a.localeCompare(b));
+  const spaceAutocomplete = sortedSpaces.map((space) => ({ text: space, value: space }));
   widgets.push({
     textInput: {
       name: getDocumentSpaceWidgetName(currentSpaceType),
       label: 'Document Space',
       hintText: 'Enter document space',
-      ...(spaceValue !== undefined ? { value: spaceValue } : {}),
       ...(spaceAutocomplete.length > 0 ? { autocomplete: spaceAutocomplete } : {}),
     },
   });

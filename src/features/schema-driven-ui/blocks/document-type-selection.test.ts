@@ -37,7 +37,7 @@ describe('Document Type Selection Block', () => {
         { text: 'Project Space', value: 'projects', selected: true },
         { text: 'Proposal Space', value: 'proposals' },
       ],
-      spaces: ['proj-alpha', 'proj-beta'],
+      spaces: ['proj-beta', 'proj-alpha'],
       documentTypes: [
         { text: 'Communication Project', value: 'communication-project' },
       ],
@@ -62,7 +62,7 @@ describe('Document Type Selection Block', () => {
     expect(spaceWidget.textInput).toBeDefined();
     expect(spaceWidget.textInput?.name).toBe(getDocumentSpaceWidgetName('projects'));
     expect(spaceWidget.textInput?.label).toBe('Document Space');
-    expect(spaceWidget.textInput?.value).toBe('proj-alpha');
+    expect(spaceWidget.textInput?.value).toBeUndefined();
     expect(spaceWidget.textInput?.autocomplete).toEqual([
       { text: 'proj-alpha', value: 'proj-alpha' },
       { text: 'proj-beta', value: 'proj-beta' },
