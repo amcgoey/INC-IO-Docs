@@ -387,11 +387,11 @@ export class DocumentService implements DocumentServicePort {
       for (const field of documentType.documentSchema.fields) {
         if (isDynamicOptionField(field)) {
           const rawValue = rawData[field.key];
-          if (rawValue !== undefined && rawValue !== null) {
+          if (typeof rawValue === 'string') {
             dynamicQueries.push({
               sourceKey: field.options.source,
               config: field.options.dynamicConfig,
-              valueToValidate: String(rawValue),
+              valueToValidate: rawValue,
             });
           }
         }

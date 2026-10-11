@@ -28,11 +28,27 @@ export interface DynamicOptionsAdapterOptions {
   timeoutMs?: number;
 }
 
+export interface GoogleDriveDynamicConfig extends Record<string, unknown> {
+  provider: 'google_drive';
+  method: 'list_folders';
+  relativePath?: string | undefined;
+}
+
+export function isGoogleDriveDynamicConfig(
+  config: Record<string, unknown>
+): config is GoogleDriveDynamicConfig {
+  return config.provider === 'google_drive' && config.method === 'list_folders';
+}
+
 const DEFAULT_TIMEOUT_MS = 5000;
 const MAX_DYNAMIC_OPTIONS = 150;
 const PLACEHOLDER_MISSING_SPACE: DynamicOptionItem[] = [
   { text: 'Select a Space first', value: '' },
 ];
+const OPTION_NOT_FOUND: DynamicValidationResult = {
+  isValid: false,
+  errorMessage: 'Option not found.',
+};
 
 export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynamicValidationPort {
   private readonly timeoutMs: number;
@@ -116,10 +132,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     query: DynamicOptionQuery,
     spaceId: string
   ): Promise<DynamicOptionItem[]> {
-    const provider = query.config.provider;
-    const method = query.config.method;
-
-    if (provider !== 'google_drive' || method !== 'list_folders') {
+    if (!isGoogleDriveDynamicConfig(query.config)) {
       return [];
     }
 
@@ -216,10 +229,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
 
     if (!context.spaceId) {
       for (const query of queries) {
-        results[query.sourceKey] = {
-          isValid: false,
-          errorMessage: 'Option not found.',
-        };
+        results[query.sourceKey] = { ...OPTION_NOT_FOUND };
       }
       return results;
     }
@@ -242,10 +252,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     // Ensure all queries have an entry
     for (const query of queries) {
       if (!results[query.sourceKey]) {
-        results[query.sourceKey] = {
-          isValid: false,
-          errorMessage: 'Option not found.',
-        };
+        results[query.sourceKey] = { ...OPTION_NOT_FOUND };
       }
     }
 
@@ -288,14 +295,8 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     query: DynamicValidationQuery,
     spaceId: string
   ): Promise<DynamicValidationResult> {
-    const provider = query.config.provider;
-    const method = query.config.method;
-
-    if (provider !== 'google_drive' || method !== 'list_folders') {
-      return {
-        isValid: false,
-        errorMessage: 'Option not found.',
-      };
+    if (!isGoogleDriveDynamicConfig(query.config)) {
+      return { ...OPTION_NOT_FOUND };
     }
 
     const relativePath =
@@ -305,10 +306,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
 
     const targetFolderId = await this.resolveTargetFolder(spaceId, relativePath);
     if (!targetFolderId) {
-      return {
-        isValid: false,
-        errorMessage: 'Option not found.',
-      };
+      return { ...OPTION_NOT_FOUND };
     }
 
     const result = await this.driveClient.listFolders({
@@ -325,10 +323,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     }
 
     if (matchingFolders.length === 0) {
-      return {
-        isValid: false,
-        errorMessage: 'Option not found.',
-      };
+      return { ...OPTION_NOT_FOUND };
     }
 
     return {
