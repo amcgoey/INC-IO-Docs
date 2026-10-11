@@ -710,6 +710,42 @@ describe('Document Info Block', () => {
       expect(Value.Check(UiViewActionSchema, buttonAction)).toBe(true);
       expect(buttonAction).toEqual({ action: 'processDocument', parameters: { mode: 'fast' } });
     });
+
+    it('populates selectionInput items from dynamicOptions when matching source is present', () => {
+      const schema: AbstractDataSchema = {
+        fields: [
+          {
+            key: 'contact',
+            type: 'string',
+            options: {
+              source: 'contactFolders',
+              key: 'name',
+              name: 'name',
+              allowUserInput: true,
+              dynamicConfig: {
+                provider: 'google_drive',
+                method: 'list_folders',
+              },
+            },
+          },
+        ],
+      };
+
+      const section = buildDocumentInfoSection(schema, undefined, {
+        dynamicOptions: {
+          contactFolders: [
+            { text: 'Folder 1', value: 'Folder 1' },
+            { text: 'Folder 2', value: 'Folder 2' },
+          ],
+        },
+      });
+
+      expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+      expect(section.widgets[0].selectionInput?.items).toEqual([
+        { text: 'Folder 1', value: 'Folder 1' },
+        { text: 'Folder 2', value: 'Folder 2' },
+      ]);
+    });
   });
 
   describe('getDocumentInfoWidgetName', () => {

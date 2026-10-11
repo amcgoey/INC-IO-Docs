@@ -43,6 +43,7 @@ export const FormDocumentFieldOptionType = Type.Object({
   key: Type.String(),
   name: Type.String(),
   allowUserInput: Type.Optional(Type.Boolean()),
+  dynamicConfig: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 }, { additionalProperties: true });
 
 export type FormDocumentFieldOption = Static<typeof FormDocumentFieldOptionType>;

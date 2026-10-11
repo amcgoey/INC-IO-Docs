@@ -6,6 +6,8 @@ import {
   GenerateViewRequestSchema,
   AbstractDataSchema,
   StandardWidgetCustomPropsSchema,
+  DynamicOptionQuerySchema,
+  OptionsFetcherContextSchema,
   type SelectionState,
   type GenerateViewRequest,
 } from './ports';
@@ -77,6 +79,36 @@ describe('schema-driven-ui ports', () => {
         items: [{ text: 'Draft', value: 'draft' }],
       };
       expect(Value.Check(StandardWidgetCustomPropsSchema, props)).toBe(true);
+    });
+  });
+
+  describe('Dynamic Options Schemas', () => {
+    it('validates DynamicOptionQuerySchema', () => {
+      const query = {
+        sourceKey: 'contactFolders',
+        config: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: '1 Admin/Communication',
+        },
+      };
+      expect(Value.Check(DynamicOptionQuerySchema, query)).toBe(true);
+    });
+
+    it('validates OptionsFetcherContextSchema', () => {
+      const context = {
+        spaceId: 'folder-123',
+        formData: { someKey: 'someVal' },
+      };
+      expect(Value.Check(OptionsFetcherContextSchema, context)).toBe(true);
+    });
+
+    it('validates GenerateViewRequest with optional spaceId', () => {
+      const req: GenerateViewRequest = {
+        viewId: 'drive-document-process-card',
+        spaceId: 'space-folder-999',
+      };
+      expect(Value.Check(GenerateViewRequestSchema, req)).toBe(true);
     });
   });
 });

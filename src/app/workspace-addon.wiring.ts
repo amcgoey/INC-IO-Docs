@@ -5,6 +5,7 @@ import {
 } from '../infrastructure/workspace-addon/api';
 import { GoogleJwtVerifier } from '../infrastructure/workspace-addon/jwt-verifier';
 import { evaluateFormChange } from '../infrastructure/workspace-addon/json-logic-evaluator';
+import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import type { HttpServer } from '../infrastructure/http';
 import {
   createDocumentServiceFactory,
@@ -18,7 +19,10 @@ import {
   createUiProcessManagerWiring,
   type DocumentServiceFactory,
   type DocumentSpaceServiceFactory,
+  type SchemaDrivenUiServiceFactory,
 } from './ui-process-manager.wiring';
+import { createSchemaDrivenUiWiring } from './schema-driven-ui.wiring';
+import { DynamicOptionsAdapter } from './dynamic-options.adapter';
 import type { RawManifestProviderPort } from '../features/ui-process-manager';
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
 import type {
@@ -29,7 +33,7 @@ import type {
 } from '../features/document/ports';
 import type { DocumentSpaceManifestRegistryAdapter } from '../features/document-space/adapters/document-space-manifest-registry';
 import type { DocumentSpaceStoragePort } from '../features/document-space/ports';
-import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
+import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 
 export interface WorkspaceAddonWiringOptions {
@@ -38,6 +42,7 @@ export interface WorkspaceAddonWiringOptions {
   createDocumentService?: DocumentServiceFactory | undefined;
   documentSpaceService?: DocumentSpaceService | undefined;
   createDocumentSpaceService?: DocumentSpaceServiceFactory | undefined;
+  createSchemaDrivenUiService?: SchemaDrivenUiServiceFactory | undefined;
   authVerifier?: WorkspaceAuthVerifierPort | undefined;
   configProvider?: (WorkspaceConfigProviderPort & Partial<AppConfigurationProviderPort>) | undefined;
   driveConfigProvider?: AppConfigurationProviderPort | undefined;
@@ -109,6 +114,23 @@ export function wireWorkspaceAddonRoutes(
           } as unknown as DocumentSpaceService)
         : undefined);
 
+    let createSchemaDrivenUiService = options.createSchemaDrivenUiService;
+    if (!createSchemaDrivenUiService && options.driveClient) {
+      createSchemaDrivenUiService = (context: WorkspaceExecutionContext) => {
+        const driveClient = context.userOAuthToken
+          ? new GoogleDriveClient({
+              auth: context.userOAuthToken,
+              configProvider: appConfigProvider,
+            })
+          : options.driveClient!;
+        const optionsFetcher = new DynamicOptionsAdapter(driveClient);
+        return createSchemaDrivenUiWiring({
+          manifestProvider,
+          optionsFetcher,
+        }).schemaDrivenUiService;
+      };
+    }
+
     const uiProcessWiring = createUiProcessManagerWiring({
       configProvider: options.configProvider,
       documentSpaceService,
@@ -116,6 +138,8 @@ export function wireWorkspaceAddonRoutes(
       manifestProvider,
       documentService: options.documentService,
       createDocumentService,
+      ...(createSchemaDrivenUiService !== undefined ? { createSchemaDrivenUiService } : {}),
+      ...(options.driveClient !== undefined ? { driveClient: options.driveClient } : {}),
       evaluateFormChange,
     });
     uiOrchestrator = uiProcessWiring.requestScopedWrapper;

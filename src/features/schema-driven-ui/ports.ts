@@ -22,6 +22,7 @@ export type SelectionState = Static<typeof SelectionStateSchema>;
 export const GenerateViewRequestSchema = Type.Object({
   viewId: Type.String({ minLength: 1 }),
   documentTypeKey: Type.Optional(Type.String({ minLength: 1 })),
+  spaceId: Type.Optional(Type.String()),
   selectionState: Type.Optional(SelectionStateSchema),
   validationErrors: Type.Optional(Type.Array(Type.String())),
   formData: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
@@ -29,6 +30,36 @@ export const GenerateViewRequestSchema = Type.Object({
 });
 
 export type GenerateViewRequest = Static<typeof GenerateViewRequestSchema>;
+
+// --- Dynamic Option DTO Schemas & Port ---
+
+export const DynamicOptionQuerySchema = Type.Object({
+  sourceKey: Type.String(),
+  config: Type.Record(Type.String(), Type.Unknown()),
+});
+
+export type DynamicOptionQuery = Static<typeof DynamicOptionQuerySchema>;
+
+export const DynamicOptionItemSchema = Type.Object({
+  text: Type.String(),
+  value: Type.String(),
+});
+
+export type DynamicOptionItem = Static<typeof DynamicOptionItemSchema>;
+
+export const OptionsFetcherContextSchema = Type.Object({
+  spaceId: Type.Optional(Type.String()),
+  formData: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+});
+
+export type OptionsFetcherContext = Static<typeof OptionsFetcherContextSchema>;
+
+export interface OptionsFetcherPort {
+  fetchOptions(
+    queries: DynamicOptionQuery[],
+    context: OptionsFetcherContext
+  ): Promise<Record<string, DynamicOptionItem[]>>;
+}
 
 // --- Data & Presentation DTO Schemas ---
 
@@ -69,6 +100,7 @@ export interface DocumentTypeDisplayNameResolverPort {
 export interface UiViewAdapterContext extends GenerateViewRequest {
   uiSchema?: UiSchema | undefined;
   documentSchema?: AbstractDataSchema | undefined;
+  dynamicOptions?: Record<string, DynamicOptionItem[]> | undefined;
 }
 
 export interface UiViewSchemaAdapterPort {

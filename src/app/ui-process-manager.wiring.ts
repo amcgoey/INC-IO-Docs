@@ -30,6 +30,8 @@ import {
 } from '../infrastructure/workspace-addon/translator';
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
 import type { FormChangeEvaluatorFn as FormChangeEvaluator } from '../features/ui-process-manager';
+import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
+import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 
 export function resolveActionRoute(route: string, baseUrl?: string): string {
   try {
@@ -191,6 +193,8 @@ export interface UiProcessManagerWiringOptions {
   createDocumentService?: DocumentServiceFactory | undefined;
   evaluateFormChange?: FormChangeEvaluator | undefined;
   createOrchestrator?: UiProcessOrchestratorFactory | undefined;
+  optionsFetcher?: OptionsFetcherPort | undefined;
+  driveClient?: GoogleDriveClient | undefined;
 }
 
 export type UiProcessOrchestratorResolver = (
@@ -241,8 +245,22 @@ export function createUiProcessRequestWrapper(
       };
     }
 
+    const rawFormData = intent.formData;
+    const resolvedSpaceId =
+      (typeof rawFormData?.spaceId === 'string' ? rawFormData.spaceId : undefined) ??
+      (typeof rawFormData?.SelectDocumentSpace === 'string' && rawFormData.SelectDocumentSpace.trim()
+        ? rawFormData.SelectDocumentSpace.trim()
+        : undefined) ??
+      (rawFormData
+        ? (Object.entries(rawFormData).find(
+            ([k, v]) =>
+              k.startsWith('SelectDocumentSpace_') && typeof v === 'string' && v.trim().length > 0
+          )?.[1] as string | undefined)
+        : undefined);
+
     const view = await schemaDrivenUiInstance.generateView({
       viewId: intent.viewId,
+      ...(resolvedSpaceId !== undefined ? { spaceId: resolvedSpaceId } : {}),
       ...(intent.documentTypeKey !== undefined ? { documentTypeKey: intent.documentTypeKey } : {}),
       ...(intent.validationErrors !== undefined ? { validationErrors: intent.validationErrors } : {}),
       ...(intent.formData !== undefined ? { formData: intent.formData } : {}),
@@ -289,6 +307,8 @@ export function createUiProcessManagerWiring(
       ? { schemaDrivenUiService: options.schemaDrivenUiService }
       : createSchemaDrivenUiWiring({
           manifestProvider: options.manifestProvider,
+          ...(options.optionsFetcher !== undefined ? { optionsFetcher: options.optionsFetcher } : {}),
+          ...(options.driveClient !== undefined ? { driveClient: options.driveClient } : {}),
         });
 
   const configProvider: UiProcessConfigProviderPort = {

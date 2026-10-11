@@ -16,6 +16,7 @@ import type {
   UiViewAdapterContext,
   UiViewSchemaAdapterPort,
   SelectionState,
+  OptionsFetcherPort,
 } from './ports';
 
 describe('schema-driven-ui domain schemas', () => {
@@ -373,5 +374,97 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
 
     expect(view.sections).toEqual([]);
     expect(view.header).toBeUndefined();
+  });
+
+  it('dispatches queries for fields with dynamicConfig to OptionsFetcherPort and populates dynamicOptions in adapterContext', async () => {
+    const docSchemaWithDynamic = {
+      fields: [
+        {
+          key: 'contact',
+          type: 'string',
+          options: {
+            source: 'contactFolders',
+            key: 'name',
+            name: 'name',
+            allowUserInput: true,
+            dynamicConfig: {
+              provider: 'google_drive',
+              method: 'list_folders',
+              relativePath: '1 Admin/Communication',
+            },
+          },
+        },
+        {
+          key: 'staticField',
+          type: 'string',
+          options: {
+            source: 'staticOptions',
+            key: 'val',
+            name: 'text',
+          },
+        },
+      ],
+      options: {
+        staticOptions: [{ val: 's1', text: 'Static 1' }],
+      },
+    };
+
+    const manifestPort = createMockManifestPort({
+      getDocumentSchema: vi.fn().mockResolvedValue(docSchemaWithDynamic),
+    });
+
+    const mockFetcher: OptionsFetcherPort = {
+      fetchOptions: vi.fn().mockResolvedValue({
+        contactFolders: [
+          { text: 'Client A', value: 'Client A' },
+          { text: 'Client B', value: 'Client B' },
+        ],
+      }),
+    };
+
+    let capturedContext: UiViewAdapterContext | undefined;
+    const adapter = createMockAdapter('dynamic-view', undefined, async (ctx) => {
+      capturedContext = ctx;
+      return {
+        id: 'dynamic-view',
+        sections: [],
+      };
+    });
+
+    const service = new SchemaDrivenUiService(manifestPort, [adapter], mockFetcher);
+
+    await service.generateView({
+      viewId: 'dynamic-view',
+      documentTypeKey: 'communication-project',
+      spaceId: 'space-folder-123',
+      formData: { existingField: 'someValue' },
+    });
+
+    expect(mockFetcher.fetchOptions).toHaveBeenCalledWith(
+      [
+        {
+          sourceKey: 'contactFolders',
+          config: {
+            provider: 'google_drive',
+            method: 'list_folders',
+            relativePath: '1 Admin/Communication',
+          },
+        },
+      ],
+      {
+        spaceId: 'space-folder-123',
+        formData: { existingField: 'someValue' },
+      }
+    );
+
+    expect(capturedContext?.dynamicOptions).toEqual({
+      contactFolders: [
+        { text: 'Client A', value: 'Client A' },
+        { text: 'Client B', value: 'Client B' },
+      ],
+    });
+
+    // Verify resolvedDocSchema was NOT mutated
+    expect(capturedContext?.documentSchema).toEqual(docSchemaWithDynamic);
   });
 });

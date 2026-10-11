@@ -10,6 +10,7 @@ import type {
   AbstractDataField,
   StandardWidgetCustomProps,
   SelectionItem,
+  DynamicOptionItem,
 } from '../ports';
 
 export interface DocumentInfoOptions {
@@ -18,6 +19,7 @@ export interface DocumentInfoOptions {
   hiddenFields?: string[] | undefined;
   onProcessAction?: UiViewAction | string | undefined;
   documentTypeKey?: string | undefined;
+  dynamicOptions?: Record<string, DynamicOptionItem[]> | undefined;
 }
 
 export function getDocumentInfoWidgetName(fieldKey: string, documentTypeKey?: string): string {
@@ -51,6 +53,7 @@ interface WidgetBuilderContext {
   onChangeAction: UiViewAction | undefined;
   formValue: unknown | undefined;
   dataSchema?: AbstractDataSchema | undefined;
+  dynamicOptions?: Record<string, Array<{ text: string; value: string }>> | undefined;
 }
 
 type WidgetBuilder = (ctx: WidgetBuilderContext) => UiViewWidget;
@@ -58,7 +61,8 @@ type WidgetBuilder = (ctx: WidgetBuilderContext) => UiViewWidget;
 export function extractSelectionItems(
   field: AbstractDataField,
   customProps: StandardWidgetCustomProps,
-  dataSchema?: AbstractDataSchema | undefined
+  dataSchema?: AbstractDataSchema | undefined,
+  dynamicOptions?: Record<string, Array<{ text: string; value: string }>> | undefined
 ): SelectionItem[] {
   let defaultItems: SelectionItem[] = [];
   if (Array.isArray(field.options)) {
@@ -78,21 +82,27 @@ export function extractSelectionItems(
   } else if (
     field.options &&
     typeof field.options === 'object' &&
-    'source' in field.options &&
-    dataSchema?.options
+    'source' in field.options
   ) {
     const sourceKey = (field.options as { source: string }).source;
-    const rawTuples = dataSchema.options[sourceKey];
-    if (Array.isArray(rawTuples)) {
-      defaultItems = rawTuples.map((tuple) => {
-        if (typeof tuple === 'object' && tuple !== null) {
-          const t = tuple as { key?: unknown; name?: unknown; text?: unknown; value?: unknown };
-          const text = String(t.name ?? t.text ?? t.key ?? t.value);
-          const value = String(t.key ?? t.value ?? t.name ?? t.text);
-          return { text, value };
-        }
-        return { text: String(tuple), value: String(tuple) };
-      });
+    if (dynamicOptions && sourceKey in dynamicOptions) {
+      defaultItems = dynamicOptions[sourceKey].map((opt) => ({
+        text: opt.text,
+        value: opt.value,
+      }));
+    } else if (dataSchema?.options) {
+      const rawTuples = dataSchema.options[sourceKey];
+      if (Array.isArray(rawTuples)) {
+        defaultItems = rawTuples.map((tuple) => {
+          if (typeof tuple === 'object' && tuple !== null) {
+            const t = tuple as { key?: unknown; name?: unknown; text?: unknown; value?: unknown };
+            const text = String(t.name ?? t.text ?? t.key ?? t.value);
+            const value = String(t.key ?? t.value ?? t.name ?? t.text);
+            return { text, value };
+          }
+          return { text: String(tuple), value: String(tuple) };
+        });
+      }
     }
   }
 
@@ -100,8 +110,8 @@ export function extractSelectionItems(
 }
 
 const widgetBuilders: Record<string, WidgetBuilder> = {
-  selectionInput: ({ field, label, widgetName, customProps, onChangeAction, formValue, dataSchema }) => {
-    const baseItems = extractSelectionItems(field, customProps, dataSchema);
+  selectionInput: ({ field, label, widgetName, customProps, onChangeAction, formValue, dataSchema, dynamicOptions }) => {
+    const baseItems = extractSelectionItems(field, customProps, dataSchema, dynamicOptions);
     const resolvedValue = formValue !== undefined ? formValue : field.defaultValue;
     const items =
       resolvedValue !== undefined
@@ -123,7 +133,7 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
       ),
     };
   },
-  textInput: ({ field, label, widgetName, customProps, onChangeAction, formValue, dataSchema }) => {
+  textInput: ({ field, label, widgetName, customProps, onChangeAction, formValue, dataSchema, dynamicOptions }) => {
     const hintText = customProps.placeholder ?? customProps.hintText;
     const value =
       formValue !== undefined
@@ -132,7 +142,7 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
           ? String(field.defaultValue)
           : customProps.value;
 
-    const autocompleteItems = extractSelectionItems(field, customProps, dataSchema);
+    const autocompleteItems = extractSelectionItems(field, customProps, dataSchema, dynamicOptions);
 
     return {
       textInput: withOnChangeAction(
@@ -202,6 +212,7 @@ export function buildDocumentInfoSection(
         onChangeAction,
         formValue,
         dataSchema,
+        dynamicOptions: options?.dynamicOptions,
       })
     );
   }

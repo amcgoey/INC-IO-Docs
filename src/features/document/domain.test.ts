@@ -680,6 +680,42 @@ describe('Document domain', () => {
     expect(Value.Check(DocumentFieldOptionType, optionWithInvalidAllowUserInput)).toBe(false);
   });
 
+  it('DocumentFieldOptionType accepts dynamicConfig only when allowUserInput is true', () => {
+    const validDynamicOption = {
+      source: 'contactFolders',
+      key: 'name',
+      name: 'name',
+      allowUserInput: true,
+      dynamicConfig: {
+        provider: 'google_drive',
+        method: 'list_folders',
+        relativePath: '1 Admin/Communication',
+      },
+    };
+    expect(Value.Check(DocumentFieldOptionType, validDynamicOption)).toBe(true);
+
+    const dynamicOptionMissingAllowUserInput = {
+      source: 'contactFolders',
+      key: 'name',
+      name: 'name',
+      dynamicConfig: {
+        provider: 'google_drive',
+      },
+    };
+    expect(Value.Check(DocumentFieldOptionType, dynamicOptionMissingAllowUserInput)).toBe(false);
+
+    const dynamicOptionWithAllowUserInputFalse = {
+      source: 'contactFolders',
+      key: 'name',
+      name: 'name',
+      allowUserInput: false,
+      dynamicConfig: {
+        provider: 'google_drive',
+      },
+    };
+    expect(Value.Check(DocumentFieldOptionType, dynamicOptionWithAllowUserInputFalse)).toBe(false);
+  });
+
   it('DocumentTypeSchema allows optional backend config stubs', () => {
     const documentTypeWithBackendConfigs: DocumentType = {
       key: 'submittal',

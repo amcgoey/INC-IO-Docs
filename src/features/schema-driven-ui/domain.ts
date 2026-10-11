@@ -4,6 +4,9 @@ import type {
   UiManifestPort,
   UiViewSchemaAdapterPort,
   UiViewAdapterContext,
+  OptionsFetcherPort,
+  DynamicOptionQuery,
+  DynamicOptionItem,
 } from './ports';
 
 import {
@@ -238,6 +241,18 @@ function validateOrThrow<T extends TSchema>(schema: T, value: unknown, errorMess
   }
 }
 
+function isDynamicOptionConfig(
+  options: unknown
+): options is { source: string; dynamicConfig: Record<string, unknown> } {
+  if (!options || typeof options !== 'object') return false;
+  const record = options as Record<string, unknown>;
+  return (
+    typeof record.source === 'string' &&
+    typeof record.dynamicConfig === 'object' &&
+    record.dynamicConfig !== null
+  );
+}
+
 // --- Domain Service (Guarded Read) ---
 
 export class SchemaDrivenUiService {
@@ -245,7 +260,8 @@ export class SchemaDrivenUiService {
 
   constructor(
     private readonly manifestPort: UiManifestPort,
-    adapters: UiViewSchemaAdapterPort[] = []
+    adapters: UiViewSchemaAdapterPort[] = [],
+    private readonly optionsFetcher?: OptionsFetcherPort
   ) {
     const adapterMap = new Map<string, UiViewSchemaAdapterPort>();
     for (const adapter of adapters) {
@@ -267,6 +283,7 @@ export class SchemaDrivenUiService {
 
     let resolvedUiSchema: UiSchema | undefined = undefined;
     let resolvedDocSchema: UiViewAdapterContext['documentSchema'] = undefined;
+    let dynamicOptions: Record<string, DynamicOptionItem[]> | undefined = undefined;
 
     if (request.documentTypeKey) {
       resolvedUiSchema = await this.manifestPort.getUiSchema(request.documentTypeKey);
@@ -280,12 +297,38 @@ export class SchemaDrivenUiService {
       );
 
       resolvedDocSchema = await this.manifestPort.getDocumentSchema(request.documentTypeKey);
+
+      if (resolvedDocSchema?.fields && this.optionsFetcher) {
+        const queries: DynamicOptionQuery[] = [];
+        for (const field of resolvedDocSchema.fields) {
+          const options = field.options;
+          if (isDynamicOptionConfig(options)) {
+            if (!queries.some((q) => q.sourceKey === options.source)) {
+              queries.push({
+                sourceKey: options.source,
+                config: options.dynamicConfig,
+              });
+            }
+          }
+        }
+
+        if (queries.length > 0) {
+          const spaceId =
+            request.spaceId ??
+            (typeof request.formData?.spaceId === 'string' ? request.formData.spaceId : undefined);
+          dynamicOptions = await this.optionsFetcher.fetchOptions(queries, {
+            ...(spaceId !== undefined ? { spaceId } : {}),
+            ...(request.formData !== undefined ? { formData: request.formData } : {}),
+          });
+        }
+      }
     }
 
     const adapterContext: UiViewAdapterContext = {
       ...request,
       uiSchema: resolvedUiSchema,
       documentSchema: resolvedDocSchema,
+      ...(dynamicOptions !== undefined ? { dynamicOptions } : {}),
     };
 
     const view = await adapter.composeView(adapterContext);

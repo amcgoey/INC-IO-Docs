@@ -65,12 +65,29 @@ export const ActivityOutputType = Type.Object({
 export type ActivityOutput = Static<typeof ActivityOutputType>;
 
 
-export const DocumentFieldOptionType = Type.Object({
+export const DynamicOptionsConfigSchema = Type.Record(Type.String(), Type.Unknown());
+export type DynamicOptionsConfig = Static<typeof DynamicOptionsConfigSchema>;
+
+export const DynamicDocumentFieldOptionType = Type.Object({
+  source: Type.String(),
+  key: Type.String(),
+  name: Type.String(),
+  allowUserInput: Type.Literal(true),
+  dynamicConfig: DynamicOptionsConfigSchema,
+});
+
+export const StaticDocumentFieldOptionType = Type.Object({
   source: Type.String(),
   key: Type.String(),
   name: Type.String(),
   allowUserInput: Type.Optional(Type.Boolean()),
+  dynamicConfig: Type.Optional(Type.Never()),
 });
+
+export const DocumentFieldOptionType = Type.Union([
+  DynamicDocumentFieldOptionType,
+  StaticDocumentFieldOptionType,
+]);
 
 export type DocumentFieldOption = Static<typeof DocumentFieldOptionType>;
 

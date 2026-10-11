@@ -9,6 +9,7 @@ import type { DocumentSpaceService } from '../features/document-space/domain';
 import type { DocumentService } from '../features/document/domain';
 import type { SchemaDrivenUiService } from '../features/schema-driven-ui/domain';
 import type { RawManifestProviderPort } from './schema-driven-ui.wiring';
+import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
 
 import type {
   GoogleWorkspaceActionResponse,
@@ -788,6 +789,106 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           manifestProvider: mockManifestProvider,
         })
       ).toThrow(/Either documentSpaceService or createDocumentSpaceService must be provided/);
+    });
+
+    it('wires dynamic options fetcher so that documents load dynamic dropdown options', async () => {
+      const dynamicManifestProvider: RawManifestProviderPort = {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: ['./document-types/communication-project.json'],
+          configuration: {
+            workspace: {
+              defaultDocumentType: 'communication-project',
+              defaultDocumentSpaceType: 'projects',
+            },
+          },
+        }),
+        readParsedSchema: vi.fn().mockImplementation(async () => {
+          return {
+            key: 'communication-project',
+            name: 'Communication Project',
+            documentSchema: {
+              fields: [
+                {
+                  key: 'contact',
+                  name: 'Contact',
+                  type: 'string',
+                  options: {
+                    source: 'contactFolders',
+                    key: 'name',
+                    name: 'name',
+                    allowUserInput: true,
+                    dynamicConfig: {
+                      provider: 'google_drive',
+                      method: 'list_folders',
+                      relativePath: '1 Admin/Communication',
+                    },
+                  },
+                },
+              ],
+            },
+            documentUiSchema: {
+              layout: ['contact'],
+              fields: {
+                contact: { widget: 'selectionInput', label: 'Contact' },
+              },
+            },
+          };
+        }),
+      };
+
+      const mockFetcher: OptionsFetcherPort = {
+        fetchOptions: vi.fn().mockResolvedValue({
+          contactFolders: [
+            { text: 'Folder Alpha', value: 'Folder Alpha' },
+            { text: 'Folder Beta', value: 'Folder Beta' },
+          ],
+        }),
+      };
+
+      const wiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: dynamicManifestProvider,
+        optionsFetcher: mockFetcher,
+      });
+
+      const response = (await wiring.requestScopedWrapper.processUiEvent({
+        actionName: 'onSpaceTypeChange',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'space-folder-xyz',
+          SelectDocumentType: 'communication-project',
+        },
+      })) as GoogleWorkspaceActionResponse;
+
+      expect(mockFetcher.fetchOptions).toHaveBeenCalledWith(
+        [
+          {
+            sourceKey: 'contactFolders',
+            config: {
+              provider: 'google_drive',
+              method: 'list_folders',
+              relativePath: '1 Admin/Communication',
+            },
+          },
+        ],
+        expect.objectContaining({
+          spaceId: 'space-folder-xyz',
+        })
+      );
+
+      const updateCard = response.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+      const docInfoSection = updateCard!.sections.find((s) => s.header === 'Document Data');
+      expect(docInfoSection).toBeDefined();
+      const contactWidget = docInfoSection!.widgets.find(
+        (w) => w.selectionInput?.name === 'contact_communication-project'
+      );
+      expect(contactWidget).toBeDefined();
+      expect(contactWidget!.selectionInput?.items).toEqual([
+        { text: 'Folder Alpha', value: 'Folder Alpha' },
+        { text: 'Folder Beta', value: 'Folder Beta' },
+      ]);
     });
   });
 });
