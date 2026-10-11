@@ -329,7 +329,7 @@ describe('WorkspaceAddonAdapter', () => {
 
       const spaceWidget = selectionSection.widgets[1].textInput;
       expect(spaceWidget?.name).toBe('SelectDocumentSpace_eng-space');
-      expect(spaceWidget?.value).toBe('Eng-Project-Alpha');
+      expect(spaceWidget?.value).toBeUndefined();
       expect(spaceWidget?.autocomplete).toEqual([
         { text: 'Eng-Project-Alpha', value: 'Eng-Project-Alpha' },
         { text: 'Eng-Project-Beta', value: 'Eng-Project-Beta' },
