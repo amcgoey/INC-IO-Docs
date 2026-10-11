@@ -271,10 +271,11 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
         this.executeValidationQuery(query, spaceId),
         timeoutPromise,
       ]);
-    } catch {
+    } catch (error) {
       return {
         isValid: false,
-        errorMessage: 'Option not found.',
+        errorMessage:
+          error instanceof Error ? error.message : 'Option not found.',
       };
     } finally {
       if (timer) {

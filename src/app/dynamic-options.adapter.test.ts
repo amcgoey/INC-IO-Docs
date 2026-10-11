@@ -500,7 +500,7 @@ describe('DynamicOptionsAdapter', () => {
       expect(result).toEqual({
         slowQuery: {
           isValid: false,
-          errorMessage: 'Option not found.',
+          errorMessage: 'Dynamic option validation timed out after 50ms',
         },
       });
     });
@@ -551,7 +551,7 @@ describe('DynamicOptionsAdapter', () => {
 
       expect(result).toEqual({
         queryValid: { isValid: true },
-        queryError: { isValid: false, errorMessage: 'Option not found.' },
+        queryError: { isValid: false, errorMessage: 'Drive API failure' },
         queryMissing: { isValid: false, errorMessage: 'Option not found.' },
       });
     });

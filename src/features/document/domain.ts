@@ -268,6 +268,19 @@ function resolvePayloadTemplates(
   return value;
 }
 
+function isDynamicOptionField(
+  field: DocumentField
+): field is DocumentField & {
+  options: { source: string; dynamicConfig: Record<string, unknown> };
+} {
+  return (
+    field.options !== undefined &&
+    'dynamicConfig' in field.options &&
+    typeof field.options.dynamicConfig === 'object' &&
+    field.options.dynamicConfig !== null
+  );
+}
+
 export function buildFieldSchema(
   field: DocumentField,
   documentSchema: DocumentSchema,
@@ -372,18 +385,13 @@ export class DocumentService implements DocumentServicePort {
       const dynamicQueries: DynamicValidationQuery[] = [];
 
       for (const field of documentType.documentSchema.fields) {
-        if (
-          field.options &&
-          'dynamicConfig' in field.options &&
-          field.options.dynamicConfig &&
-          typeof field.options.dynamicConfig === 'object'
-        ) {
+        if (isDynamicOptionField(field)) {
           const rawValue = rawData[field.key];
-          if (typeof rawValue === 'string' && rawValue.trim().length > 0) {
+          if (rawValue !== undefined && rawValue !== null) {
             dynamicQueries.push({
               sourceKey: field.options.source,
-              config: field.options.dynamicConfig as Record<string, unknown>,
-              valueToValidate: rawValue,
+              config: field.options.dynamicConfig,
+              valueToValidate: String(rawValue),
             });
           }
         }
