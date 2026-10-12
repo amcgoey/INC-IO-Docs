@@ -56,6 +56,14 @@ const OPTION_NOT_FOUND: DynamicValidationResult = {
   errorMessage: OPTION_NOT_FOUND_MSG,
 };
 
+function cleanSpaceId(spaceId?: string): string | undefined {
+  if (typeof spaceId !== 'string') {
+    return undefined;
+  }
+  const trimmed = spaceId.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynamicValidationPort {
   private readonly timeoutMs: number;
 
@@ -72,18 +80,11 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
   ): Promise<Record<string, DynamicOptionItem[]>> {
     const results: Record<string, DynamicOptionItem[]> = {};
 
-    if (!context.spaceId || !context.spaceId.trim()) {
-      for (const query of queries) {
-        results[query.sourceKey] = [...PLACEHOLDER_MISSING_SPACE];
-      }
-      return results;
-    }
-
     for (const query of queries) {
       results[query.sourceKey] = [];
     }
 
-    const spaceId = context.spaceId;
+    const spaceId = cleanSpaceId(context.spaceId);
 
     const settledQueries = await Promise.allSettled(
       queries.map(async (query) => {
@@ -103,7 +104,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
 
   private async resolveQueryWithTimeout(
     query: DynamicOptionQuery,
-    spaceId: string
+    spaceId?: string
   ): Promise<Array<{ text: string; value: string }>> {
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -129,10 +130,14 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
 
   private async executeQuery(
     query: DynamicOptionQuery,
-    spaceId: string
+    spaceId?: string
   ): Promise<DynamicOptionItem[]> {
     if (!isGoogleDriveDynamicConfig(query.config)) {
       return [];
+    }
+
+    if (!spaceId) {
+      return [...PLACEHOLDER_MISSING_SPACE];
     }
 
     const relativePath =
@@ -230,11 +235,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
       results[query.queryId] = { ...OPTION_NOT_FOUND };
     }
 
-    if (!context.spaceId) {
-      return results;
-    }
-
-    const spaceId = context.spaceId;
+    const spaceId = cleanSpaceId(context.spaceId);
 
     const settledQueries = await Promise.allSettled(
       queries.map(async (query) => {
@@ -254,7 +255,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
 
   private async validateQueryWithTimeout(
     query: DynamicValidationQuery,
-    spaceId: string
+    spaceId?: string
   ): Promise<DynamicValidationResult> {
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -291,9 +292,13 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
 
   private async executeValidationQuery(
     query: DynamicValidationQuery,
-    spaceId: string
+    spaceId?: string
   ): Promise<DynamicValidationResult> {
     if (!isGoogleDriveDynamicConfig(query.config)) {
+      return { ...OPTION_NOT_FOUND };
+    }
+
+    if (!spaceId) {
       return { ...OPTION_NOT_FOUND };
     }
 

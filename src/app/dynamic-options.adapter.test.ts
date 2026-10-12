@@ -39,6 +39,35 @@ describe('DynamicOptionsAdapter', () => {
     expect(driveClient.listFolders).not.toHaveBeenCalled();
   });
 
+  it('returns placeholder only for space-dependent Google Drive queries when spaceId is missing', async () => {
+    const driveClient = createMockDriveClient();
+    const adapter = new DynamicOptionsAdapter(driveClient);
+
+    const queries: DynamicOptionQuery[] = [
+      {
+        sourceKey: 'driveFolders',
+        config: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: '1 Admin/Communication',
+        },
+      },
+      {
+        sourceKey: 'otherQuery',
+        config: {
+          provider: 'custom_static_provider',
+        },
+      },
+    ];
+
+    const result = await adapter.fetchOptions(queries, {});
+    expect(result).toEqual({
+      driveFolders: [{ text: 'Select a Space first', value: '' }],
+      otherQuery: [],
+    });
+    expect(driveClient.listFolders).not.toHaveBeenCalled();
+  });
+
   it('fetches folders directly from spaceId when relativePath is not provided', async () => {
     const driveClient = createMockDriveClient({
       listFolders: vi.fn().mockResolvedValue({
@@ -611,6 +640,33 @@ describe('DynamicOptionsAdapter', () => {
         contact_field_1: { isValid: true },
         contact_field_2: { isValid: false, errorMessage: 'Option not found.' },
       });
+    });
+
+    it.each([
+      { desc: 'missing', context: {} },
+      { desc: 'empty', context: { spaceId: '' } },
+      { desc: 'whitespace', context: { spaceId: '   ' } },
+    ])('returns Option not found when spaceId is $desc during validation', async ({ context }) => {
+      const driveClient = createMockDriveClient();
+      const adapter = new DynamicOptionsAdapter(driveClient);
+
+      const queries = [
+        {
+          sourceKey: 'contactFolders',
+          queryId: 'contactFolders',
+          config: {
+            provider: 'google_drive',
+            method: 'list_folders',
+          },
+          valueToValidate: 'Acme Corp',
+        },
+      ];
+
+      const result = await adapter.validateExistence(queries, context);
+      expect(result).toEqual({
+        contactFolders: { isValid: false, errorMessage: 'Option not found.' },
+      });
+      expect(driveClient.listFolders).not.toHaveBeenCalled();
     });
   });
 });
