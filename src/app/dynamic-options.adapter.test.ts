@@ -312,6 +312,7 @@ describe('DynamicOptionsAdapter', () => {
       const queries = [
         {
           sourceKey: 'contactFolders',
+          queryId: 'contactFolders',
           config: {
             provider: 'google_drive',
             method: 'list_folders',
@@ -344,6 +345,7 @@ describe('DynamicOptionsAdapter', () => {
       const queries = [
         {
           sourceKey: 'contactFolders',
+          queryId: 'contactFolders',
           config: {
             provider: 'google_drive',
             method: 'list_folders',
@@ -377,6 +379,7 @@ describe('DynamicOptionsAdapter', () => {
       const queries = [
         {
           sourceKey: 'contactFolders',
+          queryId: 'contactFolders',
           config: {
             provider: 'google_drive',
             method: 'list_folders',
@@ -403,6 +406,7 @@ describe('DynamicOptionsAdapter', () => {
       const queries = [
         {
           sourceKey: 'contactFolders',
+          queryId: 'contactFolders',
           config: {
             provider: 'google_drive',
             method: 'list_folders',
@@ -431,6 +435,7 @@ describe('DynamicOptionsAdapter', () => {
       const queries = [
         {
           sourceKey: 'contactFolders',
+          queryId: 'contactFolders',
           config: {
             provider: 'google_drive',
             method: 'list_folders',
@@ -457,6 +462,7 @@ describe('DynamicOptionsAdapter', () => {
       const queries = [
         {
           sourceKey: 'unsupported',
+          queryId: 'unsupported',
           config: {
             provider: 'other_provider',
             method: 'list_folders',
@@ -487,6 +493,7 @@ describe('DynamicOptionsAdapter', () => {
       const queries = [
         {
           sourceKey: 'slowQuery',
+          queryId: 'slowQuery',
           config: {
             provider: 'google_drive',
             method: 'list_folders',
@@ -523,6 +530,7 @@ describe('DynamicOptionsAdapter', () => {
       const queries = [
         {
           sourceKey: 'queryValid',
+          queryId: 'queryValid',
           config: {
             provider: 'google_drive',
             method: 'list_folders',
@@ -531,6 +539,7 @@ describe('DynamicOptionsAdapter', () => {
         },
         {
           sourceKey: 'queryError',
+          queryId: 'queryError',
           config: {
             provider: 'google_drive',
             method: 'list_folders',
@@ -539,6 +548,7 @@ describe('DynamicOptionsAdapter', () => {
         },
         {
           sourceKey: 'queryMissing',
+          queryId: 'queryMissing',
           config: {
             provider: 'google_drive',
             method: 'list_folders',
@@ -551,7 +561,10 @@ describe('DynamicOptionsAdapter', () => {
 
       expect(result).toEqual({
         queryValid: { isValid: true },
-        queryError: { isValid: false, errorMessage: 'Validation timed out.' },
+        queryError: {
+          isValid: false,
+          errorMessage: 'An unexpected error occurred during dynamic option validation.',
+        },
         queryMissing: { isValid: false, errorMessage: 'Option not found.' },
       });
     });

@@ -8,7 +8,6 @@ import {
   DynamicValidationContextSchema,
   OPTION_NOT_FOUND_MSG,
   VALIDATION_TIMEOUT_MSG,
-  resolveQueryKey,
   type DocumentDynamicValidationPort,
   type DynamicValidationQuery,
   type DynamicValidationResult,
@@ -80,6 +79,7 @@ describe('Document Ports & DTOs', () => {
           sourceKey: 'contactFolders',
           config: { provider: 'google_drive', method: 'list_folders' },
           valueToValidate: 'Acme',
+          queryId: 'contactFolders',
         },
       ],
       { spaceId: 'space-123' }
@@ -97,10 +97,18 @@ describe('Document Ports & DTOs', () => {
     };
     expect(Value.Check(DynamicValidationQuerySchema, validQuery)).toBe(true);
 
+    const missingQueryId = {
+      sourceKey: 'contactFolders',
+      config: { provider: 'google_drive', method: 'list_folders' },
+      valueToValidate: 'Acme',
+    };
+    expect(Value.Check(DynamicValidationQuerySchema, missingQueryId)).toBe(false);
+
     const invalidQuery = {
       sourceKey: 123,
       config: 'not-an-object',
       valueToValidate: true,
+      queryId: 456,
     };
     expect(Value.Check(DynamicValidationQuerySchema, invalidQuery)).toBe(false);
   });
@@ -127,11 +135,6 @@ describe('Document Ports & DTOs', () => {
 
     const emptyContext: DynamicValidationContext = {};
     expect(Value.Check(DynamicValidationContextSchema, emptyContext)).toBe(true);
-  });
-
-  it('resolves query key using queryId if present, otherwise falling back to sourceKey', () => {
-    expect(resolveQueryKey({ sourceKey: 'folders' })).toBe('folders');
-    expect(resolveQueryKey({ queryId: 'contact_0', sourceKey: 'folders' })).toBe('contact_0');
   });
 
   it('exports standard validation messages', () => {

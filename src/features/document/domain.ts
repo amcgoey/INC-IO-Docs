@@ -14,10 +14,6 @@ import type {
 export const OPTION_NOT_FOUND_MSG = 'Option not found.';
 export const VALIDATION_TIMEOUT_MSG = 'Validation timed out.';
 
-export function resolveQueryKey(query: { queryId?: string; sourceKey: string }): string {
-  return query.queryId ?? query.sourceKey;
-}
-
 export function formatValidationErrors<T extends TSchema>(schema: T, value: unknown): string[] {
   return [...Value.Errors(schema, value)].map((e) => `${e.path}: ${e.message}`);
 }
@@ -275,18 +271,19 @@ function resolvePayloadTemplates(
   return value;
 }
 
+export const DynamicOptionFieldOptionsSchema = Type.Object({
+  source: Type.String(),
+  dynamicConfig: Type.Record(Type.String(), Type.Unknown()),
+}, { additionalProperties: true });
+
+export type DynamicOptionFieldOptions = Static<typeof DynamicOptionFieldOptionsSchema>;
+
 function isDynamicOptionField(
   field: DocumentField
 ): field is DocumentField & {
-  options: { source: string; dynamicConfig: Record<string, unknown> };
+  options: DynamicOptionFieldOptions;
 } {
-  return (
-    field.options !== undefined &&
-    typeof field.options.source === 'string' &&
-    'dynamicConfig' in field.options &&
-    typeof field.options.dynamicConfig === 'object' &&
-    field.options.dynamicConfig !== null
-  );
+  return field.options !== undefined && Value.Check(DynamicOptionFieldOptionsSchema, field.options);
 }
 
 function getSpaceStorageId(space?: DocumentSpace): string | undefined {
@@ -402,8 +399,8 @@ export class DocumentService implements DocumentServicePort {
           const valuesToValidate: string[] = [];
           const normalizedValues = Array.isArray(rawValue) ? rawValue : [rawValue];
           for (const item of normalizedValues) {
-            if (typeof item === 'string' && item.trim().length > 0) {
-              valuesToValidate.push(item.trim());
+            if (typeof item === 'string') {
+              valuesToValidate.push(item);
             }
           }
 
@@ -434,10 +431,9 @@ export class DocumentService implements DocumentServicePort {
 
         const dynamicErrors: string[] = [];
         for (const query of dynamicQueries) {
-          const queryKey = resolveQueryKey(query);
-          const result = validationResults[queryKey] ?? validationResults[query.sourceKey];
-          if (result && !result.isValid) {
-            dynamicErrors.push(result.errorMessage ?? OPTION_NOT_FOUND_MSG);
+          const result = validationResults[query.queryId] ?? validationResults[query.sourceKey];
+          if (!result || !result.isValid) {
+            dynamicErrors.push(result?.errorMessage ?? OPTION_NOT_FOUND_MSG);
           }
         }
 

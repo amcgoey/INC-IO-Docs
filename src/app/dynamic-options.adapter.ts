@@ -1,3 +1,5 @@
+import { Type, type Static } from '@sinclair/typebox';
+import { Value } from '@sinclair/typebox/value';
 import type {
   DynamicOptionItem,
   DynamicOptionQuery,
@@ -11,7 +13,6 @@ import {
   type DynamicValidationResult,
   OPTION_NOT_FOUND_MSG,
   VALIDATION_TIMEOUT_MSG,
-  resolveQueryKey,
 } from '../features/document/ports';
 
 export interface DynamicOptionsDriveClient {
@@ -31,16 +32,18 @@ export interface DynamicOptionsAdapterOptions {
   timeoutMs?: number;
 }
 
-export interface GoogleDriveDynamicConfig extends Record<string, unknown> {
-  provider: 'google_drive';
-  method: 'list_folders';
-  relativePath?: string | undefined;
-}
+export const GoogleDriveDynamicConfigSchema = Type.Object({
+  provider: Type.Literal('google_drive'),
+  method: Type.Literal('list_folders'),
+  relativePath: Type.Optional(Type.String()),
+}, { additionalProperties: true });
+
+export type GoogleDriveDynamicConfig = Static<typeof GoogleDriveDynamicConfigSchema>;
 
 export function isGoogleDriveDynamicConfig(
-  config: Record<string, unknown>
+  config: unknown
 ): config is GoogleDriveDynamicConfig {
-  return config.provider === 'google_drive' && config.method === 'list_folders';
+  return Value.Check(GoogleDriveDynamicConfigSchema, config);
 }
 
 const DEFAULT_TIMEOUT_MS = 5000;
@@ -76,6 +79,10 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
       return results;
     }
 
+    for (const query of queries) {
+      results[query.sourceKey] = [];
+    }
+
     const spaceId = context.spaceId;
 
     const settledQueries = await Promise.allSettled(
@@ -88,17 +95,6 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     for (const settled of settledQueries) {
       if (settled.status === 'fulfilled') {
         results[settled.value.sourceKey] = settled.value.items;
-      } else {
-        // If unhandled error, default to empty array
-        // (Individual query failures are already caught in resolveQueryWithTimeout,
-        // but this guarantees safety).
-      }
-    }
-
-    // Ensure all queries have an entry
-    for (const query of queries) {
-      if (!results[query.sourceKey]) {
-        results[query.sourceKey] = [];
       }
     }
 
@@ -230,11 +226,11 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
   ): Promise<Record<string, DynamicValidationResult>> {
     const results: Record<string, DynamicValidationResult> = {};
 
+    for (const query of queries) {
+      results[query.queryId] = { ...OPTION_NOT_FOUND };
+    }
+
     if (!context.spaceId) {
-      for (const query of queries) {
-        const key = resolveQueryKey(query);
-        results[key] = { ...OPTION_NOT_FOUND };
-      }
       return results;
     }
 
@@ -243,22 +239,13 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     const settledQueries = await Promise.allSettled(
       queries.map(async (query) => {
         const result = await this.validateQueryWithTimeout(query, spaceId);
-        const key = resolveQueryKey(query);
-        return { key, result };
+        return { key: query.queryId, result };
       })
     );
 
     for (const settled of settledQueries) {
       if (settled.status === 'fulfilled') {
         results[settled.value.key] = settled.value.result;
-      }
-    }
-
-    // Ensure all queries have an entry
-    for (const query of queries) {
-      const key = resolveQueryKey(query);
-      if (!results[key]) {
-        results[key] = { ...OPTION_NOT_FOUND };
       }
     }
 
@@ -284,10 +271,16 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
         this.executeValidationQuery(query, spaceId),
         timeoutPromise,
       ]);
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('timed out')) {
+        return {
+          isValid: false,
+          errorMessage: VALIDATION_TIMEOUT_MSG,
+        };
+      }
       return {
         isValid: false,
-        errorMessage: VALIDATION_TIMEOUT_MSG,
+        errorMessage: 'An unexpected error occurred during dynamic option validation.',
       };
     } finally {
       if (timer) {

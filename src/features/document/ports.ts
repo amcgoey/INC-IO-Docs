@@ -7,7 +7,6 @@ import {
   DocumentUiEventsSchema,
   OPTION_NOT_FOUND_MSG,
   VALIDATION_TIMEOUT_MSG,
-  resolveQueryKey,
   type Activity,
   type ActivityOutput,
   type FileLocator,
@@ -24,7 +23,6 @@ export {
   type UiEventRule,
   OPTION_NOT_FOUND_MSG,
   VALIDATION_TIMEOUT_MSG,
-  resolveQueryKey,
 };
 
 export type SchemaOrKeys =
@@ -124,7 +122,7 @@ export const DynamicValidationQuerySchema = Type.Object({
   sourceKey: Type.String(),
   config: Type.Record(Type.String(), Type.Unknown()),
   valueToValidate: Type.String(),
-  queryId: Type.Optional(Type.String()),
+  queryId: Type.String(),
 });
 
 export type DynamicValidationQuery = Static<typeof DynamicValidationQuerySchema>;

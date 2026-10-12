@@ -4283,7 +4283,7 @@ describe('Document domain', () => {
       const compiledRegistry = createMockCompiledRegistry(registry);
       const dynamicValidator: DocumentDynamicValidationPort = {
         validateExistence: vi.fn().mockResolvedValue({
-          contactFolders: { isValid: true },
+          contact: { isValid: true },
         }),
       };
 
@@ -4340,7 +4340,7 @@ describe('Document domain', () => {
       const compiledRegistry = createMockCompiledRegistry(registry);
       const dynamicValidator: DocumentDynamicValidationPort = {
         validateExistence: vi.fn().mockResolvedValue({
-          contactFolders: { isValid: false, errorMessage: 'Option not found.' },
+          contact: { isValid: false, errorMessage: 'Option not found.' },
         }),
       };
 
@@ -4379,7 +4379,7 @@ describe('Document domain', () => {
       const compiledRegistry = createMockCompiledRegistry(registry);
       const dynamicValidator: DocumentDynamicValidationPort = {
         validateExistence: vi.fn().mockResolvedValue({
-          contactFolders: {
+          contact: {
             isValid: false,
             errorMessage:
               'Multiple folders found with this name. Please resolve this ambiguity in Google Drive manually.',
