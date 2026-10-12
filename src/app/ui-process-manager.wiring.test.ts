@@ -282,7 +282,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
     expect(mockDocService.processDocument).toHaveBeenCalledWith(
       {
         type: 'communication-project',
-        space: 'Project Alpha',
+        space: 'proj-1',
         data: {
           contact: 'Alice Corp',
           date: '260920',

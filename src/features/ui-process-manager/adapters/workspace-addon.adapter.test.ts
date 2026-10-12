@@ -479,7 +479,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
         {
           type: 'communication-project',
-          space: 'Project Main',
+          space: 'proj1',
           data: {
             contact: 'Acme Corp',
             date: '260920',
@@ -628,6 +628,187 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
 
       expect(renderResult.isUpdateCard).toBe(true);
       expect(renderResult.validationErrors).toEqual(['Connection timed out']);
+    });
+
+    it('resolves human-readable space display name to technical ID before passing to documentRunner', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+      const spaceProviderWithAlpha: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+          },
+        ]),
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [{ id: 'space-folder-alpha-id', name: 'Project Alpha' }],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: spaceProviderWithAlpha,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Alpha',
+          SelectDocumentType_projects: 'communication-project',
+          contact: 'Test Contact',
+        },
+      };
+
+      await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          space: 'space-folder-alpha-id',
+        }),
+        'onSubmit'
+      );
+    });
+
+    it('passes direct technical ID to documentRunner when submitted with space ID directly', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+      const spaceProviderWithAlpha: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+          },
+        ]),
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [{ id: 'space-folder-alpha-id', name: 'Project Alpha' }],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: spaceProviderWithAlpha,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'space-folder-alpha-id',
+          SelectDocumentType: 'communication-project',
+          contact: 'Test Contact',
+        },
+      };
+
+      await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          space: 'space-folder-alpha-id',
+        }),
+        'onSubmit'
+      );
+    });
+
+    it('passes trimmed unlisted ID to documentRunner when submitted with an unlisted space ID', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+      const spaceProviderWithAlpha: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+          },
+        ]),
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [{ id: 'space-folder-alpha-id', name: 'Project Alpha' }],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: spaceProviderWithAlpha,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: '  unlisted-custom-folder-id  ',
+          SelectDocumentType: 'communication-project',
+          contact: 'Test Contact',
+        },
+      };
+
+      await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          space: 'unlisted-custom-folder-id',
+        }),
+        'onSubmit'
+      );
+    });
+
+    it('aborts submission and returns update card with collision error when duplicate space names exist', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+      const spaceProviderWithDuplicates: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+          },
+        ]),
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [
+            { id: 'space-alpha-1', name: 'Project Alpha' },
+            { id: 'space-alpha-2', name: 'Project Alpha' },
+          ],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: spaceProviderWithDuplicates,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Alpha',
+          SelectDocumentType: 'communication-project',
+          contact: 'Test Contact',
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
+      expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
+      expect(response.type).toBe('render');
+      const renderResult = response as UiProcessRenderResult;
+      expect(renderResult.isUpdateCard).toBe(true);
+      expect(renderResult.validationErrors).toContain(
+        'Multiple spaces match "Project Alpha". Please choose or enter a unique space identifier.'
+      );
     });
   });
 

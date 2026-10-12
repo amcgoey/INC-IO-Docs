@@ -359,7 +359,9 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
 
   const validationErrors = [
     ...(context.validationErrors ?? []),
-    ...(spaceResolution.collisionError ? [spaceResolution.collisionError] : []),
+    ...(spaceResolution.collisionError && !context.validationErrors?.includes(spaceResolution.collisionError)
+      ? [spaceResolution.collisionError]
+      : []),
   ];
 
   if (spaceResolution.collisionError) {

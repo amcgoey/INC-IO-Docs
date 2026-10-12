@@ -10,6 +10,7 @@ import type {
 } from '../ports';
 import {
   evaluateProcessUiState,
+  resolveSpace,
   resolveSpaceType,
   resolveDocumentType,
   extractDocumentData,
@@ -189,7 +190,19 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       createRenderResult({ validationErrors, isUpdateCard: true });
 
     if (actionName === 'processDocument') {
-      const selectedSpace = normalizedContext.formData?.SelectDocumentSpace as string | undefined;
+      const spaceResolution = resolveSpace(
+        {
+          formData: normalizedContext.formData,
+          activeSpaceType: currentSpaceType,
+          config,
+        },
+        spaces
+      );
+
+      if (spaceResolution.collisionError) {
+        return createErrorRenderResult([spaceResolution.collisionError]);
+      }
+
       const data = extractDocumentData(normalizedContext.formData);
 
       try {
@@ -198,7 +211,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
             {
               type: resolvedDocumentTypeKey ?? 'default',
               data,
-              ...(selectedSpace ? { space: selectedSpace } : {}),
+              ...(spaceResolution.spaceId ? { space: spaceResolution.spaceId } : {}),
             },
             'onSubmit'
           );
