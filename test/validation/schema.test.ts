@@ -158,6 +158,30 @@ describe('DocumentType JSON files schema validation', () => {
       expect(directionField?.defaultValue).toBe('IN');
     }
   });
+
+  it('should configure contact field in communication-project with dynamicConfig and allowUserInput: true', async () => {
+    const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
+    const manifestProvider = new AppManifestProvider({ manifestPath });
+    const adapter = new DocumentSchemaRegistryAdapter(
+      manifestProvider,
+      new HandlebarsAdapter()
+    );
+    const documentTypes = await adapter.loadAll();
+
+    const commProject = documentTypes.find((d) => d.key === 'communication-project');
+    expect(commProject).toBeDefined();
+
+    const contactField = commProject!.documentSchema.fields.find((f) => f.key === 'contact');
+    expect(contactField).toBeDefined();
+    expect(contactField?.options).toBeDefined();
+    expect(contactField?.options?.allowUserInput).toBe(true);
+    expect(contactField?.options?.source).toBe('contactFolders');
+    expect(contactField?.options?.dynamicConfig).toEqual({
+      provider: 'google_drive',
+      method: 'list_folders',
+      relativePath: '1 Admin/Communication',
+    });
+  });
 });
 
 

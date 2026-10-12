@@ -8,7 +8,18 @@
         "name": "Contact",
         "type": "string",
         "description": "Contact folder name",
-        "required": true
+        "required": true,
+        "options": {
+          "source": "contactFolders",
+          "key": "name",
+          "name": "name",
+          "allowUserInput": true,
+          "dynamicConfig": {
+            "provider": "google_drive",
+            "method": "list_folders",
+            "relativePath": "1 Admin/Communication"
+          }
+        }
       },
       {
         "key": "date",

@@ -396,7 +396,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
             action: 'processDocument',
           },
           formInputs: {
-            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-proposal'] } },
             contact: { stringInputs: { value: ['Acme Corp'] } },
             date: { stringInputs: { value: ['260920'] } },
             direction: { stringInputs: { value: ['IN'] } },

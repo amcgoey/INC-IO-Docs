@@ -72,7 +72,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
   ): Promise<Record<string, DynamicOptionItem[]>> {
     const results: Record<string, DynamicOptionItem[]> = {};
 
-    if (!context.spaceId) {
+    if (!context.spaceId || !context.spaceId.trim()) {
       for (const query of queries) {
         results[query.sourceKey] = [...PLACEHOLDER_MISSING_SPACE];
       }

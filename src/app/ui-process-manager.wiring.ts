@@ -246,16 +246,24 @@ export function createUiProcessRequestWrapper(
     }
 
     const rawFormData = intent.formData;
+    const activeSpaceType =
+      intent.selectionState?.spaceTypes?.find((s) => s.selected)?.value ??
+      (typeof rawFormData?.SelectDocumentSpaceType === 'string'
+        ? (rawFormData.SelectDocumentSpaceType as string).trim()
+        : undefined);
+    const activeSpaceKey = activeSpaceType ? `SelectDocumentSpace_${activeSpaceType}` : undefined;
+
     const resolvedSpaceId =
-      (typeof rawFormData?.spaceId === 'string' ? rawFormData.spaceId : undefined) ??
+      (typeof rawFormData?.spaceId === 'string' && rawFormData.spaceId.trim()
+        ? rawFormData.spaceId.trim()
+        : undefined) ??
       (typeof rawFormData?.SelectDocumentSpace === 'string' && rawFormData.SelectDocumentSpace.trim()
         ? rawFormData.SelectDocumentSpace.trim()
         : undefined) ??
-      (rawFormData
-        ? (Object.entries(rawFormData).find(
-            ([k, v]) =>
-              k.startsWith('SelectDocumentSpace_') && typeof v === 'string' && v.trim().length > 0
-          )?.[1] as string | undefined)
+      (activeSpaceKey &&
+      typeof rawFormData?.[activeSpaceKey] === 'string' &&
+      (rawFormData[activeSpaceKey] as string).trim().length > 0
+        ? (rawFormData[activeSpaceKey] as string).trim()
         : undefined);
 
     const view = await schemaDrivenUiInstance.generateView({

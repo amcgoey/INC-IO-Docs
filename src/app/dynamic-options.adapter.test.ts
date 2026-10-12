@@ -28,11 +28,21 @@ describe('DynamicOptionsAdapter', () => {
       },
     ];
 
-    const result = await adapter.fetchOptions(queries, {});
-
-    expect(result).toEqual({
+    const resultEmpty = await adapter.fetchOptions(queries, {});
+    expect(resultEmpty).toEqual({
       contactFolders: [{ text: 'Select a Space first', value: '' }],
     });
+
+    const resultBlank = await adapter.fetchOptions(queries, { spaceId: '' });
+    expect(resultBlank).toEqual({
+      contactFolders: [{ text: 'Select a Space first', value: '' }],
+    });
+
+    const resultWhitespace = await adapter.fetchOptions(queries, { spaceId: '   ' });
+    expect(resultWhitespace).toEqual({
+      contactFolders: [{ text: 'Select a Space first', value: '' }],
+    });
+
     expect(driveClient.listFolders).not.toHaveBeenCalled();
   });
 

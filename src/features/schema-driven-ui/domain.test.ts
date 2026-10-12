@@ -467,4 +467,70 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
     // Verify resolvedDocSchema was NOT mutated
     expect(capturedContext?.documentSchema).toEqual(docSchemaWithDynamic);
   });
+
+  it('calls optionsFetcher when spaceId is missing and receives placeholder item', async () => {
+    const docSchemaWithDynamic = {
+      fields: [
+        {
+          key: 'contact',
+          type: 'string',
+          options: {
+            source: 'contactFolders',
+            key: 'name',
+            name: 'name',
+            allowUserInput: true,
+            dynamicConfig: {
+              provider: 'google_drive',
+              method: 'list_folders',
+              relativePath: '1 Admin/Communication',
+            },
+          },
+        },
+      ],
+    };
+
+    const manifestPort = createMockManifestPort({
+      getDocumentSchema: vi.fn().mockResolvedValue(docSchemaWithDynamic),
+    });
+
+    const mockFetcher: OptionsFetcherPort = {
+      fetchOptions: vi.fn().mockResolvedValue({
+        contactFolders: [{ text: 'Select a Space first', value: '' }],
+      }),
+    };
+
+    let capturedContext: UiViewAdapterContext | undefined;
+    const adapter = createMockAdapter('dynamic-view-missing-space', undefined, async (ctx) => {
+      capturedContext = ctx;
+      return {
+        id: 'dynamic-view-missing-space',
+        sections: [],
+      };
+    });
+
+    const service = new SchemaDrivenUiService(manifestPort, [adapter], mockFetcher);
+
+    await service.generateView({
+      viewId: 'dynamic-view-missing-space',
+      documentTypeKey: 'communication-project',
+    });
+
+    expect(mockFetcher.fetchOptions).toHaveBeenCalledWith(
+      [
+        {
+          sourceKey: 'contactFolders',
+          config: {
+            provider: 'google_drive',
+            method: 'list_folders',
+            relativePath: '1 Admin/Communication',
+          },
+        },
+      ],
+      {}
+    );
+
+    expect(capturedContext?.dynamicOptions).toEqual({
+      contactFolders: [{ text: 'Select a Space first', value: '' }],
+    });
+  });
 });

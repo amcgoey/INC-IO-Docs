@@ -139,7 +139,7 @@ describe('Integration: CQRS UI Orchestration (Issue 140)', () => {
           action: 'processDocument',
         },
         formInputs: {
-          SelectDocumentType_projects: { stringInputs: { value: ['communication-project'] } },
+          SelectDocumentType_projects: { stringInputs: { value: ['communication-proposal'] } },
           contact: { stringInputs: { value: ['Acme Corp'] } },
           date: { stringInputs: { value: ['260920'] } },
           direction: { stringInputs: { value: ['IN'] } },

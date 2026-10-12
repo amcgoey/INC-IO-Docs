@@ -434,7 +434,7 @@ describe('App integration tests', () => {
   });
 
   describe('End-to-End Calculated Fields and Identity Properties Resolution', () => {
-    it('resolves identity properties (id, idDocument, idGroup) from communication-project.json and enriches payload before dispatching activity', async () => {
+    it('resolves identity properties (id, idDocument, idGroup) from communication-proposal.json and enriches payload before dispatching activity', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -448,7 +448,7 @@ describe('App integration tests', () => {
       await prodApp.initialize();
 
       const basePayload = {
-        type: 'communication-project',
+        type: 'communication-proposal',
         data: {
           contact: 'Jane Doe',
           date: '260825',
@@ -469,7 +469,7 @@ describe('App integration tests', () => {
       };
 
       const expectedDocument = {
-        type: 'communication-project',
+        type: 'communication-proposal',
         id: expectedIdentityValue,
         idDocument: expectedIdentityValue,
         idGroup: expectedGroupId,

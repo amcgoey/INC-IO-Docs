@@ -71,6 +71,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       .mockImplementation(() => {
         throw new Error('Unexpected network call via GoogleDriveClient.executeWithRetry');
       });
+    vi.spyOn(GoogleDriveClient.prototype, 'listFolders').mockResolvedValue({ folders: [] });
     oauthNetworkSpy = vi
       .spyOn(OAuth2Client.prototype, 'verifyIdToken')
       .mockImplementation(async () => {
