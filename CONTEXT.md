@@ -61,7 +61,7 @@ Domain and administrative defaults that govern application behavior, distinct fr
 The primary user interface, acting as a driving adapter to the core engine.
 
 **UiProcessManager**:
-The command/write model orchestrator in the CQRS UI pattern. Responsible for evaluating UI state and events, decomposing information to pass to domain features via ports, and translating display names into technical keys. Does not build UI structures.
+The command/write model orchestrator in the CQRS UI pattern. Responsible for evaluating UI state and events, decomposing information to pass to domain features via ports, and translating human-readable display names (both `DocumentType` and `DocumentSpace`) into technical keys/identifiers for backend processing. Does not build UI structures.
 _Avoid_: UiController, StateManager
 
 **SchemaDrivenUi**:
