@@ -430,5 +430,47 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
         { text: 'Wayne Enterprises' },
       ]);
     });
+
+    it('clears dynamic contact suggestions when user clears Document Space input on form change', async () => {
+      const response = await injectWorkspaceRequest(app.server, {
+        method: 'POST',
+        url: '/workspace/on-form-change',
+        headers: {
+          authorization: 'Bearer valid-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'test-oauth-token',
+          },
+          commonEventObject: {
+            parameters: {
+              action: 'onFormChange',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              SelectDocumentSpace_projects: { stringInputs: { value: [''] } },
+              SelectDocumentType_projects: { stringInputs: { value: ['communication-project'] } },
+              spaceId: { stringInputs: { value: ['space-folder-alpha-id'] } },
+            },
+          },
+          drive: {
+            selectedItems: [{ id: 'file-1', title: 'Doc.pdf' }],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      const updateCard = body.action?.navigations?.[0]?.updateCard as CardStub | undefined;
+      expect(updateCard).toBeDefined();
+
+      const dataSection = findSection(updateCard, 'Document Data');
+      expect(dataSection).toBeDefined();
+      const contactWidget = findWidget(dataSection, 'contact_communication-project');
+      expect(contactWidget).toBeDefined();
+      expect(contactWidget?.textInput?.initialSuggestions?.items).toEqual([
+        { text: 'Select a Space first' },
+      ]);
+    });
   });
 });

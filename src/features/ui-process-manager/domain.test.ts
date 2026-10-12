@@ -333,6 +333,18 @@ describe('ui-process-manager domain', () => {
         resolveSpaceId({ formData: { SelectDocumentSpace: '   alpha-2   ' } }, spaces)
       ).toBe('alpha-2');
     });
+
+    it('returns undefined without falling back to formData.spaceId when spaceSelectorKey is cleared', () => {
+      const result = resolveSpaceId({
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: '',
+          spaceId: 'existing-id',
+        },
+        activeSpaceType: 'projects',
+      });
+      expect(result).toBeUndefined();
+    });
   });
 
   describe('resolveSpace', () => {
@@ -432,6 +444,81 @@ describe('ui-process-manager domain', () => {
       expect(resolveSpace()).toEqual({});
       expect(resolveSpace({ formData: {} })).toEqual({});
       expect(resolveSpace({ formData: { SelectDocumentSpace: '   ' } })).toEqual({});
+    });
+
+    it('returns empty result without falling back to formData.spaceId when spaceSelectorKey is cleared to empty or whitespace string', () => {
+      const spaces = [
+        { id: 'space-folder-alpha-id', name: 'Project Alpha' },
+        { id: 'existing-id', name: 'Existing Space' },
+      ];
+      const emptyResult = resolveSpace(
+        {
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: '',
+            spaceId: 'existing-id',
+          },
+          activeSpaceType: 'projects',
+        },
+        spaces
+      );
+      expect(emptyResult).toEqual({});
+      expect(emptyResult.spaceId).toBeUndefined();
+
+      const whitespaceResult = resolveSpace(
+        {
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: '   ',
+            spaceId: 'existing-id',
+          },
+          activeSpaceType: 'projects',
+        },
+        spaces
+      );
+      expect(whitespaceResult).toEqual({});
+      expect(whitespaceResult.spaceId).toBeUndefined();
+    });
+
+    it('returns empty result without falling back to formData.spaceId when SelectDocumentSpace is cleared to empty or whitespace string', () => {
+      const spaces = [{ id: 'existing-id', name: 'Existing Space' }];
+      const emptyResult = resolveSpace(
+        {
+          formData: {
+            SelectDocumentSpace: '',
+            spaceId: 'existing-id',
+          },
+        },
+        spaces
+      );
+      expect(emptyResult).toEqual({});
+      expect(emptyResult.spaceId).toBeUndefined();
+
+      const whitespaceResult = resolveSpace(
+        {
+          formData: {
+            SelectDocumentSpace: '   ',
+            spaceId: 'existing-id',
+          },
+        },
+        spaces
+      );
+      expect(whitespaceResult).toEqual({});
+      expect(whitespaceResult.spaceId).toBeUndefined();
+    });
+
+    it('falls back to formData.spaceId only when neither spaceSelectorKey nor SelectDocumentSpace is present', () => {
+      const spaces = [{ id: 'existing-id', name: 'Existing Space' }];
+      const result = resolveSpace(
+        {
+          formData: {
+            spaceId: 'existing-id',
+          },
+        },
+        spaces
+      );
+      expect(result.spaceId).toBe('existing-id');
+      expect(result.matchedSpace).toEqual({ id: 'existing-id', name: 'Existing Space' });
     });
   });
 
@@ -707,6 +794,53 @@ describe('ui-process-manager domain', () => {
       const state = evaluateProcessUiState(input);
       expect(state.spaceId).toBeUndefined();
       expect(state.validationErrors).toEqual([collisionMsg, 'Other error']);
+    });
+
+    it('sets spaceId undefined and removes stale formData.spaceId when user clears space input on form change', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          actionName: 'onFormChange',
+          isUpdateCard: true,
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: '',
+            SelectDocumentType_projects: 'communication-project',
+            spaceId: 'stale-space-id',
+            'contact_communication-project': 'Previous Contact',
+          },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: [
+          { id: 'stale-space-id', name: 'Stale Space' },
+          { id: 'proj-1', name: 'Project Alpha' },
+        ],
+      };
+
+      const state = evaluateProcessUiState(input);
+      expect(state.spaceId).toBeUndefined();
+      expect(state.formData.spaceId).toBeUndefined();
+      expect(state.formData).not.toHaveProperty('spaceId');
+      expect(state.isUpdateCard).toBe(true);
+    });
+
+    it('removes stale formData.spaceId when user clears generic SelectDocumentSpace with whitespace', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          actionName: 'onFormChange',
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace: '   ',
+            spaceId: 'stale-space-id',
+          },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: [{ id: 'stale-space-id', name: 'Stale Space' }],
+      };
+
+      const state = evaluateProcessUiState(input);
+      expect(state.spaceId).toBeUndefined();
+      expect(state.formData.spaceId).toBeUndefined();
+      expect(state.formData).not.toHaveProperty('spaceId');
     });
 
     it('retains inactive document type form inputs across type toggles', () => {

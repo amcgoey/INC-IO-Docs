@@ -958,6 +958,52 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         { text: 'Client ACME', value: 'Client ACME' },
       ]);
     });
+
+    it('clears spaceId and does not pass stale spaceId to dynamic options fetcher when user clears space input on onFormChange', async () => {
+      const mockFetcher: OptionsFetcherPort = {
+        fetchOptions: vi.fn().mockResolvedValue({
+          contactFolders: [],
+        }),
+      };
+
+      const wiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: createDynamicManifestProvider(),
+        optionsFetcher: mockFetcher,
+      });
+
+      const response = (await wiring.requestScopedWrapper.processUiEvent({
+        actionName: 'onFormChange',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: '',
+          SelectDocumentType_projects: 'communication-project',
+          spaceId: 'stale-space-folder-id',
+        },
+      })) as GoogleWorkspaceActionResponse;
+
+      expect(mockFetcher.fetchOptions).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.not.objectContaining({
+          spaceId: 'stale-space-folder-id',
+        })
+      );
+      const callContext = (mockFetcher.fetchOptions as ReturnType<typeof vi.fn>).mock.calls[0][1];
+      expect(callContext.spaceId).toBeUndefined();
+      expect(callContext.formData?.spaceId).toBeUndefined();
+
+      const updateCard = response.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+
+      const docInfoSection = updateCard!.sections.find((s) => s.header === 'Document Data');
+      expect(docInfoSection).toBeDefined();
+      const contactWidget = docInfoSection!.widgets.find(
+        (w) => w.selectionInput?.name === 'contact_communication-project'
+      );
+      expect(contactWidget).toBeDefined();
+      expect(contactWidget!.selectionInput?.items).toEqual([]);
+    });
   });
 });
 

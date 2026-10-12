@@ -208,10 +208,20 @@ export function resolveSpace(
   const spaceType = context.activeSpaceType ?? resolveSpaceType(context);
   const spaceSelectorKey = spaceType ? getSpaceSelectorKey(spaceType) : undefined;
 
-  const rawInput =
-    (spaceSelectorKey ? cleanTrimmedString(formData[spaceSelectorKey]) : undefined) ??
-    cleanTrimmedString(formData[SELECT_DOCUMENT_SPACE_KEY]) ??
-    cleanTrimmedString(formData.spaceId);
+  let rawInput: string | undefined;
+  if (
+    spaceSelectorKey &&
+    (spaceSelectorKey in formData || formData[spaceSelectorKey] !== undefined)
+  ) {
+    rawInput = cleanTrimmedString(formData[spaceSelectorKey]);
+  } else if (
+    SELECT_DOCUMENT_SPACE_KEY in formData ||
+    formData[SELECT_DOCUMENT_SPACE_KEY] !== undefined
+  ) {
+    rawInput = cleanTrimmedString(formData[SELECT_DOCUMENT_SPACE_KEY]);
+  } else {
+    rawInput = cleanTrimmedString(formData.spaceId);
+  }
 
   if (!rawInput) {
     return {};
@@ -340,8 +350,19 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     input.spaces ?? []
   );
 
+  const spaceSelectorKey = currentSpaceType ? getSpaceSelectorKey(currentSpaceType) : undefined;
+
+  if (
+    spaceResolution.spaceId === undefined &&
+    ((spaceSelectorKey &&
+      (spaceSelectorKey in effectiveFormData || effectiveFormData[spaceSelectorKey] !== undefined)) ||
+      SELECT_DOCUMENT_SPACE_KEY in effectiveFormData ||
+      effectiveFormData[SELECT_DOCUMENT_SPACE_KEY] !== undefined)
+  ) {
+    delete effectiveFormData.spaceId;
+  }
+
   if (spaceResolution.isIdMatch && spaceResolution.matchedSpace) {
-    const spaceSelectorKey = currentSpaceType ? getSpaceSelectorKey(currentSpaceType) : undefined;
     if (spaceSelectorKey && effectiveFormData[spaceSelectorKey] !== undefined) {
       effectiveFormData[spaceSelectorKey] = spaceResolution.matchedSpace.name;
     }
