@@ -48,3 +48,6 @@ Thumbs.db
 # Scratch workspace
 scratch/
 
+# Git worktrees
+.worktrees/
+
