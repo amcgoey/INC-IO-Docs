@@ -229,7 +229,8 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
 
     if (!context.spaceId) {
       for (const query of queries) {
-        results[query.sourceKey] = { ...OPTION_NOT_FOUND };
+        const key = query.queryId ?? query.sourceKey;
+        results[key] = { ...OPTION_NOT_FOUND };
       }
       return results;
     }
@@ -239,20 +240,22 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     const settledQueries = await Promise.allSettled(
       queries.map(async (query) => {
         const result = await this.validateQueryWithTimeout(query, spaceId);
-        return { sourceKey: query.sourceKey, result };
+        const key = query.queryId ?? query.sourceKey;
+        return { key, result };
       })
     );
 
     for (const settled of settledQueries) {
       if (settled.status === 'fulfilled') {
-        results[settled.value.sourceKey] = settled.value.result;
+        results[settled.value.key] = settled.value.result;
       }
     }
 
     // Ensure all queries have an entry
     for (const query of queries) {
-      if (!results[query.sourceKey]) {
-        results[query.sourceKey] = { ...OPTION_NOT_FOUND };
+      const key = query.queryId ?? query.sourceKey;
+      if (!results[key]) {
+        results[key] = { ...OPTION_NOT_FOUND };
       }
     }
 
@@ -278,12 +281,8 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
         this.executeValidationQuery(query, spaceId),
         timeoutPromise,
       ]);
-    } catch (error) {
-      return {
-        isValid: false,
-        errorMessage:
-          error instanceof Error ? error.message : 'Option not found.',
-      };
+    } catch {
+      return { ...OPTION_NOT_FOUND };
     } finally {
       if (timer) {
         clearTimeout(timer);

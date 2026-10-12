@@ -114,21 +114,28 @@ export interface DocumentServicePort {
   ): Promise<ProcessDocumentResult>;
 }
 
-export interface DynamicValidationQuery {
-  sourceKey: string;
-  config: Record<string, unknown>;
-  valueToValidate: string;
-}
+export const DynamicValidationQuerySchema = Type.Object({
+  sourceKey: Type.String(),
+  config: Type.Record(Type.String(), Type.Unknown()),
+  valueToValidate: Type.String(),
+  queryId: Type.Optional(Type.String()),
+});
 
-export interface DynamicValidationResult {
-  isValid: boolean;
-  errorMessage?: string | undefined;
-}
+export type DynamicValidationQuery = Static<typeof DynamicValidationQuerySchema>;
 
-export interface DynamicValidationContext {
-  spaceId?: string | undefined;
-  formData?: Record<string, unknown> | undefined;
-}
+export const DynamicValidationResultSchema = Type.Object({
+  isValid: Type.Boolean(),
+  errorMessage: Type.Optional(Type.String()),
+});
+
+export type DynamicValidationResult = Static<typeof DynamicValidationResultSchema>;
+
+export const DynamicValidationContextSchema = Type.Object({
+  spaceId: Type.Optional(Type.String()),
+  formData: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+});
+
+export type DynamicValidationContext = Static<typeof DynamicValidationContextSchema>;
 
 export interface DocumentDynamicValidationPort {
   validateExistence(

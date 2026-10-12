@@ -3,6 +3,9 @@ import { Value } from '@sinclair/typebox/value';
 import {
   FormSchemaType,
   type FormSchema,
+  DynamicValidationQuerySchema,
+  DynamicValidationResultSchema,
+  DynamicValidationContextSchema,
   type DocumentDynamicValidationPort,
   type DynamicValidationQuery,
   type DynamicValidationResult,
@@ -80,6 +83,47 @@ describe('Document Ports & DTOs', () => {
     );
 
     expect(res.contactFolders.isValid).toBe(true);
+  });
+
+  it('validates DynamicValidationQuerySchema with Value.Check', () => {
+    const validQuery: DynamicValidationQuery = {
+      sourceKey: 'contactFolders',
+      config: { provider: 'google_drive', method: 'list_folders' },
+      valueToValidate: 'Acme',
+      queryId: 'field_1',
+    };
+    expect(Value.Check(DynamicValidationQuerySchema, validQuery)).toBe(true);
+
+    const invalidQuery = {
+      sourceKey: 123,
+      config: 'not-an-object',
+      valueToValidate: true,
+    };
+    expect(Value.Check(DynamicValidationQuerySchema, invalidQuery)).toBe(false);
+  });
+
+  it('validates DynamicValidationResultSchema with Value.Check', () => {
+    const validResult: DynamicValidationResult = {
+      isValid: false,
+      errorMessage: 'Option not found.',
+    };
+    expect(Value.Check(DynamicValidationResultSchema, validResult)).toBe(true);
+
+    const invalidResult = {
+      isValid: 'not-a-boolean',
+    };
+    expect(Value.Check(DynamicValidationResultSchema, invalidResult)).toBe(false);
+  });
+
+  it('validates DynamicValidationContextSchema with Value.Check', () => {
+    const validContext: DynamicValidationContext = {
+      spaceId: 'sp-1',
+      formData: { name: 'Test' },
+    };
+    expect(Value.Check(DynamicValidationContextSchema, validContext)).toBe(true);
+
+    const emptyContext: DynamicValidationContext = {};
+    expect(Value.Check(DynamicValidationContextSchema, emptyContext)).toBe(true);
   });
 });
 

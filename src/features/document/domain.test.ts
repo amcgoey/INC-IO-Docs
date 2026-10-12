@@ -4321,6 +4321,7 @@ describe('Document domain', () => {
               relativePath: '1 Admin/Communication',
             },
             valueToValidate: 'Acme Corp',
+            queryId: 'contact',
           },
         ],
         expect.objectContaining({
@@ -4468,6 +4469,71 @@ describe('Document domain', () => {
 
       expect(result.success).toBe(true);
       expect(dynamicValidator.validateExistence).not.toHaveBeenCalled();
+    });
+
+    it('supports array values with indexed queryId for dynamic fields', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const registry = createCustomRegistry([dynamicDocType]);
+      const compiledRegistry: CompiledSchemaRegistryPort = {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        get: vi.fn().mockReturnValue({
+          Check: () => true,
+          Schema: () => Type.Object({}),
+        }),
+      };
+      const dynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn().mockResolvedValue({
+          contact_0: { isValid: true },
+          contact_1: { isValid: false, errorMessage: 'Option not found.' },
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        compiledRegistry,
+        dynamicValidator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument({
+        type: 'comm-project',
+        data: {
+          title: 'Project Alpha',
+          contact: ['Acme Corp', 'Missing Corp'],
+        },
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors).toContain('Option not found.');
+      }
+      expect(dynamicValidator.validateExistence).toHaveBeenCalledWith(
+        [
+          {
+            sourceKey: 'contactFolders',
+            config: {
+              provider: 'google_drive',
+              method: 'list_folders',
+              relativePath: '1 Admin/Communication',
+            },
+            valueToValidate: 'Acme Corp',
+            queryId: 'contact_0',
+          },
+          {
+            sourceKey: 'contactFolders',
+            config: {
+              provider: 'google_drive',
+              method: 'list_folders',
+              relativePath: '1 Admin/Communication',
+            },
+            valueToValidate: 'Missing Corp',
+            queryId: 'contact_1',
+          },
+        ],
+        expect.anything()
+      );
     });
   });
 });

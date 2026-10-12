@@ -275,10 +275,15 @@ function isDynamicOptionField(
 } {
   return (
     field.options !== undefined &&
+    typeof field.options.source === 'string' &&
     'dynamicConfig' in field.options &&
     typeof field.options.dynamicConfig === 'object' &&
     field.options.dynamicConfig !== null
   );
+}
+
+function getSpaceStorageId(space?: DocumentSpace): string | undefined {
+  return space?.abstractStorageId ?? space?.id;
 }
 
 export function buildFieldSchema(
@@ -387,18 +392,34 @@ export class DocumentService implements DocumentServicePort {
       for (const field of documentType.documentSchema.fields) {
         if (isDynamicOptionField(field)) {
           const rawValue = rawData[field.key];
-          if (typeof rawValue === 'string') {
+          const valuesToValidate: string[] = [];
+          if (typeof rawValue === 'string' && rawValue.trim().length > 0) {
+            valuesToValidate.push(rawValue.trim());
+          } else if (Array.isArray(rawValue)) {
+            for (const item of rawValue) {
+              if (typeof item === 'string' && item.trim().length > 0) {
+                valuesToValidate.push(item.trim());
+              }
+            }
+          }
+
+          valuesToValidate.forEach((val, index) => {
+            const queryId =
+              valuesToValidate.length > 1
+                ? `${field.key}_${index}`
+                : field.key;
             dynamicQueries.push({
               sourceKey: field.options.source,
               config: field.options.dynamicConfig,
-              valueToValidate: rawValue,
+              valueToValidate: val,
+              queryId,
             });
-          }
+          });
         }
       }
 
       if (dynamicQueries.length > 0) {
-        const spaceId = document.space?.abstractStorageId ?? document.space?.id;
+        const spaceId = getSpaceStorageId(document.space);
         const validationResults = await this.dynamicValidator.validateExistence(
           dynamicQueries,
           {
@@ -409,7 +430,8 @@ export class DocumentService implements DocumentServicePort {
 
         const dynamicErrors: string[] = [];
         for (const query of dynamicQueries) {
-          const result = validationResults[query.sourceKey];
+          const queryKey = query.queryId ?? query.sourceKey;
+          const result = validationResults[queryKey] ?? validationResults[query.sourceKey];
           if (result && !result.isValid) {
             dynamicErrors.push(result.errorMessage ?? 'Option not found.');
           }

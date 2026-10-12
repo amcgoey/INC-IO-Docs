@@ -500,7 +500,7 @@ describe('DynamicOptionsAdapter', () => {
       expect(result).toEqual({
         slowQuery: {
           isValid: false,
-          errorMessage: 'Dynamic option validation timed out after 50ms',
+          errorMessage: 'Option not found.',
         },
       });
     });
@@ -551,8 +551,49 @@ describe('DynamicOptionsAdapter', () => {
 
       expect(result).toEqual({
         queryValid: { isValid: true },
-        queryError: { isValid: false, errorMessage: 'Drive API failure' },
+        queryError: { isValid: false, errorMessage: 'Option not found.' },
         queryMissing: { isValid: false, errorMessage: 'Option not found.' },
+      });
+    });
+
+    it('keys validation results by queryId when provided, avoiding key collisions', async () => {
+      const driveClient = createMockDriveClient({
+        listFolders: vi.fn().mockImplementation(async (options: { name?: string }) => {
+          if (options.name === 'Acme Corp') {
+            return { folders: [{ id: 'f-1', name: 'Acme Corp' }] };
+          }
+          return { folders: [] };
+        }),
+      });
+
+      const adapter = new DynamicOptionsAdapter(driveClient);
+
+      const queries = [
+        {
+          sourceKey: 'contactFolders',
+          queryId: 'contact_field_1',
+          config: {
+            provider: 'google_drive',
+            method: 'list_folders',
+          },
+          valueToValidate: 'Acme Corp',
+        },
+        {
+          sourceKey: 'contactFolders',
+          queryId: 'contact_field_2',
+          config: {
+            provider: 'google_drive',
+            method: 'list_folders',
+          },
+          valueToValidate: 'Missing Corp',
+        },
+      ];
+
+      const result = await adapter.validateExistence(queries, { spaceId: 'space-123' });
+
+      expect(result).toEqual({
+        contact_field_1: { isValid: true },
+        contact_field_2: { isValid: false, errorMessage: 'Option not found.' },
       });
     });
   });
