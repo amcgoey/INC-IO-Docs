@@ -806,8 +806,115 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(response.type).toBe('render');
       const renderResult = response as UiProcessRenderResult;
       expect(renderResult.isUpdateCard).toBe(true);
+      expect(renderResult.spaceId).toBeUndefined();
       expect(renderResult.validationErrors).toContain(
         'Multiple spaces match "Project Alpha". Please choose or enter a unique space identifier.'
+      );
+    });
+
+    it('resolves cleanly and completes submission when exact technical ID is entered for a space with colliding names', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+      const spaceProviderWithDuplicates: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+          },
+        ]),
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [
+            { id: 'space-alpha-1', name: 'Project Alpha' },
+            { id: 'space-alpha-2', name: 'Project Alpha' },
+          ],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: spaceProviderWithDuplicates,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'space-alpha-1',
+          SelectDocumentType: 'communication-project',
+          contact: 'Test Contact',
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        {
+          type: 'communication-project',
+          space: 'space-alpha-1',
+          data: {
+            contact: 'Test Contact',
+          },
+        },
+        'onSubmit'
+      );
+      expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
+      expect(response).toEqual({
+        type: 'notification',
+        text: 'Document processed successfully',
+      });
+    });
+
+    it('aborts submission and returns update card with collision error on whitespace and case variations of colliding space names', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+      const spaceProviderWithDuplicates: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+          },
+        ]),
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [
+            { id: 'space-alpha-1', name: '  Project Alpha  ' },
+            { id: 'space-alpha-2', name: 'PROJECT ALPHA' },
+          ],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: spaceProviderWithDuplicates,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: '   project alpha   ',
+          SelectDocumentType: 'communication-project',
+          contact: 'Test Contact',
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
+      expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
+      expect(response.type).toBe('render');
+      const renderResult = response as UiProcessRenderResult;
+      expect(renderResult.isUpdateCard).toBe(true);
+      expect(renderResult.spaceId).toBeUndefined();
+      expect(renderResult.validationErrors).toContain(
+        'Multiple spaces match "project alpha". Please choose or enter a unique space identifier.'
       );
     });
   });
@@ -889,6 +996,137 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
 
       expect(renderResult.isUpdateCard).toBe(true);
       expect(renderResult.validationErrors).toEqual(['Rule syntax error']);
+    });
+
+    it('displays error banner in validationErrors and leaves spaceId undefined when spaces collide during onFormChange', async () => {
+      const spaceProviderWithDuplicates: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+          },
+        ]),
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [
+            { id: 'dup-1', name: 'Project Alpha' },
+            { id: 'dup-2', name: 'Project Alpha' },
+          ],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: spaceProviderWithDuplicates,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'onFormChange',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Alpha',
+          SelectDocumentType_projects: 'communication-project',
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+      expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
+      expect(response.type).toBe('render');
+      const renderResult = response as UiProcessRenderResult;
+
+      expect(renderResult.isUpdateCard).toBe(true);
+      expect(renderResult.spaceId).toBeUndefined();
+      expect(renderResult.validationErrors).toContain(
+        'Multiple spaces match "Project Alpha". Please choose or enter a unique space identifier.'
+      );
+    });
+
+    it('resolves cleanly to technical ID and clears collision error when exact technical ID is entered for collided space on onFormChange', async () => {
+      const spaceProviderWithDuplicates: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+          },
+        ]),
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [
+            { id: 'dup-1', name: 'Project Alpha' },
+            { id: 'dup-2', name: 'Project Alpha' },
+          ],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: spaceProviderWithDuplicates,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'onFormChange',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'dup-1',
+          SelectDocumentType_projects: 'communication-project',
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+      expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
+      expect(response.type).toBe('render');
+      const renderResult = response as UiProcessRenderResult;
+
+      expect(renderResult.isUpdateCard).toBe(true);
+      expect(renderResult.spaceId).toBe('dup-1');
+      expect(renderResult.formData?.SelectDocumentSpace).toBe('Project Alpha');
+      expect(renderResult.validationErrors).toBeUndefined();
+    });
+
+    it('handles whitespace and case variations of colliding space names during onFormChange', async () => {
+      const spaceProviderWithDuplicates: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+          },
+        ]),
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [
+            { id: 'dup-1', name: '  Project Alpha  ' },
+            { id: 'dup-2', name: 'PROJECT ALPHA' },
+          ],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: spaceProviderWithDuplicates,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'onFormChange',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: '   project alpha   ',
+          SelectDocumentType_projects: 'communication-project',
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+      expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
+      expect(response.type).toBe('render');
+      const renderResult = response as UiProcessRenderResult;
+
+      expect(renderResult.isUpdateCard).toBe(true);
+      expect(renderResult.spaceId).toBeUndefined();
+      expect(renderResult.validationErrors).toContain(
+        'Multiple spaces match "project alpha". Please choose or enter a unique space identifier.'
+      );
     });
 
     it('calls spaceProvider.getCollection with selected space type on onSpaceTypeChange', async () => {

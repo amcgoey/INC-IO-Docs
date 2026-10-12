@@ -4,6 +4,7 @@ import {
   translateDocumentType,
   resolveSpaceType,
   resolveDocumentType,
+  resolveSpace,
   resolveSpaceId,
   evaluateProcessUiState,
   type ProcessUiStateInput,
@@ -312,6 +313,126 @@ describe('ui-process-manager domain', () => {
         resolveSpaceId({ formData: { SelectDocumentSpace: 'alpha-1' } }, spaces)
       ).toBe('alpha-1');
     });
+
+    it('returns undefined when name collision occurs with whitespace and case variations', () => {
+      const spaces = [
+        { id: 'alpha-1', name: '  Duplicate Space  ' },
+        { id: 'alpha-2', name: 'DUPLICATE SPACE' },
+      ];
+      expect(
+        resolveSpaceId({ formData: { SelectDocumentSpace: '   duplicate space   ' } }, spaces)
+      ).toBeUndefined();
+    });
+
+    it('disambiguates duplicate space names when entering unique space ID with surrounding whitespace', () => {
+      const spaces = [
+        { id: 'alpha-1', name: 'Duplicate Space' },
+        { id: 'alpha-2', name: 'Duplicate Space' },
+      ];
+      expect(
+        resolveSpaceId({ formData: { SelectDocumentSpace: '   alpha-2   ' } }, spaces)
+      ).toBe('alpha-2');
+    });
+  });
+
+  describe('resolveSpace', () => {
+    const spaces = [
+      { id: 'alpha-1', name: 'Project Alpha' },
+      { id: 'alpha-2', name: 'Project Alpha' },
+      { id: 'beta-1', name: 'Project Beta' },
+    ];
+
+    it('detects multiple spaces sharing normalized name and returns collisionError', () => {
+      const result = resolveSpace(
+        { formData: { SelectDocumentSpace: 'Project Alpha' } },
+        spaces
+      );
+      expect(result.spaceId).toBeUndefined();
+      expect(result.matchedSpace).toBeUndefined();
+      expect(result.collisionError).toBe(
+        'Multiple spaces match "Project Alpha". Please choose or enter a unique space identifier.'
+      );
+    });
+
+    it('detects collision across case variations of space names', () => {
+      const caseSpaces = [
+        { id: 'alpha-1', name: 'Project Alpha' },
+        { id: 'alpha-2', name: 'PROJECT ALPHA' },
+      ];
+      const result = resolveSpace(
+        { formData: { SelectDocumentSpace: 'project alpha' } },
+        caseSpaces
+      );
+      expect(result.spaceId).toBeUndefined();
+      expect(result.collisionError).toBe(
+        'Multiple spaces match "project alpha". Please choose or enter a unique space identifier.'
+      );
+    });
+
+    it('detects collision across whitespace variations of space names and input', () => {
+      const whitespaceSpaces = [
+        { id: 'alpha-1', name: '  Project Alpha  ' },
+        { id: 'alpha-2', name: 'Project Alpha' },
+      ];
+      const result = resolveSpace(
+        { formData: { SelectDocumentSpace: '   project alpha   ' } },
+        whitespaceSpaces
+      );
+      expect(result.spaceId).toBeUndefined();
+      expect(result.collisionError).toBe(
+        'Multiple spaces match "project alpha". Please choose or enter a unique space identifier.'
+      );
+    });
+
+    it('resolves cleanly to technical ID when entering exact unique technical ID for collided space', () => {
+      const result = resolveSpace(
+        { formData: { SelectDocumentSpace: 'alpha-1' } },
+        spaces
+      );
+      expect(result.spaceId).toBe('alpha-1');
+      expect(result.matchedSpace).toEqual({ id: 'alpha-1', name: 'Project Alpha' });
+      expect(result.isIdMatch).toBe(true);
+      expect(result.collisionError).toBeUndefined();
+    });
+
+    it('resolves cleanly to technical ID when technical ID has surrounding whitespace', () => {
+      const result = resolveSpace(
+        { formData: { SelectDocumentSpace: '   alpha-2   ' } },
+        spaces
+      );
+      expect(result.spaceId).toBe('alpha-2');
+      expect(result.matchedSpace).toEqual({ id: 'alpha-2', name: 'Project Alpha' });
+      expect(result.isIdMatch).toBe(true);
+      expect(result.collisionError).toBeUndefined();
+    });
+
+    it('resolves single unique space by case-insensitive and trimmed name match', () => {
+      const result = resolveSpace(
+        { formData: { SelectDocumentSpace: '  PROJECT BETA  ' } },
+        spaces
+      );
+      expect(result.spaceId).toBe('beta-1');
+      expect(result.matchedSpace).toEqual({ id: 'beta-1', name: 'Project Beta' });
+      expect(result.isIdMatch).toBe(false);
+      expect(result.collisionError).toBeUndefined();
+    });
+
+    it('falls back to unlisted ID when space does not match any known name or ID', () => {
+      const result = resolveSpace(
+        { formData: { SelectDocumentSpace: 'custom-unlisted-id' } },
+        spaces
+      );
+      expect(result.spaceId).toBe('custom-unlisted-id');
+      expect(result.matchedSpace).toBeUndefined();
+      expect(result.isIdMatch).toBe(false);
+      expect(result.collisionError).toBeUndefined();
+    });
+
+    it('returns empty result when formData is missing or empty', () => {
+      expect(resolveSpace()).toEqual({});
+      expect(resolveSpace({ formData: {} })).toEqual({});
+      expect(resolveSpace({ formData: { SelectDocumentSpace: '   ' } })).toEqual({});
+    });
   });
 
   describe('evaluateProcessUiState', () => {
@@ -493,6 +614,99 @@ describe('ui-process-manager domain', () => {
         'Multiple spaces match "Project Dup". Please choose or enter a unique space identifier.'
       );
       expect(state.isUpdateCard).toBe(true);
+    });
+
+    it('sets spaceId undefined, sets isUpdateCard true, and adds collision error during onFormChange', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          actionName: 'onFormChange',
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Dup',
+          },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: [
+          { id: 'dup-1', name: 'Project Dup' },
+          { id: 'dup-2', name: 'Project Dup' },
+        ],
+      };
+
+      const state = evaluateProcessUiState(input);
+      expect(state.spaceId).toBeUndefined();
+      expect(state.isUpdateCard).toBe(true);
+      expect(state.validationErrors).toContain(
+        'Multiple spaces match "Project Dup". Please choose or enter a unique space identifier.'
+      );
+    });
+
+    it('resolves cleanly to technical ID and translates name when entering exact ID for collided space during onFormChange', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          actionName: 'onFormChange',
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'dup-2',
+          },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: [
+          { id: 'dup-1', name: 'Project Dup' },
+          { id: 'dup-2', name: 'Project Dup' },
+        ],
+      };
+
+      const state = evaluateProcessUiState(input);
+      expect(state.spaceId).toBe('dup-2');
+      expect(state.formData.SelectDocumentSpace_projects).toBe('Project Dup');
+      expect(state.validationErrors).toBeUndefined();
+    });
+
+    it('detects collision across whitespace and case variations during onFormChange', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          actionName: 'onFormChange',
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: '   project dup   ',
+          },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: [
+          { id: 'dup-1', name: '  Project Dup  ' },
+          { id: 'dup-2', name: 'PROJECT DUP' },
+        ],
+      };
+
+      const state = evaluateProcessUiState(input);
+      expect(state.spaceId).toBeUndefined();
+      expect(state.isUpdateCard).toBe(true);
+      expect(state.validationErrors).toContain(
+        'Multiple spaces match "project dup". Please choose or enter a unique space identifier.'
+      );
+    });
+
+    it('does not duplicate collision error if validationErrors already contains it', () => {
+      const collisionMsg = 'Multiple spaces match "Project Dup". Please choose or enter a unique space identifier.';
+      const input: ProcessUiStateInput = {
+        context: {
+          actionName: 'onFormChange',
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Dup',
+          },
+          validationErrors: [collisionMsg, 'Other error'],
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: [
+          { id: 'dup-1', name: 'Project Dup' },
+          { id: 'dup-2', name: 'Project Dup' },
+        ],
+      };
+
+      const state = evaluateProcessUiState(input);
+      expect(state.spaceId).toBeUndefined();
+      expect(state.validationErrors).toEqual([collisionMsg, 'Other error']);
     });
 
     it('retains inactive document type form inputs across type toggles', () => {
