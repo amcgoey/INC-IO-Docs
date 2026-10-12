@@ -185,12 +185,13 @@ function cleanTrimmedString(value: unknown): string | undefined {
   return undefined;
 }
 
-export interface ResolveSpaceResult {
-  spaceId?: string | undefined;
-  matchedSpace?: UiProcessSpaceItem | undefined;
-  collisionError?: string | undefined;
-  isIdMatch?: boolean | undefined;
-}
+export const ResolveSpaceResultSchema = Type.Object({
+  spaceId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  matchedSpace: Type.Optional(Type.Union([UiProcessSpaceItemSchema, Type.Undefined()])),
+  collisionError: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  isIdMatch: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+});
+export type ResolveSpaceResult = Static<typeof ResolveSpaceResultSchema>;
 
 /**
  * Detailed space resolution evaluating exact ID matches, case-insensitive name matches,
@@ -369,12 +370,8 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     if (effectiveFormData[SELECT_DOCUMENT_SPACE_KEY] !== undefined) {
       effectiveFormData[SELECT_DOCUMENT_SPACE_KEY] = spaceResolution.matchedSpace.name;
     }
-    if (
-      effectiveFormData.spaceId !== undefined &&
-      (!spaceSelectorKey || effectiveFormData[spaceSelectorKey] === undefined) &&
-      effectiveFormData[SELECT_DOCUMENT_SPACE_KEY] === undefined
-    ) {
-      effectiveFormData[SELECT_DOCUMENT_SPACE_KEY] = spaceResolution.matchedSpace.name;
+    if (effectiveFormData.spaceId !== undefined) {
+      effectiveFormData.spaceId = spaceResolution.matchedSpace.name;
     }
   }
 

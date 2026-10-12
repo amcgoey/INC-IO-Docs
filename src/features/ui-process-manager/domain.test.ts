@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { Value } from '@sinclair/typebox/value';
 import {
   extractDocumentData,
   translateDocumentType,
@@ -7,8 +8,10 @@ import {
   resolveSpace,
   resolveSpaceId,
   evaluateProcessUiState,
+  ResolveSpaceResultSchema,
   type ProcessUiStateInput,
 } from './domain';
+import { ResolveSpaceResultSchema as PortsResolveSpaceResultSchema } from './ports';
 
 describe('ui-process-manager domain', () => {
 
@@ -520,6 +523,37 @@ describe('ui-process-manager domain', () => {
       expect(result.spaceId).toBe('existing-id');
       expect(result.matchedSpace).toEqual({ id: 'existing-id', name: 'Existing Space' });
     });
+
+    it('returns a result conforming to ResolveSpaceResultSchema and re-exported from ports', () => {
+      expect(ResolveSpaceResultSchema).toBe(PortsResolveSpaceResultSchema);
+
+      const spaces = [{ id: 'existing-id', name: 'Existing Space' }];
+      const result = resolveSpace(
+        {
+          formData: {
+            spaceId: 'existing-id',
+          },
+        },
+        spaces
+      );
+      expect(Value.Check(ResolveSpaceResultSchema, result)).toBe(true);
+
+      const collisionResult = resolveSpace(
+        {
+          formData: {
+            SelectDocumentSpace: 'Dup',
+          },
+        },
+        [
+          { id: 'd1', name: 'Dup' },
+          { id: 'd2', name: 'Dup' },
+        ]
+      );
+      expect(Value.Check(ResolveSpaceResultSchema, collisionResult)).toBe(true);
+
+      const emptyResult = resolveSpace();
+      expect(Value.Check(ResolveSpaceResultSchema, emptyResult)).toBe(true);
+    });
   });
 
   describe('evaluateProcessUiState', () => {
@@ -660,6 +694,24 @@ describe('ui-process-manager domain', () => {
       const state = evaluateProcessUiState(input);
       expect(state.spaceId).toBe('space-folder-alpha-id');
       expect(state.formData.SelectDocumentSpace).toBe('Project Alpha');
+    });
+
+    it('auto-translates raw space ID in formData.spaceId to display name when no explicit selector keys are present', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            spaceId: 'space-folder-alpha-id',
+            SelectDocumentType: 'communication-project',
+          },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: [{ id: 'space-folder-alpha-id', name: 'Project Alpha' }],
+      };
+
+      const state = evaluateProcessUiState(input);
+      expect(state.spaceId).toBe('space-folder-alpha-id');
+      expect(state.formData.spaceId).toBe('Project Alpha');
     });
 
     it('derives selectionState.spaces from spaces collection', () => {
