@@ -500,7 +500,7 @@ describe('DynamicOptionsAdapter', () => {
       expect(result).toEqual({
         slowQuery: {
           isValid: false,
-          errorMessage: 'Option not found.',
+          errorMessage: 'Validation timed out.',
         },
       });
     });
@@ -551,7 +551,7 @@ describe('DynamicOptionsAdapter', () => {
 
       expect(result).toEqual({
         queryValid: { isValid: true },
-        queryError: { isValid: false, errorMessage: 'Option not found.' },
+        queryError: { isValid: false, errorMessage: 'Validation timed out.' },
         queryMissing: { isValid: false, errorMessage: 'Option not found.' },
       });
     });

@@ -5,6 +5,9 @@ import {
   UiEventType,
   UiEventRuleType,
   DocumentUiEventsSchema,
+  OPTION_NOT_FOUND_MSG,
+  VALIDATION_TIMEOUT_MSG,
+  resolveQueryKey,
   type Activity,
   type ActivityOutput,
   type FileLocator,
@@ -19,6 +22,9 @@ export {
   type UiEvent,
   UiEventRuleType,
   type UiEventRule,
+  OPTION_NOT_FOUND_MSG,
+  VALIDATION_TIMEOUT_MSG,
+  resolveQueryKey,
 };
 
 export type SchemaOrKeys =

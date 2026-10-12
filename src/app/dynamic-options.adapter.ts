@@ -4,11 +4,14 @@ import type {
   OptionsFetcherContext,
   OptionsFetcherPort,
 } from '../features/schema-driven-ui/ports';
-import type {
-  DocumentDynamicValidationPort,
-  DynamicValidationContext,
-  DynamicValidationQuery,
-  DynamicValidationResult,
+import {
+  type DocumentDynamicValidationPort,
+  type DynamicValidationContext,
+  type DynamicValidationQuery,
+  type DynamicValidationResult,
+  OPTION_NOT_FOUND_MSG,
+  VALIDATION_TIMEOUT_MSG,
+  resolveQueryKey,
 } from '../features/document/ports';
 
 export interface DynamicOptionsDriveClient {
@@ -47,7 +50,7 @@ const PLACEHOLDER_MISSING_SPACE: DynamicOptionItem[] = [
 ];
 const OPTION_NOT_FOUND: DynamicValidationResult = {
   isValid: false,
-  errorMessage: 'Option not found.',
+  errorMessage: OPTION_NOT_FOUND_MSG,
 };
 
 export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynamicValidationPort {
@@ -229,7 +232,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
 
     if (!context.spaceId) {
       for (const query of queries) {
-        const key = query.queryId ?? query.sourceKey;
+        const key = resolveQueryKey(query);
         results[key] = { ...OPTION_NOT_FOUND };
       }
       return results;
@@ -240,7 +243,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     const settledQueries = await Promise.allSettled(
       queries.map(async (query) => {
         const result = await this.validateQueryWithTimeout(query, spaceId);
-        const key = query.queryId ?? query.sourceKey;
+        const key = resolveQueryKey(query);
         return { key, result };
       })
     );
@@ -253,7 +256,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
 
     // Ensure all queries have an entry
     for (const query of queries) {
-      const key = query.queryId ?? query.sourceKey;
+      const key = resolveQueryKey(query);
       if (!results[key]) {
         results[key] = { ...OPTION_NOT_FOUND };
       }
@@ -282,7 +285,10 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
         timeoutPromise,
       ]);
     } catch {
-      return { ...OPTION_NOT_FOUND };
+      return {
+        isValid: false,
+        errorMessage: VALIDATION_TIMEOUT_MSG,
+      };
     } finally {
       if (timer) {
         clearTimeout(timer);

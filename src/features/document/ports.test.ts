@@ -6,6 +6,9 @@ import {
   DynamicValidationQuerySchema,
   DynamicValidationResultSchema,
   DynamicValidationContextSchema,
+  OPTION_NOT_FOUND_MSG,
+  VALIDATION_TIMEOUT_MSG,
+  resolveQueryKey,
   type DocumentDynamicValidationPort,
   type DynamicValidationQuery,
   type DynamicValidationResult,
@@ -124,6 +127,16 @@ describe('Document Ports & DTOs', () => {
 
     const emptyContext: DynamicValidationContext = {};
     expect(Value.Check(DynamicValidationContextSchema, emptyContext)).toBe(true);
+  });
+
+  it('resolves query key using queryId if present, otherwise falling back to sourceKey', () => {
+    expect(resolveQueryKey({ sourceKey: 'folders' })).toBe('folders');
+    expect(resolveQueryKey({ queryId: 'contact_0', sourceKey: 'folders' })).toBe('contact_0');
+  });
+
+  it('exports standard validation messages', () => {
+    expect(OPTION_NOT_FOUND_MSG).toBe('Option not found.');
+    expect(VALIDATION_TIMEOUT_MSG).toBe('Validation timed out.');
   });
 });
 

@@ -11,6 +11,13 @@ import type {
   DynamicValidationQuery,
 } from './ports';
 
+export const OPTION_NOT_FOUND_MSG = 'Option not found.';
+export const VALIDATION_TIMEOUT_MSG = 'Validation timed out.';
+
+export function resolveQueryKey(query: { queryId?: string; sourceKey: string }): string {
+  return query.queryId ?? query.sourceKey;
+}
+
 export function formatValidationErrors<T extends TSchema>(schema: T, value: unknown): string[] {
   return [...Value.Errors(schema, value)].map((e) => `${e.path}: ${e.message}`);
 }
@@ -393,13 +400,10 @@ export class DocumentService implements DocumentServicePort {
         if (isDynamicOptionField(field)) {
           const rawValue = rawData[field.key];
           const valuesToValidate: string[] = [];
-          if (typeof rawValue === 'string' && rawValue.trim().length > 0) {
-            valuesToValidate.push(rawValue.trim());
-          } else if (Array.isArray(rawValue)) {
-            for (const item of rawValue) {
-              if (typeof item === 'string' && item.trim().length > 0) {
-                valuesToValidate.push(item.trim());
-              }
+          const normalizedValues = Array.isArray(rawValue) ? rawValue : [rawValue];
+          for (const item of normalizedValues) {
+            if (typeof item === 'string' && item.trim().length > 0) {
+              valuesToValidate.push(item.trim());
             }
           }
 
@@ -430,10 +434,10 @@ export class DocumentService implements DocumentServicePort {
 
         const dynamicErrors: string[] = [];
         for (const query of dynamicQueries) {
-          const queryKey = query.queryId ?? query.sourceKey;
+          const queryKey = resolveQueryKey(query);
           const result = validationResults[queryKey] ?? validationResults[query.sourceKey];
           if (result && !result.isValid) {
-            dynamicErrors.push(result.errorMessage ?? 'Option not found.');
+            dynamicErrors.push(result.errorMessage ?? OPTION_NOT_FOUND_MSG);
           }
         }
 
