@@ -4,9 +4,16 @@ import {
   type UiSelectionItem,
   UiSelectionStateSchema,
   type UiSelectionState,
+  UiProcessSpaceTypeSchema,
   type UiProcessSpaceType,
+  UiProcessSpaceItemSchema,
+  type UiProcessSpaceItem,
   ProcessUiStateConfigSchema,
   type ProcessUiStateConfig,
+  ProcessUiStateInputSchema,
+  type ProcessUiStateInput,
+  ProcessUiStateOutputSchema,
+  type ProcessUiStateOutput,
 } from './domain';
 
 export {
@@ -14,9 +21,16 @@ export {
   type UiSelectionItem,
   UiSelectionStateSchema,
   type UiSelectionState,
+  UiProcessSpaceTypeSchema,
   type UiProcessSpaceType,
+  UiProcessSpaceItemSchema,
+  type UiProcessSpaceItem,
   ProcessUiStateConfigSchema,
   type ProcessUiStateConfig,
+  ProcessUiStateInputSchema,
+  type ProcessUiStateInput,
+  ProcessUiStateOutputSchema,
+  type ProcessUiStateOutput,
 };
 
 export const UiProcessEventContextSchema = Type.Object({
@@ -72,7 +86,7 @@ export interface UiProcessConfigProviderPort {
 
 export interface UiProcessSpaceCollection {
   type?: UiProcessSpaceType | undefined;
-  spaces: Array<{ id: string; name: string }>;
+  spaces: UiProcessSpaceItem[];
 }
 
 export interface UiProcessSpaceProviderPort {

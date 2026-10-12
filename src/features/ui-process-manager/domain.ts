@@ -14,11 +14,20 @@ export const UiSelectionStateSchema = Type.Object({
 });
 export type UiSelectionState = Static<typeof UiSelectionStateSchema>;
 
-export interface UiProcessSpaceType {
-  id: string;
-  displayName: string;
-  spaceSchema: { allowedDocumentTypes: string[] };
-}
+export const UiProcessSpaceItemSchema = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+});
+export type UiProcessSpaceItem = Static<typeof UiProcessSpaceItemSchema>;
+
+export const UiProcessSpaceTypeSchema = Type.Object({
+  id: Type.String(),
+  displayName: Type.String(),
+  spaceSchema: Type.Object({
+    allowedDocumentTypes: Type.Array(Type.String()),
+  }),
+});
+export type UiProcessSpaceType = Static<typeof UiProcessSpaceTypeSchema>;
 
 export const ProcessUiStateConfigSchema = Type.Object({
   defaultDocumentType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
@@ -31,36 +40,39 @@ export const UiStateResolutionContextSchema = Type.Object({
   config: Type.Optional(Type.Union([ProcessUiStateConfigSchema, Type.Undefined()])),
   activeSpaceType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   parameters: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
+  spaces: Type.Optional(Type.Union([Type.Array(UiProcessSpaceItemSchema), Type.Undefined()])),
 });
 export type UiStateResolutionContext = Static<typeof UiStateResolutionContextSchema>;
 
-export interface ProcessUiStateEvent {
-  actionName?: string | undefined;
-  formData?: Record<string, unknown> | undefined;
-  parameters?: Record<string, string> | undefined;
-  validationErrors?: string[] | undefined;
-  isUpdateCard?: boolean | undefined;
-}
+export const ProcessUiStateEventSchema = Type.Object({
+  actionName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
+  parameters: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
+  validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+});
+export type ProcessUiStateEvent = Static<typeof ProcessUiStateEventSchema>;
 
-export interface ProcessUiStateInput {
-  context: ProcessUiStateEvent;
-  resolvedDocumentTypeKey?: string | undefined;
-  resolvedSpaceType?: string | undefined;
-  config?: ProcessUiStateConfig | undefined;
-  spaceTypes: UiProcessSpaceType[];
-  collectionSpaces: string[];
-  nameToKeyMap?: Record<string, string> | undefined;
-}
+export const ProcessUiStateInputSchema = Type.Object({
+  context: ProcessUiStateEventSchema,
+  resolvedDocumentTypeKey: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  resolvedSpaceType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  config: Type.Optional(Type.Union([ProcessUiStateConfigSchema, Type.Undefined()])),
+  spaceTypes: Type.Array(UiProcessSpaceTypeSchema),
+  spaces: Type.Array(UiProcessSpaceItemSchema),
+});
+export type ProcessUiStateInput = Static<typeof ProcessUiStateInputSchema>;
 
-export interface ProcessUiStateOutput {
-  viewId: string;
-  documentTypeKey: string;
-  spaceId?: string | undefined;
-  selectionState: UiSelectionState;
-  formData: Record<string, unknown>;
-  isUpdateCard: boolean;
-  validationErrors?: string[] | undefined;
-}
+export const ProcessUiStateOutputSchema = Type.Object({
+  viewId: Type.String(),
+  documentTypeKey: Type.String(),
+  spaceId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  selectionState: UiSelectionStateSchema,
+  formData: Type.Record(Type.String(), Type.Unknown()),
+  isUpdateCard: Type.Boolean(),
+  validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+});
+export type ProcessUiStateOutput = Static<typeof ProcessUiStateOutputSchema>;
 
 export const SELECTION_KEY_PREFIX = 'SelectDocument';
 export const SELECT_DOCUMENT_SPACE_TYPE_KEY = 'SelectDocumentSpaceType';
@@ -96,7 +108,6 @@ function filterFormData(
   }
   return result;
 }
-
 
 /**
  * Extracts data fields from formData by stripping selection state keys
@@ -163,30 +174,93 @@ export function resolveDocumentType(context?: UiStateResolutionContext): string 
 }
 
 function cleanTrimmedString(value: unknown): string | undefined {
-  if (typeof value !== 'string') {
-    return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
   }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
+  if (Array.isArray(value) && value.length > 0 && typeof value[0] === 'string') {
+    const trimmed = value[0].trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  return undefined;
+}
+
+export interface ResolveSpaceResult {
+  spaceId?: string | undefined;
+  matchedSpace?: UiProcessSpaceItem | undefined;
+  collisionError?: string | undefined;
+  isIdMatch?: boolean | undefined;
+}
+
+/**
+ * Detailed space resolution evaluating exact ID matches, case-insensitive name matches,
+ * ambiguity collisions, and unlisted ID fallbacks.
+ */
+export function resolveSpace(
+  context?: UiStateResolutionContext,
+  spaces?: UiProcessSpaceItem[]
+): ResolveSpaceResult {
+  const spaceList = spaces ?? context?.spaces ?? [];
+  const formData = context?.formData;
+  if (!formData) {
+    return {};
+  }
+  const spaceType = context.activeSpaceType ?? resolveSpaceType(context);
+  const spaceSelectorKey = spaceType ? getSpaceSelectorKey(spaceType) : undefined;
+
+  const rawInput =
+    (spaceSelectorKey ? cleanTrimmedString(formData[spaceSelectorKey]) : undefined) ??
+    cleanTrimmedString(formData[SELECT_DOCUMENT_SPACE_KEY]) ??
+    cleanTrimmedString(formData.spaceId);
+
+  if (!rawInput) {
+    return {};
+  }
+
+  // 1. Exact ID match
+  const idMatch = spaceList.find((s) => s.id === rawInput);
+  if (idMatch) {
+    return {
+      spaceId: idMatch.id,
+      matchedSpace: idMatch,
+      isIdMatch: true,
+    };
+  }
+
+  // 2. Case-insensitive name match
+  const normalizedRaw = rawInput.toLowerCase();
+  const nameMatches = spaceList.filter((s) => s.name.trim().toLowerCase() === normalizedRaw);
+
+  if (nameMatches.length > 1) {
+    return {
+      collisionError: `Multiple spaces match "${rawInput}". Please choose or enter a unique space identifier.`,
+    };
+  }
+
+  if (nameMatches.length === 1) {
+    return {
+      spaceId: nameMatches[0].id,
+      matchedSpace: nameMatches[0],
+      isIdMatch: false,
+    };
+  }
+
+  // 3. Unlisted ID fallback
+  return {
+    spaceId: rawInput,
+    isIdMatch: false,
+  };
 }
 
 /**
  * Resolves the active space ID from context form data.
  * Checks direct 'spaceId', generic 'SelectDocumentSpace', or active space selector 'SelectDocumentSpace_<spaceType>'.
  */
-export function resolveSpaceId(context?: UiStateResolutionContext): string | undefined {
-  const formData = context?.formData;
-  if (!formData) {
-    return undefined;
-  }
-  const spaceType = context.activeSpaceType ?? resolveSpaceType(context);
-  const spaceSelectorKey = spaceType ? getSpaceSelectorKey(spaceType) : undefined;
-
-  return (
-    cleanTrimmedString(formData.spaceId) ??
-    cleanTrimmedString(formData[SELECT_DOCUMENT_SPACE_KEY]) ??
-    (spaceSelectorKey ? cleanTrimmedString(formData[spaceSelectorKey]) : undefined)
-  );
+export function resolveSpaceId(
+  context?: UiStateResolutionContext,
+  spaces?: UiProcessSpaceItem[]
+): string | undefined {
+  return resolveSpace(context, spaces).spaceId;
 }
 
 /**
@@ -195,7 +269,7 @@ export function resolveSpaceId(context?: UiStateResolutionContext): string | und
  * 1. UI reload (isUpdateCard) on Space Type change.
  * 2. Defaulting Document Type to first allowed type when Space Type changes.
  * 3. Retains all formData across Document Type or Space Type change (dynamic-widget-suffix system prevents collisions).
- * 4. Consolidates selection state and translation into effective form data.
+ * 4. Resolves spaceId, derives selectionState.spaces, and auto-translates raw space ID to display name in effectiveFormData.
  */
 export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiStateOutput {
   const { context } = input;
@@ -210,10 +284,8 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const allowedDocumentTypes = selectedSpaceTypeObj?.spaceSchema.allowedDocumentTypes ?? [];
 
   const effectiveFormData: Record<string, unknown> = { ...context.formData };
-  const isUpdateCard = Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange);
+  let isUpdateCard = Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange);
 
-  // If resolvedDocumentTypeKey is already provided by orchestrator translation, use it;
-  // otherwise fallback to rawSelectedDocType and nameToKeyMap translation if provided
   const rawSelectedDocType =
     resolveDocumentType({
       formData: effectiveFormData,
@@ -222,9 +294,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
       parameters: context.parameters,
     });
 
-  let currentDocTypeKey =
-    input.resolvedDocumentTypeKey ??
-    (rawSelectedDocType ? translateDocumentType(rawSelectedDocType, input.nameToKeyMap) : undefined);
+  let currentDocTypeKey = input.resolvedDocumentTypeKey ?? rawSelectedDocType;
 
   if (isSpaceTypeChange && allowedDocumentTypes.length > 0) {
     currentDocTypeKey = allowedDocumentTypes[0];
@@ -257,25 +327,52 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
 
   const selectionState: UiSelectionState = {
     spaceTypes,
-    spaces: input.collectionSpaces,
+    spaces: (input.spaces ?? []).map((s) => s.name),
     documentTypes,
   };
 
-  const resolvedSpaceId = resolveSpaceId({
-    formData: effectiveFormData,
-    activeSpaceType: currentSpaceType,
-    parameters: context.parameters,
-  });
+  const spaceResolution = resolveSpace(
+    {
+      formData: effectiveFormData,
+      activeSpaceType: currentSpaceType,
+      parameters: context.parameters,
+    },
+    input.spaces ?? []
+  );
+
+  if (spaceResolution.isIdMatch && spaceResolution.matchedSpace) {
+    const spaceSelectorKey = currentSpaceType ? getSpaceSelectorKey(currentSpaceType) : undefined;
+    if (spaceSelectorKey && effectiveFormData[spaceSelectorKey] !== undefined) {
+      effectiveFormData[spaceSelectorKey] = spaceResolution.matchedSpace.name;
+    }
+    if (effectiveFormData[SELECT_DOCUMENT_SPACE_KEY] !== undefined) {
+      effectiveFormData[SELECT_DOCUMENT_SPACE_KEY] = spaceResolution.matchedSpace.name;
+    }
+    if (
+      effectiveFormData.spaceId !== undefined &&
+      (!spaceSelectorKey || effectiveFormData[spaceSelectorKey] === undefined) &&
+      effectiveFormData[SELECT_DOCUMENT_SPACE_KEY] === undefined
+    ) {
+      effectiveFormData[SELECT_DOCUMENT_SPACE_KEY] = spaceResolution.matchedSpace.name;
+    }
+  }
+
+  const validationErrors = [
+    ...(context.validationErrors ?? []),
+    ...(spaceResolution.collisionError ? [spaceResolution.collisionError] : []),
+  ];
+
+  if (spaceResolution.collisionError) {
+    isUpdateCard = true;
+  }
 
   return {
     viewId: 'drive-document-process-card',
     documentTypeKey: currentDocTypeKey,
-    ...(resolvedSpaceId !== undefined ? { spaceId: resolvedSpaceId } : {}),
+    ...(spaceResolution.spaceId !== undefined ? { spaceId: spaceResolution.spaceId } : {}),
     selectionState,
     formData: effectiveFormData,
     isUpdateCard,
-    ...(context.validationErrors && context.validationErrors.length > 0
-      ? { validationErrors: context.validationErrors }
-      : {}),
+    ...(validationErrors.length > 0 ? { validationErrors } : {}),
   };
 }

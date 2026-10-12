@@ -20,6 +20,7 @@ import {
   SELECT_DOCUMENT_SPACE_PREFIX,
   SELECT_DOCUMENT_TYPE_PREFIX,
   type UiStateResolutionContext,
+  type UiProcessSpaceItem,
 } from '../domain';
 
 export interface WorkspaceAddonAdapterOptions {
@@ -133,11 +134,11 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         ? { ...context, formData: normalizedFormData }
         : context;
 
-    let collectionSpaces: string[] = [];
+    let spaces: UiProcessSpaceItem[] = [];
     const collectionErrors: string[] = [];
     try {
       const collection = await spaceProvider.getCollection(currentSpaceType);
-      collectionSpaces = collection.spaces.map((s) => s.name);
+      spaces = collection.spaces.map((s) => ({ id: s.id, name: s.name }));
     } catch (e) {
       console.warn(`Could not fetch collection for space type: ${currentSpaceType}`, e);
       if (activeSpaceObj) {
@@ -168,7 +169,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         resolvedSpaceType: currentSpaceType,
         config,
         spaceTypes,
-        collectionSpaces,
+        spaces,
       });
 
       return {

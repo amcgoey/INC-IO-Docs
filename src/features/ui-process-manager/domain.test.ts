@@ -232,6 +232,86 @@ describe('ui-process-manager domain', () => {
       expect(resolveSpaceId({ formData: {} })).toBeUndefined();
       expect(resolveSpaceId({ formData: { spaceId: '   ' } })).toBeUndefined();
     });
+
+    it('resolves spaceId by exact ID match', () => {
+      const spaces = [
+        { id: 'space-folder-alpha-id', name: 'Project Alpha' },
+        { id: 'space-folder-beta-id', name: 'Project Beta' },
+      ];
+      const result = resolveSpaceId(
+        { formData: { SelectDocumentSpace: 'space-folder-alpha-id' } },
+        spaces
+      );
+      expect(result).toBe('space-folder-alpha-id');
+    });
+
+    it('resolves spaceId by case-insensitive name match', () => {
+      const spaces = [
+        { id: 'space-folder-alpha-id', name: 'Project Alpha' },
+      ];
+      const resultLower = resolveSpaceId(
+        { formData: { SelectDocumentSpace: 'project alpha' } },
+        spaces
+      );
+      expect(resultLower).toBe('space-folder-alpha-id');
+
+      const resultUpper = resolveSpaceId(
+        { formData: { SelectDocumentSpace: 'PROJECT ALPHA' } },
+        spaces
+      );
+      expect(resultUpper).toBe('space-folder-alpha-id');
+    });
+
+    it('resolves spaceId with whitespace trimming around input and space names', () => {
+      const spaces = [
+        { id: 'space-folder-alpha-id', name: 'Project Alpha' },
+      ];
+      const result = resolveSpaceId(
+        { formData: { SelectDocumentSpace: '   Project Alpha   ' } },
+        spaces
+      );
+      expect(result).toBe('space-folder-alpha-id');
+    });
+
+    it('falls back to unlisted ID when space does not match any known name or ID', () => {
+      const spaces = [
+        { id: 'space-folder-alpha-id', name: 'Project Alpha' },
+      ];
+      const result = resolveSpaceId(
+        { formData: { SelectDocumentSpace: 'unlisted-custom-id-999' } },
+        spaces
+      );
+      expect(result).toBe('unlisted-custom-id-999');
+    });
+
+    it('returns undefined when input is empty or whitespace only', () => {
+      const spaces = [
+        { id: 'space-folder-alpha-id', name: 'Project Alpha' },
+      ];
+      expect(resolveSpaceId({ formData: { SelectDocumentSpace: '' } }, spaces)).toBeUndefined();
+      expect(resolveSpaceId({ formData: { SelectDocumentSpace: '   ' } }, spaces)).toBeUndefined();
+      expect(resolveSpaceId({ formData: {} }, spaces)).toBeUndefined();
+    });
+
+    it('returns undefined when name collision occurs in resolveSpaceId', () => {
+      const spaces = [
+        { id: 'alpha-1', name: 'Duplicate Space' },
+        { id: 'alpha-2', name: 'Duplicate Space' },
+      ];
+      expect(
+        resolveSpaceId({ formData: { SelectDocumentSpace: 'Duplicate Space' } }, spaces)
+      ).toBeUndefined();
+    });
+
+    it('disambiguates duplicate space names when entering unique space ID', () => {
+      const spaces = [
+        { id: 'alpha-1', name: 'Duplicate Space' },
+        { id: 'alpha-2', name: 'Duplicate Space' },
+      ];
+      expect(
+        resolveSpaceId({ formData: { SelectDocumentSpace: 'alpha-1' } }, spaces)
+      ).toBe('alpha-1');
+    });
   });
 
   describe('evaluateProcessUiState', () => {
@@ -248,12 +328,6 @@ describe('ui-process-manager domain', () => {
       },
     ];
 
-    const sampleNameMap = {
-      'Communication Project': 'communication-project',
-      'Invoice Project': 'invoice-project',
-      'Communication Proposal': 'communication-proposal',
-    };
-
     it('defaults document type to the first allowed type and retains form data when Space Type changes', () => {
       const input: ProcessUiStateInput = {
         context: {
@@ -269,8 +343,10 @@ describe('ui-process-manager domain', () => {
           defaultDocumentType: 'communication-project',
         },
         spaceTypes: sampleSpaceTypes,
-        collectionSpaces: ['Proposal A', 'Proposal B'],
-        nameToKeyMap: sampleNameMap,
+        spaces: [
+          { id: 'prop-a', name: 'Proposal A' },
+          { id: 'prop-b', name: 'Proposal B' },
+        ],
       };
 
       const state = evaluateProcessUiState(input);
@@ -306,8 +382,7 @@ describe('ui-process-manager domain', () => {
           defaultDocumentType: 'communication-project',
         },
         spaceTypes: sampleSpaceTypes,
-        collectionSpaces: ['Alpha'],
-        nameToKeyMap: sampleNameMap,
+        spaces: [{ id: 'space-alpha-id', name: 'Project Alpha' }],
       };
 
       const state = evaluateProcessUiState(input);
@@ -323,7 +398,7 @@ describe('ui-process-manager domain', () => {
       });
       expect(state.formData.contact).toBe('Jane');
       expect(state.formData.date).toBe('260920');
-      expect(state.spaceId).toBe('Project Alpha');
+      expect(state.spaceId).toBe('space-alpha-id');
     });
 
     it('evaluates and includes spaceId in output when space is selected', () => {
@@ -336,11 +411,88 @@ describe('ui-process-manager domain', () => {
           },
         },
         spaceTypes: sampleSpaceTypes,
-        collectionSpaces: ['project-folder-456'],
+        spaces: [{ id: 'project-folder-456', name: 'Project 456' }],
       };
 
       const result = evaluateProcessUiState(input);
       expect(result.spaceId).toBe('project-folder-456');
+    });
+
+    it('auto-translates raw space ID to display name in effectiveFormData upon evaluateProcessUiState', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'space-folder-alpha-id',
+            SelectDocumentType_projects: 'communication-project',
+          },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: [{ id: 'space-folder-alpha-id', name: 'Project Alpha' }],
+      };
+
+      const state = evaluateProcessUiState(input);
+      expect(state.spaceId).toBe('space-folder-alpha-id');
+      expect(state.formData.SelectDocumentSpace_projects).toBe('Project Alpha');
+    });
+
+    it('auto-translates raw space ID in unsuffixed SelectDocumentSpace to display name in effectiveFormData', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace: 'space-folder-alpha-id',
+            SelectDocumentType: 'communication-project',
+          },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: [{ id: 'space-folder-alpha-id', name: 'Project Alpha' }],
+      };
+
+      const state = evaluateProcessUiState(input);
+      expect(state.spaceId).toBe('space-folder-alpha-id');
+      expect(state.formData.SelectDocumentSpace).toBe('Project Alpha');
+    });
+
+    it('derives selectionState.spaces from spaces collection', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+          },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: [
+          { id: 's1', name: 'Project Alpha' },
+          { id: 's2', name: 'Project Beta' },
+        ],
+      };
+
+      const state = evaluateProcessUiState(input);
+      expect(state.selectionState.spaces).toEqual(['Project Alpha', 'Project Beta']);
+    });
+
+    it('surfaces collision error in validationErrors and sets spaceId undefined when duplicate space names exist', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Dup',
+          },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: [
+          { id: 'dup-1', name: 'Project Dup' },
+          { id: 'dup-2', name: 'Project Dup' },
+        ],
+      };
+
+      const state = evaluateProcessUiState(input);
+      expect(state.spaceId).toBeUndefined();
+      expect(state.validationErrors).toContain(
+        'Multiple spaces match "Project Dup". Please choose or enter a unique space identifier.'
+      );
+      expect(state.isUpdateCard).toBe(true);
     });
 
     it('retains inactive document type form inputs across type toggles', () => {
@@ -361,8 +513,7 @@ describe('ui-process-manager domain', () => {
           defaultDocumentType: 'communication-project',
         },
         spaceTypes: sampleSpaceTypes,
-        collectionSpaces: ['Project Alpha'],
-        nameToKeyMap: sampleNameMap,
+        spaces: [{ id: 'space-alpha-id', name: 'Project Alpha' }],
       };
 
       const invoiceState = evaluateProcessUiState(toggleToInvoice);
@@ -385,8 +536,7 @@ describe('ui-process-manager domain', () => {
           defaultDocumentType: 'communication-project',
         },
         spaceTypes: sampleSpaceTypes,
-        collectionSpaces: ['Project Alpha'],
-        nameToKeyMap: sampleNameMap,
+        spaces: [{ id: 'space-alpha-id', name: 'Project Alpha' }],
       };
 
       const commState = evaluateProcessUiState(toggleBackToComm);
@@ -404,12 +554,12 @@ describe('ui-process-manager domain', () => {
             SelectDocumentType: 'Communication Project',
           },
         },
+        resolvedDocumentTypeKey: 'communication-project',
         config: {
           defaultDocumentSpaceType: 'projects',
         },
         spaceTypes: sampleSpaceTypes,
-        collectionSpaces: [],
-        nameToKeyMap: sampleNameMap,
+        spaces: [],
       };
 
       const state = evaluateProcessUiState(input);
@@ -431,8 +581,7 @@ describe('ui-process-manager domain', () => {
             defaultDocumentSpaceType: 'projects',
           },
           spaceTypes: sampleSpaceTypes,
-          collectionSpaces: [],
-          nameToKeyMap: sampleNameMap,
+          spaces: [],
         };
 
         const state = evaluateProcessUiState(input);
@@ -463,8 +612,7 @@ describe('ui-process-manager domain', () => {
             },
           },
           spaceTypes: sampleSpaceTypes,
-          collectionSpaces: [],
-          nameToKeyMap: sampleNameMap,
+          spaces: [],
         };
 
         const state = evaluateProcessUiState(input);
@@ -488,8 +636,7 @@ describe('ui-process-manager domain', () => {
             },
           },
           spaceTypes: sampleSpaceTypes,
-          collectionSpaces: [],
-          nameToKeyMap: sampleNameMap,
+          spaces: [],
         };
 
         const state = evaluateProcessUiState(input);
@@ -510,8 +657,7 @@ describe('ui-process-manager domain', () => {
             },
           },
           spaceTypes: sampleSpaceTypes,
-          collectionSpaces: [],
-          nameToKeyMap: sampleNameMap,
+          spaces: [],
         };
 
         const state = evaluateProcessUiState(input);
@@ -529,8 +675,7 @@ describe('ui-process-manager domain', () => {
           },
           resolvedDocumentTypeKey: 'invalid-resolved-key',
           spaceTypes: sampleSpaceTypes,
-          collectionSpaces: [],
-          nameToKeyMap: sampleNameMap,
+          spaces: [],
         };
 
         const state = evaluateProcessUiState(input);
@@ -559,7 +704,7 @@ describe('ui-process-manager domain', () => {
             defaultDocumentType: 'communication-project',
           },
           spaceTypes: emptySpaceTypes,
-          collectionSpaces: [],
+          spaces: [],
         };
 
         const stateWithConfig = evaluateProcessUiState(inputWithConfig);
@@ -575,7 +720,7 @@ describe('ui-process-manager domain', () => {
             },
           },
           spaceTypes: emptySpaceTypes,
-          collectionSpaces: [],
+          spaces: [],
         };
 
         const stateWithoutConfig = evaluateProcessUiState(inputWithoutConfig);
@@ -600,7 +745,7 @@ describe('ui-process-manager domain', () => {
             },
           },
           spaceTypes: emptySpaceTypes,
-          collectionSpaces: [],
+          spaces: [],
         };
 
         const state = evaluateProcessUiState(input);
@@ -620,7 +765,7 @@ describe('ui-process-manager domain', () => {
             defaultDocumentType: 'communication-project',
           },
           spaceTypes: sampleSpaceTypes,
-          collectionSpaces: [],
+          spaces: [],
         };
 
         const state = evaluateProcessUiState(input);
@@ -632,7 +777,7 @@ describe('ui-process-manager domain', () => {
         const input: ProcessUiStateInput = {
           context: {},
           spaceTypes: sampleSpaceTypes,
-          collectionSpaces: [],
+          spaces: [],
         };
 
         const state = evaluateProcessUiState(input);
