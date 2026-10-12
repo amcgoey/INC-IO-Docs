@@ -196,4 +196,47 @@ describe('Document Type Selection Block', () => {
     expect(Value.Check(UiViewActionSchema, docTypeAction)).toBe(true);
     expect(docTypeAction).toEqual({ action: 'onDocumentTypeChange' });
   });
+
+  it('retains Document Space textInput value when formData contains matching widget name', () => {
+    const selectionState: SelectionState = {
+      spaceTypes: [
+        { text: 'Project Space', value: 'projects', selected: true },
+      ],
+      spaces: ['proj-alpha', 'proj-beta'],
+      documentTypes: [
+        { text: 'Communication Project', value: 'communication-project' },
+      ],
+    };
+
+    const section = buildDocumentTypeSelectionSection(selectionState, {
+      formData: {
+        SelectDocumentSpace_projects: 'proj-beta',
+      },
+    });
+
+    expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+    expect(section.widgets[1].textInput?.name).toBe('SelectDocumentSpace_projects');
+    expect(section.widgets[1].textInput?.value).toBe('proj-beta');
+  });
+
+  it('attaches onSpaceChangeAction to Document Space textInput widget', () => {
+    const selectionState: SelectionState = {
+      spaceTypes: [
+        { text: 'Project Space', value: 'projects', selected: true },
+      ],
+      spaces: [],
+      documentTypes: [],
+    };
+
+    const section = buildDocumentTypeSelectionSection(selectionState, {
+      onSpaceChangeAction: { action: 'onFormChange' },
+    });
+
+    expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+    const spaceWidget = section.widgets[1].textInput;
+    expect(spaceWidget?.onChangeAction).toEqual({
+      action: 'onFormChange',
+    });
+    expect(Value.Check(UiViewActionSchema, spaceWidget?.onChangeAction)).toBe(true);
+  });
 });

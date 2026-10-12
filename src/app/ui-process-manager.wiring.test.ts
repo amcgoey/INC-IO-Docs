@@ -791,50 +791,52 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       ).toThrow(/Either documentSpaceService or createDocumentSpaceService must be provided/);
     });
 
-    it('wires dynamic options fetcher so that documents load dynamic dropdown options', async () => {
-      const dynamicManifestProvider: RawManifestProviderPort = {
-        getRawManifest: vi.fn().mockResolvedValue({
-          documentTypes: ['./document-types/communication-project.json'],
-          configuration: {
-            workspace: {
-              defaultDocumentType: 'communication-project',
-              defaultDocumentSpaceType: 'projects',
-            },
+    const createDynamicManifestProvider = (): RawManifestProviderPort => ({
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./document-types/communication-project.json'],
+        configuration: {
+          workspace: {
+            defaultDocumentType: 'communication-project',
+            defaultDocumentSpaceType: 'projects',
           },
-        }),
-        readParsedSchema: vi.fn().mockImplementation(async () => {
-          return {
-            key: 'communication-project',
-            name: 'Communication Project',
-            documentSchema: {
-              fields: [
-                {
-                  key: 'contact',
-                  name: 'Contact',
-                  type: 'string',
-                  options: {
-                    source: 'contactFolders',
-                    key: 'name',
-                    name: 'name',
-                    allowUserInput: true,
-                    dynamicConfig: {
-                      provider: 'google_drive',
-                      method: 'list_folders',
-                      relativePath: '1 Admin/Communication',
-                    },
+        },
+      }),
+      readParsedSchema: vi.fn().mockImplementation(async () => {
+        return {
+          key: 'communication-project',
+          name: 'Communication Project',
+          documentSchema: {
+            fields: [
+              {
+                key: 'contact',
+                name: 'Contact',
+                type: 'string',
+                options: {
+                  source: 'contactFolders',
+                  key: 'name',
+                  name: 'name',
+                  allowUserInput: true,
+                  dynamicConfig: {
+                    provider: 'google_drive',
+                    method: 'list_folders',
+                    relativePath: '1 Admin/Communication',
                   },
                 },
-              ],
-            },
-            documentUiSchema: {
-              layout: ['contact'],
-              fields: {
-                contact: { widget: 'selectionInput', label: 'Contact' },
               },
+            ],
+          },
+          documentUiSchema: {
+            layout: ['contact'],
+            fields: {
+              contact: { widget: 'selectionInput', label: 'Contact' },
             },
-          };
-        }),
-      };
+          },
+        };
+      }),
+    });
+
+    it('wires dynamic options fetcher so that documents load dynamic dropdown options', async () => {
+      const dynamicManifestProvider = createDynamicManifestProvider();
 
       const mockFetcher: OptionsFetcherPort = {
         fetchOptions: vi.fn().mockResolvedValue({
@@ -888,6 +890,72 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       expect(contactWidget!.selectionInput?.items).toEqual([
         { text: 'Folder Alpha', value: 'Folder Alpha' },
         { text: 'Folder Beta', value: 'Folder Beta' },
+      ]);
+    });
+
+    it('fetches dynamic options for contact field and retains space input value when onFormChange is triggered by document space change', async () => {
+      const mockFetcher = {
+        fetchOptions: vi.fn().mockResolvedValue({
+          contactFolders: [
+            { text: 'Client ACME', value: 'Client ACME' },
+          ],
+        }),
+      };
+
+      const wiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: createDynamicManifestProvider(),
+        optionsFetcher: mockFetcher,
+      });
+
+      const response = (await wiring.requestScopedWrapper.processUiEvent({
+        actionName: 'onFormChange',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'new-space-folder-id',
+          SelectDocumentType_projects: 'communication-project',
+        },
+      })) as GoogleWorkspaceActionResponse;
+
+      expect(mockFetcher.fetchOptions).toHaveBeenCalledWith(
+        [
+          {
+            sourceKey: 'contactFolders',
+            config: {
+              provider: 'google_drive',
+              method: 'list_folders',
+              relativePath: '1 Admin/Communication',
+            },
+          },
+        ],
+        expect.objectContaining({
+          spaceId: 'new-space-folder-id',
+        })
+      );
+
+      const updateCard = response.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+
+      // Document Type Selection section: Document Space widget retains value and has onChangeAction
+      const docTypeSection = updateCard!.sections.find((s) => s.header === 'Document Type');
+      expect(docTypeSection).toBeDefined();
+      const spaceWidget = docTypeSection!.widgets.find(
+        (w) => w.textInput?.name === 'SelectDocumentSpace_projects'
+      );
+      expect(spaceWidget).toBeDefined();
+      expect(spaceWidget!.textInput?.value).toBe('new-space-folder-id');
+      expect(spaceWidget!.textInput?.onChangeAction?.function).toMatch(/\/workspace\/on-form-change$/);
+
+      // Document Data section: Contact widget receives updated options
+      const docInfoSection = updateCard!.sections.find((s) => s.header === 'Document Data');
+      expect(docInfoSection).toBeDefined();
+      const contactWidget = docInfoSection!.widgets.find(
+        (w) => w.selectionInput?.name === 'contact_communication-project'
+      );
+      expect(contactWidget).toBeDefined();
+      expect(contactWidget!.selectionInput?.items).toEqual([
+        { text: 'Client ACME', value: 'Client ACME' },
       ]);
     });
   });

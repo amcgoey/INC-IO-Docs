@@ -31,7 +31,9 @@ const WORKSPACE_ADDON_VIEW_SCHEMA: readonly SectionProducer[] = [
     context.selectionState
       ? buildDocumentTypeSelectionSection(context.selectionState, {
           onSpaceTypeChangeAction: { action: 'onSpaceTypeChange' },
+          onSpaceChangeAction: { action: 'onFormChange' },
           onDocumentTypeChangeAction: { action: 'onDocumentTypeChange' },
+          formData: context.formData,
         })
       : undefined,
 

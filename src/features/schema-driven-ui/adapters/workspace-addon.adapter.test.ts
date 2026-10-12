@@ -77,8 +77,32 @@ describe('WorkspaceAddonAdapter', () => {
     expect(selectionSection.widgets[0].selectionInput?.onChangeAction).toEqual({
       action: 'onSpaceTypeChange',
     });
+    expect(selectionSection.widgets[1].textInput?.onChangeAction).toEqual({
+      action: 'onFormChange',
+    });
     expect(selectionSection.widgets[2].selectionInput?.onChangeAction).toEqual({
       action: 'onDocumentTypeChange',
+    });
+    assertValidUiView(view);
+  });
+
+  it('passes formData to selection section to retain Document Space value', async () => {
+    const context = createContext({
+      selectionState: {
+        spaceTypes: [{ text: 'Department', value: 'dept', selected: true }],
+        spaces: ['Engineering'],
+        documentTypes: [{ text: 'Invoice', value: 'inv' }],
+      },
+      formData: {
+        SelectDocumentSpace_dept: 'Engineering Space 101',
+      },
+    });
+
+    const view = await adapter.composeView(context);
+    const selectionSection = view.sections[0];
+    expect(selectionSection.widgets[1].textInput?.value).toBe('Engineering Space 101');
+    expect(selectionSection.widgets[1].textInput?.onChangeAction).toEqual({
+      action: 'onFormChange',
     });
     assertValidUiView(view);
   });
