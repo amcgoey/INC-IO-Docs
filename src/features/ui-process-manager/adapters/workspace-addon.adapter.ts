@@ -175,6 +175,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         type: 'render',
         viewId: state.viewId,
         documentTypeKey: state.documentTypeKey,
+        ...(state.spaceId !== undefined ? { spaceId: state.spaceId } : {}),
         selectionState: state.selectionState,
         formData: state.formData,
         isUpdateCard: state.isUpdateCard,

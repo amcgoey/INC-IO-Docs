@@ -13,7 +13,11 @@ describe('DynamicOptionsAdapter', () => {
     ...overrides,
   });
 
-  it('returns placeholder item when spaceId is missing', async () => {
+  it.each([
+    { desc: 'missing', context: {} },
+    { desc: 'empty', context: { spaceId: '' } },
+    { desc: 'whitespace', context: { spaceId: '   ' } },
+  ])('returns placeholder item when spaceId is $desc', async ({ context }) => {
     const driveClient = createMockDriveClient();
     const adapter = new DynamicOptionsAdapter(driveClient);
 
@@ -28,21 +32,10 @@ describe('DynamicOptionsAdapter', () => {
       },
     ];
 
-    const resultEmpty = await adapter.fetchOptions(queries, {});
-    expect(resultEmpty).toEqual({
+    const result = await adapter.fetchOptions(queries, context);
+    expect(result).toEqual({
       contactFolders: [{ text: 'Select a Space first', value: '' }],
     });
-
-    const resultBlank = await adapter.fetchOptions(queries, { spaceId: '' });
-    expect(resultBlank).toEqual({
-      contactFolders: [{ text: 'Select a Space first', value: '' }],
-    });
-
-    const resultWhitespace = await adapter.fetchOptions(queries, { spaceId: '   ' });
-    expect(resultWhitespace).toEqual({
-      contactFolders: [{ text: 'Select a Space first', value: '' }],
-    });
-
     expect(driveClient.listFolders).not.toHaveBeenCalled();
   });
 

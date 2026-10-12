@@ -4,6 +4,7 @@ import {
   translateDocumentType,
   resolveSpaceType,
   resolveDocumentType,
+  resolveSpaceId,
   evaluateProcessUiState,
   type ProcessUiStateInput,
 } from './domain';
@@ -189,6 +190,50 @@ describe('ui-process-manager domain', () => {
     });
   });
 
+  describe('resolveSpaceId', () => {
+    it('returns spaceId directly from formData.spaceId when present', () => {
+      const result = resolveSpaceId({
+        formData: { spaceId: 'direct-space-123' },
+      });
+      expect(result).toBe('direct-space-123');
+    });
+
+    it('returns spaceId from formData.SelectDocumentSpace when present', () => {
+      const result = resolveSpaceId({
+        formData: { SelectDocumentSpace: 'Space-ABC' },
+      });
+      expect(result).toBe('Space-ABC');
+    });
+
+    it('returns spaceId from suffixed SelectDocumentSpace_<spaceType> matching activeSpaceType', () => {
+      const result = resolveSpaceId({
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'project-folder-id',
+          SelectDocumentSpace_proposals: 'proposal-folder-id',
+        },
+        activeSpaceType: 'projects',
+      });
+      expect(result).toBe('project-folder-id');
+    });
+
+    it('trims whitespace and ignores blank strings', () => {
+      const result = resolveSpaceId({
+        formData: {
+          spaceId: '   ',
+          SelectDocumentSpace: '  valid-space  ',
+        },
+      });
+      expect(result).toBe('valid-space');
+    });
+
+    it('returns undefined when formData is missing or has no space ID', () => {
+      expect(resolveSpaceId()).toBeUndefined();
+      expect(resolveSpaceId({ formData: {} })).toBeUndefined();
+      expect(resolveSpaceId({ formData: { spaceId: '   ' } })).toBeUndefined();
+    });
+  });
+
   describe('evaluateProcessUiState', () => {
     const sampleSpaceTypes = [
       {
@@ -278,6 +323,24 @@ describe('ui-process-manager domain', () => {
       });
       expect(state.formData.contact).toBe('Jane');
       expect(state.formData.date).toBe('260920');
+      expect(state.spaceId).toBe('Project Alpha');
+    });
+
+    it('evaluates and includes spaceId in output when space is selected', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'project-folder-456',
+            SelectDocumentType_projects: 'communication-project',
+          },
+        },
+        spaceTypes: sampleSpaceTypes,
+        collectionSpaces: ['project-folder-456'],
+      };
+
+      const result = evaluateProcessUiState(input);
+      expect(result.spaceId).toBe('project-folder-456');
     });
 
     it('retains inactive document type form inputs across type toggles', () => {

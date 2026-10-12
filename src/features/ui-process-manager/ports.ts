@@ -43,6 +43,7 @@ export const UiProcessRenderResultSchema = Type.Object({
   type: Type.Literal('render'),
   viewId: Type.String({ minLength: 1 }),
   documentTypeKey: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  spaceId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   selectionState: Type.Optional(Type.Union([UiSelectionStateSchema, Type.Undefined()])),
   formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
   hiddenFields: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),

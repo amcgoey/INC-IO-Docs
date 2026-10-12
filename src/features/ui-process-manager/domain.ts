@@ -55,6 +55,7 @@ export interface ProcessUiStateInput {
 export interface ProcessUiStateOutput {
   viewId: string;
   documentTypeKey: string;
+  spaceId?: string | undefined;
   selectionState: UiSelectionState;
   formData: Record<string, unknown>;
   isUpdateCard: boolean;
@@ -161,6 +162,33 @@ export function resolveDocumentType(context?: UiStateResolutionContext): string 
   return context?.config?.defaultDocumentType;
 }
 
+function cleanTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Resolves the active space ID from context form data.
+ * Checks direct 'spaceId', generic 'SelectDocumentSpace', or active space selector 'SelectDocumentSpace_<spaceType>'.
+ */
+export function resolveSpaceId(context?: UiStateResolutionContext): string | undefined {
+  const formData = context?.formData;
+  if (!formData) {
+    return undefined;
+  }
+  const spaceType = context.activeSpaceType ?? resolveSpaceType(context);
+  const spaceSelectorKey = spaceType ? getSpaceSelectorKey(spaceType) : undefined;
+
+  return (
+    cleanTrimmedString(formData.spaceId) ??
+    cleanTrimmedString(formData[SELECT_DOCUMENT_SPACE_KEY]) ??
+    (spaceSelectorKey ? cleanTrimmedString(formData[spaceSelectorKey]) : undefined)
+  );
+}
+
 /**
  * Pure domain state evaluation for CQRS UI Orchestration.
  * Enforces:
@@ -233,9 +261,16 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     documentTypes,
   };
 
+  const resolvedSpaceId = resolveSpaceId({
+    formData: effectiveFormData,
+    activeSpaceType: currentSpaceType,
+    parameters: context.parameters,
+  });
+
   return {
     viewId: 'drive-document-process-card',
     documentTypeKey: currentDocTypeKey,
+    ...(resolvedSpaceId !== undefined ? { spaceId: resolvedSpaceId } : {}),
     selectionState,
     formData: effectiveFormData,
     isUpdateCard,

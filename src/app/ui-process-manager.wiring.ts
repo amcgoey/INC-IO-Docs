@@ -12,7 +12,6 @@ import {
   type UiProcessDocumentRunnerPort,
   type UiProcessFormEvaluatorPort,
   type RawManifestProviderPort,
-  type UiSelectionState,
 } from '../features/ui-process-manager';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import {
@@ -211,37 +210,6 @@ export interface RequestScopedUiWrapper {
   processUiEvent(context: WorkspaceExecutionContext): Promise<unknown>;
 }
 
-function cleanTrimmedString(value: unknown): string | undefined {
-  if (typeof value !== 'string') {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function resolveActiveSpaceType(
-  selectionState?: UiSelectionState | undefined,
-  rawFormData?: Record<string, unknown> | undefined
-): string | undefined {
-  const selectedFromState = selectionState?.spaceTypes?.find((s) => s.selected)?.value;
-  return cleanTrimmedString(selectedFromState) ?? cleanTrimmedString(rawFormData?.SelectDocumentSpaceType);
-}
-
-function resolveSpaceId(
-  rawFormData?: Record<string, unknown> | undefined,
-  activeSpaceType?: string | undefined
-): string | undefined {
-  if (!rawFormData) {
-    return undefined;
-  }
-  const activeSpaceKey = activeSpaceType ? `SelectDocumentSpace_${activeSpaceType}` : undefined;
-  return (
-    cleanTrimmedString(rawFormData.spaceId) ??
-    cleanTrimmedString(rawFormData.SelectDocumentSpace) ??
-    (activeSpaceKey ? cleanTrimmedString(rawFormData[activeSpaceKey]) : undefined)
-  );
-}
-
 export function createUiProcessRequestWrapper(
   orchestrator: UiProcessOrchestratorPort | UiProcessOrchestratorResolver,
   schemaDrivenUiService: SchemaDrivenUiService | SchemaDrivenUiServiceResolver
@@ -277,13 +245,9 @@ export function createUiProcessRequestWrapper(
       };
     }
 
-    const rawFormData = intent.formData;
-    const activeSpaceType = resolveActiveSpaceType(intent.selectionState, rawFormData);
-    const resolvedSpaceId = resolveSpaceId(rawFormData, activeSpaceType);
-
     const view = await schemaDrivenUiInstance.generateView({
       viewId: intent.viewId,
-      ...(resolvedSpaceId !== undefined ? { spaceId: resolvedSpaceId } : {}),
+      ...(intent.spaceId !== undefined ? { spaceId: intent.spaceId } : {}),
       ...(intent.documentTypeKey !== undefined ? { documentTypeKey: intent.documentTypeKey } : {}),
       ...(intent.validationErrors !== undefined ? { validationErrors: intent.validationErrors } : {}),
       ...(intent.formData !== undefined ? { formData: intent.formData } : {}),
