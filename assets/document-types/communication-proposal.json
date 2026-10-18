@@ -8,7 +8,18 @@
         "name": "Contact",
         "type": "string",
         "description": "Contact folder name",
-        "required": true
+        "required": true,
+        "options": {
+          "source": "contactFolders",
+          "key": "key",
+          "name": "name",
+          "allowUserInput": true,
+          "dynamicConfig": {
+            "provider": "google_drive",
+            "method": "list_folders",
+            "relativePath": "Communication"
+          }
+        }
       },
       {
         "key": "date",
@@ -39,9 +50,9 @@
       }
     ],
     "identity": {
-      "id": "{{contact}}-{{date}}-{{direction.key}}-{{description}}",
-      "idDocument": "{{contact}}-{{date}}-{{direction.key}}-{{description}}",
-      "idGroup": "{{contact}}"
+      "id": "{{contact.key}}-{{date}}-{{direction.key}}-{{description}}",
+      "idDocument": "{{contact.key}}-{{date}}-{{direction.key}}-{{description}}",
+      "idGroup": "{{contact.name}}"
     },
     "options": {
       "direction": [

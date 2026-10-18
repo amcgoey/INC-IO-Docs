@@ -159,7 +159,7 @@ describe('DocumentType JSON files schema validation', () => {
     }
   });
 
-  it('should configure contact field in communication-project with dynamicConfig and allowUserInput: true', async () => {
+  it('should configure contact field in communication-project with dynamicConfig, key/name, allowUserInput: true, and aligned identity templates', async () => {
     const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
     const manifestProvider = new AppManifestProvider({ manifestPath });
     const adapter = new DocumentSchemaRegistryAdapter(
@@ -176,10 +176,50 @@ describe('DocumentType JSON files schema validation', () => {
     expect(contactField?.options).toBeDefined();
     expect(contactField?.options?.allowUserInput).toBe(true);
     expect(contactField?.options?.source).toBe('contactFolders');
+    expect(contactField?.options?.key).toBe('key');
+    expect(contactField?.options?.name).toBe('name');
     expect(contactField?.options?.dynamicConfig).toEqual({
       provider: 'google_drive',
       method: 'list_folders',
       relativePath: '1 Admin/Communication',
+    });
+
+    expect(commProject!.documentSchema.identity).toEqual({
+      id: '{{contact.key}}-{{date}}-{{direction.key}}-{{description}}',
+      idDocument: '{{contact.key}}-{{date}}-{{direction.key}}-{{description}}',
+      idGroup: '{{contact.name}}',
+    });
+  });
+
+  it('should configure contact field in communication-proposal with dynamicConfig, allowUserInput: true, and aligned identity templates', async () => {
+    const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
+    const manifestProvider = new AppManifestProvider({ manifestPath });
+    const adapter = new DocumentSchemaRegistryAdapter(
+      manifestProvider,
+      new HandlebarsAdapter()
+    );
+    const documentTypes = await adapter.loadAll();
+
+    const commProposal = documentTypes.find((d) => d.key === 'communication-proposal');
+    expect(commProposal).toBeDefined();
+
+    const contactField = commProposal!.documentSchema.fields.find((f) => f.key === 'contact');
+    expect(contactField).toBeDefined();
+    expect(contactField?.options).toBeDefined();
+    expect(contactField?.options?.allowUserInput).toBe(true);
+    expect(contactField?.options?.source).toBe('contactFolders');
+    expect(contactField?.options?.key).toBe('key');
+    expect(contactField?.options?.name).toBe('name');
+    expect(contactField?.options?.dynamicConfig).toEqual({
+      provider: 'google_drive',
+      method: 'list_folders',
+      relativePath: 'Communication',
+    });
+
+    expect(commProposal!.documentSchema.identity).toEqual({
+      id: '{{contact.key}}-{{date}}-{{direction.key}}-{{description}}',
+      idDocument: '{{contact.key}}-{{date}}-{{direction.key}}-{{description}}',
+      idGroup: '{{contact.name}}',
     });
   });
 });

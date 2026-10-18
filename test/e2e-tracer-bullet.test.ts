@@ -1,11 +1,12 @@
 import * as path from 'node:path';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { createApp, type AppInstance } from '../src/app/server';
 import { injectWorkspaceRequest } from './e2e/utils/workspace-request';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
 import type { DocumentSpaceStoragePort } from '../src/features/document-space/ports';
+import { GoogleDriveClient } from '../src/infrastructure/drive/drive-client';
 import { GoogleWorkspaceActionResponseSchema } from '../src/infrastructure/workspace-addon/ui-blocks';
 import {
   getDocumentTypeWidgetName,
@@ -18,7 +19,20 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
   let mockAuthVerifier: WorkspaceAuthVerifierPort;
   let mockStorageAdapter: DocumentSpaceStoragePort;
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   beforeEach(async () => {
+    vi.spyOn(GoogleDriveClient.prototype, 'listFolders').mockImplementation(async (options) => {
+      if (options?.parentFolderId === 'folder-projects-1') {
+        return { folders: [{ id: 'comm-folder-id', name: 'Communication' }] };
+      }
+      if (options?.parentFolderId === 'comm-folder-id') {
+        return { folders: [{ id: 'contact-acme-id', name: 'Acme Corp' }] };
+      }
+      return { folders: [] };
+    });
     mockAuthVerifier = {
       verifyToken: vi.fn().mockImplementation(async (header?: string) => {
         if (header && header.startsWith('Bearer valid-')) {

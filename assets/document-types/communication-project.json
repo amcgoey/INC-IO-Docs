@@ -11,7 +11,7 @@
         "required": true,
         "options": {
           "source": "contactFolders",
-          "key": "name",
+          "key": "key",
           "name": "name",
           "allowUserInput": true,
           "dynamicConfig": {
@@ -57,9 +57,9 @@
       }
     ],
     "identity": {
-      "id": "{{contact}}-{{date}}-{{direction.key}}-{{description}}",
-      "idDocument": "{{contact}}-{{date}}-{{direction.key}}-{{description}}",
-      "idGroup": "{{contact}}"
+      "id": "{{contact.key}}-{{date}}-{{direction.key}}-{{description}}",
+      "idDocument": "{{contact.key}}-{{date}}-{{direction.key}}-{{description}}",
+      "idGroup": "{{contact.name}}"
     },
     "options": {
       "direction": [

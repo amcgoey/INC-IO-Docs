@@ -8,6 +8,7 @@ import type {
   ActivityDispatcherPort,
 } from '../src/features/document/ports';
 import type { DocumentType } from '../src/features/document/domain';
+import { GoogleDriveClient } from '../src/infrastructure/drive/drive-client';
 
 describe('App integration tests', () => {
   let app: AppInstance;
@@ -447,8 +448,24 @@ describe('App integration tests', () => {
 
       await prodApp.initialize();
 
+      const listFoldersSpy = vi.spyOn(GoogleDriveClient.prototype, 'listFolders').mockImplementation(async (options) => {
+        if (options?.parentFolderId === 'space-folder-proposal-id') {
+          return { folders: [{ id: 'comm-folder-id', name: 'Communication' }] };
+        }
+        if (options?.parentFolderId === 'comm-folder-id') {
+          return { folders: [{ id: 'contact-folder-id', name: 'Jane Doe' }] };
+        }
+        return { folders: [] };
+      });
+
       const basePayload = {
         type: 'communication-proposal',
+        space: {
+          id: 'space-folder-proposal-id',
+          name: 'Proposal Alpha',
+          typeId: 'proposals',
+          abstractStorageId: 'space-folder-proposal-id',
+        },
         data: {
           contact: 'Jane Doe',
           date: '260825',
@@ -462,6 +479,10 @@ describe('App integration tests', () => {
 
       const expectedEnrichedData = {
         ...basePayload.data,
+        contact: {
+          key: 'Jane Doe',
+          name: 'Jane Doe',
+        },
         direction: {
           key: 'IN',
           name: 'Incoming',
@@ -470,6 +491,7 @@ describe('App integration tests', () => {
 
       const expectedDocument = {
         type: 'communication-proposal',
+        space: basePayload.space,
         id: expectedIdentityValue,
         idDocument: expectedIdentityValue,
         idGroup: expectedGroupId,
@@ -501,6 +523,8 @@ describe('App integration tests', () => {
           status: 'filed',
         },
       });
+
+      listFoldersSpy.mockRestore();
     });
 
     it('rejects payload with 400 when lookup field has an invalid option value', async () => {
