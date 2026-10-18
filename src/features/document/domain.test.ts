@@ -4382,6 +4382,27 @@ describe('Document domain', () => {
       expect(compiled.Check({ notes: 'hello' })).toBe(true);
       expect(compiled.Check({ notes: 123 })).toBe(false);
     });
+
+    it('builds string field with minLength and pattern via buildFieldSchema', () => {
+      const fieldSchema = buildFieldSchema(
+        {
+          key: 'contact',
+          name: 'Contact',
+          type: 'string',
+          required: true,
+          minLength: 1,
+          pattern: '^.*\\S+.*$',
+        },
+        { fields: [] },
+        'test'
+      );
+
+      const compiled = TypeCompiler.Compile(Type.Object({ contact: fieldSchema }));
+      expect(compiled.Check({ contact: 'Acme Corp' })).toBe(true);
+      expect(compiled.Check({ contact: '' })).toBe(false);
+      expect(compiled.Check({ contact: '   ' })).toBe(false);
+      expect(compiled.Check({ contact: '\t\n ' })).toBe(false);
+    });
   });
 
   describe('DocumentService dynamic option validation (guarded write)', () => {
@@ -4835,6 +4856,75 @@ describe('Document domain', () => {
         expect(result.errors).toEqual(['Option not found.']);
       }
     });
+
+    it.each([
+      { desc: 'empty string', value: '' },
+      { desc: 'whitespace only', value: '   ' },
+      { desc: 'newlines and tabs', value: '\t\n ' },
+    ])(
+      'rejects $desc contact string via compiled schema validation without calling dynamic validator',
+      async ({ value }) => {
+        const docTypeWithPattern: DocumentType = {
+          key: 'comm-proposal',
+          name: 'Communication Proposal',
+          documentSchema: {
+            fields: [
+              {
+                key: 'contact',
+                name: 'Contact',
+                type: 'string',
+                required: true,
+                minLength: 1,
+                pattern: '^.*\\S+.*$',
+                options: {
+                  source: 'contactFolders',
+                  key: 'key',
+                  name: 'name',
+                  allowUserInput: true,
+                  dynamicConfig: {
+                    provider: 'google_drive',
+                    method: 'list_folders',
+                    relativePath: 'Communications',
+                  },
+                },
+              },
+            ],
+          },
+        };
+
+        const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+        const registry = createCustomRegistry([docTypeWithPattern]);
+        const compiledRegistry = createMockCompiledRegistry(registry);
+        const dynamicValidator: DocumentDynamicValidationPort = {
+          validateExistence: vi.fn(),
+        };
+
+        const service = createDocumentService(
+          mockDispatcher,
+          registry,
+          defaultEvaluator,
+          compiledRegistry,
+          dynamicValidator
+        );
+        await service.initialize();
+
+        const result = await service.processDocument({
+          type: 'comm-proposal',
+          data: {
+            contact: value,
+          },
+          space: {
+            id: 'sp-1',
+            typeId: 'projects',
+            name: 'Project 1',
+            abstractStorageId: 'drive-folder-123',
+          },
+        });
+
+        expect(result.success).toBe(false);
+        expect(dynamicValidator.validateExistence).not.toHaveBeenCalled();
+      }
+    );
   });
 });
 

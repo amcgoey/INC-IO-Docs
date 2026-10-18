@@ -9,6 +9,8 @@
         "type": "string",
         "description": "Contact folder name",
         "required": true,
+        "minLength": 1,
+        "pattern": "^.*\\S+.*$",
         "options": {
           "source": "contactFolders",
           "key": "key",

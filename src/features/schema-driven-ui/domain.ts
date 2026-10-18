@@ -12,7 +12,6 @@ import type {
 import {
   SelectionItemSchema,
   GenerateViewRequestSchema,
-  normalizeDynamicOptionResolution,
   type GenerateViewRequest,
 } from './ports';
 import { DEFAULT_MESSAGE_CATALOG, formatStatusSectionMessage } from './message-catalog';
@@ -243,7 +242,7 @@ function validateOrThrow<T extends TSchema>(schema: T, value: unknown, errorMess
   }
 }
 
-function isDynamicOptionConfig(
+export function isDynamicOptionConfig(
   options: unknown
 ): options is { source: string; dynamicConfig: Record<string, unknown> } {
   if (!options || typeof options !== 'object') return false;
@@ -253,6 +252,18 @@ function isDynamicOptionConfig(
     typeof record.dynamicConfig === 'object' &&
     record.dynamicConfig !== null
   );
+}
+
+export function normalizeDynamicOptionResolution(
+  raw: DynamicOptionResolution | DynamicOptionItem[] | undefined
+): DynamicOptionResolution | undefined {
+  if (!raw) return undefined;
+  if (Array.isArray(raw)) {
+    return raw.length > 0
+      ? { status: 'ready', items: raw }
+      : { status: 'empty', items: [] };
+  }
+  return raw;
 }
 
 // --- Domain Service (Guarded Read) ---
