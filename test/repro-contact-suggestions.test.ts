@@ -86,6 +86,12 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
         name: 'Proposal Gamma',
         abstractStorageId: 'space-folder-proposal-gamma-id',
       },
+      {
+        id: 'space-folder-proposal-ambig-path-id',
+        typeId: 'proposals',
+        name: 'Proposal Ambiguous Path',
+        abstractStorageId: 'space-folder-proposal-ambig-path-id',
+      },
     ];
 
     mockAuthVerifier = {
@@ -170,6 +176,16 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       // Proposal Gamma space with absent Communications folder
       if (options?.parentFolderId === 'space-folder-proposal-gamma-id') {
         return { folders: [] };
+      }
+
+      // Proposal Ambiguous Path space with duplicate Communications folders
+      if (options?.parentFolderId === 'space-folder-proposal-ambig-path-id') {
+        return {
+          folders: [
+            { id: 'comm-ambig-1', name: 'Communications' },
+            { id: 'comm-ambig-2', name: 'Communications' },
+          ],
+        };
       }
 
       // Proposal Duplicate space with duplicate contacts
@@ -976,6 +992,148 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
 
         const statusSection = updateCard?.sections?.find((s) =>
           s.widgets?.some((w) => w.textParagraph?.text?.includes('Please select a Document Space.'))
+        );
+        expect(statusSection).toBeDefined();
+      });
+
+      it('rejects submission when relativePath folder does not exist (path_not_found) with catalog message', async () => {
+        const response = await injectWorkspaceRequest(app.server, {
+          method: 'POST',
+          url: '/workspace/action',
+          headers: {
+            authorization: 'Bearer valid-token',
+          },
+          payload: {
+            authorizationEventObject: {
+              userOAuthToken: 'test-oauth-token',
+            },
+            commonEventObject: {
+              parameters: {
+                action: 'processDocument',
+              },
+              formInputs: {
+                SelectFiles: { stringInputs: { value: ['file-1'] } },
+                SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
+                SelectDocumentSpace_proposals: { stringInputs: { value: ['Proposal Gamma'] } },
+                SelectDocumentType_proposals: { stringInputs: { value: ['communication-proposal'] } },
+                contact: { stringInputs: { value: ['Wayne Enterprises'] } },
+                date: { stringInputs: { value: ['260920'] } },
+                direction: { stringInputs: { value: ['IN'] } },
+                description: { stringInputs: { value: ['Project Kickoff'] } },
+              },
+            },
+            drive: {
+              selectedItems: [{ id: 'file-1', title: 'Doc.pdf' }],
+            },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.payload);
+        const updateCard = body.action?.navigations?.[0]?.updateCard as CardStub | undefined;
+        expect(updateCard).toBeDefined();
+
+        const statusSection = updateCard?.sections?.find((s) =>
+          s.widgets?.some((w) =>
+            w.textParagraph?.text?.includes(
+              'Folder "Communications" was not found in the selected Document Space.'
+            )
+          )
+        );
+        expect(statusSection).toBeDefined();
+      });
+
+      it('rejects submission when relativePath folder path is ambiguous (ambiguous_path) with catalog message', async () => {
+        const response = await injectWorkspaceRequest(app.server, {
+          method: 'POST',
+          url: '/workspace/action',
+          headers: {
+            authorization: 'Bearer valid-token',
+          },
+          payload: {
+            authorizationEventObject: {
+              userOAuthToken: 'test-oauth-token',
+            },
+            commonEventObject: {
+              parameters: {
+                action: 'processDocument',
+              },
+              formInputs: {
+                SelectFiles: { stringInputs: { value: ['file-1'] } },
+                SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
+                SelectDocumentSpace_proposals: { stringInputs: { value: ['Proposal Ambiguous Path'] } },
+                SelectDocumentType_proposals: { stringInputs: { value: ['communication-proposal'] } },
+                contact: { stringInputs: { value: ['Wayne Enterprises'] } },
+                date: { stringInputs: { value: ['260920'] } },
+                direction: { stringInputs: { value: ['IN'] } },
+                description: { stringInputs: { value: ['Project Kickoff'] } },
+              },
+            },
+            drive: {
+              selectedItems: [{ id: 'file-1', title: 'Doc.pdf' }],
+            },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.payload);
+        const updateCard = body.action?.navigations?.[0]?.updateCard as CardStub | undefined;
+        expect(updateCard).toBeDefined();
+
+        const statusSection = updateCard?.sections?.find((s) =>
+          s.widgets?.some((w) =>
+            w.textParagraph?.text?.includes(
+              'Multiple folders found along path "Communications" in the selected Document Space. Please resolve this ambiguity in Google Drive manually.'
+            )
+          )
+        );
+        expect(statusSection).toBeDefined();
+      });
+
+      it.each([
+        { desc: 'empty string', contactVal: '' },
+        { desc: 'whitespace-only', contactVal: '   ' },
+      ])('rejects submission when contact is $desc with "Option not found."', async ({ contactVal }) => {
+        const response = await injectWorkspaceRequest(app.server, {
+          method: 'POST',
+          url: '/workspace/action',
+          headers: {
+            authorization: 'Bearer valid-token',
+          },
+          payload: {
+            authorizationEventObject: {
+              userOAuthToken: 'test-oauth-token',
+            },
+            commonEventObject: {
+              parameters: {
+                action: 'processDocument',
+              },
+              formInputs: {
+                SelectFiles: { stringInputs: { value: ['file-1'] } },
+                SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
+                SelectDocumentSpace_proposals: { stringInputs: { value: ['Proposal Alpha'] } },
+                SelectDocumentType_proposals: { stringInputs: { value: ['communication-proposal'] } },
+                contact: { stringInputs: { value: [contactVal] } },
+                date: { stringInputs: { value: ['260920'] } },
+                direction: { stringInputs: { value: ['IN'] } },
+                description: { stringInputs: { value: ['Project Kickoff'] } },
+              },
+            },
+            drive: {
+              selectedItems: [{ id: 'file-1', title: 'Doc.pdf' }],
+            },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.payload);
+        const updateCard = body.action?.navigations?.[0]?.updateCard as CardStub | undefined;
+        expect(updateCard).toBeDefined();
+
+        const statusSection = updateCard?.sections?.find((s) =>
+          s.widgets?.some((w) =>
+            w.textParagraph?.text?.includes('Option not found.')
+          )
         );
         expect(statusSection).toBeDefined();
       });

@@ -9,7 +9,12 @@ import type {
   DocumentServicePort,
   CompiledSchemaRegistryPort,
   DocumentDynamicValidationPort,
+  DynamicValidationMessageFormatter,
 } from '../features/document/ports';
+import {
+  DEFAULT_MESSAGE_CATALOG,
+  formatValidationError,
+} from '../features/schema-driven-ui/message-catalog';
 import { ensureEvaluationOrder } from '../infrastructure/validation/json-logic-graph';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import { DocumentService } from '../features/document/domain';
@@ -77,6 +82,7 @@ export interface CreateDocumentServiceFactoryOptions {
   configProvider?: AppConfigurationProviderPort | undefined;
   driveClient?: GoogleDriveClient | undefined;
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
+  validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
 }
 
 export function createDocumentServiceFactory(
@@ -116,12 +122,19 @@ export function createDocumentServiceFactory(
     const dynamicValidator =
       options.dynamicValidator ?? new DynamicOptionsAdapter(driveClient);
 
+    const validationMessageFormatter =
+      options.validationMessageFormatter ??
+      ((status, targetPath) =>
+        formatValidationError(DEFAULT_MESSAGE_CATALOG, status, targetPath) ??
+        'Option not found.');
+
     const service = new DocumentService(
       activityEngine,
       options.documentSchemaRegistry,
       options.templateEvaluator,
       options.compiledSchemaRegistry,
-      dynamicValidator
+      dynamicValidator,
+      validationMessageFormatter
     );
 
     await service.initialize();
@@ -141,6 +154,7 @@ export interface WireDocumentServicesOptions {
   compiledSchemaRegistry?: CompiledSchemaRegistryPort | undefined;
   primaryTargetId?: string | undefined;
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
+  validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
 }
 
 export function wireDocumentServicesAndRoutes(
@@ -168,12 +182,19 @@ export function wireDocumentServicesAndRoutes(
     const dynamicValidator =
       options.dynamicValidator ?? new DynamicOptionsAdapter(options.driveClient);
 
+    const validationMessageFormatter =
+      options.validationMessageFormatter ??
+      ((status, targetPath) =>
+        formatValidationError(DEFAULT_MESSAGE_CATALOG, status, targetPath) ??
+        'Option not found.');
+
     documentService = new DocumentService(
       activityEngine,
       options.documentSchemaRegistry,
       options.templateEvaluator,
       compiledSchemaRegistry,
-      dynamicValidator
+      dynamicValidator,
+      validationMessageFormatter
     );
   }
 

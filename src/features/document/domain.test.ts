@@ -47,6 +47,7 @@ import {
   type TemplateEvaluationContext,
   type TemplateEvaluatorPort,
   type DocumentDynamicValidationPort,
+  type DynamicValidationMessageFormatter,
 } from './ports';
 import { HandlebarsAdapter } from '../../infrastructure/template-engine/handlebars-adapter';
 
@@ -97,14 +98,16 @@ describe('Document domain', () => {
     registry: DocumentSchemaRegistryPort,
     evaluator: TemplateEvaluatorPort,
     compiledRegistry?: CompiledSchemaRegistryPort,
-    dynamicValidator?: DocumentDynamicValidationPort
+    dynamicValidator?: DocumentDynamicValidationPort,
+    validationMessageFormatter?: DynamicValidationMessageFormatter
   ): DocumentService =>
     new DocumentService(
       dispatcher,
       registry,
       evaluator,
       compiledRegistry ?? createMockCompiledRegistry(registry),
-      dynamicValidator
+      dynamicValidator,
+      validationMessageFormatter
     );
 
   it('should export DocumentModel schema', () => {
@@ -4674,6 +4677,163 @@ describe('Document domain', () => {
         ],
         expect.anything()
       );
+    });
+
+    it('formats failed DynamicValidationResult statuses using injected validationMessageFormatter', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const registry = createCustomRegistry([dynamicDocType]);
+      const compiledRegistry = createMockCompiledRegistry(registry);
+      const dynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn().mockResolvedValue({
+          contact: {
+            isValid: false,
+            status: 'path_not_found',
+            targetPath: '1 Admin/Communication',
+          },
+        }),
+      };
+      const mockFormatter = vi.fn().mockImplementation((status, targetPath) =>
+        `Custom formatted error: ${status} at ${targetPath}`
+      );
+
+      const service = createDocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        compiledRegistry,
+        dynamicValidator,
+        mockFormatter
+      );
+      await service.initialize();
+
+      const result = await service.processDocument({
+        type: 'comm-project',
+        data: {
+          title: 'Project Alpha',
+          contact: 'NonExistent Corp',
+        },
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors).toEqual([
+          'Custom formatted error: path_not_found at 1 Admin/Communication',
+        ]);
+      }
+      expect(mockFormatter).toHaveBeenCalledWith('path_not_found', '1 Admin/Communication');
+    });
+
+    it('prefers explicit result.errorMessage over validationMessageFormatter when errorMessage is present', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const registry = createCustomRegistry([dynamicDocType]);
+      const compiledRegistry = createMockCompiledRegistry(registry);
+      const dynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn().mockResolvedValue({
+          contact: {
+            isValid: false,
+            status: 'error',
+            errorMessage: 'Explicit legacy stub error',
+          },
+        }),
+      };
+      const mockFormatter = vi.fn().mockReturnValue('Should not be called');
+
+      const service = createDocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        compiledRegistry,
+        dynamicValidator,
+        mockFormatter
+      );
+      await service.initialize();
+
+      const result = await service.processDocument({
+        type: 'comm-project',
+        data: {
+          title: 'Project Alpha',
+          contact: 'Error Corp',
+        },
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors).toEqual(['Explicit legacy stub error']);
+      }
+      expect(mockFormatter).not.toHaveBeenCalled();
+    });
+
+    it('falls back to VALIDATION_TIMEOUT_MSG when status is timeout and no formatter or errorMessage is provided', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const registry = createCustomRegistry([dynamicDocType]);
+      const compiledRegistry = createMockCompiledRegistry(registry);
+      const dynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn().mockResolvedValue({
+          contact: {
+            isValid: false,
+            status: 'timeout',
+          },
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        compiledRegistry,
+        dynamicValidator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument({
+        type: 'comm-project',
+        data: {
+          title: 'Project Alpha',
+          contact: 'Slow Corp',
+        },
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors).toEqual(['Validation timed out.']);
+      }
+    });
+
+    it('falls back to OPTION_NOT_FOUND_MSG when status is not timeout and no formatter or errorMessage is provided', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const registry = createCustomRegistry([dynamicDocType]);
+      const compiledRegistry = createMockCompiledRegistry(registry);
+      const dynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn().mockResolvedValue({
+          contact: {
+            isValid: false,
+            status: 'path_not_found',
+            targetPath: '1 Admin/Communication',
+          },
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        compiledRegistry,
+        dynamicValidator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument({
+        type: 'comm-project',
+        data: {
+          title: 'Project Alpha',
+          contact: 'Missing Path Corp',
+        },
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors).toEqual(['Option not found.']);
+      }
     });
   });
 });

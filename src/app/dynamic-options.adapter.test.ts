@@ -597,7 +597,11 @@ describe('DynamicOptionsAdapter', () => {
       const result = await adapter.validateExistence(queries, { spaceId: 'space-123' });
 
       expect(result).toEqual({
-        contactFolders: { isValid: true },
+        contactFolders: {
+          isValid: true,
+          status: 'valid',
+          targetPath: '1 Admin/Communication',
+        },
       });
       expect(driveClient.listFolders).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -607,7 +611,7 @@ describe('DynamicOptionsAdapter', () => {
       );
     });
 
-    it('returns isValid: false with "Option not found." when 0 matching folders are found', async () => {
+    it('returns isValid: false with status "option_not_found" when 0 matching folders are found', async () => {
       const driveClient = createMockDriveClient({
         listFolders: vi.fn().mockResolvedValue({ folders: [] }),
       });
@@ -631,12 +635,13 @@ describe('DynamicOptionsAdapter', () => {
       expect(result).toEqual({
         contactFolders: {
           isValid: false,
-          errorMessage: 'Option not found.',
+          status: 'option_not_found',
+          targetPath: 'root',
         },
       });
     });
 
-    it('returns isValid: true when 0 matching folders found and allowUserInput is true', async () => {
+    it('returns isValid: true with status "valid" when 0 matching folders found and allowUserInput is true', async () => {
       const driveClient = createMockDriveClient({
         listFolders: vi.fn().mockResolvedValue({ folders: [] }),
       });
@@ -661,11 +666,13 @@ describe('DynamicOptionsAdapter', () => {
       expect(result).toEqual({
         contactFolders: {
           isValid: true,
+          status: 'valid',
+          targetPath: 'root',
         },
       });
     });
 
-    it('returns isValid: false with "Option not found." when 0 matching folders found and allowUserInput is false', async () => {
+    it('returns isValid: false with status "option_not_found" when 0 matching folders found and allowUserInput is false', async () => {
       const driveClient = createMockDriveClient({
         listFolders: vi.fn().mockResolvedValue({ folders: [] }),
       });
@@ -690,12 +697,13 @@ describe('DynamicOptionsAdapter', () => {
       expect(result).toEqual({
         contactFolders: {
           isValid: false,
-          errorMessage: 'Option not found.',
+          status: 'option_not_found',
+          targetPath: 'root',
         },
       });
     });
 
-    it('returns isValid: false with "Option not found." when allowUserInput is true but spaceId is missing', async () => {
+    it('returns isValid: false with status "missing_space" when allowUserInput is true but spaceId is missing', async () => {
       const driveClient = createMockDriveClient();
       const adapter = new DynamicOptionsAdapter(driveClient);
 
@@ -717,12 +725,13 @@ describe('DynamicOptionsAdapter', () => {
       expect(result).toEqual({
         contactFolders: {
           isValid: false,
-          errorMessage: 'Option not found.',
+          status: 'missing_space',
+          targetPath: 'root',
         },
       });
     });
 
-    it('returns isValid: false with "Option not found." when allowUserInput is true but relativePath cannot be resolved', async () => {
+    it('returns isValid: false with status "path_not_found" when allowUserInput is true but relativePath cannot be resolved', async () => {
       const driveClient = createMockDriveClient({
         listFolders: vi.fn().mockResolvedValue({ folders: [] }),
       });
@@ -748,12 +757,96 @@ describe('DynamicOptionsAdapter', () => {
       expect(result).toEqual({
         contactFolders: {
           isValid: false,
-          errorMessage: 'Option not found.',
+          status: 'path_not_found',
+          targetPath: 'NonExistentPath/Subfolder',
         },
       });
     });
 
-    it('returns isValid: false with multiple folders message when > 1 folders match even when allowUserInput is true', async () => {
+    it('returns isValid: false with status "ambiguous_path" when relativePath has ambiguous segments even with allowUserInput true', async () => {
+      const driveClient = createMockDriveClient({
+        listFolders: vi.fn().mockResolvedValue({
+          folders: [
+            { id: 'p-1', name: 'DuplicateFolder' },
+            { id: 'p-2', name: 'DuplicateFolder' },
+          ],
+        }),
+      });
+
+      const adapter = new DynamicOptionsAdapter(driveClient);
+
+      const queries = [
+        {
+          sourceKey: 'contactFolders',
+          queryId: 'contactFolders',
+          config: {
+            provider: 'google_drive',
+            method: 'list_folders',
+            relativePath: 'DuplicateFolder',
+          },
+          valueToValidate: 'BrandNewContact',
+          allowUserInput: true,
+        },
+      ];
+
+      const result = await adapter.validateExistence(queries, { spaceId: 'space-123' });
+
+      expect(result).toEqual({
+        contactFolders: {
+          isValid: false,
+          status: 'ambiguous_path',
+          targetPath: 'DuplicateFolder',
+        },
+      });
+    });
+
+    it('rejects empty or whitespace-only valueToValidate immediately with option_not_found even when allowUserInput is true', async () => {
+      const driveClient = createMockDriveClient();
+      const adapter = new DynamicOptionsAdapter(driveClient);
+
+      const queries = [
+        {
+          sourceKey: 'contactFoldersEmpty',
+          queryId: 'empty',
+          config: {
+            provider: 'google_drive',
+            method: 'list_folders',
+            relativePath: '1 Admin/Communication',
+          },
+          valueToValidate: '',
+          allowUserInput: true,
+        },
+        {
+          sourceKey: 'contactFoldersSpaces',
+          queryId: 'spaces',
+          config: {
+            provider: 'google_drive',
+            method: 'list_folders',
+            relativePath: '1 Admin/Communication',
+          },
+          valueToValidate: '   ',
+          allowUserInput: true,
+        },
+      ];
+
+      const result = await adapter.validateExistence(queries, { spaceId: 'space-123' });
+
+      expect(result).toEqual({
+        empty: {
+          isValid: false,
+          status: 'option_not_found',
+          targetPath: '1 Admin/Communication',
+        },
+        spaces: {
+          isValid: false,
+          status: 'option_not_found',
+          targetPath: '1 Admin/Communication',
+        },
+      });
+      expect(driveClient.listFolders).not.toHaveBeenCalled();
+    });
+
+    it('returns isValid: false with status "ambiguous_option" when > 1 folders match even when allowUserInput is true', async () => {
       const driveClient = createMockDriveClient({
         listFolders: vi.fn().mockResolvedValue({
           folders: [
@@ -783,19 +876,63 @@ describe('DynamicOptionsAdapter', () => {
       expect(result).toEqual({
         contactFolders: {
           isValid: false,
-          errorMessage:
-            'Multiple folders found with this name. Please resolve this ambiguity in Google Drive manually.',
+          status: 'ambiguous_option',
+          targetPath: 'root',
         },
       });
     });
 
-    it('returns isValid: false with multiple folders message when more than 1 matching folder found', async () => {
+    it('detects ambiguous options across paginated responses and short-circuits immediately', async () => {
+      const mockListFolders = vi.fn().mockImplementation(async (options: { pageToken?: string }) => {
+        if (!options.pageToken) {
+          return {
+            folders: [{ id: 'f-1', name: 'Acme Corp' }],
+            nextPageToken: 'page-2-token',
+          };
+        }
+        if (options.pageToken === 'page-2-token') {
+          return {
+            folders: [{ id: 'f-2', name: 'Acme Corp' }],
+            nextPageToken: 'page-3-token',
+          };
+        }
+        return {
+          folders: [{ id: 'f-3', name: 'Acme Corp' }],
+        };
+      });
+
+      const driveClient = createMockDriveClient({ listFolders: mockListFolders });
+      const adapter = new DynamicOptionsAdapter(driveClient);
+
+      const queries = [
+        {
+          sourceKey: 'contactFolders',
+          queryId: 'contactFolders',
+          config: {
+            provider: 'google_drive',
+            method: 'list_folders',
+          },
+          valueToValidate: 'Acme Corp',
+        },
+      ];
+
+      const result = await adapter.validateExistence(queries, { spaceId: 'space-123' });
+
+      expect(result).toEqual({
+        contactFolders: {
+          isValid: false,
+          status: 'ambiguous_option',
+          targetPath: 'root',
+        },
+      });
+      // Should short-circuit at page 2 without requesting page 3
+      expect(mockListFolders).toHaveBeenCalledTimes(2);
+    });
+
+    it('performs case-insensitive folder matching', async () => {
       const driveClient = createMockDriveClient({
         listFolders: vi.fn().mockResolvedValue({
-          folders: [
-            { id: 'f-1', name: 'Duplicate Corp' },
-            { id: 'f-2', name: 'Duplicate Corp' },
-          ],
+          folders: [{ id: 'f-1', name: 'Acme Corp' }],
         }),
       });
 
@@ -809,7 +946,7 @@ describe('DynamicOptionsAdapter', () => {
             provider: 'google_drive',
             method: 'list_folders',
           },
-          valueToValidate: 'Duplicate Corp',
+          valueToValidate: 'ACME CORP',
         },
       ];
 
@@ -817,14 +954,14 @@ describe('DynamicOptionsAdapter', () => {
 
       expect(result).toEqual({
         contactFolders: {
-          isValid: false,
-          errorMessage:
-            'Multiple folders found with this name. Please resolve this ambiguity in Google Drive manually.',
+          isValid: true,
+          status: 'valid',
+          targetPath: 'root',
         },
       });
     });
 
-    it('returns isValid: false with "Option not found." when spaceId is missing', async () => {
+    it('returns isValid: false with status "missing_space" when spaceId is missing', async () => {
       const driveClient = createMockDriveClient();
       const adapter = new DynamicOptionsAdapter(driveClient);
 
@@ -845,13 +982,14 @@ describe('DynamicOptionsAdapter', () => {
       expect(result).toEqual({
         contactFolders: {
           isValid: false,
-          errorMessage: 'Option not found.',
+          status: 'missing_space',
+          targetPath: 'root',
         },
       });
       expect(driveClient.listFolders).not.toHaveBeenCalled();
     });
 
-    it('returns isValid: false with "Option not found." when relativePath cannot be resolved', async () => {
+    it('returns isValid: false with status "path_not_found" when relativePath cannot be resolved', async () => {
       const driveClient = createMockDriveClient({
         listFolders: vi.fn().mockResolvedValue({ folders: [] }),
       });
@@ -875,12 +1013,13 @@ describe('DynamicOptionsAdapter', () => {
       expect(result).toEqual({
         contactFolders: {
           isValid: false,
-          errorMessage: 'Option not found.',
+          status: 'path_not_found',
+          targetPath: 'NonExistent/Folder',
         },
       });
     });
 
-    it('returns isValid: false with "Option not found." when provider or method is unsupported', async () => {
+    it('returns isValid: false with status "option_not_found" when provider or method is unsupported', async () => {
       const driveClient = createMockDriveClient();
       const adapter = new DynamicOptionsAdapter(driveClient);
 
@@ -901,19 +1040,23 @@ describe('DynamicOptionsAdapter', () => {
       expect(result).toEqual({
         unsupported: {
           isValid: false,
-          errorMessage: 'Option not found.',
+          status: 'option_not_found',
+          targetPath: 'root',
         },
       });
       expect(driveClient.listFolders).not.toHaveBeenCalled();
     });
 
-    it('handles timeouts gracefully via resilience wrapper', async () => {
-      const driveClient = createMockDriveClient({
-        listFolders: vi.fn().mockImplementation(
-          () => new Promise((resolve) => setTimeout(resolve, 200))
-        ),
+    it('handles timeouts gracefully via resilience wrapper and guards against unhandled rejections', async () => {
+      let rejectSlowPromise!: (reason: unknown) => void;
+      const slowPromise = new Promise((_, reject) => {
+        rejectSlowPromise = reject;
       });
-      const adapter = new DynamicOptionsAdapter(driveClient, { timeoutMs: 50 });
+
+      const driveClient = createMockDriveClient({
+        listFolders: vi.fn().mockReturnValue(slowPromise),
+      });
+      const adapter = new DynamicOptionsAdapter(driveClient, { timeoutMs: 20 });
 
       const queries = [
         {
@@ -932,9 +1075,14 @@ describe('DynamicOptionsAdapter', () => {
       expect(result).toEqual({
         slowQuery: {
           isValid: false,
-          errorMessage: 'Validation timed out.',
+          status: 'timeout',
+          targetPath: 'root',
         },
       });
+
+      // Reject the underlying promise after timeout has expired - must NOT cause unhandled rejection
+      rejectSlowPromise(new Error('Delayed Drive network failure'));
+      await new Promise((resolve) => setTimeout(resolve, 50));
     });
 
     it('processes multiple validation queries with Promise.allSettled', async () => {
@@ -985,12 +1133,21 @@ describe('DynamicOptionsAdapter', () => {
       const result = await adapter.validateExistence(queries, { spaceId: 'space-123' });
 
       expect(result).toEqual({
-        queryValid: { isValid: true },
+        queryValid: {
+          isValid: true,
+          status: 'valid',
+          targetPath: 'root',
+        },
         queryError: {
           isValid: false,
-          errorMessage: 'An unexpected error occurred during dynamic option validation.',
+          status: 'error',
+          targetPath: 'root',
         },
-        queryMissing: { isValid: false, errorMessage: 'Option not found.' },
+        queryMissing: {
+          isValid: false,
+          status: 'option_not_found',
+          targetPath: 'root',
+        },
       });
     });
 
@@ -1030,8 +1187,16 @@ describe('DynamicOptionsAdapter', () => {
       const result = await adapter.validateExistence(queries, { spaceId: 'space-123' });
 
       expect(result).toEqual({
-        contact_field_1: { isValid: true },
-        contact_field_2: { isValid: false, errorMessage: 'Option not found.' },
+        contact_field_1: {
+          isValid: true,
+          status: 'valid',
+          targetPath: 'root',
+        },
+        contact_field_2: {
+          isValid: false,
+          status: 'option_not_found',
+          targetPath: 'root',
+        },
       });
     });
 
@@ -1057,7 +1222,11 @@ describe('DynamicOptionsAdapter', () => {
 
       const result = await adapter.validateExistence(queries, context);
       expect(result).toEqual({
-        contactFolders: { isValid: false, errorMessage: 'Option not found.' },
+        contactFolders: {
+          isValid: false,
+          status: 'missing_space',
+          targetPath: 'root',
+        },
       });
       expect(driveClient.listFolders).not.toHaveBeenCalled();
     });

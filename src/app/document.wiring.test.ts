@@ -164,5 +164,145 @@ describe('document.wiring', () => {
 
       expect(service).toBeInstanceOf(DocumentService);
     });
+
+    it('injects default validationMessageFormatter using DEFAULT_MESSAGE_CATALOG', async () => {
+      const mockServer: HttpServer = {
+        registerRoute: vi.fn(),
+      } as unknown as HttpServer;
+      const mockDriveClient = {} as unknown as GoogleDriveClient;
+      const mockDynamicValidator = {
+        validateExistence: vi.fn().mockResolvedValue({
+          contact: {
+            isValid: false,
+            status: 'path_not_found',
+            targetPath: '1 Admin/Communication',
+          },
+        }),
+      };
+
+      const docTypeWithDynamic: DocumentType = {
+        key: 'comm-test',
+        name: 'Comm Test',
+        documentSchema: {
+          fields: [
+            {
+              key: 'contact',
+              name: 'Contact',
+              type: 'string',
+              required: true,
+              options: {
+                source: 'contactFolders',
+                key: 'key',
+                name: 'name',
+                allowUserInput: true,
+                dynamicConfig: {
+                  provider: 'google_drive',
+                  method: 'list_folders',
+                  relativePath: '1 Admin/Communication',
+                },
+              },
+            },
+          ],
+        },
+      };
+
+      const customRegistry: DocumentSchemaRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([docTypeWithDynamic]),
+      };
+
+      const service = wireDocumentServicesAndRoutes({
+        server: mockServer,
+        driveClient: mockDriveClient,
+        configProvider: { getDriveConfig: vi.fn().mockResolvedValue(undefined) },
+        documentSchemaRegistry: customRegistry,
+        templateEvaluator: mockEvaluator,
+        dynamicValidator: mockDynamicValidator,
+      }) as DocumentService;
+
+      await service.initialize();
+
+      const result = await service.processDocument({
+        type: 'comm-test',
+        data: { contact: 'Acme Corp' },
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors).toEqual([
+          'Folder "1 Admin/Communication" was not found in the selected Document Space.',
+        ]);
+      }
+    });
+
+    it('passes custom validationMessageFormatter when explicitly provided in wireDocumentServicesAndRoutes', async () => {
+      const mockServer: HttpServer = {
+        registerRoute: vi.fn(),
+      } as unknown as HttpServer;
+      const mockDriveClient = {} as unknown as GoogleDriveClient;
+      const mockDynamicValidator = {
+        validateExistence: vi.fn().mockResolvedValue({
+          contact: {
+            isValid: false,
+            status: 'path_not_found',
+            targetPath: '1 Admin/Communication',
+          },
+        }),
+      };
+
+      const docTypeWithDynamic: DocumentType = {
+        key: 'comm-test',
+        name: 'Comm Test',
+        documentSchema: {
+          fields: [
+            {
+              key: 'contact',
+              name: 'Contact',
+              type: 'string',
+              required: true,
+              options: {
+                source: 'contactFolders',
+                key: 'key',
+                name: 'name',
+                allowUserInput: true,
+                dynamicConfig: {
+                  provider: 'google_drive',
+                  method: 'list_folders',
+                  relativePath: '1 Admin/Communication',
+                },
+              },
+            },
+          ],
+        },
+      };
+
+      const customRegistry: DocumentSchemaRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([docTypeWithDynamic]),
+      };
+
+      const customFormatter = vi.fn().mockReturnValue('Custom error message');
+
+      const service = wireDocumentServicesAndRoutes({
+        server: mockServer,
+        driveClient: mockDriveClient,
+        configProvider: { getDriveConfig: vi.fn().mockResolvedValue(undefined) },
+        documentSchemaRegistry: customRegistry,
+        templateEvaluator: mockEvaluator,
+        dynamicValidator: mockDynamicValidator,
+        validationMessageFormatter: customFormatter,
+      }) as DocumentService;
+
+      await service.initialize();
+
+      const result = await service.processDocument({
+        type: 'comm-test',
+        data: { contact: 'Acme Corp' },
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors).toEqual(['Custom error message']);
+      }
+      expect(customFormatter).toHaveBeenCalledWith('path_not_found', '1 Admin/Communication');
+    });
   });
 });

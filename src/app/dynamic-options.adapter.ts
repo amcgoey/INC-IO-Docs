@@ -12,8 +12,6 @@ import {
   type DynamicValidationContext,
   type DynamicValidationQuery,
   type DynamicValidationResult,
-  OPTION_NOT_FOUND_MSG,
-  VALIDATION_TIMEOUT_MSG,
 } from '../features/document/ports';
 
 export interface DynamicOptionsDriveClient {
@@ -49,10 +47,6 @@ export function isGoogleDriveDynamicConfig(
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const MAX_DYNAMIC_OPTIONS = 150;
-const OPTION_NOT_FOUND: DynamicValidationResult = {
-  isValid: false,
-  errorMessage: OPTION_NOT_FOUND_MSG,
-};
 
 function normalizeTargetPath(relativePath?: unknown): string {
   if (typeof relativePath !== 'string') {
@@ -263,7 +257,10 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     const results: Record<string, DynamicValidationResult> = {};
 
     for (const query of queries) {
-      results[query.queryId] = { ...OPTION_NOT_FOUND };
+      const targetPath = normalizeTargetPath(
+        isGoogleDriveDynamicConfig(query.config) ? query.config.relativePath : undefined
+      );
+      results[query.queryId] = { isValid: false, status: 'option_not_found', targetPath };
     }
 
     const spaceId = cleanSpaceId(context.spaceId);
@@ -288,6 +285,10 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     query: DynamicValidationQuery,
     spaceId?: string
   ): Promise<DynamicValidationResult> {
+    const targetPath = normalizeTargetPath(
+      isGoogleDriveDynamicConfig(query.config) ? query.config.relativePath : undefined
+    );
+
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -310,12 +311,14 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
       if (error instanceof Error && error.message.includes('timed out')) {
         return {
           isValid: false,
-          errorMessage: VALIDATION_TIMEOUT_MSG,
+          status: 'timeout',
+          targetPath,
         };
       }
       return {
         isValid: false,
-        errorMessage: 'An unexpected error occurred during dynamic option validation.',
+        status: 'error',
+        targetPath,
       };
     } finally {
       if (timer) {
@@ -328,44 +331,62 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     query: DynamicValidationQuery,
     spaceId?: string
   ): Promise<DynamicValidationResult> {
+    const targetPath = normalizeTargetPath(
+      isGoogleDriveDynamicConfig(query.config) ? query.config.relativePath : undefined
+    );
+
+    if (query.valueToValidate.trim() === '') {
+      return { isValid: false, status: 'option_not_found', targetPath };
+    }
+
     if (!isGoogleDriveDynamicConfig(query.config)) {
-      return { ...OPTION_NOT_FOUND };
+      return { isValid: false, status: 'option_not_found', targetPath };
     }
 
     if (!spaceId) {
-      return { ...OPTION_NOT_FOUND };
+      return { isValid: false, status: 'missing_space', targetPath };
     }
 
-    const targetPath = normalizeTargetPath(query.config.relativePath);
     const outcome = await this.resolveTargetFolder(spaceId, targetPath);
     if (!outcome.success) {
-      return { ...OPTION_NOT_FOUND };
+      return { isValid: false, status: outcome.status, targetPath };
     }
 
-    const result = await this.driveClient.listFolders({
-      parentFolderId: outcome.folderId,
-      name: query.valueToValidate,
-    });
+    let pageToken: string | undefined;
+    let matchCount = 0;
+    const normalizedTarget = query.valueToValidate.toLowerCase();
 
-    const matchingFolders = result.folders.filter(
-      (f) => f.name === query.valueToValidate
-    );
+    do {
+      const result = await this.driveClient.listFolders({
+        parentFolderId: outcome.folderId,
+        name: query.valueToValidate,
+        pageSize: 100,
+        ...(pageToken !== undefined ? { pageToken } : {}),
+      });
 
-    if (matchingFolders.length === 1) {
-      return { isValid: true };
-    }
-
-    if (matchingFolders.length === 0) {
-      if (query.allowUserInput === true) {
-        return { isValid: true };
+      for (const folder of result.folders) {
+        if (folder.name.toLowerCase() === normalizedTarget) {
+          matchCount++;
+          if (matchCount >= 2) {
+            return { isValid: false, status: 'ambiguous_option', targetPath };
+          }
+        }
       }
-      return { ...OPTION_NOT_FOUND };
+
+      pageToken = result.nextPageToken;
+    } while (pageToken);
+
+    if (matchCount === 1) {
+      return { isValid: true, status: 'valid', targetPath };
     }
 
-    return {
-      isValid: false,
-      errorMessage:
-        'Multiple folders found with this name. Please resolve this ambiguity in Google Drive manually.',
-    };
+    if (matchCount === 0) {
+      if (query.allowUserInput === true) {
+        return { isValid: true, status: 'valid', targetPath };
+      }
+      return { isValid: false, status: 'option_not_found', targetPath };
+    }
+
+    return { isValid: false, status: 'ambiguous_option', targetPath };
   }
 }
