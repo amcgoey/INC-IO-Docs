@@ -42,6 +42,12 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               name: 'Active Projects',
               abstractStorageId: 'shared-drive-proj-root',
             },
+            {
+              id: 'projects-shared-drive-001',
+              typeId: 'projects',
+              name: 'Projects Shared Drive 001',
+              abstractStorageId: 'projects-shared-drive-001',
+            },
           ];
         }
         if (typeId === 'proposals') {
@@ -424,6 +430,122 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
               [getDocumentSpaceWidgetName('proposals')]: { stringInputs: { value: ['Client Proposals'] } },
               [getDocumentTypeWidgetName('proposals')]: { stringInputs: { value: ['communication-proposal'] } },
+              [getDocumentInfoWidgetName('contact', 'communication-proposal')]: { stringInputs: { value: ['Beta Architects'] } },
+              [getDocumentInfoWidgetName('date', 'communication-proposal')]: { stringInputs: { value: ['260715'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-proposal')]: { stringInputs: { value: ['OT'] } },
+              [getDocumentInfoWidgetName('description', 'communication-proposal')]: { stringInputs: { value: ['RFP Response'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        action: {
+          notification: {
+            text: 'Document processed successfully',
+          },
+        },
+      });
+
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('files communication-proposal into existing <contact> folder under projects Shared Drive space', async () => {
+      const fileId = 'file-prop-proj-456';
+      const fileName = 'RFP_Proposal_Response.pdf';
+      const rootSharedDriveId = 'projects-shared-drive-001';
+      const commFolderId = 'folder-proj-comm-1';
+      const contactFolderId = 'folder-beta-arch';
+      const newSubfolderId = 'folder-rfp-subfolder';
+
+      // 1. Dynamic Options Validation: resolves relativePath "Communication" under Shared Drive root
+      mockDynamicValidationProposal({
+        oppFolderId: rootSharedDriveId,
+        commFolderId,
+        contactFolderId,
+        contactName: 'Beta Architects',
+      });
+
+      // 2. DriveActivityHandler: resolveFolderPath('projects-shared-drive-001', ['Communication'])
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(rootSharedDriveId) && q.q.includes("name = 'Communication'"))
+        .reply(200, { files: [{ id: commFolderId, name: 'Communication' }] });
+
+      // 3. DriveActivityHandler: findOrCreateFolder(commFolderId, 'Beta Architects') -> exists
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(commFolderId) && q.q.includes("name = 'Beta Architects'"))
+        .reply(200, { files: [{ id: contactFolderId, name: 'Beta Architects' }] });
+
+      // 4. DriveActivityHandler: findOrCreateFolder(contactFolderId, '260715 OT - RFP Response') -> creates new
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(contactFolderId) && q.q.includes("name = '260715 OT - RFP Response'"))
+        .reply(200, { files: [] });
+
+      nock('https://www.googleapis.com')
+        .post('/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: newSubfolderId,
+          name: '260715 OT - RFP Response',
+          parents: [contactFolderId],
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+
+      // 5. DriveActivityHandler: move(fileId, newSubfolderId)
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${fileId}`)
+        .query(true)
+        .reply(200, {
+          id: fileId,
+          name: fileName,
+          parents: ['initial-inbox-folder'],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        });
+
+      nock('https://www.googleapis.com')
+        .patch(`/drive/v3/files/${fileId}`)
+        .query(true)
+        .reply(200, {
+          id: fileId,
+          name: fileName,
+          parents: [newSubfolderId],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          drive: {
+            selectedItems: [
+              {
+                id: fileId,
+                title: fileName,
+                mimeType: 'application/pdf',
+              },
+            ],
+          },
+          commonEventObject: {
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['projects-shared-drive-001'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-proposal'] } },
               [getDocumentInfoWidgetName('contact', 'communication-proposal')]: { stringInputs: { value: ['Beta Architects'] } },
               [getDocumentInfoWidgetName('date', 'communication-proposal')]: { stringInputs: { value: ['260715'] } },
               [getDocumentInfoWidgetName('direction', 'communication-proposal')]: { stringInputs: { value: ['OT'] } },

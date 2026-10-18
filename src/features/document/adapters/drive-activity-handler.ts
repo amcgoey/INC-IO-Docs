@@ -306,30 +306,14 @@ export class DriveActivityHandler implements ActivityHandler {
       parentPathSegments = parsePathSegments(payload.parentPath as string);
     }
 
-    let baseFolderId: string;
-    if (rootStorageId) {
-      if (parentPathSegments.length > 0) {
-        const resolvedParent = await this.driveService.resolveFolderPath(
-          rootStorageId,
-          parentPathSegments
-        );
-        baseFolderId = resolvedParent.id;
-      } else {
-        baseFolderId = rootStorageId;
-      }
-    } else {
-      const file = await this.driveService.getFile(targetSourceFiles[0].id);
-      const initialParent = file.parents?.[0] ?? 'root';
-      if (parentPathSegments.length > 0) {
-        const resolvedParent = await this.driveService.resolveFolderPath(
-          initialParent,
-          parentPathSegments
-        );
-        baseFolderId = resolvedParent.id;
-      } else {
-        baseFolderId = initialParent;
-      }
-    }
+    const startingId =
+      rootStorageId ??
+      (await this.driveService.getFile(targetSourceFiles[0].id)).parents?.[0] ??
+      'root';
+    const baseFolderId =
+      parentPathSegments.length > 0
+        ? (await this.driveService.resolveFolderPath(startingId, parentPathSegments)).id
+        : startingId;
 
     const defaultTargetName =
       driveConfig?.defaultFolderName ?? this.options.defaultFolderName ?? 'Unfiled';
