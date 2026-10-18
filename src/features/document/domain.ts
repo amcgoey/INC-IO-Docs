@@ -9,6 +9,7 @@ import type {
   CompiledSchemaRegistryPort,
   DocumentDynamicValidationPort,
   DynamicValidationQuery,
+  DynamicValidationMessageFormatter,
 } from './ports';
 
 export const OPTION_NOT_FOUND_MSG = 'Option not found.';
@@ -369,7 +370,8 @@ export class DocumentService implements DocumentServicePort {
     private readonly documentSchemaRegistry: DocumentSchemaRegistryPort,
     private readonly templateEvaluator: TemplateEvaluatorPort,
     private readonly compiledSchemaRegistry: CompiledSchemaRegistryPort,
-    private readonly dynamicValidator?: DocumentDynamicValidationPort
+    private readonly dynamicValidator?: DocumentDynamicValidationPort,
+    private readonly validationMessageFormatter?: DynamicValidationMessageFormatter
   ) {}
 
   async initialize(): Promise<void> {
@@ -455,7 +457,17 @@ export class DocumentService implements DocumentServicePort {
         for (const query of dynamicQueries) {
           const result = validationResults[query.queryId] ?? validationResults[query.sourceKey];
           if (!result || !result.isValid) {
-            dynamicErrors.push(result?.errorMessage ?? OPTION_NOT_FOUND_MSG);
+            if (result?.errorMessage !== undefined) {
+              dynamicErrors.push(result.errorMessage);
+            } else if (result?.status !== undefined && this.validationMessageFormatter) {
+              dynamicErrors.push(
+                this.validationMessageFormatter(result.status, result.targetPath)
+              );
+            } else if (result?.status === 'timeout') {
+              dynamicErrors.push(VALIDATION_TIMEOUT_MSG);
+            } else {
+              dynamicErrors.push(OPTION_NOT_FOUND_MSG);
+            }
           }
         }
 

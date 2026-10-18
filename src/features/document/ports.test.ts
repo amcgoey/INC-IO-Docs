@@ -4,6 +4,7 @@ import {
   FormSchemaType,
   type FormSchema,
   DynamicValidationQuerySchema,
+  DynamicValidationStatusSchema,
   DynamicValidationResultSchema,
   DynamicValidationContextSchema,
   SourceFileSchema,
@@ -12,6 +13,7 @@ import {
   VALIDATION_TIMEOUT_MSG,
   type DocumentDynamicValidationPort,
   type DynamicValidationQuery,
+  type DynamicValidationStatus,
   type DynamicValidationResult,
   type DynamicValidationContext,
 } from './ports';
@@ -115,6 +117,23 @@ describe('Document Ports & DTOs', () => {
     expect(Value.Check(DynamicValidationQuerySchema, invalidQuery)).toBe(false);
   });
 
+  it('validates DynamicValidationStatusSchema with Value.Check', () => {
+    const statuses: DynamicValidationStatus[] = [
+      'valid',
+      'missing_space',
+      'path_not_found',
+      'ambiguous_path',
+      'option_not_found',
+      'ambiguous_option',
+      'timeout',
+      'error',
+    ];
+    for (const status of statuses) {
+      expect(Value.Check(DynamicValidationStatusSchema, status)).toBe(true);
+    }
+    expect(Value.Check(DynamicValidationStatusSchema, 'invalid_status')).toBe(false);
+  });
+
   it('validates DynamicValidationResultSchema with Value.Check', () => {
     const validResult: DynamicValidationResult = {
       isValid: false,
@@ -122,10 +141,23 @@ describe('Document Ports & DTOs', () => {
     };
     expect(Value.Check(DynamicValidationResultSchema, validResult)).toBe(true);
 
+    const structuredResult: DynamicValidationResult = {
+      isValid: false,
+      status: 'path_not_found',
+      targetPath: '1 Admin/Communication',
+    };
+    expect(Value.Check(DynamicValidationResultSchema, structuredResult)).toBe(true);
+
     const invalidResult = {
       isValid: 'not-a-boolean',
     };
     expect(Value.Check(DynamicValidationResultSchema, invalidResult)).toBe(false);
+
+    const invalidStatusResult = {
+      isValid: false,
+      status: 'non_existent_status',
+    };
+    expect(Value.Check(DynamicValidationResultSchema, invalidStatusResult)).toBe(false);
   });
 
   it('validates DynamicValidationContextSchema with Value.Check', () => {
