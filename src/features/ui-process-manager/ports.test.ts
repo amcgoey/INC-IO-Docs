@@ -4,6 +4,8 @@ import {
   UiProcessDocumentSpaceDtoSchema,
   type UiProcessDocumentSpaceDto,
   UiProcessResultSchema,
+  UiSelectionStateSchema,
+  ProcessUiStateEventSchema,
 } from './ports';
 
 describe('UI Process Manager Ports & DTOs', () => {
@@ -82,4 +84,48 @@ describe('UI Process Manager Ports & DTOs', () => {
       expect(Value.Check(UiProcessResultSchema, notification)).toBe(true);
     });
   });
+
+  describe('UiSelectionStateSchema', () => {
+    it('validates selection state with optional files array', () => {
+      const state = {
+        spaceTypes: [{ text: 'Projects', value: 'projects' }],
+        spaces: ['space-1'],
+        documentTypes: [{ text: 'Invoice', value: 'invoice' }],
+        files: [{ text: 'File A', value: 'file-1', selected: true }],
+      };
+      expect(Value.Check(UiSelectionStateSchema, state)).toBe(true);
+    });
+
+    it('rejects selection state with invalid files array', () => {
+      const state = {
+        spaceTypes: [],
+        spaces: [],
+        documentTypes: [],
+        files: 'invalid',
+      };
+      expect(Value.Check(UiSelectionStateSchema, state)).toBe(false);
+    });
+  });
+
+  describe('ProcessUiStateEventSchema', () => {
+    it('validates selectedItems with id and title', () => {
+      const event = {
+        actionName: 'onFormChange',
+        selectedItems: [
+          { id: 'drive-item-1', title: 'Doc 1' },
+          { id: 'drive-item-2' },
+          { title: 'Doc 3' },
+        ],
+      };
+      expect(Value.Check(ProcessUiStateEventSchema, event)).toBe(true);
+    });
+
+    it('rejects invalid selectedItems item', () => {
+      const event = {
+        selectedItems: [{ id: 123 }],
+      };
+      expect(Value.Check(ProcessUiStateEventSchema, event)).toBe(false);
+    });
+  });
 });
+

@@ -11,6 +11,7 @@ export const UiSelectionStateSchema = Type.Object({
   spaceTypes: Type.Array(UiSelectionItemSchema),
   spaces: Type.Array(Type.String()),
   documentTypes: Type.Array(UiSelectionItemSchema),
+  files: Type.Optional(Type.Union([Type.Array(UiSelectionItemSchema), Type.Undefined()])),
 });
 export type UiSelectionState = Static<typeof UiSelectionStateSchema>;
 
@@ -52,6 +53,17 @@ export const ProcessUiStateEventSchema = Type.Object({
   parameters: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
   validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  selectedItems: Type.Optional(
+    Type.Union([
+      Type.Array(
+        Type.Object({
+          id: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+          title: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+        })
+      ),
+      Type.Undefined(),
+    ])
+  ),
 });
 export type ProcessUiStateEvent = Static<typeof ProcessUiStateEventSchema>;
 
@@ -340,10 +352,25 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     selected: typeKey === currentDocTypeKey,
   }));
 
+  const validSelectedItems = (context.selectedItems ?? []).filter(
+    (item): item is { id: string; title?: string | undefined } =>
+      typeof item?.id === 'string' && item.id.trim().length > 0
+  );
+
+  const files: UiSelectionItem[] = validSelectedItems.map((item) => {
+    const trimmedTitle = typeof item.title === 'string' ? item.title.trim() : '';
+    return {
+      text: trimmedTitle.length > 0 ? trimmedTitle : item.id,
+      value: item.id,
+      selected: true,
+    };
+  });
+
   const selectionState: UiSelectionState = {
     spaceTypes,
     spaces: (input.spaces ?? []).map((s) => s.name),
     documentTypes,
+    files,
   };
 
   const spaceResolution = resolveSpace(

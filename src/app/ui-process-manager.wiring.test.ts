@@ -10,6 +10,7 @@ import type { DocumentService } from '../features/document/domain';
 import type { SchemaDrivenUiService } from '../features/schema-driven-ui/domain';
 import type { RawManifestProviderPort } from './schema-driven-ui.wiring';
 import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
+import type { UiProcessOrchestratorPort } from '../features/ui-process-manager/ports';
 
 import type {
   GoogleWorkspaceActionResponse,
@@ -1032,6 +1033,52 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       );
       expect(contactWidget).toBeDefined();
       expect(contactWidget!.selectionInput?.items).toEqual([]);
+    });
+  });
+
+  describe('createUiProcessRequestWrapper file selection forwarding', () => {
+    it('forwards intent.selectionState.files to schemaDrivenUiService.generateView', async () => {
+      const mockOrchestrator = {
+        processUiEvent: vi.fn().mockResolvedValue({
+          type: 'render',
+          viewId: 'drive-document-process-card',
+          documentTypeKey: 'communication-project',
+          selectionState: {
+            spaces: ['Project Alpha'],
+            spaceTypes: [{ text: 'Projects', value: 'projects', selected: true }],
+            documentTypes: [{ text: 'Comm Project', value: 'comm-project', selected: true }],
+            files: [{ text: 'Proposal.pdf', value: 'file-123', selected: true }],
+          },
+          formData: {},
+          isUpdateCard: false,
+        }),
+      };
+
+      const mockSchemaDrivenUi = {
+        generateView: vi.fn().mockResolvedValue({
+          id: 'drive-document-process-card',
+          header: { title: 'Test', subtitle: 'Test' },
+          sections: [{ header: 'Test', widgets: [{ textParagraph: { text: 'test' } }] }],
+        }),
+      };
+
+      const wrapper = createUiProcessRequestWrapper(
+        mockOrchestrator as unknown as UiProcessOrchestratorPort,
+        mockSchemaDrivenUi as unknown as SchemaDrivenUiService
+      );
+
+      await wrapper.processUiEvent({
+        baseUrl: 'http://localhost:3000',
+        selectedItems: [{ id: 'file-123', title: 'Proposal.pdf' }],
+      });
+
+      expect(mockSchemaDrivenUi.generateView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          selectionState: expect.objectContaining({
+            files: [{ text: 'Proposal.pdf', value: 'file-123', selected: true }],
+          }),
+        })
+      );
     });
   });
 });
