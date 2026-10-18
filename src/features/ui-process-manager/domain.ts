@@ -52,6 +52,7 @@ export const ProcessUiStateEventSchema = Type.Object({
   formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
   parameters: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
   validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  statusMessages: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
   selectedItems: Type.Optional(
     Type.Union([
@@ -86,6 +87,7 @@ export const ProcessUiStateOutputSchema = Type.Object({
   formData: Type.Record(Type.String(), Type.Unknown()),
   isUpdateCard: Type.Boolean(),
   validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  statusMessages: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
 });
 export type ProcessUiStateOutput = Static<typeof ProcessUiStateOutputSchema>;
 
@@ -473,5 +475,8 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     formData: effectiveFormData,
     isUpdateCard,
     ...(validationErrors.length > 0 ? { validationErrors } : {}),
+    ...(context.statusMessages && context.statusMessages.length > 0
+      ? { statusMessages: context.statusMessages }
+      : {}),
   };
 }

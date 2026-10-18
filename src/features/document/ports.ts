@@ -135,12 +135,32 @@ export const DynamicValidationQuerySchema = Type.Object({
 
 export type DynamicValidationQuery = Static<typeof DynamicValidationQuerySchema>;
 
+export const DynamicValidationStatusSchema = Type.Union([
+  Type.Literal('valid'),
+  Type.Literal('missing_space'),
+  Type.Literal('path_not_found'),
+  Type.Literal('ambiguous_path'),
+  Type.Literal('option_not_found'),
+  Type.Literal('ambiguous_option'),
+  Type.Literal('timeout'),
+  Type.Literal('error'),
+]);
+
+export type DynamicValidationStatus = Static<typeof DynamicValidationStatusSchema>;
+
 export const DynamicValidationResultSchema = Type.Object({
   isValid: Type.Boolean(),
+  status: Type.Optional(DynamicValidationStatusSchema),
+  targetPath: Type.Optional(Type.String()),
   errorMessage: Type.Optional(Type.String()),
 });
 
 export type DynamicValidationResult = Static<typeof DynamicValidationResultSchema>;
+
+export type DynamicValidationMessageFormatter = (
+  status: DynamicValidationStatus,
+  targetPath?: string
+) => string;
 
 export const DynamicValidationContextSchema = Type.Object({
   spaceId: Type.Optional(Type.String()),

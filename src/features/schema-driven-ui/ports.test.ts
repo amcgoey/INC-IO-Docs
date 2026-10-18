@@ -7,6 +7,9 @@ import {
   AbstractDataSchema,
   StandardWidgetCustomPropsSchema,
   DynamicOptionQuerySchema,
+  DynamicOptionStatusSchema,
+  DynamicOptionResolutionSchema,
+  type DynamicOptionResolution,
   OptionsFetcherContextSchema,
   type SelectionState,
   type GenerateViewRequest,
@@ -117,12 +120,50 @@ describe('schema-driven-ui ports', () => {
       expect(Value.Check(OptionsFetcherContextSchema, context)).toBe(true);
     });
 
-    it('validates GenerateViewRequest with optional spaceId', () => {
+    it('validates GenerateViewRequest with optional spaceId and statusMessages', () => {
       const req: GenerateViewRequest = {
         viewId: 'drive-document-process-card',
         spaceId: 'space-folder-999',
+        statusMessages: ['Status message 1', 'Status message 2'],
       };
       expect(Value.Check(GenerateViewRequestSchema, req)).toBe(true);
+    });
+
+    it('validates all 7 DynamicOptionStatusSchema literals', () => {
+      const validStatuses = [
+        'ready',
+        'empty',
+        'missing_space',
+        'path_not_found',
+        'ambiguous_path',
+        'timeout',
+        'error',
+      ];
+      for (const status of validStatuses) {
+        expect(Value.Check(DynamicOptionStatusSchema, status)).toBe(true);
+      }
+      expect(Value.Check(DynamicOptionStatusSchema, 'invalid_status')).toBe(false);
+    });
+
+    it('validates DynamicOptionResolutionSchema with and without targetPath', () => {
+      const resolutionWithPath: DynamicOptionResolution = {
+        status: 'ready',
+        items: [{ text: 'Alpha', value: 'alpha' }],
+        targetPath: '1 Admin/Communications',
+      };
+      expect(Value.Check(DynamicOptionResolutionSchema, resolutionWithPath)).toBe(true);
+
+      const resolutionWithoutPath: DynamicOptionResolution = {
+        status: 'missing_space',
+        items: [],
+      };
+      expect(Value.Check(DynamicOptionResolutionSchema, resolutionWithoutPath)).toBe(true);
+
+      const invalidResolution = {
+        status: 'unknown',
+        items: [],
+      };
+      expect(Value.Check(DynamicOptionResolutionSchema, invalidResolution)).toBe(false);
     });
   });
 });

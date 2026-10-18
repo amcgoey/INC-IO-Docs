@@ -9,6 +9,7 @@ import type {
   CompiledSchemaRegistryPort,
   DocumentDynamicValidationPort,
   DynamicValidationQuery,
+  DynamicValidationMessageFormatter,
 } from './ports';
 
 export const OPTION_NOT_FOUND_MSG = 'Option not found.';
@@ -114,6 +115,8 @@ export const DocumentFieldType = Type.Object({
   required: Type.Optional(Type.Boolean()),
   defaultValue: Type.Optional(Type.String()),
   format: Type.Optional(Type.String()),
+  minLength: Type.Optional(Type.Number()),
+  pattern: Type.Optional(Type.String()),
   options: Type.Optional(DocumentFieldOptionType),
 });
 
@@ -336,7 +339,16 @@ export function buildFieldSchema(
         fieldSchema = Type.Union(literals);
       }
     } else {
-      fieldSchema = Type.String();
+      // nosemgrep: domain-pass-through-read
+      const { minLength, pattern } = field;
+      const stringOptions: { minLength?: number; pattern?: string } = {};
+      if (minLength !== undefined) {
+        stringOptions.minLength = minLength;
+      }
+      if (pattern !== undefined) {
+        stringOptions.pattern = pattern;
+      }
+      fieldSchema = Type.String(stringOptions);
     }
   } else {
     throw new Error(`Unsupported field type '${field.type}' in DocumentType '${documentTypeKey}'`);
@@ -369,7 +381,8 @@ export class DocumentService implements DocumentServicePort {
     private readonly documentSchemaRegistry: DocumentSchemaRegistryPort,
     private readonly templateEvaluator: TemplateEvaluatorPort,
     private readonly compiledSchemaRegistry: CompiledSchemaRegistryPort,
-    private readonly dynamicValidator?: DocumentDynamicValidationPort
+    private readonly dynamicValidator?: DocumentDynamicValidationPort,
+    private readonly validationMessageFormatter?: DynamicValidationMessageFormatter
   ) {}
 
   async initialize(): Promise<void> {
@@ -455,7 +468,17 @@ export class DocumentService implements DocumentServicePort {
         for (const query of dynamicQueries) {
           const result = validationResults[query.queryId] ?? validationResults[query.sourceKey];
           if (!result || !result.isValid) {
-            dynamicErrors.push(result?.errorMessage ?? OPTION_NOT_FOUND_MSG);
+            if (result?.errorMessage !== undefined) {
+              dynamicErrors.push(result.errorMessage);
+            } else if (result?.status !== undefined && this.validationMessageFormatter) {
+              dynamicErrors.push(
+                this.validationMessageFormatter(result.status, result.targetPath)
+              );
+            } else if (result?.status === 'timeout') {
+              dynamicErrors.push(VALIDATION_TIMEOUT_MSG);
+            } else {
+              dynamicErrors.push(OPTION_NOT_FOUND_MSG);
+            }
           }
         }
 

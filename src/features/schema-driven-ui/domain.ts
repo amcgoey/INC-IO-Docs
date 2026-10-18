@@ -7,13 +7,14 @@ import type {
   OptionsFetcherPort,
   DynamicOptionQuery,
   DynamicOptionItem,
+  DynamicOptionResolution,
 } from './ports';
-
 import {
   SelectionItemSchema,
   GenerateViewRequestSchema,
   type GenerateViewRequest,
 } from './ports';
+import { DEFAULT_MESSAGE_CATALOG, formatStatusSectionMessage } from './message-catalog';
 
 // --- JSON Logic Schema ---
 
@@ -241,7 +242,7 @@ function validateOrThrow<T extends TSchema>(schema: T, value: unknown, errorMess
   }
 }
 
-function isDynamicOptionConfig(
+export function isDynamicOptionConfig(
   options: unknown
 ): options is { source: string; dynamicConfig: Record<string, unknown> } {
   if (!options || typeof options !== 'object') return false;
@@ -251,6 +252,18 @@ function isDynamicOptionConfig(
     typeof record.dynamicConfig === 'object' &&
     record.dynamicConfig !== null
   );
+}
+
+export function normalizeDynamicOptionResolution(
+  raw: DynamicOptionResolution | DynamicOptionItem[] | undefined
+): DynamicOptionResolution | undefined {
+  if (!raw) return undefined;
+  if (Array.isArray(raw)) {
+    return raw.length > 0
+      ? { status: 'ready', items: raw }
+      : { status: 'empty', items: [] };
+  }
+  return raw;
 }
 
 // --- Domain Service (Guarded Read) ---
@@ -283,7 +296,7 @@ export class SchemaDrivenUiService {
 
     let resolvedUiSchema: UiSchema | undefined = undefined;
     let resolvedDocSchema: UiViewAdapterContext['documentSchema'] = undefined;
-    let dynamicOptions: Record<string, DynamicOptionItem[]> | undefined = undefined;
+    let dynamicOptions: Record<string, DynamicOptionResolution | DynamicOptionItem[]> | undefined = undefined;
 
     if (request.documentTypeKey) {
       resolvedUiSchema = await this.manifestPort.getUiSchema(request.documentTypeKey);
@@ -325,11 +338,55 @@ export class SchemaDrivenUiService {
       }
     }
 
+    const statusMessagesList: string[] = [];
+    if (request.statusMessages) {
+      statusMessagesList.push(...request.statusMessages);
+    }
+
+    if (resolvedDocSchema?.fields && dynamicOptions) {
+      const rawLayout =
+        resolvedUiSchema?.layout && resolvedUiSchema.layout.length > 0
+          ? resolvedUiSchema.layout
+          : resolvedDocSchema.fields.map((f) => f.key);
+      const hiddenSet = new Set(request.hiddenFields ?? []);
+      const visibleLayout = rawLayout.filter((key) => !hiddenSet.has(key));
+
+      const fieldMap = new Map<string, (typeof resolvedDocSchema.fields)[number]>();
+      for (const field of resolvedDocSchema.fields) {
+        fieldMap.set(field.key, field);
+      }
+
+      for (const fieldKey of visibleLayout) {
+        const field = fieldMap.get(fieldKey);
+        if (!field || !isDynamicOptionConfig(field.options)) {
+          continue;
+        }
+
+        const rawRes = dynamicOptions[field.options.source];
+        const resolution = normalizeDynamicOptionResolution(rawRes);
+        if (resolution && resolution.status !== 'ready') {
+          const statusMessage = formatStatusSectionMessage(
+            DEFAULT_MESSAGE_CATALOG,
+            resolution.status,
+            resolution.targetPath
+          );
+          if (statusMessage) {
+            statusMessagesList.push(statusMessage);
+          }
+        }
+      }
+    }
+
+    const deduplicatedStatusMessages = Array.from(new Set(statusMessagesList));
+
     const adapterContext: UiViewAdapterContext = {
       ...request,
       uiSchema: resolvedUiSchema,
       documentSchema: resolvedDocSchema,
       ...(dynamicOptions !== undefined ? { dynamicOptions } : {}),
+      ...(deduplicatedStatusMessages.length > 0
+        ? { statusMessages: deduplicatedStatusMessages }
+        : {}),
     };
 
     const view = await adapter.composeView(adapterContext);

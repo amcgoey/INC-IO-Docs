@@ -47,6 +47,7 @@ import {
   type TemplateEvaluationContext,
   type TemplateEvaluatorPort,
   type DocumentDynamicValidationPort,
+  type DynamicValidationMessageFormatter,
 } from './ports';
 import { HandlebarsAdapter } from '../../infrastructure/template-engine/handlebars-adapter';
 
@@ -97,14 +98,16 @@ describe('Document domain', () => {
     registry: DocumentSchemaRegistryPort,
     evaluator: TemplateEvaluatorPort,
     compiledRegistry?: CompiledSchemaRegistryPort,
-    dynamicValidator?: DocumentDynamicValidationPort
+    dynamicValidator?: DocumentDynamicValidationPort,
+    validationMessageFormatter?: DynamicValidationMessageFormatter
   ): DocumentService =>
     new DocumentService(
       dispatcher,
       registry,
       evaluator,
       compiledRegistry ?? createMockCompiledRegistry(registry),
-      dynamicValidator
+      dynamicValidator,
+      validationMessageFormatter
     );
 
   it('should export DocumentModel schema', () => {
@@ -4379,6 +4382,27 @@ describe('Document domain', () => {
       expect(compiled.Check({ notes: 'hello' })).toBe(true);
       expect(compiled.Check({ notes: 123 })).toBe(false);
     });
+
+    it('builds string field with minLength and pattern via buildFieldSchema', () => {
+      const fieldSchema = buildFieldSchema(
+        {
+          key: 'contact',
+          name: 'Contact',
+          type: 'string',
+          required: true,
+          minLength: 1,
+          pattern: '^.*\\S+.*$',
+        },
+        { fields: [] },
+        'test'
+      );
+
+      const compiled = TypeCompiler.Compile(Type.Object({ contact: fieldSchema }));
+      expect(compiled.Check({ contact: 'Acme Corp' })).toBe(true);
+      expect(compiled.Check({ contact: '' })).toBe(false);
+      expect(compiled.Check({ contact: '   ' })).toBe(false);
+      expect(compiled.Check({ contact: '\t\n ' })).toBe(false);
+    });
   });
 
   describe('DocumentService dynamic option validation (guarded write)', () => {
@@ -4675,6 +4699,232 @@ describe('Document domain', () => {
         expect.anything()
       );
     });
+
+    it('formats failed DynamicValidationResult statuses using injected validationMessageFormatter', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const registry = createCustomRegistry([dynamicDocType]);
+      const compiledRegistry = createMockCompiledRegistry(registry);
+      const dynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn().mockResolvedValue({
+          contact: {
+            isValid: false,
+            status: 'path_not_found',
+            targetPath: '1 Admin/Communication',
+          },
+        }),
+      };
+      const mockFormatter = vi.fn().mockImplementation((status, targetPath) =>
+        `Custom formatted error: ${status} at ${targetPath}`
+      );
+
+      const service = createDocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        compiledRegistry,
+        dynamicValidator,
+        mockFormatter
+      );
+      await service.initialize();
+
+      const result = await service.processDocument({
+        type: 'comm-project',
+        data: {
+          title: 'Project Alpha',
+          contact: 'NonExistent Corp',
+        },
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors).toEqual([
+          'Custom formatted error: path_not_found at 1 Admin/Communication',
+        ]);
+      }
+      expect(mockFormatter).toHaveBeenCalledWith('path_not_found', '1 Admin/Communication');
+    });
+
+    it('prefers explicit result.errorMessage over validationMessageFormatter when errorMessage is present', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const registry = createCustomRegistry([dynamicDocType]);
+      const compiledRegistry = createMockCompiledRegistry(registry);
+      const dynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn().mockResolvedValue({
+          contact: {
+            isValid: false,
+            status: 'error',
+            errorMessage: 'Explicit legacy stub error',
+          },
+        }),
+      };
+      const mockFormatter = vi.fn().mockReturnValue('Should not be called');
+
+      const service = createDocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        compiledRegistry,
+        dynamicValidator,
+        mockFormatter
+      );
+      await service.initialize();
+
+      const result = await service.processDocument({
+        type: 'comm-project',
+        data: {
+          title: 'Project Alpha',
+          contact: 'Error Corp',
+        },
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors).toEqual(['Explicit legacy stub error']);
+      }
+      expect(mockFormatter).not.toHaveBeenCalled();
+    });
+
+    it('falls back to VALIDATION_TIMEOUT_MSG when status is timeout and no formatter or errorMessage is provided', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const registry = createCustomRegistry([dynamicDocType]);
+      const compiledRegistry = createMockCompiledRegistry(registry);
+      const dynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn().mockResolvedValue({
+          contact: {
+            isValid: false,
+            status: 'timeout',
+          },
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        compiledRegistry,
+        dynamicValidator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument({
+        type: 'comm-project',
+        data: {
+          title: 'Project Alpha',
+          contact: 'Slow Corp',
+        },
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors).toEqual(['Validation timed out.']);
+      }
+    });
+
+    it('falls back to OPTION_NOT_FOUND_MSG when status is not timeout and no formatter or errorMessage is provided', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const registry = createCustomRegistry([dynamicDocType]);
+      const compiledRegistry = createMockCompiledRegistry(registry);
+      const dynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn().mockResolvedValue({
+          contact: {
+            isValid: false,
+            status: 'path_not_found',
+            targetPath: '1 Admin/Communication',
+          },
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        compiledRegistry,
+        dynamicValidator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument({
+        type: 'comm-project',
+        data: {
+          title: 'Project Alpha',
+          contact: 'Missing Path Corp',
+        },
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors).toEqual(['Option not found.']);
+      }
+    });
+
+    it.each([
+      { desc: 'empty string', value: '' },
+      { desc: 'whitespace only', value: '   ' },
+      { desc: 'newlines and tabs', value: '\t\n ' },
+    ])(
+      'rejects $desc contact string via compiled schema validation without calling dynamic validator',
+      async ({ value }) => {
+        const docTypeWithPattern: DocumentType = {
+          key: 'comm-proposal',
+          name: 'Communication Proposal',
+          documentSchema: {
+            fields: [
+              {
+                key: 'contact',
+                name: 'Contact',
+                type: 'string',
+                required: true,
+                minLength: 1,
+                pattern: '^.*\\S+.*$',
+                options: {
+                  source: 'contactFolders',
+                  key: 'key',
+                  name: 'name',
+                  allowUserInput: true,
+                  dynamicConfig: {
+                    provider: 'google_drive',
+                    method: 'list_folders',
+                    relativePath: 'Communications',
+                  },
+                },
+              },
+            ],
+          },
+        };
+
+        const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+        const registry = createCustomRegistry([docTypeWithPattern]);
+        const compiledRegistry = createMockCompiledRegistry(registry);
+        const dynamicValidator: DocumentDynamicValidationPort = {
+          validateExistence: vi.fn(),
+        };
+
+        const service = createDocumentService(
+          mockDispatcher,
+          registry,
+          defaultEvaluator,
+          compiledRegistry,
+          dynamicValidator
+        );
+        await service.initialize();
+
+        const result = await service.processDocument({
+          type: 'comm-proposal',
+          data: {
+            contact: value,
+          },
+          space: {
+            id: 'sp-1',
+            typeId: 'projects',
+            name: 'Project 1',
+            abstractStorageId: 'drive-folder-123',
+          },
+        });
+
+        expect(result.success).toBe(false);
+        expect(dynamicValidator.validateExistence).not.toHaveBeenCalled();
+      }
+    );
   });
 });
 

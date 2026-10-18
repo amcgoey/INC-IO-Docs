@@ -167,7 +167,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schem
 
     const expectedPayload = {
       rootStorageId: 'opp-folder-456',
-      parentPath: 'Communication',
+      parentPath: 'Communications',
       folderName: 'Architect - BBB/260715 IN - CD Comments',
     };
 

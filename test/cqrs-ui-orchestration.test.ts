@@ -63,7 +63,7 @@ describe('Integration: CQRS UI Orchestration (Issue 140)', () => {
     };
 
     vi.spyOn(GoogleDriveClient.prototype, 'resolveFolderPath').mockImplementation(async (rootFolderId, segments) => {
-      return { id: 'comm-folder-id', name: segments[segments.length - 1] ?? 'Communication', parents: [rootFolderId] };
+      return { id: 'comm-folder-id', name: segments[segments.length - 1] ?? 'Communications', parents: [rootFolderId] };
     });
     vi.spyOn(GoogleDriveClient.prototype, 'findOrCreateFolder').mockImplementation(async (parentId, name) => {
       return { id: `folder-${name}`, name, parents: [parentId] };
@@ -78,6 +78,7 @@ describe('Integration: CQRS UI Orchestration (Issue 140)', () => {
       return {
         folders: [
           { id: 'comm-folder-id', name: 'Communication' },
+          { id: 'comm-folder-props-id', name: 'Communications' },
           { id: 'acme-id', name: 'Acme Corp' },
         ],
       };

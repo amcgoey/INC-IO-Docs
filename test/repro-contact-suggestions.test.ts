@@ -12,6 +12,7 @@ interface WidgetStub {
   textInput?: {
     name: string;
     value?: string;
+    hintText?: string;
     initialSuggestions?: { items?: Array<{ text: string }> };
   };
   selectionInput?: {
@@ -85,6 +86,12 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
         name: 'Proposal Gamma',
         abstractStorageId: 'space-folder-proposal-gamma-id',
       },
+      {
+        id: 'space-folder-proposal-ambig-path-id',
+        typeId: 'proposals',
+        name: 'Proposal Ambiguous Path',
+        abstractStorageId: 'space-folder-proposal-ambig-path-id',
+      },
     ];
 
     mockAuthVerifier = {
@@ -105,7 +112,7 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
     };
 
     vi.spyOn(GoogleDriveClient.prototype, 'resolveFolderPath').mockImplementation(async (rootFolderId, segments) => {
-      return { id: 'comm-proposal-alpha-folder-id', name: segments[segments.length - 1] ?? 'Communication', parents: [rootFolderId] };
+      return { id: 'comm-proposal-alpha-folder-id', name: segments[segments.length - 1] ?? 'Communications', parents: [rootFolderId] };
     });
     vi.spyOn(GoogleDriveClient.prototype, 'findOrCreateFolder').mockImplementation(async (parentId, name) => {
       return { id: `folder-${name}`, name, parents: [parentId] };
@@ -147,7 +154,7 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
 
       // Proposal Alpha space with contacts
       if (options?.parentFolderId === 'space-folder-proposal-alpha-id') {
-        return { folders: [{ id: 'comm-proposal-alpha-folder-id', name: 'Communication' }] };
+        return { folders: [{ id: 'comm-proposal-alpha-folder-id', name: 'Communications' }] };
       }
       if (options?.parentFolderId === 'comm-proposal-alpha-folder-id') {
         return {
@@ -160,20 +167,30 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
 
       // Proposal Beta space with empty contacts
       if (options?.parentFolderId === 'space-folder-proposal-beta-id') {
-        return { folders: [{ id: 'comm-proposal-beta-folder-id', name: 'Communication' }] };
+        return { folders: [{ id: 'comm-proposal-beta-folder-id', name: 'Communications' }] };
       }
       if (options?.parentFolderId === 'comm-proposal-beta-folder-id') {
         return { folders: [] };
       }
 
-      // Proposal Gamma space with absent Communication folder
+      // Proposal Gamma space with absent Communications folder
       if (options?.parentFolderId === 'space-folder-proposal-gamma-id') {
         return { folders: [] };
       }
 
+      // Proposal Ambiguous Path space with duplicate Communications folders
+      if (options?.parentFolderId === 'space-folder-proposal-ambig-path-id') {
+        return {
+          folders: [
+            { id: 'comm-ambig-1', name: 'Communications' },
+            { id: 'comm-ambig-2', name: 'Communications' },
+          ],
+        };
+      }
+
       // Proposal Duplicate space with duplicate contacts
       if (options?.parentFolderId === 'space-folder-proposal-dup-id') {
-        return { folders: [{ id: 'comm-proposal-dup-folder-id', name: 'Communication' }] };
+        return { folders: [{ id: 'comm-proposal-dup-folder-id', name: 'Communications' }] };
       }
       if (options?.parentFolderId === 'comm-proposal-dup-folder-id') {
         return {
@@ -253,9 +270,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
     expect(dataSection).toBeDefined();
     const contactWidget = findWidget(dataSection, 'contact_communication-project');
     expect(contactWidget).toBeDefined();
-    expect(contactWidget?.textInput?.initialSuggestions?.items).toEqual([
-      { text: 'Select a Space first' },
-    ]);
+    expect(contactWidget?.textInput?.hintText).toBe('Select a Space first');
+    expect(contactWidget?.textInput?.initialSuggestions).toBeUndefined();
   });
 
   it('Lifecycle b: Space Selection & Refresh returns update card containing Contact suggestions derived from Drive folders under technical ID', async () => {
@@ -419,9 +435,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       expect(dataSection).toBeDefined();
       const contactWidget = findWidget(dataSection, 'contact_communication-project');
       expect(contactWidget).toBeDefined();
-      expect(contactWidget?.textInput?.initialSuggestions?.items).toEqual([
-        { text: 'Select a Space first' },
-      ]);
+      expect(contactWidget?.textInput?.hintText).toBe('Select a Space first');
+      expect(contactWidget?.textInput?.initialSuggestions).toBeUndefined();
     });
 
     it('returns validation error banner and resets Contact suggestions when space identifier is unknown or unlisted', async () => {
@@ -473,9 +488,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       expect(dataSection).toBeDefined();
       const contactWidget = findWidget(dataSection, 'contact_communication-project');
       expect(contactWidget).toBeDefined();
-      expect(contactWidget?.textInput?.initialSuggestions?.items).toEqual([
-        { text: 'Select a Space first' },
-      ]);
+      expect(contactWidget?.textInput?.hintText).toBe('Select a Space first');
+      expect(contactWidget?.textInput?.initialSuggestions).toBeUndefined();
     });
 
     it('clears dynamic contact suggestions when user clears Document Space input on form change', async () => {
@@ -515,9 +529,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       expect(dataSection).toBeDefined();
       const contactWidget = findWidget(dataSection, 'contact_communication-project');
       expect(contactWidget).toBeDefined();
-      expect(contactWidget?.textInput?.initialSuggestions?.items).toEqual([
-        { text: 'Select a Space first' },
-      ]);
+      expect(contactWidget?.textInput?.hintText).toBe('Select a Space first');
+      expect(contactWidget?.textInput?.initialSuggestions).toBeUndefined();
     });
   });
 
@@ -558,12 +571,11 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       expect(dataSection).toBeDefined();
       const contactWidget = findWidget(dataSection, 'contact_communication-proposal');
       expect(contactWidget).toBeDefined();
-      expect(contactWidget?.textInput?.initialSuggestions?.items).toEqual([
-        { text: 'Select a Space first' },
-      ]);
+      expect(contactWidget?.textInput?.hintText).toBe('Select a Space first');
+      expect(contactWidget?.textInput?.initialSuggestions).toBeUndefined();
     });
 
-    it('Space Selection & Refresh: selecting Proposal space by display name resolves technical ID, traverses root Communication folder, and populates suggestions', async () => {
+    it('Space Selection & Refresh: selecting Proposal space by display name resolves technical ID, traverses root Communications folder, and populates suggestions', async () => {
       const response = await injectWorkspaceRequest(app.server, {
         method: 'POST',
         url: '/workspace/on-form-change',
@@ -612,8 +624,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       ]);
     });
 
-    it('Space with No Contacts: selecting Proposal space whose Communication folder is empty or absent returns empty suggestions without erroring', async () => {
-      // Test 1: Empty Communication folder (Proposal Beta)
+    it('Space with No Contacts: selecting Proposal space whose Communications folder is empty or absent returns empty suggestions without erroring', async () => {
+      // Test 1: Empty Communications folder (Proposal Beta)
       const betaResponse = await injectWorkspaceRequest(app.server, {
         method: 'POST',
         url: '/workspace/on-form-change',
@@ -655,7 +667,7 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       expect(betaContact).toBeDefined();
       expect(betaContact?.textInput?.initialSuggestions?.items ?? []).toEqual([]);
 
-      // Test 2: Absent Communication folder (Proposal Gamma)
+      // Test 2: Absent Communications folder (Proposal Gamma)
       const gammaResponse = await injectWorkspaceRequest(app.server, {
         method: 'POST',
         url: '/workspace/on-form-change',
@@ -761,9 +773,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
         expect(dataSection).toBeDefined();
         const contactWidget = findWidget(dataSection, 'contact_communication-proposal');
         expect(contactWidget).toBeDefined();
-        expect(contactWidget?.textInput?.initialSuggestions?.items).toEqual([
-          { text: 'Select a Space first' },
-        ]);
+        expect(contactWidget?.textInput?.hintText).toBe('Select a Space first');
+        expect(contactWidget?.textInput?.initialSuggestions).toBeUndefined();
       });
 
       it('returns validation error banner and resets Contact suggestions when Proposal space identifier is unknown or unlisted', async () => {
@@ -813,9 +824,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
         expect(dataSection).toBeDefined();
         const contactWidget = findWidget(dataSection, 'contact_communication-proposal');
         expect(contactWidget).toBeDefined();
-        expect(contactWidget?.textInput?.initialSuggestions?.items).toEqual([
-          { text: 'Select a Space first' },
-        ]);
+        expect(contactWidget?.textInput?.hintText).toBe('Select a Space first');
+        expect(contactWidget?.textInput?.initialSuggestions).toBeUndefined();
       });
     });
 
@@ -982,6 +992,149 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
 
         const statusSection = updateCard?.sections?.find((s) =>
           s.widgets?.some((w) => w.textParagraph?.text?.includes('Please select a Document Space.'))
+        );
+        expect(statusSection).toBeDefined();
+      });
+
+      it('rejects submission when relativePath folder does not exist (path_not_found) with catalog message', async () => {
+        const response = await injectWorkspaceRequest(app.server, {
+          method: 'POST',
+          url: '/workspace/action',
+          headers: {
+            authorization: 'Bearer valid-token',
+          },
+          payload: {
+            authorizationEventObject: {
+              userOAuthToken: 'test-oauth-token',
+            },
+            commonEventObject: {
+              parameters: {
+                action: 'processDocument',
+              },
+              formInputs: {
+                SelectFiles: { stringInputs: { value: ['file-1'] } },
+                SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
+                SelectDocumentSpace_proposals: { stringInputs: { value: ['Proposal Gamma'] } },
+                SelectDocumentType_proposals: { stringInputs: { value: ['communication-proposal'] } },
+                contact: { stringInputs: { value: ['Wayne Enterprises'] } },
+                date: { stringInputs: { value: ['260920'] } },
+                direction: { stringInputs: { value: ['IN'] } },
+                description: { stringInputs: { value: ['Project Kickoff'] } },
+              },
+            },
+            drive: {
+              selectedItems: [{ id: 'file-1', title: 'Doc.pdf' }],
+            },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.payload);
+        const updateCard = body.action?.navigations?.[0]?.updateCard as CardStub | undefined;
+        expect(updateCard).toBeDefined();
+
+        const statusSection = updateCard?.sections?.find((s) =>
+          s.widgets?.some((w) =>
+            w.textParagraph?.text?.includes(
+              'Folder "Communications" was not found in the selected Document Space.'
+            )
+          )
+        );
+        expect(statusSection).toBeDefined();
+      });
+
+      it('rejects submission when relativePath folder path is ambiguous (ambiguous_path) with catalog message', async () => {
+        const response = await injectWorkspaceRequest(app.server, {
+          method: 'POST',
+          url: '/workspace/action',
+          headers: {
+            authorization: 'Bearer valid-token',
+          },
+          payload: {
+            authorizationEventObject: {
+              userOAuthToken: 'test-oauth-token',
+            },
+            commonEventObject: {
+              parameters: {
+                action: 'processDocument',
+              },
+              formInputs: {
+                SelectFiles: { stringInputs: { value: ['file-1'] } },
+                SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
+                SelectDocumentSpace_proposals: { stringInputs: { value: ['Proposal Ambiguous Path'] } },
+                SelectDocumentType_proposals: { stringInputs: { value: ['communication-proposal'] } },
+                contact: { stringInputs: { value: ['Wayne Enterprises'] } },
+                date: { stringInputs: { value: ['260920'] } },
+                direction: { stringInputs: { value: ['IN'] } },
+                description: { stringInputs: { value: ['Project Kickoff'] } },
+              },
+            },
+            drive: {
+              selectedItems: [{ id: 'file-1', title: 'Doc.pdf' }],
+            },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.payload);
+        const updateCard = body.action?.navigations?.[0]?.updateCard as CardStub | undefined;
+        expect(updateCard).toBeDefined();
+
+        const statusSection = updateCard?.sections?.find((s) =>
+          s.widgets?.some((w) =>
+            w.textParagraph?.text?.includes(
+              'Multiple folders found along path "Communications" in the selected Document Space. Please resolve this ambiguity in Google Drive manually.'
+            )
+          )
+        );
+        expect(statusSection).toBeDefined();
+      });
+
+      it.each([
+        { desc: 'empty string', contactVal: '' },
+        { desc: 'whitespace-only', contactVal: '   ' },
+      ])('rejects submission when contact is $desc with schema validation error', async ({ contactVal }) => {
+        const response = await injectWorkspaceRequest(app.server, {
+          method: 'POST',
+          url: '/workspace/action',
+          headers: {
+            authorization: 'Bearer valid-token',
+          },
+          payload: {
+            authorizationEventObject: {
+              userOAuthToken: 'test-oauth-token',
+            },
+            commonEventObject: {
+              parameters: {
+                action: 'processDocument',
+              },
+              formInputs: {
+                SelectFiles: { stringInputs: { value: ['file-1'] } },
+                SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
+                SelectDocumentSpace_proposals: { stringInputs: { value: ['Proposal Alpha'] } },
+                SelectDocumentType_proposals: { stringInputs: { value: ['communication-proposal'] } },
+                contact: { stringInputs: { value: [contactVal] } },
+                date: { stringInputs: { value: ['260920'] } },
+                direction: { stringInputs: { value: ['IN'] } },
+                description: { stringInputs: { value: ['Project Kickoff'] } },
+              },
+            },
+            drive: {
+              selectedItems: [{ id: 'file-1', title: 'Doc.pdf' }],
+            },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.payload);
+        const updateCard = body.action?.navigations?.[0]?.updateCard as CardStub | undefined;
+        expect(updateCard).toBeDefined();
+
+        const statusSection = updateCard?.sections?.find((s) =>
+          s.widgets?.some((w) =>
+            w.textParagraph?.text?.includes('Validation Errors:') &&
+            w.textParagraph?.text?.includes('/contact:')
+          )
         );
         expect(statusSection).toBeDefined();
       });

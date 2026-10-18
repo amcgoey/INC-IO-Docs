@@ -26,6 +26,7 @@ export const GenerateViewRequestSchema = Type.Object({
   spaceId: Type.Optional(Type.String()),
   selectionState: Type.Optional(SelectionStateSchema),
   validationErrors: Type.Optional(Type.Array(Type.String())),
+  statusMessages: Type.Optional(Type.Array(Type.String())),
   formData: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   hiddenFields: Type.Optional(Type.Array(Type.String())),
 });
@@ -48,6 +49,26 @@ export const DynamicOptionItemSchema = Type.Object({
 
 export type DynamicOptionItem = Static<typeof DynamicOptionItemSchema>;
 
+export const DynamicOptionStatusSchema = Type.Union([
+  Type.Literal('ready'),
+  Type.Literal('empty'),
+  Type.Literal('missing_space'),
+  Type.Literal('path_not_found'),
+  Type.Literal('ambiguous_path'),
+  Type.Literal('timeout'),
+  Type.Literal('error'),
+]);
+
+export type DynamicOptionStatus = Static<typeof DynamicOptionStatusSchema>;
+
+export const DynamicOptionResolutionSchema = Type.Object({
+  status: DynamicOptionStatusSchema,
+  items: Type.Array(DynamicOptionItemSchema),
+  targetPath: Type.Optional(Type.String()),
+});
+
+export type DynamicOptionResolution = Static<typeof DynamicOptionResolutionSchema>;
+
 export const OptionsFetcherContextSchema = Type.Object({
   spaceId: Type.Optional(Type.String()),
   formData: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
@@ -59,7 +80,7 @@ export interface OptionsFetcherPort {
   fetchOptions(
     queries: DynamicOptionQuery[],
     context: OptionsFetcherContext
-  ): Promise<Record<string, DynamicOptionItem[]>>;
+  ): Promise<Record<string, DynamicOptionResolution>>;
 }
 
 // --- Data & Presentation DTO Schemas ---
@@ -101,7 +122,7 @@ export interface DocumentTypeDisplayNameResolverPort {
 export interface UiViewAdapterContext extends GenerateViewRequest {
   uiSchema?: UiSchema | undefined;
   documentSchema?: AbstractDataSchema | undefined;
-  dynamicOptions?: Record<string, DynamicOptionItem[]> | undefined;
+  dynamicOptions?: Record<string, DynamicOptionResolution | DynamicOptionItem[]> | undefined;
 }
 
 export interface UiViewSchemaAdapterPort {

@@ -9,6 +9,8 @@
         "type": "string",
         "description": "Contact folder name",
         "required": true,
+        "minLength": 1,
+        "pattern": "^.*\\S+.*$",
         "options": {
           "source": "contactFolders",
           "key": "key",
@@ -17,7 +19,7 @@
           "dynamicConfig": {
             "provider": "google_drive",
             "method": "list_folders",
-            "relativePath": "Communication"
+            "relativePath": "Communications"
           }
         }
       },
@@ -75,7 +77,7 @@
     }
   },
   "storageContextConfig": {
-    "basePath": "Communication"
+    "basePath": "Communications"
   },
   "documentUiSchema": {
     "layout": [

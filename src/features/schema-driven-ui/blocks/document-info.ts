@@ -1,9 +1,11 @@
-import type {
-  UiViewSection,
-  UiSchema,
-  UiViewWidget,
-  UiField,
-  UiViewAction,
+import {
+  type UiViewSection,
+  type UiSchema,
+  type UiViewWidget,
+  type UiField,
+  type UiViewAction,
+  normalizeDynamicOptionResolution,
+  isDynamicOptionConfig,
 } from '../domain';
 import type {
   AbstractDataSchema,
@@ -11,7 +13,10 @@ import type {
   StandardWidgetCustomProps,
   SelectionItem,
   DynamicOptionItem,
+  DynamicOptionResolution,
 } from '../ports';
+import { DEFAULT_MESSAGE_CATALOG, formatFieldHint } from '../message-catalog';
+import { withOnChangeAction } from './common';
 
 export interface DocumentInfoOptions {
   sectionHeader?: string | undefined;
@@ -19,7 +24,7 @@ export interface DocumentInfoOptions {
   hiddenFields?: string[] | undefined;
   onProcessAction?: UiViewAction | string | undefined;
   documentTypeKey?: string | undefined;
-  dynamicOptions?: Record<string, DynamicOptionItem[]> | undefined;
+  dynamicOptions?: Record<string, DynamicOptionResolution | DynamicOptionItem[]> | undefined;
 }
 
 export function getDocumentInfoWidgetName(fieldKey: string, documentTypeKey?: string): string {
@@ -42,8 +47,6 @@ export function inferDefaultWidget(field: AbstractDataField): 'textInput' | 'sel
   return 'textInput';
 }
 
-import { withOnChangeAction } from './common';
-
 interface WidgetBuilderContext {
   field: AbstractDataField;
   label: string;
@@ -53,7 +56,7 @@ interface WidgetBuilderContext {
   onChangeAction: UiViewAction | undefined;
   formValue: unknown | undefined;
   dataSchema?: AbstractDataSchema | undefined;
-  dynamicOptions?: Record<string, Array<{ text: string; value: string }>> | undefined;
+  dynamicOptions?: Record<string, DynamicOptionResolution | DynamicOptionItem[]> | undefined;
 }
 
 type WidgetBuilder = (ctx: WidgetBuilderContext) => UiViewWidget;
@@ -62,7 +65,7 @@ export function extractSelectionItems(
   field: AbstractDataField,
   customProps: StandardWidgetCustomProps,
   dataSchema?: AbstractDataSchema | undefined,
-  dynamicOptions?: Record<string, Array<{ text: string; value: string }>> | undefined
+  dynamicOptions?: Record<string, DynamicOptionResolution | DynamicOptionItem[]> | undefined
 ): SelectionItem[] {
   let defaultItems: SelectionItem[] = [];
   if (Array.isArray(field.options)) {
@@ -86,10 +89,18 @@ export function extractSelectionItems(
   ) {
     const sourceKey = (field.options as { source: string }).source;
     if (dynamicOptions && sourceKey in dynamicOptions) {
-      defaultItems = dynamicOptions[sourceKey].map((opt) => ({
-        text: opt.text,
-        value: opt.value,
-      }));
+      const resolution = normalizeDynamicOptionResolution(dynamicOptions[sourceKey]);
+      if (resolution) {
+        if (resolution.status === 'ready') {
+          defaultItems = resolution.items.map((opt) => ({
+            text: opt.text,
+            value: opt.value,
+          }));
+        } else if (isDynamicOptionConfig(field.options)) {
+          const hint = formatFieldHint(DEFAULT_MESSAGE_CATALOG, resolution.status, resolution.targetPath);
+          defaultItems = [{ text: hint ?? '', value: '' }];
+        }
+      }
     } else if (dataSchema?.options) {
       const rawTuples = dataSchema.options[sourceKey];
       if (Array.isArray(rawTuples)) {
@@ -111,7 +122,24 @@ export function extractSelectionItems(
 
 const widgetBuilders: Record<string, WidgetBuilder> = {
   selectionInput: ({ field, label, widgetName, customProps, onChangeAction, formValue, dataSchema, dynamicOptions }) => {
-    const baseItems = extractSelectionItems(field, customProps, dataSchema, dynamicOptions);
+    let baseItems: SelectionItem[];
+    if (isDynamicOptionConfig(field.options)) {
+      const rawRes = dynamicOptions?.[field.options.source];
+      const resolution = normalizeDynamicOptionResolution(rawRes);
+      if (resolution) {
+        if (resolution.status === 'ready') {
+          baseItems = resolution.items.map((opt) => ({ text: opt.text, value: opt.value }));
+        } else {
+          const hint = formatFieldHint(DEFAULT_MESSAGE_CATALOG, resolution.status, resolution.targetPath);
+          baseItems = [{ text: hint ?? '', value: '' }];
+        }
+      } else {
+        baseItems = customProps.items ?? [];
+      }
+    } else {
+      baseItems = extractSelectionItems(field, customProps, dataSchema, dynamicOptions);
+    }
+
     const resolvedValue = formValue !== undefined ? formValue : field.defaultValue;
     const items =
       resolvedValue !== undefined
@@ -134,15 +162,30 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
     };
   },
   textInput: ({ field, label, widgetName, customProps, onChangeAction, formValue, dataSchema, dynamicOptions }) => {
-    const hintText = customProps.placeholder ?? customProps.hintText;
+    let hintText = customProps.placeholder ?? customProps.hintText;
+    let autocompleteItems: SelectionItem[] = [];
+
+    if (isDynamicOptionConfig(field.options)) {
+      const rawRes = dynamicOptions?.[field.options.source];
+      const resolution = normalizeDynamicOptionResolution(rawRes);
+      if (resolution) {
+        if (resolution.status === 'ready') {
+          autocompleteItems = resolution.items.map((opt) => ({ text: opt.text, value: opt.value }));
+        } else {
+          hintText = formatFieldHint(DEFAULT_MESSAGE_CATALOG, resolution.status, resolution.targetPath);
+          autocompleteItems = [];
+        }
+      }
+    } else {
+      autocompleteItems = extractSelectionItems(field, customProps, dataSchema, dynamicOptions);
+    }
+
     const value =
       formValue !== undefined
         ? String(formValue)
         : field.defaultValue !== undefined
           ? String(field.defaultValue)
           : customProps.value;
-
-    const autocompleteItems = extractSelectionItems(field, customProps, dataSchema, dynamicOptions);
 
     return {
       textInput: withOnChangeAction(

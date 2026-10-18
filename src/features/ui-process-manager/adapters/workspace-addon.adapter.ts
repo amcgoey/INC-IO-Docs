@@ -159,6 +159,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     const createRenderResult = (options: {
       formData?: Record<string, unknown> | undefined;
       validationErrors?: string[] | undefined;
+      statusMessages?: string[] | undefined;
       isUpdateCard?: boolean | undefined;
       hiddenFields?: string[] | undefined;
     }): UiProcessResult => {
@@ -172,6 +173,9 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           ...normalizedContext,
           ...(options.formData !== undefined ? { formData: options.formData } : {}),
           ...(combinedValidationErrors.length > 0 ? { validationErrors: combinedValidationErrors } : {}),
+          ...(options.statusMessages !== undefined
+            ? { statusMessages: options.statusMessages }
+            : {}),
           ...(options.isUpdateCard ? { isUpdateCard: true } : {}),
         },
         resolvedDocumentTypeKey,
@@ -191,6 +195,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         isUpdateCard: state.isUpdateCard,
         ...(options.hiddenFields !== undefined ? { hiddenFields: options.hiddenFields } : {}),
         ...(state.validationErrors ? { validationErrors: state.validationErrors } : {}),
+        ...(state.statusMessages ? { statusMessages: state.statusMessages } : {}),
       };
     };
 

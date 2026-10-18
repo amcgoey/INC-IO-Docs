@@ -746,6 +746,180 @@ describe('Document Info Block', () => {
         { text: 'Folder 2', value: 'Folder 2' },
       ]);
     });
+
+    describe('Dynamic LookupField status resolution handling', () => {
+      const dynamicSchema: AbstractDataSchema = {
+        fields: [
+          {
+            key: 'contact',
+            type: 'string',
+            options: {
+              source: 'contactFolders',
+              key: 'name',
+              name: 'name',
+              allowUserInput: true,
+              dynamicConfig: {
+                provider: 'google_drive',
+                method: 'list_folders',
+                relativePath: 'Communications',
+              },
+            },
+          },
+        ],
+      };
+
+      const dynamicUiSchemaTextInput: UiSchema = {
+        fields: {
+          contact: {
+            widget: 'textInput',
+            label: 'Contact',
+            props: {
+              placeholder: 'Enter contact name',
+            },
+          },
+        },
+      };
+
+      const dynamicUiSchemaSelectionInput: UiSchema = {
+        fields: {
+          contact: {
+            widget: 'selectionInput',
+            label: 'Contact',
+          },
+        },
+      };
+
+      it('populates autocomplete and standard placeholder for textInput when status is ready', () => {
+        const section = buildDocumentInfoSection(dynamicSchema, dynamicUiSchemaTextInput, {
+          dynamicOptions: {
+            contactFolders: {
+              status: 'ready',
+              items: [{ text: 'Alice', value: 'Alice' }],
+              targetPath: 'Communications',
+            },
+          },
+        });
+
+        const widget = section.widgets[0].textInput;
+        expect(widget?.hintText).toBe('Enter contact name');
+        expect(widget?.autocomplete).toEqual([{ text: 'Alice', value: 'Alice' }]);
+      });
+
+      it.each([
+        { status: 'missing_space', expectedHint: 'Select a Space first' },
+        { status: 'empty', expectedHint: 'No options found' },
+        { status: 'path_not_found', expectedHint: "Folder 'Communications' not found" },
+        { status: 'ambiguous_path', expectedHint: "Ambiguous folder path 'Communications'" },
+        { status: 'timeout', expectedHint: 'Timed out loading options' },
+        { status: 'error', expectedHint: 'Error loading options' },
+      ] as const)(
+        'omits autocomplete and sets hintText to $expectedHint for textInput when status is $status',
+        ({ status, expectedHint }) => {
+          const section = buildDocumentInfoSection(dynamicSchema, dynamicUiSchemaTextInput, {
+            dynamicOptions: {
+              contactFolders: {
+                status,
+                items: [],
+                targetPath: 'Communications',
+              },
+            },
+          });
+
+          const widget = section.widgets[0].textInput;
+          expect(widget?.hintText).toBe(expectedHint);
+          expect(widget?.autocomplete).toBeUndefined();
+        }
+      );
+
+      it('populates items from resolution when selectionInput has status ready', () => {
+        const section = buildDocumentInfoSection(dynamicSchema, dynamicUiSchemaSelectionInput, {
+          dynamicOptions: {
+            contactFolders: {
+              status: 'ready',
+              items: [{ text: 'Alice', value: 'Alice' }],
+              targetPath: 'Communications',
+            },
+          },
+        });
+
+        const widget = section.widgets[0].selectionInput;
+        expect(widget?.items).toEqual([{ text: 'Alice', value: 'Alice' }]);
+      });
+
+      it.each([
+        { status: 'missing_space', expectedText: 'Select a Space first' },
+        { status: 'empty', expectedText: 'No options found' },
+        { status: 'path_not_found', expectedText: "Folder 'Communications' not found" },
+        { status: 'ambiguous_path', expectedText: "Ambiguous folder path 'Communications'" },
+        { status: 'timeout', expectedText: 'Timed out loading options' },
+        { status: 'error', expectedText: 'Error loading options' },
+      ] as const)(
+        'populates single disabled item with fieldHint for selectionInput when status is $status',
+        ({ status, expectedText }) => {
+          const section = buildDocumentInfoSection(dynamicSchema, dynamicUiSchemaSelectionInput, {
+            dynamicOptions: {
+              contactFolders: {
+                status,
+                items: [],
+                targetPath: 'Communications',
+              },
+            },
+          });
+
+          const widget = section.widgets[0].selectionInput;
+          expect(widget?.items).toEqual([{ text: expectedText, value: '' }]);
+        }
+      );
+
+      it('preserves backward compatibility when dynamicOptions contains raw DynamicOptionItem[] array', () => {
+        // Non-empty array -> status ready
+        const readySection = buildDocumentInfoSection(dynamicSchema, dynamicUiSchemaTextInput, {
+          dynamicOptions: {
+            contactFolders: [{ text: 'Bob', value: 'Bob' }],
+          },
+        });
+        expect(readySection.widgets[0].textInput?.hintText).toBe('Enter contact name');
+        expect(readySection.widgets[0].textInput?.autocomplete).toEqual([{ text: 'Bob', value: 'Bob' }]);
+
+        // Empty array -> status empty
+        const emptySection = buildDocumentInfoSection(dynamicSchema, dynamicUiSchemaTextInput, {
+          dynamicOptions: {
+            contactFolders: [],
+          },
+        });
+        expect(emptySection.widgets[0].textInput?.hintText).toBe('No options found');
+        expect(emptySection.widgets[0].textInput?.autocomplete).toBeUndefined();
+      });
+
+      it('leaves non-dynamic textInput and selectionInput widgets unaffected', () => {
+        const plainSchema: AbstractDataSchema = {
+          fields: [
+            { key: 'title', type: 'string' },
+            { key: 'category', type: 'string', options: ['A', 'B'] },
+          ],
+        };
+
+        const section = buildDocumentInfoSection(plainSchema, undefined, {
+          dynamicOptions: {
+            contactFolders: {
+              status: 'path_not_found',
+              items: [],
+              targetPath: 'Communications',
+            },
+          },
+        });
+
+        // plain textInput
+        expect(section.widgets[0].textInput?.hintText).toBeUndefined();
+        expect(section.widgets[0].textInput?.autocomplete).toBeUndefined();
+
+        // static selectionInput
+        expect(section.widgets[1].selectionInput?.items).toEqual([
+          { text: 'A', value: 'A' },
+          { text: 'B', value: 'B' },
+        ]);
+      });
+    });
   });
 
   describe('getDocumentInfoWidgetName', () => {

@@ -60,6 +60,49 @@ describe('WorkspaceAddonAdapter', () => {
     assertValidUiView(view);
   });
 
+  it('orchestrates status message block first when statusMessages are provided', async () => {
+    const context = createContext({
+      statusMessages: ['Folder "Communications" was not found in the selected Document Space.'],
+    });
+
+    const view = await adapter.composeView(context);
+    expect(view.sections).toHaveLength(2);
+    expect(view.sections[0].widgets[0].textParagraph?.text).toBe(
+      'Status:\nFolder "Communications" was not found in the selected Document Space.'
+    );
+    expect(view.sections[1].header).toBe('Admin');
+    assertValidUiView(view);
+  });
+
+  it('orchestrates both statusMessages and validationErrors in order within status section', async () => {
+    const context = createContext({
+      statusMessages: ['Folder "Communications" was not found in the selected Document Space.'],
+      validationErrors: ['Document title is required'],
+    });
+
+    const view = await adapter.composeView(context);
+    expect(view.sections).toHaveLength(2);
+    expect(view.sections[0].widgets).toHaveLength(2);
+    expect(view.sections[0].widgets[0].textParagraph?.text).toBe(
+      'Status:\nFolder "Communications" was not found in the selected Document Space.'
+    );
+    expect(view.sections[0].widgets[1].textParagraph?.text).toBe('Validation Errors:\nDocument title is required');
+    expect(view.sections[1].header).toBe('Admin');
+    assertValidUiView(view);
+  });
+
+  it('omits status message block when statusMessages and validationErrors are empty arrays', async () => {
+    const context = createContext({
+      statusMessages: [],
+      validationErrors: [],
+    });
+
+    const view = await adapter.composeView(context);
+    expect(view.sections).toHaveLength(1);
+    expect(view.sections[0].header).toBe('Admin');
+    assertValidUiView(view);
+  });
+
   it('orchestrates selection section with action triggers when selectionState is present', async () => {
     const context = createContext({
       selectionState: {
