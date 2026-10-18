@@ -837,5 +837,401 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       );
       expect(errorSection).toBeDefined();
     });
+
+    it('files multiple selected SourceFiles in a single submission into the resolved communication subfolder preserving filenames', async () => {
+      const file1Id = 'file-batch-1';
+      const file1Name = 'Architectural_Plans.pdf';
+      const file2Id = 'file-batch-2';
+      const file2Name = 'Engineering_Calculations.pdf';
+      const rootSharedDriveId = 'shared-drive-proj-root';
+      const adminFolderId = 'folder-admin-1';
+      const commFolderId = 'folder-comm-1';
+      const contactFolderId = 'folder-acme-corp';
+      const newSubfolderId = 'folder-batch-meeting-sub';
+
+      // 1. Dynamic validation
+      mockDynamicValidationProject({
+        sharedDriveId: rootSharedDriveId,
+        adminFolderId,
+        commFolderId,
+        contactFolderId,
+        contactName: 'Acme Corp',
+      });
+
+      // 2. resolveFolderPath
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes('shared-drive-proj-root') && q.q.includes("name = '1 Admin'"))
+        .reply(200, { files: [{ id: adminFolderId, name: '1 Admin' }] });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(adminFolderId) && q.q.includes("name = 'Communication'"))
+        .reply(200, { files: [{ id: commFolderId, name: 'Communication' }] });
+
+      // 3. findOrCreateFolder contact
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(commFolderId) && q.q.includes("name = 'Acme Corp'"))
+        .reply(200, { files: [{ id: contactFolderId, name: 'Acme Corp' }] });
+
+      // 4. findOrCreateFolder comm folder (creates new)
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(contactFolderId) && q.q.includes("name = '260920 IN - Meeting Notes'"))
+        .reply(200, { files: [] });
+
+      nock('https://www.googleapis.com')
+        .post('/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: newSubfolderId,
+          name: '260920 IN - Meeting Notes',
+          parents: [contactFolderId],
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+
+      // 5. move file 1
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${file1Id}`)
+        .query(true)
+        .reply(200, {
+          id: file1Id,
+          name: file1Name,
+          parents: ['initial-inbox-folder'],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${file1Id}/view`,
+        });
+
+      nock('https://www.googleapis.com')
+        .patch(`/drive/v3/files/${file1Id}`)
+        .query(true)
+        .reply(200, {
+          id: file1Id,
+          name: file1Name,
+          parents: [newSubfolderId],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${file1Id}/view`,
+        });
+
+      // 6. move file 2
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${file2Id}`)
+        .query(true)
+        .reply(200, {
+          id: file2Id,
+          name: file2Name,
+          parents: ['initial-inbox-folder'],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${file2Id}/view`,
+        });
+
+      nock('https://www.googleapis.com')
+        .patch(`/drive/v3/files/${file2Id}`)
+        .query(true)
+        .reply(200, {
+          id: file2Id,
+          name: file2Name,
+          parents: [newSubfolderId],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${file2Id}/view`,
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          drive: {
+            selectedItems: [
+              { id: file1Id, title: file1Name, mimeType: 'application/pdf' },
+              { id: file2Id, title: file2Name, mimeType: 'application/pdf' },
+            ],
+          },
+          commonEventObject: {
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        action: {
+          notification: {
+            text: 'Document processed successfully',
+          },
+        },
+      });
+
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('halts immediately on partial failure during batch filing, returning error card while earlier file remains moved', async () => {
+      const file1Id = 'file-partial-1';
+      const file1Name = 'First_File.pdf';
+      const file2Id = 'file-partial-2';
+      const file2Name = 'Second_File_Fails.pdf';
+      const file3Id = 'file-partial-3';
+      const file3Name = 'Third_File_Never_Called.pdf';
+      const rootSharedDriveId = 'shared-drive-proj-root';
+      const adminFolderId = 'folder-admin-1';
+      const commFolderId = 'folder-comm-1';
+      const contactFolderId = 'folder-acme-corp';
+      const subfolderId = 'folder-batch-meeting-sub';
+
+      // 1. Dynamic validation
+      mockDynamicValidationProject({
+        sharedDriveId: rootSharedDriveId,
+        adminFolderId,
+        commFolderId,
+        contactFolderId,
+        contactName: 'Acme Corp',
+      });
+
+      // 2. resolveFolderPath
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes('shared-drive-proj-root') && q.q.includes("name = '1 Admin'"))
+        .reply(200, { files: [{ id: adminFolderId, name: '1 Admin' }] });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(adminFolderId) && q.q.includes("name = 'Communication'"))
+        .reply(200, { files: [{ id: commFolderId, name: 'Communication' }] });
+
+      // 3. findOrCreateFolder contact
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(commFolderId) && q.q.includes("name = 'Acme Corp'"))
+        .reply(200, { files: [{ id: contactFolderId, name: 'Acme Corp' }] });
+
+      // 4. findOrCreateFolder comm folder (already exists or creates)
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(contactFolderId) && q.q.includes("name = '260920 IN - Meeting Notes'"))
+        .reply(200, { files: [{ id: subfolderId, name: '260920 IN - Meeting Notes' }] });
+
+      // 5. move file 1 succeeds
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${file1Id}`)
+        .query(true)
+        .reply(200, {
+          id: file1Id,
+          name: file1Name,
+          parents: ['initial-inbox-folder'],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${file1Id}/view`,
+        });
+
+      nock('https://www.googleapis.com')
+        .patch(`/drive/v3/files/${file1Id}`)
+        .query(true)
+        .reply(200, {
+          id: file1Id,
+          name: file1Name,
+          parents: [subfolderId],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${file1Id}/view`,
+        });
+
+      // 6. move file 2 fails with 403 Forbidden on files.get
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${file2Id}`)
+        .query(true)
+        .reply(403, {
+          error: {
+            code: 403,
+            message: 'User does not have permission to move file 2',
+          },
+        });
+
+      // file 3 is never called!
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          drive: {
+            selectedItems: [
+              { id: file1Id, title: file1Name },
+              { id: file2Id, title: file2Name },
+              { id: file3Id, title: file3Name },
+            ],
+          },
+          commonEventObject: {
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      const updateCard = body.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+
+      const errorSection = updateCard.sections.find((s: { widgets?: Array<{ textParagraph?: { text?: string } }> }) =>
+        s.widgets?.some((w) => w.textParagraph?.text?.includes('Drive service error (403) in move'))
+      );
+      expect(errorSection).toBeDefined();
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('allows idempotent retry after partial failure, skipping already-moved file and completing remaining file', async () => {
+      const file1Id = 'file-retry-1';
+      const file1Name = 'First_File_Already_Moved.pdf';
+      const file2Id = 'file-retry-2';
+      const file2Name = 'Second_File_Retried.pdf';
+      const rootSharedDriveId = 'shared-drive-proj-root';
+      const adminFolderId = 'folder-admin-1';
+      const commFolderId = 'folder-comm-1';
+      const contactFolderId = 'folder-acme-corp';
+      const subfolderId = 'folder-batch-meeting-sub';
+
+      // 1. Dynamic validation
+      mockDynamicValidationProject({
+        sharedDriveId: rootSharedDriveId,
+        adminFolderId,
+        commFolderId,
+        contactFolderId,
+        contactName: 'Acme Corp',
+      });
+
+      // 2. resolveFolderPath
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes('shared-drive-proj-root') && q.q.includes("name = '1 Admin'"))
+        .reply(200, { files: [{ id: adminFolderId, name: '1 Admin' }] });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(adminFolderId) && q.q.includes("name = 'Communication'"))
+        .reply(200, { files: [{ id: commFolderId, name: 'Communication' }] });
+
+      // 3. findOrCreateFolder contact
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(commFolderId) && q.q.includes("name = 'Acme Corp'"))
+        .reply(200, { files: [{ id: contactFolderId, name: 'Acme Corp' }] });
+
+      // 4. findOrCreateFolder comm folder (finds existing subfolder created during previous attempt)
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(contactFolderId) && q.q.includes("name = '260920 IN - Meeting Notes'"))
+        .reply(200, { files: [{ id: subfolderId, name: '260920 IN - Meeting Notes' }] });
+
+      // 5. move file 1: file already has subfolderId in parents, so getFile returns it and NO patch request is issued!
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${file1Id}`)
+        .query(true)
+        .reply(200, {
+          id: file1Id,
+          name: file1Name,
+          parents: [subfolderId],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${file1Id}/view`,
+        });
+
+      // 6. move file 2: moves normally to subfolderId
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${file2Id}`)
+        .query(true)
+        .reply(200, {
+          id: file2Id,
+          name: file2Name,
+          parents: ['initial-inbox-folder'],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${file2Id}/view`,
+        });
+
+      nock('https://www.googleapis.com')
+        .patch(`/drive/v3/files/${file2Id}`)
+        .query(true)
+        .reply(200, {
+          id: file2Id,
+          name: file2Name,
+          parents: [subfolderId],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${file2Id}/view`,
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          drive: {
+            selectedItems: [
+              { id: file1Id, title: file1Name },
+              { id: file2Id, title: file2Name },
+            ],
+          },
+          commonEventObject: {
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        action: {
+          notification: {
+            text: 'Document processed successfully',
+          },
+        },
+      });
+
+      expect(nock.isDone()).toBe(true);
+    });
   });
 });

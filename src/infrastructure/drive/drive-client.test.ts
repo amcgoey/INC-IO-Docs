@@ -356,6 +356,34 @@ describe('GoogleDriveClient', () => {
       });
     });
 
+    it('returns existing file metadata as an idempotent no-op when file is already in targetFolderId and no other parents exist', async () => {
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'file-123',
+          name: 'Project Plan.pdf',
+          parents: ['new-target-folder-id'],
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/file-123/view',
+        },
+      });
+
+      const moved = await client.move('file-123', 'new-target-folder-id');
+
+      expect(moved).toEqual({
+        id: 'file-123',
+        name: 'Project Plan.pdf',
+        parents: ['new-target-folder-id'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://drive.google.com/file/d/file-123/view',
+      });
+      expect(mockDrive.files.get).toHaveBeenCalledWith({
+        fileId: 'file-123',
+        fields: 'id, name, parents, mimeType, webViewLink',
+        supportsAllDrives: true,
+      });
+      expect(mockDrive.files.update).not.toHaveBeenCalled();
+    });
+
     it('throws error when update response lacks file ID or name', async () => {
       (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValue({
         data: {

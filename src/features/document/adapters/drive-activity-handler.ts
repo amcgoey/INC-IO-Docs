@@ -339,31 +339,40 @@ export class DriveActivityHandler implements ActivityHandler {
 
     const movedFiles: FileLocator[] = [];
     for (const sourceFile of targetSourceFiles) {
-      const movedFile = await this.driveService.move(sourceFile.id, leafFolder.id);
+      try {
+        const movedFile = await this.driveService.move(sourceFile.id, leafFolder.id);
 
-      let uri = movedFile.webViewLink;
-      let mimeType = movedFile.mimeType;
-      let name = movedFile.name;
+        let uri = movedFile.webViewLink;
+        let mimeType = movedFile.mimeType;
+        let name = movedFile.name;
 
-      if (!uri || !name) {
-        try {
-          const fileMeta = await this.driveService.getFile(sourceFile.id);
-          uri = uri ?? fileMeta.webViewLink;
-          mimeType = mimeType ?? fileMeta.mimeType;
-          name = name || fileMeta.name;
-        } catch {
-          // Ignore
+        if (!uri || !name) {
+          try {
+            const fileMeta = await this.driveService.getFile(sourceFile.id);
+            uri = uri ?? fileMeta.webViewLink;
+            mimeType = mimeType ?? fileMeta.mimeType;
+            name = name || fileMeta.name;
+          } catch {
+            // Ignore
+          }
         }
-      }
 
-      const fileLocator: FileLocator = {
-        id: movedFile.id,
-        name: name || sourceFile.name || '',
-        parentName: leafFolder.name,
-        ...(mimeType ? { mimeType } : {}),
-        ...(uri ? { uri } : {}),
-      };
-      movedFiles.push(fileLocator);
+        const fileLocator: FileLocator = {
+          id: movedFile.id,
+          name: name || sourceFile.name || '',
+          parentName: leafFolder.name,
+          ...(mimeType ? { mimeType } : {}),
+          ...(uri ? { uri } : {}),
+        };
+        movedFiles.push(fileLocator);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          success: false,
+          error: errorMessage,
+          files: movedFiles,
+        };
+      }
     }
 
     return {

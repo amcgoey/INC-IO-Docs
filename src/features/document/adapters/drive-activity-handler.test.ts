@@ -595,11 +595,13 @@ describe('DriveActivityHandler', () => {
             id: 'sf-1',
             name: 'Doc1.pdf',
             parents: ['leaf-id'],
+            webViewLink: 'https://drive.google.com/file/d/sf-1/view',
           })
           .mockResolvedValueOnce({
             id: 'sf-2',
             name: 'Doc2.pdf',
             parents: ['leaf-id'],
+            webViewLink: 'https://drive.google.com/file/d/sf-2/view',
           });
 
         const multiHandler = new DriveActivityHandler(mockDriveService, {
@@ -622,6 +624,77 @@ describe('DriveActivityHandler', () => {
 
         expect(result.success).toBe(true);
         expect(result.files).toHaveLength(2);
+        expect(result.files).toEqual([
+          {
+            id: 'sf-1',
+            name: 'Doc1.pdf',
+            parentName: 'LeafFolder',
+            uri: 'https://drive.google.com/file/d/sf-1/view',
+          },
+          {
+            id: 'sf-2',
+            name: 'Doc2.pdf',
+            parentName: 'LeafFolder',
+            uri: 'https://drive.google.com/file/d/sf-2/view',
+          },
+        ]);
+        expect(mockDriveService.move).toHaveBeenNthCalledWith(1, 'sf-1', 'leaf-id');
+        expect(mockDriveService.move).toHaveBeenNthCalledWith(2, 'sf-2', 'leaf-id');
+      });
+
+      it('halts immediately on partial failure during batch move, returning already moved files and error', async () => {
+        (mockDriveService.resolveFolderPath as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          id: 'base-comm-id',
+          name: 'Communication',
+        });
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          id: 'leaf-id',
+          name: 'LeafFolder',
+        });
+
+        (mockDriveService.move as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({
+            id: 'sf-1',
+            name: 'Doc1.pdf',
+            parents: ['leaf-id'],
+            mimeType: 'application/pdf',
+            webViewLink: 'https://drive.google.com/file/d/sf-1/view',
+          })
+          .mockRejectedValueOnce(
+            new DriveServiceError('Drive service error (403) in move: User does not have permission')
+          );
+
+        const multiHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [
+            { id: 'sf-1', name: 'Doc1.pdf' },
+            { id: 'sf-2', name: 'Doc2.pdf' },
+            { id: 'sf-3', name: 'Doc3.pdf' },
+          ],
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-id',
+            parentPath: 'Communication',
+            folderName: 'LeafFolder',
+          },
+        };
+
+        const result = await multiHandler.handle(activity);
+
+        expect(result.success).toBe(false);
+        expect(result.error).toBe('Drive service error (403) in move: User does not have permission');
+        expect(result.files).toEqual([
+          {
+            id: 'sf-1',
+            name: 'Doc1.pdf',
+            parentName: 'LeafFolder',
+            mimeType: 'application/pdf',
+            uri: 'https://drive.google.com/file/d/sf-1/view',
+          },
+        ]);
+        expect(mockDriveService.move).toHaveBeenCalledTimes(2);
         expect(mockDriveService.move).toHaveBeenNthCalledWith(1, 'sf-1', 'leaf-id');
         expect(mockDriveService.move).toHaveBeenNthCalledWith(2, 'sf-2', 'leaf-id');
       });
