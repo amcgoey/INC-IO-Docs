@@ -5,6 +5,8 @@ import type {
   GmailOperationOptions,
   GmailMessageDetails,
   GmailRetryOptions,
+  GmailInlineImageDescriptor,
+  GmailAttachmentDescriptor,
 } from './types';
 import { GoogleGmailApiError, GoogleGmailNotFoundError } from './errors';
 
@@ -78,6 +80,32 @@ function getHeaderValue(
 
 function decodeBase64UrlToUtf8(data: string): string {
   return Buffer.from(data, 'base64url').toString('utf-8');
+}
+
+function normalizeContentId(rawCid?: string): string | undefined {
+  if (!rawCid) return undefined;
+  const trimmed = rawCid.trim();
+  const stripped = trimmed.replace(/^<+/, '').replace(/>+$/, '').trim();
+  return stripped.length > 0 ? stripped : undefined;
+}
+
+function isCidReferencedInHtml(html: string | undefined, normalizedCid: string): boolean {
+  if (!html) return false;
+  const targetLower = normalizedCid.toLowerCase();
+  const encodedTarget = encodeURIComponent(targetLower);
+  const cidRegex = /cid:([^\s"'`>)]+)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = cidRegex.exec(html)) !== null) {
+    const rawRef = match[1] ?? '';
+    const rawRefLower = rawRef.toLowerCase();
+    if (rawRefLower === targetLower || rawRefLower === encodedTarget) return true;
+    try {
+      if (decodeURIComponent(rawRef).toLowerCase() === targetLower) return true;
+    } catch {
+      // ignore URI malformed error
+    }
+  }
+  return false;
 }
 
 export class GoogleGmailClient {
@@ -181,6 +209,8 @@ export class GoogleGmailClient {
 
     let plainTextBody: string | undefined;
     let htmlBody: string | undefined;
+    const inlineImages: GmailInlineImageDescriptor[] = [];
+    const attachments: GmailAttachmentDescriptor[] = [];
 
     if (!payload?.parts || payload.parts.length === 0) {
       const bodyData = payload?.body?.data;
@@ -193,12 +223,105 @@ export class GoogleGmailClient {
           htmlBody = decoded;
         }
       }
+    } else {
+      interface PartContext {
+        part: gmail_v1.Schema$MessagePart;
+        isInsideMultipartRelated: boolean;
+      }
+      const candidateParts: PartContext[] = [];
+
+      const traverse = (parts: gmail_v1.Schema$MessagePart[], isInsideMultipartRelated: boolean) => {
+        for (const part of parts) {
+          const mimeType = part.mimeType?.toLowerCase();
+          const isRelated = isInsideMultipartRelated || mimeType === 'multipart/related';
+
+          if (mimeType === 'message/rfc822') {
+            candidateParts.push({ part, isInsideMultipartRelated: isRelated });
+            continue;
+          }
+
+          const filename = part.filename;
+          const hasFilename = Boolean(filename && filename.trim().length > 0);
+          const disposition = getHeaderValue(part.headers, 'Content-Disposition');
+          const isAttachmentDisposition = disposition
+            ? disposition.toLowerCase().includes('attachment')
+            : false;
+
+          if (!hasFilename && !isAttachmentDisposition) {
+            if (mimeType === 'text/plain' && plainTextBody === undefined && part.body?.data) {
+              plainTextBody = decodeBase64UrlToUtf8(part.body.data);
+            } else if (mimeType === 'text/html' && htmlBody === undefined && part.body?.data) {
+              htmlBody = decodeBase64UrlToUtf8(part.body.data);
+            }
+          }
+
+          if (part.parts && part.parts.length > 0) {
+            traverse(part.parts, isRelated);
+          } else {
+            candidateParts.push({ part, isInsideMultipartRelated: isInsideMultipartRelated });
+          }
+        }
+      };
+
+      traverse(payload.parts, false);
+
+      for (const { part, isInsideMultipartRelated } of candidateParts) {
+        const mimeType = part.mimeType?.toLowerCase() ?? '';
+        const rawCid = getHeaderValue(part.headers, 'Content-ID');
+        const normalizedCid = normalizeContentId(rawCid);
+        const isImage = mimeType.startsWith('image/');
+
+        let isInlineImage = false;
+        if (isImage && normalizedCid) {
+          if (isInsideMultipartRelated || isCidReferencedInHtml(htmlBody, normalizedCid)) {
+            isInlineImage = true;
+          }
+        }
+
+        if (isInlineImage && normalizedCid) {
+          let data: Uint8Array | undefined;
+          if (part.body?.data) {
+            data = new Uint8Array(Buffer.from(part.body.data, 'base64url'));
+          }
+
+          const inlineImage: GmailInlineImageDescriptor = {
+            cid: normalizedCid,
+            partId: part.partId ?? '',
+            mimeType: part.mimeType ?? 'image/png',
+            ...(part.body?.attachmentId ? { attachmentId: part.body.attachmentId } : {}),
+            ...(part.filename && part.filename.trim().length > 0 ? { filename: part.filename } : {}),
+            ...(typeof part.body?.size === 'number' ? { size: part.body.size } : {}),
+            ...(data ? { data } : {}),
+          };
+          inlineImages.push(inlineImage);
+        } else {
+          const filename = part.filename?.trim();
+          const attachmentId = part.body?.attachmentId?.trim();
+
+          if (filename && filename.length > 0 && attachmentId && attachmentId.length > 0) {
+            let data: Uint8Array | undefined;
+            if (part.body?.data) {
+              data = new Uint8Array(Buffer.from(part.body.data, 'base64url'));
+            }
+
+            const attachment: GmailAttachmentDescriptor = {
+              partId: part.partId ?? '',
+              attachmentId,
+              filename: part.filename ?? filename,
+              mimeType: part.mimeType ?? 'application/octet-stream',
+              size: typeof part.body?.size === 'number' ? part.body.size : 0,
+              ...(data ? { data } : {}),
+            };
+            attachments.push(attachment);
+          }
+        }
+      }
     }
 
     const details: GmailMessageDetails = {
       id: res.data.id ?? messageId,
-      inlineImages: [],
-      attachments: [],
+      inlineImages,
+      attachments,
       ...(res.data.threadId ? { threadId: res.data.threadId } : {}),
       ...(rfcMessageId !== undefined ? { rfcMessageId, messageId: rfcMessageId } : {}),
       ...(subject !== undefined ? { subject } : {}),
