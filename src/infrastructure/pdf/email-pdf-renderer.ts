@@ -17,6 +17,90 @@ const DIVIDER_PADDING = 10;
 const DIVIDER_COLOR = rgb(0.7, 0.7, 0.7);
 const FOOTER_COLOR = rgb(0.4, 0.4, 0.4);
 
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+  rsquo: "'",
+  lsquo: "'",
+  rdquo: '"',
+  ldquo: '"',
+  mdash: '--',
+  ndash: '-',
+  hellip: '...',
+  bull: '*',
+  copy: '(C)',
+  trade: '(TM)',
+};
+
+/**
+ * Decodes standard HTML entities, named typographical entities, and decimal/hex numeric entities.
+ */
+export function decodeHtmlEntities(input: string): string {
+  return input.replace(
+    /&(#x[0-9a-fA-F]+|#[0-9]+|[a-zA-Z0-9]+);/g,
+    (fullMatch, entity: string) => {
+      if (entity.startsWith('#x') || entity.startsWith('#X')) {
+        const hex = entity.slice(2);
+        const code = parseInt(hex, 16);
+        if (!isNaN(code)) {
+          if (code === 160) return ' ';
+          try {
+            return String.fromCodePoint(code);
+          } catch {
+            return fullMatch;
+          }
+        }
+      } else if (entity.startsWith('#')) {
+        const dec = entity.slice(1);
+        const code = parseInt(dec, 10);
+        if (!isNaN(code)) {
+          if (code === 160) return ' ';
+          try {
+            return String.fromCodePoint(code);
+          } catch {
+            return fullMatch;
+          }
+        }
+      } else {
+        const lower = entity.toLowerCase();
+        if (lower in NAMED_ENTITIES) {
+          return NAMED_ENTITIES[lower]!;
+        }
+      }
+      return fullMatch;
+    }
+  );
+}
+
+/**
+ * Converts an HTML email body into clean, structured plain text:
+ * 1. Pre-purges <style>, <script>, <head>, and <!-- ... --> comments.
+ * 2. Converts </td> and </th> to spaces.
+ * 3. Converts <br>, <br/>, </p>, </div>, </li>, and </tr> to newlines.
+ * 4. Strips all remaining HTML tags (<[^>]+>).
+ * 5. Decodes HTML entities (standard, typographical, numeric decimal & hex, and normalizes &nbsp; to ASCII space).
+ */
+export function convertHtmlToPlainText(html: string): string {
+  const purged = html
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<head\b[^>]*>[\s\S]*?<\/head>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '');
+
+  const whitespaceNormalized = purged
+    .replace(/<\/(td|th)>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|tr)>/gi, '\n');
+
+  const strippedTags = whitespaceNormalized.replace(/<[^>]+>/g, '');
+
+  return decodeHtmlEntities(strippedTags);
+}
+
 /**
  * Sanitizes input text to only include characters supported by standard WinAnsi encoding.
  * Converts Unicode typographical symbols (smart quotes, dashes, ellipsis, bullets) into
@@ -36,7 +120,7 @@ export function sanitizeWinAnsiText(text: string): string {
     .replace(/\u2022/g, '*')
     .replace(/\u00A9/g, '(C)')
     .replace(/\u2122/g, '(TM)')
-    .replace(/[^\x20-\x7E\xA0-\xFF\n]/g, '?');
+    .replace(/[^\x20-\x7E\xA0-\xFF\n]/gu, '?');
 }
 
 /**
@@ -261,9 +345,14 @@ export class EmailPdfRenderer {
     });
     cursorY -= DIVIDER_PADDING;
 
-    // 4. Render Plain-Text Body (if present)
-    if (email.plainTextBody !== undefined && email.plainTextBody.length > 0) {
-      const bodyLines = wrapWords(email.plainTextBody, fontRegular, FONT_SIZE, PRINTABLE_WIDTH);
+    // 4. Render Body (HTML converted, or fallback to plain text)
+    const rawBody =
+      email.htmlBody !== undefined
+        ? convertHtmlToPlainText(email.htmlBody)
+        : email.plainTextBody;
+
+    if (rawBody !== undefined && rawBody.length > 0) {
+      const bodyLines = wrapWords(rawBody, fontRegular, FONT_SIZE, PRINTABLE_WIDTH);
       for (const line of bodyLines) {
         ensureVerticalSpace(LINE_HEIGHT);
         if (line.length > 0) {

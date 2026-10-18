@@ -832,7 +832,7 @@ describe('PdfProcessor', () => {
         messageId: 'unicode-sanitization-test',
         subject: 'Meeting Notes: “Project Alpha” – Q3 & Q4…',
         plainTextBody:
-          'Notes:\r\n\t• Alice said: ‘Ready’\r\n\t• Em dash: 2025—2026\r\n\t• Special chars: © and ™\r\n\t• Emojis 🚀 and foreign text 漢字 are safely escaped.',
+          'Notes:\r\n\t• Alice said: ‘Ready’\r\n\t• Em dash: 2025—2026\r\n\t• Special chars: © and ™\r\n\t• Zero\u200BWidth\uFEFFSpace\r\n\t• Emojis 🚀 and foreign text 漢字 are safely escaped.',
       };
 
       const pdfBytes = await processor.generateEmailPdf(email);
@@ -843,6 +843,151 @@ describe('PdfProcessor', () => {
       expect(text).toContain("* Alice said: 'Ready'");
       expect(text).toContain('Em dash: 2025--2026');
       expect(text).toContain('Special chars: (C) and (TM)');
+      expect(text).toContain('ZeroWidthSpace');
+      // Confirm CRLF \r\n did not leave ?\n
+      expect(text).not.toContain('?\n');
+      expect(text).not.toContain('?•');
+      // Confirm tab \t did not leave ?
+      expect(text).not.toContain('?\t');
+      // Confirm foreign text/emojis became ? without throwing
+      expect(text).toContain('Emojis ? and foreign text ?? are safely escaped.');
+    });
+
+    it('renders htmlBody when provided and falls back to plainTextBody when undefined', async () => {
+      const emailWithHtml: EmailPdfRenderInput = {
+        messageId: 'html-body-test',
+        subject: 'HTML Email Test',
+        htmlBody: '<p>Hello from <b>HTML</b> body!</p>',
+        plainTextBody: 'Hello from plain text body!',
+      };
+
+      const pdfBytesHtml = await processor.generateEmailPdf(emailWithHtml);
+      const textHtml = await processor.extractTextFromPages(pdfBytesHtml, [1]);
+      expect(textHtml).toContain('Hello from HTML body!');
+      expect(textHtml).not.toContain('Hello from plain text body!');
+
+      const emailFallback: EmailPdfRenderInput = {
+        messageId: 'fallback-test',
+        subject: 'Fallback Email Test',
+        plainTextBody: 'Fallback to plain text!',
+      };
+
+      const pdfBytesFallback = await processor.generateEmailPdf(emailFallback);
+      const textFallback = await processor.extractTextFromPages(pdfBytesFallback, [1]);
+      expect(textFallback).toContain('Fallback to plain text!');
+    });
+
+    it('pre-purges style, script, head, and HTML comments completely from htmlBody', async () => {
+      const email: EmailPdfRenderInput = {
+        messageId: 'purge-test',
+        subject: 'Purge Security & Metadata Test',
+        htmlBody: `
+          <!DOCTYPE html>
+          <html>
+            <HEAD>
+              <title>Secret Metadata Document Title</title>
+              <meta name="author" content="Malicious Hacker" />
+            </HEAD>
+            <style type="text/css">
+              body { font-family: Arial; color: #ff0000; }
+              .hidden { display: none; visibility: hidden; }
+            </style>
+            <body>
+              <!-- Internal developer note: AWS_SECRET_KEY=12345 -->
+              <p>Actual visible email content that should be preserved.</p>
+              <script type="text/javascript">
+                console.log("malicious javascript execution");
+                window.location.href = "https://phishing.example.com";
+              </script>
+            </body>
+          </html>
+        `,
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+
+      expect(text).toContain('Actual visible email content that should be preserved.');
+      expect(text).not.toContain('Secret Metadata Document Title');
+      expect(text).not.toContain('Malicious Hacker');
+      expect(text).not.toContain('color: #ff0000');
+      expect(text).not.toContain('font-family: Arial');
+      expect(text).not.toContain('AWS_SECRET_KEY');
+      expect(text).not.toContain('malicious javascript execution');
+      expect(text).not.toContain('phishing.example.com');
+    });
+
+    it('converts table cells to spaces, block tags and breaks to newlines, and strips all remaining tags', async () => {
+      const email: EmailPdfRenderInput = {
+        messageId: 'table-and-blocks-test',
+        subject: 'Table & Block Tags Test',
+        htmlBody: `
+          <div>Heading Banner</div>
+          <p>Line Alpha<br>Line Beta<br/>Line Gamma<br />Line Delta</p>
+          <ul>
+            <li>Bullet Option 1</li>
+            <li>Bullet Option 2</li>
+          </ul>
+          <table>
+            <thead>
+              <tr><th>HeaderA</th><th>HeaderB</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Cell1</td><td>Cell2</td></tr>
+            </tbody>
+          </table>
+          <footer><span>Nested footer inline text</span></footer>
+        `,
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+
+      expect(text).toContain('Heading Banner');
+      expect(text).toContain('Line Alpha');
+      expect(text).toContain('Line Beta');
+      expect(text).toContain('Line Gamma');
+      expect(text).toContain('Line Delta');
+      expect(text).toContain('Bullet Option 1');
+      expect(text).toContain('Bullet Option 2');
+      // Table headers and cells separated by spaces
+      expect(text).toContain('HeaderA HeaderB');
+      expect(text).toContain('Cell1 Cell2');
+      expect(text).toContain('Nested footer inline text');
+      // Confirm all HTML tags were stripped
+      expect(text).not.toContain('<div');
+      expect(text).not.toContain('</div>');
+      expect(text).not.toContain('<p');
+      expect(text).not.toContain('</p>');
+      expect(text).not.toContain('<table');
+      expect(text).not.toContain('</table>');
+      expect(text).not.toContain('<span');
+      expect(text).not.toContain('</span>');
+    });
+
+    it('decodes standard, typographical, and numeric decimal/hex HTML entities in htmlBody', async () => {
+      const email: EmailPdfRenderInput = {
+        messageId: 'entities-test',
+        subject: 'Entity Decoding Test',
+        htmlBody: `
+          <p>Standard: &amp; &lt; &gt; &quot; &#39; &apos;</p>
+          <p>Nbsp: Space&nbsp;Separated</p>
+          <p>Typographical: &lsquo;single&rsquo; and &ldquo;double&rdquo; &mdash; dash &ndash; &hellip; bullet &bull; &copy; 2026 &trade;</p>
+          <p>Decimal: &#65;&#66;&#67; &#8212;</p>
+          <p>Hexadecimal: &#x41;&#x42;&#x43; &#x2013;</p>
+          <p>NumericNbsp: Numeric&#160;and&#xA0;HexNbsp</p>
+        `,
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+
+      expect(text).toContain('Standard: & < > " \' \'');
+      expect(text).toContain('Nbsp: Space Separated');
+      expect(text).toContain('Typographical: \'single\' and "double" -- dash - ... bullet * (C) 2026 (TM)');
+      expect(text).toContain('Decimal: ABC --');
+      expect(text).toContain('Hexadecimal: ABC -');
+      expect(text).toContain('NumericNbsp: Numeric and HexNbsp');
     });
   });
 });
