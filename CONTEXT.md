@@ -84,8 +84,8 @@ _Avoid_: UiController, StateManager
 The read-only model orchestrator in the CQRS UI pattern. A generic engine that receives clean view state from the `UiProcessManager` and constructs abstract `UiView`s. Responsible for fetching or resolving display names for rendering.
 
 **UiBlock**:
-A pure presenter function inside `SchemaDrivenUi`. Maps data and UI schemas into modular, abstract UI elements.
-_Avoid_: Component, Widget (when referring to the composite), Module, Renderer
+A pure presenter function inside `SchemaDrivenUi`. Maps data and UI schemas into modular, abstract UI elements. Must remain host- and trigger-agnostic; host-specific presentation differences between Google Drive, Gmail, or web triggers are achieved by composing `UiBlock`s within trigger-specific `UiViewSchema` adapters, never by creating host-specific `UiBlock`s.
+_Avoid_: Component, Widget (when referring to the composite), Module, Renderer, DriveBlock, GmailBlock
 
 **UiView**:
 A compiled, declarative view model emitted by `SchemaDrivenUi`. Flattens `UiBlock` outputs into a generic payload consumed by dumb infrastructure renderers.
