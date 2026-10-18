@@ -888,5 +888,21 @@ export function validateManifestTemplates(
   return errors;
 }
 
+/**
+ * Pure domain helper to format an email PDF filename following a deterministic, filesystem-safe convention:
+ * "Email - <Sanitized Subject>.pdf", falling back to "Email - <sanitizedId>.pdf".
+ */
+export function formatEmailPdfFileName(subject: string | undefined, messageId: string): string {
+  const trimmedSubject = subject?.trim();
+  const sanitizedSubject = trimmedSubject ? sanitizeFilePath(trimmedSubject).slice(0, 120).trim() : '';
+
+  if (sanitizedSubject.length > 0) {
+    return `Email - ${sanitizedSubject}.pdf`;
+  }
+
+  const cleanId = sanitizeFilePath(messageId.replace(/[<>]/g, '')).trim();
+  return `Email - ${cleanId}.pdf`;
+}
+
 
 
