@@ -42,6 +42,42 @@ describe('Workspace Add-on Context', () => {
       expect(context.traceId).toBe('trace-123');
     });
 
+    it('preserves multi-element stringInputs.value as string[] in formData', () => {
+      const rawPayload = {
+        commonEventObject: {
+          formInputs: {
+            multiSelectField: {
+              stringInputs: {
+                value: ['item-1', 'item-2', 'item-3'],
+              },
+            },
+            singleField: {
+              stringInputs: {
+                value: ['item-single'],
+              },
+            },
+            emptyField: {
+              stringInputs: {
+                value: [],
+              },
+            },
+            undefinedValueField: {
+              stringInputs: {},
+            },
+          },
+        },
+      };
+
+      const context = extractWorkspaceExecutionContext(rawPayload);
+
+      expect(context.formData).toEqual({
+        multiSelectField: ['item-1', 'item-2', 'item-3'],
+        singleField: 'item-single',
+        emptyField: '',
+        undefinedValueField: '',
+      });
+    });
+
 
     it('extracts validationErrors array when present in parameters', () => {
       const rawPayload = {

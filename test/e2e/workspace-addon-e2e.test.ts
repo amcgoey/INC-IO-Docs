@@ -709,6 +709,169 @@ describe('Workspace Addon UI E2E Test Suite', () => {
     });
   });
 
+  describe('File Selection Persistence & Reset across In-Card Cascading Updates (Ticket #176)', () => {
+    const multiFileDriveItems = [
+      { id: 'drive-file-001', title: 'Invoice_Alpha.pdf', mimeType: 'application/pdf' },
+      { id: 'drive-file-002', title: 'Invoice_Beta.pdf', mimeType: 'application/pdf' },
+    ];
+
+    it('preserves multi-file partial selection across cascading in-card onFormChange update', async () => {
+      const formChangePayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        drive: {
+          selectedItems: multiFileDriveItems,
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'onFormChange',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: {
+              stringInputs: { value: ['projects'] },
+            },
+            [getDocumentTypeWidgetName('projects')]: {
+              stringInputs: { value: ['communication-project'] },
+            },
+            SelectFiles: {
+              stringInputs: { value: ['drive-file-002'] },
+            },
+            [getDocumentInfoWidgetName('contact', 'communication-project')]: {
+              stringInputs: { value: ['Acme Corp'] },
+            },
+          },
+        },
+      };
+
+      const response = await injectWorkspaceRequest(app.server, {
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+        },
+        payload: formChangePayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+
+      const updateCard = body.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+
+      const fileSelectionSection = findSection(updateCard.sections, 'File Selection');
+      expect(fileSelectionSection).toBeDefined();
+
+      const selectFilesWidget = findWidget(fileSelectionSection, 'SelectFiles');
+      expect(selectFilesWidget?.selectionInput?.type).toBe('CHECK_BOX');
+      expect(selectFilesWidget?.selectionInput?.items).toEqual([
+        { text: 'Invoice_Alpha.pdf', value: 'drive-file-001', selected: false },
+        { text: 'Invoice_Beta.pdf', value: 'drive-file-002', selected: true },
+      ]);
+    });
+
+    it('retains all-unchecked file state across cascading in-card onSpaceTypeChange update', async () => {
+      const spaceChangePayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        drive: {
+          selectedItems: multiFileDriveItems,
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'onSpaceTypeChange',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: {
+              stringInputs: { value: ['proposals'] },
+            },
+            // SelectFiles is omitted or empty when all checkboxes are unchecked in Google Workspace
+            [getDocumentInfoWidgetName('contact', 'communication-project')]: {
+              stringInputs: { value: ['Acme Corp'] },
+            },
+          },
+        },
+      };
+
+      const response = await injectWorkspaceRequest(app.server, {
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+        },
+        payload: spaceChangePayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+
+      const updateCard = body.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+
+      const fileSelectionSection = findSection(updateCard.sections, 'File Selection');
+      expect(fileSelectionSection).toBeDefined();
+
+      const selectFilesWidget = findWidget(fileSelectionSection, 'SelectFiles');
+      expect(selectFilesWidget?.selectionInput?.items).toEqual([
+        { text: 'Invoice_Alpha.pdf', value: 'drive-file-001', selected: false },
+        { text: 'Invoice_Beta.pdf', value: 'drive-file-002', selected: false },
+      ]);
+    });
+
+    it('resets all files to selected: true and renders pushCard on refresh action', async () => {
+      const refreshPayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        drive: {
+          selectedItems: multiFileDriveItems,
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'refresh',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: {
+              stringInputs: { value: ['projects'] },
+            },
+            SelectFiles: {
+              stringInputs: { value: ['drive-file-002'] },
+            },
+          },
+        },
+      };
+
+      const response = await injectWorkspaceRequest(app.server, {
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+        },
+        payload: refreshPayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+
+      // On refresh, isUpdateCard remains false, returning pushCard
+      const pushCard = body.action?.navigations?.[0]?.pushCard;
+      expect(pushCard).toBeDefined();
+
+      const fileSelectionSection = findSection(pushCard.sections, 'File Selection');
+      expect(fileSelectionSection).toBeDefined();
+
+      const selectFilesWidget = findWidget(fileSelectionSection, 'SelectFiles');
+      expect(selectFilesWidget?.selectionInput?.items).toEqual([
+        { text: 'Invoice_Alpha.pdf', value: 'drive-file-001', selected: true },
+        { text: 'Invoice_Beta.pdf', value: 'drive-file-002', selected: true },
+      ]);
+    });
+  });
+
   describe('Document Processing & Action Schema Conformance (processDocument)', () => {
     const baseProcessInputs = () => ({
       SelectDocumentSpaceType: {

@@ -1511,6 +1511,66 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         'Drive network failure',
       ]);
     });
+
+    it('retains partial file selection in selectionState.files on in-card action and does not synthetically populate formData.SelectFiles', async () => {
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'onFormChange',
+        selectedItems: [
+          { id: 'drive-file-1', title: 'File 1.pdf' },
+          { id: 'drive-file-2', title: 'File 2.pdf' },
+        ],
+        formData: {
+          SelectFiles: ['drive-file-2'],
+          contact: 'Test Contact',
+        },
+      };
+
+      const result = await adapter.processUiEvent(context);
+      expect(result.type).toBe('render');
+      const renderResult = result as UiProcessRenderResult;
+
+      expect(renderResult.selectionState?.files).toEqual([
+        { text: 'File 1.pdf', value: 'drive-file-1', selected: false },
+        { text: 'File 2.pdf', value: 'drive-file-2', selected: true },
+      ]);
+    });
+
+    it('resets selectionState.files to all selected: true and isUpdateCard: false on refresh action', async () => {
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'refresh',
+        selectedItems: [
+          { id: 'drive-file-1', title: 'File 1.pdf' },
+          { id: 'drive-file-2', title: 'File 2.pdf' },
+        ],
+        formData: {
+          SelectFiles: ['drive-file-2'],
+          contact: 'Test Contact',
+        },
+        isUpdateCard: true,
+      };
+
+      const result = await adapter.processUiEvent(context);
+      expect(result.type).toBe('render');
+      const renderResult = result as UiProcessRenderResult;
+
+      expect(renderResult.selectionState?.files).toEqual([
+        { text: 'File 1.pdf', value: 'drive-file-1', selected: true },
+        { text: 'File 2.pdf', value: 'drive-file-2', selected: true },
+      ]);
+      expect(renderResult.isUpdateCard).toBe(false);
+    });
   });
 });
 
