@@ -59,6 +59,7 @@ export const UiProcessEventContextSchema = Type.Object({
         Type.Object({
           id: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
           title: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+          mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
         })
       ),
       Type.Undefined(),
@@ -127,6 +128,13 @@ export interface UiProcessManifestPort {
   getDocumentTypeSchemas(key: string): Promise<{ docSchema?: unknown; uiSchema?: unknown }>;
 }
 
+export const UiProcessSourceFileDtoSchema = Type.Object({
+  id: Type.String(),
+  name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type UiProcessSourceFileDto = Static<typeof UiProcessSourceFileDtoSchema>;
+
 export interface UiProcessDocumentExecutionResult {
   success: boolean;
   errors?: string[] | undefined;
@@ -139,10 +147,12 @@ export interface UiProcessDocumentRunnerPort {
       type: string;
       data: Record<string, unknown>;
       space?: UiProcessDocumentSpaceDto | undefined;
+      sourceFiles?: UiProcessSourceFileDto[] | undefined;
     },
     eventName: string
   ): Promise<UiProcessDocumentExecutionResult>;
 }
+
 
 export interface UiProcessFormEvaluationResult {
   computedData: Record<string, unknown>;

@@ -8,7 +8,9 @@ import type {
   UiProcessDocumentRunnerPort,
   UiProcessFormEvaluatorPort,
   UiProcessDocumentSpaceDto,
+  UiProcessSourceFileDto,
 } from '../ports';
+
 import {
   evaluateProcessUiState,
   resolveSpace,
@@ -196,14 +198,39 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       createRenderResult({ validationErrors, isUpdateCard: true });
 
     if (actionName === 'processDocument') {
-      const hasSelectedFile =
-        (typeof context.parameters?.fileId === 'string' && context.parameters.fileId.trim().length > 0) ||
-        (Array.isArray(context.selectedItems) &&
-          context.selectedItems.some(
-            (item) => typeof item?.id === 'string' && item.id.trim().length > 0
-          ));
+      const currentUiState = evaluateProcessUiState({
+        context: normalizedContext,
+        resolvedDocumentTypeKey,
+        resolvedSpaceType: currentSpaceType,
+        config,
+        spaceTypes,
+        spaces,
+      });
 
-      if (!hasSelectedFile) {
+      const checkedFileIds = new Set(
+        (currentUiState.selectionState.files ?? [])
+          .filter((f) => f.selected)
+          .map((f) => f.value.trim())
+      );
+
+      const validSelectedItems = (context.selectedItems ?? []).filter(
+        (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
+          typeof item?.id === 'string' && item.id.trim().length > 0
+      );
+
+      const activeSourceFiles: UiProcessSourceFileDto[] = validSelectedItems
+        .filter((item) => checkedFileIds.has(item.id.trim()))
+        .map((item) => ({
+          id: item.id,
+          ...(item.title ? { name: item.title } : {}),
+          ...(item.mimeType ? { mimeType: item.mimeType } : {}),
+        }));
+
+      const hasExplicitFileId =
+        typeof context.parameters?.fileId === 'string' &&
+        context.parameters.fileId.trim().length > 0;
+
+      if (activeSourceFiles.length === 0 && !hasExplicitFileId) {
         return createErrorRenderResult(['Please select at least one file in Google Drive to process.']);
       }
 
@@ -245,9 +272,11 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
               type: resolvedDocumentTypeKey ?? 'default',
               data,
               space,
+              ...(activeSourceFiles.length > 0 ? { sourceFiles: activeSourceFiles } : {}),
             },
             'onSubmit'
           );
+
 
           if (result && result.success === false) {
             const validationErrors =

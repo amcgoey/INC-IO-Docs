@@ -6,6 +6,8 @@ import {
   UiProcessResultSchema,
   UiSelectionStateSchema,
   ProcessUiStateEventSchema,
+  UiProcessEventContextSchema,
+  UiProcessSourceFileDtoSchema,
 } from './ports';
 
 describe('UI Process Manager Ports & DTOs', () => {
@@ -107,25 +109,50 @@ describe('UI Process Manager Ports & DTOs', () => {
     });
   });
 
-  describe('ProcessUiStateEventSchema', () => {
-    it('validates selectedItems with id and title', () => {
+  describe('UiProcessSourceFileDtoSchema', () => {
+    it('validates a complete UiProcessSourceFileDto', () => {
+      const dto = {
+        id: 'file-123',
+        name: 'Report.pdf',
+        mimeType: 'application/pdf',
+      };
+      expect(Value.Check(UiProcessSourceFileDtoSchema, dto)).toBe(true);
+    });
+
+    it('validates a minimal UiProcessSourceFileDto with only id', () => {
+      const dto = { id: 'file-123' };
+      expect(Value.Check(UiProcessSourceFileDtoSchema, dto)).toBe(true);
+    });
+
+    it('rejects invalid UiProcessSourceFileDto missing id or having invalid types', () => {
+      expect(Value.Check(UiProcessSourceFileDtoSchema, { name: 'Report.pdf' })).toBe(false);
+      expect(Value.Check(UiProcessSourceFileDtoSchema, { id: 123 })).toBe(false);
+      expect(Value.Check(UiProcessSourceFileDtoSchema, { id: 'file-1', mimeType: 999 })).toBe(false);
+    });
+  });
+
+  describe('ProcessUiStateEventSchema & UiProcessEventContextSchema mimeType support', () => {
+    it('validates selectedItems with mimeType in ProcessUiStateEventSchema', () => {
       const event = {
         actionName: 'onFormChange',
         selectedItems: [
-          { id: 'drive-item-1', title: 'Doc 1' },
-          { id: 'drive-item-2' },
-          { title: 'Doc 3' },
+          { id: 'drive-item-1', title: 'Doc 1', mimeType: 'application/pdf' },
+          { id: 'drive-item-2', mimeType: 'image/png' },
         ],
       };
       expect(Value.Check(ProcessUiStateEventSchema, event)).toBe(true);
     });
 
-    it('rejects invalid selectedItems item', () => {
-      const event = {
-        selectedItems: [{ id: 123 }],
+    it('validates selectedItems with mimeType in UiProcessEventContextSchema', () => {
+      const context = {
+        actionName: 'processDocument',
+        selectedItems: [
+          { id: 'drive-item-1', title: 'Doc 1', mimeType: 'application/pdf' },
+        ],
       };
-      expect(Value.Check(ProcessUiStateEventSchema, event)).toBe(false);
+      expect(Value.Check(UiProcessEventContextSchema, context)).toBe(true);
     });
   });
 });
+
 

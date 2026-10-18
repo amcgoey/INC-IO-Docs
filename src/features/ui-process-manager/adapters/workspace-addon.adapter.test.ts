@@ -493,9 +493,16 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
             contact: 'Acme Corp',
             date: '260920',
           },
+          sourceFiles: [
+            {
+              id: 'drive-item-123',
+              name: 'File.pdf',
+            },
+          ],
         },
         'onSubmit'
       );
+
 
       expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
       expect(response).toEqual({
@@ -570,6 +577,97 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         validationErrors: ['Please select at least one file in Google Drive to process.'],
       });
     });
+
+    it('aborts submission and returns error update card retaining files with selected: false when all items are unchecked in SelectFiles', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Main',
+          SelectDocumentType: 'communication-project',
+          SelectFiles: [],
+          contact: 'Acme Corp',
+          date: '260920',
+        },
+        selectedItems: [
+          { id: 'drive-file-1', title: 'File1.pdf' },
+          { id: 'drive-file-2', title: 'File2.pdf' },
+        ],
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
+      expect(response).toMatchObject({
+        type: 'render',
+        isUpdateCard: true,
+        validationErrors: ['Please select at least one file in Google Drive to process.'],
+        selectionState: {
+          files: [
+            { text: 'File1.pdf', value: 'drive-file-1', selected: false },
+            { text: 'File2.pdf', value: 'drive-file-2', selected: false },
+          ],
+        },
+      });
+    });
+
+    it('filters active sourceFiles to only checked items and passes them to documentRunner preserving mimeType', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Main',
+          SelectDocumentType: 'communication-project',
+          SelectFiles: ['drive-file-2', 'drive-file-3'],
+          contact: 'Acme Corp',
+          date: '260920',
+        },
+        selectedItems: [
+          { id: 'drive-file-1', title: 'File1.pdf', mimeType: 'application/pdf' },
+          { id: 'drive-file-2', title: 'File2.png', mimeType: 'image/png' },
+          { id: 'drive-file-3', title: 'File3.txt', mimeType: 'text/plain' },
+        ],
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sourceFiles: [
+            { id: 'drive-file-2', name: 'File2.png', mimeType: 'image/png' },
+            { id: 'drive-file-3', name: 'File3.txt', mimeType: 'text/plain' },
+          ],
+        }),
+        'onSubmit'
+      );
+      expect(response).toEqual({
+        type: 'notification',
+        text: 'Document processed successfully',
+      });
+    });
+
 
     it('proceeds with submission when parameters.fileId is present even without selectedItems', async () => {
       const mockDocumentRunner = {
@@ -1117,9 +1215,16 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           data: {
             contact: 'Test Contact',
           },
+          sourceFiles: [
+            {
+              id: 'drive-item-123',
+              name: 'File.pdf',
+            },
+          ],
         },
         'onSubmit'
       );
+
       expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
       expect(response).toEqual({
         type: 'notification',

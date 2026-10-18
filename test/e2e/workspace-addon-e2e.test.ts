@@ -978,7 +978,116 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
+    it('returns error update card with status message when all items in SelectFiles are unchecked on processDocument', async () => {
+      const inputs = baseProcessInputs();
+      delete (inputs as Record<string, unknown>).SelectFiles;
+
+      const processPayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        drive: {
+          selectedItems: [
+            { id: 'drive-file-001', title: 'File1.pdf', mimeType: 'application/pdf' },
+            { id: 'drive-file-002', title: 'File2.pdf', mimeType: 'application/pdf' },
+          ],
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'processDocument',
+          },
+          formInputs: {
+            ...inputs,
+            [getDocumentTypeWidgetName('projects')]: {
+              stringInputs: { value: ['communication-project'] },
+            },
+          },
+        },
+      };
+
+      const response = await injectWorkspaceRequest(app.server, {
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+        },
+        payload: processPayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+
+      const updateCard = body.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+
+      const errorSection = updateCard.sections.find((s: SectionStub) =>
+        s.widgets.some((w) => w.textParagraph?.text?.includes('Validation Errors:'))
+      );
+      expect(errorSection).toBeDefined();
+      const errorWidget = errorSection?.widgets.find((w: WidgetStub) =>
+        w.textParagraph?.text?.includes('Validation Errors:')
+      );
+      expect(errorWidget?.textParagraph?.text).toContain('Please select at least one file in Google Drive to process.');
+      expect(mockDocumentService.processDocument).not.toHaveBeenCalled();
+
+
+      const fileSelectionSection = findSection(updateCard.sections, 'File Selection');
+      const selectFilesWidget = findWidget(fileSelectionSection, 'SelectFiles');
+      expect(selectFilesWidget?.selectionInput?.items).toEqual([
+        { text: 'File1.pdf', value: 'drive-file-001', selected: false },
+        { text: 'File2.pdf', value: 'drive-file-002', selected: false },
+      ]);
+    });
+
+    it('processes only checked file when multiple files are selected in Drive and only a subset is checked', async () => {
+      const processPayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        drive: {
+          selectedItems: [
+            { id: 'drive-file-001', title: 'First.pdf', mimeType: 'application/pdf' },
+            { id: 'drive-file-002', title: 'Second.pdf', mimeType: 'application/pdf' },
+          ],
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'processDocument',
+          },
+          formInputs: {
+            ...baseProcessInputs(),
+            SelectFiles: { stringInputs: { value: ['drive-file-002'] } }, // only file 2 checked
+            [getDocumentTypeWidgetName('projects')]: {
+              stringInputs: { value: ['communication-project'] },
+            },
+          },
+        },
+      };
+
+      const response = await injectWorkspaceRequest(app.server, {
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+        },
+        payload: processPayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body).toEqual({
+        action: {
+          notification: {
+            text: 'Document processed successfully',
+          },
+        },
+      });
+    });
+
     it('executes processDocument action when payload passes canonical document type key directly', async () => {
+
       const processPayload = {
         authorizationEventObject: {
           userOAuthToken: 'ya29.sample-e2e-token',

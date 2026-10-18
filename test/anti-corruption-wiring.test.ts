@@ -237,10 +237,12 @@ describe('Anti-Corruption Wiring Integration', () => {
             action: 'processDocument',
           },
           formInputs: {
+            SelectFiles: { stringInputs: { value: ['drive-file-789'] } },
             SelectDocumentType: { stringInputs: { value: ['contract-doc'] } },
             SelectDocumentSpace_projects: { stringInputs: { value: ['Space 1'] } },
             title: { stringInputs: { value: ['Contract A'] } },
           },
+
         },
       },
     });
