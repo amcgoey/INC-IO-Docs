@@ -60,7 +60,7 @@ _Avoid_: Derived field, formula field
 Templates generating unique identifiers (e.g., `id`, `idDocument`, `idGroup`) based on the payload, used in workflows and activities.
 
 **LookupField**:
-A `DocumentField` that links to and validates against predefined option tuples, enriched to provide both machine-friendly identifiers and human-friendly display names.
+A `DocumentField` that links to static or dynamically sourced option tuples (and optionally accepts new user-entered values when `allowUserInput` is enabled), enriched to provide both machine-friendly identifiers and human-friendly display names.
 _Avoid_: ListField
 
 **StorageContext**:
