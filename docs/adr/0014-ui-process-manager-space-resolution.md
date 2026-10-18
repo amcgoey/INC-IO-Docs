@@ -29,16 +29,17 @@ We adopt **Option 2B** and establish the following architectural invariants for 
    - If input uniquely matches a known space's `name`, resolve to its `id`.
    - **Name Collisions**: If multiple spaces in the loaded collection share the exact same name, `resolveSpaceId` flags an ambiguity collision. The error is surfaced immediately in `validationErrors` (`"Multiple spaces match \"<name>\". Please choose or enter a unique space identifier."`), leaving `spaceId` undefined to prevent routing documents to the wrong container.
    - **ID-to-Name Auto-Translation**: If input directly matches a known space's `id`, `resolveSpaceId` returns the ID, and `effectiveFormData` is auto-translated to the space's human-readable `name` on refresh.
-   - **Unlisted ID Fallback**: If input does not match any loaded space name or ID, it is preserved as an unlisted ID fallback.
+   - **Unknown Space Rejection**: `DocumentSpace`s represent pre-existing storage containers; users cannot create new `DocumentSpace`s from the app. If a non-empty input does not match any loaded space's `name` or `id`, `resolveSpace` flags a not-found error (`"Document space \"<input>\" was not found. Please select an existing space."`), leaving `spaceId` undefined and resetting dependent dynamic options to `"Select a Space first"`.
    - **Empty Input**: Clearing the Document Space field resolves `spaceId` to `undefined` and clears dependent dynamic options.
-4. **Pre-Submit Resolution**: In form submission (`actionName === 'processDocument'`), `workspace-addon.adapter.ts` resolves the space display name to its technical storage ID prior to calling `documentRunner.processDocument()`.
+4. **Pre-Submit Resolution & Hydrated Space Contract**: In form submission (`actionName === 'processDocument'`), `workspace-addon.adapter.ts` resolves the space input against the loaded collection prior to calling `documentRunner.processDocument()`. If the space input is empty (`"Please select a Document Space."`), collides with duplicate names, or does not match an existing space in the collection, submission is aborted with an error update card. When matched, the full `DocumentSpace` (`{ id, typeId, name, abstractStorageId }`) is passed to `DocumentService.processDocument()`.
 
 ## Consequences
 
 - **Pros**:
   - Provides a deep, cohesive domain module interface in `UiProcessManager` with zero parameter redundancy.
   - Fixes dynamic suggestion population (Contact suggestions) by ensuring downstream Drive queries receive valid folder IDs.
-  - Prevents data corruption from duplicate space names by throwing an explicit user-facing error.
+  - Prevents data corruption or invalid routing from duplicate or non-existent space names by surfacing explicit user-facing errors.
+  - Preserves `DocumentModel` domain invariants by ensuring `Document.space` is always a validated `DocumentSpace` entity.
   - Preserves Google Workspace Card UI ergonomics by displaying human-readable names.
 - **Cons**:
   - All callers of `evaluateProcessUiState` must supply `spaces: UiProcessSpaceItem[]`.

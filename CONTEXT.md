@@ -16,6 +16,14 @@ _Avoid_: recordSchema
 A highly condensed, abstract blueprint that maps `DocumentSchema` fields to UI concepts (widgets, labels, reactive behaviors). Separated from the core domain.
 _Avoid_: documentUiConfig, FormSchema
 
+**DocumentSpaceType**:
+The structural definition for a category of storage containers (e.g., Projects or Proposals), specifying which `DocumentType`s are allowed and how `DocumentSpace` instances are fetched from storage.
+_Avoid_: ContainerType, SpaceCategory
+
+**DocumentSpace**:
+A pre-existing storage container instance (such as a Google Shared Drive or root folder) belonging to a `DocumentSpaceType`, identified by a canonical ID, display name, and `abstractStorageId`. Users select an existing `DocumentSpace` when filing a `Document`; new `DocumentSpace`s cannot be created through the filing flow.
+_Avoid_: Workspace, FolderContainer, TargetDrive
+
 **SpaceUiSchema**:
 The abstract blueprint mapping `DocumentSpaceType` attributes to UI concepts.
 _Avoid_: spaceUiConfig
