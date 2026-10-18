@@ -193,6 +193,7 @@ describe('Integration: CQRS UI Orchestration (Issue 140)', () => {
           action: 'processDocument',
         },
         formInputs: {
+          SelectFiles: { stringInputs: { value: ['drive-file-101'] } },
           SelectDocumentType_projects: { stringInputs: { value: ['communication-proposal'] } },
           SelectDocumentSpace_projects: { stringInputs: { value: ['Project 1'] } },
           contact: { stringInputs: { value: ['Acme Corp'] } },
