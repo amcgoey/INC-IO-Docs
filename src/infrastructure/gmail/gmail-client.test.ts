@@ -391,4 +391,403 @@ describe('GoogleGmailClient', () => {
       gmailSpy.mockRestore();
     });
   });
+
+  describe('getAttachment', () => {
+    it('downloads and decodes base64url attachment payload into binary Uint8Array', async () => {
+      const rawPayload = 'Sample binary payload content for attachment download test';
+      const base64urlData = Buffer.from(rawPayload, 'utf-8').toString('base64url');
+
+      const mockGetAttachment = vi.fn().mockResolvedValue({
+        data: {
+          size: base64urlData.length,
+          data: base64urlData,
+        },
+      });
+
+      const mockGmail = {
+        users: {
+          messages: {
+            attachments: {
+              get: mockGetAttachment,
+            },
+          },
+        },
+      } as unknown as gmail_v1.Gmail;
+
+      const client = new GoogleGmailClient({ gmail: mockGmail });
+      const result = await client.getAttachment('msg-123', 'att-456');
+
+      expect(mockGetAttachment).toHaveBeenCalledWith({
+        userId: 'me',
+        messageId: 'msg-123',
+        id: 'att-456',
+      });
+      expect(result).toBeInstanceOf(Uint8Array);
+      expect(Buffer.from(result).toString('utf-8')).toBe(rawPayload);
+    });
+
+    it('supports per-request auth override in getAttachment', async () => {
+      const defaultMockGet = vi.fn();
+      const ephemeralMockGet = vi.fn().mockResolvedValue({
+        data: { data: Buffer.from('ephemeral-data').toString('base64url') },
+      });
+
+      const defaultGmail = {
+        users: { messages: { attachments: { get: defaultMockGet } } },
+      } as unknown as gmail_v1.Gmail;
+
+      const ephemeralGmail = {
+        users: { messages: { attachments: { get: ephemeralMockGet } } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(ephemeralGmail);
+
+      const client = new GoogleGmailClient({ gmail: defaultGmail });
+      const result = await client.getAttachment('msg-1', 'att-1', { auth: 'ya29.override-auth' });
+
+      expect(defaultMockGet).not.toHaveBeenCalled();
+      expect(ephemeralMockGet).toHaveBeenCalledWith({
+        userId: 'me',
+        messageId: 'msg-1',
+        id: 'att-1',
+      });
+      expect(Buffer.from(result).toString('utf-8')).toBe('ephemeral-data');
+
+      gmailSpy.mockRestore();
+    });
+
+    it('supports per-request accessToken override in getAttachment', async () => {
+      const defaultMockGet = vi.fn();
+      const ephemeralMockGet = vi.fn().mockResolvedValue({
+        data: { data: Buffer.from('token-data').toString('base64url') },
+      });
+
+      const defaultGmail = {
+        users: { messages: { attachments: { get: defaultMockGet } } },
+      } as unknown as gmail_v1.Gmail;
+
+      const ephemeralGmail = {
+        users: { messages: { attachments: { get: ephemeralMockGet } } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(ephemeralGmail);
+
+      const client = new GoogleGmailClient({ gmail: defaultGmail });
+      const result = await client.getAttachment('msg-2', 'att-2', { accessToken: 'ya29.override-token' });
+
+      expect(defaultMockGet).not.toHaveBeenCalled();
+      expect(ephemeralMockGet).toHaveBeenCalledWith({
+        userId: 'me',
+        messageId: 'msg-2',
+        id: 'att-2',
+      });
+      expect(Buffer.from(result).toString('utf-8')).toBe('token-data');
+
+      gmailSpy.mockRestore();
+    });
+
+    it('throws GoogleGmailNotFoundError with statusCode 404 when attachment API returns 404', async () => {
+      const mockApiError = {
+        message: 'Attachment not found',
+        response: { status: 404 },
+      };
+      const mockGetAttachment = vi.fn().mockRejectedValue(mockApiError);
+
+      const client = new GoogleGmailClient({
+        gmail: {
+          users: { messages: { attachments: { get: mockGetAttachment } } },
+        } as unknown as gmail_v1.Gmail,
+      });
+
+      await expect(client.getAttachment('msg-1', 'missing-att')).rejects.toThrow(GoogleGmailNotFoundError);
+
+      try {
+        await client.getAttachment('msg-1', 'missing-att');
+      } catch (err) {
+        expect(err).toBeInstanceOf(GoogleGmailNotFoundError);
+        const notFound = err as GoogleGmailNotFoundError;
+        expect(notFound.statusCode).toBe(404);
+        expect(notFound.cause).toBe(mockApiError);
+        expect(notFound.message).toContain('Google Gmail API error in getAttachment');
+      }
+    });
+
+    it.each([
+      { desc: 'missing data property', payload: {} },
+      { desc: 'empty string data property', payload: { data: '' } },
+    ])('throws GoogleGmailNotFoundError when attachment payload is $desc', async ({ payload }) => {
+      const mockGetAttachment = vi.fn().mockResolvedValue({ data: payload });
+
+      const client = new GoogleGmailClient({
+        gmail: {
+          users: { messages: { attachments: { get: mockGetAttachment } } },
+        } as unknown as gmail_v1.Gmail,
+      });
+
+      await expect(client.getAttachment('msg-1', 'att-empty')).rejects.toThrow(GoogleGmailNotFoundError);
+
+      try {
+        await client.getAttachment('msg-1', 'att-empty');
+      } catch (err) {
+        expect(err).toBeInstanceOf(GoogleGmailNotFoundError);
+        const notFound = err as GoogleGmailNotFoundError;
+        expect(notFound.statusCode).toBe(404);
+        expect(notFound.message).toContain('not found or payload is empty');
+      }
+    });
+
+    it('throws GoogleGmailApiError preserving statusCode on 500 error in getAttachment', async () => {
+      const mockApiError = {
+        message: 'Internal error',
+        status: 500,
+      };
+      const mockGetAttachment = vi.fn().mockRejectedValue(mockApiError);
+
+      const client = new GoogleGmailClient({
+        gmail: {
+          users: { messages: { attachments: { get: mockGetAttachment } } },
+        } as unknown as gmail_v1.Gmail,
+      });
+
+      await expect(client.getAttachment('msg-1', 'att-err')).rejects.toThrow(GoogleGmailApiError);
+    });
+  });
+
+  describe('Exponential Backoff Retries (429 / 403 Quota)', () => {
+    it('retries getMessage on HTTP 429 and succeeds when a retry attempt succeeds', async () => {
+      const error429 = { status: 429, message: 'Too Many Requests' };
+      const successResponse = { data: { id: 'retry-success-msg' } };
+
+      const mockGet = vi
+        .fn()
+        .mockRejectedValueOnce(error429)
+        .mockRejectedValueOnce(error429)
+        .mockResolvedValueOnce(successResponse);
+
+      const mockSleep = vi.fn().mockResolvedValue(undefined);
+
+      const client = new GoogleGmailClient({
+        gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        retryOptions: {
+          maxRetries: 3,
+          initialDelayMs: 100,
+          backoffFactor: 2,
+          sleep: mockSleep,
+        },
+      });
+
+      const result = await client.getMessage('retry-success-msg');
+
+      expect(result.id).toBe('retry-success-msg');
+      expect(mockGet).toHaveBeenCalledTimes(3);
+      expect(mockSleep).toHaveBeenCalledTimes(2);
+
+      // Attempt 0: baseDelay = 100, jitter in [75, 125]
+      const delay0 = mockSleep.mock.calls[0]?.[0] as number;
+      expect(delay0).toBeGreaterThanOrEqual(75);
+      expect(delay0).toBeLessThanOrEqual(125);
+
+      // Attempt 1: baseDelay = 200, jitter in [150, 250]
+      const delay1 = mockSleep.mock.calls[1]?.[0] as number;
+      expect(delay1).toBeGreaterThanOrEqual(150);
+      expect(delay1).toBeLessThanOrEqual(250);
+    });
+
+    it('retries getAttachment on HTTP 429 and succeeds when a retry attempt succeeds', async () => {
+      const error429 = { status: 429, message: 'Too Many Requests' };
+      const rawPayload = 'Downloaded after 429 retry';
+      const successResponse = {
+        data: { data: Buffer.from(rawPayload).toString('base64url') },
+      };
+
+      const mockGetAttachment = vi
+        .fn()
+        .mockRejectedValueOnce(error429)
+        .mockResolvedValueOnce(successResponse);
+
+      const mockSleep = vi.fn().mockResolvedValue(undefined);
+
+      const client = new GoogleGmailClient({
+        gmail: {
+          users: { messages: { attachments: { get: mockGetAttachment } } },
+        } as unknown as gmail_v1.Gmail,
+        retryOptions: {
+          maxRetries: 3,
+          initialDelayMs: 100,
+          backoffFactor: 2,
+          sleep: mockSleep,
+        },
+      });
+
+      const result = await client.getAttachment('msg-1', 'att-1');
+
+      expect(Buffer.from(result).toString('utf-8')).toBe(rawPayload);
+      expect(mockGetAttachment).toHaveBeenCalledTimes(2);
+      expect(mockSleep).toHaveBeenCalledTimes(1);
+      const delay = mockSleep.mock.calls[0]?.[0] as number;
+      expect(delay).toBeGreaterThanOrEqual(75);
+      expect(delay).toBeLessThanOrEqual(125);
+    });
+
+    it('fails when maxRetries is exceeded on HTTP 429 and throws wrapped GoogleGmailApiError', async () => {
+      const error429 = { status: 429, message: 'Too Many Requests' };
+      const mockGet = vi.fn().mockRejectedValue(error429);
+      const mockSleep = vi.fn().mockResolvedValue(undefined);
+
+      const client = new GoogleGmailClient({
+        gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        retryOptions: {
+          maxRetries: 3,
+          initialDelayMs: 100,
+          backoffFactor: 2,
+          sleep: mockSleep,
+        },
+      });
+
+      await expect(client.getMessage('always-fails')).rejects.toThrow(GoogleGmailApiError);
+      expect(mockGet).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
+      expect(mockSleep).toHaveBeenCalledTimes(3);
+    });
+
+    it.each([
+      {
+        reason: 'userRateLimitExceeded',
+        error: {
+          status: 403,
+          response: {
+            status: 403,
+            data: {
+              error: {
+                errors: [{ reason: 'userRateLimitExceeded', message: 'User Rate Limit Exceeded' }],
+              },
+            },
+          },
+        },
+      },
+      {
+        reason: 'rateLimitExceeded',
+        error: {
+          statusCode: 403,
+          message: 'rateLimitExceeded: Rate limit exceeded',
+        },
+      },
+      {
+        reason: 'quotaExceeded',
+        error: {
+          code: 403,
+          errors: [{ reason: 'quotaExceeded', message: 'Quota exceeded' }],
+        },
+      },
+    ])('retries on HTTP 403 with $reason error', async ({ error }) => {
+      const successResponse = { data: { id: 'quota-retry-ok' } };
+      const mockGet = vi
+        .fn()
+        .mockRejectedValueOnce(error)
+        .mockResolvedValueOnce(successResponse);
+
+      const mockSleep = vi.fn().mockResolvedValue(undefined);
+
+      const client = new GoogleGmailClient({
+        gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        retryOptions: {
+          maxRetries: 2,
+          initialDelayMs: 100,
+          sleep: mockSleep,
+        },
+      });
+
+      const result = await client.getMessage('quota-retry-ok');
+      expect(result.id).toBe('quota-retry-ok');
+      expect(mockGet).toHaveBeenCalledTimes(2);
+      expect(mockSleep).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT retry on HTTP 403 when reason is not quota/rate-limit (e.g. forbidden/permission denied)', async () => {
+      const nonQuotaError = {
+        status: 403,
+        message: 'The caller does not have permission',
+        response: {
+          status: 403,
+          data: {
+            error: {
+              errors: [{ reason: 'forbidden', message: 'Forbidden' }],
+            },
+          },
+        },
+      };
+
+      const mockGet = vi.fn().mockRejectedValue(nonQuotaError);
+      const mockSleep = vi.fn().mockResolvedValue(undefined);
+
+      const client = new GoogleGmailClient({
+        gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        retryOptions: {
+          maxRetries: 3,
+          sleep: mockSleep,
+        },
+      });
+
+      await expect(client.getMessage('forbidden-msg')).rejects.toThrow(GoogleGmailApiError);
+      expect(mockGet).toHaveBeenCalledTimes(1);
+      expect(mockSleep).not.toHaveBeenCalled();
+    });
+
+    it('does NOT retry on HTTP 404 or HTTP 500 errors', async () => {
+      const error404 = { status: 404, message: 'Not Found' };
+      const mockGet404 = vi.fn().mockRejectedValue(error404);
+      const mockSleep = vi.fn().mockResolvedValue(undefined);
+
+      const client = new GoogleGmailClient({
+        gmail: { users: { messages: { get: mockGet404 } } } as unknown as gmail_v1.Gmail,
+        retryOptions: {
+          maxRetries: 3,
+          sleep: mockSleep,
+        },
+      });
+
+      await expect(client.getMessage('missing')).rejects.toThrow(GoogleGmailNotFoundError);
+      expect(mockGet404).toHaveBeenCalledTimes(1);
+      expect(mockSleep).not.toHaveBeenCalled();
+    });
+
+    it('honors default retry options (maxRetries: 3, initialDelayMs: 1000, backoffFactor: 2) when only sleep is provided', async () => {
+      const error429 = { status: 429, message: 'Too Many Requests' };
+      const mockGet = vi
+        .fn()
+        .mockRejectedValueOnce(error429)
+        .mockRejectedValueOnce(error429)
+        .mockRejectedValueOnce(error429)
+        .mockResolvedValueOnce({ data: { id: 'default-retry-success' } });
+
+      const mockSleep = vi.fn().mockResolvedValue(undefined);
+
+      const client = new GoogleGmailClient({
+        gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        retryOptions: {
+          sleep: mockSleep,
+        },
+      });
+
+      const result = await client.getMessage('default-retry-success');
+      expect(result.id).toBe('default-retry-success');
+      expect(mockGet).toHaveBeenCalledTimes(4);
+      expect(mockSleep).toHaveBeenCalledTimes(3);
+
+      // Attempt 0: initialDelayMs = 1000 -> [750, 1250]
+      const delay0 = mockSleep.mock.calls[0]?.[0] as number;
+      expect(delay0).toBeGreaterThanOrEqual(750);
+      expect(delay0).toBeLessThanOrEqual(1250);
+
+      // Attempt 1: 1000 * 2^1 = 2000 -> [1500, 2500]
+      const delay1 = mockSleep.mock.calls[1]?.[0] as number;
+      expect(delay1).toBeGreaterThanOrEqual(1500);
+      expect(delay1).toBeLessThanOrEqual(2500);
+
+      // Attempt 2: 1000 * 2^2 = 4000 -> [3000, 5000]
+      const delay2 = mockSleep.mock.calls[2]?.[0] as number;
+      expect(delay2).toBeGreaterThanOrEqual(3000);
+      expect(delay2).toBeLessThanOrEqual(5000);
+    });
+  });
 });
+

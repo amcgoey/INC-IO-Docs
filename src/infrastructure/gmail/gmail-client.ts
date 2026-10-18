@@ -4,6 +4,7 @@ import type {
   GoogleGmailClientOptions,
   GmailOperationOptions,
   GmailMessageDetails,
+  GmailRetryOptions,
 } from './types';
 import { GoogleGmailApiError, GoogleGmailNotFoundError } from './errors';
 
@@ -16,6 +17,38 @@ function extractHttpStatusCode(error: unknown): number | undefined {
   if (typeof err.code === 'number') return err.code;
   if (typeof err.code === 'string' && !Number.isNaN(Number(err.code))) return Number(err.code);
   return undefined;
+}
+
+function isRateLimitOrQuotaError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const status = extractHttpStatusCode(error);
+  if (status === 429) return true;
+
+  const err = error as Record<string, unknown>;
+  if (err.code === '429' || err.code === 429) return true;
+
+  if (status === 403 || err.code === '403' || err.code === 403) {
+    try {
+      const errorStr = JSON.stringify(error);
+      const quotaReasons = ['userRateLimitExceeded', 'rateLimitExceeded', 'quotaExceeded'];
+      if (quotaReasons.some((reason) => errorStr.includes(reason))) {
+        return true;
+      }
+    } catch {
+      // Non-serializable object
+    }
+    const message = formatErrorMessage(error).toLowerCase();
+    if (
+      message.includes('rate limit') ||
+      message.includes('ratelimit') ||
+      message.includes('quota exceeded') ||
+      message.includes('user rate limit')
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function formatErrorMessage(error: unknown): string {
@@ -49,8 +82,10 @@ function decodeBase64UrlToUtf8(data: string): string {
 
 export class GoogleGmailClient {
   private readonly defaultGmail: gmail_v1.Gmail;
+  private readonly retryOptions: GmailRetryOptions;
 
   constructor(options: GoogleGmailClientOptions = {}) {
+    this.retryOptions = options.retryOptions ?? {};
     if (options.gmail) {
       this.defaultGmail = options.gmail;
     } else if (typeof options.auth === 'string') {
@@ -92,15 +127,43 @@ export class GoogleGmailClient {
     throw new GoogleGmailApiError(message, { cause: error, statusCode });
   }
 
+  private async executeWithRetry<T>(operation: () => Promise<T>): Promise<T> {
+    const maxRetries = this.retryOptions.maxRetries ?? 3;
+    const initialDelayMs = this.retryOptions.initialDelayMs ?? 1000;
+    const backoffFactor = this.retryOptions.backoffFactor ?? 2;
+    const sleep =
+      this.retryOptions.sleep ??
+      ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+
+    let attempt = 0;
+    while (true) {
+      try {
+        return await operation();
+      } catch (error) {
+        if (isRateLimitOrQuotaError(error) && attempt < maxRetries) {
+          const baseDelay = initialDelayMs * Math.pow(backoffFactor, attempt);
+          const jitter = 0.75 + Math.random() * 0.5;
+          const delay = Math.round(baseDelay * jitter);
+          attempt++;
+          await sleep(delay);
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
   async getMessage(messageId: string, options?: GmailOperationOptions): Promise<GmailMessageDetails> {
     const gmail = this.getGmail(options);
     let res: { data: gmail_v1.Schema$Message };
     try {
-      res = await gmail.users.messages.get({
-        userId: 'me',
-        id: messageId,
-        format: 'full',
-      });
+      res = await this.executeWithRetry(() =>
+        gmail.users.messages.get({
+          userId: 'me',
+          id: messageId,
+          format: 'full',
+        })
+      );
     } catch (error) {
       this.wrapApiError('getMessage', error);
     }
@@ -148,6 +211,44 @@ export class GoogleGmailClient {
     };
 
     return details;
+  }
+
+  async getAttachment(
+    messageId: string,
+    attachmentId: string,
+    options?: GmailOperationOptions
+  ): Promise<Uint8Array> {
+    const gmail = this.getGmail(options);
+    let res: { data: gmail_v1.Schema$MessagePartBody };
+    try {
+      res = await this.executeWithRetry(() =>
+        gmail.users.messages.attachments.get({
+          userId: 'me',
+          messageId,
+          id: attachmentId,
+        })
+      );
+    } catch (error) {
+      this.wrapApiError('getAttachment', error);
+    }
+
+    const data = res.data.data;
+    if (!data || data.length === 0) {
+      throw new GoogleGmailNotFoundError(
+        `Google Gmail API error in getAttachment: Attachment '${attachmentId}' in message '${messageId}' not found or payload is empty`,
+        { statusCode: 404 }
+      );
+    }
+
+    const buffer = Buffer.from(data, 'base64url');
+    if (buffer.length === 0) {
+      throw new GoogleGmailNotFoundError(
+        `Google Gmail API error in getAttachment: Attachment '${attachmentId}' in message '${messageId}' payload is empty`,
+        { statusCode: 404 }
+      );
+    }
+
+    return new Uint8Array(buffer);
   }
 }
 
