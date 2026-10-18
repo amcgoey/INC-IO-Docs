@@ -115,6 +115,8 @@ export const DocumentFieldType = Type.Object({
   required: Type.Optional(Type.Boolean()),
   defaultValue: Type.Optional(Type.String()),
   format: Type.Optional(Type.String()),
+  minLength: Type.Optional(Type.Number()),
+  pattern: Type.Optional(Type.String()),
   options: Type.Optional(DocumentFieldOptionType),
 });
 
@@ -337,7 +339,16 @@ export function buildFieldSchema(
         fieldSchema = Type.Union(literals);
       }
     } else {
-      fieldSchema = Type.String();
+      // nosemgrep: domain-pass-through-read
+      const { minLength, pattern } = field;
+      const stringOptions: { minLength?: number; pattern?: string } = {};
+      if (minLength !== undefined) {
+        stringOptions.minLength = minLength;
+      }
+      if (pattern !== undefined) {
+        stringOptions.pattern = pattern;
+      }
+      fieldSchema = Type.String(stringOptions);
     }
   } else {
     throw new Error(`Unsupported field type '${field.type}' in DocumentType '${documentTypeKey}'`);

@@ -48,19 +48,29 @@ export function isGoogleDriveDynamicConfig(
 const DEFAULT_TIMEOUT_MS = 5000;
 const MAX_DYNAMIC_OPTIONS = 150;
 
-function normalizeTargetPath(relativePath?: unknown): string {
+export function extractPathSpec(relativePath?: unknown): string {
   if (typeof relativePath !== 'string') {
-    return 'root';
+    return '';
   }
-  const trimmed = relativePath.trim().replace(/^\/+|\/+$/g, '');
-  return trimmed || 'root';
+  return relativePath.trim().replace(/^\/+|\/+$/g, '');
 }
 
-function getPathSegments(targetPath: string): string[] {
-  if (targetPath === 'root') {
+export function extractTargetPath(pathSpec: string): string {
+  return pathSpec.length > 0 ? pathSpec : 'root';
+}
+
+export function extractPathInfo(config: unknown): { pathSpec: string; targetPath: string } {
+  const relativePath = isGoogleDriveDynamicConfig(config) ? config.relativePath : undefined;
+  const pathSpec = extractPathSpec(relativePath);
+  const targetPath = extractTargetPath(pathSpec);
+  return { pathSpec, targetPath };
+}
+
+export function getPathSegments(pathSpec: string): string[] {
+  if (!pathSpec) {
     return [];
   }
-  return targetPath
+  return pathSpec
     .split('/')
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
@@ -95,9 +105,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     const results: Record<string, DynamicOptionResolution> = {};
 
     for (const query of queries) {
-      const targetPath = normalizeTargetPath(
-        isGoogleDriveDynamicConfig(query.config) ? query.config.relativePath : undefined
-      );
+      const { targetPath } = extractPathInfo(query.config);
       results[query.sourceKey] = { status: 'empty', items: [], targetPath };
     }
 
@@ -123,9 +131,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     query: DynamicOptionQuery,
     spaceId?: string
   ): Promise<DynamicOptionResolution> {
-    const targetPath = normalizeTargetPath(
-      isGoogleDriveDynamicConfig(query.config) ? query.config.relativePath : undefined
-    );
+    const { targetPath } = extractPathInfo(query.config);
 
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -156,9 +162,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     query: DynamicOptionQuery,
     spaceId?: string
   ): Promise<DynamicOptionResolution> {
-    const targetPath = normalizeTargetPath(
-      isGoogleDriveDynamicConfig(query.config) ? query.config.relativePath : undefined
-    );
+    const { pathSpec, targetPath } = extractPathInfo(query.config);
 
     if (!isGoogleDriveDynamicConfig(query.config)) {
       return { status: 'empty', items: [], targetPath };
@@ -168,7 +172,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
       return { status: 'missing_space', items: [], targetPath };
     }
 
-    const outcome = await this.resolveTargetFolder(spaceId, targetPath);
+    const outcome = await this.resolveTargetFolder(spaceId, pathSpec);
     if (!outcome.success) {
       return { status: outcome.status, items: [], targetPath };
     }
@@ -183,9 +187,9 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
 
   private async resolveTargetFolder(
     spaceId: string,
-    targetPath: string
+    pathSpec: string
   ): Promise<ResolveFolderOutcome> {
-    const segments = getPathSegments(targetPath);
+    const segments = getPathSegments(pathSpec);
     if (segments.length === 0) {
       return { success: true, folderId: spaceId };
     }
@@ -257,9 +261,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     const results: Record<string, DynamicValidationResult> = {};
 
     for (const query of queries) {
-      const targetPath = normalizeTargetPath(
-        isGoogleDriveDynamicConfig(query.config) ? query.config.relativePath : undefined
-      );
+      const { targetPath } = extractPathInfo(query.config);
       results[query.queryId] = { isValid: false, status: 'option_not_found', targetPath };
     }
 
@@ -285,9 +287,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     query: DynamicValidationQuery,
     spaceId?: string
   ): Promise<DynamicValidationResult> {
-    const targetPath = normalizeTargetPath(
-      isGoogleDriveDynamicConfig(query.config) ? query.config.relativePath : undefined
-    );
+    const { targetPath } = extractPathInfo(query.config);
 
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -331,9 +331,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     query: DynamicValidationQuery,
     spaceId?: string
   ): Promise<DynamicValidationResult> {
-    const targetPath = normalizeTargetPath(
-      isGoogleDriveDynamicConfig(query.config) ? query.config.relativePath : undefined
-    );
+    const { pathSpec, targetPath } = extractPathInfo(query.config);
 
     if (query.valueToValidate.trim() === '') {
       return { isValid: false, status: 'option_not_found', targetPath };
@@ -347,14 +345,13 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
       return { isValid: false, status: 'missing_space', targetPath };
     }
 
-    const outcome = await this.resolveTargetFolder(spaceId, targetPath);
+    const outcome = await this.resolveTargetFolder(spaceId, pathSpec);
     if (!outcome.success) {
       return { isValid: false, status: outcome.status, targetPath };
     }
 
     let pageToken: string | undefined;
     let matchCount = 0;
-    const normalizedTarget = query.valueToValidate.toLowerCase();
 
     do {
       const result = await this.driveClient.listFolders({
@@ -365,7 +362,7 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
       });
 
       for (const folder of result.folders) {
-        if (folder.name.toLowerCase() === normalizedTarget) {
+        if (folder.name === query.valueToValidate) {
           matchCount++;
           if (matchCount >= 2) {
             return { isValid: false, status: 'ambiguous_option', targetPath };

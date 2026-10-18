@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   DynamicOptionsAdapter,
+  extractPathSpec,
+  extractTargetPath,
+  getPathSegments,
   type DynamicOptionsDriveClient,
 } from './dynamic-options.adapter';
 import type { DynamicOptionQuery } from '../features/schema-driven-ui/ports';
@@ -498,6 +501,76 @@ describe('DynamicOptionsAdapter', () => {
     expect(result.emptySlash.status).toBe('ready');
   });
 
+  it('extractPathSpec, extractTargetPath, and getPathSegments handle empty, root, and subfolders correctly', () => {
+    expect(extractPathSpec(undefined)).toBe('');
+    expect(extractPathSpec('')).toBe('');
+    expect(extractPathSpec('///')).toBe('');
+    expect(extractPathSpec('root')).toBe('root');
+    expect(extractPathSpec('root/sub')).toBe('root/sub');
+
+    expect(extractTargetPath('')).toBe('root');
+    expect(extractTargetPath('root')).toBe('root');
+    expect(extractTargetPath('root/sub')).toBe('root/sub');
+
+    expect(getPathSegments('')).toEqual([]);
+    expect(getPathSegments('root')).toEqual(['root']);
+    expect(getPathSegments('root/sub')).toEqual(['root', 'sub']);
+  });
+
+  it('correctly traverses a folder named "root" as a subfolder rather than treating it as empty root path', async () => {
+    const listFoldersMock = vi.fn().mockImplementation(async (options: { parentFolderId?: string }) => {
+      if (options.parentFolderId === 'space-123') {
+        return {
+          folders: [
+            { id: 'subfolder-root-id', name: 'root' },
+            { id: 'other-id', name: 'other' },
+          ],
+        };
+      }
+      if (options.parentFolderId === 'subfolder-root-id') {
+        return {
+          folders: [
+            { id: 'item-1', name: 'Folder Inside Root' },
+          ],
+        };
+      }
+      return { folders: [] };
+    });
+
+    const driveClient = createMockDriveClient({ listFolders: listFoldersMock });
+    const adapter = new DynamicOptionsAdapter(driveClient);
+
+    const queries: DynamicOptionQuery[] = [
+      {
+        sourceKey: 'rootSubfolder',
+        config: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: 'root',
+        },
+      },
+    ];
+
+    const result = await adapter.fetchOptions(queries, { spaceId: 'space-123' });
+
+    expect(result).toEqual({
+      rootSubfolder: {
+        status: 'ready',
+        items: [
+          { text: 'Folder Inside Root', value: 'Folder Inside Root' },
+        ],
+        targetPath: 'root',
+      },
+    });
+
+    expect(listFoldersMock).toHaveBeenCalledWith(
+      expect.objectContaining({ parentFolderId: 'space-123' })
+    );
+    expect(listFoldersMock).toHaveBeenCalledWith(
+      expect.objectContaining({ parentFolderId: 'subfolder-root-id' })
+    );
+  });
+
   it('returns error resolution on unexpected Drive API error', async () => {
     const driveClient = createMockDriveClient({
       listFolders: vi.fn().mockRejectedValue(new Error('Google Drive 500: Internal Server Error')),
@@ -929,13 +1002,77 @@ describe('DynamicOptionsAdapter', () => {
       expect(mockListFolders).toHaveBeenCalledTimes(2);
     });
 
-    it('performs case-insensitive folder matching', async () => {
+    it('performs exact folder matching in validation', async () => {
       const driveClient = createMockDriveClient({
-        listFolders: vi.fn().mockResolvedValue({
-          folders: [{ id: 'f-1', name: 'Acme Corp' }],
+        listFolders: vi.fn().mockImplementation(async (options: { name?: string }) => {
+          if (options.name === 'Acme Corp') {
+            return { folders: [{ id: 'f-1', name: 'Acme Corp' }] };
+          }
+          return { folders: [] };
         }),
       });
 
+      const adapter = new DynamicOptionsAdapter(driveClient);
+
+      // Exact match succeeds
+      const exactQueries = [
+        {
+          sourceKey: 'contactFolders',
+          queryId: 'contactFolders',
+          config: {
+            provider: 'google_drive',
+            method: 'list_folders',
+          },
+          valueToValidate: 'Acme Corp',
+        },
+      ];
+
+      const exactResult = await adapter.validateExistence(exactQueries, { spaceId: 'space-123' });
+
+      expect(exactResult).toEqual({
+        contactFolders: {
+          isValid: true,
+          status: 'valid',
+          targetPath: 'root',
+        },
+      });
+
+      // Case mismatch fails exact match with option_not_found
+      const mismatchQueries = [
+        {
+          sourceKey: 'contactFolders',
+          queryId: 'contactFolders',
+          config: {
+            provider: 'google_drive',
+            method: 'list_folders',
+          },
+          valueToValidate: 'ACME CORP',
+        },
+      ];
+
+      const mismatchResult = await adapter.validateExistence(mismatchQueries, { spaceId: 'space-123' });
+
+      expect(mismatchResult).toEqual({
+        contactFolders: {
+          isValid: false,
+          status: 'option_not_found',
+          targetPath: 'root',
+        },
+      });
+    });
+
+    it('correctly traverses a folder named "root" as a subfolder during validation', async () => {
+      const listFoldersMock = vi.fn().mockImplementation(async (options: { parentFolderId?: string; name?: string }) => {
+        if (options.parentFolderId === 'space-123' && !options.name) {
+          return { folders: [{ id: 'subfolder-root-id', name: 'root' }] };
+        }
+        if (options.parentFolderId === 'subfolder-root-id' && options.name === 'Acme Corp') {
+          return { folders: [{ id: 'client-1', name: 'Acme Corp' }] };
+        }
+        return { folders: [] };
+      });
+
+      const driveClient = createMockDriveClient({ listFolders: listFoldersMock });
       const adapter = new DynamicOptionsAdapter(driveClient);
 
       const queries = [
@@ -945,8 +1082,9 @@ describe('DynamicOptionsAdapter', () => {
           config: {
             provider: 'google_drive',
             method: 'list_folders',
+            relativePath: 'root',
           },
-          valueToValidate: 'ACME CORP',
+          valueToValidate: 'Acme Corp',
         },
       ];
 
@@ -959,6 +1097,13 @@ describe('DynamicOptionsAdapter', () => {
           targetPath: 'root',
         },
       });
+
+      expect(listFoldersMock).toHaveBeenCalledWith(
+        expect.objectContaining({ parentFolderId: 'space-123' })
+      );
+      expect(listFoldersMock).toHaveBeenCalledWith(
+        expect.objectContaining({ parentFolderId: 'subfolder-root-id', name: 'Acme Corp' })
+      );
     });
 
     it('returns isValid: false with status "missing_space" when spaceId is missing', async () => {

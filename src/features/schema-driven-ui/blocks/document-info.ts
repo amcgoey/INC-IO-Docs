@@ -1,9 +1,11 @@
-import type {
-  UiViewSection,
-  UiSchema,
-  UiViewWidget,
-  UiField,
-  UiViewAction,
+import {
+  type UiViewSection,
+  type UiSchema,
+  type UiViewWidget,
+  type UiField,
+  type UiViewAction,
+  normalizeDynamicOptionResolution,
+  isDynamicOptionConfig,
 } from '../domain';
 import type {
   AbstractDataSchema,
@@ -13,10 +15,8 @@ import type {
   DynamicOptionItem,
   DynamicOptionResolution,
 } from '../ports';
-import { normalizeDynamicOptionResolution } from '../ports';
 import { DEFAULT_MESSAGE_CATALOG, formatFieldHint } from '../message-catalog';
-
-export { normalizeDynamicOptionResolution };
+import { withOnChangeAction } from './common';
 
 export interface DocumentInfoOptions {
   sectionHeader?: string | undefined;
@@ -46,20 +46,6 @@ export function inferDefaultWidget(field: AbstractDataField): 'textInput' | 'sel
   }
   return 'textInput';
 }
-
-export function isDynamicOptionConfig(
-  options: unknown
-): options is { source: string; dynamicConfig: Record<string, unknown> } {
-  if (!options || typeof options !== 'object') return false;
-  const record = options as Record<string, unknown>;
-  return (
-    typeof record.source === 'string' &&
-    typeof record.dynamicConfig === 'object' &&
-    record.dynamicConfig !== null
-  );
-}
-
-import { withOnChangeAction } from './common';
 
 interface WidgetBuilderContext {
   field: AbstractDataField;

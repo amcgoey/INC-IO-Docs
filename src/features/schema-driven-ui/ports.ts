@@ -69,18 +69,6 @@ export const DynamicOptionResolutionSchema = Type.Object({
 
 export type DynamicOptionResolution = Static<typeof DynamicOptionResolutionSchema>;
 
-export function normalizeDynamicOptionResolution(
-  raw: DynamicOptionResolution | DynamicOptionItem[] | undefined
-): DynamicOptionResolution | undefined {
-  if (!raw) return undefined;
-  if (Array.isArray(raw)) {
-    return raw.length > 0
-      ? { status: 'ready', items: raw }
-      : { status: 'empty', items: [] };
-  }
-  return raw;
-}
-
 export const OptionsFetcherContextSchema = Type.Object({
   spaceId: Type.Optional(Type.String()),
   formData: Type.Optional(Type.Record(Type.String(), Type.Unknown())),

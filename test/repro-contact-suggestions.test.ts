@@ -1093,7 +1093,7 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       it.each([
         { desc: 'empty string', contactVal: '' },
         { desc: 'whitespace-only', contactVal: '   ' },
-      ])('rejects submission when contact is $desc with "Option not found."', async ({ contactVal }) => {
+      ])('rejects submission when contact is $desc with schema validation error', async ({ contactVal }) => {
         const response = await injectWorkspaceRequest(app.server, {
           method: 'POST',
           url: '/workspace/action',
@@ -1132,7 +1132,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
 
         const statusSection = updateCard?.sections?.find((s) =>
           s.widgets?.some((w) =>
-            w.textParagraph?.text?.includes('Option not found.')
+            w.textParagraph?.text?.includes('Validation Errors:') &&
+            w.textParagraph?.text?.includes('/contact:')
           )
         );
         expect(statusSection).toBeDefined();
