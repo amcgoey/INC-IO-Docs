@@ -260,6 +260,9 @@ export function createUiProcessRequestWrapper(
               spaces: intent.selectionState.spaces,
               spaceTypes: mapSelectionItems(intent.selectionState.spaceTypes),
               documentTypes: mapSelectionItems(intent.selectionState.documentTypes),
+              ...(intent.selectionState.files !== undefined
+                ? { files: mapSelectionItems(intent.selectionState.files) }
+                : {}),
             },
           }
         : {}),

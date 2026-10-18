@@ -70,7 +70,7 @@ describe('WorkspaceAddonAdapter', () => {
     });
 
     const view = await adapter.composeView(context);
-    expect(view.sections).toHaveLength(2);
+    expect(view.sections).toHaveLength(3);
     const selectionSection = view.sections[0];
     expect(selectionSection.header).toBe('Document Type');
     expect(selectionSection.widgets).toHaveLength(3);
@@ -104,6 +104,48 @@ describe('WorkspaceAddonAdapter', () => {
     expect(selectionSection.widgets[1].textInput?.onChangeAction).toEqual({
       action: 'onFormChange',
     });
+    assertValidUiView(view);
+  });
+
+  it('orchestrates file selection section immediately after document type when selectionState is present', async () => {
+    const context = createContext({
+      selectionState: {
+        spaceTypes: [{ text: 'Department', value: 'dept' }],
+        spaces: ['Engineering'],
+        documentTypes: [{ text: 'Invoice', value: 'inv' }],
+        files: [{ text: 'File 1.pdf', value: 'file-1', selected: true }],
+      },
+    });
+
+    const view = await adapter.composeView(context);
+    expect(view.sections).toHaveLength(3);
+    expect(view.sections[0].header).toBe('Document Type');
+    expect(view.sections[1].header).toBe('File Selection');
+    expect(view.sections[1].collapsible).toBe(true);
+    expect(view.sections[1].widgets[0].selectionInput?.type).toBe('CHECK_BOX');
+    expect(view.sections[1].widgets[0].selectionInput?.name).toBe('SelectFiles');
+    expect(view.sections[1].widgets[0].selectionInput?.items).toEqual([
+      { text: 'File 1.pdf', value: 'file-1', selected: true },
+    ]);
+    expect(view.sections[2].header).toBe('Admin');
+    assertValidUiView(view);
+  });
+
+  it('renders file selection section with empty text when files is omitted from selectionState', async () => {
+    const context = createContext({
+      selectionState: {
+        spaceTypes: [{ text: 'Department', value: 'dept' }],
+        spaces: ['Engineering'],
+        documentTypes: [{ text: 'Invoice', value: 'inv' }],
+      },
+    });
+
+    const view = await adapter.composeView(context);
+    expect(view.sections).toHaveLength(3);
+    expect(view.sections[0].header).toBe('Document Type');
+    expect(view.sections[1].header).toBe('File Selection');
+    expect(view.sections[1].widgets[0].textParagraph?.text).toBe('No files selected.');
+    expect(view.sections[2].header).toBe('Admin');
     assertValidUiView(view);
   });
 
@@ -197,13 +239,15 @@ describe('WorkspaceAddonAdapter', () => {
     // Assert sections order per declarative schema:
     // 1. Status Message Section
     // 2. Document Type Selection Section
-    // 3. Document Info Section
-    // 4. Admin Section
-    expect(view.sections).toHaveLength(4);
+    // 3. File Selection Section
+    // 4. Document Info Section
+    // 5. Admin Section
+    expect(view.sections).toHaveLength(5);
     expect(view.sections[0].widgets[0].textParagraph?.text).toContain('Error A');
     expect(view.sections[1].header).toBe('Document Type');
-    expect(view.sections[2].header).toBe('Document Data');
-    expect(view.sections[3].header).toBe('Admin');
+    expect(view.sections[2].header).toBe('File Selection');
+    expect(view.sections[3].header).toBe('Document Data');
+    expect(view.sections[4].header).toBe('Admin');
     expect(view.evaluationOrder).toEqual(['title']);
     assertValidUiView(view);
   });
@@ -336,7 +380,7 @@ describe('WorkspaceAddonAdapter', () => {
         subtitle: 'Process Document',
       });
       expect(view.evaluationOrder).toEqual(['amount', 'status']);
-      expect(view.sections).toHaveLength(4);
+      expect(view.sections).toHaveLength(5);
 
       // 2. Section 0: Status message section
       const statusSection = view.sections[0];
@@ -363,8 +407,13 @@ describe('WorkspaceAddonAdapter', () => {
       assertValidAgnosticAction(docTypeAction);
       expect(docTypeAction).toEqual({ action: 'onDocumentTypeChange' });
 
-      // 4. Section 2: Document Info section
-      const infoSection = view.sections[2];
+      // 4. Section 2: File Selection section
+      const fileSection = view.sections[2];
+      expect(fileSection.header).toBe('File Selection');
+      expect(fileSection.collapsible).toBe(true);
+
+      // 5. Section 3: Document Info section
+      const infoSection = view.sections[3];
       expect(infoSection.header).toBe('Document Data');
       expect(infoSection.widgets).toHaveLength(3); // 2 inputs + Process Document button
 
@@ -382,8 +431,8 @@ describe('WorkspaceAddonAdapter', () => {
       assertValidAgnosticAction(processButton?.onClick);
       expect(processButton?.onClick).toEqual({ action: 'processDocument' });
 
-      // 5. Section 3: Admin section
-      const adminSection = view.sections[3];
+      // 6. Section 4: Admin section
+      const adminSection = view.sections[4];
       expect(adminSection.header).toBe('Admin');
       expect(adminSection.collapsible).toBe(true);
 
@@ -518,14 +567,15 @@ describe('WorkspaceAddonAdapter', () => {
       const view = await adapter.composeView(context);
       assertValidUiView(view);
 
-      expect(view.sections).toHaveLength(3); // Status, Selection, Admin
+      expect(view.sections).toHaveLength(4); // Status, Selection, File Selection, Admin
       expect(view.sections[0].widgets[0].textParagraph?.text).toContain('Invalid document state');
       expect(view.sections[1].header).toBe('Document Type');
-      expect(view.sections[2].header).toBe('Admin');
+      expect(view.sections[2].header).toBe('File Selection');
+      expect(view.sections[3].header).toBe('Admin');
 
       assertValidAgnosticAction(view.sections[1].widgets[0].selectionInput?.onChangeAction);
       assertValidAgnosticAction(view.sections[1].widgets[2].selectionInput?.onChangeAction);
-      assertValidAgnosticAction(view.sections[2].widgets[0].buttonList?.buttons[0].onClick);
+      assertValidAgnosticAction(view.sections[3].widgets[0].buttonList?.buttons[0].onClick);
     });
   });
 });

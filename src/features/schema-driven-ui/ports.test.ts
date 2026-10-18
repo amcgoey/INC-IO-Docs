@@ -28,13 +28,27 @@ describe('schema-driven-ui ports', () => {
       expect(Value.Check(SelectionStateSchema, state)).toBe(true);
     });
 
-    it('rejects SelectionStateSchema with invalid spaceTypes', () => {
-      const invalidState = {
-        spaceTypes: 'not-an-array',
+    it('validates SelectionStateSchema with optional files array', () => {
+      const stateWithFiles: SelectionState = {
+        spaceTypes: [{ text: 'Projects', value: 'projects' }],
+        spaces: ['space-1', 'space-2'],
+        documentTypes: [{ text: 'Invoice', value: 'invoice', selected: true }],
+        files: [
+          { text: 'File A', value: 'file-1', selected: true },
+          { text: 'File B', value: 'file-2', selected: false },
+        ],
+      };
+      expect(Value.Check(SelectionStateSchema, stateWithFiles)).toBe(true);
+    });
+
+    it('rejects SelectionStateSchema with invalid files property', () => {
+      const invalidFilesState = {
+        spaceTypes: [],
         spaces: [],
         documentTypes: [],
+        files: 'not-an-array',
       };
-      expect(Value.Check(SelectionStateSchema, invalidState)).toBe(false);
+      expect(Value.Check(SelectionStateSchema, invalidFilesState)).toBe(false);
     });
   });
 

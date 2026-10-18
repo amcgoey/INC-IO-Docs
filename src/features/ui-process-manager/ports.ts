@@ -16,6 +16,8 @@ import {
   type ProcessUiStateOutput,
   ResolveSpaceResultSchema,
   type ResolveSpaceResult,
+  ProcessUiStateEventSchema,
+  type ProcessUiStateEvent,
 } from './domain';
 
 export {
@@ -35,6 +37,8 @@ export {
   type ProcessUiStateOutput,
   ResolveSpaceResultSchema,
   type ResolveSpaceResult,
+  ProcessUiStateEventSchema,
+  type ProcessUiStateEvent,
 };
 
 export const UiProcessEventContextSchema = Type.Object({

@@ -1267,6 +1267,87 @@ describe('ui-process-manager domain', () => {
         expect(state.selectionState.documentTypes).toHaveLength(2);
         expect(state.selectionState.documentTypes[0].selected).toBe(true);
       });
+
+      describe('selectionState.files population', () => {
+        it('populates selectionState.files from valid selectedItems with trimmed title and selected: true', () => {
+          const input: ProcessUiStateInput = {
+            context: {
+              selectedItems: [
+                { id: 'drive-1', title: '  Proposal 2026.pdf  ' },
+                { id: 'drive-2', title: 'Contract.pdf' },
+              ],
+            },
+            spaceTypes: sampleSpaceTypes,
+            spaces: [],
+          };
+
+          const state = evaluateProcessUiState(input);
+
+          expect(state.selectionState.files).toEqual([
+            { text: 'Proposal 2026.pdf', value: 'drive-1', selected: true },
+            { text: 'Contract.pdf', value: 'drive-2', selected: true },
+          ]);
+        });
+
+        it('falls back to item.id when title is undefined or whitespace-only', () => {
+          const input: ProcessUiStateInput = {
+            context: {
+              selectedItems: [
+                { id: 'file-no-title' },
+                { id: 'file-whitespace-title', title: '   ' },
+              ],
+            },
+            spaceTypes: sampleSpaceTypes,
+            spaces: [],
+          };
+
+          const state = evaluateProcessUiState(input);
+
+          expect(state.selectionState.files).toEqual([
+            { text: 'file-no-title', value: 'file-no-title', selected: true },
+            { text: 'file-whitespace-title', value: 'file-whitespace-title', selected: true },
+          ]);
+        });
+
+        it('filters out items with missing, empty, or whitespace-only ids', () => {
+          const input: ProcessUiStateInput = {
+            context: {
+              selectedItems: [
+                { id: 'valid-1', title: 'Valid 1' },
+                { title: 'No Id' },
+                { id: '', title: 'Empty Id' },
+                { id: '   ', title: 'Whitespace Id' },
+                { id: 'valid-2', title: 'Valid 2' },
+              ],
+            },
+            spaceTypes: sampleSpaceTypes,
+            spaces: [],
+          };
+
+          const state = evaluateProcessUiState(input);
+
+          expect(state.selectionState.files).toEqual([
+            { text: 'Valid 1', value: 'valid-1', selected: true },
+            { text: 'Valid 2', value: 'valid-2', selected: true },
+          ]);
+        });
+
+        it('sets selectionState.files to an empty array when selectedItems is undefined or empty', () => {
+          const inputUndefined: ProcessUiStateInput = {
+            context: {},
+            spaceTypes: sampleSpaceTypes,
+            spaces: [],
+          };
+          expect(evaluateProcessUiState(inputUndefined).selectionState.files).toEqual([]);
+
+          const inputEmpty: ProcessUiStateInput = {
+            context: { selectedItems: [] },
+            spaceTypes: sampleSpaceTypes,
+            spaces: [],
+          };
+          expect(evaluateProcessUiState(inputEmpty).selectionState.files).toEqual([]);
+        });
+      });
     });
   });
 
