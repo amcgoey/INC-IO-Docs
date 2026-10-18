@@ -36,9 +36,7 @@ export class DriveActivityHandler implements ActivityHandler {
 
   canHandle(activity: Activity): boolean {
     return (
-      activity.type === 'MOVE_DRIVE_FILE' ||
-      activity.type === 'MOVE_SELECTED_FILE' ||
-      activity.type === 'DRIVE_MOVE_SELECTED_FILE' ||
+      activity.type === 'MOVE_FILE' ||
       activity.type === 'SEARCH_DRIVE_FILE' ||
       activity.type === 'FIND_DRIVE_FILE' ||
       activity.type === 'RESOLVE_DRIVE_FILE'

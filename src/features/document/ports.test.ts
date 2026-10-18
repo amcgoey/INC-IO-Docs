@@ -6,6 +6,8 @@ import {
   DynamicValidationQuerySchema,
   DynamicValidationResultSchema,
   DynamicValidationContextSchema,
+  SourceFileSchema,
+  type SourceFile,
   OPTION_NOT_FOUND_MSG,
   VALIDATION_TIMEOUT_MSG,
   type DocumentDynamicValidationPort,
@@ -140,6 +142,22 @@ describe('Document Ports & DTOs', () => {
   it('exports standard validation messages', () => {
     expect(OPTION_NOT_FOUND_MSG).toBe('Option not found.');
     expect(VALIDATION_TIMEOUT_MSG).toBe('Validation timed out.');
+  });
+
+  it('re-exports SourceFileSchema and validates SourceFile shape', () => {
+    expect(SourceFileSchema).toBeDefined();
+
+    const validSourceFile: SourceFile = {
+      id: 'file-xyz-99',
+      name: 'invoice.pdf',
+      mimeType: 'application/pdf',
+    };
+    expect(Value.Check(SourceFileSchema, validSourceFile)).toBe(true);
+
+    const invalidSourceFile = {
+      name: 'invoice.pdf',
+    };
+    expect(Value.Check(SourceFileSchema, invalidSourceFile)).toBe(false);
   });
 });
 

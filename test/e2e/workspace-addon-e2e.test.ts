@@ -331,9 +331,6 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       [getDocumentInfoWidgetName('description', 'communication-project')]: {
         stringInputs: { value: ['Initial Discussion'] },
       },
-      [getDocumentInfoWidgetName('incomingNotes', 'communication-project')]: {
-        stringInputs: { value: ['Notes from call'] },
-      },
     });
 
     it('executes onSpaceTypeChange, ensures no field input collisions on new document type via dynamic suffixes, and retains all previous data when toggling back', async () => {
@@ -530,12 +527,6 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       );
       expect(descriptionWidget2?.textInput?.value).toBe('Initial Discussion');
 
-      const incomingNotesWidget2 = docDataSection2.widgets.find(
-        (w: { textInput?: { name: string } }) =>
-          w.textInput?.name === getDocumentInfoWidgetName('incomingNotes', 'communication-project')
-      );
-      expect(incomingNotesWidget2?.textInput?.value).toBe('Notes from call');
-
       // 6. Explicitly prove NO real network calls occurred throughout
       expect(driveNetworkSpy).not.toHaveBeenCalled();
       expect(oauthNetworkSpy).not.toHaveBeenCalled();
@@ -709,12 +700,6 @@ describe('Workspace Addon UI E2E Test Suite', () => {
           w.textInput?.name === getDocumentInfoWidgetName('description', 'communication-project')
       );
       expect(descriptionWidget2?.textInput?.value).toBe('Initial Discussion');
-
-      const incomingNotesWidget2 = docDataSection2.widgets.find(
-        (w: { textInput?: { name: string } }) =>
-          w.textInput?.name === getDocumentInfoWidgetName('incomingNotes', 'communication-project')
-      );
-      expect(incomingNotesWidget2?.textInput?.value).toBe('Notes from call');
 
       // 5. Explicitly prove NO real network calls occurred
       expect(driveNetworkSpy).not.toHaveBeenCalled();

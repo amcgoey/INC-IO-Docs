@@ -59,6 +59,16 @@ export const FileLocatorType = Type.Object({
 
 export type FileLocator = Static<typeof FileLocatorType>;
 
+export const SourceFileSchema = Type.Object({
+  id: Type.String(),
+  name: Type.Optional(Type.String()),
+  mimeType: Type.Optional(Type.String()),
+});
+
+export const SourceFileType = SourceFileSchema;
+
+export type SourceFile = Static<typeof SourceFileSchema>;
+
 export const ActivityOutputType = Type.Object({
   success: Type.Optional(Type.Boolean()),
   error: Type.Optional(Type.String()),

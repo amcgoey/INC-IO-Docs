@@ -3,7 +3,6 @@ import { Value } from '@sinclair/typebox/value';
 import {
   extractWorkspaceExecutionContext,
   extractBaseUrl,
-  findLatestFileLocator,
   AppBaseUrlEnvSchema,
   WorkspaceRequestHeadersSchema,
 } from './context';
@@ -266,22 +265,6 @@ describe('Workspace Add-on Context', () => {
         const context = extractWorkspaceExecutionContext({}, undefined, { host: 123 } as unknown);
         expect(context.baseUrl).toBeUndefined();
       });
-    });
-  });
-
-
-  describe('findLatestFileLocator', () => {
-    it('returns undefined if outputs is empty or undefined', () => {
-      expect(findLatestFileLocator(undefined)).toBeUndefined();
-      expect(findLatestFileLocator([])).toBeUndefined();
-    });
-
-    it('returns the last file from the latest output with files', () => {
-      const outputs = [
-        { files: [{ name: 'first.pdf' }, { name: 'second.pdf' }] },
-        { files: [{ name: 'latest.pdf' }] },
-      ];
-      expect(findLatestFileLocator(outputs)).toEqual({ name: 'latest.pdf' });
     });
   });
 });

@@ -216,7 +216,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     expect(body.action.navigations[0].pushCard.sections.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('interaction loop: programmatically navigates cascading dropdowns and form changes via simulated JSON Logic roundtrips', async () => {
+  it('interaction loop: programmatically navigates cascading dropdowns via simulated space type changes', async () => {
     // 1. Initial trigger
     const initialResponse = await injectWorkspaceRequest(app.server, {
       method: 'POST',
@@ -232,106 +232,8 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     });
     expect(initialResponse.statusCode).toBe(200);
 
-    // 2. Simulate onFormChange roundtrip 1: user selects direction 'Outgoing' ('OT')
-    // Dynamic rule: incomingNotes showIf: { '==': [{ var: 'data.direction' }, 'IN'] }
-    // When direction is 'OT', incomingNotes must be dynamically hidden.
-    const changeResponse1 = await injectWorkspaceRequest(app.server, {
-      method: 'POST',
-      url: '/workspace/on-form-change',
-      headers: {
-        authorization: 'Bearer valid-jwt-token',
-      },
-      payload: {
-        commonEventObject: {
-          parameters: {
-            action: 'onFormChange',
-          },
-          formInputs: {
-            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
-            [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['John Doe'] } },
-            [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['OT'] } },
-          },
-        },
-        drive: {
-          selectedItems: [{ id: 'drive-file-999', title: 'Q3_Financial_Review.pdf' }],
-        },
-      },
-    });
-
-    expect(changeResponse1.statusCode).toBe(200);
-    const changeBody1 = JSON.parse(changeResponse1.payload);
-    expect(Value.Check(GoogleWorkspaceActionResponseSchema, changeBody1)).toBe(true);
-
-    const updateCard1 = changeBody1.action.navigations[0].updateCard;
-    expect(updateCard1).toBeDefined();
-
-    const dataSection1 = updateCard1.sections.find(
-      (s: { header?: string }) => s.header === 'Document Data'
-    );
-    expect(dataSection1).toBeDefined();
-
-    // Verify incomingNotes is dynamically hidden when direction === 'OT'
-    const notesWidget1 = dataSection1.widgets.find(
-      (w: { textInput?: { name: string } }) =>
-        w.textInput?.name === getDocumentInfoWidgetName('incomingNotes', 'communication-project')
-    );
-    expect(notesWidget1).toBeUndefined();
-
-    // 3. Simulate onFormChange roundtrip 2: user toggles cascading dropdown direction to 'Incoming' ('IN')
-    // Dynamic rule evaluates: incomingNotes showIf evaluates to true, revealing the field!
-    const changeResponse2 = await injectWorkspaceRequest(app.server, {
-      method: 'POST',
-      url: '/workspace/on-form-change',
-      headers: {
-        authorization: 'Bearer valid-jwt-token',
-      },
-      payload: {
-        commonEventObject: {
-          parameters: {
-            action: 'onFormChange',
-          },
-          formInputs: {
-            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
-            [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['John Doe'] } },
-            [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
-            [getDocumentInfoWidgetName('incomingNotes', 'communication-project')]: {
-              stringInputs: { value: ['Follow up with legal'] },
-            },
-          },
-        },
-        drive: {
-          selectedItems: [{ id: 'drive-file-999', title: 'Q3_Financial_Review.pdf' }],
-        },
-      },
-    });
-
-    expect(changeResponse2.statusCode).toBe(200);
-    const changeBody2 = JSON.parse(changeResponse2.payload);
-    const updateCard2 = changeBody2.action.navigations[0].updateCard;
-    const dataSection2 = updateCard2.sections.find(
-      (s: { header?: string }) => s.header === 'Document Data'
-    );
-
-    // Verify incomingNotes is dynamically rendered when direction === 'IN'
-    const notesWidget2 = dataSection2.widgets.find(
-      (w: { textInput?: { name: string } }) =>
-        w.textInput?.name === getDocumentInfoWidgetName('incomingNotes', 'communication-project')
-    );
-    expect(notesWidget2).toBeDefined();
-
-    // Verify cascading dropdown selected states are maintained correctly
-    const directionWidget2 = dataSection2.widgets.find(
-      (w: { selectionInput?: { name: string } }) =>
-        w.selectionInput?.name === getDocumentInfoWidgetName('direction', 'communication-project')
-    );
-    expect(directionWidget2?.selectionInput).toBeDefined();
-    const incomingItem = directionWidget2?.selectionInput?.items.find(
-      (item: { value: string }) => item.value === 'IN'
-    );
-    expect(incomingItem?.selected).toBe(true);
-
-    // 4. Simulate onFormChange roundtrip 3: user changes the Document Space Type cascading selection dropdown to 'proposals'
-    const changeResponse3 = await injectWorkspaceRequest(app.server, {
+    // 2. Simulate onSpaceTypeChange: user changes the Document Space Type cascading selection dropdown to 'proposals'
+    const changeResponse = await injectWorkspaceRequest(app.server, {
       method: 'POST',
       url: '/workspace/action',
       headers: {
@@ -353,27 +255,148 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
       },
     });
 
-    expect(changeResponse3.statusCode).toBe(200);
-    const changeBody3 = JSON.parse(changeResponse3.payload);
-    const updateCard3 = changeBody3.action.navigations[0].updateCard;
-    const docTypeSection3 = updateCard3.sections.find(
+    expect(changeResponse.statusCode).toBe(200);
+    const changeBody = JSON.parse(changeResponse.payload);
+    const updateCard = changeBody.action.navigations[0].updateCard;
+    const docTypeSection = updateCard.sections.find(
       (s: { header?: string }) => s.header === 'Document Type'
     );
-    const spaceTypeWidget3 = docTypeSection3.widgets.find(
+    const spaceTypeWidget = docTypeSection.widgets.find(
       (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'SelectDocumentSpaceType'
     );
-    const selectedSpaceType = spaceTypeWidget3?.selectionInput?.items.find(
+    const selectedSpaceType = spaceTypeWidget?.selectionInput?.items.find(
       (item: { value: string }) => item.value === 'proposals'
     );
     expect(selectedSpaceType?.selected).toBe(true);
 
-    const docTypeWidget3 = docTypeSection3.widgets.find(
+    const docTypeWidget = docTypeSection.widgets.find(
       (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === getDocumentTypeWidgetName('proposals')
     );
-    const selectedProposalItem = docTypeWidget3?.selectionInput?.items.find(
+    const selectedProposalItem = docTypeWidget?.selectionInput?.items.find(
       (item: { value: string }) => item.value === 'communication-proposal'
     );
     expect(selectedProposalItem?.selected).toBe(true);
+  });
+
+  it('reactive field visibility: evaluates showIf rules against a dedicated test fixture schema', async () => {
+    const showIfManifestPath = path.resolve(__dirname, 'fixtures/showif-manifest.json');
+    const showIfManifestProvider = new AppManifestProvider({ manifestPath: showIfManifestPath });
+    const showIfApp = createApp({
+      manifestProvider: showIfManifestProvider,
+      authVerifier: mockAuthVerifier,
+      skipSpaceValidation: true,
+      storageAdapter: mockStorageAdapter,
+    });
+    await showIfApp.initialize();
+
+    // 1. Initial trigger
+    const initialResponse = await injectWorkspaceRequest(showIfApp.server, {
+      method: 'POST',
+      url: '/workspace/drive-items-selected',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        drive: {
+          selectedItems: [{ id: 'drive-file-999', title: 'Q3_Financial_Review.pdf' }],
+        },
+      },
+    });
+    expect(initialResponse.statusCode).toBe(200);
+
+    // 2. Simulate onFormChange roundtrip 1: category is 'STANDARD' (default) -> specialNotes hidden
+    const changeResponse1 = await injectWorkspaceRequest(showIfApp.server, {
+      method: 'POST',
+      url: '/workspace/on-form-change',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        commonEventObject: {
+          parameters: {
+            action: 'onFormChange',
+          },
+          formInputs: {
+            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['showif-test-document'] } },
+            [getDocumentInfoWidgetName('category', 'showif-test-document')]: { stringInputs: { value: ['STANDARD'] } },
+          },
+        },
+        drive: {
+          selectedItems: [{ id: 'drive-file-999', title: 'Q3_Financial_Review.pdf' }],
+        },
+      },
+    });
+
+    expect(changeResponse1.statusCode).toBe(200);
+    const changeBody1 = JSON.parse(changeResponse1.payload);
+    expect(Value.Check(GoogleWorkspaceActionResponseSchema, changeBody1)).toBe(true);
+
+    const updateCard1 = changeBody1.action.navigations[0].updateCard;
+    expect(updateCard1).toBeDefined();
+
+    const dataSection1 = updateCard1.sections.find(
+      (s: { header?: string }) => s.header === 'Document Data'
+    );
+    expect(dataSection1).toBeDefined();
+
+    // Verify specialNotes is dynamically hidden when category === 'STANDARD'
+    const notesWidget1 = dataSection1.widgets.find(
+      (w: { textInput?: { name: string } }) =>
+        w.textInput?.name === getDocumentInfoWidgetName('specialNotes', 'showif-test-document')
+    );
+    expect(notesWidget1).toBeUndefined();
+
+    // 3. Simulate onFormChange roundtrip 2: user toggles category to 'SPECIAL'
+    // Dynamic rule evaluates: specialNotes showIf evaluates to true, revealing the field!
+    const changeResponse2 = await injectWorkspaceRequest(showIfApp.server, {
+      method: 'POST',
+      url: '/workspace/on-form-change',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        commonEventObject: {
+          parameters: {
+            action: 'onFormChange',
+          },
+          formInputs: {
+            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['showif-test-document'] } },
+            [getDocumentInfoWidgetName('category', 'showif-test-document')]: { stringInputs: { value: ['SPECIAL'] } },
+            [getDocumentInfoWidgetName('specialNotes', 'showif-test-document')]: {
+              stringInputs: { value: ['High priority note'] },
+            },
+          },
+        },
+        drive: {
+          selectedItems: [{ id: 'drive-file-999', title: 'Q3_Financial_Review.pdf' }],
+        },
+      },
+    });
+
+    expect(changeResponse2.statusCode).toBe(200);
+    const changeBody2 = JSON.parse(changeResponse2.payload);
+    const updateCard2 = changeBody2.action.navigations[0].updateCard;
+    const dataSection2 = updateCard2.sections.find(
+      (s: { header?: string }) => s.header === 'Document Data'
+    );
+
+    // Verify specialNotes is dynamically rendered when category === 'SPECIAL'
+    const notesWidget2 = dataSection2.widgets.find(
+      (w: { textInput?: { name: string } }) =>
+        w.textInput?.name === getDocumentInfoWidgetName('specialNotes', 'showif-test-document')
+    );
+    expect(notesWidget2).toBeDefined();
+
+    // Verify category selection state is maintained
+    const categoryWidget2 = dataSection2.widgets.find(
+      (w: { selectionInput?: { name: string } }) =>
+        w.selectionInput?.name === getDocumentInfoWidgetName('category', 'showif-test-document')
+    );
+    expect(categoryWidget2?.selectionInput).toBeDefined();
+    const specialItem = categoryWidget2?.selectionInput?.items.find(
+      (item: { value: string }) => item.value === 'SPECIAL'
+    );
+    expect(specialItem?.selected).toBe(true);
   });
 
   it('mutation & error rendering: drives flow to final Process submission testing both failure and success paths', async () => {

@@ -22,6 +22,7 @@ import {
   ActivityType,
   ActivityOutputType,
   FileLocatorType,
+  SourceFileSchema,
   formatValidationErrors,
   validateManifestTemplates,
   walkTemplates,
@@ -30,6 +31,7 @@ import {
   type Activity,
   type ActivityOutput,
   type FileLocator,
+  type SourceFile,
   type Document,
   type DocumentType,
   type StorageContextConfig,
@@ -192,6 +194,45 @@ describe('Document domain', () => {
       uri: 12345,
     };
     expect(Value.Check(FileLocatorType, invalidUriType)).toBe(false);
+  });
+
+  it('should export SourceFileSchema and validate valid and invalid source files', () => {
+    expect(SourceFileSchema).toBeDefined();
+
+    const fullSourceFile: SourceFile = {
+      id: 'file-123',
+      name: 'Report.pdf',
+      mimeType: 'application/pdf',
+    };
+    expect(Value.Check(SourceFileSchema, fullSourceFile)).toBe(true);
+
+    const minimalSourceFile: SourceFile = {
+      id: 'file-456',
+    };
+    expect(Value.Check(SourceFileSchema, minimalSourceFile)).toBe(true);
+
+    const missingId = {
+      name: 'Report.pdf',
+    };
+    expect(Value.Check(SourceFileSchema, missingId)).toBe(false);
+
+    const invalidIdType = {
+      id: 12345,
+      name: 'Report.pdf',
+    };
+    expect(Value.Check(SourceFileSchema, invalidIdType)).toBe(false);
+
+    const invalidNameType = {
+      id: 'file-123',
+      name: 999,
+    };
+    expect(Value.Check(SourceFileSchema, invalidNameType)).toBe(false);
+
+    const invalidMimeType = {
+      id: 'file-123',
+      mimeType: true,
+    };
+    expect(Value.Check(SourceFileSchema, invalidMimeType)).toBe(false);
   });
 
   it('should export ActivityOutputType schema and validate valid and invalid outputs', () => {

@@ -1,0 +1,29 @@
+{
+  "documentTypes": [
+    "./showif-document.json"
+  ],
+  "configuration": {
+    "workspace": {
+      "appTitle": "INC-IO Engine",
+      "actionButtonText": "Process",
+      "defaultDocumentType": "showif-test-document",
+      "defaultDocumentSpaceType": "projects",
+      "defaultEventName": "onSubmit"
+    }
+  },
+  "DocumentSpaceTypes": [
+    {
+      "id": "projects",
+      "displayName": "Projects",
+      "spaceSchema": {
+        "allowedDocumentTypes": [
+          "showif-test-document"
+        ]
+      },
+      "storageConfig": {
+        "provider": "google_drive",
+        "fetchMethod": "shared_drives"
+      }
+    }
+  ]
+}

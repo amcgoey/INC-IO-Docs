@@ -47,13 +47,6 @@
         "type": "string",
         "description": "Description of communication",
         "required": true
-      },
-      {
-        "key": "incomingNotes",
-        "name": "Incoming Notes",
-        "type": "string",
-        "description": "Notes for incoming communication",
-        "required": false
       }
     ],
     "identity": {
@@ -79,8 +72,7 @@
       "contact",
       "date",
       "direction",
-      "description",
-      "incomingNotes"
+      "description"
     ],
     "fields": {
       "contact": {
@@ -98,18 +90,6 @@
       "description": {
         "widget": "textInput",
         "label": "Description"
-      },
-      "incomingNotes": {
-        "widget": "textInput",
-        "label": "Incoming Notes",
-        "showIf": {
-          "==": [
-            {
-              "var": "data.direction"
-            },
-            "IN"
-          ]
-        }
       }
     },
     "events": {

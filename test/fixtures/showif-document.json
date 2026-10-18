@@ -1,0 +1,82 @@
+{
+  "key": "showif-test-document",
+  "name": "ShowIf Test Document",
+  "documentSchema": {
+    "fields": [
+      {
+        "key": "category",
+        "name": "Category",
+        "type": "string",
+        "required": true,
+        "defaultValue": "STANDARD",
+        "options": {
+          "source": "categoryOptions",
+          "key": "key",
+          "name": "name"
+        }
+      },
+      {
+        "key": "specialNotes",
+        "name": "Special Notes",
+        "type": "string",
+        "required": false
+      }
+    ],
+    "options": {
+      "categoryOptions": [
+        {
+          "key": "STANDARD",
+          "name": "Standard"
+        },
+        {
+          "key": "SPECIAL",
+          "name": "Special"
+        }
+      ]
+    }
+  },
+  "documentUiSchema": {
+    "layout": [
+      "category",
+      "specialNotes"
+    ],
+    "fields": {
+      "category": {
+        "widget": "selectionInput",
+        "label": "Category"
+      },
+      "specialNotes": {
+        "widget": "textInput",
+        "label": "Special Notes",
+        "showIf": {
+          "==": [
+            {
+              "var": "data.category"
+            },
+            "SPECIAL"
+          ]
+        }
+      }
+    },
+    "events": {
+      "onSubmit": {
+        "catchAllWorkflow": "SubmitShowIfTest"
+      }
+    }
+  },
+  "documentWorkflowConfig": {
+    "workflows": [
+      {
+        "name": "SubmitShowIfTest",
+        "activitySequence": [
+          {
+            "type": "MOVE_FILE",
+            "payload": {
+              "folderName": "Special"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

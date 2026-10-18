@@ -818,7 +818,7 @@ describe('App integration tests', () => {
               name: 'ConfiguredWorkflow',
               activitySequence: [
                 {
-                  type: 'MOVE_DRIVE_FILE',
+                  type: 'MOVE_FILE',
                   payload: {},
                 },
               ],

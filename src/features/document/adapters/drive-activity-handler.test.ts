@@ -54,15 +54,16 @@ describe('DriveActivityHandler', () => {
 
   describe('canHandle', () => {
     it('returns true for supported activity types', () => {
-      expect(handler.canHandle({ type: 'MOVE_DRIVE_FILE', payload: {} })).toBe(true);
-      expect(handler.canHandle({ type: 'MOVE_SELECTED_FILE', payload: {} })).toBe(true);
-      expect(handler.canHandle({ type: 'DRIVE_MOVE_SELECTED_FILE', payload: {} })).toBe(true);
+      expect(handler.canHandle({ type: 'MOVE_FILE', payload: {} })).toBe(true);
       expect(handler.canHandle({ type: 'SEARCH_DRIVE_FILE', payload: {} })).toBe(true);
       expect(handler.canHandle({ type: 'FIND_DRIVE_FILE', payload: {} })).toBe(true);
       expect(handler.canHandle({ type: 'RESOLVE_DRIVE_FILE', payload: {} })).toBe(true);
     });
 
-    it('returns false for unrelated activity types', () => {
+    it('returns false for retired aliases and unrelated activity types', () => {
+      expect(handler.canHandle({ type: 'MOVE_DRIVE_FILE', payload: {} })).toBe(false);
+      expect(handler.canHandle({ type: 'MOVE_SELECTED_FILE', payload: {} })).toBe(false);
+      expect(handler.canHandle({ type: 'DRIVE_MOVE_SELECTED_FILE', payload: {} })).toBe(false);
       expect(handler.canHandle({ type: 'LOG_DOCUMENT', payload: {} })).toBe(false);
       expect(handler.canHandle({ type: 'SEND_EMAIL', payload: {} })).toBe(false);
     });
@@ -71,7 +72,7 @@ describe('DriveActivityHandler', () => {
   describe('handle', () => {
     it('moves file when fileId is in activity payload', async () => {
       const activity: Activity = {
-        type: 'MOVE_DRIVE_FILE',
+        type: 'MOVE_FILE',
         payload: {
           fileId: 'file-123',
           folderName: 'Unfiled',
@@ -108,7 +109,7 @@ describe('DriveActivityHandler', () => {
         primaryTargetId: 'selected-file-789',
       });
       const activity: Activity = {
-        type: 'MOVE_DRIVE_FILE',
+        type: 'MOVE_FILE',
         payload: {},
       };
 
@@ -127,7 +128,7 @@ describe('DriveActivityHandler', () => {
 
     it('throws error when fileId cannot be found in payload or context', async () => {
       const activity: Activity = {
-        type: 'MOVE_DRIVE_FILE',
+        type: 'MOVE_FILE',
         payload: {},
       };
 
@@ -145,7 +146,7 @@ describe('DriveActivityHandler', () => {
       });
 
       const activity: Activity = {
-        type: 'MOVE_DRIVE_FILE',
+        type: 'MOVE_FILE',
         payload: { fileId: 'root-file-123' },
       };
 
@@ -176,7 +177,7 @@ describe('DriveActivityHandler', () => {
       });
 
       const activity: Activity = {
-        type: 'MOVE_DRIVE_FILE',
+        type: 'MOVE_FILE',
         payload: { fileId: 'file-123' },
       };
 
@@ -202,7 +203,7 @@ describe('DriveActivityHandler', () => {
       });
 
       const activity: Activity = {
-        type: 'MOVE_DRIVE_FILE',
+        type: 'MOVE_FILE',
         payload: { fileId: 'file-123', folderName: 'PayloadFolder' },
       };
 
@@ -228,7 +229,7 @@ describe('DriveActivityHandler', () => {
       });
 
       const activity: Activity = {
-        type: 'MOVE_DRIVE_FILE',
+        type: 'MOVE_FILE',
         payload: { fileId: 'file-fallback' },
       };
 
@@ -249,7 +250,7 @@ describe('DriveActivityHandler', () => {
       });
 
       const activity: Activity = {
-        type: 'MOVE_DRIVE_FILE',
+        type: 'MOVE_FILE',
         payload: { fileId: 'file-no-link' },
       };
 
@@ -267,7 +268,7 @@ describe('DriveActivityHandler', () => {
       });
 
       const activity: Activity = {
-        type: 'MOVE_DRIVE_FILE',
+        type: 'MOVE_FILE',
         payload: { fileId: 'file-123' },
       };
 
@@ -282,7 +283,7 @@ describe('DriveActivityHandler', () => {
       );
 
       const activity: Activity = {
-        type: 'MOVE_DRIVE_FILE',
+        type: 'MOVE_FILE',
         payload: { fileId: 'file-123' },
       };
 
@@ -466,7 +467,7 @@ describe('DriveActivityHandler', () => {
           primaryTargetId: 'injected-file-opt-999',
         });
         const activity: Activity = {
-          type: 'MOVE_DRIVE_FILE',
+          type: 'MOVE_FILE',
           payload: { folderName: 'CustomFolder' },
         };
 
@@ -492,7 +493,7 @@ describe('DriveActivityHandler', () => {
           primaryTargetId: 'fallback-file-id',
         });
         const activity: Activity = {
-          type: 'MOVE_DRIVE_FILE',
+          type: 'MOVE_FILE',
           payload: { fileId: 'payload-priority-id', folderName: 'CustomFolder' },
         };
 
