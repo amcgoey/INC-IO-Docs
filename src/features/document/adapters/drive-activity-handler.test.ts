@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { DriveActivityHandler } from './drive-activity-handler';
+import { DriveActivityHandler, parsePathSegments } from './drive-activity-handler';
 import {
   AmbiguousPathSpecError,
   DriveServiceError,
@@ -494,7 +494,7 @@ describe('DriveActivityHandler', () => {
         ).toThrow(/DriveActivityHandler: primaryTargetId must be a non-empty string/);
       });
 
-      it('prefers payload fileId over injected primaryTargetId', async () => {
+      it('prefers normalized sourceFiles (from primaryTargetId) over payload fileId', async () => {
         const injectedHandler = new DriveActivityHandler(mockDriveService, {
           primaryTargetId: 'fallback-file-id',
         });
@@ -505,8 +505,35 @@ describe('DriveActivityHandler', () => {
 
         await injectedHandler.handle(activity);
 
-        expect(mockDriveService.getFile).toHaveBeenCalledWith('payload-priority-id');
-        expect(mockDriveService.move).toHaveBeenCalledWith('payload-priority-id', 'testmove-folder-id');
+        expect(mockDriveService.getFile).toHaveBeenCalledWith('fallback-file-id');
+        expect(mockDriveService.move).toHaveBeenCalledWith('fallback-file-id', 'testmove-folder-id');
+      });
+
+      it('falls back to payload fileId when sourceFiles and primaryTargetId are absent', async () => {
+        const fallbackHandler = new DriveActivityHandler(mockDriveService);
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: { fileId: 'payload-file-id', folderName: 'CustomFolder' },
+        };
+
+        await fallbackHandler.handle(activity);
+
+        expect(mockDriveService.getFile).toHaveBeenCalledWith('payload-file-id');
+        expect(mockDriveService.move).toHaveBeenCalledWith('payload-file-id', 'testmove-folder-id');
+      });
+    });
+
+    describe('parsePathSegments helper', () => {
+      it('parses valid single and multi-segment paths', () => {
+        expect(parsePathSegments('Admin/Communication')).toEqual(['Admin', 'Communication']);
+        expect(parsePathSegments('  /Admin\\Communication/  ')).toEqual(['Admin', 'Communication']);
+        expect(parsePathSegments('SingleFolder')).toEqual(['SingleFolder']);
+      });
+
+      it('throws DriveServiceError on invalid paths', () => {
+        expect(() => parsePathSegments('')).toThrow(DriveServiceError);
+        expect(() => parsePathSegments('   /  ')).toThrow(DriveServiceError);
+        expect(() => parsePathSegments(123 as unknown as string)).toThrow(DriveServiceError);
       });
     });
 

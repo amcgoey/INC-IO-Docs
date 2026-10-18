@@ -19,6 +19,21 @@ export interface DriveActivityHandlerOptions {
   sourceFiles?: SourceFile[] | undefined;
 }
 
+export function parsePathSegments(path: string): string[] {
+  if (typeof path !== 'string') {
+    throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
+  }
+  const cleanPath = path.trim().replace(/^[/\\ ]+|[/\\ ]+$/g, '');
+  if (cleanPath.length === 0) {
+    throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
+  }
+  const segments = cleanPath.split(/[/\\]+/).map((s) => s.trim());
+  if (segments.length === 0 || segments.some((s) => s.length === 0)) {
+    throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
+  }
+  return segments;
+}
+
 export class DriveActivityHandler implements ActivityHandler {
   private readonly options: DriveActivityHandlerOptions;
   private readonly sourceFiles?: SourceFile[] | undefined;
@@ -37,6 +52,8 @@ export class DriveActivityHandler implements ActivityHandler {
     };
     if (options?.sourceFiles && options.sourceFiles.length > 0) {
       this.sourceFiles = options.sourceFiles;
+    } else if (validatedTargetId) {
+      this.sourceFiles = [{ id: validatedTargetId }];
     } else {
       this.sourceFiles = undefined;
     }
@@ -243,12 +260,10 @@ export class DriveActivityHandler implements ActivityHandler {
         ? payload.fileId.trim()
         : undefined;
 
-    if (payloadFileId) {
-      targetSourceFiles = [{ id: payloadFileId }];
-    } else if (this.sourceFiles && this.sourceFiles.length > 0) {
+    if (this.sourceFiles && this.sourceFiles.length > 0) {
       targetSourceFiles = [...this.sourceFiles];
-    } else if (this.options.primaryTargetId) {
-      targetSourceFiles = [{ id: this.options.primaryTargetId }];
+    } else if (payloadFileId) {
+      targetSourceFiles = [{ id: payloadFileId }];
     } else {
       const searchQuery = this.extractSearchQuery(payload);
       if (searchQuery) {
@@ -288,18 +303,7 @@ export class DriveActivityHandler implements ActivityHandler {
 
     let parentPathSegments: string[] = [];
     if (payload.parentPath !== undefined) {
-      if (typeof payload.parentPath !== 'string') {
-        throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
-      }
-      const cleanParentPath = payload.parentPath.trim().replace(/^[/\\ ]+|[/\\ ]+$/g, '');
-      if (cleanParentPath.length === 0) {
-        throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
-      }
-      const segments = cleanParentPath.split(/[/\\]+/).map((s) => s.trim());
-      if (segments.length === 0 || segments.some((s) => s.length === 0)) {
-        throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
-      }
-      parentPathSegments = segments;
+      parentPathSegments = parsePathSegments(payload.parentPath as string);
     }
 
     let baseFolderId: string;
@@ -331,18 +335,7 @@ export class DriveActivityHandler implements ActivityHandler {
       driveConfig?.defaultFolderName ?? this.options.defaultFolderName ?? 'Unfiled';
     let folderSegments: string[];
     if (payload.folderName !== undefined) {
-      if (typeof payload.folderName !== 'string') {
-        throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
-      }
-      const cleanFolderName = payload.folderName.trim().replace(/^[/\\ ]+|[/\\ ]+$/g, '');
-      if (cleanFolderName.length === 0) {
-        throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
-      }
-      const segments = cleanFolderName.split(/[/\\]+/).map((s) => s.trim());
-      if (segments.length === 0 || segments.some((s) => s.length === 0)) {
-        throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
-      }
-      folderSegments = segments;
+      folderSegments = parsePathSegments(payload.folderName as string);
     } else {
       folderSegments = [defaultTargetName];
     }

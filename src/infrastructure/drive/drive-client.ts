@@ -350,7 +350,7 @@ export class GoogleDriveClient {
 
       if (res.data.files && res.data.files.length > 1) {
         throw new GoogleDriveAmbiguousPathError(
-          `AmbiguousPathSpecError: Query for folder '${folderName}' in parent '${parentId}' returned ${res.data.files.length} results, exceeding unique match threshold.`
+          `Query for folder '${folderName}' in parent '${parentId}' returned ${res.data.files.length} results, exceeding unique match threshold.`
         );
       }
 
@@ -438,7 +438,7 @@ export class GoogleDriveClient {
 
         if (files.length > 1) {
           throw new GoogleDriveAmbiguousPathError(
-            `AmbiguousPathSpecError: Query for folder segment '${segment}' under parent '${currentFolderId}' returned ${files.length} matches and could not be uniquely resolved.`
+            `Query for folder segment '${segment}' under parent '${currentFolderId}' returned ${files.length} matches and could not be uniquely resolved.`
           );
         }
 
@@ -491,7 +491,7 @@ export class GoogleDriveClient {
       const removeParents =
         removeParentsList.length > 0 ? removeParentsList.join(',') : undefined;
 
-      if (currentParents.includes(targetFolderId) && !removeParents) {
+      if (currentParents.includes(targetFolderId)) {
         return file;
       }
 
@@ -656,7 +656,7 @@ export class GoogleDriveClient {
 
           if (parentFiles.length > 20) {
             throw new GoogleDriveAmbiguousPathError(
-              `AmbiguousPathSpecError: Query for parent folder '${parentFolderName}' returned ${parentFiles.length} results, exceeding the threshold cap of 20 matches.`
+              `Query for parent folder '${parentFolderName}' returned ${parentFiles.length} results, exceeding the threshold cap of 20 matches.`
             );
           }
 

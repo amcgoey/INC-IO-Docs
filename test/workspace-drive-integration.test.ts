@@ -1030,7 +1030,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(updateCard).toBeDefined();
 
       const errorSection = updateCard.sections.find((s: { widgets?: Array<{ textParagraph?: { text?: string } }> }) =>
-        s.widgets?.some((w) => w.textParagraph?.text?.includes('AmbiguousPathSpecError'))
+        s.widgets?.some((w) => w.textParagraph?.text?.includes('could not be uniquely resolved'))
       );
       expect(errorSection).toBeDefined();
     });

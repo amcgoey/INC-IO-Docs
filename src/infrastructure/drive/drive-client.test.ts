@@ -327,7 +327,7 @@ describe('GoogleDriveClient', () => {
       });
     });
 
-    it('filters out targetFolderId from removeParents when targetFolderId is already in parents list', async () => {
+    it('returns existing file metadata as an idempotent no-op when targetFolderId is already in parents list', async () => {
       (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValue({
         data: {
           id: 'file-123',
@@ -336,24 +336,10 @@ describe('GoogleDriveClient', () => {
         },
       });
 
-      (mockDrive.files.update as ReturnType<typeof vi.fn>).mockResolvedValue({
-        data: {
-          id: 'file-123',
-          name: 'Project Plan.pdf',
-          parents: ['new-target-folder-id'],
-        },
-      });
-
       const moved = await client.move('file-123', 'new-target-folder-id');
 
-      expect(moved.parents).toEqual(['new-target-folder-id']);
-      expect(mockDrive.files.update).toHaveBeenCalledWith({
-        fileId: 'file-123',
-        addParents: 'new-target-folder-id',
-        removeParents: 'old-parent-id',
-        fields: 'id, name, parents, mimeType, webViewLink',
-        supportsAllDrives: true,
-      });
+      expect(moved.parents).toEqual(['old-parent-id', 'new-target-folder-id']);
+      expect(mockDrive.files.update).not.toHaveBeenCalled();
     });
 
     it('returns existing file metadata as an idempotent no-op when file is already in targetFolderId and no other parents exist', async () => {
@@ -905,7 +891,7 @@ describe('GoogleDriveClient', () => {
 
         expect(error).toBeInstanceOf(GoogleDriveAmbiguousPathError);
         expect(error.name).toBe('GoogleDriveAmbiguousPathError');
-        expect(error.message).toMatch(/AmbiguousPathSpecError: Query for parent folder 'Duplicates' returned 21 results, exceeding the threshold cap of 20 matches/);
+        expect(error.message).toMatch(/Query for parent folder 'Duplicates' returned 21 results, exceeding the threshold cap of 20 matches/);
         expect(mockDrive.files.list).toHaveBeenCalledTimes(1);
       });
 
@@ -1246,7 +1232,7 @@ describe('GoogleDriveClient', () => {
 
         expect(error).toBeInstanceOf(GoogleDriveAmbiguousPathError);
         expect(error.message).toMatch(
-          /AmbiguousPathSpecError: Query for parent folder 'Offices' returned 21 results, exceeding the threshold cap of 20 matches/
+          /Query for parent folder 'Offices' returned 21 results, exceeding the threshold cap of 20 matches/
         );
         // Should halt immediately and not query Level 2 or Target
         expect(mockDrive.files.list).toHaveBeenCalledTimes(2);
