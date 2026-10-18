@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { PdfProcessor } from './pdf-processor';
+import type { EmailPdfRenderInput } from './types';
 import {
   PdfCorruptedError,
   PdfEncryptionError,
@@ -594,6 +595,254 @@ describe('PdfProcessor', () => {
       ).rejects.toThrow(PdfCorruptedError);
 
       extractPagesSpy.mockRestore();
+    });
+  });
+
+  describe('generateEmailPdf', () => {
+    it('generates a Letter-sized PDF with standard margins, headers, and footer', async () => {
+      const email: EmailPdfRenderInput = {
+        messageId: '<msg-123@example.com>',
+        subject: 'Quarterly Financial Summary',
+        from: 'alice@example.com',
+        to: 'bob@example.com',
+        date: '2026-10-18 10:00:00',
+        plainTextBody: 'Hello Bob,\nPlease find attached the report.\nBest,\nAlice',
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+
+      const doc = await PDFDocument.load(pdfBytes);
+      expect(doc.getPageCount()).toBe(1);
+
+      const page = doc.getPage(0);
+      expect(page.getWidth()).toBe(612);
+      expect(page.getHeight()).toBe(792);
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Message ID: <msg-123@example.com>');
+      expect(text).toContain('Subject: Quarterly Financial Summary');
+      expect(text).toContain('From: alice@example.com');
+      expect(text).toContain('To: bob@example.com');
+      expect(text).toContain('Date: 2026-10-18 10:00:00');
+      expect(text).toContain('Hello Bob,');
+      expect(text).toContain('Page 1 of 1');
+    });
+
+    it('falls back to (No Subject) when subject is missing, empty, or whitespace-only', async () => {
+      const emailMissing: EmailPdfRenderInput = {
+        messageId: 'id-1',
+      };
+      const textMissing = await processor.extractTextFromPages(
+        await processor.generateEmailPdf(emailMissing),
+        [1]
+      );
+      expect(textMissing).toContain('Subject: (No Subject)');
+
+      const emailEmpty: EmailPdfRenderInput = {
+        messageId: 'id-2',
+        subject: '',
+      };
+      const textEmpty = await processor.extractTextFromPages(
+        await processor.generateEmailPdf(emailEmpty),
+        [1]
+      );
+      expect(textEmpty).toContain('Subject: (No Subject)');
+
+      const emailWhitespace: EmailPdfRenderInput = {
+        messageId: 'id-3',
+        subject: '   \t  ',
+      };
+      const textWhitespace = await processor.extractTextFromPages(
+        await processor.generateEmailPdf(emailWhitespace),
+        [1]
+      );
+      expect(textWhitespace).toContain('Subject: (No Subject)');
+    });
+
+    it('prefers rfcMessageId over internal messageId when present', async () => {
+      const email: EmailPdfRenderInput = {
+        messageId: '18a123456789abcd',
+        rfcMessageId: '<custom-rfc-id@domain.com>',
+      };
+      const text = await processor.extractTextFromPages(
+        await processor.generateEmailPdf(email),
+        [1]
+      );
+      expect(text).toContain('Message ID: <custom-rfc-id@domain.com>');
+      expect(text).not.toContain('Message ID: 18a123456789abcd');
+    });
+
+    it('strictly omits Cc and Attachments when absent or empty', async () => {
+      const emailWithoutOptional: EmailPdfRenderInput = {
+        messageId: 'id-opt',
+        subject: 'Test Subject',
+        from: 'sender@example.com',
+        to: 'recipient@example.com',
+      };
+      const textWithout = await processor.extractTextFromPages(
+        await processor.generateEmailPdf(emailWithoutOptional),
+        [1]
+      );
+      expect(textWithout).not.toContain('Cc:');
+      expect(textWithout).not.toContain('Attachments:');
+
+      const emailWithEmptyOptional: EmailPdfRenderInput = {
+        messageId: 'id-empty-opt',
+        subject: 'Test Subject',
+        cc: '   ',
+        attachmentNames: [],
+      };
+      const textEmpty = await processor.extractTextFromPages(
+        await processor.generateEmailPdf(emailWithEmptyOptional),
+        [1]
+      );
+      expect(textEmpty).not.toContain('Cc:');
+      expect(textEmpty).not.toContain('Attachments:');
+    });
+
+    it('renders Cc and Attachments when populated', async () => {
+      const email: EmailPdfRenderInput = {
+        messageId: 'id-with-att',
+        subject: 'Invoice & Proposal',
+        cc: 'charlie@example.com, dana@example.com',
+        attachmentNames: ['Invoice-101.pdf', 'Proposal.docx'],
+      };
+      const text = await processor.extractTextFromPages(
+        await processor.generateEmailPdf(email),
+        [1]
+      );
+      expect(text).toContain('Cc: charlie@example.com, dana@example.com');
+      expect(text).toContain('Attachments: Invoice-101.pdf, Proposal.docx');
+    });
+
+    it('wraps long header values and paginates onto new Letter pages when header exceeds vertical space', async () => {
+      // 100 recipients will wrap to ~55-60 lines, exceeding 1 Letter page printable height (~49 lines)
+      const manyRecipients = Array.from(
+        { length: 100 },
+        (_, i) => `long-recipient-address-${i + 1}@enterprise-organization.com`
+      ).join(', ');
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'header-pagination-test',
+        subject: 'Executive Board Announcement',
+        to: manyRecipients,
+        plainTextBody: 'Final meeting agenda follows.',
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      const doc = await PDFDocument.load(pdfBytes);
+
+      expect(doc.getPageCount()).toBeGreaterThanOrEqual(2);
+
+      const page1Text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(page1Text).toContain('Subject: Executive Board Announcement');
+      expect(page1Text).toContain('long-recipient-address-1@enterprise-organization.com');
+      expect(page1Text).toContain('Page 1 of 2');
+
+      const page2Text = await processor.extractTextFromPages(pdfBytes, [2]);
+      expect(page2Text).toContain('long-recipient-address-100@enterprise-organization.com');
+      expect(page2Text).toContain('Final meeting agenda follows.');
+      expect(page2Text).toContain('Page 2 of 2');
+    });
+
+    it('gracefully handles missing or empty plainTextBody rendering only header block and divider', async () => {
+      const emailMissingBody: EmailPdfRenderInput = {
+        messageId: 'empty-body-test-1',
+        subject: 'Header Only Email',
+        from: 'sender@example.com',
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(emailMissingBody);
+      const doc = await PDFDocument.load(pdfBytes);
+      expect(doc.getPageCount()).toBe(1);
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Message ID: empty-body-test-1');
+      expect(text).toContain('Subject: Header Only Email');
+      expect(text).toContain('From: sender@example.com');
+      expect(text).toContain('Page 1 of 1');
+
+      const emailEmptyStringBody: EmailPdfRenderInput = {
+        messageId: 'empty-body-test-2',
+        subject: 'Empty String Body Email',
+        plainTextBody: '',
+      };
+
+      const pdfBytes2 = await processor.generateEmailPdf(emailEmptyStringBody);
+      const doc2 = await PDFDocument.load(pdfBytes2);
+      expect(doc2.getPageCount()).toBe(1);
+
+      const text2 = await processor.extractTextFromPages(pdfBytes2, [1]);
+      expect(text2).toContain('Subject: Empty String Body Email');
+      expect(text2).toContain('Page 1 of 1');
+    });
+
+    it('breaks single words wider than 512 pt printable width across lines without error', async () => {
+      // 150 consecutive characters without spaces is ~1050 pt wide (> 2x 512 pt)
+      const unbrokenToken = 'X'.repeat(150);
+      const email: EmailPdfRenderInput = {
+        messageId: 'unbroken-word-test',
+        subject: 'Long Token Email',
+        plainTextBody: `Start token: ${unbrokenToken} End token`,
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      const doc = await PDFDocument.load(pdfBytes);
+      expect(doc.getPageCount()).toBe(1);
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Start token:');
+      expect(text).toContain('End token');
+      // All 150 Xs should be present in the extracted text
+      expect(text).toContain('X'.repeat(50));
+    });
+
+    it('paginates body content across multiple pages with accurate Page X of Y footers', async () => {
+      // 120 body lines will span across ~3 pages
+      const lines = Array.from(
+        { length: 120 },
+        (_, i) => `Paragraph line ${i + 1}: The quick brown fox jumps over the lazy dog.`
+      );
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'multi-page-body-test',
+        subject: 'Multi-Page Body Email',
+        plainTextBody: lines.join('\n'),
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      const doc = await PDFDocument.load(pdfBytes);
+      const totalPages = doc.getPageCount();
+
+      expect(totalPages).toBeGreaterThanOrEqual(3);
+
+      const page1Text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(page1Text).toContain('Subject: Multi-Page Body Email');
+      expect(page1Text).toContain('Paragraph line 1:');
+      expect(page1Text).toContain(`Page 1 of ${totalPages}`);
+
+      const lastPageText = await processor.extractTextFromPages(pdfBytes, [totalPages]);
+      expect(lastPageText).toContain('Paragraph line 120:');
+      expect(lastPageText).toContain(`Page ${totalPages} of ${totalPages}`);
+    });
+
+    it('sanitizes Unicode typographical characters, CRLF line endings, and tabs without throwing', async () => {
+      const email: EmailPdfRenderInput = {
+        messageId: 'unicode-sanitization-test',
+        subject: 'Meeting Notes: “Project Alpha” – Q3 & Q4…',
+        plainTextBody:
+          'Notes:\r\n\t• Alice said: ‘Ready’\r\n\t• Em dash: 2025—2026\r\n\t• Special chars: © and ™\r\n\t• Emojis 🚀 and foreign text 漢字 are safely escaped.',
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Meeting Notes: "Project Alpha" - Q3 & Q4...');
+      expect(text).toContain("* Alice said: 'Ready'");
+      expect(text).toContain('Em dash: 2025--2026');
+      expect(text).toContain('Special chars: (C) and (TM)');
     });
   });
 });

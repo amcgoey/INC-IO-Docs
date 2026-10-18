@@ -15,6 +15,8 @@ import {
   PdfOutOfBoundsError,
   PdfProcessorError,
 } from './errors';
+import { EmailPdfRenderer } from './email-pdf-renderer';
+import type { EmailPdfRenderInput } from './types';
 
 export class PdfProcessor {
   /**
@@ -377,6 +379,17 @@ export class PdfProcessor {
         { cause: error }
       );
     }
+  }
+
+  /**
+   * Renders an email message payload into a standardized multi-page Letter-sized PDF.
+   *
+   * @param email - The email metadata, body, and attachments to render.
+   * @returns A promise resolving to the binary Uint8Array of the generated PDF document.
+   */
+  async generateEmailPdf(email: EmailPdfRenderInput): Promise<Uint8Array> {
+    const renderer = new EmailPdfRenderer();
+    return await renderer.render(email);
   }
 }
 
