@@ -47,26 +47,8 @@ export {
   extractSelectFilesSet,
 };
 
-export const UiProcessEventContextSchema = Type.Object({
-  actionName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
-  formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
-  parameters: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
-  validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
-  isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
-  selectedItems: Type.Optional(
-    Type.Union([
-      Type.Array(
-        Type.Object({
-          id: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
-          title: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
-          mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
-        })
-      ),
-      Type.Undefined(),
-    ])
-  ),
-});
-export type UiProcessEventContext = Static<typeof UiProcessEventContextSchema>;
+export const UiProcessEventContextSchema = ProcessUiStateEventSchema;
+export type UiProcessEventContext = ProcessUiStateEvent;
 
 export const UiProcessRenderResultSchema = Type.Object({
   type: Type.Literal('render'),

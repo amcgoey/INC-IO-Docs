@@ -152,6 +152,10 @@ describe('UI Process Manager Ports & DTOs', () => {
       };
       expect(Value.Check(UiProcessEventContextSchema, context)).toBe(true);
     });
+
+    it('aliases ProcessUiStateEventSchema to adhere to Rule 2 schema deduplication', () => {
+      expect(UiProcessEventContextSchema).toBe(ProcessUiStateEventSchema);
+    });
   });
 });
 
