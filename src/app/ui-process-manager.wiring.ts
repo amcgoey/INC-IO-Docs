@@ -231,8 +231,10 @@ export function createUiProcessRequestWrapper(
       validationErrors: context.validationErrors,
       selectedItems: context.selectedItems?.map((item) => ({
         id: item.id,
-        title: item.title,
+        ...(item.title !== undefined ? { title: item.title } : {}),
+        ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
       })),
+
     };
 
     const intent: UiProcessResult = await orchestratorInstance.processUiEvent(eventContext);
@@ -260,6 +262,9 @@ export function createUiProcessRequestWrapper(
               spaces: intent.selectionState.spaces,
               spaceTypes: mapSelectionItems(intent.selectionState.spaceTypes),
               documentTypes: mapSelectionItems(intent.selectionState.documentTypes),
+              ...(intent.selectionState.files !== undefined
+                ? { files: mapSelectionItems(intent.selectionState.files) }
+                : {}),
             },
           }
         : {}),
@@ -368,12 +373,14 @@ export function createUiProcessManagerWiring(
           const space = toStructuredDocumentSpace(payload.space);
           return options.documentService!.processDocument(
             {
-              ...payload,
+              type: payload.type,
+              data: payload.data,
               ...(space ? { space } : {}),
             },
             eventName
           );
         },
+
       }
     : undefined;
 
@@ -400,11 +407,6 @@ export function createUiProcessManagerWiring(
       ? await options.createDocumentSpaceService(context)
       : options.documentSpaceService;
 
-    let docService = options.documentService;
-    if (options.createDocumentService) {
-      docService = await options.createDocumentService(context);
-    }
-
     const reqSpaceProvider: UiProcessSpaceProviderPort = {
       getAllTypes: () => (docSpaceService ? docSpaceService.getAllTypes() : []),
       getCollection: (typeId: string) => {
@@ -416,15 +418,35 @@ export function createUiProcessManagerWiring(
     };
 
     const reqDocumentRunner: UiProcessDocumentRunnerPort | undefined =
-      docService || options.createDocumentService
+      options.documentService || options.createDocumentService
         ? {
             processDocument: async (payload, eventName) => {
-              const activeDocService =
-                docService ?? (await options.createDocumentService!(context));
-              const space = toStructuredDocumentSpace(payload.space);
+              const { sourceFiles, ...documentPayload } = payload;
+              const activeContext: WorkspaceExecutionContext = {
+                ...context,
+                ...(sourceFiles !== undefined
+                  ? {
+                      selectedItems: sourceFiles.map((file) => ({
+                        id: file.id,
+                        ...(file.name !== undefined ? { title: file.name } : {}),
+                        ...(file.mimeType !== undefined ? { mimeType: file.mimeType } : {}),
+                      })),
+                    }
+                  : {}),
+              };
+
+              const activeDocService = options.createDocumentService
+                ? await options.createDocumentService(activeContext)
+                : options.documentService;
+
+              if (!activeDocService) {
+                throw new Error('DocumentService not provided');
+              }
+
+              const space = toStructuredDocumentSpace(documentPayload.space);
               return activeDocService.processDocument(
                 {
-                  ...payload,
+                  ...documentPayload,
                   ...(space ? { space } : {}),
                 },
                 eventName
@@ -432,6 +454,7 @@ export function createUiProcessManagerWiring(
             },
           }
         : undefined;
+
 
     return new WorkspaceAddonAdapter({
       spaceProvider: reqSpaceProvider,

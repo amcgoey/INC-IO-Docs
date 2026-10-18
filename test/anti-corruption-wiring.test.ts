@@ -97,18 +97,22 @@ describe('Anti-Corruption Wiring Integration', () => {
     expect(pushCard.sections[1].widgets[2].selectionInput?.name).toBe(getDocumentTypeWidgetName('legal'));
 
 
-    // Section 3: Document data
-    expect(pushCard.sections[2].header).toBe('Document Data');
-    expect(pushCard.sections[2].widgets).toHaveLength(3);
-    expect(pushCard.sections[2].widgets[0].textInput?.name).toBe(
+    // Section 3: File selection
+    expect(pushCard.sections[2].header).toBe('File Selection');
+    expect(pushCard.sections[2].collapsible).toBe(true);
+
+    // Section 4: Document data
+    expect(pushCard.sections[3].header).toBe('Document Data');
+    expect(pushCard.sections[3].widgets).toHaveLength(3);
+    expect(pushCard.sections[3].widgets[0].textInput?.name).toBe(
       getDocumentInfoWidgetName('title', 'contract-doc')
     );
-    expect(pushCard.sections[2].widgets[0].textInput?.label).toBe('Contract Title');
-    expect(pushCard.sections[2].widgets[1].textInput?.name).toBe(
+    expect(pushCard.sections[3].widgets[0].textInput?.label).toBe('Contract Title');
+    expect(pushCard.sections[3].widgets[1].textInput?.name).toBe(
       getDocumentInfoWidgetName('amount', 'contract-doc')
     );
-    expect(pushCard.sections[2].widgets[1].textInput?.label).toBe('Total Amount');
-    expect(pushCard.sections[2].widgets[2].buttonList?.buttons).toEqual([
+    expect(pushCard.sections[3].widgets[1].textInput?.label).toBe('Total Amount');
+    expect(pushCard.sections[3].widgets[2].buttonList?.buttons).toEqual([
       {
         text: 'Process Document',
         onClick: {
@@ -121,9 +125,9 @@ describe('Anti-Corruption Wiring Integration', () => {
       },
     ]);
 
-    // Section 4: Document Space Admin
-    expect(pushCard.sections[3].header).toBe('Admin');
-    expect(pushCard.sections[3].collapsible).toBe(true);
+    // Section 5: Document Space Admin
+    expect(pushCard.sections[4].header).toBe('Admin');
+    expect(pushCard.sections[4].collapsible).toBe(true);
   });
 
   it('wires processCardOrchestrator in wireWorkspaceAddonRoutes to resolve schema-driven-ui pipeline without leaking types', async () => {
@@ -233,10 +237,12 @@ describe('Anti-Corruption Wiring Integration', () => {
             action: 'processDocument',
           },
           formInputs: {
+            SelectFiles: { stringInputs: { value: ['drive-file-789'] } },
             SelectDocumentType: { stringInputs: { value: ['contract-doc'] } },
             SelectDocumentSpace_projects: { stringInputs: { value: ['Space 1'] } },
             title: { stringInputs: { value: ['Contract A'] } },
           },
+
         },
       },
     });

@@ -7,6 +7,7 @@ import type { UiView, UiViewSection } from '../domain';
 import {
   buildStatusMessageSection,
   buildDocumentTypeSelectionSection,
+  buildFileSelectionSection,
   buildDocumentInfoSection,
   buildDocumentAdminSection,
 } from '../blocks';
@@ -37,7 +38,13 @@ const WORKSPACE_ADDON_VIEW_SCHEMA: readonly SectionProducer[] = [
         })
       : undefined,
 
-  // 3. Document Info Section
+  // 3. File Selection Section
+  (context) =>
+    context.selectionState
+      ? buildFileSelectionSection(context.selectionState.files)
+      : undefined,
+
+  // 4. Document Info Section
   (context) =>
     context.documentSchema
       ? buildDocumentInfoSection(context.documentSchema, context.uiSchema, {

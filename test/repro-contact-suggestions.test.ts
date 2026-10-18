@@ -836,6 +836,7 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
                 action: 'processDocument',
               },
               formInputs: {
+                SelectFiles: { stringInputs: { value: ['file-1'] } },
                 SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
                 SelectDocumentSpace_proposals: { stringInputs: { value: ['Proposal Alpha'] } },
                 SelectDocumentType_proposals: { stringInputs: { value: ['communication-proposal'] } },
@@ -873,6 +874,7 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
                 action: 'processDocument',
               },
               formInputs: {
+                SelectFiles: { stringInputs: { value: ['file-1'] } },
                 SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
                 SelectDocumentSpace_proposals: { stringInputs: { value: ['Proposal Alpha'] } },
                 SelectDocumentType_proposals: { stringInputs: { value: ['communication-proposal'] } },
@@ -910,6 +912,7 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
                 action: 'processDocument',
               },
               formInputs: {
+                SelectFiles: { stringInputs: { value: ['file-1'] } },
                 SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
                 SelectDocumentSpace_proposals: { stringInputs: { value: ['Proposal Duplicate'] } },
                 SelectDocumentType_proposals: { stringInputs: { value: ['communication-proposal'] } },
@@ -956,6 +959,7 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
                 action: 'processDocument',
               },
               formInputs: {
+                SelectFiles: { stringInputs: { value: ['file-1'] } },
                 SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
                 SelectDocumentSpace_proposals: { stringInputs: { value: [''] } },
                 SelectDocumentType_proposals: { stringInputs: { value: ['communication-proposal'] } },

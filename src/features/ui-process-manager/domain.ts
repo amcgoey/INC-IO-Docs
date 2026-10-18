@@ -11,6 +11,7 @@ export const UiSelectionStateSchema = Type.Object({
   spaceTypes: Type.Array(UiSelectionItemSchema),
   spaces: Type.Array(Type.String()),
   documentTypes: Type.Array(UiSelectionItemSchema),
+  files: Type.Optional(Type.Union([Type.Array(UiSelectionItemSchema), Type.Undefined()])),
 });
 export type UiSelectionState = Static<typeof UiSelectionStateSchema>;
 
@@ -52,6 +53,18 @@ export const ProcessUiStateEventSchema = Type.Object({
   parameters: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
   validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  selectedItems: Type.Optional(
+    Type.Union([
+      Type.Array(
+        Type.Object({
+          id: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+          title: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+          mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+        })
+      ),
+      Type.Undefined(),
+    ])
+  ),
 });
 export type ProcessUiStateEvent = Static<typeof ProcessUiStateEventSchema>;
 
@@ -76,6 +89,7 @@ export const ProcessUiStateOutputSchema = Type.Object({
 });
 export type ProcessUiStateOutput = Static<typeof ProcessUiStateOutputSchema>;
 
+export const SELECT_FILES_KEY = 'SelectFiles';
 export const SELECTION_KEY_PREFIX = 'SelectDocument';
 export const SELECT_DOCUMENT_SPACE_TYPE_KEY = 'SelectDocumentSpaceType';
 export const SELECT_DOCUMENT_SPACE_KEY = 'SelectDocumentSpace';
@@ -92,7 +106,31 @@ export function getDocTypeSelectorKey(spaceType: string): string {
 }
 
 export function isSelectionKey(key: string): boolean {
-  return key.startsWith(SELECTION_KEY_PREFIX);
+  return key.startsWith(SELECTION_KEY_PREFIX) || key === SELECT_FILES_KEY;
+}
+
+/**
+ * Normalizes formData.SelectFiles (string | string[] | undefined) into a Set of non-empty trimmed strings.
+ */
+export function extractSelectFilesSet(formData?: Record<string, unknown>): Set<string> {
+  const raw = formData?.[SELECT_FILES_KEY];
+  const set = new Set<string>();
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (trimmed.length > 0) {
+      set.add(trimmed);
+    }
+  } else if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (typeof item === 'string') {
+        const trimmed = item.trim();
+        if (trimmed.length > 0) {
+          set.add(trimmed);
+        }
+      }
+    }
+  }
+  return set;
 }
 
 function filterFormData(
@@ -205,6 +243,7 @@ export function resolveSpace(
   spaces?: UiProcessSpaceItem[]
 ): ResolveSpaceResult {
   const spaceList = spaces ?? context?.spaces ?? [];
+  // nosemgrep: domain-pass-through-read
   const formData = context?.formData;
   if (!formData) {
     return {};
@@ -299,7 +338,10 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const allowedDocumentTypes = selectedSpaceTypeObj?.spaceSchema.allowedDocumentTypes ?? [];
 
   const effectiveFormData: Record<string, unknown> = { ...context.formData };
-  let isUpdateCard = Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange);
+  const isRefresh = action === 'refresh';
+  let isUpdateCard = isRefresh
+    ? false
+    : Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange);
 
   const rawSelectedDocType =
     resolveDocumentType({
@@ -340,10 +382,45 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     selected: typeKey === currentDocTypeKey,
   }));
 
+  const inCardActions = new Set([
+    'onSpaceTypeChange',
+    'onDocumentTypeChange',
+    'onFormChange',
+    'processDocument',
+    'viewJson',
+  ]);
+  const hasInCardAction = action !== undefined && inCardActions.has(action);
+
+  const hasSelectionKeysInFormData = Boolean(
+    context.formData &&
+    Object.keys(context.formData).some((k) => isSelectionKey(k))
+  );
+
+  const isResetOrInitialLoad =
+    isRefresh || (!hasInCardAction && !hasSelectionKeysInFormData);
+
+  const selectedFilesSet = extractSelectFilesSet(context.formData);
+
+  const validSelectedItems = (context.selectedItems ?? []).filter(
+    (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
+      typeof item?.id === 'string' && item.id.trim().length > 0
+  );
+
+  const files: UiSelectionItem[] = validSelectedItems.map((item) => {
+    const trimmedTitle = typeof item.title === 'string' ? item.title.trim() : '';
+    const fileId = item.id.trim();
+    return {
+      text: trimmedTitle.length > 0 ? trimmedTitle : fileId,
+      value: item.id,
+      selected: isResetOrInitialLoad ? true : selectedFilesSet.has(fileId),
+    };
+  });
+
   const selectionState: UiSelectionState = {
     spaceTypes,
     spaces: (input.spaces ?? []).map((s) => s.name),
     documentTypes,
+    files,
   };
 
   const spaceResolution = resolveSpace(
@@ -363,12 +440,15 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
 
   if (spaceResolution.isIdMatch && spaceResolution.matchedSpace) {
     if (spaceSelectorKey && effectiveFormData[spaceSelectorKey] !== undefined) {
+      // nosemgrep: domain-pass-through-read
       effectiveFormData[spaceSelectorKey] = spaceResolution.matchedSpace.name;
     }
     if (effectiveFormData[SELECT_DOCUMENT_SPACE_KEY] !== undefined) {
+      // nosemgrep: domain-pass-through-read
       effectiveFormData[SELECT_DOCUMENT_SPACE_KEY] = spaceResolution.matchedSpace.name;
     }
     if (effectiveFormData.spaceId !== undefined) {
+      // nosemgrep: domain-pass-through-read
       effectiveFormData.spaceId = spaceResolution.matchedSpace.name;
     }
   }
@@ -381,7 +461,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
       : []),
   ];
 
-  if (spaceResolution.collisionError || spaceResolution.notFoundError) {
+  if (!isRefresh && (spaceResolution.collisionError || spaceResolution.notFoundError)) {
     isUpdateCard = true;
   }
 

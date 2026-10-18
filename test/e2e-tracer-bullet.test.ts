@@ -216,8 +216,9 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
 
     // All other blocks remain present
     expect(pushCard.sections[1].header).toBe('Document Type');
-    expect(pushCard.sections[2].header).toBe('Document Data');
-    expect(pushCard.sections[3].header).toBe('Admin');
+    expect(pushCard.sections[2].header).toBe('File Selection');
+    expect(pushCard.sections[3].header).toBe('Document Data');
+    expect(pushCard.sections[4].header).toBe('Admin');
   });
 
   it('renders schema-driven process card on /workspace/homepage trigger', async () => {
@@ -434,6 +435,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
             action: 'processDocument',
           },
           formInputs: {
+            SelectFiles: { stringInputs: { value: ['drive-file-999'] } },
             [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
             [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Project 1'] } },
             // contact, date, direction, description are required but missing
@@ -473,6 +475,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
             action: 'processDocument',
           },
           formInputs: {
+            SelectFiles: { stringInputs: { value: ['drive-file-999'] } },
             [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-proposal'] } },
             [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Project 1'] } },
             contact: { stringInputs: { value: ['Acme Corp'] } },

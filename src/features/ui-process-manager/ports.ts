@@ -16,6 +16,11 @@ import {
   type ProcessUiStateOutput,
   ResolveSpaceResultSchema,
   type ResolveSpaceResult,
+  ProcessUiStateEventSchema,
+  type ProcessUiStateEvent,
+  SELECT_FILES_KEY,
+  isSelectionKey,
+  extractSelectFilesSet,
 } from './domain';
 
 export {
@@ -35,27 +40,15 @@ export {
   type ProcessUiStateOutput,
   ResolveSpaceResultSchema,
   type ResolveSpaceResult,
+  ProcessUiStateEventSchema,
+  type ProcessUiStateEvent,
+  SELECT_FILES_KEY,
+  isSelectionKey,
+  extractSelectFilesSet,
 };
 
-export const UiProcessEventContextSchema = Type.Object({
-  actionName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
-  formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
-  parameters: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
-  validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
-  isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
-  selectedItems: Type.Optional(
-    Type.Union([
-      Type.Array(
-        Type.Object({
-          id: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
-          title: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
-        })
-      ),
-      Type.Undefined(),
-    ])
-  ),
-});
-export type UiProcessEventContext = Static<typeof UiProcessEventContextSchema>;
+export const UiProcessEventContextSchema = ProcessUiStateEventSchema;
+export type UiProcessEventContext = ProcessUiStateEvent;
 
 export const UiProcessRenderResultSchema = Type.Object({
   type: Type.Literal('render'),
@@ -117,6 +110,13 @@ export interface UiProcessManifestPort {
   getDocumentTypeSchemas(key: string): Promise<{ docSchema?: unknown; uiSchema?: unknown }>;
 }
 
+export const UiProcessSourceFileDtoSchema = Type.Object({
+  id: Type.String(),
+  name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type UiProcessSourceFileDto = Static<typeof UiProcessSourceFileDtoSchema>;
+
 export interface UiProcessDocumentExecutionResult {
   success: boolean;
   errors?: string[] | undefined;
@@ -129,10 +129,12 @@ export interface UiProcessDocumentRunnerPort {
       type: string;
       data: Record<string, unknown>;
       space?: UiProcessDocumentSpaceDto | undefined;
+      sourceFiles?: UiProcessSourceFileDto[] | undefined;
     },
     eventName: string
   ): Promise<UiProcessDocumentExecutionResult>;
 }
+
 
 export interface UiProcessFormEvaluationResult {
   computedData: Record<string, unknown>;

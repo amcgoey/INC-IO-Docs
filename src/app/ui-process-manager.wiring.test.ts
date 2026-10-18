@@ -10,6 +10,7 @@ import type { DocumentService } from '../features/document/domain';
 import type { SchemaDrivenUiService } from '../features/schema-driven-ui/domain';
 import type { RawManifestProviderPort } from './schema-driven-ui.wiring';
 import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
+import type { UiProcessOrchestratorPort } from '../features/ui-process-manager/ports';
 
 import type {
   GoogleWorkspaceActionResponse,
@@ -274,6 +275,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         SelectDocumentSpaceType: 'projects',
         SelectDocumentSpace: 'Project Alpha',
         SelectDocumentType: 'Communication Project',
+        SelectFiles: 'file-123',
         contact: 'Alice Corp',
         date: '260920',
       },
@@ -324,6 +326,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         SelectDocumentSpaceType: 'projects',
         SelectDocumentSpace: 'Project Alpha',
         SelectDocumentType: 'communication-project',
+        SelectFiles: 'file-123',
       },
       selectedItems: [{ id: 'file-123' }],
     };
@@ -641,6 +644,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           SelectDocumentSpaceType: 'projects',
           SelectDocumentSpace: 'Project Alpha',
           SelectDocumentType: 'communication-project',
+          SelectFiles: 'file-target-alpha',
           contact: 'Alpha Contact',
           date: '260901',
         },
@@ -654,6 +658,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           SelectDocumentSpaceType: 'projects',
           SelectDocumentSpace: 'Project Alpha',
           SelectDocumentType: 'communication-project',
+          SelectFiles: 'file-target-beta',
           contact: 'Beta Contact',
           date: '260902',
         },
@@ -667,6 +672,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           SelectDocumentSpaceType: 'projects',
           SelectDocumentSpace: 'Project Alpha',
           SelectDocumentType: 'communication-project',
+          SelectFiles: 'file-target-gamma',
           contact: 'Gamma Contact',
           date: '260903',
         },
@@ -1034,6 +1040,185 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       expect(contactWidget!.selectionInput?.items).toEqual([]);
     });
   });
+
+  describe('createUiProcessRequestWrapper file selection forwarding', () => {
+    it('forwards intent.selectionState.files to schemaDrivenUiService.generateView', async () => {
+      const mockOrchestrator = {
+        processUiEvent: vi.fn().mockResolvedValue({
+          type: 'render',
+          viewId: 'drive-document-process-card',
+          documentTypeKey: 'communication-project',
+          selectionState: {
+            spaces: ['Project Alpha'],
+            spaceTypes: [{ text: 'Projects', value: 'projects', selected: true }],
+            documentTypes: [{ text: 'Comm Project', value: 'comm-project', selected: true }],
+            files: [{ text: 'Proposal.pdf', value: 'file-123', selected: true }],
+          },
+          formData: {},
+          isUpdateCard: false,
+        }),
+      };
+
+      const mockSchemaDrivenUi = {
+        generateView: vi.fn().mockResolvedValue({
+          id: 'drive-document-process-card',
+          header: { title: 'Test', subtitle: 'Test' },
+          sections: [{ header: 'Test', widgets: [{ textParagraph: { text: 'test' } }] }],
+        }),
+      };
+
+      const wrapper = createUiProcessRequestWrapper(
+        mockOrchestrator as unknown as UiProcessOrchestratorPort,
+        mockSchemaDrivenUi as unknown as SchemaDrivenUiService
+      );
+
+      await wrapper.processUiEvent({
+        baseUrl: 'http://localhost:3000',
+        selectedItems: [{ id: 'file-123', title: 'Proposal.pdf' }],
+      });
+
+      expect(mockSchemaDrivenUi.generateView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          selectionState: expect.objectContaining({
+            files: [{ text: 'Proposal.pdf', value: 'file-123', selected: true }],
+          }),
+        })
+      );
+    });
+
+    it('preserves mimeType when mapping selectedItems into UiProcessEventContext', async () => {
+      const mockOrchestrator = {
+        processUiEvent: vi.fn().mockResolvedValue({
+          type: 'render',
+          viewId: 'drive-document-process-card',
+          documentTypeKey: 'communication-project',
+          selectionState: {
+            spaces: ['Project Alpha'],
+            spaceTypes: [{ text: 'Projects', value: 'projects', selected: true }],
+            documentTypes: [{ text: 'Comm Project', value: 'comm-project', selected: true }],
+          },
+          formData: {},
+          isUpdateCard: false,
+        }),
+      };
+
+      const mockSchemaDrivenUi = {
+        generateView: vi.fn().mockResolvedValue({
+          id: 'drive-document-process-card',
+          header: { title: 'Test', subtitle: 'Test' },
+          sections: [{ header: 'Test', widgets: [{ textParagraph: { text: 'test' } }] }],
+        }),
+      };
+
+      const wrapper = createUiProcessRequestWrapper(
+        mockOrchestrator as unknown as UiProcessOrchestratorPort,
+        mockSchemaDrivenUi as unknown as SchemaDrivenUiService
+      );
+
+      await wrapper.processUiEvent({
+        baseUrl: 'http://localhost:3000',
+        selectedItems: [
+          { id: 'file-123', title: 'Doc.pdf', mimeType: 'application/pdf' },
+        ],
+      });
+
+      expect(mockOrchestrator.processUiEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          selectedItems: [
+            { id: 'file-123', title: 'Doc.pdf', mimeType: 'application/pdf' },
+          ],
+        })
+      );
+    });
+  });
+
+  describe('Lazy DocumentService instantiation on processDocument', () => {
+    it('does not eagerly instantiate createDocumentService on initial render or non-submission actions', async () => {
+      const createDocumentService = vi.fn();
+
+      const wiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: mockManifestProvider,
+        createDocumentService,
+      });
+
+      await wiring.requestScopedWrapper.processUiEvent({
+        selectedItems: [{ id: 'file-123', title: 'File.pdf' }],
+      });
+
+      expect(createDocumentService).not.toHaveBeenCalled();
+    });
+
+    it('lazily instantiates createDocumentService on processDocument with selectedItems overridden by sourceFiles and passes clean payload per ADR-0005', async () => {
+      let passedContext: WorkspaceExecutionContext | undefined;
+      const mockProcessDocument = vi.fn().mockResolvedValue({ success: true });
+
+      const createDocumentService = vi.fn(async (ctx: WorkspaceExecutionContext) => {
+        passedContext = ctx;
+        return {
+          processDocument: mockProcessDocument,
+        } as unknown as DocumentService;
+      });
+
+      const wiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: mockManifestProvider,
+        createDocumentService,
+      });
+
+      const req: WorkspaceExecutionContext = {
+        actionName: 'processDocument',
+        userOAuthToken: 'token-user-123',
+        selectedItems: [
+          { id: 'file-1', title: 'First.pdf', mimeType: 'application/pdf' },
+          { id: 'file-2', title: 'Second.png', mimeType: 'image/png' },
+        ],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Alpha',
+          SelectDocumentType: 'communication-project',
+          SelectFiles: 'file-2', // only file-2 is checked
+          contact: 'Test Contact',
+          date: '260901',
+        },
+      };
+
+      const result = (await wiring.requestScopedWrapper.processUiEvent(req)) as GoogleWorkspaceActionResponse;
+
+      expect(result.action?.notification?.text).toBe('Document processed successfully');
+      expect(createDocumentService).toHaveBeenCalledTimes(1);
+
+      // Verify activeContext.selectedItems has only the checked file (file-2) and preserved mimeType
+      expect(passedContext?.selectedItems).toEqual([
+        { id: 'file-2', title: 'Second.png', mimeType: 'image/png' },
+      ]);
+      expect(passedContext?.userOAuthToken).toBe('token-user-123');
+
+      // Verify activeDocService.processDocument received clean documentPayload without sourceFiles
+      expect(mockProcessDocument).toHaveBeenCalledWith(
+        {
+          type: 'communication-project',
+          data: {
+            contact: 'Test Contact',
+            date: '260901',
+          },
+          space: {
+            id: 'proj-1',
+            name: 'Project Alpha',
+            typeId: 'projects',
+            abstractStorageId: 'proj-1',
+          },
+        },
+        'onSubmit'
+      );
+      // Ensure sourceFiles is not present on documentPayload per ADR-0005
+      const calledPayload = mockProcessDocument.mock.calls[0][0];
+      expect(calledPayload).not.toHaveProperty('sourceFiles');
+    });
+  });
 });
+
 
 

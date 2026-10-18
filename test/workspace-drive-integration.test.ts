@@ -311,6 +311,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -427,6 +428,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
               [getDocumentSpaceWidgetName('proposals')]: { stringInputs: { value: ['Client Proposals'] } },
               [getDocumentTypeWidgetName('proposals')]: { stringInputs: { value: ['communication-proposal'] } },
@@ -543,6 +545,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['projects-shared-drive-001'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-proposal'] } },
@@ -657,6 +660,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -801,6 +805,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -947,6 +952,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -1060,6 +1066,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -1134,6 +1141,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -1227,6 +1235,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -1370,6 +1379,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [file1Id, file2Id] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -1395,7 +1405,191 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(nock.isDone()).toBe(true);
     });
 
+    it('files only checked subset of selected SourceFiles when the first Drive item is unchecked, preserving mimeType and moving only checked file', async () => {
+      const file1Id = 'file-first-unchecked';
+      const file1Name = 'First_Unchecked.pdf';
+      const file2Id = 'file-second-checked';
+      const file2Name = 'Second_Checked.png';
+      const rootSharedDriveId = 'shared-drive-proj-root';
+      const adminFolderId = 'folder-admin-1';
+      const commFolderId = 'folder-comm-1';
+      const contactFolderId = 'folder-acme-corp';
+      const newSubfolderId = 'folder-subset-subfolder';
+
+      // 1. Dynamic Options Validation
+      mockDynamicValidationProject({
+        sharedDriveId: rootSharedDriveId,
+        adminFolderId,
+        commFolderId,
+        contactFolderId,
+        contactName: 'Acme Corp',
+      });
+
+      // 2. resolveFolderPath
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes('shared-drive-proj-root') && q.q.includes("name = '1 Admin'"))
+        .reply(200, { files: [{ id: adminFolderId, name: '1 Admin' }] });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(adminFolderId) && q.q.includes("name = 'Communication'"))
+        .reply(200, { files: [{ id: commFolderId, name: 'Communication' }] });
+
+      // 3. findOrCreateFolder contact
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(commFolderId) && q.q.includes("name = 'Acme Corp'"))
+        .reply(200, { files: [{ id: contactFolderId, name: 'Acme Corp' }] });
+
+      // 4. findOrCreateFolder comm folder
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(contactFolderId) && q.q.includes("name = '260920 IN - Meeting Notes'"))
+        .reply(200, { files: [] });
+
+      nock('https://www.googleapis.com')
+        .post('/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: newSubfolderId,
+          name: '260920 IN - Meeting Notes',
+          parents: [contactFolderId],
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+
+      // 5. move ONLY file 2 (file 1 was unchecked!)
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${file2Id}`)
+        .query(true)
+        .reply(200, {
+          id: file2Id,
+          name: file2Name,
+          parents: ['initial-inbox-folder'],
+          mimeType: 'image/png',
+          webViewLink: `https://drive.google.com/file/d/${file2Id}/view`,
+        });
+
+      nock('https://www.googleapis.com')
+        .patch(`/drive/v3/files/${file2Id}`)
+        .query(true)
+        .reply(200, {
+          id: file2Id,
+          name: file2Name,
+          parents: [newSubfolderId],
+          mimeType: 'image/png',
+          webViewLink: `https://drive.google.com/file/d/${file2Id}/view`,
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          drive: {
+            selectedItems: [
+              { id: file1Id, title: file1Name, mimeType: 'application/pdf' },
+              { id: file2Id, title: file2Name, mimeType: 'image/png' },
+            ],
+          },
+          commonEventObject: {
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectFiles: { stringInputs: { value: [file2Id] } }, // Only file 2 checked!
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        action: {
+          notification: {
+            text: 'Document processed successfully',
+          },
+        },
+      });
+
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('aborts submission and returns error update card when all items in SelectFiles are unchecked, without invoking Drive move', async () => {
+      const file1Id = 'file-unchecked-1';
+      const file1Name = 'First.pdf';
+      const file2Id = 'file-unchecked-2';
+      const file2Name = 'Second.png';
+
+      // No dynamic validation or Drive nocks since submission is blocked before activity engine is invoked!
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          drive: {
+            selectedItems: [
+              { id: file1Id, title: file1Name, mimeType: 'application/pdf' },
+              { id: file2Id, title: file2Name, mimeType: 'image/png' },
+            ],
+          },
+          commonEventObject: {
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      const updateCard = body.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+
+      const errorSection = updateCard.sections.find((s: { widgets?: Array<{ textParagraph?: { text?: string } }> }) =>
+        s.widgets?.some((w) => w.textParagraph?.text?.includes('Please select at least one file in Google Drive to process.'))
+      );
+      expect(errorSection).toBeDefined();
+
+      const fileSelectionSection = updateCard.sections.find((s: { header?: string }) => s.header === 'File Selection');
+      expect(fileSelectionSection).toBeDefined();
+      const selectFilesWidget = fileSelectionSection?.widgets?.find((w: { selectionInput?: { name?: string } }) => w.selectionInput?.name === 'SelectFiles');
+      expect(selectFilesWidget?.selectionInput?.items).toEqual([
+        { text: file1Name, value: file1Id, selected: false },
+        { text: file2Name, value: file2Id, selected: false },
+      ]);
+    });
+
     it('halts immediately on partial failure during batch filing, returning error card while earlier file remains moved', async () => {
+
       const file1Id = 'file-partial-1';
       const file1Name = 'First_File.pdf';
       const file2Id = 'file-partial-2';
@@ -1498,6 +1692,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [file1Id, file2Id, file3Id] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -1621,6 +1816,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [file1Id, file2Id] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },

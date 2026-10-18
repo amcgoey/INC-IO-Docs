@@ -4,6 +4,10 @@ import {
   UiProcessDocumentSpaceDtoSchema,
   type UiProcessDocumentSpaceDto,
   UiProcessResultSchema,
+  UiSelectionStateSchema,
+  ProcessUiStateEventSchema,
+  UiProcessEventContextSchema,
+  UiProcessSourceFileDtoSchema,
 } from './ports';
 
 describe('UI Process Manager Ports & DTOs', () => {
@@ -82,4 +86,77 @@ describe('UI Process Manager Ports & DTOs', () => {
       expect(Value.Check(UiProcessResultSchema, notification)).toBe(true);
     });
   });
+
+  describe('UiSelectionStateSchema', () => {
+    it('validates selection state with optional files array', () => {
+      const state = {
+        spaceTypes: [{ text: 'Projects', value: 'projects' }],
+        spaces: ['space-1'],
+        documentTypes: [{ text: 'Invoice', value: 'invoice' }],
+        files: [{ text: 'File A', value: 'file-1', selected: true }],
+      };
+      expect(Value.Check(UiSelectionStateSchema, state)).toBe(true);
+    });
+
+    it('rejects selection state with invalid files array', () => {
+      const state = {
+        spaceTypes: [],
+        spaces: [],
+        documentTypes: [],
+        files: 'invalid',
+      };
+      expect(Value.Check(UiSelectionStateSchema, state)).toBe(false);
+    });
+  });
+
+  describe('UiProcessSourceFileDtoSchema', () => {
+    it('validates a complete UiProcessSourceFileDto', () => {
+      const dto = {
+        id: 'file-123',
+        name: 'Report.pdf',
+        mimeType: 'application/pdf',
+      };
+      expect(Value.Check(UiProcessSourceFileDtoSchema, dto)).toBe(true);
+    });
+
+    it('validates a minimal UiProcessSourceFileDto with only id', () => {
+      const dto = { id: 'file-123' };
+      expect(Value.Check(UiProcessSourceFileDtoSchema, dto)).toBe(true);
+    });
+
+    it('rejects invalid UiProcessSourceFileDto missing id or having invalid types', () => {
+      expect(Value.Check(UiProcessSourceFileDtoSchema, { name: 'Report.pdf' })).toBe(false);
+      expect(Value.Check(UiProcessSourceFileDtoSchema, { id: 123 })).toBe(false);
+      expect(Value.Check(UiProcessSourceFileDtoSchema, { id: 'file-1', mimeType: 999 })).toBe(false);
+    });
+  });
+
+  describe('ProcessUiStateEventSchema & UiProcessEventContextSchema mimeType support', () => {
+    it('validates selectedItems with mimeType in ProcessUiStateEventSchema', () => {
+      const event = {
+        actionName: 'onFormChange',
+        selectedItems: [
+          { id: 'drive-item-1', title: 'Doc 1', mimeType: 'application/pdf' },
+          { id: 'drive-item-2', mimeType: 'image/png' },
+        ],
+      };
+      expect(Value.Check(ProcessUiStateEventSchema, event)).toBe(true);
+    });
+
+    it('validates selectedItems with mimeType in UiProcessEventContextSchema', () => {
+      const context = {
+        actionName: 'processDocument',
+        selectedItems: [
+          { id: 'drive-item-1', title: 'Doc 1', mimeType: 'application/pdf' },
+        ],
+      };
+      expect(Value.Check(UiProcessEventContextSchema, context)).toBe(true);
+    });
+
+    it('aliases ProcessUiStateEventSchema to adhere to Rule 2 schema deduplication', () => {
+      expect(UiProcessEventContextSchema).toBe(ProcessUiStateEventSchema);
+    });
+  });
 });
+
+

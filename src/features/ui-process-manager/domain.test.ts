@@ -8,6 +8,9 @@ import {
   resolveSpace,
   resolveSpaceId,
   evaluateProcessUiState,
+  isSelectionKey,
+  SELECT_FILES_KEY,
+  extractSelectFilesSet,
   ResolveSpaceResultSchema,
   UiProcessSpaceItemSchema,
   type ProcessUiStateInput,
@@ -19,12 +22,50 @@ import {
 
 describe('ui-process-manager domain', () => {
 
+  describe('extractSelectFilesSet', () => {
+    it('extracts set from scalar string trimming whitespace', () => {
+      expect(extractSelectFilesSet({ SelectFiles: ' file-1 ' })).toEqual(new Set(['file-1']));
+    });
+
+    it('extracts set from array of strings trimming whitespace and ignoring blanks', () => {
+      expect(
+        extractSelectFilesSet({
+          SelectFiles: [' file-1 ', 'file-2', '', '   ', 123 as unknown as string],
+        })
+      ).toEqual(new Set(['file-1', 'file-2']));
+    });
+
+    it('returns empty set when SelectFiles is absent, undefined, or empty', () => {
+      expect(extractSelectFilesSet(undefined)).toEqual(new Set());
+      expect(extractSelectFilesSet({})).toEqual(new Set());
+      expect(extractSelectFilesSet({ SelectFiles: undefined })).toEqual(new Set());
+      expect(extractSelectFilesSet({ SelectFiles: '' })).toEqual(new Set());
+      expect(extractSelectFilesSet({ SelectFiles: [] })).toEqual(new Set());
+    });
+  });
+
+  describe('isSelectionKey', () => {
+    it('returns true for SELECT_FILES_KEY and any key starting with SELECTION_KEY_PREFIX', () => {
+      expect(SELECT_FILES_KEY).toBe('SelectFiles');
+      expect(isSelectionKey('SelectFiles')).toBe(true);
+      expect(isSelectionKey('SelectDocumentSpaceType')).toBe(true);
+      expect(isSelectionKey('SelectDocumentSpace')).toBe(true);
+      expect(isSelectionKey('SelectDocumentType')).toBe(true);
+      expect(isSelectionKey('SelectDocumentSpace_projects')).toBe(true);
+      expect(isSelectionKey('SelectDocumentType_projects')).toBe(true);
+      expect(isSelectionKey('contact')).toBe(false);
+      expect(isSelectionKey('title')).toBe(false);
+      expect(isSelectionKey('files')).toBe(false);
+    });
+  });
+
   describe('extractDocumentData', () => {
-    it('extracts only non-SelectDocument keys from formData', () => {
+    it('extracts only non-SelectDocument keys from formData and strips SelectFiles', () => {
       const formData = {
         SelectDocumentSpaceType: 'projects',
         SelectDocumentSpace: 'Project Alpha',
         SelectDocumentType: 'communication-project',
+        SelectFiles: ['file-1', 'file-2'],
         contact: 'John Doe',
         date: '260920',
         direction: 'IN',
@@ -40,6 +81,7 @@ describe('ui-process-manager domain', () => {
       expect(result).not.toHaveProperty('SelectDocumentSpaceType');
       expect(result).not.toHaveProperty('SelectDocumentSpace');
       expect(result).not.toHaveProperty('SelectDocumentType');
+      expect(result).not.toHaveProperty('SelectFiles');
     });
 
     it('returns empty object when formData is undefined or empty', () => {
@@ -1266,6 +1308,274 @@ describe('ui-process-manager domain', () => {
         expect(state.formData.SelectDocumentType).toBe('communication-project');
         expect(state.selectionState.documentTypes).toHaveLength(2);
         expect(state.selectionState.documentTypes[0].selected).toBe(true);
+      });
+
+      describe('selectionState.files population', () => {
+        it('populates selectionState.files from valid selectedItems with trimmed title and selected: true', () => {
+          const input: ProcessUiStateInput = {
+            context: {
+              selectedItems: [
+                { id: 'drive-1', title: '  Proposal 2026.pdf  ' },
+                { id: 'drive-2', title: 'Contract.pdf' },
+              ],
+            },
+            spaceTypes: sampleSpaceTypes,
+            spaces: [],
+          };
+
+          const state = evaluateProcessUiState(input);
+
+          expect(state.selectionState.files).toEqual([
+            { text: 'Proposal 2026.pdf', value: 'drive-1', selected: true },
+            { text: 'Contract.pdf', value: 'drive-2', selected: true },
+          ]);
+        });
+
+        it('falls back to item.id when title is undefined or whitespace-only', () => {
+          const input: ProcessUiStateInput = {
+            context: {
+              selectedItems: [
+                { id: 'file-no-title' },
+                { id: 'file-whitespace-title', title: '   ' },
+              ],
+            },
+            spaceTypes: sampleSpaceTypes,
+            spaces: [],
+          };
+
+          const state = evaluateProcessUiState(input);
+
+          expect(state.selectionState.files).toEqual([
+            { text: 'file-no-title', value: 'file-no-title', selected: true },
+            { text: 'file-whitespace-title', value: 'file-whitespace-title', selected: true },
+          ]);
+        });
+
+        it('filters out items with missing, empty, or whitespace-only ids', () => {
+          const input: ProcessUiStateInput = {
+            context: {
+              selectedItems: [
+                { id: 'valid-1', title: 'Valid 1' },
+                { title: 'No Id' },
+                { id: '', title: 'Empty Id' },
+                { id: '   ', title: 'Whitespace Id' },
+                { id: 'valid-2', title: 'Valid 2' },
+              ],
+            },
+            spaceTypes: sampleSpaceTypes,
+            spaces: [],
+          };
+
+          const state = evaluateProcessUiState(input);
+
+          expect(state.selectionState.files).toEqual([
+            { text: 'Valid 1', value: 'valid-1', selected: true },
+            { text: 'Valid 2', value: 'valid-2', selected: true },
+          ]);
+        });
+
+        it('sets selectionState.files to an empty array when selectedItems is undefined or empty', () => {
+          const inputUndefined: ProcessUiStateInput = {
+            context: {},
+            spaceTypes: sampleSpaceTypes,
+            spaces: [],
+          };
+          expect(evaluateProcessUiState(inputUndefined).selectionState.files).toEqual([]);
+
+          const inputEmpty: ProcessUiStateInput = {
+            context: { selectedItems: [] },
+            spaceTypes: sampleSpaceTypes,
+            spaces: [],
+          };
+          expect(evaluateProcessUiState(inputEmpty).selectionState.files).toEqual([]);
+        });
+
+        describe('two-branch precedence & stateful retention', () => {
+          const sampleSelectedItems = [
+            { id: 'drive-1', title: 'File 1.pdf' },
+            { id: 'drive-2', title: 'File 2.pdf' },
+            { id: 'drive-3', title: 'File 3.pdf' },
+          ];
+
+          it.each([
+            'onSpaceTypeChange',
+            'onDocumentTypeChange',
+            'onFormChange',
+            'processDocument',
+            'viewJson',
+          ])('retains partial file selection on in-card action: %s', (actionName) => {
+            const input: ProcessUiStateInput = {
+              context: {
+                actionName,
+                selectedItems: sampleSelectedItems,
+                formData: {
+                  SelectFiles: ['drive-2', 'drive-3'],
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+
+            expect(state.selectionState.files).toEqual([
+              { text: 'File 1.pdf', value: 'drive-1', selected: false },
+              { text: 'File 2.pdf', value: 'drive-2', selected: true },
+              { text: 'File 3.pdf', value: 'drive-3', selected: true },
+            ]);
+          });
+
+          it('supports scalar string in formData.SelectFiles during in-card actions', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                actionName: 'onFormChange',
+                selectedItems: sampleSelectedItems,
+                formData: {
+                  SelectFiles: 'drive-1',
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+
+            expect(state.selectionState.files).toEqual([
+              { text: 'File 1.pdf', value: 'drive-1', selected: true },
+              { text: 'File 2.pdf', value: 'drive-2', selected: false },
+              { text: 'File 3.pdf', value: 'drive-3', selected: false },
+            ]);
+          });
+
+          it('marks all files unselected when all checkboxes are unchecked during in-card actions', () => {
+            const inputUndefinedSelectFiles: ProcessUiStateInput = {
+              context: {
+                actionName: 'onFormChange',
+                selectedItems: sampleSelectedItems,
+                formData: {
+                  contact: 'Acme Corp',
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state1 = evaluateProcessUiState(inputUndefinedSelectFiles);
+            expect(state1.selectionState.files).toEqual([
+              { text: 'File 1.pdf', value: 'drive-1', selected: false },
+              { text: 'File 2.pdf', value: 'drive-2', selected: false },
+              { text: 'File 3.pdf', value: 'drive-3', selected: false },
+            ]);
+
+            const inputEmptySelectFiles: ProcessUiStateInput = {
+              context: {
+                actionName: 'onSpaceTypeChange',
+                selectedItems: sampleSelectedItems,
+                formData: {
+                  SelectFiles: [],
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state2 = evaluateProcessUiState(inputEmptySelectFiles);
+            expect(state2.selectionState.files).toEqual([
+              { text: 'File 1.pdf', value: 'drive-1', selected: false },
+              { text: 'File 2.pdf', value: 'drive-2', selected: false },
+              { text: 'File 3.pdf', value: 'drive-3', selected: false },
+            ]);
+          });
+
+          it('applies in-card stateful retention branch whenever formData contains SelectFiles or SelectDocument* keys even without explicit in-card action', () => {
+            const inputWithSelectFiles: ProcessUiStateInput = {
+              context: {
+                selectedItems: sampleSelectedItems,
+                formData: {
+                  SelectFiles: ['drive-1'],
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state1 = evaluateProcessUiState(inputWithSelectFiles);
+            expect(state1.selectionState.files).toEqual([
+              { text: 'File 1.pdf', value: 'drive-1', selected: true },
+              { text: 'File 2.pdf', value: 'drive-2', selected: false },
+              { text: 'File 3.pdf', value: 'drive-3', selected: false },
+            ]);
+
+            const inputWithSelectDocKey: ProcessUiStateInput = {
+              context: {
+                selectedItems: sampleSelectedItems,
+                formData: {
+                  SelectDocumentType: 'communication-project',
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state2 = evaluateProcessUiState(inputWithSelectDocKey);
+            expect(state2.selectionState.files).toEqual([
+              { text: 'File 1.pdf', value: 'drive-1', selected: false },
+              { text: 'File 2.pdf', value: 'drive-2', selected: false },
+              { text: 'File 3.pdf', value: 'drive-3', selected: false },
+            ]);
+          });
+
+          it('resets all files to selected: true on refresh action and maintains isUpdateCard false', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                actionName: 'refresh',
+                selectedItems: sampleSelectedItems,
+                formData: {
+                  SelectFiles: ['drive-2'],
+                  SelectDocumentType: 'communication-project',
+                  contact: 'Acme Corp',
+                },
+                isUpdateCard: true,
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+
+            expect(state.selectionState.files).toEqual([
+              { text: 'File 1.pdf', value: 'drive-1', selected: true },
+              { text: 'File 2.pdf', value: 'drive-2', selected: true },
+              { text: 'File 3.pdf', value: 'drive-3', selected: true },
+            ]);
+            expect(state.isUpdateCard).toBe(false);
+          });
+
+          it('does not synthetically populate effectiveFormData.SelectFiles on initial load or refresh', () => {
+            const initialLoadInput: ProcessUiStateInput = {
+              context: {
+                selectedItems: sampleSelectedItems,
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const initialState = evaluateProcessUiState(initialLoadInput);
+            expect(initialState.formData.SelectFiles).toBeUndefined();
+
+            const refreshInput: ProcessUiStateInput = {
+              context: {
+                actionName: 'refresh',
+                selectedItems: sampleSelectedItems,
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const refreshState = evaluateProcessUiState(refreshInput);
+            expect(refreshState.formData.SelectFiles).toBeUndefined();
+          });
+        });
       });
     });
   });
