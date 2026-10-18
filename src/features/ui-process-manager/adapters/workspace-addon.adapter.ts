@@ -196,6 +196,17 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       createRenderResult({ validationErrors, isUpdateCard: true });
 
     if (actionName === 'processDocument') {
+      const hasSelectedFile =
+        (typeof context.parameters?.fileId === 'string' && context.parameters.fileId.trim().length > 0) ||
+        (Array.isArray(context.selectedItems) &&
+          context.selectedItems.some(
+            (item) => typeof item?.id === 'string' && item.id.trim().length > 0
+          ));
+
+      if (!hasSelectedFile) {
+        return createErrorRenderResult(['Please select at least one file in Google Drive to process.']);
+      }
+
       const spaceResolution = resolveSpace(
         {
           formData: normalizedContext.formData,

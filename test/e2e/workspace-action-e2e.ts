@@ -100,6 +100,7 @@ async function runE2E(): Promise<void> {
               parents: ['root'],
             }),
             searchFiles: async () => [],
+            resolveFolderPath: async () => ({ id: 'mock-folder-id', name: 'MockFolder', parents: ['root'] }),
             downloadAsBuffer: async () => new Uint8Array(),
             saveBuffer: async () => ({
               id: 'mock-saved-file-id',

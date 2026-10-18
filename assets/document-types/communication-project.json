@@ -49,6 +49,13 @@
         "required": true
       }
     ],
+    "calculatedFields": [
+      {
+        "name": "commFolderName",
+        "key": "commFolderName",
+        "template": "{{date}} {{direction.key}} - {{description}}"
+      }
+    ],
     "identity": {
       "id": "{{contact.key}}-{{date}}-{{direction.key}}-{{description}}",
       "idDocument": "{{contact.key}}-{{date}}-{{direction.key}}-{{description}}",
@@ -66,6 +73,9 @@
         }
       ]
     }
+  },
+  "storageContextConfig": {
+    "basePath": "1 Admin/Communication"
   },
   "documentUiSchema": {
     "layout": [
@@ -104,9 +114,11 @@
         "name": "FileCommProject",
         "activitySequence": [
           {
-            "type": "LOG_DOCUMENT",
+            "type": "MOVE_FILE",
             "payload": {
-              "status": "filed"
+              "rootStorageId": "{{Document.space.abstractStorageId}}",
+              "parentPath": "{{StorageContext.basePath}}",
+              "folderName": "{{Document.data.contact.key}}/{{Document.data.commFolderName}}"
             }
           }
         ]

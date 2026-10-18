@@ -495,7 +495,10 @@ describe('App integration tests', () => {
         id: expectedIdentityValue,
         idDocument: expectedIdentityValue,
         idGroup: expectedGroupId,
-        data: expectedEnrichedData,
+        data: {
+          ...expectedEnrichedData,
+          commFolderName: '260825 IN - Quarterly review discussion',
+        },
       };
 
       const response = await prodApp.server.inject({
@@ -510,17 +513,21 @@ describe('App integration tests', () => {
       expect(body.data).toEqual(expectedDocument);
       expect(body.activities).toEqual([
         {
-          type: 'LOG_DOCUMENT',
+          type: 'MOVE_FILE',
           payload: {
-            status: 'filed',
+            rootStorageId: 'space-folder-proposal-id',
+            parentPath: 'Communication',
+            folderName: 'Jane Doe/260825 IN - Quarterly review discussion',
           },
         },
       ]);
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'LOG_DOCUMENT',
+        type: 'MOVE_FILE',
         payload: {
-          status: 'filed',
+          rootStorageId: 'space-folder-proposal-id',
+          parentPath: 'Communication',
+          folderName: 'Jane Doe/260825 IN - Quarterly review discussion',
         },
       });
 
@@ -873,6 +880,7 @@ describe('App integration tests', () => {
           parents: ['custom-folder-id'],
         }),
         searchFiles: vi.fn().mockResolvedValue([]),
+        resolveFolderPath: vi.fn(),
         downloadAsBuffer: vi.fn(),
         saveBuffer: vi.fn(),
         uploadStream: vi.fn(),

@@ -25,6 +25,12 @@ describe('DriveActivityHandler', () => {
         parents: ['folder-parent-xyz'],
         webViewLink: 'https://drive.google.com/drive/folders/testmove-folder-id',
       }),
+      resolveFolderPath: vi.fn().mockResolvedValue({
+        id: 'resolved-parent-folder-id',
+        name: 'Communication',
+        parents: ['folder-parent-xyz'],
+        webViewLink: 'https://drive.google.com/drive/folders/resolved-parent-folder-id',
+      }),
       move: vi.fn().mockResolvedValue({
         id: 'file-123',
         name: 'Report.docx',
@@ -501,6 +507,179 @@ describe('DriveActivityHandler', () => {
 
         expect(mockDriveService.getFile).toHaveBeenCalledWith('payload-priority-id');
         expect(mockDriveService.move).toHaveBeenCalledWith('payload-priority-id', 'testmove-folder-id');
+      });
+    });
+
+    describe('sourceFiles constructor injection and deep path MOVE_FILE', () => {
+      it('moves sourceFiles to resolved deep path and sequential subfolders preserving original filename', async () => {
+        (mockDriveService.resolveFolderPath as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          id: 'admin-comm-folder-id',
+          name: 'Communication',
+          parents: ['admin-id'],
+        });
+
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({
+            id: 'contact-folder-id',
+            name: 'Acme Corp',
+            parents: ['admin-comm-folder-id'],
+          })
+          .mockResolvedValueOnce({
+            id: 'comm-folder-id',
+            name: '260920 IN - Meeting Notes',
+            parents: ['contact-folder-id'],
+          });
+
+        (mockDriveService.move as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          id: 'sf-1',
+          name: 'Original_Report.pdf',
+          parents: ['comm-folder-id'],
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/sf-1/view',
+        });
+
+        const sfHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [{ id: 'sf-1', name: 'Original_Report.pdf', mimeType: 'application/pdf' }],
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-shared-drive-id',
+            parentPath: '1 Admin/Communication',
+            folderName: 'Acme Corp/260920 IN - Meeting Notes',
+          },
+        };
+
+        const result = await sfHandler.handle(activity);
+
+        expect(result.success).toBe(true);
+        expect(mockDriveService.resolveFolderPath).toHaveBeenCalledWith('root-shared-drive-id', [
+          '1 Admin',
+          'Communication',
+        ]);
+        expect(mockDriveService.findOrCreateFolder).toHaveBeenNthCalledWith(
+          1,
+          'admin-comm-folder-id',
+          'Acme Corp'
+        );
+        expect(mockDriveService.findOrCreateFolder).toHaveBeenNthCalledWith(
+          2,
+          'contact-folder-id',
+          '260920 IN - Meeting Notes'
+        );
+        expect(mockDriveService.move).toHaveBeenCalledWith('sf-1', 'comm-folder-id');
+        expect(result.files).toEqual([
+          {
+            id: 'sf-1',
+            name: 'Original_Report.pdf',
+            parentName: '260920 IN - Meeting Notes',
+            mimeType: 'application/pdf',
+            uri: 'https://drive.google.com/file/d/sf-1/view',
+          },
+        ]);
+      });
+
+      it('moves multiple sourceFiles sequentially into the leaf folder', async () => {
+        (mockDriveService.resolveFolderPath as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          id: 'base-comm-id',
+          name: 'Communication',
+        });
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          id: 'leaf-id',
+          name: 'LeafFolder',
+        });
+
+        (mockDriveService.move as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({
+            id: 'sf-1',
+            name: 'Doc1.pdf',
+            parents: ['leaf-id'],
+          })
+          .mockResolvedValueOnce({
+            id: 'sf-2',
+            name: 'Doc2.pdf',
+            parents: ['leaf-id'],
+          });
+
+        const multiHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [
+            { id: 'sf-1', name: 'Doc1.pdf' },
+            { id: 'sf-2', name: 'Doc2.pdf' },
+          ],
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-id',
+            parentPath: 'Communication',
+            folderName: 'LeafFolder',
+          },
+        };
+
+        const result = await multiHandler.handle(activity);
+
+        expect(result.success).toBe(true);
+        expect(result.files).toHaveLength(2);
+        expect(mockDriveService.move).toHaveBeenNthCalledWith(1, 'sf-1', 'leaf-id');
+        expect(mockDriveService.move).toHaveBeenNthCalledWith(2, 'sf-2', 'leaf-id');
+      });
+
+      it('catches DriveServiceError during move and returns success: false instead of crashing', async () => {
+        (mockDriveService.resolveFolderPath as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+          new DriveServiceError('Drive service error (403): Insufficient permissions')
+        );
+
+        const sfHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [{ id: 'sf-1' }],
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-id',
+            parentPath: '1 Admin/Communication',
+            folderName: 'Acme/Sub',
+          },
+        };
+
+        const result = await sfHandler.handle(activity);
+
+        expect(result).toEqual({
+          success: false,
+          error: 'Drive service error (403): Insufficient permissions',
+        });
+      });
+
+      it('catches AmbiguousPathSpecError during findOrCreateFolder and returns success: false', async () => {
+        (mockDriveService.resolveFolderPath as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          id: 'base-id',
+          name: 'Communication',
+        });
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+          new AmbiguousPathSpecError('AmbiguousPathSpecError: Multiple folders named Acme found')
+        );
+
+        const sfHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [{ id: 'sf-1' }],
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-id',
+            parentPath: 'Communication',
+            folderName: 'Acme/Sub',
+          },
+        };
+
+        const result = await sfHandler.handle(activity);
+
+        expect(result).toEqual({
+          success: false,
+          error: 'AmbiguousPathSpecError: Multiple folders named Acme found',
+        });
       });
     });
   });

@@ -1,6 +1,7 @@
 import {
   DriveServiceError,
   AmbiguousPathSpecError,
+  FileNotFoundError,
   type DriveContentSaveOptions,
   type DriveDuplicateOptions,
   type DriveFileResult,
@@ -49,6 +50,10 @@ export interface DriveClientPort {
   findOrCreateFolder(
     parentId: string,
     folderName: string
+  ): Promise<DriveClientFileMetadata>;
+  resolveFolderPath(
+    rootFolderId: string,
+    pathSegments: string[]
   ): Promise<DriveClientFileMetadata>;
   move(
     fileId: string,
@@ -129,6 +134,19 @@ export class DriveServiceAdapter implements DriveServicePort {
       throw new AmbiguousPathSpecError(baseMessage, { cause: error });
     }
 
+    if (
+      errorName === 'GoogleDriveNotFoundError' ||
+      errorName === 'FileNotFoundError'
+    ) {
+      const baseMessage =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'object' && error !== null && 'message' in error
+            ? String((error as { message: unknown }).message)
+            : String(error);
+      throw new FileNotFoundError(baseMessage, { cause: error });
+    }
+
     const statusCode = extractHttpStatusCode(error);
 
     const baseMessage =
@@ -168,6 +186,21 @@ export class DriveServiceAdapter implements DriveServicePort {
       return mapMetadataToResult(metadata);
     } catch (error) {
       this.translateError('findOrCreateFolder', error);
+    }
+  }
+
+  async resolveFolderPath(
+    rootFolderId: string,
+    pathSegments: string[]
+  ): Promise<DriveFileResult> {
+    try {
+      const metadata = await this.driveClient.resolveFolderPath(
+        rootFolderId,
+        pathSegments
+      );
+      return mapMetadataToResult(metadata);
+    } catch (error) {
+      this.translateError('resolveFolderPath', error);
     }
   }
 

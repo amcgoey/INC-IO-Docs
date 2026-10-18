@@ -89,6 +89,12 @@ export function createDocumentServiceFactory(
       context.parameters?.fileId ??
       (context.formData?.fileId as string | undefined);
 
+    const sourceFiles = context.selectedItems?.map((item) => ({
+      id: item.id,
+      ...(item.title !== undefined ? { name: item.title } : {}),
+      ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
+    }));
+
     const driveClient = context.userOAuthToken
       ? new GoogleDriveClient({
           auth: context.userOAuthToken,
@@ -102,6 +108,7 @@ export function createDocumentServiceFactory(
     const driveActivityHandler = new DriveActivityHandler(driveService, {
       configProvider: options.configProvider,
       primaryTargetId,
+      sourceFiles,
     });
 
     const activityEngine = new ActivityEngine([driveActivityHandler]);

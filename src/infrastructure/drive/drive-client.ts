@@ -103,6 +103,16 @@ export class GoogleDriveAmbiguousPathError extends GoogleDriveApiError {
   }
 }
 
+export class GoogleDriveNotFoundError extends GoogleDriveApiError {
+  constructor(
+    message: string,
+    options?: { cause?: unknown; statusCode?: number | undefined }
+  ) {
+    super(message, { statusCode: 404, ...options });
+    this.name = 'GoogleDriveNotFoundError';
+  }
+}
+
 export interface DriveRetryOptions {
   maxRetries?: number;
   initialDelayMs?: number;
@@ -140,7 +150,7 @@ function extractHttpStatusCode(error: unknown): number | undefined {
 }
 
 function escapeDriveQuery(str: string): string {
-  return str.replace(/'/g, "\\'");
+  return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
 function isRateLimitError(error: unknown): boolean {
@@ -331,6 +341,12 @@ export class GoogleDriveClient {
         })
       );
 
+      if (res.data.files && res.data.files.length > 1) {
+        throw new GoogleDriveAmbiguousPathError(
+          `AmbiguousPathSpecError: Query for folder '${folderName}' in parent '${parentId}' returned ${res.data.files.length} results, exceeding unique match threshold.`
+        );
+      }
+
       const existingFolder = res.data.files?.[0];
       if (existingFolder?.id && existingFolder?.name) {
         return {
@@ -367,7 +383,86 @@ export class GoogleDriveClient {
         webViewLink: createRes.data.webViewLink ?? undefined,
       };
     } catch (error) {
+      if (error instanceof GoogleDriveAmbiguousPathError) {
+        throw error;
+      }
       this.wrapApiError('findOrCreateFolder', error);
+    }
+  }
+
+  async resolveFolderPath(
+    rootFolderId: string,
+    pathSegments: string[],
+    options?: DriveOperationOptions
+  ): Promise<DriveFileMetadata> {
+    const drive = this.getDrive(options?.auth);
+    try {
+      if (pathSegments.length === 0) {
+        return await this.getFile(rootFolderId, options);
+      }
+
+      let currentFolderId = rootFolderId;
+      let currentFolder: DriveFileMetadata | undefined = undefined;
+
+      for (const segment of pathSegments) {
+        const escapedName = escapeDriveQuery(segment);
+        const q = `'${currentFolderId}' in parents and name = '${escapedName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+
+        const res = await this.executeWithRetry(() =>
+          drive.files.list({
+            q,
+            fields: 'files(id, name, parents, mimeType, webViewLink)',
+            spaces: 'drive',
+            includeItemsFromAllDrives: true,
+            supportsAllDrives: true,
+          })
+        );
+
+        const files = res.data.files ?? [];
+        if (files.length === 0) {
+          throw new GoogleDriveNotFoundError(
+            `FileNotFoundError: Folder segment '${segment}' not found under parent '${currentFolderId}'.`,
+            { statusCode: 404 }
+          );
+        }
+
+        if (files.length > 1) {
+          throw new GoogleDriveAmbiguousPathError(
+            `AmbiguousPathSpecError: Query for folder segment '${segment}' under parent '${currentFolderId}' returned ${files.length} matches and could not be uniquely resolved.`
+          );
+        }
+
+        const match = files[0];
+        if (!match.id || !match.name) {
+          throw new GoogleDriveNotFoundError(
+            `FileNotFoundError: Folder segment '${segment}' under parent '${currentFolderId}' returned incomplete metadata.`,
+            { statusCode: 404 }
+          );
+        }
+
+        currentFolderId = match.id;
+        currentFolder = {
+          id: match.id,
+          name: match.name,
+          parents: match.parents ?? [currentFolderId],
+          mimeType: match.mimeType ?? 'application/vnd.google-apps.folder',
+          webViewLink: match.webViewLink ?? undefined,
+        };
+      }
+
+      if (!currentFolder) {
+        return await this.getFile(rootFolderId, options);
+      }
+
+      return currentFolder;
+    } catch (error) {
+      if (
+        error instanceof GoogleDriveNotFoundError ||
+        error instanceof GoogleDriveAmbiguousPathError
+      ) {
+        throw error;
+      }
+      this.wrapApiError('resolveFolderPath', error);
     }
   }
 
@@ -385,6 +480,10 @@ export class GoogleDriveClient {
       );
       const removeParents =
         removeParentsList.length > 0 ? removeParentsList.join(',') : undefined;
+
+      if (currentParents.includes(targetFolderId) && !removeParents) {
+        return file;
+      }
 
       const res = await this.executeWithRetry(() =>
         drive.files.update({

@@ -119,6 +119,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       rename: vi.fn().mockResolvedValue({ id: 'file-123', name: 'Renamed.pdf', parents: ['root'] }),
       duplicate: vi.fn().mockResolvedValue({ id: 'file-123-copy', name: 'Invoice.pdf', parents: ['root'] }),
       searchFiles: vi.fn().mockResolvedValue([]),
+      resolveFolderPath: vi.fn().mockResolvedValue({ id: 'resolved-folder-1', name: 'ResolvedFolder', parents: ['root'] }),
       downloadAsBuffer: vi.fn().mockResolvedValue(new Uint8Array()),
       saveBuffer: vi.fn().mockResolvedValue({ id: 'saved-1', name: 'Saved.pdf', parents: ['root'] }),
       uploadStream: vi.fn().mockResolvedValue({ id: 'stream-1', name: 'Streamed.pdf', parents: ['root'] }),
@@ -878,6 +879,15 @@ describe('Workspace Addon UI E2E Test Suite', () => {
         authorizationEventObject: {
           userOAuthToken: 'ya29.sample-e2e-token',
         },
+        drive: {
+          selectedItems: [
+            {
+              id: 'drive-file-001',
+              title: 'Sample.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        },
         commonEventObject: {
           parameters: {
             action: 'processDocument',
@@ -966,6 +976,54 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
+    it('aborts submission and returns pre-submit validation error card when submitting processDocument without selected items', async () => {
+      const processPayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'processDocument',
+          },
+          formInputs: {
+            ...baseProcessInputs(),
+            [getDocumentTypeWidgetName('projects')]: {
+              stringInputs: { value: ['communication-project'] },
+            },
+          },
+        },
+      };
+
+      const response = await injectWorkspaceRequest(app.server, {
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+        },
+        payload: processPayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+
+      expect([...Value.Errors(GoogleWorkspaceActionResponseSchema, body)]).toHaveLength(0);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+
+      const updateCard = body.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+
+      const errorSection = updateCard.sections.find((s: SectionStub) =>
+        s.widgets.some((w) => w.textParagraph?.text?.includes('Validation Errors:'))
+      );
+      expect(errorSection).toBeDefined();
+      const errorWidget = errorSection?.widgets.find((w: WidgetStub) =>
+        w.textParagraph?.text?.includes('Validation Errors:')
+      );
+      expect(errorWidget?.textParagraph?.text).toContain('Please select at least one file in Google Drive to process.');
+
+      expect(mockDocumentService.processDocument).not.toHaveBeenCalled();
+    });
+
     it('handles document processing exceptions gracefully, returning an updateCard with error message adhering to schema', async () => {
       mockDocumentService.processDocument.mockRejectedValueOnce(
         new Error('Document processing pipeline failure')
@@ -974,6 +1032,15 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       const processPayload = {
         authorizationEventObject: {
           userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        drive: {
+          selectedItems: [
+            {
+              id: 'drive-file-001',
+              title: 'Sample.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
         },
         commonEventObject: {
           parameters: {

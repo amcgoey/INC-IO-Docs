@@ -104,6 +104,19 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       })),
     };
 
+    vi.spyOn(GoogleDriveClient.prototype, 'resolveFolderPath').mockImplementation(async (rootFolderId, segments) => {
+      return { id: 'comm-proposal-alpha-folder-id', name: segments[segments.length - 1] ?? 'Communication', parents: [rootFolderId] };
+    });
+    vi.spyOn(GoogleDriveClient.prototype, 'findOrCreateFolder').mockImplementation(async (parentId, name) => {
+      return { id: `folder-${name}`, name, parents: [parentId] };
+    });
+    vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId) => {
+      return { id: fileId, name: 'Doc.pdf', parents: ['root'] };
+    });
+    vi.spyOn(GoogleDriveClient.prototype, 'move').mockImplementation(async (fileId, targetFolderId) => {
+      return { id: fileId, name: 'Doc.pdf', parents: [targetFolderId] };
+    });
+
     vi.spyOn(GoogleDriveClient.prototype, 'listFolders').mockImplementation(async (options) => {
       // Alpha space with contacts
       if (options?.parentFolderId === 'space-folder-alpha-id') {

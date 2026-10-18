@@ -325,6 +325,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         SelectDocumentSpace: 'Project Alpha',
         SelectDocumentType: 'communication-project',
       },
+      selectedItems: [{ id: 'file-123' }],
     };
 
     const response = (await wiring.requestScopedWrapper.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;

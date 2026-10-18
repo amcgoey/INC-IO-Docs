@@ -1,163 +1,49 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { DocumentService, type DocumentType, type Document, type Activity } from '../src/features/document/domain';
+import * as path from 'node:path';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { DocumentService, type Document, type Activity, type ActivityOutput } from '../src/features/document/domain';
 import { HandlebarsAdapter } from '../src/infrastructure/template-engine/handlebars-adapter';
-import { StructuredLogActivity } from '../src/features/document/adapters/structured-log-activity';
 import { ActivityEngine } from '../src/features/document/adapters/activity-engine';
-import type { DocumentSchemaRegistryPort } from '../src/features/document/ports';
+import { DocumentSchemaRegistryAdapter } from '../src/features/document/adapters/document-schema-registry';
 import { CompiledSchemaRegistry } from '../src/features/document/adapters/compiled-schema-registry';
+import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
+import { ensureEvaluationOrder } from '../src/infrastructure/validation/json-logic-graph';
+import type { ActivityHandler } from '../src/features/document/ports';
 
-describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
+describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schemas)', () => {
   let documentService: DocumentService;
   let handlebarsAdapter: HandlebarsAdapter;
   let activityEngine: ActivityEngine;
-  let structuredLogActivity: StructuredLogActivity;
-  let consoleSpy: ReturnType<typeof vi.spyOn>;
-
-  const communicationProjectDocumentType: DocumentType = {
-    key: 'communication-project',
-    name: 'Communication Project',
-    documentSchema: {
-      fields: [
-        {
-          key: 'contact',
-          name: 'Contact',
-          type: 'string',
-          description: 'Contact folder name',
-          required: true,
-        },
-        {
-          key: 'date',
-          name: 'Date',
-          type: 'string',
-          description: 'Date in yyMMdd format',
-          required: true,
-        },
-        {
-          key: 'direction',
-          name: 'Direction',
-          type: 'string',
-          description: 'Communication direction',
-          required: true,
-          options: {
-            source: 'direction',
-            key: 'key',
-            name: 'name',
-          },
-        },
-        {
-          key: 'description',
-          name: 'Description',
-          type: 'string',
-          description: 'Description of communication',
-          required: true,
-        },
-      ],
-      calculatedFields: [
-        {
-          key: 'summary',
-          template: '{{date}} {{direction.key}} - {{description}}',
-        },
-        {
-          key: 'testCalculatedField',
-          template: '{{date}}-{{direction.key}}-{{contact}}-{{description}}',
-        },
-      ],
-      identity: {
-        id: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
-        idDocument: '{{contact}}-{{date}}-{{direction.key}}-{{description}}',
-        idGroup: '{{contact}}',
-      },
-      options: {
-        direction: [
-          {
-            key: 'IN',
-            name: 'Incoming',
-          },
-          {
-            key: 'OT',
-            name: 'Outgoing',
-          },
-        ],
-      },
-    },
-    documentUiSchema: {
-      events: {
-        onSubmit: {
-          rules: [
-            {
-              matchFields: { direction: 'OT' },
-              workflow: 'OutgoingCommWorkflow',
-            },
-            {
-              matchFields: { direction: 'IN' },
-              workflow: 'IncomingCommWorkflow',
-            },
-          ],
-          catchAllWorkflow: 'DefaultCommWorkflow',
-        },
-      },
-    },
-    storageContextConfig: {
-      folder: '1Admin\\Communication\\\\{{Document.data.contact}}',
-      subfolder: 'Archive\\\\{{Document.data.direction.key}}',
-    },
-    documentWorkflowConfig: {
-      workflows: [
-        {
-          name: 'OutgoingCommWorkflow',
-          activitySequence: [
-            {
-              type: 'LOG_DOCUMENT',
-              payload: {
-                targetPath: '{{StorageContext.folder}}\\\\{{Document.data.summary}}',
-                archivePath: '{{StorageContext.subfolder}}\\\\{{Document.data.testCalculatedField}}',
-              },
-            },
-          ],
-        },
-        {
-          name: 'IncomingCommWorkflow',
-          activitySequence: [
-            {
-              type: 'LOG_DOCUMENT',
-              payload: {
-                targetPath: '{{StorageContext.folder}}\\\\{{Document.data.summary}}',
-                archivePath: '{{StorageContext.subfolder}}\\\\{{Document.data.testCalculatedField}}',
-              },
-            },
-          ],
-        },
-        {
-          name: 'DefaultCommWorkflow',
-          activitySequence: [
-            {
-              type: 'LOG_DOCUMENT',
-              payload: {
-                targetPath: '{{StorageContext.folder}}\\\\{{Document.data.summary}}',
-                archivePath: '{{StorageContext.subfolder}}\\\\{{Document.data.testCalculatedField}}',
-              },
-            },
-          ],
-        },
-      ],
-    },
-  };
+  let mockMoveHandler: ActivityHandler;
+  let moveHandleSpy: Mock<(activity: Activity) => Promise<ActivityOutput>>;
 
   beforeEach(async () => {
-    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    moveHandleSpy = vi.fn<(activity: Activity) => Promise<ActivityOutput>>().mockResolvedValue({
+      success: true,
+      files: [{ id: 'moved-file-123', name: 'Original.pdf', parentName: '260826 OT - ASR 06 Design Changes' }],
+    });
 
-    const mockRegistry: DocumentSchemaRegistryPort = {
-      loadAll: vi.fn().mockResolvedValue([communicationProjectDocumentType]),
+    mockMoveHandler = {
+      canHandle: vi.fn((activity: Activity) => activity.type === 'MOVE_FILE'),
+      handle: (activity: Activity) => moveHandleSpy(activity),
     };
 
     handlebarsAdapter = new HandlebarsAdapter();
-    structuredLogActivity = new StructuredLogActivity();
-    activityEngine = new ActivityEngine([structuredLogActivity]);
-    const compiledRegistry = new CompiledSchemaRegistry(mockRegistry);
+    activityEngine = new ActivityEngine([mockMoveHandler]);
+
+    const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+    const manifestProvider = new AppManifestProvider({ manifestPath });
+    const registryAdapter = new DocumentSchemaRegistryAdapter(
+      manifestProvider,
+      handlebarsAdapter,
+      ensureEvaluationOrder
+    );
+
+    const compiledRegistry = new CompiledSchemaRegistry(registryAdapter);
     await compiledRegistry.initialize();
+
     documentService = new DocumentService(
       activityEngine,
-      mockRegistry,
+      registryAdapter,
       handlebarsAdapter,
       compiledRegistry
     );
@@ -165,13 +51,15 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
     await documentService.initialize();
   });
 
-  afterEach(() => {
-    consoleSpy.mockRestore();
-  });
-
-  it('routes and executes Document 1 (Client - AAA) with option enrichment, identities, calculated fields, and precise path resolution', async () => {
-    const document1: Document = {
+  it('routes and executes communication-project: enriches options, evaluates commFolderName, synthesizes identity, resolves basePath, and dispatches MOVE_FILE', async () => {
+    const projectDocument: Document = {
       type: 'communication-project',
+      space: {
+        id: 'proj-1',
+        typeId: 'projects',
+        abstractStorageId: 'shared-drive-proj-123',
+        name: 'Project Alpha',
+      },
       data: {
         contact: '_Client - AAA',
         date: '260826',
@@ -180,47 +68,63 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
       },
     };
 
-    const result = await documentService.processDocument(document1, 'onSubmit');
+    const result = await documentService.processDocument(projectDocument, 'onSubmit');
 
     expect(result.success).toBe(true);
     if (!result.success) return;
 
-    // Asserts identity synthesis and option enrichment from communication-project schema
+    // Asserts identity synthesis, option enrichment, and calculated field from communication-project schema
     expect(result.data).toEqual({
       type: 'communication-project',
       id: '_Client - AAA-260826-OT-ASR 06 Design Changes',
       idDocument: '_Client - AAA-260826-OT-ASR 06 Design Changes',
       idGroup: '_Client - AAA',
+      space: {
+        id: 'proj-1',
+        typeId: 'projects',
+        abstractStorageId: 'shared-drive-proj-123',
+        name: 'Project Alpha',
+      },
       data: {
-        contact: '_Client - AAA',
+        contact: {
+          key: '_Client - AAA',
+          name: '_Client - AAA',
+        },
         date: '260826',
         direction: {
           key: 'OT',
           name: 'Outgoing',
         },
         description: 'ASR 06 Design Changes',
-        summary: '260826 OT - ASR 06 Design Changes',
-        testCalculatedField: '260826-OT-_Client - AAA-ASR 06 Design Changes',
+        commFolderName: '260826 OT - ASR 06 Design Changes',
       },
     });
 
     const expectedPayload = {
-      targetPath: '1Admin\\Communication\\_Client - AAA\\260826 OT - ASR 06 Design Changes',
-      archivePath: 'Archive\\OT\\260826-OT-_Client - AAA-ASR 06 Design Changes',
+      rootStorageId: 'shared-drive-proj-123',
+      parentPath: '1 Admin/Communication',
+      folderName: '_Client - AAA/260826 OT - ASR 06 Design Changes',
     };
 
     const expectedActivity: Activity = {
-      type: 'LOG_DOCUMENT',
+      type: 'MOVE_FILE',
       payload: expectedPayload,
     };
 
     expect(result.activities).toEqual([expectedActivity]);
-    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(expectedPayload));
+    expect(mockMoveHandler.canHandle).toHaveBeenCalledWith(expectedActivity);
+    expect(moveHandleSpy).toHaveBeenCalledWith(expectedActivity);
   });
 
-  it('routes and executes Document 2 (Architect - BBB) with option enrichment, identities, calculated fields, and precise path resolution', async () => {
-    const document2: Document = {
-      type: 'communication-project',
+  it('routes and executes communication-proposal: enriches options, evaluates commFolderName, synthesizes identity, resolves basePath, and dispatches MOVE_FILE', async () => {
+    const proposalDocument: Document = {
+      type: 'communication-proposal',
+      space: {
+        id: 'prop-1',
+        typeId: 'proposals',
+        abstractStorageId: 'opp-folder-456',
+        name: 'Proposal Beta',
+      },
       data: {
         contact: 'Architect - BBB',
         date: '260715',
@@ -229,41 +133,51 @@ describe('Workflow & Activity End-to-End Hexagonal Integration', () => {
       },
     };
 
-    const result = await documentService.processDocument(document2, 'onSubmit');
+    const result = await documentService.processDocument(proposalDocument, 'onSubmit');
 
     expect(result.success).toBe(true);
     if (!result.success) return;
 
-    // Asserts identity synthesis and option enrichment from communication-project schema
+    // Asserts identity synthesis, option enrichment, and calculated field from communication-proposal schema
     expect(result.data).toEqual({
-      type: 'communication-project',
+      type: 'communication-proposal',
       id: 'Architect - BBB-260715-IN-CD Comments',
       idDocument: 'Architect - BBB-260715-IN-CD Comments',
       idGroup: 'Architect - BBB',
+      space: {
+        id: 'prop-1',
+        typeId: 'proposals',
+        abstractStorageId: 'opp-folder-456',
+        name: 'Proposal Beta',
+      },
       data: {
-        contact: 'Architect - BBB',
+        contact: {
+          key: 'Architect - BBB',
+          name: 'Architect - BBB',
+        },
         date: '260715',
         direction: {
           key: 'IN',
           name: 'Incoming',
         },
         description: 'CD Comments',
-        summary: '260715 IN - CD Comments',
-        testCalculatedField: '260715-IN-Architect - BBB-CD Comments',
+        commFolderName: '260715 IN - CD Comments',
       },
     });
 
     const expectedPayload = {
-      targetPath: '1Admin\\Communication\\Architect - BBB\\260715 IN - CD Comments',
-      archivePath: 'Archive\\IN\\260715-IN-Architect - BBB-CD Comments',
+      rootStorageId: 'opp-folder-456',
+      parentPath: 'Communication',
+      folderName: 'Architect - BBB/260715 IN - CD Comments',
     };
 
     const expectedActivity: Activity = {
-      type: 'LOG_DOCUMENT',
+      type: 'MOVE_FILE',
       payload: expectedPayload,
     };
 
     expect(result.activities).toEqual([expectedActivity]);
-    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(expectedPayload));
+    expect(mockMoveHandler.canHandle).toHaveBeenCalledWith(expectedActivity);
+    expect(moveHandleSpy).toHaveBeenCalledWith(expectedActivity);
   });
 });

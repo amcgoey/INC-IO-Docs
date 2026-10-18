@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { GoogleDriveClient, GoogleDriveApiError, GoogleDriveAmbiguousPathError } from './drive-client';
+import {
+  GoogleDriveClient,
+  GoogleDriveApiError,
+  GoogleDriveAmbiguousPathError,
+  GoogleDriveNotFoundError,
+} from './drive-client';
 import { google, type drive_v3 } from 'googleapis';
 
 describe('GoogleDriveClient', () => {
@@ -186,6 +191,39 @@ describe('GoogleDriveClient', () => {
         })
       );
     });
+
+    it('throws GoogleDriveAmbiguousPathError when multiple matching folders exist under parentId', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          files: [
+            { id: 'folder-1', name: 'Duplicates', parents: ['p1'] },
+            { id: 'folder-2', name: 'Duplicates', parents: ['p1'] },
+          ],
+        },
+      });
+
+      await expect(client.findOrCreateFolder('p1', 'Duplicates')).rejects.toThrow(
+        GoogleDriveAmbiguousPathError
+      );
+    });
+
+    it('escapes backslashes and single quotes properly in query', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: { files: [] },
+      });
+
+      (mockDrive.files.create as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: { id: 'created-folder', name: "A\\B'C", parents: ['p1'] },
+      });
+
+      await client.findOrCreateFolder('p1', "A\\B'C");
+
+      expect(mockDrive.files.list).toHaveBeenCalledWith(
+        expect.objectContaining({
+          q: "'p1' in parents and name = 'A\\\\B\\'C' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        })
+      );
+    });
   });
 
   describe('move', () => {
@@ -333,6 +371,134 @@ describe('GoogleDriveClient', () => {
 
       await expect(client.move('file-123', 'p2')).rejects.toThrow(
         /Failed to move file 'file-123' to folder 'p2'/
+      );
+    });
+
+    it('returns existing file metadata as an idempotent no-op when targetFolderId is already the sole parent', async () => {
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'file-123',
+          name: 'Project Plan.pdf',
+          parents: ['target-folder-id'],
+        },
+      });
+
+      const result = await client.move('file-123', 'target-folder-id');
+
+      expect(result).toEqual({
+        id: 'file-123',
+        name: 'Project Plan.pdf',
+        parents: ['target-folder-id'],
+        mimeType: undefined,
+        webViewLink: undefined,
+      });
+      expect(mockDrive.files.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('resolveFolderPath', () => {
+    it('returns root folder metadata when pathSegments is empty', async () => {
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'root-id',
+          name: 'RootFolder',
+          parents: [],
+        },
+      });
+
+      const folder = await client.resolveFolderPath('root-id', []);
+
+      expect(folder).toEqual({
+        id: 'root-id',
+        name: 'RootFolder',
+        parents: [],
+        mimeType: undefined,
+        webViewLink: undefined,
+      });
+      expect(mockDrive.files.get).toHaveBeenCalledWith({
+        fileId: 'root-id',
+        fields: 'id, name, parents, mimeType, webViewLink',
+        supportsAllDrives: true,
+      });
+    });
+
+    it('traverses pathSegments top-down sequentially omitting corpora: user and setting includeItemsFromAllDrives', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          data: {
+            files: [
+              {
+                id: 'admin-id',
+                name: '1 Admin',
+                parents: ['root-id'],
+                mimeType: 'application/vnd.google-apps.folder',
+              },
+            ],
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            files: [
+              {
+                id: 'comm-id',
+                name: 'Communication',
+                parents: ['admin-id'],
+                mimeType: 'application/vnd.google-apps.folder',
+                webViewLink: 'https://drive/comm',
+              },
+            ],
+          },
+        });
+
+      const folder = await client.resolveFolderPath('root-id', ['1 Admin', 'Communication']);
+
+      expect(folder).toEqual({
+        id: 'comm-id',
+        name: 'Communication',
+        parents: ['admin-id'],
+        mimeType: 'application/vnd.google-apps.folder',
+        webViewLink: 'https://drive/comm',
+      });
+
+      expect(mockDrive.files.list).toHaveBeenNthCalledWith(1, {
+        q: "'root-id' in parents and name = '1 Admin' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        fields: 'files(id, name, parents, mimeType, webViewLink)',
+        spaces: 'drive',
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true,
+      });
+
+      expect(mockDrive.files.list).toHaveBeenNthCalledWith(2, {
+        q: "'admin-id' in parents and name = 'Communication' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        fields: 'files(id, name, parents, mimeType, webViewLink)',
+        spaces: 'drive',
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true,
+      });
+    });
+
+    it('throws GoogleDriveNotFoundError when segment has 0 matches', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: { files: [] },
+      });
+
+      await expect(client.resolveFolderPath('root-id', ['NonExistent'])).rejects.toThrow(
+        GoogleDriveNotFoundError
+      );
+    });
+
+    it('throws GoogleDriveAmbiguousPathError when segment has > 1 matches', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: {
+          files: [
+            { id: 'f-1', name: 'Ambiguous', parents: ['root-id'] },
+            { id: 'f-2', name: 'Ambiguous', parents: ['root-id'] },
+          ],
+        },
+      });
+
+      await expect(client.resolveFolderPath('root-id', ['Ambiguous'])).rejects.toThrow(
+        GoogleDriveAmbiguousPathError
       );
     });
   });

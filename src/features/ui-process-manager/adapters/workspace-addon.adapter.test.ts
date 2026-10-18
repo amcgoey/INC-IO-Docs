@@ -503,6 +503,106 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       });
     });
 
+    it('aborts submission and returns error update card when selectedItems is missing or empty', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Main',
+          SelectDocumentType: 'communication-project',
+          contact: 'Acme Corp',
+          date: '260920',
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
+      expect(response).toMatchObject({
+        type: 'render',
+        isUpdateCard: true,
+        validationErrors: ['Please select at least one file in Google Drive to process.'],
+      });
+    });
+
+    it('aborts submission and returns error update card when selectedItems items have empty id', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Main',
+          SelectDocumentType: 'communication-project',
+          contact: 'Acme Corp',
+          date: '260920',
+        },
+        selectedItems: [{ id: '   ', title: 'File.pdf' }],
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
+      expect(response).toMatchObject({
+        type: 'render',
+        isUpdateCard: true,
+        validationErrors: ['Please select at least one file in Google Drive to process.'],
+      });
+    });
+
+    it('proceeds with submission when parameters.fileId is present even without selectedItems', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Main',
+          SelectDocumentType: 'communication-project',
+          contact: 'Acme Corp',
+          date: '260920',
+        },
+        parameters: { fileId: 'param-file-123' },
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalled();
+      expect(response).toEqual({
+        type: 'notification',
+        text: 'Document processed successfully',
+      });
+    });
+
     it('executes documentRunner with space from dynamically suffixed SelectDocumentSpace_<activeSpaceType>', async () => {
       const mockDocumentRunner = {
         processDocument: vi.fn().mockResolvedValue({
@@ -526,6 +626,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           SelectDocumentType: 'communication-project',
           contact: 'Acme Corp',
         },
+        selectedItems: [{ id: 'drive-item-123', title: 'File.pdf' }],
       };
 
       await adapter.processUiEvent(context);
@@ -566,6 +667,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           'contact_communication-project': 'Acme Suffixed',
           'contact_invoice-project': 'Inactive Invoice Contact',
         },
+        selectedItems: [{ id: 'drive-item-123', title: 'File.pdf' }],
       };
 
       await adapter.processUiEvent(context);
@@ -609,6 +711,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           SelectDocumentSpace: 'Project Main',
           SelectDocumentType: 'communication-project',
         },
+        selectedItems: [{ id: 'drive-item-123', title: 'File.pdf' }],
       };
 
       const response = await adapter.processUiEvent(context);
@@ -639,6 +742,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           SelectDocumentSpace: 'Project Main',
           SelectDocumentType: 'communication-project',
         },
+        selectedItems: [{ id: 'drive-item-123', title: 'File.pdf' }],
       };
 
       const response = await adapter.processUiEvent(context);
@@ -682,6 +786,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           SelectDocumentType_projects: 'communication-project',
           contact: 'Test Contact',
         },
+        selectedItems: [{ id: 'drive-item-123', title: 'File.pdf' }],
       };
 
       await adapter.processUiEvent(context);
@@ -731,6 +836,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           SelectDocumentType: 'communication-project',
           contact: 'Test Contact',
         },
+        selectedItems: [{ id: 'drive-item-123', title: 'File.pdf' }],
       };
 
       await adapter.processUiEvent(context);
@@ -827,6 +933,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           SelectDocumentType: 'communication-project',
           contact: 'Test Contact',
         },
+        selectedItems: [{ id: 'drive-item-123', title: 'File.pdf' }],
       };
 
       const response = await adapter.processUiEvent(context);
@@ -878,6 +985,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           SelectDocumentSpace: 'Project Alpha',
           SelectDocumentType: 'communication-project',
         },
+        selectedItems: [{ id: 'drive-item-123', title: 'File.pdf' }],
       };
 
       await adapter.processUiEvent(context);
@@ -930,6 +1038,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           SelectDocumentType: 'communication-project',
           contact: 'Test Contact',
         },
+        selectedItems: [{ id: 'drive-item-123', title: 'File.pdf' }],
       };
 
       const response = await adapter.processUiEvent(context);
@@ -980,6 +1089,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           SelectDocumentType: 'communication-project',
           contact: 'Test Contact',
         },
+        selectedItems: [{ id: 'drive-item-123', title: 'File.pdf' }],
       };
 
       const response = await adapter.processUiEvent(context);

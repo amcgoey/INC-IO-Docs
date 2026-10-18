@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DriveServiceAdapter, type DriveClientPort } from './drive-service-adapter';
-import { DriveServiceError, AmbiguousPathSpecError } from '../ports';
+import { DriveServiceError, AmbiguousPathSpecError, FileNotFoundError } from '../ports';
 
 describe('DriveServiceAdapter', () => {
   const mockDriveClient: DriveClientPort = {
     getFile: vi.fn(),
     findOrCreateFolder: vi.fn(),
+    resolveFolderPath: vi.fn(),
     move: vi.fn(),
     rename: vi.fn(),
     duplicate: vi.fn(),
@@ -540,6 +541,64 @@ describe('DriveServiceAdapter', () => {
         );
       }
     );
+  });
+
+  describe('resolveFolderPath', () => {
+    it('resolves and maps folder path result successfully', async () => {
+      (mockDriveClient.resolveFolderPath as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'leaf-folder-id',
+        name: 'Communication',
+        parents: ['admin-id'],
+        mimeType: 'application/vnd.google-apps.folder',
+        webViewLink: 'https://drive/leaf',
+      });
+
+      const result = await adapter.resolveFolderPath('root-1', ['1 Admin', 'Communication']);
+
+      expect(result).toEqual({
+        id: 'leaf-folder-id',
+        name: 'Communication',
+        parents: ['admin-id'],
+        mimeType: 'application/vnd.google-apps.folder',
+        webViewLink: 'https://drive/leaf',
+      });
+      expect(mockDriveClient.resolveFolderPath).toHaveBeenCalledWith('root-1', ['1 Admin', 'Communication']);
+    });
+
+    it('translates GoogleDriveAmbiguousPathError to AmbiguousPathSpecError', async () => {
+      const ambiguousError = new Error('Query for folder segment Communication returned 2 matches.');
+      ambiguousError.name = 'GoogleDriveAmbiguousPathError';
+
+      (mockDriveClient.resolveFolderPath as ReturnType<typeof vi.fn>).mockRejectedValue(ambiguousError);
+
+      const err = await adapter.resolveFolderPath('root-1', ['Communication']).catch((e) => e);
+
+      expect(err).toBeInstanceOf(AmbiguousPathSpecError);
+      expect(err.name).toBe('AmbiguousPathSpecError');
+    });
+
+    it('translates GoogleDriveNotFoundError to FileNotFoundError', async () => {
+      const notFoundError = new Error('Folder segment NonExistent not found.');
+      notFoundError.name = 'GoogleDriveNotFoundError';
+
+      (mockDriveClient.resolveFolderPath as ReturnType<typeof vi.fn>).mockRejectedValue(notFoundError);
+
+      const err = await adapter.resolveFolderPath('root-1', ['NonExistent']).catch((e) => e);
+
+      expect(err).toBeInstanceOf(FileNotFoundError);
+      expect(err.name).toBe('FileNotFoundError');
+    });
+
+    it('translates generic error to DriveServiceError', async () => {
+      (mockDriveClient.resolveFolderPath as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Network failure')
+      );
+
+      const err = await adapter.resolveFolderPath('root-1', ['Folder']).catch((e) => e);
+
+      expect(err).toBeInstanceOf(DriveServiceError);
+      expect(err.message).toMatch(/Drive service error in resolveFolderPath: Network failure/);
+    });
   });
 });
 

@@ -62,6 +62,27 @@ describe('Integration: CQRS UI Orchestration (Issue 140)', () => {
       })),
     };
 
+    vi.spyOn(GoogleDriveClient.prototype, 'resolveFolderPath').mockImplementation(async (rootFolderId, segments) => {
+      return { id: 'comm-folder-id', name: segments[segments.length - 1] ?? 'Communication', parents: [rootFolderId] };
+    });
+    vi.spyOn(GoogleDriveClient.prototype, 'findOrCreateFolder').mockImplementation(async (parentId, name) => {
+      return { id: `folder-${name}`, name, parents: [parentId] };
+    });
+    vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId) => {
+      return { id: fileId, name: 'Sample_Doc.pdf', parents: ['root'] };
+    });
+    vi.spyOn(GoogleDriveClient.prototype, 'move').mockImplementation(async (fileId, targetFolderId) => {
+      return { id: fileId, name: 'Sample_Doc.pdf', parents: [targetFolderId] };
+    });
+    vi.spyOn(GoogleDriveClient.prototype, 'listFolders').mockImplementation(async () => {
+      return {
+        folders: [
+          { id: 'comm-folder-id', name: 'Communication' },
+          { id: 'acme-id', name: 'Acme Corp' },
+        ],
+      };
+    });
+
     const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
     const manifestProvider = new AppManifestProvider({ manifestPath });
     app = createApp({
@@ -199,7 +220,6 @@ describe('Integration: CQRS UI Orchestration (Issue 140)', () => {
     const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
     expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
 
-    // Verify notification action returned directly from notification intent
     expect(body.action?.notification).toBeDefined();
     expect(body.action?.notification?.text).toBe('Document processed successfully');
   });

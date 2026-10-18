@@ -1,4 +1,4 @@
-import type { Activity, ActivityOutput, FileLocator } from '../domain';
+import type { Activity, ActivityOutput, FileLocator, SourceFile } from '../domain';
 import {
   AmbiguousFileError,
   AmbiguousPathSpecError,
@@ -7,6 +7,7 @@ import {
   validatePrimaryTargetId,
   type ActivityHandler,
   type AppConfigurationProviderPort,
+  type DriveFileResult,
   type DriveSearchQuery,
   type DriveServicePort,
 } from '../ports';
@@ -15,10 +16,12 @@ export interface DriveActivityHandlerOptions {
   defaultFolderName?: string | undefined;
   configProvider?: AppConfigurationProviderPort | undefined;
   primaryTargetId?: string | undefined;
+  sourceFiles?: SourceFile[] | undefined;
 }
 
 export class DriveActivityHandler implements ActivityHandler {
   private readonly options: DriveActivityHandlerOptions;
+  private readonly sourceFiles?: SourceFile[] | undefined;
 
   constructor(
     private readonly driveService: DriveServicePort,
@@ -32,6 +35,11 @@ export class DriveActivityHandler implements ActivityHandler {
       ...(options ?? {}),
       ...(validatedTargetId !== undefined ? { primaryTargetId: validatedTargetId } : {}),
     };
+    if (options?.sourceFiles && options.sourceFiles.length > 0) {
+      this.sourceFiles = options.sourceFiles;
+    } else {
+      this.sourceFiles = undefined;
+    }
   }
 
   canHandle(activity: Activity): boolean {
@@ -125,14 +133,36 @@ export class DriveActivityHandler implements ActivityHandler {
       activity.type === 'FIND_DRIVE_FILE' ||
       activity.type === 'RESOLVE_DRIVE_FILE';
 
-    try {
-      if (isSearchActivity) {
+    if (isSearchActivity) {
+      try {
         return await this.handleSearch(payload);
-      }
+      } catch (error) {
+        if (
+          error instanceof AmbiguousPathSpecError ||
+          error instanceof AmbiguousFileError ||
+          error instanceof FileNotFoundError
+        ) {
+          return {
+            success: false,
+            error: error.message,
+          };
+        }
 
+        if (error instanceof DriveServiceError) {
+          throw error;
+        }
+
+        throw error instanceof Error
+          ? error
+          : new Error(`DriveActivityHandler failed: ${String(error)}`, { cause: error });
+      }
+    }
+
+    try {
       return await this.handleMove(payload);
     } catch (error) {
       if (
+        error instanceof DriveServiceError ||
         error instanceof AmbiguousPathSpecError ||
         error instanceof AmbiguousFileError ||
         error instanceof FileNotFoundError
@@ -143,13 +173,10 @@ export class DriveActivityHandler implements ActivityHandler {
         };
       }
 
-      if (error instanceof DriveServiceError) {
-        throw error;
-      }
-
-      throw error instanceof Error
-        ? error
-        : new Error(`DriveActivityHandler failed: ${String(error)}`, { cause: error });
+      throw new Error(
+        `DriveActivityHandler failed to move file: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error }
+      );
     }
   }
 
@@ -209,37 +236,36 @@ export class DriveActivityHandler implements ActivityHandler {
   private async handleMove(
     payload: Record<string, unknown>
   ): Promise<ActivityOutput> {
-    const payloadFileId =
-      typeof payload.fileId === 'string' ? payload.fileId : undefined;
-    let fileId = payloadFileId ?? this.options.primaryTargetId;
+    let targetSourceFiles: SourceFile[] = [];
 
-    if (!fileId) {
+    const payloadFileId =
+      typeof payload.fileId === 'string' && payload.fileId.trim().length > 0
+        ? payload.fileId.trim()
+        : undefined;
+
+    if (payloadFileId) {
+      targetSourceFiles = [{ id: payloadFileId }];
+    } else if (this.sourceFiles && this.sourceFiles.length > 0) {
+      targetSourceFiles = [...this.sourceFiles];
+    } else if (this.options.primaryTargetId) {
+      targetSourceFiles = [{ id: this.options.primaryTargetId }];
+    } else {
       const searchQuery = this.extractSearchQuery(payload);
       if (searchQuery) {
-        try {
-          const results = await this.driveService.searchFiles(searchQuery);
-          if (results.length === 0) {
-            throw new FileNotFoundError(`FileNotFoundError: File not found for target '${searchQuery.targetName}'`);
-          }
-          if (results.length > 1) {
-            throw new AmbiguousFileError(
-              `AmbiguousFileError: Query for target '${searchQuery.targetName}' returned ${results.length} matches and could not be uniquely resolved.`
-            );
-          }
-          fileId = results[0].id;
-        } catch (error) {
-          if (error instanceof DriveServiceError) {
-            throw error;
-          }
-          throw new Error(
-            `DriveActivityHandler failed to resolve file for move: ${error instanceof Error ? error.message : String(error)}`,
-            { cause: error }
+        const results = await this.driveService.searchFiles(searchQuery);
+        if (results.length === 0) {
+          throw new FileNotFoundError(`FileNotFoundError: File not found for target '${searchQuery.targetName}'`);
+        }
+        if (results.length > 1) {
+          throw new AmbiguousFileError(
+            `AmbiguousFileError: Query for target '${searchQuery.targetName}' returned ${results.length} matches and could not be uniquely resolved.`
           );
         }
+        targetSourceFiles = [{ id: results[0].id }];
       }
     }
 
-    if (!fileId) {
+    if (targetSourceFiles.length === 0) {
       throw new Error('DriveActivityHandler: No fileId found in activity payload or execution context');
     }
 
@@ -255,42 +281,95 @@ export class DriveActivityHandler implements ActivityHandler {
       }
     }
 
+    const rootStorageId =
+      typeof payload.rootStorageId === 'string' && payload.rootStorageId.trim().length > 0
+        ? payload.rootStorageId.trim()
+        : undefined;
+
+    const parentPathStr =
+      typeof payload.parentPath === 'string' && payload.parentPath.trim().length > 0
+        ? payload.parentPath.trim()
+        : undefined;
+
+    const parentPathSegments = parentPathStr
+      ? parentPathStr.split(/[/\\]+/).filter((seg) => seg.length > 0)
+      : [];
+
+    let baseFolderId: string;
+    if (rootStorageId) {
+      if (parentPathSegments.length > 0) {
+        const resolvedParent = await this.driveService.resolveFolderPath(
+          rootStorageId,
+          parentPathSegments
+        );
+        baseFolderId = resolvedParent.id;
+      } else {
+        baseFolderId = rootStorageId;
+      }
+    } else {
+      const file = await this.driveService.getFile(targetSourceFiles[0].id);
+      const initialParent = file.parents?.[0] ?? 'root';
+      if (parentPathSegments.length > 0) {
+        const resolvedParent = await this.driveService.resolveFolderPath(
+          initialParent,
+          parentPathSegments
+        );
+        baseFolderId = resolvedParent.id;
+      } else {
+        baseFolderId = initialParent;
+      }
+    }
+
     const defaultTargetName =
       driveConfig?.defaultFolderName ?? this.options.defaultFolderName ?? 'Unfiled';
     const folderName =
-      typeof payload.folderName === 'string'
-        ? payload.folderName
+      typeof payload.folderName === 'string' && payload.folderName.trim().length > 0
+        ? payload.folderName.trim()
         : defaultTargetName;
 
-    try {
-      const file = await this.driveService.getFile(fileId);
-      const currentParentId = file.parents?.[0] ?? 'root';
-      const targetFolder = await this.driveService.findOrCreateFolder(currentParentId, folderName);
-      const movedFile = await this.driveService.move(fileId, targetFolder.id);
+    const folderSegments = folderName.split(/[/\\]+/).filter((seg) => seg.length > 0);
 
-      const mimeType = movedFile.mimeType ?? file.mimeType;
-      const uri = movedFile.webViewLink ?? file.webViewLink;
+    let currentParentId = baseFolderId;
+    let leafFolder: DriveFileResult = { id: baseFolderId, name: '' };
+
+    for (const segment of folderSegments) {
+      leafFolder = await this.driveService.findOrCreateFolder(currentParentId, segment);
+      currentParentId = leafFolder.id;
+    }
+
+    const movedFiles: FileLocator[] = [];
+    for (const sourceFile of targetSourceFiles) {
+      const movedFile = await this.driveService.move(sourceFile.id, leafFolder.id);
+
+      let uri = movedFile.webViewLink;
+      let mimeType = movedFile.mimeType;
+      let name = movedFile.name;
+
+      if (!uri || !name) {
+        try {
+          const fileMeta = await this.driveService.getFile(sourceFile.id);
+          uri = uri ?? fileMeta.webViewLink;
+          mimeType = mimeType ?? fileMeta.mimeType;
+          name = name || fileMeta.name;
+        } catch {
+          // Ignore
+        }
+      }
+
       const fileLocator: FileLocator = {
         id: movedFile.id,
-        name: movedFile.name,
-        parentName: targetFolder.name,
+        name: name || sourceFile.name || '',
+        parentName: leafFolder.name,
         ...(mimeType ? { mimeType } : {}),
         ...(uri ? { uri } : {}),
       };
-
-      return {
-        success: true,
-        files: [fileLocator],
-      };
-    } catch (error) {
-      if (error instanceof DriveServiceError) {
-        throw error;
-      }
-      throw new Error(
-        `DriveActivityHandler failed to move file: ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error }
-      );
+      movedFiles.push(fileLocator);
     }
+
+    return {
+      success: true,
+      files: movedFiles,
+    };
   }
 }
 

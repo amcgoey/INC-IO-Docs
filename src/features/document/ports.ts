@@ -73,6 +73,7 @@ export type FormDocumentField = Static<typeof FormDocumentFieldType>;
 
 export const FormDocumentCalculatedFieldType = Type.Object({
   key: Type.String(),
+  name: Type.Optional(Type.String()),
   template: Type.String(),
   description: Type.Optional(Type.String()),
 }, { additionalProperties: true });
@@ -254,6 +255,7 @@ export type DriveContentSaveOptions = DriveContentCreateOptions | DriveContentUp
 export interface DriveServicePort {
   getFile(fileId: string): Promise<DriveFileResult>;
   findOrCreateFolder(parentId: string, folderName: string): Promise<DriveFileResult>;
+  resolveFolderPath(rootFolderId: string, pathSegments: string[]): Promise<DriveFileResult>;
   move(fileId: string, targetFolderId: string): Promise<DriveFileResult>;
   rename(fileId: string, newName: string): Promise<DriveFileResult>;
   duplicate(

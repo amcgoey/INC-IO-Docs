@@ -136,6 +136,7 @@ export type DocumentIdentitySchema = Static<typeof DocumentIdentitySchemaType>;
 
 export const CalculatedFieldType = Type.Object({
   key: Type.String(),
+  name: Type.Optional(Type.String()),
   template: Type.String(),
   description: Type.Optional(Type.String()),
 });
