@@ -457,9 +457,12 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     expect(errorCard).toBeDefined();
     const statusSection = errorCard.sections.find(
       (s: { widgets: Array<{ textParagraph?: { text: string } }> }) =>
-        s.widgets?.[0]?.textParagraph?.text?.includes('failed') ||
-        s.widgets?.[0]?.textParagraph?.text?.includes('validation') ||
-        s.widgets?.[0]?.textParagraph?.text?.includes('required')
+        s.widgets?.some(
+          (w) =>
+            w.textParagraph?.text?.includes('failed') ||
+            w.textParagraph?.text?.includes('validation') ||
+            w.textParagraph?.text?.includes('required')
+        )
     );
     expect(statusSection).toBeDefined();
 

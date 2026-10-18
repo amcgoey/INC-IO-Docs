@@ -17,7 +17,7 @@ describe('DynamicOptionsAdapter', () => {
     { desc: 'missing', context: {} },
     { desc: 'empty', context: { spaceId: '' } },
     { desc: 'whitespace', context: { spaceId: '   ' } },
-  ])('returns placeholder item when spaceId is $desc', async ({ context }) => {
+  ])('returns missing_space resolution when spaceId is $desc', async ({ context }) => {
     const driveClient = createMockDriveClient();
     const adapter = new DynamicOptionsAdapter(driveClient);
 
@@ -34,12 +34,16 @@ describe('DynamicOptionsAdapter', () => {
 
     const result = await adapter.fetchOptions(queries, context);
     expect(result).toEqual({
-      contactFolders: [{ text: 'Select a Space first', value: '' }],
+      contactFolders: {
+        status: 'missing_space',
+        items: [],
+        targetPath: '1 Admin/Communication',
+      },
     });
     expect(driveClient.listFolders).not.toHaveBeenCalled();
   });
 
-  it('returns placeholder only for space-dependent Google Drive queries when spaceId is missing', async () => {
+  it('returns missing_space only for space-dependent Google Drive queries when spaceId is missing', async () => {
     const driveClient = createMockDriveClient();
     const adapter = new DynamicOptionsAdapter(driveClient);
 
@@ -62,8 +66,16 @@ describe('DynamicOptionsAdapter', () => {
 
     const result = await adapter.fetchOptions(queries, {});
     expect(result).toEqual({
-      driveFolders: [{ text: 'Select a Space first', value: '' }],
-      otherQuery: [],
+      driveFolders: {
+        status: 'missing_space',
+        items: [],
+        targetPath: '1 Admin/Communication',
+      },
+      otherQuery: {
+        status: 'empty',
+        items: [],
+        targetPath: 'root',
+      },
     });
     expect(driveClient.listFolders).not.toHaveBeenCalled();
   });
@@ -93,10 +105,14 @@ describe('DynamicOptionsAdapter', () => {
     const result = await adapter.fetchOptions(queries, { spaceId: 'space-123' });
 
     expect(result).toEqual({
-      rootFolders: [
-        { text: 'Alpha', value: 'Alpha' },
-        { text: 'Beta', value: 'Beta' },
-      ],
+      rootFolders: {
+        status: 'ready',
+        items: [
+          { text: 'Alpha', value: 'Alpha' },
+          { text: 'Beta', value: 'Beta' },
+        ],
+        targetPath: 'root',
+      },
     });
     expect(driveClient.listFolders).toHaveBeenCalledWith(
       expect.objectContaining({ parentFolderId: 'space-123' })
@@ -148,14 +164,18 @@ describe('DynamicOptionsAdapter', () => {
     const result = await adapter.fetchOptions(queries, { spaceId: 'space-123' });
 
     expect(result).toEqual({
-      contactFolders: [
-        { text: 'Acme Corp', value: 'Acme Corp' },
-        { text: 'Globex', value: 'Globex' },
-      ],
+      contactFolders: {
+        status: 'ready',
+        items: [
+          { text: 'Acme Corp', value: 'Acme Corp' },
+          { text: 'Globex', value: 'Globex' },
+        ],
+        targetPath: '1 Admin/Communication',
+      },
     });
   });
 
-  it('returns empty array when a relativePath segment is not found', async () => {
+  it('returns path_not_found resolution when a relativePath segment is not found', async () => {
     const driveClient = createMockDriveClient({
       listFolders: vi.fn().mockResolvedValue({
         folders: [{ id: 'other-id', name: '2 Other' }],
@@ -177,7 +197,41 @@ describe('DynamicOptionsAdapter', () => {
     const result = await adapter.fetchOptions(queries, { spaceId: 'space-123' });
 
     expect(result).toEqual({
-      contactFolders: [],
+      contactFolders: {
+        status: 'path_not_found',
+        items: [],
+        targetPath: '1 Admin/Communication',
+      },
+    });
+  });
+
+  it('returns empty resolution when target folder has 0 child folders', async () => {
+    const driveClient = createMockDriveClient({
+      listFolders: vi.fn().mockResolvedValue({
+        folders: [],
+      }),
+    });
+    const adapter = new DynamicOptionsAdapter(driveClient);
+
+    const queries: DynamicOptionQuery[] = [
+      {
+        sourceKey: 'contactFolders',
+        config: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: '',
+        },
+      },
+    ];
+
+    const result = await adapter.fetchOptions(queries, { spaceId: 'space-123' });
+
+    expect(result).toEqual({
+      contactFolders: {
+        status: 'empty',
+        items: [],
+        targetPath: 'root',
+      },
     });
   });
 
@@ -213,14 +267,15 @@ describe('DynamicOptionsAdapter', () => {
 
     const result = await adapter.fetchOptions(queries, { spaceId: 'space-123' });
 
-    expect(result.largeList).toHaveLength(150);
-    expect(result.largeList[0]).toEqual({ text: 'Folder 000', value: 'Folder 000' });
-    expect(result.largeList[149]).toEqual({ text: 'Folder 149', value: 'Folder 149' });
-    // Verify it stopped and didn't fetch page 3
+    expect(result.largeList.status).toBe('ready');
+    expect(result.largeList.items).toHaveLength(150);
+    expect(result.largeList.items[0]).toEqual({ text: 'Folder 000', value: 'Folder 000' });
+    expect(result.largeList.items[149]).toEqual({ text: 'Folder 149', value: 'Folder 149' });
+    expect(result.largeList.targetPath).toBe('root');
     expect(listFoldersMock).toHaveBeenCalledTimes(2);
   });
 
-  it('returns empty array when provider or method is unsupported', async () => {
+  it('returns empty resolution when provider or method is unsupported', async () => {
     const driveClient = createMockDriveClient();
     const adapter = new DynamicOptionsAdapter(driveClient);
 
@@ -244,8 +299,16 @@ describe('DynamicOptionsAdapter', () => {
     const result = await adapter.fetchOptions(queries, { spaceId: 'space-123' });
 
     expect(result).toEqual({
-      unsupportedProvider: [],
-      unsupportedMethod: [],
+      unsupportedProvider: {
+        status: 'empty',
+        items: [],
+        targetPath: 'root',
+      },
+      unsupportedMethod: {
+        status: 'empty',
+        items: [],
+        targetPath: 'root',
+      },
     });
     expect(driveClient.listFolders).not.toHaveBeenCalled();
   });
@@ -271,15 +334,202 @@ describe('DynamicOptionsAdapter', () => {
     const result = await adapter.fetchOptions(queries, { spaceId: 'space-123' });
 
     expect(result).toEqual({
-      slowQuery: [],
+      slowQuery: {
+        status: 'timeout',
+        items: [],
+        targetPath: 'root',
+      },
+    });
+  });
+
+  it('prevents unhandled promise rejection when slow Drive promise rejects after timeout', async () => {
+    let rejectSlowPromise!: (err: Error) => void;
+    const slowPromise = new Promise<{ folders: Array<{ id: string; name: string }> }>((_, reject) => {
+      rejectSlowPromise = reject;
+    });
+
+    const driveClient = createMockDriveClient({
+      listFolders: vi.fn().mockImplementation(() => slowPromise),
+    });
+    const adapter = new DynamicOptionsAdapter(driveClient, { timeoutMs: 20 });
+
+    const queries: DynamicOptionQuery[] = [
+      {
+        sourceKey: 'slowQuery',
+        config: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: 'Communications',
+        },
+      },
+    ];
+
+    const result = await adapter.fetchOptions(queries, { spaceId: 'space-123' });
+    expect(result.slowQuery).toEqual({
+      status: 'timeout',
+      items: [],
+      targetPath: 'Communications',
+    });
+
+    // Reject slow promise after timeout has already completed
+    expect(() => rejectSlowPromise(new Error('Late Drive failure'))).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+
+  it('short-circuits pagination immediately to ambiguous_path when >= 2 folders match a segment', async () => {
+    const listFoldersMock = vi.fn().mockImplementation(async (options: { pageToken?: string }) => {
+      if (!options.pageToken) {
+        return {
+          folders: [
+            { id: 'f-1', name: 'Communications' },
+            { id: 'f-2', name: 'Communications' },
+          ],
+          nextPageToken: 'page-2-token',
+        };
+      }
+      return {
+        folders: [{ id: 'f-3', name: 'Communications' }],
+      };
+    });
+
+    const driveClient = createMockDriveClient({ listFolders: listFoldersMock });
+    const adapter = new DynamicOptionsAdapter(driveClient);
+
+    const queries: DynamicOptionQuery[] = [
+      {
+        sourceKey: 'commFolders',
+        config: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: 'Communications',
+        },
+      },
+    ];
+
+    const result = await adapter.fetchOptions(queries, { spaceId: 'space-123' });
+
+    expect(result).toEqual({
+      commFolders: {
+        status: 'ambiguous_path',
+        items: [],
+        targetPath: 'Communications',
+      },
+    });
+    expect(listFoldersMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('short-circuits to ambiguous_path when 2nd match is found on page 2', async () => {
+    const listFoldersMock = vi.fn().mockImplementation(async (options: { pageToken?: string }) => {
+      if (!options.pageToken) {
+        return {
+          folders: [{ id: 'f-1', name: 'Communications' }],
+          nextPageToken: 'page-2-token',
+        };
+      }
+      if (options.pageToken === 'page-2-token') {
+        return {
+          folders: [{ id: 'f-2', name: 'Communications' }],
+          nextPageToken: 'page-3-token',
+        };
+      }
+      return {
+        folders: [{ id: 'f-3', name: 'Communications' }],
+      };
+    });
+
+    const driveClient = createMockDriveClient({ listFolders: listFoldersMock });
+    const adapter = new DynamicOptionsAdapter(driveClient);
+
+    const queries: DynamicOptionQuery[] = [
+      {
+        sourceKey: 'commFolders',
+        config: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: 'Communications',
+        },
+      },
+    ];
+
+    const result = await adapter.fetchOptions(queries, { spaceId: 'space-123' });
+
+    expect(result.commFolders.status).toBe('ambiguous_path');
+    expect(listFoldersMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('normalizes leading, trailing, and redundant slashes in relativePath to targetPath', async () => {
+    const listFoldersMock = vi.fn().mockImplementation(async (options: { parentFolderId?: string }) => {
+      if (options.parentFolderId === 'space-123') {
+        return {
+          folders: [{ id: 'comm-id', name: 'Communications' }],
+        };
+      }
+      return {
+        folders: [{ id: 'acme-id', name: 'Acme' }],
+      };
+    });
+
+    const driveClient = createMockDriveClient({ listFolders: listFoldersMock });
+    const adapter = new DynamicOptionsAdapter(driveClient);
+
+    const queries: DynamicOptionQuery[] = [
+      {
+        sourceKey: 'slashed',
+        config: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: '///Communications///',
+        },
+      },
+      {
+        sourceKey: 'emptySlash',
+        config: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: '///',
+        },
+      },
+    ];
+
+    const result = await adapter.fetchOptions(queries, { spaceId: 'space-123' });
+    expect(result.slashed.targetPath).toBe('Communications');
+    expect(result.slashed.status).toBe('ready');
+    expect(result.emptySlash.targetPath).toBe('root');
+    expect(result.emptySlash.status).toBe('ready');
+  });
+
+  it('returns error resolution on unexpected Drive API error', async () => {
+    const driveClient = createMockDriveClient({
+      listFolders: vi.fn().mockRejectedValue(new Error('Google Drive 500: Internal Server Error')),
+    });
+    const adapter = new DynamicOptionsAdapter(driveClient);
+
+    const queries: DynamicOptionQuery[] = [
+      {
+        sourceKey: 'failingQuery',
+        config: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: 'Communications',
+        },
+      },
+    ];
+
+    const result = await adapter.fetchOptions(queries, { spaceId: 'space-123' });
+    expect(result).toEqual({
+      failingQuery: {
+        status: 'error',
+        items: [],
+        targetPath: 'Communications',
+      },
     });
   });
 
   it('processes multiple queries with Promise.allSettled where one succeeds and one fails', async () => {
     const driveClient = createMockDriveClient({
       listFolders: vi.fn().mockImplementation(async (options: { parentFolderId?: string }) => {
-        if (options.parentFolderId === 'failing-parent') {
-          throw new Error('Drive API failure');
+        if (options.parentFolderId === 'space-123') {
+          throw new Error('Drive API failure on failingQuery');
         }
         return {
           folders: [{ id: 'ok-1', name: 'OK Folder' }],
@@ -306,20 +556,10 @@ describe('DynamicOptionsAdapter', () => {
       },
     ];
 
-    // Mock implementation for segment resolution
-    (driveClient.listFolders as ReturnType<typeof vi.fn>).mockImplementation(async (options: { parentFolderId?: string }) => {
-      if (options.parentFolderId === 'space-123') {
-        throw new Error('Drive API failure on failingQuery');
-      }
-      return {
-        folders: [{ id: 'ok-1', name: 'OK Folder' }],
-      };
-    });
-
     const result = await adapter.fetchOptions(queries, { spaceId: 'space-123' });
 
-    expect(result.failingQuery).toEqual([]);
-    expect(result.successQuery).toEqual([]);
+    expect(result.failingQuery.status).toBe('error');
+    expect(result.successQuery.status).toBe('error');
   });
 
   describe('validateExistence (Guarded Write)', () => {

@@ -254,6 +254,7 @@ export function createUiProcessRequestWrapper(
       ...(intent.spaceId !== undefined ? { spaceId: intent.spaceId } : {}),
       ...(intent.documentTypeKey !== undefined ? { documentTypeKey: intent.documentTypeKey } : {}),
       ...(intent.validationErrors !== undefined ? { validationErrors: intent.validationErrors } : {}),
+      ...(intent.statusMessages !== undefined ? { statusMessages: intent.statusMessages } : {}),
       ...(intent.formData !== undefined ? { formData: intent.formData } : {}),
       ...(intent.hiddenFields !== undefined ? { hiddenFields: intent.hiddenFields } : {}),
       ...(intent.selectionState !== undefined
