@@ -41,7 +41,7 @@ A generic patch or effect produced by an executed Activity, containing fields li
 _Avoid_: Execution result, side-channel mutation
 
 **SourceFile**:
-A descriptor representing an input file to be processed by an `Activity`, independent of its origin (such as a selected Google Drive item, an email attachment, a web URL, or an uploaded file stream).
+A descriptor representing an input file or folder to be processed by an `Activity`, independent of its origin (such as a selected Google Drive item, a Google Drive file or folder URL, an email attachment, or a generated email PDF).
 _Avoid_: SelectedItem, Attachment, RawFile
 
 **FileLocator**:
