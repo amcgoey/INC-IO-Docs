@@ -435,6 +435,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
             action: 'processDocument',
           },
           formInputs: {
+            SelectFiles: { stringInputs: { value: ['drive-file-999'] } },
             [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
             [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Project 1'] } },
             // contact, date, direction, description are required but missing
@@ -474,6 +475,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
             action: 'processDocument',
           },
           formInputs: {
+            SelectFiles: { stringInputs: { value: ['drive-file-999'] } },
             [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-proposal'] } },
             [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Project 1'] } },
             contact: { stringInputs: { value: ['Acme Corp'] } },

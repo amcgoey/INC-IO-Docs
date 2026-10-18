@@ -311,6 +311,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -427,6 +428,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
               [getDocumentSpaceWidgetName('proposals')]: { stringInputs: { value: ['Client Proposals'] } },
               [getDocumentTypeWidgetName('proposals')]: { stringInputs: { value: ['communication-proposal'] } },
@@ -543,6 +545,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['projects-shared-drive-001'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-proposal'] } },
@@ -657,6 +660,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -801,6 +805,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -947,6 +952,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -1060,6 +1066,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -1134,6 +1141,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -1227,6 +1235,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [fileId] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -1370,6 +1379,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [file1Id, file2Id] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -1498,6 +1508,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [file1Id, file2Id, file3Id] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
@@ -1621,6 +1632,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
               action: 'processDocument',
             },
             formInputs: {
+              SelectFiles: { stringInputs: { value: [file1Id, file2Id] } },
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
               [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
               [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },

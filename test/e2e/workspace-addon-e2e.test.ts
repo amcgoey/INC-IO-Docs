@@ -877,6 +877,9 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       SelectDocumentSpaceType: {
         stringInputs: { value: ['projects'] },
       },
+      SelectFiles: {
+        stringInputs: { value: ['drive-file-001'] },
+      },
       [getDocumentSpaceWidgetName('projects')]: {
         stringInputs: { value: ['Active Projects'] },
       },
@@ -995,6 +998,9 @@ describe('Workspace Addon UI E2E Test Suite', () => {
           },
           formInputs: {
             ...baseProcessInputs(),
+            SelectFiles: {
+              stringInputs: { value: ['drive-file-002'] },
+            },
             [getDocumentTypeWidgetName('projects')]: {
               stringInputs: { value: ['communication-project'] },
             },
