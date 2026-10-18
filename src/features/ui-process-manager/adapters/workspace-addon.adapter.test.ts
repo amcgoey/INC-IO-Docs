@@ -668,6 +668,60 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       });
     });
 
+    it('preserves empty string title and mimeType while cleanly omitting undefined in sourceFiles mapping', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Main',
+          SelectDocumentType: 'communication-project',
+          SelectFiles: ['file-empty-strings', 'file-undefined-fields'],
+          contact: 'Acme Corp',
+          date: '260920',
+        },
+        selectedItems: [
+          { id: 'file-empty-strings', title: '', mimeType: '' },
+          { id: 'file-undefined-fields', title: undefined, mimeType: undefined },
+        ],
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sourceFiles: [
+            { id: 'file-empty-strings', name: '', mimeType: '' },
+            { id: 'file-undefined-fields' },
+          ],
+        }),
+        'onSubmit'
+      );
+
+      const passedCall = (mockDocumentRunner.processDocument.mock.calls as unknown[][])[0][0] as {
+        sourceFiles: Array<Record<string, unknown>>;
+      };
+      const secondFile = passedCall.sourceFiles[1];
+      expect(secondFile).toHaveProperty('id', 'file-undefined-fields');
+      expect(Object.prototype.hasOwnProperty.call(secondFile, 'name')).toBe(false);
+      expect(Object.prototype.hasOwnProperty.call(secondFile, 'mimeType')).toBe(false);
+
+      expect(response).toEqual({
+        type: 'notification',
+        text: 'Document processed successfully',
+      });
+    });
+
 
     it('proceeds with submission when parameters.fileId is present even without selectedItems', async () => {
       const mockDocumentRunner = {

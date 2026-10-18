@@ -222,8 +222,8 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         .filter((item) => checkedFileIds.has(item.id.trim()))
         .map((item) => ({
           id: item.id,
-          ...(item.title ? { name: item.title } : {}),
-          ...(item.mimeType ? { mimeType: item.mimeType } : {}),
+          ...(item.title !== undefined ? { name: item.title } : {}),
+          ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
         }));
 
       const hasExplicitFileId =
