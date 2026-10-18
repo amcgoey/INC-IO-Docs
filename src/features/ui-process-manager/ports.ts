@@ -82,6 +82,14 @@ export const UiProcessResultSchema = Type.Union([
 ]);
 export type UiProcessResult = Static<typeof UiProcessResultSchema>;
 
+export const UiProcessDocumentSpaceDtoSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  typeId: Type.String({ minLength: 1 }),
+  name: Type.String({ minLength: 1 }),
+  abstractStorageId: Type.String({ minLength: 1 }),
+});
+export type UiProcessDocumentSpaceDto = Static<typeof UiProcessDocumentSpaceDtoSchema>;
+
 // --- Driven Ports ---
 
 export interface UiProcessConfigProviderPort {
@@ -120,11 +128,7 @@ export interface UiProcessDocumentRunnerPort {
     payload: {
       type: string;
       data: Record<string, unknown>;
-      space?:
-        | UiProcessSpaceItem
-        | string
-        | { id: string; typeId: string; name: string; abstractStorageId: string }
-        | undefined;
+      space?: UiProcessDocumentSpaceDto | undefined;
     },
     eventName: string
   ): Promise<UiProcessDocumentExecutionResult>;

@@ -13,6 +13,7 @@ import {
   type UiProcessFormEvaluatorPort,
   type RawManifestProviderPort,
   type UiProcessSpaceItem,
+  type UiProcessDocumentSpaceDto,
 } from '../features/ui-process-manager';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import {
@@ -335,11 +336,11 @@ export function createUiProcessManagerWiring(
 
   function toStructuredDocumentSpace(
     space:
+      | UiProcessDocumentSpaceDto
       | UiProcessSpaceItem
       | string
-      | { id: string; typeId: string; name: string; abstractStorageId: string }
       | undefined
-  ): { id: string; typeId: string; name: string; abstractStorageId: string } | undefined {
+  ): UiProcessDocumentSpaceDto | undefined {
     if (!space) {
       return undefined;
     }

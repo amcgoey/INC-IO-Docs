@@ -7,6 +7,7 @@ import type {
   UiProcessManifestPort,
   UiProcessDocumentRunnerPort,
   UiProcessFormEvaluatorPort,
+  UiProcessDocumentSpaceDto,
 } from '../ports';
 import {
   evaluateProcessUiState,
@@ -217,7 +218,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       }
 
       const matchedSpace = spaceResolution.matchedSpace;
-      const space = {
+      const space: UiProcessDocumentSpaceDto = {
         id: matchedSpace.id,
         name: matchedSpace.name,
         typeId: matchedSpace.typeId ?? currentSpaceType,
