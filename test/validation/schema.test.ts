@@ -213,7 +213,7 @@ describe('DocumentType JSON files schema validation', () => {
     expect(contactField?.options?.dynamicConfig).toEqual({
       provider: 'google_drive',
       method: 'list_folders',
-      relativePath: 'Communication',
+      relativePath: 'Communications',
     });
 
     expect(commProposal!.documentSchema.identity).toEqual({

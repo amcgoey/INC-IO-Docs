@@ -1001,7 +1001,6 @@ export class GoogleDriveClient {
         listParams.corpora = 'drive';
         listParams.driveId = options.sharedDriveId;
       } else {
-        listParams.corpora = 'user';
         listParams.spaces = 'drive';
       }
 

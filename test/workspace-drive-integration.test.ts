@@ -131,7 +131,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
       .query((q) => typeof q.q === 'string' && q.q.includes(`'${oppFolderId}' in parents`) && !q.q.includes('name ='))
-      .reply(200, { files: [{ id: commFolderId, name: 'Communication' }] });
+      .reply(200, { files: [{ id: commFolderId, name: 'Communications' }] });
 
     // executeValidationQuery: check contact folder exists
     nock('https://www.googleapis.com')
@@ -353,11 +353,11 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         contactName: 'Beta Architects',
       });
 
-      // 2. DriveActivityHandler: resolveFolderPath('folder-opp-root', ['Communication'])
+      // 2. DriveActivityHandler: resolveFolderPath('folder-opp-root', ['Communications'])
       nock('https://www.googleapis.com')
         .get('/drive/v3/files')
-        .query((q) => typeof q.q === 'string' && q.q.includes(rootOppFolderId) && q.q.includes("name = 'Communication'"))
-        .reply(200, { files: [{ id: commFolderId, name: 'Communication' }] });
+        .query((q) => typeof q.q === 'string' && q.q.includes(rootOppFolderId) && q.q.includes("name = 'Communications'"))
+        .reply(200, { files: [{ id: commFolderId, name: 'Communications' }] });
 
       // 3. DriveActivityHandler: findOrCreateFolder(commFolderId, 'Beta Architects') -> exists
       nock('https://www.googleapis.com')
@@ -462,7 +462,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       const contactFolderId = 'folder-beta-arch';
       const newSubfolderId = 'folder-rfp-subfolder';
 
-      // 1. Dynamic Options Validation: resolves relativePath "Communication" under Shared Drive root
+      // 1. Dynamic Options Validation: resolves relativePath "Communications" under Shared Drive root
       mockDynamicValidationProposal({
         oppFolderId: rootSharedDriveId,
         commFolderId,
@@ -470,11 +470,11 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         contactName: 'Beta Architects',
       });
 
-      // 2. DriveActivityHandler: resolveFolderPath('projects-shared-drive-001', ['Communication'])
+      // 2. DriveActivityHandler: resolveFolderPath('projects-shared-drive-001', ['Communications'])
       nock('https://www.googleapis.com')
         .get('/drive/v3/files')
-        .query((q) => typeof q.q === 'string' && q.q.includes(rootSharedDriveId) && q.q.includes("name = 'Communication'"))
-        .reply(200, { files: [{ id: commFolderId, name: 'Communication' }] });
+        .query((q) => typeof q.q === 'string' && q.q.includes(rootSharedDriveId) && q.q.includes("name = 'Communications'"))
+        .reply(200, { files: [{ id: commFolderId, name: 'Communications' }] });
 
       // 3. DriveActivityHandler: findOrCreateFolder(commFolderId, 'Beta Architects') -> exists
       nock('https://www.googleapis.com')

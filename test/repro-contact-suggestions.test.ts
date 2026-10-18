@@ -105,7 +105,7 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
     };
 
     vi.spyOn(GoogleDriveClient.prototype, 'resolveFolderPath').mockImplementation(async (rootFolderId, segments) => {
-      return { id: 'comm-proposal-alpha-folder-id', name: segments[segments.length - 1] ?? 'Communication', parents: [rootFolderId] };
+      return { id: 'comm-proposal-alpha-folder-id', name: segments[segments.length - 1] ?? 'Communications', parents: [rootFolderId] };
     });
     vi.spyOn(GoogleDriveClient.prototype, 'findOrCreateFolder').mockImplementation(async (parentId, name) => {
       return { id: `folder-${name}`, name, parents: [parentId] };
@@ -147,7 +147,7 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
 
       // Proposal Alpha space with contacts
       if (options?.parentFolderId === 'space-folder-proposal-alpha-id') {
-        return { folders: [{ id: 'comm-proposal-alpha-folder-id', name: 'Communication' }] };
+        return { folders: [{ id: 'comm-proposal-alpha-folder-id', name: 'Communications' }] };
       }
       if (options?.parentFolderId === 'comm-proposal-alpha-folder-id') {
         return {
@@ -160,20 +160,20 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
 
       // Proposal Beta space with empty contacts
       if (options?.parentFolderId === 'space-folder-proposal-beta-id') {
-        return { folders: [{ id: 'comm-proposal-beta-folder-id', name: 'Communication' }] };
+        return { folders: [{ id: 'comm-proposal-beta-folder-id', name: 'Communications' }] };
       }
       if (options?.parentFolderId === 'comm-proposal-beta-folder-id') {
         return { folders: [] };
       }
 
-      // Proposal Gamma space with absent Communication folder
+      // Proposal Gamma space with absent Communications folder
       if (options?.parentFolderId === 'space-folder-proposal-gamma-id') {
         return { folders: [] };
       }
 
       // Proposal Duplicate space with duplicate contacts
       if (options?.parentFolderId === 'space-folder-proposal-dup-id') {
-        return { folders: [{ id: 'comm-proposal-dup-folder-id', name: 'Communication' }] };
+        return { folders: [{ id: 'comm-proposal-dup-folder-id', name: 'Communications' }] };
       }
       if (options?.parentFolderId === 'comm-proposal-dup-folder-id') {
         return {
@@ -563,7 +563,7 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       ]);
     });
 
-    it('Space Selection & Refresh: selecting Proposal space by display name resolves technical ID, traverses root Communication folder, and populates suggestions', async () => {
+    it('Space Selection & Refresh: selecting Proposal space by display name resolves technical ID, traverses root Communications folder, and populates suggestions', async () => {
       const response = await injectWorkspaceRequest(app.server, {
         method: 'POST',
         url: '/workspace/on-form-change',
@@ -612,8 +612,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       ]);
     });
 
-    it('Space with No Contacts: selecting Proposal space whose Communication folder is empty or absent returns empty suggestions without erroring', async () => {
-      // Test 1: Empty Communication folder (Proposal Beta)
+    it('Space with No Contacts: selecting Proposal space whose Communications folder is empty or absent returns empty suggestions without erroring', async () => {
+      // Test 1: Empty Communications folder (Proposal Beta)
       const betaResponse = await injectWorkspaceRequest(app.server, {
         method: 'POST',
         url: '/workspace/on-form-change',
@@ -655,7 +655,7 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       expect(betaContact).toBeDefined();
       expect(betaContact?.textInput?.initialSuggestions?.items ?? []).toEqual([]);
 
-      // Test 2: Absent Communication folder (Proposal Gamma)
+      // Test 2: Absent Communications folder (Proposal Gamma)
       const gammaResponse = await injectWorkspaceRequest(app.server, {
         method: 'POST',
         url: '/workspace/on-form-change',

@@ -2490,7 +2490,7 @@ describe('GoogleDriveClient', () => {
   });
 
   describe('listFolders', () => {
-    it('queries user drive folders when sharedDriveId is omitted', async () => {
+    it('queries folders omitting corpora when sharedDriveId is omitted', async () => {
       (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         data: {
           files: [
@@ -2514,7 +2514,6 @@ describe('GoogleDriveClient', () => {
         fields: 'nextPageToken, files(id, name)',
         includeItemsFromAllDrives: true,
         supportsAllDrives: true,
-        corpora: 'user',
         spaces: 'drive',
       });
       expect(res).toEqual({

@@ -79,6 +79,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
       return {
         folders: [
           { id: 'comm-folder-id', name: 'Communication' },
+          { id: 'comm-folder-props-id', name: 'Communications' },
           { id: 'acme-id', name: 'Acme Corp' },
         ],
       };

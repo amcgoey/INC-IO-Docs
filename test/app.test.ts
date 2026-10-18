@@ -450,7 +450,7 @@ describe('App integration tests', () => {
 
       const listFoldersSpy = vi.spyOn(GoogleDriveClient.prototype, 'listFolders').mockImplementation(async (options) => {
         if (options?.parentFolderId === 'space-folder-proposal-id') {
-          return { folders: [{ id: 'comm-folder-id', name: 'Communication' }] };
+          return { folders: [{ id: 'comm-folder-id', name: 'Communications' }] };
         }
         if (options?.parentFolderId === 'comm-folder-id') {
           return { folders: [{ id: 'contact-folder-id', name: 'Jane Doe' }] };
@@ -516,7 +516,7 @@ describe('App integration tests', () => {
           type: 'MOVE_FILE',
           payload: {
             rootStorageId: 'space-folder-proposal-id',
-            parentPath: 'Communication',
+            parentPath: 'Communications',
             folderName: 'Jane Doe/260825 IN - Quarterly review discussion',
           },
         },
@@ -526,7 +526,7 @@ describe('App integration tests', () => {
         type: 'MOVE_FILE',
         payload: {
           rootStorageId: 'space-folder-proposal-id',
-          parentPath: 'Communication',
+          parentPath: 'Communications',
           folderName: 'Jane Doe/260825 IN - Quarterly review discussion',
         },
       });
