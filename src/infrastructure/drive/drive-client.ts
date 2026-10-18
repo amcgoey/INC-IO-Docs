@@ -149,7 +149,7 @@ function extractHttpStatusCode(error: unknown): number | undefined {
   return undefined;
 }
 
-function escapeDriveQuery(str: string): string {
+export function escapeDriveQuery(str: string): string {
   return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
@@ -201,6 +201,10 @@ function toUint8Array(data: unknown): Uint8Array {
 }
 
 export class GoogleDriveClient {
+  static escapeDriveQuery(str: string): string {
+    return escapeDriveQuery(str);
+  }
+
   private readonly defaultDrive: drive_v3.Drive;
   private readonly retryOptions: DriveRetryOptions;
   private readonly configProvider?: DriveConfigProvider | undefined;
@@ -326,6 +330,9 @@ export class GoogleDriveClient {
     folderName: string,
     options?: DriveOperationOptions
   ): Promise<DriveFileMetadata> {
+    if (typeof folderName !== 'string' || folderName.trim().length === 0) {
+      throw new Error('Folder name must be a non-empty string');
+    }
     const drive = this.getDrive(options?.auth);
     try {
       const escapedName = escapeDriveQuery(folderName);
@@ -405,6 +412,9 @@ export class GoogleDriveClient {
       let currentFolder: DriveFileMetadata | undefined = undefined;
 
       for (const segment of pathSegments) {
+        if (typeof segment !== 'string' || segment.trim().length === 0) {
+          throw new Error('Folder path segment must be a non-empty string');
+        }
         const escapedName = escapeDriveQuery(segment);
         const q = `'${currentFolderId}' in parents and name = '${escapedName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
 

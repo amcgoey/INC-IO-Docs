@@ -180,4 +180,72 @@ describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schem
     expect(mockMoveHandler.canHandle).toHaveBeenCalledWith(expectedActivity);
     expect(moveHandleSpy).toHaveBeenCalledWith(expectedActivity);
   });
+
+  it('sanitizes disallowed file-path characters in contact and description, evaluates commFolderName, synthesizes identity, and dispatches sanitized MOVE_FILE activity', async () => {
+    const projectDocument: Document = {
+      type: 'communication-project',
+      space: {
+        id: 'proj-1',
+        typeId: 'projects',
+        abstractStorageId: 'shared-drive-proj-123',
+        name: 'Project Alpha',
+      },
+      data: {
+        contact: '  Client: /Bad*Name?|With<Disallowed>"Chars\\And\x01Control. . ',
+        date: '260826',
+        direction: 'OT',
+        description: '  ASR / 06: Design * Changes? ...  ',
+      },
+    };
+
+    const result = await documentService.processDocument(projectDocument, 'onSubmit');
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    const expectedContact = 'Client- -Bad-Name--With-Disallowed--Chars-And-Control';
+    const expectedDescription = 'ASR - 06- Design - Changes-';
+    const expectedCommFolder = '260826 OT - ASR - 06- Design - Changes-';
+
+    expect(result.data).toEqual({
+      type: 'communication-project',
+      id: `${expectedContact}-260826-OT-${expectedDescription}`,
+      idDocument: `${expectedContact}-260826-OT-${expectedDescription}`,
+      idGroup: expectedContact,
+      space: {
+        id: 'proj-1',
+        typeId: 'projects',
+        abstractStorageId: 'shared-drive-proj-123',
+        name: 'Project Alpha',
+      },
+      data: {
+        contact: {
+          key: expectedContact,
+          name: expectedContact,
+        },
+        date: '260826',
+        direction: {
+          key: 'OT',
+          name: 'Outgoing',
+        },
+        description: expectedDescription,
+        commFolderName: expectedCommFolder,
+      },
+    });
+
+    const expectedPayload = {
+      rootStorageId: 'shared-drive-proj-123',
+      parentPath: '1 Admin/Communication',
+      folderName: `${expectedContact}/${expectedCommFolder}`,
+    };
+
+    const expectedActivity: Activity = {
+      type: 'MOVE_FILE',
+      payload: expectedPayload,
+    };
+
+    expect(result.activities).toEqual([expectedActivity]);
+    expect(mockMoveHandler.canHandle).toHaveBeenCalledWith(expectedActivity);
+    expect(moveHandleSpy).toHaveBeenCalledWith(expectedActivity);
+  });
 });

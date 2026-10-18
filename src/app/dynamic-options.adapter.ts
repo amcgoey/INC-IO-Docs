@@ -326,6 +326,9 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     }
 
     if (matchingFolders.length === 0) {
+      if (query.allowUserInput === true) {
+        return { isValid: true };
+      }
       return { ...OPTION_NOT_FOUND };
     }
 

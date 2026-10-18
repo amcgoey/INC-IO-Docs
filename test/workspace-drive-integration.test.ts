@@ -560,6 +560,296 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(nock.isDone()).toBe(true);
     });
 
+    it('files communication-project with a brand-new user-entered <contact> name, creating both <contact> and <commFolderName> folders in Drive', async () => {
+      const fileId = 'file-brand-new-123';
+      const fileName = 'Welcome_Package.docx';
+      const sharedDriveId = 'shared-drive-proj-root';
+      const adminFolderId = 'folder-admin-1';
+      const commFolderId = 'folder-comm-1';
+      const newContactName = 'Brand New Client Inc';
+      const newContactFolderId = 'folder-new-client-456';
+      const newSubfolderId = 'folder-welcome-subfolder-789';
+
+      // 1. Dynamic Options Validation:
+      // resolveTargetFolder step 1: list folders in shared drive root
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(`'${sharedDriveId}' in parents`) && !q.q.includes('name ='))
+        .reply(200, { files: [{ id: adminFolderId, name: '1 Admin' }] });
+
+      // resolveTargetFolder step 2: list folders in 1 Admin
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(`'${adminFolderId}' in parents`) && !q.q.includes('name ='))
+        .reply(200, { files: [{ id: commFolderId, name: 'Communication' }] });
+
+      // executeValidationQuery: check contact folder exists -> returns 0 matching folders (new contact)
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(`'${commFolderId}' in parents`) && q.q.includes(`name = '${newContactName}'`))
+        .reply(200, { files: [] });
+
+      // 2. DriveActivityHandler: resolveFolderPath('shared-drive-proj-root', ['1 Admin', 'Communication'])
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(sharedDriveId) && q.q.includes("name = '1 Admin'"))
+        .reply(200, { files: [{ id: adminFolderId, name: '1 Admin' }] });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(adminFolderId) && q.q.includes("name = 'Communication'"))
+        .reply(200, { files: [{ id: commFolderId, name: 'Communication' }] });
+
+      // 3. DriveActivityHandler: findOrCreateFolder(commFolderId, 'Brand New Client Inc') -> creates new contact folder
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(commFolderId) && q.q.includes(`name = '${newContactName}'`))
+        .reply(200, { files: [] });
+
+      nock('https://www.googleapis.com')
+        .post('/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: newContactFolderId,
+          name: newContactName,
+          parents: [commFolderId],
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+
+      // 4. DriveActivityHandler: findOrCreateFolder(newContactFolderId, '260920 IN - Welcome Package') -> creates new subfolder
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(newContactFolderId) && q.q.includes("name = '260920 IN - Welcome Package'"))
+        .reply(200, { files: [] });
+
+      nock('https://www.googleapis.com')
+        .post('/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: newSubfolderId,
+          name: '260920 IN - Welcome Package',
+          parents: [newContactFolderId],
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+
+      // 5. DriveActivityHandler: move(fileId, newSubfolderId)
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${fileId}`)
+        .query(true)
+        .reply(200, {
+          id: fileId,
+          name: fileName,
+          parents: ['initial-inbox-folder'],
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        });
+
+      nock('https://www.googleapis.com')
+        .patch(`/drive/v3/files/${fileId}`)
+        .query(true)
+        .reply(200, {
+          id: fileId,
+          name: fileName,
+          parents: [newSubfolderId],
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          drive: {
+            selectedItems: [
+              {
+                id: fileId,
+                title: fileName,
+                mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              },
+            ],
+          },
+          commonEventObject: {
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: [newContactName] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Welcome Package'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        action: {
+          notification: {
+            text: 'Document processed successfully',
+          },
+        },
+      });
+
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('files communication-project with disallowed path characters in contact and description, creating sanitized folders in Drive', async () => {
+      const fileId = 'file-disallowed-123';
+      const fileName = 'Contract.docx';
+      const sharedDriveId = 'shared-drive-proj-root';
+      const adminFolderId = 'folder-admin-1';
+      const commFolderId = 'folder-comm-1';
+      const rawContact = '  Client: /Bad*Name?|With<Disallowed>"Chars\\And\x07Control. . ';
+      const sanitizedContact = 'Client- -Bad-Name--With-Disallowed--Chars-And-Control';
+      const rawDescription = '  Meeting / Discussion: Issue *123? ...  ';
+      const sanitizedDescription = 'Meeting - Discussion- Issue -123-';
+      const expectedCommFolder = `260920 IN - ${sanitizedDescription}`;
+      const sanitizedContactFolderId = 'folder-sanitized-client-123';
+      const newSubfolderId = 'folder-sanitized-subfolder-456';
+
+      // 1. Dynamic Options Validation:
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(`'${sharedDriveId}' in parents`) && !q.q.includes('name ='))
+        .reply(200, { files: [{ id: adminFolderId, name: '1 Admin' }] });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(`'${adminFolderId}' in parents`) && !q.q.includes('name ='))
+        .reply(200, { files: [{ id: commFolderId, name: 'Communication' }] });
+
+      // Dynamic validation receives raw input and returns 0 matching folders (allowUserInput passes)
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(`'${commFolderId}' in parents`) && q.q.includes('name ='))
+        .reply(200, { files: [] });
+
+      // 2. DriveActivityHandler: resolveFolderPath('shared-drive-proj-root', ['1 Admin', 'Communication'])
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(sharedDriveId) && q.q.includes("name = '1 Admin'"))
+        .reply(200, { files: [{ id: adminFolderId, name: '1 Admin' }] });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(adminFolderId) && q.q.includes("name = 'Communication'"))
+        .reply(200, { files: [{ id: commFolderId, name: 'Communication' }] });
+
+      // 3. DriveActivityHandler: findOrCreateFolder with sanitized contact folder name
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(commFolderId) && q.q.includes(`name = '${sanitizedContact}'`))
+        .reply(200, { files: [] });
+
+      nock('https://www.googleapis.com')
+        .post('/drive/v3/files', (reqBody) => reqBody.name === sanitizedContact && reqBody.parents[0] === commFolderId)
+        .query(true)
+        .reply(200, {
+          id: sanitizedContactFolderId,
+          name: sanitizedContact,
+          parents: [commFolderId],
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+
+      // 4. DriveActivityHandler: findOrCreateFolder with sanitized commFolderName
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(sanitizedContactFolderId) && q.q.includes(`name = '${expectedCommFolder}'`))
+        .reply(200, { files: [] });
+
+      nock('https://www.googleapis.com')
+        .post('/drive/v3/files', (reqBody) => reqBody.name === expectedCommFolder && reqBody.parents[0] === sanitizedContactFolderId)
+        .query(true)
+        .reply(200, {
+          id: newSubfolderId,
+          name: expectedCommFolder,
+          parents: [sanitizedContactFolderId],
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+
+      // 5. DriveActivityHandler: move(fileId, newSubfolderId)
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${fileId}`)
+        .query(true)
+        .reply(200, {
+          id: fileId,
+          name: fileName,
+          parents: ['initial-inbox-folder'],
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        });
+
+      nock('https://www.googleapis.com')
+        .patch(`/drive/v3/files/${fileId}`)
+        .query(true)
+        .reply(200, {
+          id: fileId,
+          name: fileName,
+          parents: [newSubfolderId],
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          drive: {
+            selectedItems: [
+              {
+                id: fileId,
+                title: fileName,
+                mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              },
+            ],
+          },
+          commonEventObject: {
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: [rawContact] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: [rawDescription] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        action: {
+          notification: {
+            text: 'Document processed successfully',
+          },
+        },
+      });
+
+      expect(nock.isDone()).toBe(true);
+    });
+
     it('returns pre-submit validation error card when submitting processDocument with zero selected files', async () => {
       const response = await app.server.inject({
         method: 'POST',

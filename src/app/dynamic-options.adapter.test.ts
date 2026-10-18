@@ -396,6 +396,159 @@ describe('DynamicOptionsAdapter', () => {
       });
     });
 
+    it('returns isValid: true when 0 matching folders found and allowUserInput is true', async () => {
+      const driveClient = createMockDriveClient({
+        listFolders: vi.fn().mockResolvedValue({ folders: [] }),
+      });
+
+      const adapter = new DynamicOptionsAdapter(driveClient);
+
+      const queries = [
+        {
+          sourceKey: 'contactFolders',
+          queryId: 'contactFolders',
+          config: {
+            provider: 'google_drive',
+            method: 'list_folders',
+          },
+          valueToValidate: 'BrandNewContact',
+          allowUserInput: true,
+        },
+      ];
+
+      const result = await adapter.validateExistence(queries, { spaceId: 'space-123' });
+
+      expect(result).toEqual({
+        contactFolders: {
+          isValid: true,
+        },
+      });
+    });
+
+    it('returns isValid: false with "Option not found." when 0 matching folders found and allowUserInput is false', async () => {
+      const driveClient = createMockDriveClient({
+        listFolders: vi.fn().mockResolvedValue({ folders: [] }),
+      });
+
+      const adapter = new DynamicOptionsAdapter(driveClient);
+
+      const queries = [
+        {
+          sourceKey: 'contactFolders',
+          queryId: 'contactFolders',
+          config: {
+            provider: 'google_drive',
+            method: 'list_folders',
+          },
+          valueToValidate: 'NonExistent',
+          allowUserInput: false,
+        },
+      ];
+
+      const result = await adapter.validateExistence(queries, { spaceId: 'space-123' });
+
+      expect(result).toEqual({
+        contactFolders: {
+          isValid: false,
+          errorMessage: 'Option not found.',
+        },
+      });
+    });
+
+    it('returns isValid: false with "Option not found." when allowUserInput is true but spaceId is missing', async () => {
+      const driveClient = createMockDriveClient();
+      const adapter = new DynamicOptionsAdapter(driveClient);
+
+      const queries = [
+        {
+          sourceKey: 'contactFolders',
+          queryId: 'contactFolders',
+          config: {
+            provider: 'google_drive',
+            method: 'list_folders',
+          },
+          valueToValidate: 'BrandNewContact',
+          allowUserInput: true,
+        },
+      ];
+
+      const result = await adapter.validateExistence(queries, {});
+
+      expect(result).toEqual({
+        contactFolders: {
+          isValid: false,
+          errorMessage: 'Option not found.',
+        },
+      });
+    });
+
+    it('returns isValid: false with "Option not found." when allowUserInput is true but relativePath cannot be resolved', async () => {
+      const driveClient = createMockDriveClient({
+        listFolders: vi.fn().mockResolvedValue({ folders: [] }),
+      });
+
+      const adapter = new DynamicOptionsAdapter(driveClient);
+
+      const queries = [
+        {
+          sourceKey: 'contactFolders',
+          queryId: 'contactFolders',
+          config: {
+            provider: 'google_drive',
+            method: 'list_folders',
+            relativePath: 'NonExistentPath/Subfolder',
+          },
+          valueToValidate: 'BrandNewContact',
+          allowUserInput: true,
+        },
+      ];
+
+      const result = await adapter.validateExistence(queries, { spaceId: 'space-123' });
+
+      expect(result).toEqual({
+        contactFolders: {
+          isValid: false,
+          errorMessage: 'Option not found.',
+        },
+      });
+    });
+
+    it('returns isValid: false with multiple folders message when > 1 folders match even when allowUserInput is true', async () => {
+      const driveClient = createMockDriveClient({
+        listFolders: vi.fn().mockResolvedValue({
+          folders: [
+            { id: 'f-1', name: 'Duplicate Corp' },
+            { id: 'f-2', name: 'Duplicate Corp' },
+          ],
+        }),
+      });
+
+      const adapter = new DynamicOptionsAdapter(driveClient);
+
+      const queries = [
+        {
+          sourceKey: 'contactFolders',
+          queryId: 'contactFolders',
+          config: {
+            provider: 'google_drive',
+            method: 'list_folders',
+          },
+          valueToValidate: 'Duplicate Corp',
+          allowUserInput: true,
+        },
+      ];
+
+      const result = await adapter.validateExistence(queries, { spaceId: 'space-123' });
+
+      expect(result).toEqual({
+        contactFolders: {
+          isValid: false,
+          errorMessage:
+            'Multiple folders found with this name. Please resolve this ambiguity in Google Drive manually.',
+        },
+      });
+    });
+
     it('returns isValid: false with multiple folders message when more than 1 matching folder found', async () => {
       const driveClient = createMockDriveClient({
         listFolders: vi.fn().mockResolvedValue({

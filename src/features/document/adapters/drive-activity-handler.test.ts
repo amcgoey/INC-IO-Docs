@@ -754,6 +754,27 @@ describe('DriveActivityHandler', () => {
           error: 'AmbiguousPathSpecError: Multiple folders named Acme found',
         });
       });
+
+      it('validates that resolved folder path segments are non-empty before initiating folder creation', async () => {
+        const sfHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [{ id: 'sf-1' }],
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-id',
+            folderName: '   ',
+          },
+        };
+
+        const result = await sfHandler.handle(activity);
+        expect(result).toEqual({
+          success: false,
+          error: expect.stringMatching(/non-empty/i),
+        });
+        expect(mockDriveService.findOrCreateFolder).not.toHaveBeenCalled();
+      });
     });
   });
 });
