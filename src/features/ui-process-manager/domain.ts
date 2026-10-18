@@ -59,6 +59,7 @@ export const ProcessUiStateEventSchema = Type.Object({
         Type.Object({
           id: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
           title: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+          mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
         })
       ),
       Type.Undefined(),
@@ -401,7 +402,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const selectedFilesSet = extractSelectFilesSet(context.formData);
 
   const validSelectedItems = (context.selectedItems ?? []).filter(
-    (item): item is { id: string; title?: string | undefined } =>
+    (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
       typeof item?.id === 'string' && item.id.trim().length > 0
   );
 
