@@ -248,6 +248,14 @@ function matchFieldValue(value: unknown, expected: string): boolean {
   return String(value) === expected;
 }
 
+export function sanitizeFilePath(value: string): string {
+  return value
+    // eslint-disable-next-line no-control-regex
+    .replace(/[/\\:*?"<>|\x00-\x1f]/g, '-')
+    .replace(/^\s+/, '')
+    .replace(/[\s.]+$/, '');
+}
+
 function matchesRule(matchFields: { [key: string]: string } | undefined, document: Document): boolean {
   if (!matchFields || Object.keys(matchFields).length === 0) {
     return true;
@@ -425,6 +433,9 @@ export class DocumentService implements DocumentServicePort {
               config: field.options.dynamicConfig,
               valueToValidate: val,
               queryId,
+              ...(field.options.allowUserInput !== undefined
+                ? { allowUserInput: field.options.allowUserInput }
+                : {}),
             });
           });
         }
@@ -462,7 +473,7 @@ export class DocumentService implements DocumentServicePort {
     const enrichedData: { [key: string]: unknown } = {};
     for (const [key, value] of Object.entries(rawData)) {
       if (schemaFieldKeys.has(key)) {
-        enrichedData[key] = value;
+        enrichedData[key] = typeof value === 'string' ? sanitizeFilePath(value) : value;
       }
     }
 
@@ -470,14 +481,32 @@ export class DocumentService implements DocumentServicePort {
       if (field.options) {
         const rawValue = rawData[field.key];
         if (typeof rawValue === 'string') {
+          const sanitizedVal = sanitizeFilePath(rawValue);
           const optionTuples = documentType.documentSchema.options?.[field.options.source] ?? [];
-          const matchedTuple = optionTuples.find((tuple) => tuple[field.options!.key] === rawValue);
+          const matchedTuple = optionTuples.find(
+            (tuple) => tuple[field.options!.key] === rawValue || tuple[field.options!.key] === sanitizedVal
+          );
           if (matchedTuple) {
             enrichedData[field.key] = { ...matchedTuple };
           } else if (field.options.allowUserInput) {
             enrichedData[field.key] = {
-              [field.options.key]: rawValue,
-              [field.options.name]: rawValue,
+              [field.options.key]: sanitizedVal,
+              [field.options.name]: sanitizedVal,
+            };
+          }
+        } else if (rawValue !== null && typeof rawValue === 'object') {
+          const tupleObj = rawValue as Record<string, unknown>;
+          if (field.options.allowUserInput) {
+            enrichedData[field.key] = {
+              ...tupleObj,
+              [field.options.key]:
+                typeof tupleObj[field.options.key] === 'string'
+                  ? sanitizeFilePath(tupleObj[field.options.key] as string)
+                  : tupleObj[field.options.key],
+              [field.options.name]:
+                typeof tupleObj[field.options.name] === 'string'
+                  ? sanitizeFilePath(tupleObj[field.options.name] as string)
+                  : tupleObj[field.options.name],
             };
           }
         }

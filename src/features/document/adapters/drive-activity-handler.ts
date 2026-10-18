@@ -286,14 +286,21 @@ export class DriveActivityHandler implements ActivityHandler {
         ? payload.rootStorageId.trim()
         : undefined;
 
-    const parentPathStr =
-      typeof payload.parentPath === 'string' && payload.parentPath.trim().length > 0
-        ? payload.parentPath.trim()
-        : undefined;
-
-    const parentPathSegments = parentPathStr
-      ? parentPathStr.split(/[/\\]+/).filter((seg) => seg.length > 0)
-      : [];
+    let parentPathSegments: string[] = [];
+    if (payload.parentPath !== undefined) {
+      if (typeof payload.parentPath !== 'string') {
+        throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
+      }
+      const cleanParentPath = payload.parentPath.trim().replace(/^[/\\ ]+|[/\\ ]+$/g, '');
+      if (cleanParentPath.length === 0) {
+        throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
+      }
+      const segments = cleanParentPath.split(/[/\\]+/).map((s) => s.trim());
+      if (segments.length === 0 || segments.some((s) => s.length === 0)) {
+        throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
+      }
+      parentPathSegments = segments;
+    }
 
     let baseFolderId: string;
     if (rootStorageId) {
@@ -322,12 +329,23 @@ export class DriveActivityHandler implements ActivityHandler {
 
     const defaultTargetName =
       driveConfig?.defaultFolderName ?? this.options.defaultFolderName ?? 'Unfiled';
-    const folderName =
-      typeof payload.folderName === 'string' && payload.folderName.trim().length > 0
-        ? payload.folderName.trim()
-        : defaultTargetName;
-
-    const folderSegments = folderName.split(/[/\\]+/).filter((seg) => seg.length > 0);
+    let folderSegments: string[];
+    if (payload.folderName !== undefined) {
+      if (typeof payload.folderName !== 'string') {
+        throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
+      }
+      const cleanFolderName = payload.folderName.trim().replace(/^[/\\ ]+|[/\\ ]+$/g, '');
+      if (cleanFolderName.length === 0) {
+        throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
+      }
+      const segments = cleanFolderName.split(/[/\\]+/).map((s) => s.trim());
+      if (segments.length === 0 || segments.some((s) => s.length === 0)) {
+        throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
+      }
+      folderSegments = segments;
+    } else {
+      folderSegments = [defaultTargetName];
+    }
 
     let currentParentId = baseFolderId;
     let leafFolder: DriveFileResult = { id: baseFolderId, name: '' };

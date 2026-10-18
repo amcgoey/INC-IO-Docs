@@ -48,6 +48,7 @@ import {
   type TemplateEvaluatorPort,
   type DocumentDynamicValidationPort,
 } from './ports';
+import { HandlebarsAdapter } from '../../infrastructure/template-engine/handlebars-adapter';
 
 
 
@@ -2067,6 +2068,101 @@ describe('Document domain', () => {
           },
         });
       }
+    });
+
+    it('sanitizes disallowed characters, control chars, and trailing dots/whitespace in string fields and synthesized lookup tuples before evaluating calculatedFields and identity', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'comm-project',
+          name: 'Communication Project',
+          documentSchema: {
+            fields: [
+              {
+                key: 'contact',
+                name: 'Contact',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'contactFolders',
+                  key: 'key',
+                  name: 'name',
+                  allowUserInput: true,
+                },
+              },
+              { key: 'date', name: 'Date', type: 'string', required: true },
+              {
+                key: 'direction',
+                name: 'Direction',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'direction',
+                  key: 'key',
+                  name: 'name',
+                },
+              },
+              {
+                key: 'description',
+                name: 'Description',
+                type: 'string',
+                required: true,
+              },
+            ],
+            calculatedFields: [
+              {
+                key: 'commFolderName',
+                template: '{{date}} {{direction.key}} - {{description}}',
+              },
+            ],
+            identity: {
+              id: '{{contact.key}}-{{date}}-{{direction.key}}-{{description}}',
+              idDocument: '{{contact.key}}-{{date}}-{{direction.key}}-{{description}}',
+              idGroup: '{{contact.key}}',
+            },
+            options: {
+              direction: [
+                { key: 'IN', name: 'Incoming' },
+                { key: 'OT', name: 'Outgoing' },
+              ],
+            },
+          },
+        },
+      ];
+
+      const customRegistry = createCustomRegistry(mockDocumentTypes);
+      const service = createDocumentService(mockDispatcher, customRegistry, new HandlebarsAdapter());
+      await service.initialize();
+
+      // Test with disallowed path characters: / \ : * ? " < > | and control char \x07, plus trailing dots and whitespace
+      const inputDocument: Document = {
+        type: 'comm-project',
+        data: {
+          contact: '  Client: /Bad*Name?|With<Disallowed>"Chars\\And\x07Control. . ',
+          date: '260920',
+          direction: 'IN',
+          description: '  Meeting / Discussion: Issue *123? ...  ',
+        },
+      };
+
+      const result = await service.processDocument(inputDocument);
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const expectedContact = 'Client- -Bad-Name--With-Disallowed--Chars-And-Control';
+      const expectedDescription = 'Meeting - Discussion- Issue -123-';
+      const expectedCommFolder = '260920 IN - Meeting - Discussion- Issue -123-';
+
+      expect(result.data.data.contact).toEqual({
+        key: expectedContact,
+        name: expectedContact,
+      });
+      expect(result.data.data.description).toBe(expectedDescription);
+      expect(result.data.data.commFolderName).toBe(expectedCommFolder);
+      expect(result.data.id).toBe(`${expectedContact}-260920-IN-${expectedDescription}`);
+      expect(result.data.idGroup).toBe(expectedContact);
     });
 
     it('passes enriched tuple context seamlessly to Handlebars evaluator for calculatedFields and identity', async () => {
@@ -4363,6 +4459,7 @@ describe('Document domain', () => {
             },
             valueToValidate: 'Acme Corp',
             queryId: 'contact',
+            allowUserInput: true,
           },
         ],
         expect.objectContaining({
@@ -4561,6 +4658,7 @@ describe('Document domain', () => {
             },
             valueToValidate: 'Acme Corp',
             queryId: 'contact_0',
+            allowUserInput: true,
           },
           {
             sourceKey: 'contactFolders',
@@ -4571,6 +4669,7 @@ describe('Document domain', () => {
             },
             valueToValidate: 'Missing Corp',
             queryId: 'contact_1',
+            allowUserInput: true,
           },
         ],
         expect.anything()

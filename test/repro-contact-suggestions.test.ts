@@ -857,7 +857,7 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
         expect(body.action?.notification?.text).toBe('Document processed successfully');
       });
 
-      it('rejects submission when Contact folder does not exist with "Option not found."', async () => {
+      it('successfully processes submission when Contact folder does not exist (new contact allowed via allowUserInput)', async () => {
         const response = await injectWorkspaceRequest(app.server, {
           method: 'POST',
           url: '/workspace/action',
@@ -890,13 +890,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
 
         expect(response.statusCode).toBe(200);
         const body = JSON.parse(response.payload);
-        const updateCard = body.action?.navigations?.[0]?.updateCard as CardStub | undefined;
-        expect(updateCard).toBeDefined();
-
-        const statusSection = updateCard?.sections?.find((s) =>
-          s.widgets?.some((w) => w.textParagraph?.text?.includes('Option not found.'))
-        );
-        expect(statusSection).toBeDefined();
+        expect(body.action?.notification).toBeDefined();
+        expect(body.action?.notification?.text).toBe('Document processed successfully');
       });
 
       it('rejects submission when duplicate Contact folders exist', async () => {

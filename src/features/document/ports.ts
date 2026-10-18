@@ -130,6 +130,7 @@ export const DynamicValidationQuerySchema = Type.Object({
   config: Type.Record(Type.String(), Type.Unknown()),
   valueToValidate: Type.String(),
   queryId: Type.String(),
+  allowUserInput: Type.Optional(Type.Boolean()),
 });
 
 export type DynamicValidationQuery = Static<typeof DynamicValidationQuerySchema>;

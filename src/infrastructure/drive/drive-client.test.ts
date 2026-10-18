@@ -2568,6 +2568,29 @@ describe('GoogleDriveClient', () => {
       );
     });
   });
+
+  describe('escapeDriveQuery', () => {
+    it('escapes backslashes before single quotes', () => {
+      expect(GoogleDriveClient.escapeDriveQuery("A\\B'C")).toBe("A\\\\B\\'C");
+    });
+
+    it('escapes single quotes to backslash single quote', () => {
+      expect(GoogleDriveClient.escapeDriveQuery("O'Reilly")).toBe("O\\'Reilly");
+    });
+
+    it('escapes multiple backslashes', () => {
+      expect(GoogleDriveClient.escapeDriveQuery("foo\\\\bar")).toBe("foo\\\\\\\\bar");
+    });
+
+    it('returns unchanged string when no special characters present', () => {
+      expect(GoogleDriveClient.escapeDriveQuery("Normal Folder Name 123")).toBe("Normal Folder Name 123");
+    });
+
+    it('escapes backslashes immediately preceding single quotes without double-escaping', () => {
+      // Literal string containing \' -> backslash becomes \\, quote becomes \' -> \\\'
+      expect(GoogleDriveClient.escapeDriveQuery("folder\\'name")).toBe("folder\\\\\\'name");
+    });
+  });
 });
 
 
