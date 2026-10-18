@@ -8,6 +8,7 @@ import { wireWorkspaceAddonRoutes } from '../src/app/workspace-addon.wiring';
 import { mapUiViewToWorkspaceUiView } from '../src/app/ui-process-manager.wiring';
 import type { HttpServer, RouteDefinition } from '../src/infrastructure/http';
 import type { DocumentService } from '../src/features/document/domain';
+import type { DocumentSpaceService } from '../src/features/document-space/domain';
 import { translateUiViewToNavigationAction } from '../src/infrastructure/workspace-addon/translator';
 import { GoogleWorkspaceActionResponseSchema } from '../src/infrastructure/workspace-addon/ui-blocks';
 import {
@@ -180,10 +181,30 @@ describe('Anti-Corruption Wiring Integration', () => {
     } as unknown as HttpServer;
 
     const mockProcessDocument = vi.fn().mockResolvedValue({ success: true });
+    const mockDocumentSpaceService = {
+      getAllTypes: vi.fn().mockReturnValue([
+        {
+          id: 'projects',
+          displayName: 'Projects',
+          spaceSchema: { allowedDocumentTypes: ['contract-doc'] },
+        },
+      ]),
+      getCollection: vi.fn().mockResolvedValue({
+        spaces: [
+          {
+            id: 'space-123',
+            name: 'Space 1',
+            typeId: 'projects',
+            abstractStorageId: 'drive-folder-123',
+          },
+        ],
+      }),
+    };
 
     wireWorkspaceAddonRoutes({
       server: mockServer,
       manifestProvider: mockManifestProvider,
+      documentSpaceService: mockDocumentSpaceService as unknown as DocumentSpaceService,
       documentService: {
         processDocument: mockProcessDocument,
       } as unknown as DocumentService,
@@ -213,6 +234,7 @@ describe('Anti-Corruption Wiring Integration', () => {
           },
           formInputs: {
             SelectDocumentType: { stringInputs: { value: ['contract-doc'] } },
+            SelectDocumentSpace_projects: { stringInputs: { value: ['Space 1'] } },
             title: { stringInputs: { value: ['Contract A'] } },
           },
         },
@@ -223,6 +245,12 @@ describe('Anti-Corruption Wiring Integration', () => {
     expect(mockProcessDocument).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'contract-doc',
+        space: {
+          id: 'space-123',
+          name: 'Space 1',
+          typeId: 'projects',
+          abstractStorageId: 'drive-folder-123',
+        },
       }),
       'onSubmit'
     );

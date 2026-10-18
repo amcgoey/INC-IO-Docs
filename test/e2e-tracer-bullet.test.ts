@@ -5,6 +5,7 @@ import { createApp, type AppInstance } from '../src/app/server';
 import { injectWorkspaceRequest } from './e2e/utils/workspace-request';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
+import type { DocumentSpaceStoragePort } from '../src/features/document-space/ports';
 import { GoogleWorkspaceActionResponseSchema } from '../src/infrastructure/workspace-addon/ui-blocks';
 import {
   getDocumentTypeWidgetName,
@@ -15,6 +16,7 @@ import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/bloc
 describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
   let app: AppInstance;
   let mockAuthVerifier: WorkspaceAuthVerifierPort;
+  let mockStorageAdapter: DocumentSpaceStoragePort;
 
   beforeEach(async () => {
     mockAuthVerifier = {
@@ -32,12 +34,28 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
       }),
     };
 
+    mockStorageAdapter = {
+      fetchSpaces: vi.fn().mockImplementation(async (_config, typeId: string) => [
+        {
+          id: `space-${typeId}-1`,
+          typeId,
+          name: typeId === 'projects' ? 'Project 1' : 'Proposal 1',
+          abstractStorageId: `folder-${typeId}-1`,
+        },
+      ]),
+      resolveStorageLocation: vi.fn().mockImplementation(async (abstractStorageId: string) => ({
+        provider: 'google_drive',
+        abstractStorageId,
+      })),
+    };
+
     const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
     const manifestProvider = new AppManifestProvider({ manifestPath });
     app = createApp({
       manifestProvider,
       authVerifier: mockAuthVerifier,
       skipSpaceValidation: true,
+      storageAdapter: mockStorageAdapter,
     });
 
     await app.initialize();
@@ -359,6 +377,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
           },
           formInputs: {
             [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+            [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Project 1'] } },
             // contact, date, direction, description are required but missing
           },
         },
@@ -397,6 +416,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
           },
           formInputs: {
             [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-proposal'] } },
+            [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Project 1'] } },
             contact: { stringInputs: { value: ['Acme Corp'] } },
             date: { stringInputs: { value: ['260920'] } },
             direction: { stringInputs: { value: ['IN'] } },

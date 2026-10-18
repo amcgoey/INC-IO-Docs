@@ -32,7 +32,10 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         };
       }
       return {
-        spaces: [{ id: 'proj1', name: 'Project Main' }],
+        spaces: [
+          { id: 'proj1', name: 'Project Main' },
+          { id: 'proj-suffixed-id', name: 'Project Suffixed' },
+        ],
       };
     }),
   };
@@ -479,7 +482,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
         {
           type: 'communication-project',
-          space: 'proj1',
+          space: {
+            id: 'proj1',
+            name: 'Project Main',
+            typeId: 'projects',
+            abstractStorageId: 'proj1',
+          },
           data: {
             contact: 'Acme Corp',
             date: '260920',
@@ -524,7 +532,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
 
       expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
         expect.objectContaining({
-          space: 'Project Suffixed',
+          space: {
+            id: 'proj-suffixed-id',
+            name: 'Project Suffixed',
+            typeId: 'projects',
+            abstractStorageId: 'proj-suffixed-id',
+          },
         }),
         'onSubmit'
       );
@@ -559,7 +572,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
 
       expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
         expect.objectContaining({
-          space: 'Project Suffixed',
+          space: {
+            id: 'proj-suffixed-id',
+            name: 'Project Suffixed',
+            typeId: 'projects',
+            abstractStorageId: 'proj-suffixed-id',
+          },
           data: {
             contact: 'Acme Suffixed',
             'contact_invoice-project': 'Inactive Invoice Contact',
@@ -588,6 +606,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         actionName: 'processDocument',
         formData: {
           SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Main',
           SelectDocumentType: 'communication-project',
         },
       };
@@ -617,6 +636,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         actionName: 'processDocument',
         formData: {
           SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Main',
           SelectDocumentType: 'communication-project',
         },
       };
@@ -630,7 +650,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(renderResult.validationErrors).toEqual(['Connection timed out']);
     });
 
-    it('resolves human-readable space display name to technical ID before passing to documentRunner', async () => {
+    it('resolves human-readable space display name to complete DocumentSpace entity before passing to documentRunner', async () => {
       const mockDocumentRunner = {
         processDocument: vi.fn().mockResolvedValue({ success: true }),
       };
@@ -668,13 +688,18 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
 
       expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
         expect.objectContaining({
-          space: 'space-folder-alpha-id',
+          space: {
+            id: 'space-folder-alpha-id',
+            name: 'Project Alpha',
+            typeId: 'projects',
+            abstractStorageId: 'space-folder-alpha-id',
+          },
         }),
         'onSubmit'
       );
     });
 
-    it('passes direct technical ID to documentRunner when submitted with space ID directly', async () => {
+    it('passes complete DocumentSpace entity to documentRunner when submitted with space ID directly', async () => {
       const mockDocumentRunner = {
         processDocument: vi.fn().mockResolvedValue({ success: true }),
       };
@@ -712,13 +737,18 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
 
       expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
         expect.objectContaining({
-          space: 'space-folder-alpha-id',
+          space: {
+            id: 'space-folder-alpha-id',
+            name: 'Project Alpha',
+            typeId: 'projects',
+            abstractStorageId: 'space-folder-alpha-id',
+          },
         }),
         'onSubmit'
       );
     });
 
-    it('passes trimmed unlisted ID to documentRunner when submitted with an unlisted space ID', async () => {
+    it('aborts submission and returns update card with notFoundError when submitted with an unlisted space ID', async () => {
       const mockDocumentRunner = {
         processDocument: vi.fn().mockResolvedValue({ success: true }),
       };
@@ -752,11 +782,114 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         },
       };
 
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
+      expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
+      expect(response.type).toBe('render');
+      const renderResult = response as UiProcessRenderResult;
+      expect(renderResult.isUpdateCard).toBe(true);
+      expect(renderResult.spaceId).toBeUndefined();
+      expect(renderResult.validationErrors).toContain(
+        'Document space "unlisted-custom-folder-id" was not found. Please select an existing space.'
+      );
+    });
+
+    it('aborts submission and returns update card when space input is missing or empty', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+      const spaceProviderWithAlpha: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+          },
+        ]),
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [{ id: 'space-folder-alpha-id', name: 'Project Alpha' }],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: spaceProviderWithAlpha,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: '',
+          SelectDocumentType: 'communication-project',
+          contact: 'Test Contact',
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
+      expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
+      expect(response.type).toBe('render');
+      const renderResult = response as UiProcessRenderResult;
+      expect(renderResult.isUpdateCard).toBe(true);
+      expect(renderResult.spaceId).toBeUndefined();
+      expect(renderResult.validationErrors).toContain('Please select a Document Space.');
+    });
+
+    it('preserves collection typeId and abstractStorageId when delivering DocumentSpace to documentRunner', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+      const spaceProviderWithAttributes: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+          },
+        ]),
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [
+            {
+              id: 'space-folder-alpha-id',
+              name: 'Project Alpha',
+              typeId: 'custom-type-id',
+              abstractStorageId: 'custom-drive-storage-id',
+            },
+          ],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: spaceProviderWithAttributes,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Alpha',
+          SelectDocumentType: 'communication-project',
+        },
+      };
+
       await adapter.processUiEvent(context);
 
       expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
         expect.objectContaining({
-          space: 'unlisted-custom-folder-id',
+          space: {
+            id: 'space-folder-alpha-id',
+            name: 'Project Alpha',
+            typeId: 'custom-type-id',
+            abstractStorageId: 'custom-drive-storage-id',
+          },
         }),
         'onSubmit'
       );
@@ -854,7 +987,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
         {
           type: 'communication-project',
-          space: 'space-alpha-1',
+          space: {
+            id: 'space-alpha-1',
+            name: 'Project Alpha',
+            typeId: 'projects',
+            abstractStorageId: 'space-alpha-1',
+          },
           data: {
             contact: 'Test Contact',
           },

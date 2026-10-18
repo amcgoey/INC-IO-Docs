@@ -12,6 +12,7 @@ import {
   type UiProcessDocumentRunnerPort,
   type UiProcessFormEvaluatorPort,
   type RawManifestProviderPort,
+  type UiProcessSpaceItem,
 } from '../features/ui-process-manager';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import {
@@ -332,10 +333,45 @@ export function createUiProcessManagerWiring(
     },
   };
 
+  function toStructuredDocumentSpace(
+    space:
+      | UiProcessSpaceItem
+      | string
+      | { id: string; typeId: string; name: string; abstractStorageId: string }
+      | undefined
+  ): { id: string; typeId: string; name: string; abstractStorageId: string } | undefined {
+    if (!space) {
+      return undefined;
+    }
+    if (typeof space === 'object') {
+      return {
+        id: space.id,
+        name: space.name,
+        typeId: ('typeId' in space && space.typeId) ? space.typeId : 'default',
+        abstractStorageId: ('abstractStorageId' in space && space.abstractStorageId)
+          ? space.abstractStorageId
+          : space.id,
+      };
+    }
+    return {
+      id: space,
+      name: space,
+      typeId: 'default',
+      abstractStorageId: space,
+    };
+  }
+
   const fallbackDocumentRunner: UiProcessDocumentRunnerPort | undefined = options.documentService
     ? {
         processDocument: async (payload, eventName) => {
-          return options.documentService!.processDocument(payload, eventName);
+          const space = toStructuredDocumentSpace(payload.space);
+          return options.documentService!.processDocument(
+            {
+              ...payload,
+              ...(space ? { space } : {}),
+            },
+            eventName
+          );
         },
       }
     : undefined;
@@ -384,7 +420,14 @@ export function createUiProcessManagerWiring(
             processDocument: async (payload, eventName) => {
               const activeDocService =
                 docService ?? (await options.createDocumentService!(context));
-              return activeDocService.processDocument(payload, eventName);
+              const space = toStructuredDocumentSpace(payload.space);
+              return activeDocService.processDocument(
+                {
+                  ...payload,
+                  ...(space ? { space } : {}),
+                },
+                eventName
+              );
             },
           }
         : undefined;

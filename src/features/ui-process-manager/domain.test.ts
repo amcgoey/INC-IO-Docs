@@ -9,9 +9,13 @@ import {
   resolveSpaceId,
   evaluateProcessUiState,
   ResolveSpaceResultSchema,
+  UiProcessSpaceItemSchema,
   type ProcessUiStateInput,
 } from './domain';
-import { ResolveSpaceResultSchema as PortsResolveSpaceResultSchema } from './ports';
+import {
+  ResolveSpaceResultSchema as PortsResolveSpaceResultSchema,
+  UiProcessSpaceItemSchema as PortsUiProcessSpaceItemSchema,
+} from './ports';
 
 describe('ui-process-manager domain', () => {
 
@@ -196,39 +200,51 @@ describe('ui-process-manager domain', () => {
 
   describe('resolveSpaceId', () => {
     it('returns spaceId directly from formData.spaceId when present', () => {
-      const result = resolveSpaceId({
-        formData: { spaceId: 'direct-space-123' },
-      });
+      const result = resolveSpaceId(
+        {
+          formData: { spaceId: 'direct-space-123' },
+          spaces: [{ id: 'direct-space-123', name: 'Direct Space' }],
+        }
+      );
       expect(result).toBe('direct-space-123');
     });
 
     it('returns spaceId from formData.SelectDocumentSpace when present', () => {
-      const result = resolveSpaceId({
-        formData: { SelectDocumentSpace: 'Space-ABC' },
-      });
-      expect(result).toBe('Space-ABC');
+      const result = resolveSpaceId(
+        {
+          formData: { SelectDocumentSpace: 'Space-ABC' },
+          spaces: [{ id: 'space-abc-id', name: 'Space-ABC' }],
+        }
+      );
+      expect(result).toBe('space-abc-id');
     });
 
     it('returns spaceId from suffixed SelectDocumentSpace_<spaceType> matching activeSpaceType', () => {
-      const result = resolveSpaceId({
-        formData: {
-          SelectDocumentSpaceType: 'projects',
-          SelectDocumentSpace_projects: 'project-folder-id',
-          SelectDocumentSpace_proposals: 'proposal-folder-id',
-        },
-        activeSpaceType: 'projects',
-      });
+      const result = resolveSpaceId(
+        {
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'project-folder-id',
+            SelectDocumentSpace_proposals: 'proposal-folder-id',
+          },
+          activeSpaceType: 'projects',
+          spaces: [{ id: 'project-folder-id', name: 'Project Folder' }],
+        }
+      );
       expect(result).toBe('project-folder-id');
     });
 
     it('trims whitespace and ignores blank strings', () => {
-      const result = resolveSpaceId({
-        formData: {
-          spaceId: '   ',
-          SelectDocumentSpace: '  valid-space  ',
-        },
-      });
-      expect(result).toBe('valid-space');
+      const result = resolveSpaceId(
+        {
+          formData: {
+            spaceId: '   ',
+            SelectDocumentSpace: '  valid-space  ',
+          },
+          spaces: [{ id: 'valid-space-id', name: 'valid-space' }],
+        }
+      );
+      expect(result).toBe('valid-space-id');
     });
 
     it('returns undefined when formData is missing or has no space ID', () => {
@@ -277,7 +293,7 @@ describe('ui-process-manager domain', () => {
       expect(result).toBe('space-folder-alpha-id');
     });
 
-    it('falls back to unlisted ID when space does not match any known name or ID', () => {
+    it('returns undefined when space does not match any known name or ID', () => {
       const spaces = [
         { id: 'space-folder-alpha-id', name: 'Project Alpha' },
       ];
@@ -285,7 +301,7 @@ describe('ui-process-manager domain', () => {
         { formData: { SelectDocumentSpace: 'unlisted-custom-id-999' } },
         spaces
       );
-      expect(result).toBe('unlisted-custom-id-999');
+      expect(result).toBeUndefined();
     });
 
     it('returns undefined when input is empty or whitespace only', () => {
@@ -432,15 +448,30 @@ describe('ui-process-manager domain', () => {
       expect(result.collisionError).toBeUndefined();
     });
 
-    it('falls back to unlisted ID when space does not match any known name or ID', () => {
+    it('returns notFoundError and undefined spaceId when space does not match any known name or ID', () => {
       const result = resolveSpace(
         { formData: { SelectDocumentSpace: 'custom-unlisted-id' } },
         spaces
       );
-      expect(result.spaceId).toBe('custom-unlisted-id');
+      expect(result.spaceId).toBeUndefined();
       expect(result.matchedSpace).toBeUndefined();
-      expect(result.isIdMatch).toBe(false);
+      expect(result.isIdMatch).toBeUndefined();
       expect(result.collisionError).toBeUndefined();
+      expect(result.notFoundError).toBe(
+        'Document space "custom-unlisted-id" was not found. Please select an existing space.'
+      );
+    });
+
+    it('trims whitespace and returns notFoundError when unknown space has surrounding whitespace', () => {
+      const result = resolveSpace(
+        { formData: { SelectDocumentSpace: '   unknown-space   ' } },
+        spaces
+      );
+      expect(result.spaceId).toBeUndefined();
+      expect(result.matchedSpace).toBeUndefined();
+      expect(result.notFoundError).toBe(
+        'Document space "unknown-space" was not found. Please select an existing space.'
+      );
     });
 
     it('returns empty result when formData is missing or empty', () => {
@@ -848,6 +879,55 @@ describe('ui-process-manager domain', () => {
       expect(state.validationErrors).toEqual([collisionMsg, 'Other error']);
     });
 
+    it('surfaces notFoundError in validationErrors and sets isUpdateCard when space does not match', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          actionName: 'onFormChange',
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Nonexistent Space',
+            SelectDocumentType_projects: 'communication-project',
+            spaceId: 'stale-space-id',
+          },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: [
+          { id: 'proj-1', name: 'Project Alpha' },
+        ],
+      };
+
+      const state = evaluateProcessUiState(input);
+      expect(state.spaceId).toBeUndefined();
+      expect(state.formData.spaceId).toBeUndefined();
+      expect(state.formData).not.toHaveProperty('spaceId');
+      expect(state.isUpdateCard).toBe(true);
+      expect(state.validationErrors).toContain(
+        'Document space "Nonexistent Space" was not found. Please select an existing space.'
+      );
+    });
+
+    it('does not duplicate notFoundError if validationErrors already contains it', () => {
+      const notFoundMsg = 'Document space "Nonexistent Space" was not found. Please select an existing space.';
+      const input: ProcessUiStateInput = {
+        context: {
+          actionName: 'onFormChange',
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Nonexistent Space',
+          },
+          validationErrors: [notFoundMsg, 'Other error'],
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: [
+          { id: 'proj-1', name: 'Project Alpha' },
+        ],
+      };
+
+      const state = evaluateProcessUiState(input);
+      expect(state.spaceId).toBeUndefined();
+      expect(state.validationErrors).toEqual([notFoundMsg, 'Other error']);
+    });
+
     it('sets spaceId undefined and removes stale formData.spaceId when user clears space input on form change', () => {
       const input: ProcessUiStateInput = {
         context: {
@@ -1187,6 +1267,36 @@ describe('ui-process-manager domain', () => {
         expect(state.selectionState.documentTypes).toHaveLength(2);
         expect(state.selectionState.documentTypes[0].selected).toBe(true);
       });
+    });
+  });
+
+  describe('UiProcessSpaceItemSchema and ResolveSpaceResultSchema', () => {
+    it('validates space item with optional typeId and abstractStorageId in both domain and ports', () => {
+      const fullItem = {
+        id: 'space-1',
+        name: 'Space One',
+        typeId: 'projects',
+        abstractStorageId: 'storage-1',
+      };
+      expect(Value.Check(UiProcessSpaceItemSchema, fullItem)).toBe(true);
+      expect(Value.Check(PortsUiProcessSpaceItemSchema, fullItem)).toBe(true);
+
+      const minimalItem = {
+        id: 'space-2',
+        name: 'Space Two',
+      };
+      expect(Value.Check(UiProcessSpaceItemSchema, minimalItem)).toBe(true);
+      expect(Value.Check(PortsUiProcessSpaceItemSchema, minimalItem)).toBe(true);
+    });
+
+    it('validates resolve space result with notFoundError in both domain and ports', () => {
+      const resultWithNotFound = {
+        spaceId: undefined,
+        matchedSpace: undefined,
+        notFoundError: 'Document space "abc" was not found. Please select an existing space.',
+      };
+      expect(Value.Check(ResolveSpaceResultSchema, resultWithNotFound)).toBe(true);
+      expect(Value.Check(PortsResolveSpaceResultSchema, resultWithNotFound)).toBe(true);
     });
   });
 });

@@ -117,7 +117,15 @@ export interface UiProcessDocumentExecutionResult {
 
 export interface UiProcessDocumentRunnerPort {
   processDocument(
-    payload: { type: string; data: Record<string, unknown>; space?: string },
+    payload: {
+      type: string;
+      data: Record<string, unknown>;
+      space?:
+        | UiProcessSpaceItem
+        | string
+        | { id: string; typeId: string; name: string; abstractStorageId: string }
+        | undefined;
+    },
     eventName: string
   ): Promise<UiProcessDocumentExecutionResult>;
 }

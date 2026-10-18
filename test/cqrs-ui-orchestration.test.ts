@@ -5,6 +5,7 @@ import { createApp, type AppInstance } from '../src/app/server';
 import { injectWorkspaceRequest } from './e2e/utils/workspace-request';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
+import type { DocumentSpaceStoragePort } from '../src/features/document-space/ports';
 import {
   GoogleWorkspaceActionResponseSchema,
   type GoogleWorkspaceActionResponse,
@@ -13,6 +14,7 @@ import {
 describe('Integration: CQRS UI Orchestration (Issue 140)', () => {
   let app: AppInstance;
   let mockAuthVerifier: WorkspaceAuthVerifierPort;
+  let mockStorageAdapter: DocumentSpaceStoragePort;
 
   beforeEach(async () => {
     mockAuthVerifier = {
@@ -30,6 +32,21 @@ describe('Integration: CQRS UI Orchestration (Issue 140)', () => {
       }),
     };
 
+    mockStorageAdapter = {
+      fetchSpaces: vi.fn().mockImplementation(async (_config, typeId: string) => [
+        {
+          id: `space-${typeId}-1`,
+          typeId,
+          name: typeId === 'projects' ? 'Project 1' : 'Client Proposals',
+          abstractStorageId: `folder-${typeId}-1`,
+        },
+      ]),
+      resolveStorageLocation: vi.fn().mockImplementation(async (abstractStorageId: string) => ({
+        provider: 'google_drive',
+        abstractStorageId,
+      })),
+    };
+
     const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
     const manifestProvider = new AppManifestProvider({ manifestPath });
     app = createApp({
@@ -37,6 +54,7 @@ describe('Integration: CQRS UI Orchestration (Issue 140)', () => {
       authVerifier: mockAuthVerifier,
       skipSpaceValidation: true,
       appBaseUrl: 'https://cqrs-addon.example.com',
+      storageAdapter: mockStorageAdapter,
     });
 
     await app.initialize();
@@ -140,6 +158,7 @@ describe('Integration: CQRS UI Orchestration (Issue 140)', () => {
         },
         formInputs: {
           SelectDocumentType_projects: { stringInputs: { value: ['communication-proposal'] } },
+          SelectDocumentSpace_projects: { stringInputs: { value: ['Project 1'] } },
           contact: { stringInputs: { value: ['Acme Corp'] } },
           date: { stringInputs: { value: ['260920'] } },
           direction: { stringInputs: { value: ['IN'] } },

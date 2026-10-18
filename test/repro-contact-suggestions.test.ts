@@ -346,8 +346,7 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       ]);
     });
 
-    it('falls back cleanly without erroring when space identifier is unknown or unlisted', async () => {
-      // 1. Unknown space with empty folders falls back cleanly without collision error
+    it('returns validation error banner and resets Contact suggestions when space identifier is unknown or unlisted', async () => {
       const updateResponse = await injectWorkspaceRequest(app.server, {
         method: 'POST',
         url: '/workspace/on-form-change',
@@ -364,7 +363,7 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
             },
             formInputs: {
               SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
-              SelectDocumentSpace_projects: { stringInputs: { value: ['unlisted-empty-folder-id'] } },
+              SelectDocumentSpace_projects: { stringInputs: { value: ['unlisted-folder-id'] } },
               SelectDocumentType_projects: { stringInputs: { value: ['communication-project'] } },
             },
           },
@@ -379,55 +378,25 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       const updateCard = updateBody.action?.navigations?.[0]?.updateCard as CardStub | undefined;
       expect(updateCard).toBeDefined();
 
-      // Ensure no collision or validation error banner
+      // Verify validation error banner is displayed
       const statusSection = updateCard?.sections?.find((s) =>
         s.widgets?.some((w) => w.textParagraph?.text?.includes('Validation Errors'))
       );
-      expect(statusSection).toBeUndefined();
+      expect(statusSection).toBeDefined();
+      const errorTextWidget = statusSection?.widgets?.find((w) =>
+        w.textParagraph?.text?.includes(
+          'Document space "unlisted-folder-id" was not found. Please select an existing space.'
+        )
+      );
+      expect(errorTextWidget).toBeDefined();
 
-      // Contact widget is present and handled gracefully
+      // Verify Contact widget suggestions reset to prompt space selection
       const dataSection = findSection(updateCard, 'Document Data');
       expect(dataSection).toBeDefined();
       const contactWidget = findWidget(dataSection, 'contact_communication-project');
       expect(contactWidget).toBeDefined();
-      expect(contactWidget?.textInput?.initialSuggestions?.items ?? []).toEqual([]);
-
-      // 2. Unlisted space with existing contact folders resolves and populates suggestions cleanly
-      const unlistedWithContactsResponse = await injectWorkspaceRequest(app.server, {
-        method: 'POST',
-        url: '/workspace/on-form-change',
-        headers: {
-          authorization: 'Bearer valid-token',
-        },
-        payload: {
-          authorizationEventObject: {
-            userOAuthToken: 'test-oauth-token',
-          },
-          commonEventObject: {
-            parameters: {
-              action: 'onFormChange',
-            },
-            formInputs: {
-              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
-              SelectDocumentSpace_projects: { stringInputs: { value: ['unlisted-with-contacts-id'] } },
-              SelectDocumentType_projects: { stringInputs: { value: ['communication-project'] } },
-            },
-          },
-          drive: {
-            selectedItems: [{ id: 'file-1', title: 'Doc.pdf' }],
-          },
-        },
-      });
-
-      expect(unlistedWithContactsResponse.statusCode).toBe(200);
-      const unlistedBody = JSON.parse(unlistedWithContactsResponse.payload);
-      const unlistedCard = unlistedBody.action?.navigations?.[0]?.updateCard as CardStub | undefined;
-      expect(unlistedCard).toBeDefined();
-
-      const unlistedDataSection = findSection(unlistedCard, 'Document Data');
-      const unlistedContactWidget = findWidget(unlistedDataSection, 'contact_communication-project');
-      expect(unlistedContactWidget?.textInput?.initialSuggestions?.items).toEqual([
-        { text: 'Wayne Enterprises' },
+      expect(contactWidget?.textInput?.initialSuggestions?.items).toEqual([
+        { text: 'Select a Space first' },
       ]);
     });
 

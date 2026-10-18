@@ -109,7 +109,11 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           displayName: 'Projects',
           spaceSchema: { allowedDocumentTypes: ['communication-project'] },
         },
-        spaces: [{ id: 'proj-1', name: 'Project Alpha' }],
+        spaces: [
+          { id: 'proj-1', name: 'Project Alpha' },
+          { id: 'space-folder-xyz', name: 'Folder XYZ' },
+          { id: 'new-space-folder-id', name: 'new-space-folder-id' },
+        ],
       };
     }),
   } as unknown as DocumentSpaceService;
@@ -282,7 +286,12 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
     expect(mockDocService.processDocument).toHaveBeenCalledWith(
       {
         type: 'communication-project',
-        space: 'proj-1',
+        space: {
+          id: 'proj-1',
+          name: 'Project Alpha',
+          typeId: 'projects',
+          abstractStorageId: 'proj-1',
+        },
         data: {
           contact: 'Alice Corp',
           date: '260920',
@@ -313,6 +322,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       actionName: 'processDocument',
       formData: {
         SelectDocumentSpaceType: 'projects',
+        SelectDocumentSpace: 'Project Alpha',
         SelectDocumentType: 'communication-project',
       },
     };
@@ -686,6 +696,12 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       expect(alphaTracked?.mockProcessDocument).toHaveBeenCalledTimes(1);
       expect(alphaTracked?.mockProcessDocument).toHaveBeenCalledWith(
         expect.objectContaining({
+          space: {
+            id: 'proj-1',
+            name: 'Project Alpha',
+            typeId: 'projects',
+            abstractStorageId: 'proj-1',
+          },
           data: expect.objectContaining({ contact: 'Alpha Contact', date: '260901' }),
         }),
         'onSubmit'
@@ -696,6 +712,12 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       expect(betaTracked?.mockProcessDocument).toHaveBeenCalledTimes(1);
       expect(betaTracked?.mockProcessDocument).toHaveBeenCalledWith(
         expect.objectContaining({
+          space: {
+            id: 'proj-1',
+            name: 'Project Alpha',
+            typeId: 'projects',
+            abstractStorageId: 'proj-1',
+          },
           data: expect.objectContaining({ contact: 'Beta Contact', date: '260902' }),
         }),
         'onSubmit'
@@ -706,6 +728,12 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       expect(gammaTracked?.mockProcessDocument).toHaveBeenCalledTimes(1);
       expect(gammaTracked?.mockProcessDocument).toHaveBeenCalledWith(
         expect.objectContaining({
+          space: {
+            id: 'proj-1',
+            name: 'Project Alpha',
+            typeId: 'projects',
+            abstractStorageId: 'proj-1',
+          },
           data: expect.objectContaining({ contact: 'Gamma Contact', date: '260903' }),
         }),
         'onSubmit'

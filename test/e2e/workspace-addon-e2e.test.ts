@@ -804,7 +804,12 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       expect(mockDocumentService.processDocument).toHaveBeenCalledWith(
         {
           type: 'communication-project', // Canonical backend key strictly mapped from 'Communication Project'
-          space: 'space-projects-1',
+          space: {
+            id: 'space-projects-1',
+            typeId: 'projects',
+            name: 'Active Projects',
+            abstractStorageId: 'folder-projects-1',
+          },
           data: {
             contact: 'Acme Corp',
             date: '260921',
@@ -867,7 +872,12 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       expect(mockDocumentService.processDocument).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'communication-project',
-          space: 'space-projects-1',
+          space: {
+            id: 'space-projects-1',
+            typeId: 'projects',
+            name: 'Active Projects',
+            abstractStorageId: 'folder-projects-1',
+          },
         }),
         'onSubmit'
       );

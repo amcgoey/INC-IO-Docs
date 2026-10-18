@@ -139,7 +139,12 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     const collectionErrors: string[] = [];
     try {
       const collection = await spaceProvider.getCollection(currentSpaceType);
-      spaces = collection.spaces.map((s) => ({ id: s.id, name: s.name }));
+      spaces = collection.spaces.map((s) => ({
+        id: s.id,
+        name: s.name,
+        ...(s.typeId !== undefined ? { typeId: s.typeId } : {}),
+        ...(s.abstractStorageId !== undefined ? { abstractStorageId: s.abstractStorageId } : {}),
+      }));
     } catch (e) {
       console.warn(`Could not fetch collection for space type: ${currentSpaceType}`, e);
       if (activeSpaceObj) {
@@ -203,6 +208,22 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         return createErrorRenderResult([spaceResolution.collisionError]);
       }
 
+      if (spaceResolution.notFoundError) {
+        return createErrorRenderResult([spaceResolution.notFoundError]);
+      }
+
+      if (!spaceResolution.matchedSpace) {
+        return createErrorRenderResult(['Please select a Document Space.']);
+      }
+
+      const matchedSpace = spaceResolution.matchedSpace;
+      const space = {
+        id: matchedSpace.id,
+        name: matchedSpace.name,
+        typeId: matchedSpace.typeId ?? currentSpaceType,
+        abstractStorageId: matchedSpace.abstractStorageId ?? matchedSpace.id,
+      };
+
       const data = extractDocumentData(normalizedContext.formData);
 
       try {
@@ -211,7 +232,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
             {
               type: resolvedDocumentTypeKey ?? 'default',
               data,
-              ...(spaceResolution.spaceId ? { space: spaceResolution.spaceId } : {}),
+              space,
             },
             'onSubmit'
           );

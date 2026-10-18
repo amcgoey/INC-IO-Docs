@@ -17,6 +17,8 @@ export type UiSelectionState = Static<typeof UiSelectionStateSchema>;
 export const UiProcessSpaceItemSchema = Type.Object({
   id: Type.String(),
   name: Type.String(),
+  typeId: Type.Optional(Type.String()),
+  abstractStorageId: Type.Optional(Type.String()),
 });
 export type UiProcessSpaceItem = Static<typeof UiProcessSpaceItemSchema>;
 
@@ -189,13 +191,14 @@ export const ResolveSpaceResultSchema = Type.Object({
   spaceId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   matchedSpace: Type.Optional(Type.Union([UiProcessSpaceItemSchema, Type.Undefined()])),
   collisionError: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  notFoundError: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   isIdMatch: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
 });
 export type ResolveSpaceResult = Static<typeof ResolveSpaceResultSchema>;
 
 /**
  * Detailed space resolution evaluating exact ID matches, case-insensitive name matches,
- * ambiguity collisions, and unlisted ID fallbacks.
+ * ambiguity collisions, and unknown space rejection.
  */
 export function resolveSpace(
   context?: UiStateResolutionContext,
@@ -256,10 +259,11 @@ export function resolveSpace(
     };
   }
 
-  // 3. Unlisted ID fallback
+  // 3. Unknown space rejection (no unlisted ID fallback)
   return {
-    spaceId: rawInput,
-    isIdMatch: false,
+    spaceId: undefined,
+    matchedSpace: undefined,
+    notFoundError: `Document space "${rawInput}" was not found. Please select an existing space.`,
   };
 }
 
@@ -353,13 +357,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
 
   const spaceSelectorKey = currentSpaceType ? getSpaceSelectorKey(currentSpaceType) : undefined;
 
-  if (
-    spaceResolution.spaceId === undefined &&
-    ((spaceSelectorKey &&
-      (spaceSelectorKey in effectiveFormData || effectiveFormData[spaceSelectorKey] !== undefined)) ||
-      SELECT_DOCUMENT_SPACE_KEY in effectiveFormData ||
-      effectiveFormData[SELECT_DOCUMENT_SPACE_KEY] !== undefined)
-  ) {
+  if (spaceResolution.spaceId === undefined) {
     delete effectiveFormData.spaceId;
   }
 
@@ -375,14 +373,15 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     }
   }
 
+  const spaceError = spaceResolution.collisionError ?? spaceResolution.notFoundError;
   const validationErrors = [
     ...(context.validationErrors ?? []),
-    ...(spaceResolution.collisionError && !context.validationErrors?.includes(spaceResolution.collisionError)
-      ? [spaceResolution.collisionError]
+    ...(spaceError && !context.validationErrors?.includes(spaceError)
+      ? [spaceError]
       : []),
   ];
 
-  if (spaceResolution.collisionError) {
+  if (spaceResolution.collisionError || spaceResolution.notFoundError) {
     isUpdateCard = true;
   }
 
