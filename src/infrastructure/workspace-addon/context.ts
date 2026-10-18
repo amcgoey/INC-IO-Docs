@@ -143,7 +143,12 @@ export function extractWorkspaceExecutionContext(
     for (const [key, val] of Object.entries(event.commonEventObject.formInputs)) {
       if (val && typeof val === 'object' && 'stringInputs' in val) {
         const stringInputs = (val as { stringInputs?: { value?: unknown[] } })['stringInputs'];
-        formData[key] = stringInputs?.value?.[0] ?? '';
+        const values = stringInputs?.value;
+        if (Array.isArray(values) && values.length > 1) {
+          formData[key] = values;
+        } else {
+          formData[key] = values?.[0] ?? '';
+        }
       } else {
         formData[key] = val;
       }

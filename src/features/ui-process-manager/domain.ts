@@ -88,6 +88,7 @@ export const ProcessUiStateOutputSchema = Type.Object({
 });
 export type ProcessUiStateOutput = Static<typeof ProcessUiStateOutputSchema>;
 
+export const SELECT_FILES_KEY = 'SelectFiles';
 export const SELECTION_KEY_PREFIX = 'SelectDocument';
 export const SELECT_DOCUMENT_SPACE_TYPE_KEY = 'SelectDocumentSpaceType';
 export const SELECT_DOCUMENT_SPACE_KEY = 'SelectDocumentSpace';
@@ -104,7 +105,31 @@ export function getDocTypeSelectorKey(spaceType: string): string {
 }
 
 export function isSelectionKey(key: string): boolean {
-  return key.startsWith(SELECTION_KEY_PREFIX);
+  return key.startsWith(SELECTION_KEY_PREFIX) || key === SELECT_FILES_KEY;
+}
+
+/**
+ * Normalizes formData.SelectFiles (string | string[] | undefined) into a Set of non-empty trimmed strings.
+ */
+export function extractSelectFilesSet(formData?: Record<string, unknown>): Set<string> {
+  const raw = formData?.[SELECT_FILES_KEY];
+  const set = new Set<string>();
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (trimmed.length > 0) {
+      set.add(trimmed);
+    }
+  } else if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (typeof item === 'string') {
+        const trimmed = item.trim();
+        if (trimmed.length > 0) {
+          set.add(trimmed);
+        }
+      }
+    }
+  }
+  return set;
 }
 
 function filterFormData(
@@ -311,7 +336,10 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const allowedDocumentTypes = selectedSpaceTypeObj?.spaceSchema.allowedDocumentTypes ?? [];
 
   const effectiveFormData: Record<string, unknown> = { ...context.formData };
-  let isUpdateCard = Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange);
+  const isRefresh = action === 'refresh';
+  let isUpdateCard = isRefresh
+    ? false
+    : Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange);
 
   const rawSelectedDocType =
     resolveDocumentType({
@@ -352,6 +380,25 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     selected: typeKey === currentDocTypeKey,
   }));
 
+  const inCardActions = new Set([
+    'onSpaceTypeChange',
+    'onDocumentTypeChange',
+    'onFormChange',
+    'processDocument',
+    'viewJson',
+  ]);
+  const hasInCardAction = action !== undefined && inCardActions.has(action);
+
+  const hasSelectionKeysInFormData = Boolean(
+    context.formData &&
+    Object.keys(context.formData).some((k) => isSelectionKey(k))
+  );
+
+  const isResetOrInitialLoad =
+    isRefresh || (!hasInCardAction && !hasSelectionKeysInFormData);
+
+  const selectedFilesSet = extractSelectFilesSet(context.formData);
+
   const validSelectedItems = (context.selectedItems ?? []).filter(
     (item): item is { id: string; title?: string | undefined } =>
       typeof item?.id === 'string' && item.id.trim().length > 0
@@ -359,10 +406,11 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
 
   const files: UiSelectionItem[] = validSelectedItems.map((item) => {
     const trimmedTitle = typeof item.title === 'string' ? item.title.trim() : '';
+    const fileId = item.id.trim();
     return {
-      text: trimmedTitle.length > 0 ? trimmedTitle : item.id,
+      text: trimmedTitle.length > 0 ? trimmedTitle : fileId,
       value: item.id,
-      selected: true,
+      selected: isResetOrInitialLoad ? true : selectedFilesSet.has(fileId),
     };
   });
 
@@ -408,7 +456,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
       : []),
   ];
 
-  if (spaceResolution.collisionError || spaceResolution.notFoundError) {
+  if (!isRefresh && (spaceResolution.collisionError || spaceResolution.notFoundError)) {
     isUpdateCard = true;
   }
 

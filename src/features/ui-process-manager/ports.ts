@@ -18,6 +18,9 @@ import {
   type ResolveSpaceResult,
   ProcessUiStateEventSchema,
   type ProcessUiStateEvent,
+  SELECT_FILES_KEY,
+  isSelectionKey,
+  extractSelectFilesSet,
 } from './domain';
 
 export {
@@ -39,6 +42,9 @@ export {
   type ResolveSpaceResult,
   ProcessUiStateEventSchema,
   type ProcessUiStateEvent,
+  SELECT_FILES_KEY,
+  isSelectionKey,
+  extractSelectFilesSet,
 };
 
 export const UiProcessEventContextSchema = Type.Object({
