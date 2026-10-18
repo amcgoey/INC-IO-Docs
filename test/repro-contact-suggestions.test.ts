@@ -12,6 +12,7 @@ interface WidgetStub {
   textInput?: {
     name: string;
     value?: string;
+    hintText?: string;
     initialSuggestions?: { items?: Array<{ text: string }> };
   };
   selectionInput?: {
@@ -253,9 +254,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
     expect(dataSection).toBeDefined();
     const contactWidget = findWidget(dataSection, 'contact_communication-project');
     expect(contactWidget).toBeDefined();
-    expect(contactWidget?.textInput?.initialSuggestions?.items).toEqual([
-      { text: 'Select a Space first' },
-    ]);
+    expect(contactWidget?.textInput?.hintText).toBe('Select a Space first');
+    expect(contactWidget?.textInput?.initialSuggestions).toBeUndefined();
   });
 
   it('Lifecycle b: Space Selection & Refresh returns update card containing Contact suggestions derived from Drive folders under technical ID', async () => {
@@ -419,9 +419,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       expect(dataSection).toBeDefined();
       const contactWidget = findWidget(dataSection, 'contact_communication-project');
       expect(contactWidget).toBeDefined();
-      expect(contactWidget?.textInput?.initialSuggestions?.items).toEqual([
-        { text: 'Select a Space first' },
-      ]);
+      expect(contactWidget?.textInput?.hintText).toBe('Select a Space first');
+      expect(contactWidget?.textInput?.initialSuggestions).toBeUndefined();
     });
 
     it('returns validation error banner and resets Contact suggestions when space identifier is unknown or unlisted', async () => {
@@ -473,9 +472,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       expect(dataSection).toBeDefined();
       const contactWidget = findWidget(dataSection, 'contact_communication-project');
       expect(contactWidget).toBeDefined();
-      expect(contactWidget?.textInput?.initialSuggestions?.items).toEqual([
-        { text: 'Select a Space first' },
-      ]);
+      expect(contactWidget?.textInput?.hintText).toBe('Select a Space first');
+      expect(contactWidget?.textInput?.initialSuggestions).toBeUndefined();
     });
 
     it('clears dynamic contact suggestions when user clears Document Space input on form change', async () => {
@@ -515,9 +513,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       expect(dataSection).toBeDefined();
       const contactWidget = findWidget(dataSection, 'contact_communication-project');
       expect(contactWidget).toBeDefined();
-      expect(contactWidget?.textInput?.initialSuggestions?.items).toEqual([
-        { text: 'Select a Space first' },
-      ]);
+      expect(contactWidget?.textInput?.hintText).toBe('Select a Space first');
+      expect(contactWidget?.textInput?.initialSuggestions).toBeUndefined();
     });
   });
 
@@ -558,9 +555,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
       expect(dataSection).toBeDefined();
       const contactWidget = findWidget(dataSection, 'contact_communication-proposal');
       expect(contactWidget).toBeDefined();
-      expect(contactWidget?.textInput?.initialSuggestions?.items).toEqual([
-        { text: 'Select a Space first' },
-      ]);
+      expect(contactWidget?.textInput?.hintText).toBe('Select a Space first');
+      expect(contactWidget?.textInput?.initialSuggestions).toBeUndefined();
     });
 
     it('Space Selection & Refresh: selecting Proposal space by display name resolves technical ID, traverses root Communications folder, and populates suggestions', async () => {
@@ -761,9 +757,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
         expect(dataSection).toBeDefined();
         const contactWidget = findWidget(dataSection, 'contact_communication-proposal');
         expect(contactWidget).toBeDefined();
-        expect(contactWidget?.textInput?.initialSuggestions?.items).toEqual([
-          { text: 'Select a Space first' },
-        ]);
+        expect(contactWidget?.textInput?.hintText).toBe('Select a Space first');
+        expect(contactWidget?.textInput?.initialSuggestions).toBeUndefined();
       });
 
       it('returns validation error banner and resets Contact suggestions when Proposal space identifier is unknown or unlisted', async () => {
@@ -813,9 +808,8 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
         expect(dataSection).toBeDefined();
         const contactWidget = findWidget(dataSection, 'contact_communication-proposal');
         expect(contactWidget).toBeDefined();
-        expect(contactWidget?.textInput?.initialSuggestions?.items).toEqual([
-          { text: 'Select a Space first' },
-        ]);
+        expect(contactWidget?.textInput?.hintText).toBe('Select a Space first');
+        expect(contactWidget?.textInput?.initialSuggestions).toBeUndefined();
       });
     });
 

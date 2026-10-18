@@ -1037,7 +1037,9 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         (w) => w.selectionInput?.name === 'contact_communication-project'
       );
       expect(contactWidget).toBeDefined();
-      expect(contactWidget!.selectionInput?.items).toEqual([]);
+      expect(contactWidget!.selectionInput?.items).toEqual([
+        { text: 'No options found', value: '' },
+      ]);
     });
   });
 

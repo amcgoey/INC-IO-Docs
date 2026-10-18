@@ -59,6 +59,7 @@ export const UiProcessRenderResultSchema = Type.Object({
   formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
   hiddenFields: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  statusMessages: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
 });
 export type UiProcessRenderResult = Static<typeof UiProcessRenderResultSchema>;

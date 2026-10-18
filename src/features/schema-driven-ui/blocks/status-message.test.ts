@@ -65,4 +65,37 @@ describe('Status Message Block', () => {
     expect(section?.widgets).toHaveLength(1);
     expect(section?.widgets[0].textParagraph?.text).toBe('Validation Errors:\nSingle isolated failure');
   });
+
+  it('renders statusMessages alone with Status: prefix', () => {
+    const section = buildStatusMessageSection({
+      statusMessages: [
+        'Folder "Communications" was not found in the selected Document Space.',
+        'Folder "Invoices" was not found in the selected Document Space.',
+      ],
+    });
+    expect(section).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, section!)).toBe(true);
+    expect(section?.widgets).toHaveLength(1);
+    expect(section?.widgets[0].textParagraph?.text).toBe(
+      'Status:\nFolder "Communications" was not found in the selected Document Space.\nFolder "Invoices" was not found in the selected Document Space.'
+    );
+  });
+
+  it('renders statusMessages prior to validationErrors when both are present', () => {
+    const section = buildStatusMessageSection({
+      statusMessages: ['Folder "Communications" was not found in the selected Document Space.'],
+      validationErrors: ['Title is required'],
+    });
+    expect(section).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, section!)).toBe(true);
+    expect(section?.widgets).toHaveLength(2);
+    expect(section?.widgets[0].textParagraph?.text).toBe(
+      'Status:\nFolder "Communications" was not found in the selected Document Space.'
+    );
+    expect(section?.widgets[1].textParagraph?.text).toBe('Validation Errors:\nTitle is required');
+  });
+
+  it('returns undefined when statusMessages is empty array and other options are omitted', () => {
+    expect(buildStatusMessageSection({ statusMessages: [] })).toBeUndefined();
+  });
 });

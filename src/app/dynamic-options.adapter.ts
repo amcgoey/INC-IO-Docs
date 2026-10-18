@@ -2,6 +2,7 @@ import { Type, type Static } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import type {
   DynamicOptionItem,
+  DynamicOptionResolution,
   DynamicOptionQuery,
   OptionsFetcherContext,
   OptionsFetcherPort,
@@ -48,13 +49,32 @@ export function isGoogleDriveDynamicConfig(
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const MAX_DYNAMIC_OPTIONS = 150;
-const PLACEHOLDER_MISSING_SPACE: DynamicOptionItem[] = [
-  { text: 'Select a Space first', value: '' },
-];
 const OPTION_NOT_FOUND: DynamicValidationResult = {
   isValid: false,
   errorMessage: OPTION_NOT_FOUND_MSG,
 };
+
+function normalizeTargetPath(relativePath?: unknown): string {
+  if (typeof relativePath !== 'string') {
+    return 'root';
+  }
+  const trimmed = relativePath.trim().replace(/^\/+|\/+$/g, '');
+  return trimmed || 'root';
+}
+
+function getPathSegments(targetPath: string): string[] {
+  if (targetPath === 'root') {
+    return [];
+  }
+  return targetPath
+    .split('/')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+type ResolveFolderOutcome =
+  | { success: true; folderId: string }
+  | { success: false; status: 'path_not_found' | 'ambiguous_path' };
 
 function cleanSpaceId(spaceId?: string): string | undefined {
   if (typeof spaceId !== 'string') {
@@ -77,25 +97,28 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
   async fetchOptions(
     queries: DynamicOptionQuery[],
     context: OptionsFetcherContext
-  ): Promise<Record<string, DynamicOptionItem[]>> {
-    const results: Record<string, DynamicOptionItem[]> = {};
+  ): Promise<Record<string, DynamicOptionResolution>> {
+    const results: Record<string, DynamicOptionResolution> = {};
 
     for (const query of queries) {
-      results[query.sourceKey] = [];
+      const targetPath = normalizeTargetPath(
+        isGoogleDriveDynamicConfig(query.config) ? query.config.relativePath : undefined
+      );
+      results[query.sourceKey] = { status: 'empty', items: [], targetPath };
     }
 
     const spaceId = cleanSpaceId(context.spaceId);
 
     const settledQueries = await Promise.allSettled(
       queries.map(async (query) => {
-        const items = await this.resolveQueryWithTimeout(query, spaceId);
-        return { sourceKey: query.sourceKey, items };
+        const resolution = await this.resolveQueryWithTimeout(query, spaceId);
+        return { sourceKey: query.sourceKey, resolution };
       })
     );
 
     for (const settled of settledQueries) {
       if (settled.status === 'fulfilled') {
-        results[settled.value.sourceKey] = settled.value.items;
+        results[settled.value.sourceKey] = settled.value.resolution;
       }
     }
 
@@ -105,7 +128,11 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
   private async resolveQueryWithTimeout(
     query: DynamicOptionQuery,
     spaceId?: string
-  ): Promise<Array<{ text: string; value: string }>> {
+  ): Promise<DynamicOptionResolution> {
+    const targetPath = normalizeTargetPath(
+      isGoogleDriveDynamicConfig(query.config) ? query.config.relativePath : undefined
+    );
+
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -114,13 +141,16 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
       }, this.timeoutMs);
     });
 
+    const queryPromise = this.executeQuery(query, spaceId);
+    queryPromise.catch(() => {});
+
     try {
-      return await Promise.race([
-        this.executeQuery(query, spaceId),
-        timeoutPromise,
-      ]);
-    } catch {
-      return [];
+      return await Promise.race([queryPromise, timeoutPromise]);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('timed out')) {
+        return { status: 'timeout', items: [], targetPath };
+      }
+      return { status: 'error', items: [], targetPath };
     } finally {
       if (timer) {
         clearTimeout(timer);
@@ -131,45 +161,45 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
   private async executeQuery(
     query: DynamicOptionQuery,
     spaceId?: string
-  ): Promise<DynamicOptionItem[]> {
+  ): Promise<DynamicOptionResolution> {
+    const targetPath = normalizeTargetPath(
+      isGoogleDriveDynamicConfig(query.config) ? query.config.relativePath : undefined
+    );
+
     if (!isGoogleDriveDynamicConfig(query.config)) {
-      return [];
+      return { status: 'empty', items: [], targetPath };
     }
 
     if (!spaceId) {
-      return [...PLACEHOLDER_MISSING_SPACE];
+      return { status: 'missing_space', items: [], targetPath };
     }
 
-    const relativePath =
-      typeof query.config.relativePath === 'string'
-        ? query.config.relativePath.trim()
-        : '';
-
-    const targetFolderId = await this.resolveTargetFolder(spaceId, relativePath);
-    if (!targetFolderId) {
-      return [];
+    const outcome = await this.resolveTargetFolder(spaceId, targetPath);
+    if (!outcome.success) {
+      return { status: outcome.status, items: [], targetPath };
     }
 
-    return await this.listFoldersUpToMax(targetFolderId, MAX_DYNAMIC_OPTIONS);
+    const items = await this.listFoldersUpToMax(outcome.folderId, MAX_DYNAMIC_OPTIONS);
+    if (items.length === 0) {
+      return { status: 'empty', items: [], targetPath };
+    }
+
+    return { status: 'ready', items, targetPath };
   }
 
   private async resolveTargetFolder(
     spaceId: string,
-    relativePath: string
-  ): Promise<string | undefined> {
-    if (!relativePath) {
-      return spaceId;
+    targetPath: string
+  ): Promise<ResolveFolderOutcome> {
+    const segments = getPathSegments(targetPath);
+    if (segments.length === 0) {
+      return { success: true, folderId: spaceId };
     }
-
-    const segments = relativePath
-      .split('/')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
 
     let currentFolderId: string = spaceId;
 
     for (const segment of segments) {
-      let foundChildId: string | undefined;
+      const matchingFolders: Array<{ id: string; name: string }> = [];
       let pageToken: string | undefined;
 
       do {
@@ -179,23 +209,24 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
           ...(pageToken !== undefined ? { pageToken } : {}),
         });
 
-        const match = result.folders.find((f) => f.name === segment);
-        if (match) {
-          foundChildId = match.id;
-          break;
+        const matchesInPage = result.folders.filter((f) => f.name === segment);
+        matchingFolders.push(...matchesInPage);
+
+        if (matchingFolders.length >= 2) {
+          return { success: false, status: 'ambiguous_path' };
         }
 
         pageToken = result.nextPageToken;
       } while (pageToken);
 
-      if (!foundChildId) {
-        return undefined;
+      if (matchingFolders.length === 0) {
+        return { success: false, status: 'path_not_found' };
       }
 
-      currentFolderId = foundChildId;
+      currentFolderId = matchingFolders[0].id;
     }
 
-    return currentFolderId;
+    return { success: true, folderId: currentFolderId };
   }
 
   private async listFoldersUpToMax(
@@ -267,9 +298,12 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
       }, this.timeoutMs);
     });
 
+    const queryPromise = this.executeValidationQuery(query, spaceId);
+    queryPromise.catch(() => {});
+
     try {
       return await Promise.race([
-        this.executeValidationQuery(query, spaceId),
+        queryPromise,
         timeoutPromise,
       ]);
     } catch (error) {
@@ -302,18 +336,14 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
       return { ...OPTION_NOT_FOUND };
     }
 
-    const relativePath =
-      typeof query.config.relativePath === 'string'
-        ? query.config.relativePath.trim()
-        : '';
-
-    const targetFolderId = await this.resolveTargetFolder(spaceId, relativePath);
-    if (!targetFolderId) {
+    const targetPath = normalizeTargetPath(query.config.relativePath);
+    const outcome = await this.resolveTargetFolder(spaceId, targetPath);
+    if (!outcome.success) {
       return { ...OPTION_NOT_FOUND };
     }
 
     const result = await this.driveClient.listFolders({
-      parentFolderId: targetFolderId,
+      parentFolderId: outcome.folderId,
       name: query.valueToValidate,
     });
 

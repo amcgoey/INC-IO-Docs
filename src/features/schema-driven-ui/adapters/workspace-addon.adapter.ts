@@ -21,10 +21,13 @@ type SectionProducer = (context: UiViewAdapterContext) => UiViewSection | undefi
  * in the Workspace Addon process view.
  */
 const WORKSPACE_ADDON_VIEW_SCHEMA: readonly SectionProducer[] = [
-  // 1. Status Section (validation errors)
+  // 1. Status Section (status messages & validation errors)
   (context) =>
-    context.validationErrors
-      ? buildStatusMessageSection({ validationErrors: context.validationErrors })
+    (context.statusMessages?.length || context.validationErrors?.length)
+      ? buildStatusMessageSection({
+          statusMessages: context.statusMessages,
+          validationErrors: context.validationErrors,
+        })
       : undefined,
 
   // 2. Document Type Selection Section

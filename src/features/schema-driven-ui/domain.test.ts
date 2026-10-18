@@ -533,4 +533,147 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
       contactFolders: [{ text: 'Select a Space first', value: '' }],
     });
   });
+
+  describe('generateView dynamic status resolution and top-of-card statusMessages', () => {
+    const multiDynamicDocSchema = {
+      fields: [
+        {
+          key: 'contact',
+          type: 'string',
+          options: {
+            source: 'contactFolders',
+            dynamicConfig: {
+              provider: 'google_drive',
+              method: 'list_folders',
+              relativePath: 'Communications',
+            },
+          },
+        },
+        {
+          key: 'secondaryContact',
+          type: 'string',
+          options: {
+            source: 'secondaryContactFolders',
+            dynamicConfig: {
+              provider: 'google_drive',
+              method: 'list_folders',
+              relativePath: 'Communications',
+            },
+          },
+        },
+        {
+          key: 'vendor',
+          type: 'string',
+          options: {
+            source: 'vendorFolders',
+            dynamicConfig: {
+              provider: 'google_drive',
+              method: 'list_folders',
+              relativePath: 'Vendors',
+            },
+          },
+        },
+        {
+          key: 'hiddenDynamic',
+          type: 'string',
+          options: {
+            source: 'hiddenFolders',
+            dynamicConfig: {
+              provider: 'google_drive',
+              method: 'list_folders',
+              relativePath: 'HiddenPath',
+            },
+          },
+        },
+      ],
+    };
+
+    const multiDynamicUiSchema = {
+      layout: ['contact', 'secondaryContact', 'vendor', 'hiddenDynamic'],
+      fields: {},
+    };
+
+    it('populates deduplicated statusMessages for visible dynamic fields and skips hiddenFields', async () => {
+      const manifestPort = createMockManifestPort({
+        getUiSchema: vi.fn().mockResolvedValue(multiDynamicUiSchema),
+        getDocumentSchema: vi.fn().mockResolvedValue(multiDynamicDocSchema),
+      });
+
+      const mockFetcher: OptionsFetcherPort = {
+        fetchOptions: vi.fn().mockResolvedValue({
+          contactFolders: {
+            status: 'path_not_found',
+            items: [],
+            targetPath: 'Communications',
+          },
+          secondaryContactFolders: {
+            status: 'path_not_found',
+            items: [],
+            targetPath: 'Communications',
+          },
+          vendorFolders: {
+            status: 'timeout',
+            items: [],
+            targetPath: 'Vendors',
+          },
+          hiddenFolders: {
+            status: 'error',
+            items: [],
+            targetPath: 'HiddenPath',
+          },
+        }),
+      };
+
+      let capturedContext: UiViewAdapterContext | undefined;
+      const adapter = createMockAdapter('test-status-view', undefined, async (ctx) => {
+        capturedContext = ctx;
+        return { id: 'test-status-view', sections: [] };
+      });
+
+      const service = new SchemaDrivenUiService(manifestPort, [adapter], mockFetcher);
+
+      await service.generateView({
+        viewId: 'test-status-view',
+        documentTypeKey: 'multi-dynamic',
+        hiddenFields: ['hiddenDynamic'],
+        statusMessages: ['Initial system alert'],
+      });
+
+      expect(capturedContext?.statusMessages).toEqual([
+        'Initial system alert',
+        'Folder "Communications" was not found in the selected Document Space.',
+        'Timed out loading options from "Vendors".',
+      ]);
+    });
+
+    it('leaves statusMessages undefined when all dynamic statuses are ready, empty, or missing_space', async () => {
+      const manifestPort = createMockManifestPort({
+        getUiSchema: vi.fn().mockResolvedValue(multiDynamicUiSchema),
+        getDocumentSchema: vi.fn().mockResolvedValue(multiDynamicDocSchema),
+      });
+
+      const mockFetcher: OptionsFetcherPort = {
+        fetchOptions: vi.fn().mockResolvedValue({
+          contactFolders: { status: 'ready', items: [{ text: 'Alice', value: 'Alice' }] },
+          secondaryContactFolders: { status: 'empty', items: [] },
+          vendorFolders: { status: 'missing_space', items: [] },
+        }),
+      };
+
+      let capturedContext: UiViewAdapterContext | undefined;
+      const adapter = createMockAdapter('test-status-view-clean', undefined, async (ctx) => {
+        capturedContext = ctx;
+        return { id: 'test-status-view-clean', sections: [] };
+      });
+
+      const service = new SchemaDrivenUiService(manifestPort, [adapter], mockFetcher);
+
+      await service.generateView({
+        viewId: 'test-status-view-clean',
+        documentTypeKey: 'multi-dynamic',
+      });
+
+      expect(capturedContext?.statusMessages).toBeUndefined();
+    });
+  });
 });

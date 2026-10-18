@@ -1,8 +1,9 @@
 import type { UiViewSection, UiViewWidget } from '../domain';
 
 export interface StatusMessageOptions {
-  message?: string;
-  validationErrors?: string[];
+  message?: string | undefined;
+  statusMessages?: string[] | undefined;
+  validationErrors?: string[] | undefined;
 }
 
 export function buildStatusMessageSection(options: StatusMessageOptions): UiViewSection | undefined {
@@ -12,6 +13,14 @@ export function buildStatusMessageSection(options: StatusMessageOptions): UiView
     widgets.push({
       textParagraph: {
         text: options.message,
+      },
+    });
+  }
+
+  if (options.statusMessages && options.statusMessages.length > 0) {
+    widgets.push({
+      textParagraph: {
+        text: `Status:\n${options.statusMessages.join('\n')}`,
       },
     });
   }
