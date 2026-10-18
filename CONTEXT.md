@@ -40,6 +40,14 @@ _Avoid_: Side-effect, action
 A generic patch or effect produced by an executed Activity, containing fields like `documentDataPatch` or `contextVariables` that the engine merges into the workflow context.
 _Avoid_: Execution result, side-channel mutation
 
+**SourceFile**:
+A descriptor representing an input file to be processed by an `Activity`, independent of its origin (such as a selected Google Drive item, an email attachment, a web URL, or an uploaded file stream).
+_Avoid_: SelectedItem, Attachment, RawFile
+
+**FileLocator**:
+An infrastructure-agnostic output pointer to a stored file produced by an `Activity` and returned in `ActivityOutput.files`.
+_Avoid_: DriveFileResult, FileMetadata
+
 **DocumentField**:
 A definition of a pure data property expected within a `Document`.
 _Avoid_: Property, variable, recordField
