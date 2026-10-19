@@ -12,6 +12,7 @@ export const UiSelectionStateSchema = Type.Object({
   spaces: Type.Array(Type.String()),
   documentTypes: Type.Array(UiSelectionItemSchema),
   files: Type.Optional(Type.Union([Type.Array(UiSelectionItemSchema), Type.Undefined()])),
+  fileSources: Type.Optional(Type.Union([Type.Array(UiSelectionItemSchema), Type.Undefined()])),
 });
 export type UiSelectionState = Static<typeof UiSelectionStateSchema>;
 
@@ -47,6 +48,13 @@ export const UiStateResolutionContextSchema = Type.Object({
 });
 export type UiStateResolutionContext = Static<typeof UiStateResolutionContextSchema>;
 
+export const UiProcessGmailEventContextSchema = Type.Object({
+  messageId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  threadId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  accessToken: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type UiProcessGmailEventContext = Static<typeof UiProcessGmailEventContextSchema>;
+
 export const ProcessUiStateEventSchema = Type.Object({
   actionName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
@@ -54,6 +62,9 @@ export const ProcessUiStateEventSchema = Type.Object({
   validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   statusMessages: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  hostApp: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  gmail: Type.Optional(Type.Union([UiProcessGmailEventContextSchema, Type.Undefined()])),
+  userOAuthToken: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   selectedItems: Type.Optional(
     Type.Union([
       Type.Array(
@@ -91,7 +102,23 @@ export const ProcessUiStateOutputSchema = Type.Object({
 });
 export type ProcessUiStateOutput = Static<typeof ProcessUiStateOutputSchema>;
 
+export const DRIVE_WORKSPACE_ADDON_VIEW_ID = 'drive-document-process-card';
+export const GMAIL_WORKSPACE_ADDON_VIEW_ID = 'gmail-document-process-card';
+
 export const SELECT_FILES_KEY = 'SelectFiles';
+export const SELECT_FILE_SOURCE_KEY = 'SelectFileSource';
+export const SELECT_ATTACHMENTS_KEY = 'SelectAttachments';
+export const INPUT_DRIVE_URL_KEY = 'InputDriveURL';
+export const SAVE_EMAIL_TO_PDF_KEY = 'SaveEmailToPdf';
+
+export const EPHEMERAL_UI_SELECTION_KEYS = new Set([
+  SELECT_FILES_KEY,
+  SELECT_FILE_SOURCE_KEY,
+  SELECT_ATTACHMENTS_KEY,
+  INPUT_DRIVE_URL_KEY,
+  SAVE_EMAIL_TO_PDF_KEY,
+]);
+
 export const SELECTION_KEY_PREFIX = 'SelectDocument';
 export const SELECT_DOCUMENT_SPACE_TYPE_KEY = 'SelectDocumentSpaceType';
 export const SELECT_DOCUMENT_SPACE_KEY = 'SelectDocumentSpace';
@@ -108,14 +135,30 @@ export function getDocTypeSelectorKey(spaceType: string): string {
 }
 
 export function isSelectionKey(key: string): boolean {
-  return key.startsWith(SELECTION_KEY_PREFIX) || key === SELECT_FILES_KEY;
+  return key.startsWith(SELECTION_KEY_PREFIX) || EPHEMERAL_UI_SELECTION_KEYS.has(key);
 }
 
 /**
- * Normalizes formData.SelectFiles (string | string[] | undefined) into a Set of non-empty trimmed strings.
+ * Checks whether an event context corresponds to a Gmail context.
  */
-export function extractSelectFilesSet(formData?: Record<string, unknown>): Set<string> {
-  const raw = formData?.[SELECT_FILES_KEY];
+export function isGmailContext(context?: {
+  hostApp?: string | undefined;
+  gmail?: { messageId?: string | undefined } | undefined;
+} | undefined): boolean {
+  if (!context) {
+    return false;
+  }
+  return context.hostApp?.toUpperCase() === 'GMAIL' || Boolean(context.gmail?.messageId);
+}
+
+/**
+ * Normalizes formData[keyName] (string | string[] | undefined) into a Set of non-empty trimmed strings.
+ */
+export function extractSelectFilesSet(
+  formData?: Record<string, unknown>,
+  keyName: string = SELECT_FILES_KEY
+): Set<string> {
+  const raw = formData?.[keyName];
   const set = new Set<string>();
   if (typeof raw === 'string') {
     const trimmed = raw.trim();
@@ -332,6 +375,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const action = context.actionName ?? context.parameters?.action;
   const isSpaceTypeChange = action === 'onSpaceTypeChange';
   const isDocTypeChange = action === 'onDocumentTypeChange';
+  const isFileSourceChange = action === 'onFileSourceChange';
 
   const currentSpaceType =
     input.resolvedSpaceType ?? resolveSpaceType({ formData: context.formData, config: input.config });
@@ -343,7 +387,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const isRefresh = action === 'refresh';
   let isUpdateCard = isRefresh
     ? false
-    : Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange);
+    : Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange || isFileSourceChange);
 
   const rawSelectedDocType =
     resolveDocumentType({
@@ -388,6 +432,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     'onSpaceTypeChange',
     'onDocumentTypeChange',
     'onFormChange',
+    'onFileSourceChange',
     'processDocument',
     'viewJson',
   ]);
@@ -401,28 +446,114 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const isResetOrInitialLoad =
     isRefresh || (!hasInCardAction && !hasSelectionKeysInFormData);
 
-  const selectedFilesSet = extractSelectFilesSet(context.formData);
+  const isGmail = isGmailContext(context);
 
   const validSelectedItems = (context.selectedItems ?? []).filter(
     (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
       typeof item?.id === 'string' && item.id.trim().length > 0
   );
 
-  const files: UiSelectionItem[] = validSelectedItems.map((item) => {
-    const trimmedTitle = typeof item.title === 'string' ? item.title.trim() : '';
-    const fileId = item.id.trim();
-    return {
-      text: trimmedTitle.length > 0 ? trimmedTitle : fileId,
-      value: item.id,
-      selected: isResetOrInitialLoad ? true : selectedFilesSet.has(fileId),
-    };
-  });
+  let fileSources: UiSelectionItem[] | undefined;
+  let effectiveFileSource: string | undefined;
+  if (isGmail) {
+    if (isResetOrInitialLoad) {
+      effectiveFileSource = 'Email Attachments';
+      effectiveFormData[SELECT_FILE_SOURCE_KEY] = 'Email Attachments';
+      effectiveFormData[INPUT_DRIVE_URL_KEY] = '';
+    } else {
+      effectiveFileSource =
+        (context.formData?.[SELECT_FILE_SOURCE_KEY] as string) ?? 'Email Attachments';
+      effectiveFormData[SELECT_FILE_SOURCE_KEY] = effectiveFileSource;
+      if (context.formData?.[INPUT_DRIVE_URL_KEY] !== undefined) {
+        effectiveFormData[INPUT_DRIVE_URL_KEY] = String(context.formData[INPUT_DRIVE_URL_KEY]).trim();
+      } else if (context.parameters?.previousDriveUrl) {
+        // nosemgrep: domain-pass-through-read
+        effectiveFormData[INPUT_DRIVE_URL_KEY] = context.parameters.previousDriveUrl;
+      } else {
+        effectiveFormData[INPUT_DRIVE_URL_KEY] = '';
+      }
+    }
+
+    fileSources = [
+      {
+        text: 'Email Attachments',
+        value: 'Email Attachments',
+        selected: effectiveFileSource === 'Email Attachments',
+      },
+      {
+        text: 'Google Drive URL',
+        value: 'Google Drive URL',
+        selected: effectiveFileSource === 'Google Drive URL',
+      },
+    ];
+  }
+
+  let files: UiSelectionItem[];
+  if (isGmail) {
+    if (validSelectedItems.length > 0) {
+      const hasAttachmentFormKey = context.formData?.[SELECT_ATTACHMENTS_KEY] !== undefined;
+      const selectedSet = hasAttachmentFormKey
+        ? extractSelectFilesSet(context.formData, SELECT_ATTACHMENTS_KEY)
+        : undefined;
+
+      let parsedParamSet: Set<string> | undefined;
+      if (!hasAttachmentFormKey && !isResetOrInitialLoad && context.parameters?.previousAttachments) {
+        try {
+          const parsed = JSON.parse(context.parameters.previousAttachments);
+          if (Array.isArray(parsed)) {
+            parsedParamSet = new Set(parsed.map(String));
+          }
+        } catch {
+          // ignore malformed JSON
+        }
+      }
+
+      files = validSelectedItems.map((item) => {
+        const trimmedTitle = typeof item.title === 'string' ? item.title.trim() : '';
+        const fileId = item.id.trim();
+        let selected: boolean;
+        if (isRefresh) {
+          selected = true;
+        } else if (hasAttachmentFormKey) {
+          selected = selectedSet!.has(fileId) || selectedSet!.has(item.id);
+        } else if (!isResetOrInitialLoad && parsedParamSet !== undefined) {
+          selected = parsedParamSet.has(fileId) || parsedParamSet.has(item.id);
+        } else if (isResetOrInitialLoad) {
+          selected = true;
+        } else if (!isResetOrInitialLoad && effectiveFileSource === 'Email Attachments') {
+          // When submitting in-card action from 'Email Attachments' mode, Google Workspace omits checkbox name when 0 checkboxes are checked
+          selected = false;
+        } else {
+          selected = true;
+        }
+        return {
+          text: trimmedTitle.length > 0 ? trimmedTitle : fileId,
+          value: item.id,
+          selected,
+        };
+      });
+    } else {
+      files = [];
+    }
+  } else {
+    const selectedFilesSet = extractSelectFilesSet(context.formData, SELECT_FILES_KEY);
+    files = validSelectedItems.map((item) => {
+      const trimmedTitle = typeof item.title === 'string' ? item.title.trim() : '';
+      const fileId = item.id.trim();
+      return {
+        text: trimmedTitle.length > 0 ? trimmedTitle : fileId,
+        value: item.id,
+        selected: isResetOrInitialLoad ? true : selectedFilesSet.has(fileId),
+      };
+    });
+  }
 
   const selectionState: UiSelectionState = {
     spaceTypes,
     spaces: (input.spaces ?? []).map((s) => s.name),
     documentTypes,
     files,
+    ...(fileSources !== undefined ? { fileSources } : {}),
   };
 
   const spaceResolution = resolveSpace(
@@ -467,8 +598,26 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     isUpdateCard = true;
   }
 
+  const viewId = isGmail
+    ? GMAIL_WORKSPACE_ADDON_VIEW_ID
+    : DRIVE_WORKSPACE_ADDON_VIEW_ID;
+
+  if (isGmail) {
+    if (isResetOrInitialLoad) {
+      effectiveFormData[SAVE_EMAIL_TO_PDF_KEY] = false;
+    } else {
+      const rawSave = context.formData?.[SAVE_EMAIL_TO_PDF_KEY];
+      effectiveFormData[SAVE_EMAIL_TO_PDF_KEY] =
+        Array.isArray(rawSave)
+          ? rawSave.length > 0 && Boolean(rawSave[0]) && rawSave[0] !== 'false'
+          : rawSave === 'false'
+            ? false
+            : Boolean(rawSave);
+    }
+  }
+
   return {
-    viewId: 'drive-document-process-card',
+    viewId,
     documentTypeKey: currentDocTypeKey,
     ...(spaceResolution.spaceId !== undefined ? { spaceId: spaceResolution.spaceId } : {}),
     selectionState,

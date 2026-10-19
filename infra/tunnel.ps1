@@ -179,6 +179,9 @@ if ($manifestContent.addOns) {
             $manifestContent.addOns.drive.onItemsSelectedTrigger.runFunction = $homepageUrl
         }
     }
+    if ($manifestContent.addOns.gmail -and $manifestContent.addOns.gmail.contextualTriggers -and $manifestContent.addOns.gmail.contextualTriggers.Count -gt 0) {
+        $manifestContent.addOns.gmail.contextualTriggers[0].onTriggerFunction = "$publicHttpsUrl/workspace/gmail-contextual"
+    }
 }
 
 $updatedJson = $manifestContent | ConvertTo-Json -Depth 10
@@ -191,6 +194,7 @@ Write-Host "==========================================================" -Foregro
 Write-Host " Workspace Add-on Endpoints:" -ForegroundColor Green
 Write-Host "   Homepage: $homepageUrl"
 Write-Host "   Action:   $publicHttpsUrl/workspace/action"
+Write-Host "   Gmail:    $publicHttpsUrl/workspace/gmail-contextual"
 Write-Host "   Web UI:   http://127.0.0.1:4040"
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host ""

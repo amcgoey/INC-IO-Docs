@@ -4,6 +4,9 @@ import { UiViewModel, UiViewActionSchema, type UiView } from '../domain';
 import {
   WorkspaceAddonAdapter,
   WORKSPACE_ADDON_VIEW_ID,
+  GmailWorkspaceAddonAdapter,
+  GMAIL_WORKSPACE_ADDON_VIEW_ID,
+  createWorkspaceAddonViewSchema,
 } from './workspace-addon.adapter';
 import type { UiViewAdapterContext } from '../ports';
 
@@ -621,5 +624,349 @@ describe('WorkspaceAddonAdapter', () => {
       assertValidAgnosticAction(view.sections[3].widgets[0].buttonList?.buttons[0].onClick);
     });
   });
+
+  describe('createWorkspaceAddonViewSchema', () => {
+    it('composes a view with the injected viewId', async () => {
+      const composer = createWorkspaceAddonViewSchema({
+        viewId: 'gmail-document-process-card',
+      });
+
+      const context: UiViewAdapterContext = {
+        viewId: 'gmail-document-process-card',
+      };
+
+      const view = await composer(context);
+      expect(view.id).toBe('gmail-document-process-card');
+      expect(view.header?.title).toBe('INC-IO Engine');
+      expect(view.header?.subtitle).toBe('Process Document');
+      expect(view.sections).toHaveLength(1);
+      expect(view.sections[0].header).toBe('Admin');
+      assertValidUiView(view);
+    });
+
+    it('injects custom fileSelectionConfig section producer', async () => {
+      const customSection = {
+        header: 'Gmail Attachments',
+        collapsible: true,
+        widgets: [{ textParagraph: { text: '2 attachments found' } }],
+      };
+
+      const composer = createWorkspaceAddonViewSchema({
+        viewId: 'gmail-document-process-card',
+        fileSelectionConfig: () => customSection,
+      });
+
+      const context: UiViewAdapterContext = {
+        viewId: 'gmail-document-process-card',
+        selectionState: {
+          spaceTypes: [{ text: 'Department', value: 'dept' }],
+          spaces: ['Engineering'],
+          documentTypes: [{ text: 'Invoice', value: 'inv' }],
+        },
+      };
+
+      const view = await composer(context);
+      expect(view.sections).toHaveLength(3);
+      expect(view.sections[0].header).toBe('Document Type');
+      expect(view.sections[1].header).toBe('Gmail Attachments');
+      expect(view.sections[1].widgets[0].textParagraph?.text).toBe('2 attachments found');
+      expect(view.sections[2].header).toBe('Admin');
+      assertValidUiView(view);
+    });
+
+    it('defaults to standard file selection section when fileSelectionConfig is omitted', async () => {
+      const composer = createWorkspaceAddonViewSchema({
+        viewId: 'custom-view-card',
+      });
+
+      const context: UiViewAdapterContext = {
+        viewId: 'custom-view-card',
+        selectionState: {
+          spaceTypes: [{ text: 'Department', value: 'dept' }],
+          spaces: ['Engineering'],
+          documentTypes: [{ text: 'Invoice', value: 'inv' }],
+          files: [{ text: 'doc.pdf', value: 'f1', selected: true }],
+        },
+      };
+
+      const view = await composer(context);
+      expect(view.sections).toHaveLength(3);
+      expect(view.sections[1].header).toBe('File Selection');
+      expect(view.sections[1].widgets[0].selectionInput?.name).toBe('SelectFiles');
+      expect(view.sections[1].widgets[0].selectionInput?.items).toEqual([
+        { text: 'doc.pdf', value: 'f1', selected: true },
+      ]);
+      assertValidUiView(view);
+    });
+
+    it('executes shared async DocumentType display-name resolution pipeline', async () => {
+      const mockResolver = {
+        getDisplayName: vi.fn().mockImplementation(async (key: string) => {
+          if (key === 'email-doc') return 'Resolved Email Document';
+          return undefined;
+        }),
+      };
+
+      const composer = createWorkspaceAddonViewSchema({
+        viewId: 'gmail-document-process-card',
+      });
+
+      const context: UiViewAdapterContext = {
+        viewId: 'gmail-document-process-card',
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'email-doc', value: 'email-doc' }],
+        },
+      };
+
+      const view = await composer(context, mockResolver);
+      expect(mockResolver.getDisplayName).toHaveBeenCalledWith('email-doc');
+      const docTypeWidget = view.sections[0].widgets[2].selectionInput;
+      expect(docTypeWidget?.items?.[0].text).toBe('Resolved Email Document');
+      assertValidUiView(view);
+    });
+
+    it('supports direct invocation with (config, context, resolver)', async () => {
+      const mockResolver = {
+        getDisplayName: vi.fn().mockResolvedValue('Resolved Form'),
+      };
+
+      const context: UiViewAdapterContext = {
+        viewId: 'direct-card',
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'form-key', value: 'form-key' }],
+        },
+      };
+
+      const view = await createWorkspaceAddonViewSchema(
+        { viewId: 'direct-card' },
+        context,
+        mockResolver
+      );
+
+      expect(view.id).toBe('direct-card');
+      const docTypeWidget = view.sections[0].widgets[2].selectionInput;
+      expect(docTypeWidget?.items?.[0].text).toBe('Resolved Form');
+      assertValidUiView(view);
+    });
+  });
+
+  describe('GmailWorkspaceAddonAdapter', () => {
+    let gmailAdapter: GmailWorkspaceAddonAdapter;
+
+    beforeEach(() => {
+      gmailAdapter = new GmailWorkspaceAddonAdapter();
+    });
+
+    it('initializes with GMAIL_WORKSPACE_ADDON_VIEW_ID and standard header', async () => {
+      expect(gmailAdapter.viewId).toBe(GMAIL_WORKSPACE_ADDON_VIEW_ID);
+      expect(gmailAdapter.viewId).toBe('gmail-document-process-card');
+
+      const view = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+      });
+
+      expect(view.id).toBe(GMAIL_WORKSPACE_ADDON_VIEW_ID);
+      expect(view.header?.title).toBe('INC-IO Engine');
+      expect(view.header?.subtitle).toBe('Process Document');
+      assertValidUiView(view);
+    });
+
+    it('renders non-collapsible file selection with SelectAttachments inputName and emptyText when no files', async () => {
+      const view = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'Invoice', value: 'invoice' }],
+          files: [],
+        },
+      });
+
+      // Section 0 is document type selection, Section 1 is file selection, Section 2 is admin
+      const fileSection = view.sections.find((s) => s.header === 'File Selection');
+      expect(fileSection).toBeDefined();
+      expect(fileSection?.collapsible).toBe(false);
+      expect(fileSection?.widgets[0].textParagraph?.text).toBe('No attachments found.');
+      assertValidUiView(view);
+    });
+
+    it('renders attachment checkboxes under SelectAttachments inputName when files are present', async () => {
+      const view = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'Invoice', value: 'invoice' }],
+          files: [
+            { text: 'contract.pdf', value: 'att-1', selected: true },
+            { text: 'invoice.pdf', value: 'att-2', selected: false },
+          ],
+        },
+      });
+
+      const fileSection = view.sections.find((s) => s.header === 'File Selection');
+      expect(fileSection).toBeDefined();
+      expect(fileSection?.collapsible).toBe(false);
+      const widget = fileSection?.widgets[0].selectionInput;
+      expect(widget).toBeDefined();
+      expect(widget?.name).toBe('SelectAttachments');
+      expect(widget?.type).toBe('CHECK_BOX');
+      expect(widget?.items).toEqual([
+        { text: 'contract.pdf', value: 'att-1', selected: true },
+        { text: 'invoice.pdf', value: 'att-2', selected: false },
+      ]);
+      assertValidUiView(view);
+    });
+
+    it('produces SaveEmailToPdf SWITCH toggle in File Selection section reflecting formData', async () => {
+      // Test when SaveEmailToPdf is true in formData
+      const viewWithTrue = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        formData: { SaveEmailToPdf: true },
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'Invoice', value: 'invoice' }],
+          files: [],
+        },
+      });
+
+      const fileSectionTrue = viewWithTrue.sections.find((s) => s.header === 'File Selection');
+      expect(fileSectionTrue).toBeDefined();
+      expect(fileSectionTrue?.widgets).toHaveLength(2);
+      expect(fileSectionTrue?.widgets[0].textParagraph?.text).toBe('No attachments found.');
+
+      const switchTrue = fileSectionTrue?.widgets[1].selectionInput;
+      expect(switchTrue).toBeDefined();
+      expect(switchTrue?.name).toBe('SaveEmailToPdf');
+      expect(switchTrue?.type).toBe('SWITCH');
+      expect(switchTrue?.items).toEqual([
+        { text: 'Save Email to PDF', value: 'true', selected: true },
+      ]);
+      assertValidUiView(viewWithTrue);
+
+      // Test when SaveEmailToPdf is absent / false in formData
+      const viewWithFalse = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        formData: {},
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'Invoice', value: 'invoice' }],
+          files: [
+            { text: 'doc.pdf', value: 'att-1', selected: true },
+          ],
+        },
+      });
+
+      const fileSectionFalse = viewWithFalse.sections.find((s) => s.header === 'File Selection');
+      expect(fileSectionFalse).toBeDefined();
+      expect(fileSectionFalse?.widgets).toHaveLength(2);
+      expect(fileSectionFalse?.widgets[0].selectionInput?.name).toBe('SelectAttachments');
+
+      const switchFalse = fileSectionFalse?.widgets[1].selectionInput;
+      expect(switchFalse).toBeDefined();
+      expect(switchFalse?.name).toBe('SaveEmailToPdf');
+      expect(switchFalse?.type).toBe('SWITCH');
+      expect(switchFalse?.items).toEqual([
+        { text: 'Save Email to PDF', value: 'true', selected: false },
+      ]);
+      assertValidUiView(viewWithFalse);
+    });
+
+    it('resolves document type display names via injected displayNameResolver', async () => {
+      const mockResolver = {
+        getDisplayName: vi.fn().mockImplementation(async (key: string) => {
+          if (key === 'communication-project') return 'Project Communication';
+          return undefined;
+        }),
+      };
+
+      const adapterWithResolver = new GmailWorkspaceAddonAdapter(mockResolver);
+      const view = await adapterWithResolver.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        selectionState: {
+          spaceTypes: [{ text: 'Projects', value: 'projects' }],
+          spaces: [],
+          documentTypes: [{ text: 'communication-project', value: 'communication-project' }],
+        },
+      });
+
+      expect(mockResolver.getDisplayName).toHaveBeenCalledWith('communication-project');
+      const docTypeWidget = view.sections[0].widgets[2].selectionInput;
+      expect(docTypeWidget?.items?.[0].text).toBe('Project Communication');
+      assertValidUiView(view);
+    });
+
+    it('populates previousAttachments and previousDriveUrl in onFileSourceChange action parameters', async () => {
+      // Case 1: Derive from selected files in selectionState when formData.SelectAttachments is absent
+      const viewFromSelection = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        formData: {
+          InputDriveURL: 'https://drive.google.com/file/d/xyz',
+        },
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'Invoice', value: 'invoice' }],
+          fileSources: [
+            { text: 'Email Attachments', value: 'Email Attachments', selected: true },
+            { text: 'Google Drive URL', value: 'Google Drive URL', selected: false },
+          ],
+          files: [
+            { text: 'att1.pdf', value: 'att-1', selected: true },
+            { text: 'att2.pdf', value: 'att-2', selected: false },
+            { text: 'att3.pdf', value: 'att-3', selected: true },
+          ],
+        },
+      });
+
+      const fileSection1 = viewFromSelection.sections.find((s) => s.header === 'File Selection');
+      expect(fileSection1).toBeDefined();
+      const dropdownWidget1 = fileSection1?.widgets[0].selectionInput;
+      expect(dropdownWidget1?.name).toBe('SelectFileSource');
+      expect(dropdownWidget1?.onChangeAction).toBeDefined();
+      expect(dropdownWidget1?.onChangeAction?.action).toBe('onFileSourceChange');
+      expect(dropdownWidget1?.onChangeAction?.parameters).toEqual({
+        previousAttachments: JSON.stringify(['att-1', 'att-3']),
+        previousDriveUrl: 'https://drive.google.com/file/d/xyz',
+      });
+      assertValidUiView(viewFromSelection);
+
+      // Case 2: Derive from formData.SelectAttachments when present
+      const viewFromFormData = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        formData: {
+          SelectAttachments: ['att-2'],
+        },
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'Invoice', value: 'invoice' }],
+          fileSources: [
+            { text: 'Email Attachments', value: 'Email Attachments', selected: true },
+            { text: 'Google Drive URL', value: 'Google Drive URL', selected: false },
+          ],
+          files: [
+            { text: 'att1.pdf', value: 'att-1', selected: true },
+            { text: 'att2.pdf', value: 'att-2', selected: true },
+          ],
+        },
+      });
+
+      const fileSection2 = viewFromFormData.sections.find((s) => s.header === 'File Selection');
+      const dropdownWidget2 = fileSection2?.widgets[0].selectionInput;
+      expect(dropdownWidget2?.onChangeAction?.parameters).toEqual({
+        previousAttachments: JSON.stringify(['att-2']),
+        previousDriveUrl: '',
+      });
+      assertValidUiView(viewFromFormData);
+    });
+  });
 });
+
 

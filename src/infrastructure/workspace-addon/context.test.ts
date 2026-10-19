@@ -124,6 +124,51 @@ describe('Workspace Add-on Context', () => {
       ]);
     });
 
+    it('extracts gmail context and falls back to gmail.accessToken for userOAuthToken', () => {
+      const rawPayload = {
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-999',
+          threadId: 'th-888',
+          accessToken: 'ya29.gmail-token',
+        },
+      };
+
+      const context = extractWorkspaceExecutionContext(rawPayload);
+      expect(context.hostApp).toBe('GMAIL');
+      expect(context.gmail).toEqual({
+        messageId: 'msg-999',
+        threadId: 'th-888',
+        accessToken: 'ya29.gmail-token',
+      });
+      expect(context.userOAuthToken).toBe('ya29.gmail-token');
+    });
+
+    it('extracts hostApp from commonEventObject when present', () => {
+      const rawPayload = {
+        commonEventObject: {
+          hostApp: 'GMAIL',
+        },
+      };
+
+      const context = extractWorkspaceExecutionContext(rawPayload);
+      expect(context.hostApp).toBe('GMAIL');
+    });
+
+    it('prioritizes authorizationEventObject.userOAuthToken over gmail.accessToken', () => {
+      const rawPayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.auth-token',
+        },
+        gmail: {
+          accessToken: 'ya29.gmail-token',
+        },
+      };
+
+      const context = extractWorkspaceExecutionContext(rawPayload);
+      expect(context.userOAuthToken).toBe('ya29.auth-token');
+    });
+
     describe('baseUrl extraction', () => {
       const originalEnv = process.env.APP_BASE_URL;
 

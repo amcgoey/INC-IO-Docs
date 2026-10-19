@@ -177,7 +177,14 @@ export const UiViewWidgetSchema = Type.Object(
       Type.Object(
         {
           ...BaseInputWidgetProps,
-          type: Type.Optional(Type.String()),
+          type: Type.Optional(
+            Type.Union([
+              Type.Literal('DROPDOWN'),
+              Type.Literal('RADIO_BUTTON'),
+              Type.Literal('CHECK_BOX'),
+              Type.Literal('SWITCH'),
+            ])
+          ),
           items: Type.Optional(Type.Array(SelectionItemSchema)),
         },
         { additionalProperties: false }

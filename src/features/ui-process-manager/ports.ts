@@ -19,8 +19,17 @@ import {
   ProcessUiStateEventSchema,
   type ProcessUiStateEvent,
   SELECT_FILES_KEY,
+  SELECT_FILE_SOURCE_KEY,
+  SELECT_ATTACHMENTS_KEY,
+  INPUT_DRIVE_URL_KEY,
+  SAVE_EMAIL_TO_PDF_KEY,
+  EPHEMERAL_UI_SELECTION_KEYS,
   isSelectionKey,
   extractSelectFilesSet,
+  DRIVE_WORKSPACE_ADDON_VIEW_ID,
+  GMAIL_WORKSPACE_ADDON_VIEW_ID,
+  UiProcessGmailEventContextSchema,
+  type UiProcessGmailEventContext,
 } from './domain';
 
 export {
@@ -43,8 +52,17 @@ export {
   ProcessUiStateEventSchema,
   type ProcessUiStateEvent,
   SELECT_FILES_KEY,
+  SELECT_FILE_SOURCE_KEY,
+  SELECT_ATTACHMENTS_KEY,
+  INPUT_DRIVE_URL_KEY,
+  SAVE_EMAIL_TO_PDF_KEY,
+  EPHEMERAL_UI_SELECTION_KEYS,
   isSelectionKey,
   extractSelectFilesSet,
+  DRIVE_WORKSPACE_ADDON_VIEW_ID,
+  GMAIL_WORKSPACE_ADDON_VIEW_ID,
+  UiProcessGmailEventContextSchema,
+  type UiProcessGmailEventContext,
 };
 
 export const UiProcessEventContextSchema = ProcessUiStateEventSchema;
@@ -148,6 +166,19 @@ export interface UiProcessFormEvaluatorPort {
     formData: Record<string, unknown>,
     documentTypeKey?: string
   ): Promise<UiProcessFormEvaluationResult>;
+}
+
+export interface UiProcessGmailAttachmentDescriptor {
+  id: string;
+  title: string;
+  mimeType: string;
+}
+
+export interface UiProcessGmailPort {
+  getMessageAttachments(
+    messageId: string,
+    accessToken?: string
+  ): Promise<UiProcessGmailAttachmentDescriptor[]>;
 }
 
 // --- Driving Port ---

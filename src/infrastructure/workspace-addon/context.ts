@@ -16,6 +16,14 @@ export const WorkspaceDriveEventType = Type.Object({
 
 export type WorkspaceDriveEvent = Static<typeof WorkspaceDriveEventType>;
 
+export const WorkspaceGmailEventType = Type.Object({
+  messageId: Type.Optional(Type.String()),
+  threadId: Type.Optional(Type.String()),
+  accessToken: Type.Optional(Type.String()),
+});
+
+export type WorkspaceGmailEvent = Static<typeof WorkspaceGmailEventType>;
+
 export const WorkspaceCommonEventObjectType = Type.Object({
   userLocale: Type.Optional(Type.String()),
   hostApp: Type.Optional(Type.String()),
@@ -29,6 +37,8 @@ export type WorkspaceCommonEventObject = Static<typeof WorkspaceCommonEventObjec
 export const WorkspaceEventPayloadType = Type.Object({
   commonEventObject: Type.Optional(WorkspaceCommonEventObjectType),
   drive: Type.Optional(WorkspaceDriveEventType),
+  gmail: Type.Optional(WorkspaceGmailEventType),
+  hostApp: Type.Optional(Type.String()),
   authorizationEventObject: Type.Optional(
     Type.Object({
       userOAuthToken: Type.Optional(Type.String()),
@@ -56,6 +66,11 @@ export interface WorkspaceExecutionContext {
   userOAuthToken?: string | undefined;
   userEmail?: string | undefined;
   hostApp?: string | undefined;
+  gmail?: {
+    messageId?: string | undefined;
+    threadId?: string | undefined;
+    accessToken?: string | undefined;
+  } | undefined;
   platform?: string | undefined;
   traceId?: string | undefined;
   baseUrl?: string | undefined;
@@ -121,7 +136,9 @@ export function extractWorkspaceExecutionContext(
     Value.Check(WorkspaceRequestHeadersSchema, rawHeaders) ? rawHeaders : {};
 
   const userOAuthToken =
-    event.authorizationEventObject?.userOAuthToken ?? event.userOAuthToken;
+    event.authorizationEventObject?.userOAuthToken ??
+    event.userOAuthToken ??
+    event.gmail?.accessToken;
 
   let validationErrors: string[] | undefined;
   // nosemgrep: domain-pass-through-read
@@ -164,7 +181,14 @@ export function extractWorkspaceExecutionContext(
   return {
     userOAuthToken: typeof userOAuthToken === 'string' ? userOAuthToken : undefined,
     userEmail: typeof event.userEmail === 'string' ? event.userEmail : undefined,
-    hostApp: event.commonEventObject?.hostApp,
+    hostApp: event.commonEventObject?.hostApp ?? event.hostApp,
+    gmail: event.gmail
+      ? {
+          messageId: event.gmail.messageId,
+          threadId: event.gmail.threadId,
+          accessToken: event.gmail.accessToken,
+        }
+      : undefined,
     platform: event.commonEventObject?.platform,
     traceId,
     baseUrl: extractBaseUrl(headers, appBaseUrl),

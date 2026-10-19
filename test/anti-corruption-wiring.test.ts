@@ -261,5 +261,41 @@ describe('Anti-Corruption Wiring Integration', () => {
       'onSubmit'
     );
   });
+
+  it('maps SWITCH selection input from UiView through mapUiViewToWorkspaceUiView into Google Workspace Card', () => {
+    const view = {
+      header: { title: 'INC-IO Engine' },
+      sections: [
+        {
+          header: 'File Selection',
+          widgets: [
+            {
+              selectionInput: {
+                name: 'SaveEmailToPdf',
+                type: 'SWITCH' as const,
+                items: [{ text: 'Save Email to PDF', value: 'true', selected: true }],
+                onChangeAction: { action: 'onTogglePdf' },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const mapped = mapUiViewToWorkspaceUiView(view);
+    const mappedWidget = mapped.sections[0].widgets[0];
+    expect('selectionInput' in mappedWidget && mappedWidget.selectionInput?.type).toBe('SWITCH');
+
+    const actionResponse = translateUiViewToNavigationAction(mapped);
+    expect(Value.Check(GoogleWorkspaceActionResponseSchema, actionResponse)).toBe(true);
+
+    const switchWidget = actionResponse.action.navigations?.[0]?.pushCard?.sections[0].widgets[0].selectionInput;
+    expect(switchWidget).toBeDefined();
+    expect(switchWidget?.type).toBe('SWITCH');
+    expect(switchWidget?.name).toBe('SaveEmailToPdf');
+    expect(switchWidget?.items).toEqual([
+      { text: 'Save Email to PDF', value: 'true', selected: true },
+    ]);
+  });
 });
 
