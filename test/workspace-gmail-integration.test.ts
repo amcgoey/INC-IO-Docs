@@ -161,15 +161,17 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     const docTypeSection = sections[0];
     expect(docTypeSection.widgets).toBeDefined();
 
-    // Section 2: File Selection (non-collapsible, SelectAttachments, empty text)
+    // Section 2: File Selection (non-collapsible, SelectFileSource dropdown, empty text, SaveEmailToPdf)
     const fileSelectionSection = sections.find((s) => s.header === 'File Selection');
     expect(fileSelectionSection).toBeDefined();
     expect(fileSelectionSection?.collapsible).toBe(false);
-    expect(fileSelectionSection?.widgets).toHaveLength(2);
-    expect(fileSelectionSection?.widgets[0].textParagraph?.text).toBe('No attachments found.');
-    expect(fileSelectionSection?.widgets[1].selectionInput?.name).toBe('SaveEmailToPdf');
-    expect(fileSelectionSection?.widgets[1].selectionInput?.type).toBe('SWITCH');
-    expect(fileSelectionSection?.widgets[1].selectionInput?.items).toEqual([
+    expect(fileSelectionSection?.widgets).toHaveLength(3);
+    expect(fileSelectionSection?.widgets[0].selectionInput?.name).toBe('SelectFileSource');
+    expect(fileSelectionSection?.widgets[0].selectionInput?.type).toBe('DROPDOWN');
+    expect(fileSelectionSection?.widgets[1].textParagraph?.text).toBe('No attachments found.');
+    expect(fileSelectionSection?.widgets[2].selectionInput?.name).toBe('SaveEmailToPdf');
+    expect(fileSelectionSection?.widgets[2].selectionInput?.type).toBe('SWITCH');
+    expect(fileSelectionSection?.widgets[2].selectionInput?.items).toEqual([
       { text: 'Save Email to PDF', value: 'true', selected: false },
     ]);
 
@@ -204,7 +206,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     expect(pushCard.header?.title).toBe('INC-IO Engine');
     const fileSection = pushCard.sections.find((s) => s.header === 'File Selection');
     expect(fileSection?.collapsible).toBe(false);
-    expect(fileSection?.widgets[0].textParagraph?.text).toBe('No attachments found.');
+    expect(fileSection?.widgets[0].selectionInput?.name).toBe('SelectFileSource');
+    expect(fileSection?.widgets[1].textParagraph?.text).toBe('No attachments found.');
+    expect(fileSection?.widgets[2].selectionInput?.name).toBe('SaveEmailToPdf');
   });
 
   it('renders SelectAttachments checkboxes when files are passed in selectedItems', async () => {
@@ -235,11 +239,14 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     const pushCard = body.action!.navigations![0].pushCard!;
     const fileSection = pushCard.sections.find((s) => s.header === 'File Selection');
     expect(fileSection?.collapsible).toBe(false);
-    expect(fileSection?.widgets[0].selectionInput?.name).toBe('SelectAttachments');
-    expect(fileSection?.widgets[0].selectionInput?.items).toHaveLength(2);
-    expect(fileSection?.widgets[0].selectionInput?.items[0].text).toBe('Invoice.pdf');
-    expect(fileSection?.widgets[1].selectionInput?.name).toBe('SaveEmailToPdf');
-    expect(fileSection?.widgets[1].selectionInput?.type).toBe('SWITCH');
+    expect(fileSection?.widgets).toHaveLength(3);
+    expect(fileSection?.widgets[0].selectionInput?.name).toBe('SelectFileSource');
+    expect(fileSection?.widgets[0].selectionInput?.type).toBe('DROPDOWN');
+    expect(fileSection?.widgets[1].selectionInput?.name).toBe('SelectAttachments');
+    expect(fileSection?.widgets[1].selectionInput?.items).toHaveLength(2);
+    expect(fileSection?.widgets[1].selectionInput?.items[0].text).toBe('Invoice.pdf');
+    expect(fileSection?.widgets[2].selectionInput?.name).toBe('SaveEmailToPdf');
+    expect(fileSection?.widgets[2].selectionInput?.type).toBe('SWITCH');
   });
 
   it('discovers live email attachments via gmailClient and populates SelectAttachments checkboxes on POST /workspace/gmail-contextual', async () => {
@@ -265,21 +272,176 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     const fileSection = pushCard.sections.find((s) => s.header === 'File Selection');
     expect(fileSection).toBeDefined();
     expect(fileSection?.collapsible).toBe(false);
-    expect(fileSection?.widgets[0].selectionInput?.name).toBe('SelectAttachments');
-    expect(fileSection?.widgets[0].selectionInput?.items).toHaveLength(2);
-    expect(fileSection?.widgets[0].selectionInput?.items[0]).toEqual({
+    expect(fileSection?.widgets).toHaveLength(3);
+    expect(fileSection?.widgets[0].selectionInput?.name).toBe('SelectFileSource');
+    expect(fileSection?.widgets[0].selectionInput?.type).toBe('DROPDOWN');
+    expect(fileSection?.widgets[1].selectionInput?.name).toBe('SelectAttachments');
+    expect(fileSection?.widgets[1].selectionInput?.items).toHaveLength(2);
+    expect(fileSection?.widgets[1].selectionInput?.items[0]).toEqual({
       text: 'Invoice.pdf',
       value: 'att-1',
       selected: true,
     });
-    expect(fileSection?.widgets[0].selectionInput?.items[1]).toEqual({
+    expect(fileSection?.widgets[1].selectionInput?.items[1]).toEqual({
       text: 'Statement.pdf',
       value: 'att-2',
       selected: true,
     });
+    expect(fileSection?.widgets[2].selectionInput?.name).toBe('SaveEmailToPdf');
     expect(mockGmailClient.getMessage).toHaveBeenCalledWith('msg-with-live-attachments', {
       auth: 'ya29.live-token',
     });
+  });
+
+  it('simulates switching from Email Attachments to Google Drive URL, entering URL, switching back, and verifying state retention and updateCard', async () => {
+    // Step 1: Initial trigger with 2 live attachments
+    const resInitial = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/gmail-contextual',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-with-live-attachments',
+          threadId: 'th-test-live',
+          accessToken: 'ya29.live-token',
+        },
+      },
+    });
+
+    expect(resInitial.statusCode).toBe(200);
+    const bodyInitial = JSON.parse(resInitial.payload) as GoogleWorkspaceActionResponse;
+    const pushCard = bodyInitial.action!.navigations![0].pushCard!;
+    const fileSecInitial = pushCard.sections.find((s) => s.header === 'File Selection')!;
+    expect(fileSecInitial.widgets[0].selectionInput?.name).toBe('SelectFileSource');
+    expect(fileSecInitial.widgets[0].selectionInput?.items?.[0]).toEqual({
+      text: 'Email Attachments',
+      value: 'Email Attachments',
+      selected: true,
+    });
+    expect(fileSecInitial.widgets[1].selectionInput?.name).toBe('SelectAttachments');
+
+    // Step 2: Switch to "Google Drive URL" with att-1 selected in previousAttachments
+    const resSwitchToDrive = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/on-form-change',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'onFileSourceChange',
+            previousAttachments: JSON.stringify(['att-1']),
+            previousDriveUrl: '',
+          },
+          formInputs: {
+            SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+          },
+        },
+        gmail: {
+          messageId: 'msg-with-live-attachments',
+          threadId: 'th-test-live',
+          accessToken: 'ya29.live-token',
+        },
+        drive: {
+          selectedItems: [
+            { id: 'att-1', title: 'Invoice.pdf', mimeType: 'application/pdf' },
+            { id: 'att-2', title: 'Statement.pdf', mimeType: 'application/pdf' },
+          ],
+        },
+      },
+    });
+
+    expect(resSwitchToDrive.statusCode).toBe(200);
+    const bodySwitchToDrive = JSON.parse(resSwitchToDrive.payload) as GoogleWorkspaceActionResponse;
+    // Verify updateCard action
+    expect(bodySwitchToDrive.action?.navigations?.[0].updateCard).toBeDefined();
+    const updateCardDrive = bodySwitchToDrive.action!.navigations![0].updateCard!;
+    const fileSecDrive = updateCardDrive.sections.find((s) => s.header === 'File Selection')!;
+
+    // Widget 0: Dropdown with Google Drive URL active
+    expect(fileSecDrive.widgets[0].selectionInput?.name).toBe('SelectFileSource');
+    expect(fileSecDrive.widgets[0].selectionInput?.items?.[1]).toEqual({
+      text: 'Google Drive URL',
+      value: 'Google Drive URL',
+      selected: true,
+    });
+
+    // Widget 1: InputDriveURL text input is swapped in!
+    expect(fileSecDrive.widgets[1].textInput).toBeDefined();
+    expect(fileSecDrive.widgets[1].textInput?.name).toBe('InputDriveURL');
+    expect(fileSecDrive.widgets[1].textInput?.label).toBe('Google Drive URL');
+    expect(fileSecDrive.widgets[1].textInput?.value).toBe('');
+
+    // Widget 2: SaveEmailToPdf SWITCH
+    expect(fileSecDrive.widgets[2].selectionInput?.name).toBe('SaveEmailToPdf');
+
+    // Step 3: Switch back to "Email Attachments" with entered Drive URL preserved
+    const testDriveUrl = 'https://drive.google.com/drive/folders/test-folder-123';
+    const resSwitchBack = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/on-form-change',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'onFileSourceChange',
+            previousAttachments: JSON.stringify(['att-1']),
+            previousDriveUrl: testDriveUrl,
+          },
+          formInputs: {
+            SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+            InputDriveURL: { stringInputs: { value: [testDriveUrl] } },
+          },
+        },
+        gmail: {
+          messageId: 'msg-with-live-attachments',
+          threadId: 'th-test-live',
+          accessToken: 'ya29.live-token',
+        },
+        drive: {
+          selectedItems: [
+            { id: 'att-1', title: 'Invoice.pdf', mimeType: 'application/pdf' },
+            { id: 'att-2', title: 'Statement.pdf', mimeType: 'application/pdf' },
+          ],
+        },
+      },
+    });
+
+    expect(resSwitchBack.statusCode).toBe(200);
+    const bodySwitchBack = JSON.parse(resSwitchBack.payload) as GoogleWorkspaceActionResponse;
+    expect(bodySwitchBack.action?.navigations?.[0].updateCard).toBeDefined();
+    const updateCardEmail = bodySwitchBack.action!.navigations![0].updateCard!;
+    const fileSecEmail = updateCardEmail.sections.find((s) => s.header === 'File Selection')!;
+
+    // Widget 0: Dropdown with Email Attachments active
+    expect(fileSecEmail.widgets[0].selectionInput?.name).toBe('SelectFileSource');
+    expect(fileSecEmail.widgets[0].selectionInput?.items?.[0]).toEqual({
+      text: 'Email Attachments',
+      value: 'Email Attachments',
+      selected: true,
+    });
+    // parameters preserved the previousDriveUrl
+    const onChangeParams = fileSecEmail.widgets[0].selectionInput?.onChangeAction?.parameters;
+    const previousDriveUrlParam = onChangeParams?.find((p: { key: string }) => p.key === 'previousDriveUrl')?.value;
+    expect(previousDriveUrlParam).toBe(testDriveUrl);
+
+    // Widget 1: SelectAttachments checkboxes restored with att-1 checked and att-2 unchecked!
+    expect(fileSecEmail.widgets[1].selectionInput?.name).toBe('SelectAttachments');
+    expect(fileSecEmail.widgets[1].selectionInput?.items).toEqual([
+      { text: 'Invoice.pdf', value: 'att-1', selected: true },
+      { text: 'Statement.pdf', value: 'att-2', selected: false },
+    ]);
+
+    // Widget 2: SaveEmailToPdf SWITCH
+    expect(fileSecEmail.widgets[2].selectionInput?.name).toBe('SaveEmailToPdf');
   });
 
   it('returns fallback error card if orchestrator fails', async () => {

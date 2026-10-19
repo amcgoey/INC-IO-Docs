@@ -188,20 +188,58 @@ export class GmailWorkspaceAddonAdapter implements UiViewSchemaAdapterPort {
   ) {
     this.composer = createWorkspaceAddonViewSchema({
       viewId: this.viewId,
-      fileSelectionConfig: (ctx) =>
-        ctx.selectionState
-          ? buildFileSelectionSection(ctx.selectionState.files, {
-              collapsible: false,
-              inputName: 'SelectAttachments',
-              emptyText: 'No attachments found.',
-              formData: ctx.formData,
-              toggleInput: {
-                name: 'SaveEmailToPdf',
-                text: 'Save Email to PDF',
-                value: 'true',
+      fileSelectionConfig: (ctx) => {
+        if (!ctx.selectionState) {
+          return undefined;
+        }
+
+        const rawAttachmentForm = ctx.formData?.['SelectAttachments'];
+        let checkedAttachmentIds: string[];
+        if (rawAttachmentForm !== undefined) {
+          if (Array.isArray(rawAttachmentForm)) {
+            checkedAttachmentIds = rawAttachmentForm.map(String);
+          } else if (typeof rawAttachmentForm === 'string') {
+            checkedAttachmentIds =
+              rawAttachmentForm.trim().length > 0 ? [rawAttachmentForm.trim()] : [];
+          } else {
+            checkedAttachmentIds = [];
+          }
+        } else {
+          checkedAttachmentIds =
+            ctx.selectionState.files?.filter((f) => f.selected).map((f) => f.value) ?? [];
+        }
+
+        const currentDriveUrl = (ctx.formData?.['InputDriveURL'] as string) ?? '';
+
+        return buildFileSelectionSection(ctx.selectionState, {
+          collapsible: false,
+          inputName: 'SelectAttachments',
+          emptyText: 'No attachments found.',
+          formData: ctx.formData,
+          fileSourceDropdown: {
+            name: 'SelectFileSource',
+            label: 'File Source',
+            onChangeAction: {
+              action: 'onFileSourceChange',
+              parameters: {
+                previousAttachments: JSON.stringify(checkedAttachmentIds),
+                previousDriveUrl: currentDriveUrl,
               },
-            })
-          : undefined,
+            },
+          },
+          urlInput: {
+            name: 'InputDriveURL',
+            label: 'Google Drive URL',
+            hintText: 'Enter Google Drive file or folder URL',
+            activeOnSourceValue: 'Google Drive URL',
+          },
+          toggleInput: {
+            name: 'SaveEmailToPdf',
+            text: 'Save Email to PDF',
+            value: 'true',
+          },
+        });
+      },
     });
   }
 

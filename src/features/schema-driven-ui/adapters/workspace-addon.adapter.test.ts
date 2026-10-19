@@ -901,6 +901,71 @@ describe('WorkspaceAddonAdapter', () => {
       expect(docTypeWidget?.items?.[0].text).toBe('Project Communication');
       assertValidUiView(view);
     });
+
+    it('populates previousAttachments and previousDriveUrl in onFileSourceChange action parameters', async () => {
+      // Case 1: Derive from selected files in selectionState when formData.SelectAttachments is absent
+      const viewFromSelection = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        formData: {
+          InputDriveURL: 'https://drive.google.com/file/d/xyz',
+        },
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'Invoice', value: 'invoice' }],
+          fileSources: [
+            { text: 'Email Attachments', value: 'Email Attachments', selected: true },
+            { text: 'Google Drive URL', value: 'Google Drive URL', selected: false },
+          ],
+          files: [
+            { text: 'att1.pdf', value: 'att-1', selected: true },
+            { text: 'att2.pdf', value: 'att-2', selected: false },
+            { text: 'att3.pdf', value: 'att-3', selected: true },
+          ],
+        },
+      });
+
+      const fileSection1 = viewFromSelection.sections.find((s) => s.header === 'File Selection');
+      expect(fileSection1).toBeDefined();
+      const dropdownWidget1 = fileSection1?.widgets[0].selectionInput;
+      expect(dropdownWidget1?.name).toBe('SelectFileSource');
+      expect(dropdownWidget1?.onChangeAction).toBeDefined();
+      expect(dropdownWidget1?.onChangeAction?.action).toBe('onFileSourceChange');
+      expect(dropdownWidget1?.onChangeAction?.parameters).toEqual({
+        previousAttachments: JSON.stringify(['att-1', 'att-3']),
+        previousDriveUrl: 'https://drive.google.com/file/d/xyz',
+      });
+      assertValidUiView(viewFromSelection);
+
+      // Case 2: Derive from formData.SelectAttachments when present
+      const viewFromFormData = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        formData: {
+          SelectAttachments: ['att-2'],
+        },
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'Invoice', value: 'invoice' }],
+          fileSources: [
+            { text: 'Email Attachments', value: 'Email Attachments', selected: true },
+            { text: 'Google Drive URL', value: 'Google Drive URL', selected: false },
+          ],
+          files: [
+            { text: 'att1.pdf', value: 'att-1', selected: true },
+            { text: 'att2.pdf', value: 'att-2', selected: true },
+          ],
+        },
+      });
+
+      const fileSection2 = viewFromFormData.sections.find((s) => s.header === 'File Selection');
+      const dropdownWidget2 = fileSection2?.widgets[0].selectionInput;
+      expect(dropdownWidget2?.onChangeAction?.parameters).toEqual({
+        previousAttachments: JSON.stringify(['att-2']),
+        previousDriveUrl: '',
+      });
+      assertValidUiView(viewFromFormData);
+    });
   });
 });
 

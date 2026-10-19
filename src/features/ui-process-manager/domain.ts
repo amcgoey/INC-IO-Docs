@@ -12,6 +12,7 @@ export const UiSelectionStateSchema = Type.Object({
   spaces: Type.Array(Type.String()),
   documentTypes: Type.Array(UiSelectionItemSchema),
   files: Type.Optional(Type.Union([Type.Array(UiSelectionItemSchema), Type.Undefined()])),
+  fileSources: Type.Optional(Type.Union([Type.Array(UiSelectionItemSchema), Type.Undefined()])),
 });
 export type UiSelectionState = Static<typeof UiSelectionStateSchema>;
 
@@ -361,6 +362,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const action = context.actionName ?? context.parameters?.action;
   const isSpaceTypeChange = action === 'onSpaceTypeChange';
   const isDocTypeChange = action === 'onDocumentTypeChange';
+  const isFileSourceChange = action === 'onFileSourceChange';
 
   const currentSpaceType =
     input.resolvedSpaceType ?? resolveSpaceType({ formData: context.formData, config: input.config });
@@ -372,7 +374,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const isRefresh = action === 'refresh';
   let isUpdateCard = isRefresh
     ? false
-    : Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange);
+    : Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange || isFileSourceChange);
 
   const rawSelectedDocType =
     resolveDocumentType({
@@ -417,6 +419,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     'onSpaceTypeChange',
     'onDocumentTypeChange',
     'onFormChange',
+    'onFileSourceChange',
     'processDocument',
     'viewJson',
   ]);
@@ -438,6 +441,41 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
       typeof item?.id === 'string' && item.id.trim().length > 0
   );
 
+  let fileSources: UiSelectionItem[] | undefined;
+  if (isGmailContext) {
+    let effectiveFileSource: string;
+    if (isResetOrInitialLoad) {
+      effectiveFileSource = 'Email Attachments';
+      effectiveFormData[SELECT_FILE_SOURCE_KEY] = 'Email Attachments';
+      effectiveFormData[INPUT_DRIVE_URL_KEY] = '';
+    } else {
+      effectiveFileSource =
+        (context.formData?.[SELECT_FILE_SOURCE_KEY] as string) ?? 'Email Attachments';
+      effectiveFormData[SELECT_FILE_SOURCE_KEY] = effectiveFileSource;
+      if (context.formData?.[INPUT_DRIVE_URL_KEY] !== undefined) {
+        effectiveFormData[INPUT_DRIVE_URL_KEY] = String(context.formData[INPUT_DRIVE_URL_KEY]).trim();
+      } else if (context.parameters?.previousDriveUrl) {
+        // nosemgrep: domain-pass-through-read
+        effectiveFormData[INPUT_DRIVE_URL_KEY] = context.parameters.previousDriveUrl;
+      } else {
+        effectiveFormData[INPUT_DRIVE_URL_KEY] = '';
+      }
+    }
+
+    fileSources = [
+      {
+        text: 'Email Attachments',
+        value: 'Email Attachments',
+        selected: effectiveFileSource === 'Email Attachments',
+      },
+      {
+        text: 'Google Drive URL',
+        value: 'Google Drive URL',
+        selected: effectiveFileSource === 'Google Drive URL',
+      },
+    ];
+  }
+
   let files: UiSelectionItem[];
   if (isGmailContext) {
     if (validSelectedItems.length > 0) {
@@ -445,6 +483,18 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
       const selectedSet = hasAttachmentFormKey
         ? extractSelectFilesSet(context.formData, SELECT_ATTACHMENTS_KEY)
         : undefined;
+
+      let parsedParamSet: Set<string> | undefined;
+      if (!hasAttachmentFormKey && !isResetOrInitialLoad && context.parameters?.previousAttachments) {
+        try {
+          const parsed = JSON.parse(context.parameters.previousAttachments);
+          if (Array.isArray(parsed)) {
+            parsedParamSet = new Set(parsed.map(String));
+          }
+        } catch {
+          // ignore malformed JSON
+        }
+      }
 
       files = validSelectedItems.map((item) => {
         const trimmedTitle = typeof item.title === 'string' ? item.title.trim() : '';
@@ -454,6 +504,8 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
           selected = true;
         } else if (hasAttachmentFormKey) {
           selected = selectedSet!.has(fileId) || selectedSet!.has(item.id);
+        } else if (!isResetOrInitialLoad && parsedParamSet !== undefined) {
+          selected = parsedParamSet.has(fileId) || parsedParamSet.has(item.id);
         } else if (isResetOrInitialLoad) {
           selected = true;
         } else {
@@ -486,6 +538,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     spaces: (input.spaces ?? []).map((s) => s.name),
     documentTypes,
     files,
+    ...(fileSources !== undefined ? { fileSources } : {}),
   };
 
   const spaceResolution = resolveSpace(

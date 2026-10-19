@@ -13,6 +13,17 @@ export interface FileSelectionOptions {
     value?: string | undefined;
     onChangeAction?: UiViewAction | undefined;
   } | undefined;
+  fileSourceDropdown?: {
+    name: string;
+    label?: string | undefined;
+    onChangeAction?: UiViewAction | undefined;
+  } | undefined;
+  urlInput?: {
+    name: string;
+    label: string;
+    hintText: string;
+    activeOnSourceValue: string;
+  } | undefined;
 }
 
 export function buildFileSelectionSection(
@@ -24,27 +35,61 @@ export function buildFileSelectionSection(
   const emptyText = options?.emptyText ?? 'No files selected.';
   const inputName = options?.inputName ?? 'SelectFiles';
 
-  const normalized = Array.isArray(selectionState)
-    ? { files: selectionState }
+  const normSelectionState = Array.isArray(selectionState)
+    ? { files: selectionState, fileSources: undefined }
     : selectionState;
-  const files = normalized?.files;
+  const files = normSelectionState?.files;
+  const fileSources = normSelectionState?.fileSources;
 
   const widgets: UiViewWidget[] = [];
 
-  if (!files || files.length === 0) {
+  if (options?.fileSourceDropdown && fileSources && fileSources.length > 0) {
     widgets.push({
-      textParagraph: {
-        text: emptyText,
+      selectionInput: {
+        name: options.fileSourceDropdown.name,
+        ...(options.fileSourceDropdown.label !== undefined
+          ? { label: options.fileSourceDropdown.label }
+          : {}),
+        type: 'DROPDOWN',
+        items: fileSources,
+        ...(options.fileSourceDropdown.onChangeAction
+          ? { onChangeAction: options.fileSourceDropdown.onChangeAction }
+          : {}),
+      },
+    });
+  }
+
+  const isUrlActive = Boolean(
+    options?.urlInput &&
+      options?.fileSourceDropdown &&
+      options.formData?.[options.fileSourceDropdown.name] === options.urlInput.activeOnSourceValue
+  );
+
+  if (isUrlActive) {
+    widgets.push({
+      textInput: {
+        name: options!.urlInput!.name,
+        label: options!.urlInput!.label,
+        hintText: options!.urlInput!.hintText,
+        value: (options?.formData?.[options!.urlInput!.name] as string) ?? '',
       },
     });
   } else {
-    widgets.push({
-      selectionInput: {
-        name: inputName,
-        type: 'CHECK_BOX',
-        items: files,
-      },
-    });
+    if (!files || files.length === 0) {
+      widgets.push({
+        textParagraph: {
+          text: emptyText,
+        },
+      });
+    } else {
+      widgets.push({
+        selectionInput: {
+          name: inputName,
+          type: 'CHECK_BOX',
+          items: files,
+        },
+      });
+    }
   }
 
   if (options?.toggleInput) {

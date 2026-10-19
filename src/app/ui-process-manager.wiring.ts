@@ -272,6 +272,9 @@ export function createUiProcessRequestWrapper(
               ...(intent.selectionState.files !== undefined
                 ? { files: mapSelectionItems(intent.selectionState.files) }
                 : {}),
+              ...(intent.selectionState.fileSources !== undefined
+                ? { fileSources: mapSelectionItems(intent.selectionState.fileSources) }
+                : {}),
             },
           }
         : {}),
