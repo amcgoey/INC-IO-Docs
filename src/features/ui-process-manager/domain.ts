@@ -501,6 +501,20 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     ? GMAIL_WORKSPACE_ADDON_VIEW_ID
     : DRIVE_WORKSPACE_ADDON_VIEW_ID;
 
+  if (isGmail) {
+    if (isResetOrInitialLoad) {
+      effectiveFormData[SAVE_EMAIL_TO_PDF_KEY] = false;
+    } else {
+      const rawSave = context.formData?.[SAVE_EMAIL_TO_PDF_KEY];
+      effectiveFormData[SAVE_EMAIL_TO_PDF_KEY] =
+        Array.isArray(rawSave)
+          ? rawSave.length > 0 && Boolean(rawSave[0]) && rawSave[0] !== 'false'
+          : rawSave === 'false'
+            ? false
+            : Boolean(rawSave);
+    }
+  }
+
   return {
     viewId,
     documentTypeKey: currentDocTypeKey,

@@ -109,5 +109,79 @@ describe('File Selection Block', () => {
     const sectionUndefined = buildFileSelectionSection(stateUndefinedFiles);
     expect(sectionUndefined.widgets[0].textParagraph?.text).toBe('No files selected.');
   });
+
+  describe('toggleInput option', () => {
+    it('appends SWITCH widget below file selection checkbox when files are present', () => {
+      const section = buildFileSelectionSection(sampleFiles, {
+        formData: { SaveEmailToPdf: true },
+        toggleInput: {
+          name: 'SaveEmailToPdf',
+          text: 'Save Email to PDF',
+          value: 'true',
+        },
+      });
+
+      expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+      expect(section.widgets).toHaveLength(2);
+
+      // First widget: files checklist
+      expect(section.widgets[0].selectionInput?.name).toBe('SelectFiles');
+      expect(section.widgets[0].selectionInput?.type).toBe('CHECK_BOX');
+      expect(section.widgets[0].selectionInput?.items).toEqual(sampleFiles);
+
+      // Second widget: SWITCH toggle
+      const switchWidget = section.widgets[1].selectionInput;
+      expect(switchWidget).toBeDefined();
+      expect(switchWidget?.name).toBe('SaveEmailToPdf');
+      expect(switchWidget?.type).toBe('SWITCH');
+      expect(switchWidget?.items).toEqual([
+        { text: 'Save Email to PDF', value: 'true', selected: true },
+      ]);
+    });
+
+    it('appends SWITCH widget below emptyText textParagraph when files array is empty', () => {
+      const section = buildFileSelectionSection([], {
+        emptyText: 'No attachments found.',
+        formData: { SaveEmailToPdf: false },
+        toggleInput: {
+          name: 'SaveEmailToPdf',
+          text: 'Save Email to PDF',
+          value: 'true',
+        },
+      });
+
+      expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+      expect(section.widgets).toHaveLength(2);
+
+      // First widget: empty text
+      expect(section.widgets[0].textParagraph?.text).toBe('No attachments found.');
+
+      // Second widget: SWITCH toggle with selected false
+      const switchWidget = section.widgets[1].selectionInput;
+      expect(switchWidget).toBeDefined();
+      expect(switchWidget?.name).toBe('SaveEmailToPdf');
+      expect(switchWidget?.type).toBe('SWITCH');
+      expect(switchWidget?.items).toEqual([
+        { text: 'Save Email to PDF', value: 'true', selected: false },
+      ]);
+    });
+
+    it('defaults value to true and includes onChangeAction when provided', () => {
+      const section = buildFileSelectionSection([], {
+        formData: {},
+        toggleInput: {
+          name: 'SaveEmailToPdf',
+          text: 'Save Email to PDF',
+          onChangeAction: { action: 'onTogglePdf' },
+        },
+      });
+
+      expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+      const switchWidget = section.widgets[1].selectionInput;
+      expect(switchWidget?.items?.[0].value).toBe('true');
+      expect(switchWidget?.items?.[0].selected).toBe(false);
+      expect(switchWidget?.onChangeAction).toEqual({ action: 'onTogglePdf' });
+    });
+  });
 });
 

@@ -194,6 +194,12 @@ export class GmailWorkspaceAddonAdapter implements UiViewSchemaAdapterPort {
               collapsible: false,
               inputName: 'SelectAttachments',
               emptyText: 'No attachments found.',
+              formData: ctx.formData,
+              toggleInput: {
+                name: 'SaveEmailToPdf',
+                text: 'Save Email to PDF',
+                value: 'true',
+              },
             })
           : undefined,
     });

@@ -1335,6 +1335,115 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
         expect(() => translateUiViewToWorkspaceCard(brokenCheckboxView)).toThrow('Invalid UiView');
       });
 
+      describe('SWITCH selection input translation', () => {
+        it('translates SWITCH selection input with exactly one item into Google Workspace format', () => {
+          const switchView = {
+            sections: [
+              {
+                widgets: [
+                  {
+                    selectionInput: {
+                      name: 'SaveEmailToPdf',
+                      type: 'SWITCH',
+                      items: [{ text: 'Save Email to PDF', value: 'true', selected: true }],
+                      label: 'Email Options',
+                      onChangeAction: {
+                        action: 'onTogglePdf',
+                        route: '/workspace/on-form-change',
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+
+          const card = translateUiViewToWorkspaceCard(switchView);
+          expect(Value.Check(GoogleWorkspaceCardSchema, card)).toBe(true);
+
+          const widget = card.sections[0].widgets[0];
+          expect(widget.selectionInput).toEqual({
+            name: 'SaveEmailToPdf',
+            type: 'SWITCH',
+            label: 'Email Options',
+            items: [{ text: 'Save Email to PDF', value: 'true', selected: true }],
+            onChangeAction: {
+              function: '/workspace/on-form-change',
+              parameters: [{ key: 'action', value: 'onTogglePdf' }],
+              loadIndicator: 'SPINNER',
+            },
+          });
+        });
+
+        it('throws descriptive invariant error when SWITCH selection input has 0 items', () => {
+          const emptySwitchView = {
+            sections: [
+              {
+                widgets: [
+                  {
+                    selectionInput: {
+                      name: 'SaveEmailToPdf',
+                      type: 'SWITCH',
+                      items: [],
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+
+          expect(() => translateUiViewToWorkspaceCard(emptySwitchView)).toThrow(
+            'SWITCH selection input must have exactly one item'
+          );
+        });
+
+        it('throws descriptive invariant error when SWITCH selection input has more than 1 item', () => {
+          const multipleItemsSwitchView = {
+            sections: [
+              {
+                widgets: [
+                  {
+                    selectionInput: {
+                      name: 'SaveEmailToPdf',
+                      type: 'SWITCH',
+                      items: [
+                        { text: 'Option 1', value: '1' },
+                        { text: 'Option 2', value: '2' },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+
+          expect(() => translateUiViewToWorkspaceCard(multipleItemsSwitchView)).toThrow(
+            'SWITCH selection input must have exactly one item'
+          );
+        });
+
+        it('throws descriptive invariant error when SWITCH selection input items is undefined', () => {
+          const undefinedItemsSwitchView = {
+            sections: [
+              {
+                widgets: [
+                  {
+                    selectionInput: {
+                      name: 'SaveEmailToPdf',
+                      type: 'SWITCH',
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+
+          expect(() => translateUiViewToWorkspaceCard(undefinedItemsSwitchView)).toThrow(
+            'SWITCH selection input must have exactly one item'
+          );
+        });
+      });
+
       it('rejects buttonList when any button has a malformed onClick action', () => {
         const mixedButtonsView = {
           sections: [

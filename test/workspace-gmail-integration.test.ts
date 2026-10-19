@@ -132,8 +132,13 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     const fileSelectionSection = sections.find((s) => s.header === 'File Selection');
     expect(fileSelectionSection).toBeDefined();
     expect(fileSelectionSection?.collapsible).toBe(false);
-    expect(fileSelectionSection?.widgets).toHaveLength(1);
+    expect(fileSelectionSection?.widgets).toHaveLength(2);
     expect(fileSelectionSection?.widgets[0].textParagraph?.text).toBe('No attachments found.');
+    expect(fileSelectionSection?.widgets[1].selectionInput?.name).toBe('SaveEmailToPdf');
+    expect(fileSelectionSection?.widgets[1].selectionInput?.type).toBe('SWITCH');
+    expect(fileSelectionSection?.widgets[1].selectionInput?.items).toEqual([
+      { text: 'Save Email to PDF', value: 'true', selected: false },
+    ]);
 
     // Section 3: Document Data
     const docDataSection = sections.find((s) => s.header === 'Document Data');
@@ -200,6 +205,8 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     expect(fileSection?.widgets[0].selectionInput?.name).toBe('SelectAttachments');
     expect(fileSection?.widgets[0].selectionInput?.items).toHaveLength(2);
     expect(fileSection?.widgets[0].selectionInput?.items[0].text).toBe('Invoice.pdf');
+    expect(fileSection?.widgets[1].selectionInput?.name).toBe('SaveEmailToPdf');
+    expect(fileSection?.widgets[1].selectionInput?.type).toBe('SWITCH');
   });
 
   it('returns fallback error card if orchestrator fails', async () => {

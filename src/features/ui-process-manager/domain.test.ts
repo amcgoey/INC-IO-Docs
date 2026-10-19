@@ -1691,6 +1691,120 @@ describe('ui-process-manager domain', () => {
           const state = evaluateProcessUiState(input);
           expect(state.viewId).toBe(GMAIL_WORKSPACE_ADDON_VIEW_ID);
         });
+
+        describe('SaveEmailToPdf toggle in Gmail context', () => {
+          it('defaults SaveEmailToPdf to false on initial load (initial trigger)', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                selectedItems: [{ id: 'att-1', title: 'test.pdf' }],
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.formData[SAVE_EMAIL_TO_PDF_KEY]).toBe(false);
+          });
+
+          it('resets SaveEmailToPdf to false on refresh action even if formData had it true', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'refresh',
+                formData: {
+                  [SAVE_EMAIL_TO_PDF_KEY]: true,
+                  SelectAttachments: ['att-1'],
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.formData[SAVE_EMAIL_TO_PDF_KEY]).toBe(false);
+          });
+
+          it('retains SaveEmailToPdf state on subsequent in-card actions when true', () => {
+            const inputBool: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'onFormChange',
+                formData: {
+                  [SAVE_EMAIL_TO_PDF_KEY]: true,
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+            expect(evaluateProcessUiState(inputBool).formData[SAVE_EMAIL_TO_PDF_KEY]).toBe(true);
+
+            const inputString: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'onDocumentTypeChange',
+                formData: {
+                  [SAVE_EMAIL_TO_PDF_KEY]: 'true',
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+            expect(evaluateProcessUiState(inputString).formData[SAVE_EMAIL_TO_PDF_KEY]).toBe(true);
+
+            const inputArray: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'onFormChange',
+                formData: {
+                  [SAVE_EMAIL_TO_PDF_KEY]: ['true'],
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+            expect(evaluateProcessUiState(inputArray).formData[SAVE_EMAIL_TO_PDF_KEY]).toBe(true);
+          });
+
+          it('sets SaveEmailToPdf to false on in-card actions when absent or false in formData', () => {
+            const inputAbsent: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'onFormChange',
+                formData: {
+                  otherField: 'val',
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+            expect(evaluateProcessUiState(inputAbsent).formData[SAVE_EMAIL_TO_PDF_KEY]).toBe(false);
+
+            const inputFalse: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'onFormChange',
+                formData: {
+                  [SAVE_EMAIL_TO_PDF_KEY]: false,
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+            expect(evaluateProcessUiState(inputFalse).formData[SAVE_EMAIL_TO_PDF_KEY]).toBe(false);
+          });
+
+          it('does not evaluate SaveEmailToPdf when not in Gmail context (e.g. Drive)', () => {
+            const inputDrive: ProcessUiStateInput = {
+              context: {
+                hostApp: 'DRIVE',
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+            expect(evaluateProcessUiState(inputDrive).formData[SAVE_EMAIL_TO_PDF_KEY]).toBeUndefined();
+          });
+        });
       });
     });
   });
