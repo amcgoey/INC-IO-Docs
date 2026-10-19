@@ -2373,6 +2373,198 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         'onSubmit'
       );
     });
+
+    describe('SaveEmailToPdf handling', () => {
+      it('appends email-pdf-<messageId> to activeSourceFiles when SaveEmailToPdf is true with 0 attachments, satisfying zero-file policy', async () => {
+        const mockDocumentRunner = {
+          processDocument: vi.fn().mockResolvedValue({ success: true }),
+        };
+
+        const manifestPortWithEmptyPolicy: UiProcessManifestPort = {
+          ...mockManifestPort,
+          getDocumentTypeSchemas: vi.fn().mockResolvedValue({
+            allowEmptySourceFiles: false,
+          }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: manifestPortWithEmptyPolicy,
+          documentRunner: mockDocumentRunner,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'processDocument',
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-save-pdf-1',
+          },
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            SelectDocumentType: 'communication-project',
+            SaveEmailToPdf: true,
+            SelectAttachments: [],
+          },
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('notification');
+        expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sourceFiles: [
+              {
+                id: 'email-pdf-msg-save-pdf-1',
+                mimeType: 'application/pdf',
+              },
+            ],
+          }),
+          'onSubmit'
+        );
+      });
+
+      it('appends email-pdf-<messageId> alongside checked attachments when both are present', async () => {
+        const mockDocumentRunner = {
+          processDocument: vi.fn().mockResolvedValue({ success: true }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          documentRunner: mockDocumentRunner,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'processDocument',
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-both-123',
+          },
+          selectedItems: [
+            { id: 'att-1', title: 'Invoice.pdf', mimeType: 'application/pdf' },
+          ],
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            SelectDocumentType: 'communication-project',
+            SelectFileSource: 'Email Attachments',
+            SelectAttachments: ['att-1'],
+            SaveEmailToPdf: 'true',
+          },
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('notification');
+        expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sourceFiles: [
+              {
+                id: 'att-1',
+                name: 'Invoice.pdf',
+                mimeType: 'application/pdf',
+              },
+              {
+                id: 'email-pdf-msg-both-123',
+                mimeType: 'application/pdf',
+              },
+            ],
+          }),
+          'onSubmit'
+        );
+      });
+
+      it('appends email-pdf-<messageId> alongside Google Drive URL item when SelectFileSource is Google Drive URL', async () => {
+        const mockDocumentRunner = {
+          processDocument: vi.fn().mockResolvedValue({ success: true }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          documentRunner: mockDocumentRunner,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'processDocument',
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-drive-combo',
+          },
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            SelectDocumentType: 'communication-project',
+            SelectFileSource: 'Google Drive URL',
+            InputDriveURL: 'https://drive.google.com/file/d/1A2B3C4D5E6F/view',
+            SaveEmailToPdf: true,
+          },
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('notification');
+        expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sourceFiles: [
+              {
+                id: '1A2B3C4D5E6F',
+                name: '1A2B3C4D5E6F',
+              },
+              {
+                id: 'email-pdf-msg-drive-combo',
+                mimeType: 'application/pdf',
+              },
+            ],
+          }),
+          'onSubmit'
+        );
+      });
+
+      it('fails with zero-file error when SaveEmailToPdf is false and 0 attachments are checked on allowEmptySourceFiles: false', async () => {
+        const mockDocumentRunner = {
+          processDocument: vi.fn().mockResolvedValue({ success: true }),
+        };
+
+        const manifestPortWithEmptyPolicy: UiProcessManifestPort = {
+          ...mockManifestPort,
+          getDocumentTypeSchemas: vi.fn().mockResolvedValue({
+            allowEmptySourceFiles: false,
+          }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: manifestPortWithEmptyPolicy,
+          documentRunner: mockDocumentRunner,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'processDocument',
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-no-save',
+          },
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            SelectDocumentType: 'communication-project',
+            SaveEmailToPdf: false,
+            SelectAttachments: [],
+          },
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('render');
+        const renderResult = response as UiProcessRenderResult;
+        expect(renderResult.validationErrors).toContain(
+          'Please select at least one file to process or enable Save Email to PDF.'
+        );
+        expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
+      });
+    });
   });
 });
 
