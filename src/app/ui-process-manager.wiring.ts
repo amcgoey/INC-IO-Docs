@@ -43,6 +43,8 @@ import type {
   DocumentSchemaRegistryPort,
   DocumentDynamicValidationPort,
   DynamicValidationMessageFormatter,
+  DocumentServicePort,
+  DocumentModel,
 } from '../features/document/ports';
 
 export function resolveActionRoute(route: string, baseUrl?: string): string {
@@ -394,34 +396,35 @@ export function createUiProcessManagerWiring(
   const pdfProcessor = options.pdfProcessor ?? new PdfProcessor();
   const hydrator = new GmailSourceFileHydrator(gmailClient, pdfProcessor);
 
+async function runPreValidation(
+  docService: DocumentServicePort,
+  documentPayload: DocumentModel
+): Promise<{ success: boolean; errors?: string[] } | undefined> {
+  if (docService.validateDocument) {
+    const preValidation = await docService.validateDocument(documentPayload);
+    if (!preValidation.success) {
+      return {
+        success: false,
+        errors: preValidation.errors ?? ['Invalid document data payload'],
+      };
+    }
+  }
+  return undefined;
+}
+
   const fallbackDocumentRunner: UiProcessDocumentRunnerPort | undefined = options.documentService
     ? {
         processDocument: async (payload, eventName) => {
           const space = toStructuredDocumentSpace(payload.space);
-          const documentPayload = {
+          const documentPayload: DocumentModel = {
             type: payload.type,
             data: payload.data,
             ...(space ? { space } : {}),
           };
 
-          if (
-            'validateDocument' in options.documentService! &&
-            typeof (options.documentService as { validateDocument?: unknown }).validateDocument ===
-              'function'
-          ) {
-            const preValidation = await (
-              options.documentService as {
-                validateDocument: (
-                  doc: typeof documentPayload
-                ) => Promise<{ success: boolean; errors?: string[] }>;
-              }
-            ).validateDocument(documentPayload);
-            if (!preValidation.success) {
-              return {
-                success: false,
-                errors: preValidation.errors ?? ['Invalid document data payload'],
-              };
-            }
+          const preValError = await runPreValidation(options.documentService!, documentPayload);
+          if (preValError) {
+            return preValError;
           }
 
           return options.documentService!.processDocument(
@@ -483,8 +486,9 @@ export function createUiProcessManagerWiring(
             processDocument: async (payload, eventName) => {
               const { sourceFiles, ...documentPayload } = payload;
               const space = toStructuredDocumentSpace(documentPayload.space);
-              const targetDocPayload = {
-                ...documentPayload,
+              const targetDocPayload: DocumentModel = {
+                type: documentPayload.type,
+                data: documentPayload.data,
                 ...(space ? { space } : {}),
               };
 
@@ -507,24 +511,9 @@ export function createUiProcessManagerWiring(
                 throw new Error('DocumentService not provided');
               }
 
-              if (
-                'validateDocument' in docService &&
-                typeof (docService as { validateDocument?: unknown }).validateDocument ===
-                  'function'
-              ) {
-                const preValidation = await (
-                  docService as {
-                    validateDocument: (
-                      doc: typeof targetDocPayload
-                    ) => Promise<{ success: boolean; errors?: string[] }>;
-                  }
-                ).validateDocument(targetDocPayload);
-                if (!preValidation.success) {
-                  return {
-                    success: false,
-                    errors: preValidation.errors ?? ['Invalid document data payload'],
-                  };
-                }
+              const preValError = await runPreValidation(docService, targetDocPayload);
+              if (preValError) {
+                return preValError;
               }
 
               const needsHydration = Boolean(
