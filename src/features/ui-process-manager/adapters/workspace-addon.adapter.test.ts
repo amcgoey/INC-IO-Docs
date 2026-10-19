@@ -10,6 +10,7 @@ import {
   type UiProcessRenderResult,
   type UiProcessFormEvaluatorPort,
   type UiProcessGmailPort,
+  type UiProcessGmailEventContext,
 } from '../ports';
 
 describe('WorkspaceAddonAdapter in ui-process-manager', () => {
@@ -2232,6 +2233,145 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       );
       expect(render.selectionState?.files).toEqual([]);
       warnSpy.mockRestore();
+    });
+  });
+
+  describe('Gmail attachment mapping during processDocument (Ticket #200)', () => {
+    it('maps checked attachments in SelectAttachments to activeSourceFiles preserving metadata from selectedItems', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-attachments-test',
+        },
+        selectedItems: [
+          { id: 'att-1', title: 'Invoice.pdf', mimeType: 'application/pdf' },
+          { id: 'att-2', title: 'Receipt.png', mimeType: 'image/png' },
+        ],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType: 'communication-project',
+          SelectAttachments: ['att-1'],
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+      expect(response.type).toBe('notification');
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sourceFiles: [
+            {
+              id: 'att-1',
+              name: 'Invoice.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        }),
+        'onSubmit'
+      );
+    });
+
+    it('maps checked attachments from context.gmail.messageDetails.attachments when selectedItems is empty', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-details-test',
+          messageDetails: {
+            attachments: [
+              {
+                attachmentId: 'att-x',
+                filename: 'Doc.pdf',
+                mimeType: 'application/pdf',
+              },
+            ],
+          },
+        } as unknown as UiProcessGmailEventContext,
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType: 'communication-project',
+          SelectAttachments: ['att-x'],
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+      expect(response.type).toBe('notification');
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sourceFiles: [
+            {
+              id: 'att-x',
+              name: 'Doc.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        }),
+        'onSubmit'
+      );
+    });
+
+    it('maps checked attachments to { id } fallback when metadata is not provided', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-bare-test',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType: 'communication-project',
+          SelectAttachments: ['att-bare'],
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+      expect(response.type).toBe('notification');
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sourceFiles: [
+            {
+              id: 'att-bare',
+            },
+          ],
+        }),
+        'onSubmit'
+      );
     });
   });
 });

@@ -64,6 +64,7 @@ export const SourceFileSchema = Type.Object({
   id: Type.String(),
   name: Type.Optional(Type.String()),
   mimeType: Type.Optional(Type.String()),
+  content: Type.Optional(Type.Uint8Array()),
 });
 
 export const SourceFileType = SourceFileSchema;

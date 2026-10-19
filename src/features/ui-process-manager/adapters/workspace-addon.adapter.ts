@@ -25,7 +25,9 @@ import {
   SELECT_DOCUMENT_SPACE_PREFIX,
   SELECT_DOCUMENT_TYPE_PREFIX,
   SELECT_FILE_SOURCE_KEY,
+  SELECT_ATTACHMENTS_KEY,
   INPUT_DRIVE_URL_KEY,
+  extractSelectFilesSet,
   parseGoogleDriveUrl,
   isGmailContext,
   type UiStateResolutionContext,
@@ -273,6 +275,88 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           }
           activeSourceFiles.push({ id: parsed.id, name: parsed.id });
         }
+      } else if (isGmail) {
+        const formAttachmentIds = extractSelectFilesSet(normalizedContext.formData, SELECT_ATTACHMENTS_KEY);
+        const stateCheckedIds = new Set(
+          (currentUiState.selectionState.files ?? [])
+            .filter((f) => f.selected)
+            .map((f) => f.value.trim())
+        );
+
+        let checkedIds = stateCheckedIds;
+        if (checkedIds.size === 0 && formAttachmentIds.size > 0) {
+          checkedIds = formAttachmentIds;
+        }
+        if (checkedIds.size === 0 && context.parameters?.previousAttachments) {
+          try {
+            const parsed = JSON.parse(context.parameters.previousAttachments);
+            if (Array.isArray(parsed)) {
+              checkedIds = new Set(parsed.map(String).map((s) => s.trim()));
+            }
+          } catch {
+            // ignore
+          }
+        }
+        if (checkedIds.size === 0 && context.parameters?.attachments) {
+          try {
+            const parsed = JSON.parse(context.parameters.attachments);
+            if (Array.isArray(parsed)) {
+              checkedIds = new Set(parsed.map(String).map((s) => s.trim()));
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        if (formAttachmentIds.size > 0) {
+          for (const id of formAttachmentIds) {
+            checkedIds.add(id);
+          }
+        }
+
+        const metaMap = new Map<string, { name?: string; mimeType?: string }>();
+        for (const item of normalizedContext.selectedItems ?? []) {
+          if (item?.id) {
+            metaMap.set(item.id.trim(), {
+              ...(item.title !== undefined ? { name: item.title } : {}),
+              ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
+            });
+          }
+        }
+
+        const gmailMsgDetails = (context.gmail as {
+          messageDetails?: {
+            attachments?: Array<{
+              id?: string;
+              attachmentId?: string;
+              filename?: string;
+              name?: string;
+              mimeType?: string;
+            }>;
+          };
+        } | undefined)?.messageDetails;
+
+        for (const att of gmailMsgDetails?.attachments ?? []) {
+          const attId = (att.attachmentId ?? att.id)?.trim();
+          if (attId) {
+            const existing = metaMap.get(attId) ?? {};
+            const resolvedName = att.filename ?? att.name ?? existing.name;
+            const resolvedMimeType = att.mimeType ?? existing.mimeType;
+            metaMap.set(attId, {
+              ...(resolvedName !== undefined ? { name: resolvedName } : {}),
+              ...(resolvedMimeType !== undefined ? { mimeType: resolvedMimeType } : {}),
+            });
+          }
+        }
+
+        activeSourceFiles = Array.from(checkedIds).map((id) => {
+          const meta = metaMap.get(id);
+          return {
+            id,
+            ...(meta?.name !== undefined ? { name: meta.name } : {}),
+            ...(meta?.mimeType !== undefined ? { mimeType: meta.mimeType } : {}),
+          };
+        });
       } else {
         const checkedFileIds = new Set(
           (currentUiState.selectionState.files ?? [])
