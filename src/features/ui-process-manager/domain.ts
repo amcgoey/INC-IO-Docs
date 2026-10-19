@@ -47,6 +47,13 @@ export const UiStateResolutionContextSchema = Type.Object({
 });
 export type UiStateResolutionContext = Static<typeof UiStateResolutionContextSchema>;
 
+export const UiProcessGmailEventContextSchema = Type.Object({
+  messageId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  threadId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  accessToken: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type UiProcessGmailEventContext = Static<typeof UiProcessGmailEventContextSchema>;
+
 export const ProcessUiStateEventSchema = Type.Object({
   actionName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
@@ -54,6 +61,8 @@ export const ProcessUiStateEventSchema = Type.Object({
   validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   statusMessages: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  hostApp: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  gmail: Type.Optional(Type.Union([UiProcessGmailEventContextSchema, Type.Undefined()])),
   selectedItems: Type.Optional(
     Type.Union([
       Type.Array(
@@ -90,6 +99,9 @@ export const ProcessUiStateOutputSchema = Type.Object({
   statusMessages: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
 });
 export type ProcessUiStateOutput = Static<typeof ProcessUiStateOutputSchema>;
+
+export const DRIVE_WORKSPACE_ADDON_VIEW_ID = 'drive-document-process-card';
+export const GMAIL_WORKSPACE_ADDON_VIEW_ID = 'gmail-document-process-card';
 
 export const SELECT_FILES_KEY = 'SelectFiles';
 export const SELECT_FILE_SOURCE_KEY = 'SelectFileSource';
@@ -483,8 +495,14 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     isUpdateCard = true;
   }
 
+  const isGmail =
+    context.hostApp?.toUpperCase() === 'GMAIL' || Boolean(context.gmail?.messageId);
+  const viewId = isGmail
+    ? GMAIL_WORKSPACE_ADDON_VIEW_ID
+    : DRIVE_WORKSPACE_ADDON_VIEW_ID;
+
   return {
-    viewId: 'drive-document-process-card',
+    viewId,
     documentTypeKey: currentDocTypeKey,
     ...(spaceResolution.spaceId !== undefined ? { spaceId: spaceResolution.spaceId } : {}),
     selectionState,

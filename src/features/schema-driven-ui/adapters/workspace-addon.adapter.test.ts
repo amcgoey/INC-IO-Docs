@@ -4,6 +4,8 @@ import { UiViewModel, UiViewActionSchema, type UiView } from '../domain';
 import {
   WorkspaceAddonAdapter,
   WORKSPACE_ADDON_VIEW_ID,
+  GmailWorkspaceAddonAdapter,
+  GMAIL_WORKSPACE_ADDON_VIEW_ID,
   createWorkspaceAddonViewSchema,
 } from './workspace-addon.adapter';
 import type { UiViewAdapterContext } from '../ports';
@@ -748,6 +750,99 @@ describe('WorkspaceAddonAdapter', () => {
       expect(view.id).toBe('direct-card');
       const docTypeWidget = view.sections[0].widgets[2].selectionInput;
       expect(docTypeWidget?.items?.[0].text).toBe('Resolved Form');
+      assertValidUiView(view);
+    });
+  });
+
+  describe('GmailWorkspaceAddonAdapter', () => {
+    let gmailAdapter: GmailWorkspaceAddonAdapter;
+
+    beforeEach(() => {
+      gmailAdapter = new GmailWorkspaceAddonAdapter();
+    });
+
+    it('initializes with GMAIL_WORKSPACE_ADDON_VIEW_ID and standard header', async () => {
+      expect(gmailAdapter.viewId).toBe(GMAIL_WORKSPACE_ADDON_VIEW_ID);
+      expect(gmailAdapter.viewId).toBe('gmail-document-process-card');
+
+      const view = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+      });
+
+      expect(view.id).toBe(GMAIL_WORKSPACE_ADDON_VIEW_ID);
+      expect(view.header?.title).toBe('INC-IO Engine');
+      expect(view.header?.subtitle).toBe('Process Document');
+      assertValidUiView(view);
+    });
+
+    it('renders non-collapsible file selection with SelectAttachments inputName and emptyText when no files', async () => {
+      const view = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'Invoice', value: 'invoice' }],
+          files: [],
+        },
+      });
+
+      // Section 0 is document type selection, Section 1 is file selection, Section 2 is admin
+      const fileSection = view.sections.find((s) => s.header === 'File Selection');
+      expect(fileSection).toBeDefined();
+      expect(fileSection?.collapsible).toBe(false);
+      expect(fileSection?.widgets[0].textParagraph?.text).toBe('No attachments found.');
+      assertValidUiView(view);
+    });
+
+    it('renders attachment checkboxes under SelectAttachments inputName when files are present', async () => {
+      const view = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'Invoice', value: 'invoice' }],
+          files: [
+            { text: 'contract.pdf', value: 'att-1', selected: true },
+            { text: 'invoice.pdf', value: 'att-2', selected: false },
+          ],
+        },
+      });
+
+      const fileSection = view.sections.find((s) => s.header === 'File Selection');
+      expect(fileSection).toBeDefined();
+      expect(fileSection?.collapsible).toBe(false);
+      const widget = fileSection?.widgets[0].selectionInput;
+      expect(widget).toBeDefined();
+      expect(widget?.name).toBe('SelectAttachments');
+      expect(widget?.type).toBe('CHECK_BOX');
+      expect(widget?.items).toEqual([
+        { text: 'contract.pdf', value: 'att-1', selected: true },
+        { text: 'invoice.pdf', value: 'att-2', selected: false },
+      ]);
+      assertValidUiView(view);
+    });
+
+    it('resolves document type display names via injected displayNameResolver', async () => {
+      const mockResolver = {
+        getDisplayName: vi.fn().mockImplementation(async (key: string) => {
+          if (key === 'communication-project') return 'Project Communication';
+          return undefined;
+        }),
+      };
+
+      const adapterWithResolver = new GmailWorkspaceAddonAdapter(mockResolver);
+      const view = await adapterWithResolver.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        selectionState: {
+          spaceTypes: [{ text: 'Projects', value: 'projects' }],
+          spaces: [],
+          documentTypes: [{ text: 'communication-project', value: 'communication-project' }],
+        },
+      });
+
+      expect(mockResolver.getDisplayName).toHaveBeenCalledWith('communication-project');
+      const docTypeWidget = view.sections[0].widgets[2].selectionInput;
+      expect(docTypeWidget?.items?.[0].text).toBe('Project Communication');
       assertValidUiView(view);
     });
   });

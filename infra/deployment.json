@@ -2,6 +2,8 @@
   "oauthScopes": [
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/drive.addons.metadata.readonly",
+    "https://www.googleapis.com/auth/gmail.addons.execute",
+    "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/userinfo.email"
   ],
   "addOns": {
@@ -19,6 +21,14 @@
       "onItemsSelectedTrigger": {
         "runFunction": "https://example.ngrok-free.app/workspace/drive-items-selected"
       }
+    },
+    "gmail": {
+      "contextualTriggers": [
+        {
+          "unconditional": {},
+          "onTriggerFunction": "https://example.ngrok-free.app/workspace/gmail-contextual"
+        }
+      ]
     }
   }
 }

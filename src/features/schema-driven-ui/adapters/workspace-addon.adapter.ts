@@ -13,6 +13,7 @@ import {
 } from '../blocks';
 
 export const WORKSPACE_ADDON_VIEW_ID = 'drive-document-process-card';
+export const GMAIL_WORKSPACE_ADDON_VIEW_ID = 'gmail-document-process-card';
 
 export type SectionProducer = (context: UiViewAdapterContext) => UiViewSection | undefined;
 
@@ -169,6 +170,31 @@ export class WorkspaceAddonAdapter implements UiViewSchemaAdapterPort {
       fileSelectionConfig: (context) =>
         context.selectionState
           ? buildFileSelectionSection(context.selectionState)
+          : undefined,
+    });
+  }
+
+  composeView(context: UiViewAdapterContext): Promise<UiView> | UiView {
+    return this.composer(context, this.displayNameResolver);
+  }
+}
+
+export class GmailWorkspaceAddonAdapter implements UiViewSchemaAdapterPort {
+  public readonly viewId = GMAIL_WORKSPACE_ADDON_VIEW_ID;
+  private readonly composer: WorkspaceAddonViewComposer;
+
+  constructor(
+    private readonly displayNameResolver?: DocumentTypeDisplayNameResolverPort
+  ) {
+    this.composer = createWorkspaceAddonViewSchema({
+      viewId: this.viewId,
+      fileSelectionConfig: (ctx) =>
+        ctx.selectionState
+          ? buildFileSelectionSection(ctx.selectionState.files, {
+              collapsible: false,
+              inputName: 'SelectAttachments',
+              emptyText: 'No attachments found.',
+            })
           : undefined,
     });
   }

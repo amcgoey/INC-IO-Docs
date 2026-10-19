@@ -307,4 +307,108 @@ describe('Workspace Add-on Infrastructure API', () => {
       expect(body.action.notification.text).toBe('Document processed successfully');
     });
   });
+
+  describe('POST /workspace/gmail-contextual', () => {
+    it('returns 401 Unauthorized if authorization header is missing', async () => {
+      const server = createHttpServer();
+      registerWorkspaceAddonRoutes(server, {
+        authVerifier: mockAuthVerifier,
+        uiOrchestrator: mockUiOrchestrator,
+      });
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/workspace/gmail-contextual',
+      });
+
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.payload);
+      expect(body.error).toBe('Unauthorized');
+      expect(body.message).toBe('Authorization header missing');
+    });
+
+    it('returns 401 Unauthorized if token is invalid', async () => {
+      const server = createHttpServer();
+      registerWorkspaceAddonRoutes(server, {
+        authVerifier: mockAuthVerifier,
+        uiOrchestrator: mockUiOrchestrator,
+      });
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/workspace/gmail-contextual',
+        headers: {
+          authorization: 'Bearer invalid-token',
+        },
+      });
+
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.payload);
+      expect(body.error).toBe('Unauthorized');
+      expect(body.message).toBe('Invalid token signature');
+    });
+
+    it('delegates to uiOrchestrator with extracted gmail context when valid token provided', async () => {
+      const server = createHttpServer();
+      registerWorkspaceAddonRoutes(server, {
+        authVerifier: mockAuthVerifier,
+        uiOrchestrator: mockUiOrchestrator,
+      });
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/workspace/gmail-contextual',
+        headers: {
+          authorization: 'Bearer valid-token',
+        },
+        payload: {
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-123',
+            threadId: 'th-456',
+            accessToken: 'gmail-token',
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockUiOrchestrator.processUiEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-123',
+            threadId: 'th-456',
+            accessToken: 'gmail-token',
+          },
+          userOAuthToken: 'gmail-token',
+        })
+      );
+    });
+
+    it('returns fallback error card on handler exception', async () => {
+      const server = createHttpServer();
+      const failingOrchestrator: WorkspaceUiOrchestratorPort = {
+        processUiEvent: vi.fn().mockRejectedValue(new Error('Gmail failure')),
+      };
+
+      registerWorkspaceAddonRoutes(server, {
+        authVerifier: mockAuthVerifier,
+        uiOrchestrator: failingOrchestrator,
+      });
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/workspace/gmail-contextual',
+        headers: {
+          authorization: 'Bearer valid-token',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.action.navigations[0].pushCard.sections[0].widgets[0].textParagraph.text).toContain(
+        'Gmail failure'
+      );
+    });
+  });
 });

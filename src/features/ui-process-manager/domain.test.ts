@@ -18,6 +18,8 @@ import {
   extractSelectFilesSet,
   ResolveSpaceResultSchema,
   UiProcessSpaceItemSchema,
+  DRIVE_WORKSPACE_ADDON_VIEW_ID,
+  GMAIL_WORKSPACE_ADDON_VIEW_ID,
   type ProcessUiStateInput,
 } from './domain';
 import {
@@ -1634,6 +1636,60 @@ describe('ui-process-manager domain', () => {
             const refreshState = evaluateProcessUiState(refreshInput);
             expect(refreshState.formData.SelectFiles).toBeUndefined();
           });
+        });
+      });
+
+      describe('hostApp and Gmail view routing', () => {
+        it('routes to DRIVE_WORKSPACE_ADDON_VIEW_ID by default when hostApp is absent', () => {
+          const input: ProcessUiStateInput = {
+            context: {},
+            spaceTypes: sampleSpaceTypes,
+            spaces: [],
+          };
+          const state = evaluateProcessUiState(input);
+          expect(state.viewId).toBe(DRIVE_WORKSPACE_ADDON_VIEW_ID);
+          expect(state.viewId).toBe('drive-document-process-card');
+        });
+
+        it('routes to DRIVE_WORKSPACE_ADDON_VIEW_ID when hostApp is DRIVE', () => {
+          const input: ProcessUiStateInput = {
+            context: { hostApp: 'DRIVE' },
+            spaceTypes: sampleSpaceTypes,
+            spaces: [],
+          };
+          const state = evaluateProcessUiState(input);
+          expect(state.viewId).toBe(DRIVE_WORKSPACE_ADDON_VIEW_ID);
+        });
+
+        it('routes to GMAIL_WORKSPACE_ADDON_VIEW_ID when hostApp is GMAIL (case-insensitive)', () => {
+          const upperInput: ProcessUiStateInput = {
+            context: { hostApp: 'GMAIL' },
+            spaceTypes: sampleSpaceTypes,
+            spaces: [],
+          };
+          expect(evaluateProcessUiState(upperInput).viewId).toBe(GMAIL_WORKSPACE_ADDON_VIEW_ID);
+
+          const lowerInput: ProcessUiStateInput = {
+            context: { hostApp: 'gmail' },
+            spaceTypes: sampleSpaceTypes,
+            spaces: [],
+          };
+          expect(evaluateProcessUiState(lowerInput).viewId).toBe(GMAIL_WORKSPACE_ADDON_VIEW_ID);
+          expect(evaluateProcessUiState(lowerInput).viewId).toBe('gmail-document-process-card');
+        });
+
+        it('routes to GMAIL_WORKSPACE_ADDON_VIEW_ID when context.gmail.messageId is present even without hostApp', () => {
+          const input: ProcessUiStateInput = {
+            context: {
+              gmail: {
+                messageId: 'msg-abc-123',
+              },
+            },
+            spaceTypes: sampleSpaceTypes,
+            spaces: [],
+          };
+          const state = evaluateProcessUiState(input);
+          expect(state.viewId).toBe(GMAIL_WORKSPACE_ADDON_VIEW_ID);
         });
       });
     });

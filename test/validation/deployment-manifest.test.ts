@@ -8,6 +8,11 @@ export const WorkspaceTriggerSchema = Type.Object({
   runFunction: Type.String({ minLength: 1 }),
 });
 
+export const GmailTriggerSchema = Type.Object({
+  unconditional: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  onTriggerFunction: Type.String({ minLength: 1 }),
+});
+
 export const DeploymentManifestSchema = Type.Object({
   oauthScopes: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
   addOns: Type.Object({
@@ -20,6 +25,11 @@ export const DeploymentManifestSchema = Type.Object({
       Type.Object({
         homepageTrigger: Type.Optional(WorkspaceTriggerSchema),
         onItemsSelectedTrigger: Type.Optional(WorkspaceTriggerSchema),
+      })
+    ),
+    gmail: Type.Optional(
+      Type.Object({
+        contextualTriggers: Type.Optional(Type.Array(GmailTriggerSchema)),
       })
     ),
   }),
@@ -48,10 +58,12 @@ describe('Google Workspace Add-on Deployment Manifest', () => {
     const typed = manifest as DeploymentManifest;
     expect(typed.oauthScopes).toContain('https://www.googleapis.com/auth/drive');
     expect(typed.oauthScopes).toContain('https://www.googleapis.com/auth/drive.addons.metadata.readonly');
+    expect(typed.oauthScopes).toContain('https://www.googleapis.com/auth/gmail.addons.execute');
+    expect(typed.oauthScopes).toContain('https://www.googleapis.com/auth/gmail.readonly');
     expect(typed.oauthScopes).toContain('https://www.googleapis.com/auth/userinfo.email');
   });
 
-  it('should configure valid HTTPS triggers for common and drive integration', () => {
+  it('should configure valid HTTPS triggers for common, drive, and gmail integration', () => {
     const typed = manifest as DeploymentManifest;
     expect(typed.addOns.common.name).toBe('INC-IO Docs');
     expect(typed.addOns.common.logoUrl).toMatch(/^https:\/\//);
@@ -59,5 +71,7 @@ describe('Google Workspace Add-on Deployment Manifest', () => {
 
     expect(typed.addOns.drive?.homepageTrigger?.runFunction).toMatch(/^https:\/\//);
     expect(typed.addOns.drive?.onItemsSelectedTrigger?.runFunction).toMatch(/^https:\/\//);
+
+    expect(typed.addOns.gmail?.contextualTriggers?.[0]?.onTriggerFunction).toMatch(/^https:\/\//);
   });
 });

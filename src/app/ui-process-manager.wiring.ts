@@ -229,12 +229,13 @@ export function createUiProcessRequestWrapper(
       formData: context.formData,
       parameters: context.parameters,
       validationErrors: context.validationErrors,
+      hostApp: context.hostApp,
+      gmail: context.gmail,
       selectedItems: context.selectedItems?.map((item) => ({
         id: item.id,
         ...(item.title !== undefined ? { title: item.title } : {}),
         ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
       })),
-
     };
 
     const intent: UiProcessResult = await orchestratorInstance.processUiEvent(eventContext);

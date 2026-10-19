@@ -68,6 +68,7 @@ export class AppInfrastructure extends pulumi.ComponentResource {
       "drive.googleapis.com",
       "appsmarket.googleapis.com",
       "gsuiteaddons.googleapis.com",
+      "gmail.googleapis.com",
     ];
 
     const enabledApis = requiredApis.map(
