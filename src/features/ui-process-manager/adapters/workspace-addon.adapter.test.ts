@@ -759,6 +759,197 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       });
     });
 
+    it('in Gmail context with SelectFileSource = "Google Drive URL" and valid file URL, appends parsed file to activeSourceFiles and calls documentRunner', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const driveUrl = 'https://drive.google.com/file/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/view?usp=sharing';
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-123',
+          threadId: 'th-123',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Main',
+          SelectDocumentType: 'communication-project',
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: driveUrl,
+          contact: 'Acme Corp',
+          date: '260920',
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledTimes(1);
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'communication-project',
+          sourceFiles: [
+            {
+              id: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms',
+              name: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms',
+            },
+          ],
+        }),
+        'onSubmit'
+      );
+      expect(response).toEqual({
+        type: 'notification',
+        text: 'Document processed successfully',
+      });
+    });
+
+    it('in Gmail context with SelectFileSource = "Google Drive URL" and valid folder URL, appends parsed folder to activeSourceFiles', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const folderUrl = 'https://drive.google.com/drive/u/1/folders/1ABC_xyz-789?usp=drive_link';
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-123',
+          threadId: 'th-123',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Main',
+          SelectDocumentType: 'communication-project',
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: folderUrl,
+          contact: 'Acme Corp',
+          date: '260920',
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledTimes(1);
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'communication-project',
+          sourceFiles: [
+            {
+              id: '1ABC_xyz-789',
+              name: '1ABC_xyz-789',
+            },
+          ],
+        }),
+        'onSubmit'
+      );
+      expect(response).toEqual({
+        type: 'notification',
+        text: 'Document processed successfully',
+      });
+    });
+
+    it('in Gmail context with SelectFileSource = "Google Drive URL" and invalid URL, aborts submission immediately and preserves user form inputs', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-123',
+          threadId: 'th-123',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Main',
+          SelectDocumentType: 'communication-project',
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: 'https://dropbox.com/s/invalid-file',
+          contact: 'Acme Corp',
+          date: '260920',
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
+      expect(response).toMatchObject({
+        type: 'render',
+        isUpdateCard: true,
+        validationErrors: [
+          'Invalid Google Drive URL. Please enter a valid Google Drive file or folder link.',
+        ],
+        formData: expect.objectContaining({
+          contact: 'Acme Corp',
+          date: '260920',
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: 'https://dropbox.com/s/invalid-file',
+        }),
+      });
+    });
+
+    it('in Gmail context with SelectFileSource = "Google Drive URL" and blank InputDriveURL, falls through to zero-file policy check', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-123',
+          threadId: 'th-123',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Main',
+          SelectDocumentType: 'invoice-project', // allowEmptySourceFiles is false
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: '   ',
+          contact: 'Acme Corp',
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
+      expect(response).toMatchObject({
+        type: 'render',
+        isUpdateCard: true,
+        validationErrors: ['Please select at least one file to process or enable Save Email to PDF.'],
+      });
+    });
+
     it('filters active sourceFiles to only checked items and passes them to documentRunner preserving mimeType', async () => {
       const mockDocumentRunner = {
         processDocument: vi.fn().mockResolvedValue({ success: true }),

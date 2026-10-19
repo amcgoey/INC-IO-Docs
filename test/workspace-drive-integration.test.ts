@@ -1311,7 +1311,11 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(updateCard).toBeDefined();
 
       const errorSection = updateCard.sections.find((s: { widgets?: Array<{ textParagraph?: { text?: string } }> }) =>
-        s.widgets?.some((w) => w.textParagraph?.text?.includes('Drive service error (403) in move'))
+        s.widgets?.some(
+          (w) =>
+            w.textParagraph?.text?.includes('Access denied. You do not have permission to access this Google Drive file or folder.') ||
+            w.textParagraph?.text?.includes('Drive service error (403) in move')
+        )
       );
       expect(errorSection).toBeDefined();
     });
@@ -1777,7 +1781,11 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(updateCard).toBeDefined();
 
       const errorSection = updateCard.sections.find((s: { widgets?: Array<{ textParagraph?: { text?: string } }> }) =>
-        s.widgets?.some((w) => w.textParagraph?.text?.includes('Drive service error (403) in move'))
+        s.widgets?.some(
+          (w) =>
+            w.textParagraph?.text?.includes('Access denied. You do not have permission to access this Google Drive file or folder.') ||
+            w.textParagraph?.text?.includes('Drive service error (403) in move')
+        )
       );
       expect(errorSection).toBeDefined();
       expect(nock.isDone()).toBe(true);

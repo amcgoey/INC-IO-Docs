@@ -24,6 +24,9 @@ import {
   SELECT_DOCUMENT_TYPE_KEY,
   SELECT_DOCUMENT_SPACE_PREFIX,
   SELECT_DOCUMENT_TYPE_PREFIX,
+  SELECT_FILE_SOURCE_KEY,
+  INPUT_DRIVE_URL_KEY,
+  parseGoogleDriveUrl,
   isGmailContext,
   type UiStateResolutionContext,
   type UiProcessSpaceItem,
@@ -248,24 +251,48 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         spaces,
       });
 
-      const checkedFileIds = new Set(
-        (currentUiState.selectionState.files ?? [])
-          .filter((f) => f.selected)
-          .map((f) => f.value.trim())
-      );
+      const isGmail = isGmailContext(normalizedContext);
+      const isDriveUrlSource =
+        isGmail &&
+        (normalizedContext.formData?.[SELECT_FILE_SOURCE_KEY] === 'Google Drive URL' ||
+          currentUiState.formData[SELECT_FILE_SOURCE_KEY] === 'Google Drive URL');
 
-      const validSelectedItems = (normalizedContext.selectedItems ?? []).filter(
-        (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
-          typeof item?.id === 'string' && item.id.trim().length > 0
-      );
+      let activeSourceFiles: UiProcessSourceFileDto[] = [];
 
-      const activeSourceFiles: UiProcessSourceFileDto[] = validSelectedItems
-        .filter((item) => checkedFileIds.has(item.id.trim()))
-        .map((item) => ({
-          id: item.id,
-          ...(item.title !== undefined ? { name: item.title } : {}),
-          ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
-        }));
+      if (isDriveUrlSource) {
+        const rawDriveUrl =
+          (normalizedContext.formData?.[INPUT_DRIVE_URL_KEY] ??
+            currentUiState.formData[INPUT_DRIVE_URL_KEY]) as string | undefined;
+        const driveUrl = typeof rawDriveUrl === 'string' ? rawDriveUrl.trim() : '';
+        if (driveUrl.length > 0) {
+          const parsed = parseGoogleDriveUrl(driveUrl);
+          if (!parsed) {
+            return createErrorRenderResult([
+              'Invalid Google Drive URL. Please enter a valid Google Drive file or folder link.',
+            ]);
+          }
+          activeSourceFiles.push({ id: parsed.id, name: parsed.id });
+        }
+      } else {
+        const checkedFileIds = new Set(
+          (currentUiState.selectionState.files ?? [])
+            .filter((f) => f.selected)
+            .map((f) => f.value.trim())
+        );
+
+        const validSelectedItems = (normalizedContext.selectedItems ?? []).filter(
+          (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
+            typeof item?.id === 'string' && item.id.trim().length > 0
+        );
+
+        activeSourceFiles = validSelectedItems
+          .filter((item) => checkedFileIds.has(item.id.trim()))
+          .map((item) => ({
+            id: item.id,
+            ...(item.title !== undefined ? { name: item.title } : {}),
+            ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
+          }));
+      }
 
       let allowEmptySourceFiles = false;
       if (resolvedDocumentTypeKey && manifestPort) {

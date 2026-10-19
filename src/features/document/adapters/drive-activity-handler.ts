@@ -34,6 +34,38 @@ export function parsePathSegments(path: string): string[] {
   return segments;
 }
 
+function isAccessDeniedError(error: unknown): boolean {
+  if (typeof error === 'object' && error !== null) {
+    const err = error as { statusCode?: unknown; status?: unknown; code?: unknown; message?: unknown };
+    if (err.statusCode === 403 || err.status === 403 || err.code === 403) {
+      return true;
+    }
+    if (typeof err.message === 'string' && /403|insufficient permissions|access denied/i.test(err.message)) {
+      return true;
+    }
+  }
+  if (typeof error === 'string' && /403|insufficient permissions|access denied/i.test(error)) {
+    return true;
+  }
+  return false;
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  if (error instanceof FileNotFoundError) {
+    return true;
+  }
+  if (typeof error === 'object' && error !== null) {
+    const err = error as { name?: unknown; message?: unknown; statusCode?: unknown; status?: unknown };
+    if (err.name === 'FileNotFoundError' || err.statusCode === 404 || err.status === 404) {
+      return true;
+    }
+    if (typeof err.message === 'string' && (err.message.includes('FileNotFoundError') || /404|file not found/i.test(err.message))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export class DriveActivityHandler implements ActivityHandler {
   private readonly options: DriveActivityHandlerOptions;
   private readonly sourceFiles?: SourceFile[] | undefined;
@@ -369,6 +401,22 @@ export class DriveActivityHandler implements ActivityHandler {
         };
         movedFiles.push(fileLocator);
       } catch (error) {
+        if (isFileNotFoundError(error)) {
+          return {
+            success: false,
+            error: 'The specified Google Drive file or folder was not found.',
+            files: movedFiles,
+          };
+        }
+
+        if (isAccessDeniedError(error)) {
+          return {
+            success: false,
+            error: 'Access denied. You do not have permission to access this Google Drive file or folder.',
+            files: movedFiles,
+          };
+        }
+
         const errorMessage = error instanceof Error ? error.message : String(error);
         return {
           success: false,

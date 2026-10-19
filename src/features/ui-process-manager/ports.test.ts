@@ -15,6 +15,7 @@ import {
   SAVE_EMAIL_TO_PDF_KEY,
   EPHEMERAL_UI_SELECTION_KEYS,
   isSelectionKey,
+  parseGoogleDriveUrl,
   extractSelectFilesSet,
 } from './ports';
 
@@ -187,6 +188,7 @@ describe('UI Process Manager Ports & DTOs', () => {
       expect(EPHEMERAL_UI_SELECTION_KEYS).toBeInstanceOf(Set);
       expect(EPHEMERAL_UI_SELECTION_KEYS.size).toBe(5);
       expect(typeof isSelectionKey).toBe('function');
+      expect(typeof parseGoogleDriveUrl).toBe('function');
       expect(typeof extractSelectFilesSet).toBe('function');
     });
   });
