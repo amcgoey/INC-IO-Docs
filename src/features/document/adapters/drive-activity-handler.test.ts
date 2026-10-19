@@ -1049,6 +1049,186 @@ describe('DriveActivityHandler', () => {
         });
       });
     });
+
+    describe('Binary SourceFile filing via saveBuffer (Ticket #200)', () => {
+      it('saves binary sourceFile content using driveService.saveBuffer into leafFolder preserving name and mimeType', async () => {
+        const binaryContent = new Uint8Array([1, 2, 3, 4]);
+        const binaryHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [
+            {
+              id: 'att-1',
+              name: 'Invoice.pdf',
+              mimeType: 'application/pdf',
+              content: binaryContent,
+            },
+          ],
+        });
+
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'target-folder-id',
+          name: 'Target Folder',
+        });
+        (mockDriveService.saveBuffer as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'drive-file-new-1',
+          name: 'Invoice.pdf',
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/drive-file-new-1/view',
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-storage-id',
+            folderName: 'Target Folder',
+          },
+        };
+
+        const result = await binaryHandler.handle(activity);
+
+        expect(mockDriveService.saveBuffer).toHaveBeenCalledWith(binaryContent, {
+          action: 'create',
+          targetFolderId: 'target-folder-id',
+          name: 'Invoice.pdf',
+          mimeType: 'application/pdf',
+        });
+        expect(mockDriveService.move).not.toHaveBeenCalled();
+        expect(result).toEqual({
+          success: true,
+          files: [
+            {
+              id: 'drive-file-new-1',
+              name: 'Invoice.pdf',
+              parentName: 'Target Folder',
+              mimeType: 'application/pdf',
+              uri: 'https://drive.google.com/file/d/drive-file-new-1/view',
+            },
+          ],
+        });
+      });
+
+      it('falls back to sourceFile.id if sourceFile.name is undefined when calling saveBuffer', async () => {
+        const binaryContent = new Uint8Array([5, 6, 7]);
+        const binaryHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [
+            {
+              id: 'att-unnamed',
+              mimeType: 'image/png',
+              content: binaryContent,
+            },
+          ],
+        });
+
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'target-folder-id',
+          name: 'Target Folder',
+        });
+        (mockDriveService.saveBuffer as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'drive-file-new-2',
+          name: 'att-unnamed',
+          mimeType: 'image/png',
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-storage-id',
+            folderName: 'Target Folder',
+          },
+        };
+
+        const result = await binaryHandler.handle(activity);
+
+        expect(mockDriveService.saveBuffer).toHaveBeenCalledWith(binaryContent, {
+          action: 'create',
+          targetFolderId: 'target-folder-id',
+          name: 'att-unnamed',
+          mimeType: 'image/png',
+        });
+        expect(result.files).toHaveLength(1);
+        expect(result.files?.[0].uri).toBe('');
+      });
+
+      it('does NOT call getFile().parents when resolving startingId if targetSourceFiles[0] has binary content', async () => {
+        const binaryHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [
+            {
+              id: 'att-binary-no-parent',
+              name: 'Invoice.pdf',
+              content: new Uint8Array([1, 2]),
+            },
+          ],
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            folderName: 'Target Folder',
+          },
+        };
+
+        await expect(binaryHandler.handle(activity)).rejects.toThrow(
+          'DriveActivityHandler: Cannot create destination folder for zero-file filing because rootStorageId is missing or unresolved in activity payload'
+        );
+        expect(mockDriveService.getFile).not.toHaveBeenCalled();
+      });
+
+      it('handles mixed source files saving binary files via saveBuffer and moving Drive items via move', async () => {
+        const binaryContent = new Uint8Array([9, 9]);
+        const mixedHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [
+            {
+              id: 'att-binary',
+              name: 'Attachment.pdf',
+              mimeType: 'application/pdf',
+              content: binaryContent,
+            },
+            {
+              id: 'drive-item-123',
+              name: 'ExistingDoc.docx',
+            },
+          ],
+        });
+
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'target-folder-id',
+          name: 'Target Folder',
+        });
+        (mockDriveService.saveBuffer as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'drive-saved-1',
+          name: 'Attachment.pdf',
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/drive-saved-1/view',
+        });
+        (mockDriveService.move as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'drive-item-123',
+          name: 'ExistingDoc.docx',
+          mimeType: 'application/vnd.google-apps.document',
+          webViewLink: 'https://drive.google.com/file/d/drive-item-123/view',
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-storage-id',
+            folderName: 'Target Folder',
+          },
+        };
+
+        const result = await mixedHandler.handle(activity);
+
+        expect(mockDriveService.saveBuffer).toHaveBeenCalledWith(binaryContent, {
+          action: 'create',
+          targetFolderId: 'target-folder-id',
+          name: 'Attachment.pdf',
+          mimeType: 'application/pdf',
+        });
+        expect(mockDriveService.move).toHaveBeenCalledWith('drive-item-123', 'target-folder-id');
+        expect(result.success).toBe(true);
+        expect(result.files).toHaveLength(2);
+        expect(result.files?.[0].id).toBe('drive-saved-1');
+        expect(result.files?.[1].id).toBe('drive-item-123');
+      });
+    });
   });
 });
 

@@ -102,6 +102,7 @@ export function createDocumentServiceFactory(
             id: file.id,
             ...(file.name !== undefined ? { name: file.name } : {}),
             ...(file.mimeType !== undefined ? { mimeType: file.mimeType } : {}),
+            ...(file.content !== undefined ? { content: file.content } : {}),
           }))
         : context.selectedItems?.map((item) => ({
             id: item.id,

@@ -139,6 +139,7 @@ export const UiProcessSourceFileDtoSchema = Type.Object({
   id: Type.String(),
   name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  content: Type.Optional(Type.Union([Type.Uint8Array(), Type.Undefined()])),
 });
 export type UiProcessSourceFileDto = Static<typeof UiProcessSourceFileDtoSchema>;
 

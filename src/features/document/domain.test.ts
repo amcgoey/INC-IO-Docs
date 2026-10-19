@@ -238,6 +238,20 @@ describe('Document domain', () => {
       mimeType: true,
     };
     expect(Value.Check(SourceFileSchema, invalidMimeType)).toBe(false);
+
+    const binarySourceFile = {
+      id: 'att-123',
+      name: 'Invoice.pdf',
+      mimeType: 'application/pdf',
+      content: new Uint8Array([1, 2, 3]),
+    };
+    expect(Value.Check(SourceFileSchema, binarySourceFile)).toBe(true);
+
+    const invalidContentSourceFile = {
+      id: 'att-123',
+      content: 'not a Uint8Array',
+    };
+    expect(Value.Check(SourceFileSchema, invalidContentSourceFile)).toBe(false);
   });
 
   it('should export ActivityOutputType schema and validate valid and invalid outputs', () => {

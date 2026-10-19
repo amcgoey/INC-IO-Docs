@@ -341,7 +341,7 @@ export class DriveActivityHandler implements ActivityHandler {
     let startingId: string;
     if (rootStorageId) {
       startingId = rootStorageId;
-    } else if (targetSourceFiles.length > 0) {
+    } else if (targetSourceFiles.length > 0 && !(targetSourceFiles[0].content instanceof Uint8Array)) {
       startingId =
         (await this.driveService.getFile(targetSourceFiles[0].id)).parents?.[0] ??
         'root';
@@ -375,31 +375,49 @@ export class DriveActivityHandler implements ActivityHandler {
     const movedFiles: FileLocator[] = [];
     for (const sourceFile of targetSourceFiles) {
       try {
-        const movedFile = await this.driveService.move(sourceFile.id, leafFolder.id);
+        if (sourceFile.content instanceof Uint8Array) {
+          const file = await this.driveService.saveBuffer(sourceFile.content, {
+            action: 'create',
+            targetFolderId: leafFolder.id,
+            name: sourceFile.name || sourceFile.id,
+            ...(sourceFile.mimeType !== undefined ? { mimeType: sourceFile.mimeType } : {}),
+          });
+          const resolvedMimeType = file.mimeType ?? sourceFile.mimeType;
+          const fileLocator: FileLocator = {
+            id: file.id,
+            name: file.name,
+            parentName: leafFolder.name,
+            ...(resolvedMimeType !== undefined ? { mimeType: resolvedMimeType } : {}),
+            uri: file.webViewLink ?? '',
+          };
+          movedFiles.push(fileLocator);
+        } else {
+          const movedFile = await this.driveService.move(sourceFile.id, leafFolder.id);
 
-        let uri = movedFile.webViewLink;
-        let mimeType = movedFile.mimeType;
-        let name = movedFile.name;
+          let uri = movedFile.webViewLink;
+          let mimeType = movedFile.mimeType;
+          let name = movedFile.name;
 
-        if (!uri || !name) {
-          try {
-            const fileMeta = await this.driveService.getFile(sourceFile.id);
-            uri = uri ?? fileMeta.webViewLink;
-            mimeType = mimeType ?? fileMeta.mimeType;
-            name = name || fileMeta.name;
-          } catch {
-            // Ignore
+          if (!uri || !name) {
+            try {
+              const fileMeta = await this.driveService.getFile(sourceFile.id);
+              uri = uri ?? fileMeta.webViewLink;
+              mimeType = mimeType ?? fileMeta.mimeType;
+              name = name || fileMeta.name;
+            } catch {
+              // Ignore
+            }
           }
-        }
 
-        const fileLocator: FileLocator = {
-          id: movedFile.id,
-          name: name || sourceFile.name || '',
-          parentName: leafFolder.name,
-          ...(mimeType ? { mimeType } : {}),
-          ...(uri ? { uri } : {}),
-        };
-        movedFiles.push(fileLocator);
+          const fileLocator: FileLocator = {
+            id: movedFile.id,
+            name: name || sourceFile.name || '',
+            parentName: leafFolder.name,
+            ...(mimeType ? { mimeType } : {}),
+            ...(uri ? { uri } : {}),
+          };
+          movedFiles.push(fileLocator);
+        }
       } catch (error) {
         if (isFileNotFoundError(error)) {
           return {

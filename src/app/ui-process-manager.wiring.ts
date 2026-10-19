@@ -36,6 +36,17 @@ import type { FormChangeEvaluatorFn as FormChangeEvaluator } from '../features/u
 import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
 import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
+import { GmailSourceFileHydrator } from './gmail-source-file-hydrator';
+import {
+  formatValidationErrors,
+} from '../features/document/domain';
+import type {
+  CompiledSchemaRegistryPort,
+  DocumentSchemaRegistryPort,
+  DocumentDynamicValidationPort,
+  DynamicValidationMessageFormatter,
+  DynamicValidationQuery,
+} from '../features/document/ports';
 
 export function resolveActionRoute(route: string, baseUrl?: string): string {
   try {
@@ -201,6 +212,10 @@ export interface UiProcessManagerWiringOptions {
   driveClient?: GoogleDriveClient | undefined;
   gmailClient?: GoogleGmailClient | undefined;
   gmailPort?: UiProcessGmailPort | undefined;
+  compiledSchemaRegistry?: CompiledSchemaRegistryPort | undefined;
+  documentSchemaRegistry?: DocumentSchemaRegistryPort | undefined;
+  dynamicValidator?: DocumentDynamicValidationPort | undefined;
+  validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
 }
 
 export type UiProcessOrchestratorResolver = (
@@ -377,10 +392,109 @@ export function createUiProcessManagerWiring(
     };
   }
 
+  const compiledSchemaRegistry = options.compiledSchemaRegistry;
+  const documentSchemaRegistry = options.documentSchemaRegistry;
+
+  const gmailClient = options.gmailClient ?? new GoogleGmailClient();
+  const hydrator = new GmailSourceFileHydrator(gmailClient);
+
+  const preValidateDocument = async (
+    type: string,
+    data: Record<string, unknown>,
+    space?: UiProcessDocumentSpaceDto
+  ): Promise<{ success: boolean; errors?: string[] }> => {
+    if (compiledSchemaRegistry) {
+      await compiledSchemaRegistry.initialize();
+      const compiled = compiledSchemaRegistry.get(type);
+      if (compiled && !compiled.Check(data)) {
+        const errors = formatValidationErrors(compiled.Schema(), data);
+        return {
+          success: false,
+          errors: errors.length > 0 ? errors : ['Invalid document data payload'],
+        };
+      }
+    }
+
+    if (options.dynamicValidator && documentSchemaRegistry) {
+      const docTypes = await documentSchemaRegistry.loadAll();
+      const documentType = docTypes.find((dt) => dt.key === type);
+      if (documentType) {
+        const dynamicQueries: DynamicValidationQuery[] = [];
+        for (const field of documentType.documentSchema.fields) {
+          if (field.options && 'dynamicConfig' in field.options && field.options.dynamicConfig) {
+            const dynamicOption = field.options;
+            const rawValue = data[field.key];
+            const valuesToValidate: string[] = [];
+            const normalizedValues = Array.isArray(rawValue) ? rawValue : [rawValue];
+            for (const item of normalizedValues) {
+              if (typeof item === 'string') {
+                valuesToValidate.push(item);
+              }
+            }
+
+            valuesToValidate.forEach((val, index) => {
+              const queryId = valuesToValidate.length > 1 ? `${field.key}_${index}` : field.key;
+              dynamicQueries.push({
+                sourceKey: dynamicOption.source,
+                config: dynamicOption.dynamicConfig as Record<string, unknown>,
+                valueToValidate: val,
+                queryId,
+                ...(dynamicOption.allowUserInput !== undefined
+                  ? { allowUserInput: dynamicOption.allowUserInput }
+                  : {}),
+              });
+            });
+          }
+        }
+
+        if (dynamicQueries.length > 0) {
+          const spaceId = space?.abstractStorageId ?? space?.id;
+          const validationResults = await options.dynamicValidator.validateExistence(dynamicQueries, {
+            ...(spaceId !== undefined ? { spaceId } : {}),
+            formData: data,
+          });
+
+          const dynamicErrors: string[] = [];
+          for (const query of dynamicQueries) {
+            const result = validationResults[query.queryId] ?? validationResults[query.sourceKey];
+            if (!result || !result.isValid) {
+              if (result?.errorMessage !== undefined) {
+                dynamicErrors.push(result.errorMessage);
+              } else if (result?.status !== undefined && options.validationMessageFormatter) {
+                dynamicErrors.push(options.validationMessageFormatter(result.status, result.targetPath));
+              } else if (result?.status === 'timeout') {
+                dynamicErrors.push('Validation timed out.');
+              } else {
+                dynamicErrors.push('Option not found.');
+              }
+            }
+          }
+
+          if (dynamicErrors.length > 0) {
+            return {
+              success: false,
+              errors: dynamicErrors,
+            };
+          }
+        }
+      }
+    }
+
+    return { success: true };
+  };
+
   const fallbackDocumentRunner: UiProcessDocumentRunnerPort | undefined = options.documentService
     ? {
         processDocument: async (payload, eventName) => {
           const space = toStructuredDocumentSpace(payload.space);
+          const preValidation = await preValidateDocument(payload.type, payload.data, space);
+          if (!preValidation.success) {
+            return {
+              success: false,
+              errors: preValidation.errors,
+            };
+          }
+
           return options.documentService!.processDocument(
             {
               type: payload.type,
@@ -390,11 +504,9 @@ export function createUiProcessManagerWiring(
             eventName
           );
         },
-
       }
     : undefined;
 
-  const gmailClient = options.gmailClient ?? new GoogleGmailClient();
   const gmailPort: UiProcessGmailPort = options.gmailPort ?? {
     getMessageAttachments: async (messageId: string, accessToken?: string) => {
       const msg = await gmailClient.getMessage(messageId, { auth: accessToken });
@@ -445,18 +557,35 @@ export function createUiProcessManagerWiring(
         ? {
             processDocument: async (payload, eventName) => {
               const { sourceFiles, ...documentPayload } = payload;
+              const space = toStructuredDocumentSpace(documentPayload.space);
+
+              // 1. Pre-validate documentPayload.data BEFORE any external network calls or hydration
+              const preValidation = await preValidateDocument(
+                documentPayload.type,
+                documentPayload.data,
+                space
+              );
+              if (!preValidation.success) {
+                return {
+                  success: false,
+                  errors: preValidation.errors,
+                };
+              }
+
+              // 2. Hydrate source files via GmailSourceFileHydrator (only after validation passes)
+              const hydratedSourceFiles = hydrator
+                ? await hydrator.hydrate(sourceFiles ?? [], context)
+                : (sourceFiles ?? []);
+
+              // 3. Assign activeContext.sourceFiles = hydratedSourceFiles
               const activeContext: WorkspaceExecutionContext = {
                 ...context,
-                ...(sourceFiles !== undefined
-                  ? {
-                      sourceFiles,
-                      selectedItems: sourceFiles.map((file) => ({
-                        id: file.id,
-                        ...(file.name !== undefined ? { title: file.name } : {}),
-                        ...(file.mimeType !== undefined ? { mimeType: file.mimeType } : {}),
-                      })),
-                    }
-                  : {}),
+                sourceFiles: hydratedSourceFiles,
+                selectedItems: hydratedSourceFiles.map((file) => ({
+                  id: file.id,
+                  ...(file.name !== undefined ? { title: file.name } : {}),
+                  ...(file.mimeType !== undefined ? { mimeType: file.mimeType } : {}),
+                })),
               };
 
               const activeDocService = options.createDocumentService
@@ -467,7 +596,6 @@ export function createUiProcessManagerWiring(
                 throw new Error('DocumentService not provided');
               }
 
-              const space = toStructuredDocumentSpace(documentPayload.space);
               return activeDocService.processDocument(
                 {
                   ...documentPayload,

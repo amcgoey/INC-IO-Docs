@@ -142,6 +142,8 @@ export function wireWorkspaceAddonRoutes(
       manifestProvider,
       documentService: options.documentService,
       createDocumentService,
+      ...(options.compiledSchemaRegistry !== undefined ? { compiledSchemaRegistry: options.compiledSchemaRegistry } : {}),
+      ...(options.documentSchemaRegistry !== undefined ? { documentSchemaRegistry: options.documentSchemaRegistry } : {}),
       ...(createSchemaDrivenUiService !== undefined ? { createSchemaDrivenUiService } : {}),
       ...(options.driveClient !== undefined ? { driveClient: options.driveClient } : {}),
       ...(options.gmailClient !== undefined ? { gmailClient: options.gmailClient } : {}),
