@@ -8,6 +8,14 @@ import {
   ProcessUiStateEventSchema,
   UiProcessEventContextSchema,
   UiProcessSourceFileDtoSchema,
+  SELECT_FILES_KEY,
+  SELECT_FILE_SOURCE_KEY,
+  SELECT_ATTACHMENTS_KEY,
+  INPUT_DRIVE_URL_KEY,
+  SAVE_EMAIL_TO_PDF_KEY,
+  EPHEMERAL_UI_SELECTION_KEYS,
+  isSelectionKey,
+  extractSelectFilesSet,
 } from './ports';
 
 describe('UI Process Manager Ports & DTOs', () => {
@@ -157,6 +165,21 @@ describe('UI Process Manager Ports & DTOs', () => {
       expect(UiProcessEventContextSchema).toBe(ProcessUiStateEventSchema);
     });
   });
+
+  describe('Re-exported Ephemeral Keys & Selection Utilities', () => {
+    it('re-exports ephemeral selection keys and sets from domain', () => {
+      expect(SELECT_FILES_KEY).toBe('SelectFiles');
+      expect(SELECT_FILE_SOURCE_KEY).toBe('SelectFileSource');
+      expect(SELECT_ATTACHMENTS_KEY).toBe('SelectAttachments');
+      expect(INPUT_DRIVE_URL_KEY).toBe('InputDriveURL');
+      expect(SAVE_EMAIL_TO_PDF_KEY).toBe('SaveEmailToPdf');
+      expect(EPHEMERAL_UI_SELECTION_KEYS).toBeInstanceOf(Set);
+      expect(EPHEMERAL_UI_SELECTION_KEYS.size).toBe(5);
+      expect(typeof isSelectionKey).toBe('function');
+      expect(typeof extractSelectFilesSet).toBe('function');
+    });
+  });
 });
+
 
 

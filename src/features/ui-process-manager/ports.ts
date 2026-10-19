@@ -19,6 +19,11 @@ import {
   ProcessUiStateEventSchema,
   type ProcessUiStateEvent,
   SELECT_FILES_KEY,
+  SELECT_FILE_SOURCE_KEY,
+  SELECT_ATTACHMENTS_KEY,
+  INPUT_DRIVE_URL_KEY,
+  SAVE_EMAIL_TO_PDF_KEY,
+  EPHEMERAL_UI_SELECTION_KEYS,
   isSelectionKey,
   extractSelectFilesSet,
 } from './domain';
@@ -43,6 +48,11 @@ export {
   ProcessUiStateEventSchema,
   type ProcessUiStateEvent,
   SELECT_FILES_KEY,
+  SELECT_FILE_SOURCE_KEY,
+  SELECT_ATTACHMENTS_KEY,
+  INPUT_DRIVE_URL_KEY,
+  SAVE_EMAIL_TO_PDF_KEY,
+  EPHEMERAL_UI_SELECTION_KEYS,
   isSelectionKey,
   extractSelectFilesSet,
 };

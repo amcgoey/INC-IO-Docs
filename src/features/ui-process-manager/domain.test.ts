@@ -10,6 +10,11 @@ import {
   evaluateProcessUiState,
   isSelectionKey,
   SELECT_FILES_KEY,
+  SELECT_FILE_SOURCE_KEY,
+  SELECT_ATTACHMENTS_KEY,
+  INPUT_DRIVE_URL_KEY,
+  SAVE_EMAIL_TO_PDF_KEY,
+  EPHEMERAL_UI_SELECTION_KEYS,
   extractSelectFilesSet,
   ResolveSpaceResultSchema,
   UiProcessSpaceItemSchema,
@@ -42,17 +47,63 @@ describe('ui-process-manager domain', () => {
       expect(extractSelectFilesSet({ SelectFiles: '' })).toEqual(new Set());
       expect(extractSelectFilesSet({ SelectFiles: [] })).toEqual(new Set());
     });
+
+    it('parameterizes extraction using a custom keyName', () => {
+      expect(
+        extractSelectFilesSet(
+          { [SELECT_ATTACHMENTS_KEY]: ' att-1 ' },
+          SELECT_ATTACHMENTS_KEY
+        )
+      ).toEqual(new Set(['att-1']));
+
+      expect(
+        extractSelectFilesSet(
+          { [SELECT_ATTACHMENTS_KEY]: [' att-1 ', 'att-2', '', '   '] },
+          SELECT_ATTACHMENTS_KEY
+        )
+      ).toEqual(new Set(['att-1', 'att-2']));
+
+      expect(
+        extractSelectFilesSet(
+          { SelectFiles: 'file-1' },
+          SELECT_ATTACHMENTS_KEY
+        )
+      ).toEqual(new Set());
+    });
   });
 
-  describe('isSelectionKey', () => {
-    it('returns true for SELECT_FILES_KEY and any key starting with SELECTION_KEY_PREFIX', () => {
+  describe('isSelectionKey and EPHEMERAL_UI_SELECTION_KEYS', () => {
+    it('defines EPHEMERAL_UI_SELECTION_KEYS containing all five ephemeral selection keys', () => {
       expect(SELECT_FILES_KEY).toBe('SelectFiles');
+      expect(SELECT_FILE_SOURCE_KEY).toBe('SelectFileSource');
+      expect(SELECT_ATTACHMENTS_KEY).toBe('SelectAttachments');
+      expect(INPUT_DRIVE_URL_KEY).toBe('InputDriveURL');
+      expect(SAVE_EMAIL_TO_PDF_KEY).toBe('SaveEmailToPdf');
+
+      expect(EPHEMERAL_UI_SELECTION_KEYS).toEqual(
+        new Set([
+          'SelectFiles',
+          'SelectFileSource',
+          'SelectAttachments',
+          'InputDriveURL',
+          'SaveEmailToPdf',
+        ])
+      );
+    });
+
+    it('returns true for all EPHEMERAL_UI_SELECTION_KEYS and any key starting with SELECTION_KEY_PREFIX', () => {
       expect(isSelectionKey('SelectFiles')).toBe(true);
+      expect(isSelectionKey('SelectFileSource')).toBe(true);
+      expect(isSelectionKey('SelectAttachments')).toBe(true);
+      expect(isSelectionKey('InputDriveURL')).toBe(true);
+      expect(isSelectionKey('SaveEmailToPdf')).toBe(true);
+
       expect(isSelectionKey('SelectDocumentSpaceType')).toBe(true);
       expect(isSelectionKey('SelectDocumentSpace')).toBe(true);
       expect(isSelectionKey('SelectDocumentType')).toBe(true);
       expect(isSelectionKey('SelectDocumentSpace_projects')).toBe(true);
       expect(isSelectionKey('SelectDocumentType_projects')).toBe(true);
+
       expect(isSelectionKey('contact')).toBe(false);
       expect(isSelectionKey('title')).toBe(false);
       expect(isSelectionKey('files')).toBe(false);
@@ -60,12 +111,16 @@ describe('ui-process-manager domain', () => {
   });
 
   describe('extractDocumentData', () => {
-    it('extracts only non-SelectDocument keys from formData and strips SelectFiles', () => {
+    it('extracts only non-SelectDocument keys from formData and strips all five ephemeral keys', () => {
       const formData = {
         SelectDocumentSpaceType: 'projects',
         SelectDocumentSpace: 'Project Alpha',
         SelectDocumentType: 'communication-project',
         SelectFiles: ['file-1', 'file-2'],
+        SelectFileSource: 'DRIVE',
+        SelectAttachments: ['att-1', 'att-2'],
+        InputDriveURL: 'https://drive.google.com/open?id=123',
+        SaveEmailToPdf: true,
         contact: 'John Doe',
         date: '260920',
         direction: 'IN',
@@ -82,6 +137,10 @@ describe('ui-process-manager domain', () => {
       expect(result).not.toHaveProperty('SelectDocumentSpace');
       expect(result).not.toHaveProperty('SelectDocumentType');
       expect(result).not.toHaveProperty('SelectFiles');
+      expect(result).not.toHaveProperty('SelectFileSource');
+      expect(result).not.toHaveProperty('SelectAttachments');
+      expect(result).not.toHaveProperty('InputDriveURL');
+      expect(result).not.toHaveProperty('SaveEmailToPdf');
     });
 
     it('returns empty object when formData is undefined or empty', () => {
