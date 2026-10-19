@@ -139,6 +139,19 @@ export function isSelectionKey(key: string): boolean {
 }
 
 /**
+ * Checks whether an event context corresponds to a Gmail context.
+ */
+export function isGmailContext(context?: {
+  hostApp?: string | undefined;
+  gmail?: { messageId?: string | undefined } | undefined;
+} | undefined): boolean {
+  if (!context) {
+    return false;
+  }
+  return context.hostApp?.toUpperCase() === 'GMAIL' || Boolean(context.gmail?.messageId);
+}
+
+/**
  * Normalizes formData[keyName] (string | string[] | undefined) into a Set of non-empty trimmed strings.
  */
 export function extractSelectFilesSet(
@@ -433,8 +446,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const isResetOrInitialLoad =
     isRefresh || (!hasInCardAction && !hasSelectionKeysInFormData);
 
-  const isGmailContext =
-    context.hostApp?.toUpperCase() === 'GMAIL' || Boolean(context.gmail?.messageId);
+  const isGmail = isGmailContext(context);
 
   const validSelectedItems = (context.selectedItems ?? []).filter(
     (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
@@ -442,8 +454,8 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   );
 
   let fileSources: UiSelectionItem[] | undefined;
-  if (isGmailContext) {
-    let effectiveFileSource: string;
+  let effectiveFileSource: string | undefined;
+  if (isGmail) {
     if (isResetOrInitialLoad) {
       effectiveFileSource = 'Email Attachments';
       effectiveFormData[SELECT_FILE_SOURCE_KEY] = 'Email Attachments';
@@ -477,7 +489,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   }
 
   let files: UiSelectionItem[];
-  if (isGmailContext) {
+  if (isGmail) {
     if (validSelectedItems.length > 0) {
       const hasAttachmentFormKey = context.formData?.[SELECT_ATTACHMENTS_KEY] !== undefined;
       const selectedSet = hasAttachmentFormKey
@@ -508,6 +520,9 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
           selected = parsedParamSet.has(fileId) || parsedParamSet.has(item.id);
         } else if (isResetOrInitialLoad) {
           selected = true;
+        } else if (!isResetOrInitialLoad && effectiveFileSource === 'Email Attachments') {
+          // When submitting in-card action from 'Email Attachments' mode, Google Workspace omits checkbox name when 0 checkboxes are checked
+          selected = false;
         } else {
           selected = true;
         }
@@ -583,11 +598,11 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     isUpdateCard = true;
   }
 
-  const viewId = isGmailContext
+  const viewId = isGmail
     ? GMAIL_WORKSPACE_ADDON_VIEW_ID
     : DRIVE_WORKSPACE_ADDON_VIEW_ID;
 
-  if (isGmailContext) {
+  if (isGmail) {
     if (isResetOrInitialLoad) {
       effectiveFormData[SAVE_EMAIL_TO_PDF_KEY] = false;
     } else {

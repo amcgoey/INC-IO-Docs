@@ -24,6 +24,7 @@ import {
   SELECT_DOCUMENT_TYPE_KEY,
   SELECT_DOCUMENT_SPACE_PREFIX,
   SELECT_DOCUMENT_TYPE_PREFIX,
+  isGmailContext,
   type UiStateResolutionContext,
   type UiProcessSpaceItem,
 } from '../domain';
@@ -96,14 +97,13 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     const actionName = context.actionName ?? context.parameters?.action;
     let effectiveContext = context;
 
-    const isGmailContext =
-      context.hostApp?.toUpperCase() === 'GMAIL' || Boolean(context.gmail?.messageId);
+    const isGmail = isGmailContext(context);
 
     if (
-      isGmailContext &&
-      (actionName === 'refresh' || !actionName) &&
+      isGmail &&
       this.gmailPort &&
-      context.gmail?.messageId
+      context.gmail?.messageId &&
+      (!effectiveContext.selectedItems || effectiveContext.selectedItems.length === 0 || actionName === 'refresh')
     ) {
       try {
         const token = context.userOAuthToken ?? context.gmail.accessToken;
