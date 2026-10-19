@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { PDFDocument, PDFPage, StandardFonts } from 'pdf-lib';
 import { PdfProcessor } from './pdf-processor';
+import type { EmailPdfRenderInput } from './types';
 import {
   PdfCorruptedError,
   PdfEncryptionError,
@@ -594,6 +595,748 @@ describe('PdfProcessor', () => {
       ).rejects.toThrow(PdfCorruptedError);
 
       extractPagesSpy.mockRestore();
+    });
+  });
+
+  describe('generateEmailPdf', () => {
+    it('generates a Letter-sized PDF with standard margins, headers, and footer', async () => {
+      const email: EmailPdfRenderInput = {
+        messageId: '<msg-123@example.com>',
+        subject: 'Quarterly Financial Summary',
+        from: 'alice@example.com',
+        to: 'bob@example.com',
+        date: '2026-10-18 10:00:00',
+        plainTextBody: 'Hello Bob,\nPlease find attached the report.\nBest,\nAlice',
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+
+      const doc = await PDFDocument.load(pdfBytes);
+      expect(doc.getPageCount()).toBe(1);
+
+      const page = doc.getPage(0);
+      expect(page.getWidth()).toBe(612);
+      expect(page.getHeight()).toBe(792);
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Message ID: <msg-123@example.com>');
+      expect(text).toContain('Subject: Quarterly Financial Summary');
+      expect(text).toContain('From: alice@example.com');
+      expect(text).toContain('To: bob@example.com');
+      expect(text).toContain('Date: 2026-10-18 10:00:00');
+      expect(text).toContain('Hello Bob,');
+      expect(text).toContain('Page 1 of 1');
+    });
+
+    it('falls back to (No Subject) when subject is missing, empty, or whitespace-only', async () => {
+      const emailMissing: EmailPdfRenderInput = {
+        messageId: 'id-1',
+      };
+      const textMissing = await processor.extractTextFromPages(
+        await processor.generateEmailPdf(emailMissing),
+        [1]
+      );
+      expect(textMissing).toContain('Subject: (No Subject)');
+
+      const emailEmpty: EmailPdfRenderInput = {
+        messageId: 'id-2',
+        subject: '',
+      };
+      const textEmpty = await processor.extractTextFromPages(
+        await processor.generateEmailPdf(emailEmpty),
+        [1]
+      );
+      expect(textEmpty).toContain('Subject: (No Subject)');
+
+      const emailWhitespace: EmailPdfRenderInput = {
+        messageId: 'id-3',
+        subject: '   \t  ',
+      };
+      const textWhitespace = await processor.extractTextFromPages(
+        await processor.generateEmailPdf(emailWhitespace),
+        [1]
+      );
+      expect(textWhitespace).toContain('Subject: (No Subject)');
+    });
+
+    it('prefers rfcMessageId over internal messageId when present', async () => {
+      const email: EmailPdfRenderInput = {
+        messageId: '18a123456789abcd',
+        rfcMessageId: '<custom-rfc-id@domain.com>',
+      };
+      const text = await processor.extractTextFromPages(
+        await processor.generateEmailPdf(email),
+        [1]
+      );
+      expect(text).toContain('Message ID: <custom-rfc-id@domain.com>');
+      expect(text).not.toContain('Message ID: 18a123456789abcd');
+    });
+
+    it('strictly omits Cc and Attachments when absent or empty', async () => {
+      const emailWithoutOptional: EmailPdfRenderInput = {
+        messageId: 'id-opt',
+        subject: 'Test Subject',
+        from: 'sender@example.com',
+        to: 'recipient@example.com',
+      };
+      const textWithout = await processor.extractTextFromPages(
+        await processor.generateEmailPdf(emailWithoutOptional),
+        [1]
+      );
+      expect(textWithout).not.toContain('Cc:');
+      expect(textWithout).not.toContain('Attachments:');
+
+      const emailWithEmptyOptional: EmailPdfRenderInput = {
+        messageId: 'id-empty-opt',
+        subject: 'Test Subject',
+        cc: '   ',
+        attachmentNames: [],
+      };
+      const textEmpty = await processor.extractTextFromPages(
+        await processor.generateEmailPdf(emailWithEmptyOptional),
+        [1]
+      );
+      expect(textEmpty).not.toContain('Cc:');
+      expect(textEmpty).not.toContain('Attachments:');
+    });
+
+    it('renders Cc and Attachments when populated', async () => {
+      const email: EmailPdfRenderInput = {
+        messageId: 'id-with-att',
+        subject: 'Invoice & Proposal',
+        cc: 'charlie@example.com, dana@example.com',
+        attachmentNames: ['Invoice-101.pdf', 'Proposal.docx'],
+      };
+      const text = await processor.extractTextFromPages(
+        await processor.generateEmailPdf(email),
+        [1]
+      );
+      expect(text).toContain('Cc: charlie@example.com, dana@example.com');
+      expect(text).toContain('Attachments: Invoice-101.pdf, Proposal.docx');
+    });
+
+    it('wraps long header values and paginates onto new Letter pages when header exceeds vertical space', async () => {
+      // 100 recipients will wrap to ~55-60 lines, exceeding 1 Letter page printable height (~49 lines)
+      const manyRecipients = Array.from(
+        { length: 100 },
+        (_, i) => `long-recipient-address-${i + 1}@enterprise-organization.com`
+      ).join(', ');
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'header-pagination-test',
+        subject: 'Executive Board Announcement',
+        to: manyRecipients,
+        plainTextBody: 'Final meeting agenda follows.',
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      const doc = await PDFDocument.load(pdfBytes);
+
+      expect(doc.getPageCount()).toBeGreaterThanOrEqual(2);
+
+      const page1Text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(page1Text).toContain('Subject: Executive Board Announcement');
+      expect(page1Text).toContain('long-recipient-address-1@enterprise-organization.com');
+      expect(page1Text).toContain('Page 1 of 2');
+
+      const page2Text = await processor.extractTextFromPages(pdfBytes, [2]);
+      expect(page2Text).toContain('long-recipient-address-100@enterprise-organization.com');
+      expect(page2Text).toContain('Final meeting agenda follows.');
+      expect(page2Text).toContain('Page 2 of 2');
+    });
+
+    it('gracefully handles missing or empty plainTextBody rendering only header block and divider', async () => {
+      const emailMissingBody: EmailPdfRenderInput = {
+        messageId: 'empty-body-test-1',
+        subject: 'Header Only Email',
+        from: 'sender@example.com',
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(emailMissingBody);
+      const doc = await PDFDocument.load(pdfBytes);
+      expect(doc.getPageCount()).toBe(1);
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Message ID: empty-body-test-1');
+      expect(text).toContain('Subject: Header Only Email');
+      expect(text).toContain('From: sender@example.com');
+      expect(text).toContain('Page 1 of 1');
+
+      const emailEmptyStringBody: EmailPdfRenderInput = {
+        messageId: 'empty-body-test-2',
+        subject: 'Empty String Body Email',
+        plainTextBody: '',
+      };
+
+      const pdfBytes2 = await processor.generateEmailPdf(emailEmptyStringBody);
+      const doc2 = await PDFDocument.load(pdfBytes2);
+      expect(doc2.getPageCount()).toBe(1);
+
+      const text2 = await processor.extractTextFromPages(pdfBytes2, [1]);
+      expect(text2).toContain('Subject: Empty String Body Email');
+      expect(text2).toContain('Page 1 of 1');
+    });
+
+    it('breaks single words wider than 512 pt printable width across lines without error', async () => {
+      // 150 consecutive characters without spaces is ~1050 pt wide (> 2x 512 pt)
+      const unbrokenToken = 'X'.repeat(150);
+      const email: EmailPdfRenderInput = {
+        messageId: 'unbroken-word-test',
+        subject: 'Long Token Email',
+        plainTextBody: `Start token: ${unbrokenToken} End token`,
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      const doc = await PDFDocument.load(pdfBytes);
+      expect(doc.getPageCount()).toBe(1);
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Start token:');
+      expect(text).toContain('End token');
+      // All 150 Xs should be present in the extracted text
+      expect(text).toContain('X'.repeat(50));
+    });
+
+    it('paginates body content across multiple pages with accurate Page X of Y footers', async () => {
+      // 120 body lines will span across ~3 pages
+      const lines = Array.from(
+        { length: 120 },
+        (_, i) => `Paragraph line ${i + 1}: The quick brown fox jumps over the lazy dog.`
+      );
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'multi-page-body-test',
+        subject: 'Multi-Page Body Email',
+        plainTextBody: lines.join('\n'),
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      const doc = await PDFDocument.load(pdfBytes);
+      const totalPages = doc.getPageCount();
+
+      expect(totalPages).toBeGreaterThanOrEqual(3);
+
+      const page1Text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(page1Text).toContain('Subject: Multi-Page Body Email');
+      expect(page1Text).toContain('Paragraph line 1:');
+      expect(page1Text).toContain(`Page 1 of ${totalPages}`);
+
+      const lastPageText = await processor.extractTextFromPages(pdfBytes, [totalPages]);
+      expect(lastPageText).toContain('Paragraph line 120:');
+      expect(lastPageText).toContain(`Page ${totalPages} of ${totalPages}`);
+    });
+
+    it('sanitizes Unicode typographical characters, CRLF line endings, and tabs without throwing', async () => {
+      const email: EmailPdfRenderInput = {
+        messageId: 'unicode-sanitization-test',
+        subject: 'Meeting Notes: “Project Alpha” – Q3 & Q4…',
+        plainTextBody:
+          'Notes:\r\n\t• Alice said: ‘Ready’\r\n\t• Em dash: 2025—2026\r\n\t• Special chars: © and ™\r\n\t• Zero\u200BWidth\uFEFFSpace\r\n\t• Emojis 🚀 and foreign text 漢字 are safely escaped.',
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Meeting Notes: "Project Alpha" - Q3 & Q4...');
+      expect(text).toContain("* Alice said: 'Ready'");
+      expect(text).toContain('Em dash: 2025--2026');
+      expect(text).toContain('Special chars: (C) and (TM)');
+      expect(text).toContain('ZeroWidthSpace');
+      // Confirm CRLF \r\n did not leave ?\n
+      expect(text).not.toContain('?\n');
+      expect(text).not.toContain('?•');
+      // Confirm tab \t did not leave ?
+      expect(text).not.toContain('?\t');
+      // Confirm foreign text/emojis became ? without throwing
+      expect(text).toContain('Emojis ? and foreign text ?? are safely escaped.');
+    });
+
+    it('renders htmlBody when provided and falls back to plainTextBody when undefined', async () => {
+      const emailWithHtml: EmailPdfRenderInput = {
+        messageId: 'html-body-test',
+        subject: 'HTML Email Test',
+        htmlBody: '<p>Hello from <b>HTML</b> body!</p>',
+        plainTextBody: 'Hello from plain text body!',
+      };
+
+      const pdfBytesHtml = await processor.generateEmailPdf(emailWithHtml);
+      const textHtml = await processor.extractTextFromPages(pdfBytesHtml, [1]);
+      expect(textHtml).toContain('Hello from HTML body!');
+      expect(textHtml).not.toContain('Hello from plain text body!');
+
+      const emailFallback: EmailPdfRenderInput = {
+        messageId: 'fallback-test',
+        subject: 'Fallback Email Test',
+        plainTextBody: 'Fallback to plain text!',
+      };
+
+      const pdfBytesFallback = await processor.generateEmailPdf(emailFallback);
+      const textFallback = await processor.extractTextFromPages(pdfBytesFallback, [1]);
+      expect(textFallback).toContain('Fallback to plain text!');
+    });
+
+    it('pre-purges style, script, head, and HTML comments completely from htmlBody', async () => {
+      const email: EmailPdfRenderInput = {
+        messageId: 'purge-test',
+        subject: 'Purge Security & Metadata Test',
+        htmlBody: `
+          <!DOCTYPE html>
+          <html>
+            <HEAD>
+              <title>Secret Metadata Document Title</title>
+              <meta name="author" content="Malicious Hacker" />
+            </HEAD>
+            <style type="text/css">
+              body { font-family: Arial; color: #ff0000; }
+              .hidden { display: none; visibility: hidden; }
+            </style>
+            <body>
+              <!-- Internal developer note: AWS_SECRET_KEY=12345 -->
+              <p>Actual visible email content that should be preserved.</p>
+              <script type="text/javascript">
+                console.log("malicious javascript execution");
+                window.location.href = "https://phishing.example.com";
+              </script>
+            </body>
+          </html>
+        `,
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+
+      expect(text).toContain('Actual visible email content that should be preserved.');
+      expect(text).not.toContain('Secret Metadata Document Title');
+      expect(text).not.toContain('Malicious Hacker');
+      expect(text).not.toContain('color: #ff0000');
+      expect(text).not.toContain('font-family: Arial');
+      expect(text).not.toContain('AWS_SECRET_KEY');
+      expect(text).not.toContain('malicious javascript execution');
+      expect(text).not.toContain('phishing.example.com');
+    });
+
+    it('converts table cells to spaces, block tags and breaks to newlines, and strips all remaining tags', async () => {
+      const email: EmailPdfRenderInput = {
+        messageId: 'table-and-blocks-test',
+        subject: 'Table & Block Tags Test',
+        htmlBody: `
+          <div>Heading Banner</div>
+          <p>Line Alpha<br>Line Beta<br/>Line Gamma<br />Line Delta</p>
+          <ul>
+            <li>Bullet Option 1</li>
+            <li>Bullet Option 2</li>
+          </ul>
+          <table>
+            <thead>
+              <tr><th>HeaderA</th><th>HeaderB</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Cell1</td><td>Cell2</td></tr>
+            </tbody>
+          </table>
+          <footer><span>Nested footer inline text</span></footer>
+        `,
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+
+      expect(text).toContain('Heading Banner');
+      expect(text).toContain('Line Alpha');
+      expect(text).toContain('Line Beta');
+      expect(text).toContain('Line Gamma');
+      expect(text).toContain('Line Delta');
+      expect(text).toContain('Bullet Option 1');
+      expect(text).toContain('Bullet Option 2');
+      // Table headers and cells separated by spaces
+      expect(text).toContain('HeaderA HeaderB');
+      expect(text).toContain('Cell1 Cell2');
+      expect(text).toContain('Nested footer inline text');
+      // Confirm all HTML tags were stripped
+      expect(text).not.toContain('<div');
+      expect(text).not.toContain('</div>');
+      expect(text).not.toContain('<p');
+      expect(text).not.toContain('</p>');
+      expect(text).not.toContain('<table');
+      expect(text).not.toContain('</table>');
+      expect(text).not.toContain('<span');
+      expect(text).not.toContain('</span>');
+    });
+
+    it('decodes standard, typographical, and numeric decimal/hex HTML entities in htmlBody', async () => {
+      const email: EmailPdfRenderInput = {
+        messageId: 'entities-test',
+        subject: 'Entity Decoding Test',
+        htmlBody: `
+          <p>Standard: &amp; &lt; &gt; &quot; &#39; &apos;</p>
+          <p>Nbsp: Space&nbsp;Separated</p>
+          <p>Typographical: &lsquo;single&rsquo; and &ldquo;double&rdquo; &mdash; dash &ndash; &hellip; bullet &bull; &copy; 2026 &trade;</p>
+          <p>Decimal: &#65;&#66;&#67; &#8212;</p>
+          <p>Hexadecimal: &#x41;&#x42;&#x43; &#x2013;</p>
+          <p>NumericNbsp: Numeric&#160;and&#xA0;HexNbsp</p>
+        `,
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+
+      expect(text).toContain('Standard: & < > " \' \'');
+      expect(text).toContain('Nbsp: Space Separated');
+      expect(text).toContain('Typographical: \'single\' and "double" -- dash - ... bullet * (C) 2026 (TM)');
+      expect(text).toContain('Decimal: ABC --');
+      expect(text).toContain('Hexadecimal: ABC -');
+      expect(text).toContain('NumericNbsp: Numeric and HexNbsp');
+    });
+
+    it('embeds inline PNG image referenced by CID in htmlBody', async () => {
+      const samplePng = new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          'base64'
+        )
+      );
+
+      const embedPngSpy = vi.spyOn(PDFDocument.prototype, 'embedPng');
+      const drawImageSpy = vi.spyOn(PDFPage.prototype, 'drawImage');
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'inline-png-test',
+        subject: 'Inline PNG Test',
+        htmlBody: `
+          <p>Paragraph before image.</p>
+          <p><img src="cid:chart-logo.png" alt="Company Chart" /></p>
+          <p>Paragraph after image.</p>
+        `,
+        inlineImages: [
+          {
+            cid: 'chart-logo.png',
+            mimeType: 'image/png',
+            data: samplePng,
+          },
+        ],
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+
+      expect(embedPngSpy).toHaveBeenCalledTimes(1);
+      expect(drawImageSpy).toHaveBeenCalledTimes(1);
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Paragraph before image.');
+      expect(text).toContain('Paragraph after image.');
+
+      embedPngSpy.mockRestore();
+      drawImageSpy.mockRestore();
+    });
+
+    it('embeds JPEG inline images and normalizes CID references with angle brackets and URL encoding', async () => {
+      const sampleJpeg = new Uint8Array(
+        Buffer.from(
+          '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=',
+          'base64'
+        )
+      );
+
+      const embedJpgSpy = vi.spyOn(PDFDocument.prototype, 'embedJpg');
+      const drawImageSpy = vi.spyOn(PDFPage.prototype, 'drawImage');
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'jpeg-cid-normalization-test',
+        subject: 'JPEG CID Test',
+        htmlBody: `
+          <p>Introductory text.</p>
+          <img src="cid:<photo.jpeg@enterprise.com>" />
+          <p>Middle text.</p>
+          <img src="cid:diagram%20report.jpg" />
+          <p>Closing text.</p>
+        `,
+        inlineImages: [
+          {
+            // CID in metadata without brackets, case-insensitive match
+            cid: 'PHOTO.JPEG@ENTERPRISE.COM',
+            mimeType: 'image/jpeg',
+            data: sampleJpeg,
+          },
+          {
+            // CID with spaces (matching %20 in HTML)
+            cid: '<diagram report.jpg>',
+            mimeType: 'image/jpg',
+            data: sampleJpeg,
+          },
+        ],
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+
+      expect(embedJpgSpy).toHaveBeenCalledTimes(2);
+      expect(drawImageSpy).toHaveBeenCalledTimes(2);
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Introductory text.');
+      expect(text).toContain('Middle text.');
+      expect(text).toContain('Closing text.');
+
+      embedJpgSpy.mockRestore();
+      drawImageSpy.mockRestore();
+    });
+
+    it('caches embedded PDFImage instances by CID so repeated CIDs embed only once', async () => {
+      const samplePng = new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          'base64'
+        )
+      );
+
+      const embedPngSpy = vi.spyOn(PDFDocument.prototype, 'embedPng');
+      const drawImageSpy = vi.spyOn(PDFPage.prototype, 'drawImage');
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'repeated-cid-caching-test',
+        subject: 'Repeated CID Test',
+        htmlBody: `
+          <p>Occurrence 1</p>
+          <img src="cid:signature-icon" />
+          <p>Occurrence 2</p>
+          <img src="cid:<SIGNATURE-ICON>" />
+          <p>Occurrence 3</p>
+          <img src="cid:signature-icon" />
+        `,
+        inlineImages: [
+          {
+            cid: 'signature-icon',
+            mimeType: 'image/png',
+            data: samplePng,
+          },
+        ],
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+
+      // Embedded only once, but drawn 3 times
+      expect(embedPngSpy).toHaveBeenCalledTimes(1);
+      expect(drawImageSpy).toHaveBeenCalledTimes(3);
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Occurrence 1');
+      expect(text).toContain('Occurrence 2');
+      expect(text).toContain('Occurrence 3');
+
+      embedPngSpy.mockRestore();
+      drawImageSpy.mockRestore();
+    });
+
+    it('scales oversized images proportionally to fit within 512 pt width and 692 pt height', async () => {
+      const samplePng = new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          'base64'
+        )
+      );
+
+      const realEmbedPng = PDFDocument.prototype.embedPng;
+      const embedPngSpy = vi.spyOn(PDFDocument.prototype, 'embedPng').mockImplementation(async function (this: PDFDocument, ...args) {
+        const realImg = await realEmbedPng.apply(this, args);
+        // Create an image object with simulated oversized dimensions 1024 x 512
+        return Object.create(realImg, {
+          width: { value: 1024 },
+          height: { value: 512 },
+        });
+      });
+
+      const drawImageSpy = vi.spyOn(PDFPage.prototype, 'drawImage');
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'proportional-scaling-test',
+        subject: 'Scaling Test',
+        htmlBody: '<p>Before</p><img src="cid:oversized.png" /><p>After</p>',
+        inlineImages: [
+          {
+            cid: 'oversized.png',
+            mimeType: 'image/png',
+            data: samplePng,
+          },
+        ],
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+
+      expect(drawImageSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          width: 512,
+          height: 256,
+        })
+      );
+
+      embedPngSpy.mockRestore();
+      drawImageSpy.mockRestore();
+    });
+
+    it('skips images with non-positive dimensions (width <= 0 or height <= 0)', async () => {
+      const samplePng = new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          'base64'
+        )
+      );
+
+      const realEmbedPng = PDFDocument.prototype.embedPng;
+      const embedPngSpy = vi.spyOn(PDFDocument.prototype, 'embedPng').mockImplementation(async function (this: PDFDocument, ...args) {
+        const realImg = await realEmbedPng.apply(this, args);
+        return Object.create(realImg, {
+          width: { value: 0 },
+          height: { value: 100 },
+        });
+      });
+
+      const drawImageSpy = vi.spyOn(PDFPage.prototype, 'drawImage');
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'zero-dimension-test',
+        subject: 'Zero Dimension Test',
+        htmlBody: '<p>Before</p><img src="cid:zero-dim.png" /><p>After</p>',
+        inlineImages: [
+          {
+            cid: 'zero-dim.png',
+            mimeType: 'image/png',
+            data: samplePng,
+          },
+        ],
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+
+      expect(drawImageSpy).not.toHaveBeenCalled();
+
+      embedPngSpy.mockRestore();
+      drawImageSpy.mockRestore();
+    });
+
+    it('allocates a new Letter page when remaining vertical space is insufficient for image', async () => {
+      const samplePng = new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          'base64'
+        )
+      );
+
+      // Simulate a tall image of 500 pt
+      const realEmbedPng = PDFDocument.prototype.embedPng;
+      const embedPngSpy = vi.spyOn(PDFDocument.prototype, 'embedPng').mockImplementation(async function (this: PDFDocument, ...args) {
+        const realImg = await realEmbedPng.apply(this, args);
+        return Object.create(realImg, {
+          width: { value: 400 },
+          height: { value: 500 },
+        });
+      });
+
+      // 30 lines of text take ~420 pt. With headers (~150 pt), cursor is ~172 pt.
+      // 500 pt image cannot fit on page 1 (172 - 500 < 50), so it must paginate onto page 2!
+      const paragraphs = Array.from({ length: 30 }, (_, i) => `<p>Paragraph ${i + 1}</p>`).join('');
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'image-pagination-test',
+        subject: 'Image Pagination Test',
+        htmlBody: `
+          ${paragraphs}
+          <img src="cid:tall-diagram.png" />
+          <p>Text on page 2 following tall image.</p>
+        `,
+        inlineImages: [
+          {
+            cid: 'tall-diagram.png',
+            mimeType: 'image/png',
+            data: samplePng,
+          },
+        ],
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      const doc = await PDFDocument.load(pdfBytes);
+
+      expect(doc.getPageCount()).toBeGreaterThanOrEqual(2);
+
+      const page1Text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(page1Text).toContain('Paragraph 1');
+      expect(page1Text).toContain('Page 1 of 2');
+
+      const page2Text = await processor.extractTextFromPages(pdfBytes, [2]);
+      expect(page2Text).toContain('Text on page 2 following tall image.');
+      expect(page2Text).toContain('Page 2 of 2');
+
+      embedPngSpy.mockRestore();
+    });
+
+    it('gracefully degrades when CID images are missing, corrupted, empty, or unsupported without throwing', async () => {
+      const corruptedBytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+      const emptyBytes = new Uint8Array([]);
+      const dummyBytes = new Uint8Array([1, 2, 3, 4]);
+
+      const drawImageSpy = vi.spyOn(PDFPage.prototype, 'drawImage');
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'graceful-degradation-test',
+        subject: 'Graceful Degradation Test',
+        htmlBody: `
+          <p>Start of body.</p>
+          <img src="cid:missing-reference" />
+          <img src="cid:corrupted-png" />
+          <img src="cid:empty-jpeg" />
+          <img src="cid:animated.gif" />
+          <img src="cid:modern.webp" />
+          <img src="cid:vector.svg" />
+          <p>End of body.</p>
+        `,
+        inlineImages: [
+          {
+            cid: 'corrupted-png',
+            mimeType: 'image/png',
+            data: corruptedBytes,
+          },
+          {
+            cid: 'empty-jpeg',
+            mimeType: 'image/jpeg',
+            data: emptyBytes,
+          },
+          {
+            cid: 'animated.gif',
+            mimeType: 'image/gif',
+            data: dummyBytes,
+          },
+          {
+            cid: 'modern.webp',
+            mimeType: 'image/webp',
+            data: dummyBytes,
+          },
+          {
+            cid: 'vector.svg',
+            mimeType: 'image/svg+xml',
+            data: dummyBytes,
+          },
+        ],
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+
+      expect(drawImageSpy).not.toHaveBeenCalled();
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Start of body.');
+      expect(text).toContain('End of body.');
+
+      const doc = await PDFDocument.load(pdfBytes);
+      expect(doc.getPageCount()).toBe(1);
+
+      drawImageSpy.mockRestore();
     });
   });
 });

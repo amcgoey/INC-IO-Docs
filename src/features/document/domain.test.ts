@@ -28,6 +28,7 @@ import {
   walkTemplates,
   buildDocumentTypeSchema,
   buildFieldSchema,
+  formatEmailPdfFileName,
   type Activity,
   type ActivityOutput,
   type FileLocator,
@@ -4925,6 +4926,62 @@ describe('Document domain', () => {
         expect(dynamicValidator.validateExistence).not.toHaveBeenCalled();
       }
     );
+  });
+
+  describe('formatEmailPdfFileName', () => {
+    it('formats a standard subject as Email - <Subject>.pdf', () => {
+      const fileName = formatEmailPdfFileName('Weekly Status Update', '18c2f1a2b3c4d5e6');
+      expect(fileName).toBe('Email - Weekly Status Update.pdf');
+    });
+
+    it('sanitizes illegal filesystem characters and control characters in subject', () => {
+      const fileName = formatEmailPdfFileName(
+        'Project Update: Q3 / Final? <Draft> *Special* | Part "A"\x00\x1f',
+        '18c2f1a2b3c4d5e6'
+      );
+      expect(fileName).toBe(
+        'Email - Project Update- Q3 - Final- -Draft- -Special- - Part -A---.pdf'
+      );
+    });
+
+    it('truncates subject longer than 120 characters to exactly 120 characters', () => {
+      const longSubject = 'A'.repeat(150);
+      const fileName = formatEmailPdfFileName(longSubject, '18c2f1a2b3c4d5e6');
+      expect(fileName).toBe(`Email - ${'A'.repeat(120)}.pdf`);
+    });
+
+    it('preserves subjects of exactly 120 characters without truncation', () => {
+      const exactSubject = 'B'.repeat(120);
+      const fileName = formatEmailPdfFileName(exactSubject, '18c2f1a2b3c4d5e6');
+      expect(fileName).toBe(`Email - ${'B'.repeat(120)}.pdf`);
+    });
+
+    it.each([
+      { desc: 'undefined', subject: undefined },
+      { desc: 'empty string', subject: '' },
+      { desc: 'whitespace only', subject: '   ' },
+      { desc: 'tabs and newlines', subject: '\t\n ' },
+      { desc: 'sanitizes to empty string', subject: '...   ...' },
+    ])('falls back to Email - <sanitizedId>.pdf when subject is $desc', ({ subject }) => {
+      const fileName = formatEmailPdfFileName(subject, '18c2f1a2b3c4d5e6');
+      expect(fileName).toBe('Email - 18c2f1a2b3c4d5e6.pdf');
+    });
+
+    it('strips angle brackets from RFC 822 messageId in fallback filename', () => {
+      const fileName = formatEmailPdfFileName(
+        undefined,
+        '<CABeG4=rS+123_xyz.abc@mail.gmail.com>'
+      );
+      expect(fileName).toBe('Email - CABeG4=rS+123_xyz.abc@mail.gmail.com.pdf');
+    });
+
+    it('sanitizes illegal filesystem characters within fallback messageId', () => {
+      const fileName = formatEmailPdfFileName(
+        '',
+        '<msg/id:456*test|draft?val>'
+      );
+      expect(fileName).toBe('Email - msg-id-456-test-draft-val.pdf');
+    });
   });
 });
 
