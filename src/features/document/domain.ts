@@ -208,6 +208,7 @@ export const DocumentTypeSchema = Type.Object({
   documentUiSchema: Type.Optional(DocumentUiEventsSchema),
   documentWorkflowConfig: Type.Optional(DocumentWorkflowConfigType),
   storageContextConfig: Type.Optional(StorageContextConfigType),
+  allowEmptySourceFiles: Type.Optional(Type.Boolean()),
 });
 
 export type DocumentType = Static<typeof DocumentTypeSchema>;

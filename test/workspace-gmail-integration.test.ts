@@ -1,5 +1,6 @@
 import * as path from 'node:path';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import nock from 'nock';
 import { createApp, type AppInstance } from '../src/app/server';
 import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
@@ -9,9 +10,15 @@ import type {
   GoogleWorkspaceActionResponse,
   GoogleWorkspaceSection,
 } from '../src/infrastructure/workspace-addon/ui-blocks';
+import {
+  getDocumentTypeWidgetName,
+  getDocumentSpaceWidgetName,
+} from '../src/features/schema-driven-ui/blocks/document-type-selection';
+import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
 
 describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () => {
   let app: AppInstance;
+  let manifestProvider: AppManifestProvider;
   let mockAuthVerifier: WorkspaceAuthVerifierPort;
   let mockStorageAdapter: DocumentSpaceStoragePort;
   let mockGmailClient: Partial<GoogleGmailClient>;
@@ -93,7 +100,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     };
 
     const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
-    const manifestProvider = new AppManifestProvider({ manifestPath });
+    manifestProvider = new AppManifestProvider({ manifestPath });
     app = createApp({
       manifestProvider,
       authVerifier: mockAuthVerifier,
@@ -104,6 +111,43 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
     await app.initialize();
   });
+
+  afterEach(() => {
+    nock.cleanAll();
+    vi.restoreAllMocks();
+  });
+
+  function mockDynamicValidationProject({
+    sharedDriveId,
+    adminFolderId,
+    commFolderId,
+    contactFolderId,
+    contactName,
+  }: {
+    sharedDriveId: string;
+    adminFolderId: string;
+    commFolderId: string;
+    contactFolderId: string;
+    contactName: string;
+  }) {
+    // resolveTargetFolder step 1: list folders in shared drive root
+    nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes(`'${sharedDriveId}' in parents`) && !q.q.includes('name ='))
+      .reply(200, { files: [{ id: adminFolderId, name: '1 Admin' }] });
+
+    // resolveTargetFolder step 2: list folders in 1 Admin
+    nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes(`'${adminFolderId}' in parents`) && !q.q.includes('name ='))
+      .reply(200, { files: [{ id: commFolderId, name: 'Communication' }] });
+
+    // executeValidationQuery: check contact folder exists
+    nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes(`'${commFolderId}' in parents`) && q.q.includes(`name = '${contactName}'`))
+      .reply(200, { files: [{ id: contactFolderId, name: contactName }] });
+  }
 
   it('rejects POST /workspace/gmail-contextual without auth with 401', async () => {
     const res = await app.server.inject({
@@ -526,4 +570,161 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
     expect(body.action?.navigations?.[0]?.pushCard).toBeDefined();
   });
+
+  it('files communication-project with zero selected files in Gmail context, creating folder hierarchy in Drive and succeeding with notification', async () => {
+    const rootSharedDriveId = 'shared-drive-proj-root';
+    const adminFolderId = 'folder-admin-1';
+    const commFolderId = 'folder-comm-1';
+    const contactFolderId = 'folder-acme-corp';
+    const newSubfolderId = 'folder-meeting-subfolder';
+
+    // 1. Dynamic Options Validation
+    mockDynamicValidationProject({
+      sharedDriveId: rootSharedDriveId,
+      adminFolderId,
+      commFolderId,
+      contactFolderId,
+      contactName: 'Acme Corp',
+    });
+
+    // 2. DriveActivityHandler: resolveFolderPath('shared-drive-proj-root', ['1 Admin', 'Communication'])
+    nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes(rootSharedDriveId) && q.q.includes("name = '1 Admin'"))
+      .reply(200, {
+        files: [{ id: adminFolderId, name: '1 Admin', mimeType: 'application/vnd.google-apps.folder' }],
+      });
+
+    nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes(adminFolderId) && q.q.includes("name = 'Communication'"))
+      .reply(200, {
+        files: [{ id: commFolderId, name: 'Communication', mimeType: 'application/vnd.google-apps.folder' }],
+      });
+
+    // 3. DriveActivityHandler: findOrCreateFolder(commFolderId, 'Acme Corp') -> exists
+    nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes(commFolderId) && q.q.includes("name = 'Acme Corp'"))
+      .reply(200, {
+        files: [{ id: contactFolderId, name: 'Acme Corp', mimeType: 'application/vnd.google-apps.folder' }],
+      });
+
+    // 4. DriveActivityHandler: findOrCreateFolder(contactFolderId, '260920 IN - Meeting Notes') -> creates new
+    nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes(contactFolderId) && q.q.includes("name = '260920 IN - Meeting Notes'"))
+      .reply(200, { files: [] });
+
+    nock('https://www.googleapis.com')
+      .post('/drive/v3/files')
+      .query(true)
+      .reply(200, {
+        id: newSubfolderId,
+        name: '260920 IN - Meeting Notes',
+        parents: [contactFolderId],
+        mimeType: 'application/vnd.google-apps.folder',
+      });
+
+    const response = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/action',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.valid-oauth-token',
+        },
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-without-attachments',
+          threadId: 'th-test-live',
+          accessToken: 'ya29.live-token',
+        },
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'processDocument',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+            [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+            [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+            [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+            [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+            [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+          },
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.payload);
+    expect(body).toEqual({
+      action: {
+        notification: {
+          text: 'Document processed successfully',
+        },
+      },
+    });
+    expect(nock.isDone()).toBe(true);
+  });
+
+  it('rejects zero files in Gmail context when allowEmptySourceFiles is false or omitted with message "Please select at least one file to process or enable Save Email to PDF."', async () => {
+    const originalRead = manifestProvider.readParsedSchema.bind(manifestProvider);
+    vi.spyOn(manifestProvider, 'readParsedSchema').mockImplementation(async (relPath: string) => {
+      const parsed = (await originalRead(relPath)) as Record<string, unknown>;
+      return {
+        ...parsed,
+        allowEmptySourceFiles: false,
+      };
+    });
+
+    const response = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/action',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.valid-oauth-token',
+        },
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-without-attachments',
+          threadId: 'th-test-live',
+          accessToken: 'ya29.live-token',
+        },
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'processDocument',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+            [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+            [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+            [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+            [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+            [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+          },
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+    const updateCard = body.action?.navigations?.[0]?.updateCard;
+    expect(updateCard).toBeDefined();
+
+    const errorSection = updateCard!.sections.find((s) =>
+      s.widgets?.some((w) => w.textParagraph?.text?.includes('Please select at least one file to process or enable Save Email to PDF.'))
+    );
+    expect(errorSection).toBeDefined();
+  });
 });
+

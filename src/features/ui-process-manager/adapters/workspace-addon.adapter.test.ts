@@ -51,13 +51,21 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
   const mockManifestPort: UiProcessManifestPort = {
     resolveDocumentTypeKey: vi.fn().mockImplementation(async (nameOrKey: string) => {
       if (nameOrKey === 'Communication Project') return 'communication-project';
+      if (nameOrKey === 'Communication Proposal') return 'communication-proposal';
+      if (nameOrKey === 'Invoice Project') return 'invoice-project';
       return nameOrKey;
     }),
     getAllDocumentTypes: vi.fn().mockResolvedValue([
       { key: 'communication-project', name: 'Communication Project' },
       { key: 'communication-proposal', name: 'Communication Proposal' },
+      { key: 'invoice-project', name: 'Invoice Project' },
     ]),
-    getDocumentTypeSchemas: vi.fn().mockResolvedValue({}),
+    getDocumentTypeSchemas: vi.fn().mockImplementation(async (key: string) => {
+      if (key === 'communication-project' || key === 'communication-proposal') {
+        return { allowEmptySourceFiles: true };
+      }
+      return {};
+    }),
   };
 
   it('triggers UI reload and defaults Document Type to first allowed when Space Type changes', async () => {
@@ -529,7 +537,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         formData: {
           SelectDocumentSpaceType: 'projects',
           SelectDocumentSpace: 'Project Main',
-          SelectDocumentType: 'communication-project',
+          SelectDocumentType: 'invoice-project',
           contact: 'Acme Corp',
           date: '260920',
         },
@@ -562,7 +570,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         formData: {
           SelectDocumentSpaceType: 'projects',
           SelectDocumentSpace: 'Project Main',
-          SelectDocumentType: 'communication-project',
+          SelectDocumentType: 'invoice-project',
           contact: 'Acme Corp',
           date: '260920',
         },
@@ -596,7 +604,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         formData: {
           SelectDocumentSpaceType: 'projects',
           SelectDocumentSpace: 'Project Main',
-          SelectDocumentType: 'communication-project',
+          SelectDocumentType: 'invoice-project',
           SelectFiles: [],
           contact: 'Acme Corp',
           date: '260920',
@@ -620,6 +628,134 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
             { text: 'File2.pdf', value: 'drive-file-2', selected: false },
           ],
         },
+      });
+    });
+
+    it('allows submission with 0 source files when allowEmptySourceFiles is true and passes sourceFiles: [] to documentRunner in Drive context', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Main',
+          SelectDocumentType: 'communication-project',
+          contact: 'Acme Corp',
+          date: '260920',
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledTimes(1);
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        {
+          type: 'communication-project',
+          data: { contact: 'Acme Corp', date: '260920' },
+          space: {
+            id: 'proj1',
+            name: 'Project Main',
+            typeId: 'projects',
+            abstractStorageId: 'proj1',
+          },
+          sourceFiles: [],
+        },
+        'onSubmit'
+      );
+      expect(response).toEqual({
+        type: 'notification',
+        text: 'Document processed successfully',
+      });
+    });
+
+    it('allows submission with 0 source files when allowEmptySourceFiles is true in Gmail context', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-123',
+          threadId: 'th-123',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Main',
+          SelectDocumentType: 'communication-project',
+          contact: 'Acme Corp',
+          date: '260920',
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledTimes(1);
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'communication-project',
+          sourceFiles: [],
+        }),
+        'onSubmit'
+      );
+      expect(response).toEqual({
+        type: 'notification',
+        text: 'Document processed successfully',
+      });
+    });
+
+    it('aborts submission with Gmail-specific error message when 0 files and allowEmptySourceFiles is false or omitted in Gmail context', async () => {
+      const mockDocumentRunner = {
+        processDocument: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner: mockDocumentRunner,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'processDocument',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-123',
+          threadId: 'th-123',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Main',
+          SelectDocumentType: 'invoice-project',
+          contact: 'Acme Corp',
+          date: '260920',
+        },
+      };
+
+      const response = await adapter.processUiEvent(context);
+
+      expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
+      expect(response).toMatchObject({
+        type: 'render',
+        isUpdateCard: true,
+        validationErrors: ['Please select at least one file to process or enable Save Email to PDF.'],
       });
     });
 

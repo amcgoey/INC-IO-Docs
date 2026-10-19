@@ -802,7 +802,77 @@ describe('DriveActivityHandler', () => {
         });
         expect(mockDriveService.findOrCreateFolder).not.toHaveBeenCalled();
       });
+
+      it('creates destination folder hierarchy when targetSourceFiles is empty and rootStorageId is provided', async () => {
+        (mockDriveService.resolveFolderPath as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          id: 'resolved-comm-folder-id',
+          name: 'Communication',
+        });
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({
+            id: 'contact-folder-id',
+            name: 'Acme Corp',
+          })
+          .mockResolvedValueOnce({
+            id: 'subfolder-id',
+            name: '260920 IN - Meeting Notes',
+          });
+
+        const zeroFilesHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [],
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'shared-drive-root-id',
+            parentPath: '1 Admin/Communication',
+            folderName: 'Acme Corp/260920 IN - Meeting Notes',
+          },
+        };
+
+        const result = await zeroFilesHandler.handle(activity);
+
+        expect(result).toEqual({
+          success: true,
+          files: [],
+        });
+        expect(mockDriveService.resolveFolderPath).toHaveBeenCalledWith(
+          'shared-drive-root-id',
+          ['1 Admin', 'Communication']
+        );
+        expect(mockDriveService.findOrCreateFolder).toHaveBeenNthCalledWith(
+          1,
+          'resolved-comm-folder-id',
+          'Acme Corp'
+        );
+        expect(mockDriveService.findOrCreateFolder).toHaveBeenNthCalledWith(
+          2,
+          'contact-folder-id',
+          '260920 IN - Meeting Notes'
+        );
+        expect(mockDriveService.move).not.toHaveBeenCalled();
+      });
+
+      it('throws when targetSourceFiles is empty and rootStorageId is missing', async () => {
+        const zeroFilesHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [],
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            parentPath: '1 Admin/Communication',
+            folderName: 'Acme Corp/260920 IN - Meeting Notes',
+          },
+        };
+
+        await expect(zeroFilesHandler.handle(activity)).rejects.toThrow(
+          'DriveActivityHandler: Cannot create destination folder for zero-file filing because rootStorageId is missing or unresolved in activity payload'
+        );
+      });
     });
   });
 });
+
 
