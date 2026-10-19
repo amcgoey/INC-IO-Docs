@@ -139,6 +139,78 @@ export function isSelectionKey(key: string): boolean {
 }
 
 /**
+ * Parses a Google Drive file, folder, or Google Workspace collaborative doc URL.
+ * Returns { id, resourceType: 'file' | 'folder' } or undefined if invalid.
+ */
+export function parseGoogleDriveUrl(
+  url: string
+): { id: string; resourceType: 'file' | 'folder' } | undefined {
+  if (typeof url !== 'string') {
+    return undefined;
+  }
+  const trimmed = url.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(trimmed);
+  } catch {
+    return undefined;
+  }
+
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    return undefined;
+  }
+
+  const hostname = parsedUrl.hostname.toLowerCase();
+  if (hostname !== 'drive.google.com' && hostname !== 'docs.google.com') {
+    return undefined;
+  }
+
+  const pathname = parsedUrl.pathname as string;
+
+  if (hostname === 'drive.google.com') {
+    // 2. Standard Drive Folders:
+    // https://drive.google.com/(?:drive/)?(?:u/\d+/)?folders/([a-zA-Z0-9_-]+)
+    const folderMatch = pathname.match(/^(?:\/(?:drive|u\/\d+))*\/folders\/([a-zA-Z0-9_-]+)(?:\/.*)?$/);
+    if (folderMatch) {
+      return { id: folderMatch[1], resourceType: 'folder' };
+    }
+
+    // 3. Drive Open ID:
+    // https://drive.google.com/open?.*id=([a-zA-Z0-9_-]+) (or query parameter id=<id>)
+    if (/^(?:\/u\/\d+)?\/open(?:\/.*)?$/.test(pathname)) {
+      const idParam = parsedUrl.searchParams.get('id');
+      if (idParam && /^[a-zA-Z0-9_-]+$/.test(idParam)) {
+        return { id: idParam, resourceType: 'file' };
+      }
+    }
+
+    // 1. Standard Drive Files:
+    // https://drive.google.com/(?:file/)?(?:u/\d+/)?d/([a-zA-Z0-9_-]+)
+    const fileMatch = pathname.match(/^(?:\/(?:file|u\/\d+))*\/d\/([a-zA-Z0-9_-]+)(?:\/.*)?$/);
+    if (fileMatch) {
+      return { id: fileMatch[1], resourceType: 'file' };
+    }
+  }
+
+  if (hostname === 'docs.google.com') {
+    // 4. Google Workspace Collaborative Docs:
+    // https://docs.google.com/(?:document|spreadsheets|presentation|forms)/(?:u/\d+/)?d/([a-zA-Z0-9_-]+)
+    const docsMatch = pathname.match(
+      /^(?:\/u\/\d+)?\/(?:document|spreadsheets|presentation|forms)(?:\/u\/\d+)?\/d\/([a-zA-Z0-9_-]+)(?:\/.*)?$/
+    );
+    if (docsMatch) {
+      return { id: docsMatch[1], resourceType: 'file' };
+    }
+  }
+
+  return undefined;
+}
+
+/**
  * Checks whether an event context corresponds to a Gmail context.
  */
 export function isGmailContext(context?: {

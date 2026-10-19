@@ -726,5 +726,490 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     );
     expect(errorSection).toBeDefined();
   });
+
+  describe('Google Drive URL filing (SelectFileSource = "Google Drive URL")', () => {
+    const rootSharedDriveId = 'shared-drive-proj-root';
+    const adminFolderId = 'folder-admin-1';
+    const commFolderId = 'folder-comm-1';
+    const contactFolderId = 'folder-acme-corp';
+    const newSubfolderId = 'folder-meeting-subfolder';
+
+    function mockFolderResolution() {
+      mockDynamicValidationProject({
+        sharedDriveId: rootSharedDriveId,
+        adminFolderId,
+        commFolderId,
+        contactFolderId,
+        contactName: 'Acme Corp',
+      });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(rootSharedDriveId) && q.q.includes("name = '1 Admin'"))
+        .reply(200, {
+          files: [{ id: adminFolderId, name: '1 Admin', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(adminFolderId) && q.q.includes("name = 'Communication'"))
+        .reply(200, {
+          files: [{ id: commFolderId, name: 'Communication', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(commFolderId) && q.q.includes("name = 'Acme Corp'"))
+        .reply(200, {
+          files: [{ id: contactFolderId, name: 'Acme Corp', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(contactFolderId) && q.q.includes("name = '260920 IN - Meeting Notes'"))
+        .reply(200, { files: [] });
+
+      nock('https://www.googleapis.com')
+        .post('/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: newSubfolderId,
+          name: '260920 IN - Meeting Notes',
+          parents: [contactFolderId],
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+    }
+
+    it('moves file into <contact>/<commFolderName> when SelectFileSource is Google Drive URL with valid file URL', async () => {
+      mockFolderResolution();
+
+      const fileId = '1file-drive-url-123';
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${fileId}`)
+        .query(true)
+        .reply(200, {
+          id: fileId,
+          name: 'Project_Contract.pdf',
+          parents: ['initial-parent-folder'],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        });
+
+      nock('https://www.googleapis.com')
+        .patch(`/drive/v3/files/${fileId}`)
+        .query(true)
+        .reply(200, {
+          id: fileId,
+          name: 'Project_Contract.pdf',
+          parents: [newSubfolderId],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-without-attachments',
+            threadId: 'th-test-live',
+            accessToken: 'ya29.live-token',
+          },
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+              InputDriveURL: { stringInputs: { value: [`https://drive.google.com/file/d/${fileId}/view?usp=sharing`] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        action: {
+          notification: {
+            text: 'Document processed successfully',
+          },
+        },
+      });
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('moves folder into <contact>/<commFolderName> when SelectFileSource is Google Drive URL with valid folder URL', async () => {
+      mockFolderResolution();
+
+      const folderId = '1folder-drive-url-456';
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${folderId}`)
+        .query(true)
+        .reply(200, {
+          id: folderId,
+          name: 'Client_Assets',
+          parents: ['initial-parent-folder'],
+          mimeType: 'application/vnd.google-apps.folder',
+          webViewLink: `https://drive.google.com/drive/folders/${folderId}`,
+        });
+
+      nock('https://www.googleapis.com')
+        .patch(`/drive/v3/files/${folderId}`)
+        .query(true)
+        .reply(200, {
+          id: folderId,
+          name: 'Client_Assets',
+          parents: [newSubfolderId],
+          mimeType: 'application/vnd.google-apps.folder',
+          webViewLink: `https://drive.google.com/drive/folders/${folderId}`,
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-without-attachments',
+            threadId: 'th-test-live',
+            accessToken: 'ya29.live-token',
+          },
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+              InputDriveURL: { stringInputs: { value: [`https://drive.google.com/drive/folders/${folderId}?usp=drive_link`] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        action: {
+          notification: {
+            text: 'Document processed successfully',
+          },
+        },
+      });
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('parses multi-account /u/1/folders/<id> URL and moves folder into destination hierarchy', async () => {
+      mockFolderResolution();
+
+      const folderId = '1folder-multi-account-789';
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${folderId}`)
+        .query(true)
+        .reply(200, {
+          id: folderId,
+          name: 'MultiAccount_Assets',
+          parents: ['initial-parent-folder'],
+          mimeType: 'application/vnd.google-apps.folder',
+          webViewLink: `https://drive.google.com/drive/folders/${folderId}`,
+        });
+
+      nock('https://www.googleapis.com')
+        .patch(`/drive/v3/files/${folderId}`)
+        .query(true)
+        .reply(200, {
+          id: folderId,
+          name: 'MultiAccount_Assets',
+          parents: [newSubfolderId],
+          mimeType: 'application/vnd.google-apps.folder',
+          webViewLink: `https://drive.google.com/drive/folders/${folderId}`,
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-without-attachments',
+            threadId: 'th-test-live',
+            accessToken: 'ya29.live-token',
+          },
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+              InputDriveURL: { stringInputs: { value: [`https://drive.google.com/drive/u/1/folders/${folderId}`] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body).toEqual({
+        action: {
+          notification: {
+            text: 'Document processed successfully',
+          },
+        },
+      });
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('aborts with "Invalid Google Drive URL. Please enter a valid Google Drive file or folder link." preserving inputs when URL is malformed', async () => {
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-without-attachments',
+            threadId: 'th-test-live',
+            accessToken: 'ya29.live-token',
+          },
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+              InputDriveURL: { stringInputs: { value: ['https://dropbox.com/s/invalid-link'] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+      const updateCard = body.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+
+      const errorSection = updateCard!.sections.find((s) =>
+        s.widgets?.some((w) =>
+          w.textParagraph?.text?.includes(
+            'Invalid Google Drive URL. Please enter a valid Google Drive file or folder link.'
+          )
+        )
+      );
+      expect(errorSection).toBeDefined();
+
+      // Verify form inputs preserved
+      const infoSection = updateCard!.sections.find((s) => s.header === 'Document Data');
+      expect(infoSection).toBeDefined();
+      const contactWidget = infoSection!.widgets.find(
+        (w) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-project')
+      );
+      expect(contactWidget?.textInput?.value).toBe('Acme Corp');
+
+      const fileSection = updateCard!.sections.find((s) => s.header === 'File Selection');
+      expect(fileSection).toBeDefined();
+      const driveUrlWidget = fileSection!.widgets.find((w) => w.textInput?.name === 'InputDriveURL');
+      expect(driveUrlWidget?.textInput?.value).toBe('https://dropbox.com/s/invalid-link');
+    });
+
+    it('aborts with "The specified Google Drive file or folder was not found." preserving inputs when Drive returns 404', async () => {
+      mockFolderResolution();
+
+      const missingFileId = 'missing-file-404';
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${missingFileId}`)
+        .query(true)
+        .reply(404, {
+          error: {
+            code: 404,
+            message: `File not found: ${missingFileId}`,
+          },
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-without-attachments',
+            threadId: 'th-test-live',
+            accessToken: 'ya29.live-token',
+          },
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+              InputDriveURL: { stringInputs: { value: [`https://drive.google.com/file/d/${missingFileId}/view`] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+      const updateCard = body.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+
+      const errorSection = updateCard!.sections.find((s) =>
+        s.widgets?.some((w) =>
+          w.textParagraph?.text?.includes('The specified Google Drive file or folder was not found.')
+        )
+      );
+      expect(errorSection).toBeDefined();
+
+      // Form inputs preserved
+      const infoSection = updateCard!.sections.find((s) => s.header === 'Document Data');
+      expect(infoSection).toBeDefined();
+      const contactWidget = infoSection!.widgets.find(
+        (w) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-project')
+      );
+      expect(contactWidget?.textInput?.value).toBe('Acme Corp');
+    });
+
+    it('aborts with "Access denied. You do not have permission to access this Google Drive file or folder." preserving inputs when Drive returns 403', async () => {
+      mockFolderResolution();
+
+      const forbiddenFileId = 'forbidden-file-403';
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${forbiddenFileId}`)
+        .query(true)
+        .reply(403, {
+          error: {
+            code: 403,
+            message: 'User does not have sufficient permissions to access file',
+          },
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-without-attachments',
+            threadId: 'th-test-live',
+            accessToken: 'ya29.live-token',
+          },
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+              InputDriveURL: { stringInputs: { value: [`https://drive.google.com/file/d/${forbiddenFileId}/view`] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+      const updateCard = body.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+
+      const errorSection = updateCard!.sections.find((s) =>
+        s.widgets?.some((w) =>
+          w.textParagraph?.text?.includes(
+            'Access denied. You do not have permission to access this Google Drive file or folder.'
+          )
+        )
+      );
+      expect(errorSection).toBeDefined();
+
+      // Form inputs preserved
+      const infoSection = updateCard!.sections.find((s) => s.header === 'Document Data');
+      expect(infoSection).toBeDefined();
+      const contactWidget = infoSection!.widgets.find(
+        (w) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-project')
+      );
+      expect(contactWidget?.textInput?.value).toBe('Acme Corp');
+    });
+  });
 });
 
