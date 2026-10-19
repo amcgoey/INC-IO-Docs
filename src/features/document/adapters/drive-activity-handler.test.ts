@@ -3,6 +3,7 @@ import { DriveActivityHandler, parsePathSegments } from './drive-activity-handle
 import {
   AmbiguousPathSpecError,
   DriveServiceError,
+  FileNotFoundError,
   type DriveServicePort,
 } from '../ports';
 import type { Activity } from '../domain';
@@ -711,7 +712,7 @@ describe('DriveActivityHandler', () => {
         const result = await multiHandler.handle(activity);
 
         expect(result.success).toBe(false);
-        expect(result.error).toBe('Drive service error (403) in move: User does not have permission');
+        expect(result.error).toBe('Access denied. You do not have permission to access this Google Drive file or folder.');
         expect(result.files).toEqual([
           {
             id: 'sf-1',
@@ -802,7 +803,433 @@ describe('DriveActivityHandler', () => {
         });
         expect(mockDriveService.findOrCreateFolder).not.toHaveBeenCalled();
       });
+
+      it('creates destination folder hierarchy when targetSourceFiles is empty and rootStorageId is provided', async () => {
+        (mockDriveService.resolveFolderPath as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          id: 'resolved-comm-folder-id',
+          name: 'Communication',
+        });
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({
+            id: 'contact-folder-id',
+            name: 'Acme Corp',
+          })
+          .mockResolvedValueOnce({
+            id: 'subfolder-id',
+            name: '260920 IN - Meeting Notes',
+          });
+
+        const zeroFilesHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [],
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'shared-drive-root-id',
+            parentPath: '1 Admin/Communication',
+            folderName: 'Acme Corp/260920 IN - Meeting Notes',
+          },
+        };
+
+        const result = await zeroFilesHandler.handle(activity);
+
+        expect(result).toEqual({
+          success: true,
+          files: [],
+        });
+        expect(mockDriveService.resolveFolderPath).toHaveBeenCalledWith(
+          'shared-drive-root-id',
+          ['1 Admin', 'Communication']
+        );
+        expect(mockDriveService.findOrCreateFolder).toHaveBeenNthCalledWith(
+          1,
+          'resolved-comm-folder-id',
+          'Acme Corp'
+        );
+        expect(mockDriveService.findOrCreateFolder).toHaveBeenNthCalledWith(
+          2,
+          'contact-folder-id',
+          '260920 IN - Meeting Notes'
+        );
+        expect(mockDriveService.move).not.toHaveBeenCalled();
+      });
+
+      it('throws when targetSourceFiles is empty and rootStorageId is missing', async () => {
+        const zeroFilesHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [],
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            parentPath: '1 Admin/Communication',
+            folderName: 'Acme Corp/260920 IN - Meeting Notes',
+          },
+        };
+
+        await expect(zeroFilesHandler.handle(activity)).rejects.toThrow(
+          'DriveActivityHandler: Cannot create destination folder for zero-file filing because rootStorageId is missing or unresolved in activity payload'
+        );
+      });
+    });
+
+    describe('Google Drive file/folder move & resilient 404/403 error mapping', () => {
+      it('moves file ID via move and returns FileLocator on success', async () => {
+        const fileHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [{ id: 'file-doc-123', name: 'Document.docx' }],
+        });
+
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'target-folder-id',
+          name: 'Target Folder',
+        });
+        (mockDriveService.move as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'file-doc-123',
+          name: 'Document.docx',
+          parents: ['target-folder-id'],
+          mimeType: 'application/vnd.google-apps.document',
+          webViewLink: 'https://docs.google.com/document/d/file-doc-123/edit',
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-storage-id',
+            folderName: 'Target Folder',
+          },
+        };
+
+        const result = await fileHandler.handle(activity);
+
+        expect(mockDriveService.move).toHaveBeenCalledWith('file-doc-123', 'target-folder-id');
+        expect(result).toEqual({
+          success: true,
+          files: [
+            {
+              id: 'file-doc-123',
+              name: 'Document.docx',
+              parentName: 'Target Folder',
+              mimeType: 'application/vnd.google-apps.document',
+              uri: 'https://docs.google.com/document/d/file-doc-123/edit',
+            },
+          ],
+        });
+      });
+
+      it('moves folder ID via move and returns FileLocator on success', async () => {
+        const folderHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [{ id: 'folder-sub-456', name: 'SubFolder' }],
+        });
+
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'target-folder-id',
+          name: 'Target Folder',
+        });
+        (mockDriveService.move as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'folder-sub-456',
+          name: 'SubFolder',
+          parents: ['target-folder-id'],
+          mimeType: 'application/vnd.google-apps.folder',
+          webViewLink: 'https://drive.google.com/drive/folders/folder-sub-456',
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-storage-id',
+            folderName: 'Target Folder',
+          },
+        };
+
+        const result = await folderHandler.handle(activity);
+
+        expect(mockDriveService.move).toHaveBeenCalledWith('folder-sub-456', 'target-folder-id');
+        expect(result).toEqual({
+          success: true,
+          files: [
+            {
+              id: 'folder-sub-456',
+              name: 'SubFolder',
+              parentName: 'Target Folder',
+              mimeType: 'application/vnd.google-apps.folder',
+              uri: 'https://drive.google.com/drive/folders/folder-sub-456',
+            },
+          ],
+        });
+      });
+
+      it('catches FileNotFoundError during move and returns mapped error "The specified Google Drive file or folder was not found."', async () => {
+        const notFoundHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [{ id: 'non-existent-id', name: 'Missing' }],
+        });
+
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'target-folder-id',
+          name: 'Target Folder',
+        });
+        (mockDriveService.move as ReturnType<typeof vi.fn>).mockRejectedValue(
+          new FileNotFoundError('File not found: non-existent-id')
+        );
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-storage-id',
+            folderName: 'Target Folder',
+          },
+        };
+
+        const result = await notFoundHandler.handle(activity);
+
+        expect(result).toEqual({
+          success: false,
+          error: 'The specified Google Drive file or folder was not found.',
+          files: [],
+        });
+      });
+
+      it('catches 403 error during move and returns mapped error "Access denied. You do not have permission to access this Google Drive file or folder."', async () => {
+        const forbiddenHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [{ id: 'forbidden-id', name: 'Restricted' }],
+        });
+
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'target-folder-id',
+          name: 'Target Folder',
+        });
+        (mockDriveService.move as ReturnType<typeof vi.fn>).mockRejectedValue(
+          new DriveServiceError('Drive service error (403) in move: Insufficient permissions for file')
+        );
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-storage-id',
+            folderName: 'Target Folder',
+          },
+        };
+
+        const result = await forbiddenHandler.handle(activity);
+
+        expect(result).toEqual({
+          success: false,
+          error: 'Access denied. You do not have permission to access this Google Drive file or folder.',
+          files: [],
+        });
+      });
+
+      it('catches error containing "Access denied" or "insufficient permissions" and maps to friendly error', async () => {
+        const deniedHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [{ id: 'denied-id', name: 'NoAccess' }],
+        });
+
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'target-folder-id',
+          name: 'Target Folder',
+        });
+        (mockDriveService.move as ReturnType<typeof vi.fn>).mockRejectedValue(
+          new Error('Access denied: user cannot write to resource')
+        );
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-storage-id',
+            folderName: 'Target Folder',
+          },
+        };
+
+        const result = await deniedHandler.handle(activity);
+
+        expect(result).toEqual({
+          success: false,
+          error: 'Access denied. You do not have permission to access this Google Drive file or folder.',
+          files: [],
+        });
+      });
+    });
+
+    describe('Binary SourceFile filing via saveBuffer (Ticket #200)', () => {
+      it('saves binary sourceFile content using driveService.saveBuffer into leafFolder preserving name and mimeType', async () => {
+        const binaryContent = new Uint8Array([1, 2, 3, 4]);
+        const binaryHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [
+            {
+              id: 'att-1',
+              name: 'Invoice.pdf',
+              mimeType: 'application/pdf',
+              content: binaryContent,
+            },
+          ],
+        });
+
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'target-folder-id',
+          name: 'Target Folder',
+        });
+        (mockDriveService.saveBuffer as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'drive-file-new-1',
+          name: 'Invoice.pdf',
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/drive-file-new-1/view',
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-storage-id',
+            folderName: 'Target Folder',
+          },
+        };
+
+        const result = await binaryHandler.handle(activity);
+
+        expect(mockDriveService.saveBuffer).toHaveBeenCalledWith(binaryContent, {
+          action: 'create',
+          targetFolderId: 'target-folder-id',
+          name: 'Invoice.pdf',
+          mimeType: 'application/pdf',
+        });
+        expect(mockDriveService.move).not.toHaveBeenCalled();
+        expect(result).toEqual({
+          success: true,
+          files: [
+            {
+              id: 'drive-file-new-1',
+              name: 'Invoice.pdf',
+              parentName: 'Target Folder',
+              mimeType: 'application/pdf',
+              uri: 'https://drive.google.com/file/d/drive-file-new-1/view',
+            },
+          ],
+        });
+      });
+
+      it('falls back to sourceFile.id if sourceFile.name is undefined when calling saveBuffer', async () => {
+        const binaryContent = new Uint8Array([5, 6, 7]);
+        const binaryHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [
+            {
+              id: 'att-unnamed',
+              mimeType: 'image/png',
+              content: binaryContent,
+            },
+          ],
+        });
+
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'target-folder-id',
+          name: 'Target Folder',
+        });
+        (mockDriveService.saveBuffer as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'drive-file-new-2',
+          name: 'att-unnamed',
+          mimeType: 'image/png',
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-storage-id',
+            folderName: 'Target Folder',
+          },
+        };
+
+        const result = await binaryHandler.handle(activity);
+
+        expect(mockDriveService.saveBuffer).toHaveBeenCalledWith(binaryContent, {
+          action: 'create',
+          targetFolderId: 'target-folder-id',
+          name: 'att-unnamed',
+          mimeType: 'image/png',
+        });
+        expect(result.files).toHaveLength(1);
+        expect(result.files?.[0].uri).toBe('');
+      });
+
+      it('does NOT call getFile().parents when resolving startingId if targetSourceFiles[0] has binary content', async () => {
+        const binaryHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [
+            {
+              id: 'att-binary-no-parent',
+              name: 'Invoice.pdf',
+              content: new Uint8Array([1, 2]),
+            },
+          ],
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            folderName: 'Target Folder',
+          },
+        };
+
+        await expect(binaryHandler.handle(activity)).rejects.toThrow(
+          'DriveActivityHandler: Cannot create destination folder for binary file filing because rootStorageId is missing or unresolved in activity payload'
+        );
+        expect(mockDriveService.getFile).not.toHaveBeenCalled();
+      });
+
+      it('handles mixed source files saving binary files via saveBuffer and moving Drive items via move', async () => {
+        const binaryContent = new Uint8Array([9, 9]);
+        const mixedHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [
+            {
+              id: 'att-binary',
+              name: 'Attachment.pdf',
+              mimeType: 'application/pdf',
+              content: binaryContent,
+            },
+            {
+              id: 'drive-item-123',
+              name: 'ExistingDoc.docx',
+            },
+          ],
+        });
+
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'target-folder-id',
+          name: 'Target Folder',
+        });
+        (mockDriveService.saveBuffer as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'drive-saved-1',
+          name: 'Attachment.pdf',
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/drive-saved-1/view',
+        });
+        (mockDriveService.move as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'drive-item-123',
+          name: 'ExistingDoc.docx',
+          mimeType: 'application/vnd.google-apps.document',
+          webViewLink: 'https://drive.google.com/file/d/drive-item-123/view',
+        });
+
+        const activity: Activity = {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'root-storage-id',
+            folderName: 'Target Folder',
+          },
+        };
+
+        const result = await mixedHandler.handle(activity);
+
+        expect(mockDriveService.saveBuffer).toHaveBeenCalledWith(binaryContent, {
+          action: 'create',
+          targetFolderId: 'target-folder-id',
+          name: 'Attachment.pdf',
+          mimeType: 'application/pdf',
+        });
+        expect(mockDriveService.move).toHaveBeenCalledWith('drive-item-123', 'target-folder-id');
+        expect(result.success).toBe(true);
+        expect(result.files).toHaveLength(2);
+        expect(result.files?.[0].id).toBe('drive-saved-1');
+        expect(result.files?.[1].id).toBe('drive-item-123');
+      });
     });
   });
 });
+
 

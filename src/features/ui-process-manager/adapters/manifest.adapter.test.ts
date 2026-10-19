@@ -82,4 +82,33 @@ describe('ManifestAdapter', () => {
     const empty = await adapter.getDocumentTypeSchemas('non-existent');
     expect(empty).toEqual({});
   });
+
+  it('retrieves allowEmptySourceFiles flag from document type definition', async () => {
+    const mockProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['schemas/comm-project.json', 'schemas/invoice.json'],
+      }),
+      readParsedSchema: vi.fn().mockImplementation(async (path: string) => {
+        if (path === 'schemas/comm-project.json') {
+          return {
+            key: 'comm-project',
+            documentSchema: {},
+            allowEmptySourceFiles: true,
+          };
+        }
+        return {
+          key: 'invoice',
+          documentSchema: {},
+        };
+      }),
+    };
+
+    const adapter = new ManifestAdapter(mockProvider);
+    const commSchemas = await adapter.getDocumentTypeSchemas('comm-project');
+    const invoiceSchemas = await adapter.getDocumentTypeSchemas('invoice');
+
+    expect(commSchemas.allowEmptySourceFiles).toBe(true);
+    expect(invoiceSchemas.allowEmptySourceFiles).toBeUndefined();
+  });
 });
+

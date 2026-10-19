@@ -42,6 +42,7 @@ export const DocumentModel = Type.Object({
 });
 
 export type Document = Static<typeof DocumentModel>;
+export type DocumentModel = Document;
 
 export const ActivityType = Type.Object({
   type: Type.String(),
@@ -64,6 +65,7 @@ export const SourceFileSchema = Type.Object({
   id: Type.String(),
   name: Type.Optional(Type.String()),
   mimeType: Type.Optional(Type.String()),
+  content: Type.Optional(Type.Uint8Array()),
 });
 
 export const SourceFileType = SourceFileSchema;
@@ -208,6 +210,7 @@ export const DocumentTypeSchema = Type.Object({
   documentUiSchema: Type.Optional(DocumentUiEventsSchema),
   documentWorkflowConfig: Type.Optional(DocumentWorkflowConfigType),
   storageContextConfig: Type.Optional(StorageContextConfigType),
+  allowEmptySourceFiles: Type.Optional(Type.Boolean()),
 });
 
 export type DocumentType = Static<typeof DocumentTypeSchema>;
@@ -373,6 +376,8 @@ export function buildDocumentTypeSchema(documentType: DocumentType): TSchema {
   return Type.Object(properties);
 }
 
+const validatedDataObjects = new WeakSet<object>();
+
 export class DocumentService implements DocumentServicePort {
   private documentTypes: DocumentType[] = [];
 
@@ -390,19 +395,17 @@ export class DocumentService implements DocumentServicePort {
     this.documentTypes = await this.documentSchemaRegistry.loadAll();
   }
 
-  async processDocument(
-    payload?: unknown,
-    eventName?: string
-  ): Promise<ProcessDocumentResult> {
-    if (!Value.Check(DocumentModel, payload)) {
-      const errors = formatValidationErrors(DocumentModel, payload);
-      return {
-        success: false,
-        errors: errors.length > 0 ? errors : ['Invalid document payload'],
-      };
+  public async validateDocument(
+    document: DocumentModel
+  ): Promise<{ success: boolean; errors?: string[] }> {
+    if (
+      document.data &&
+      typeof document.data === 'object' &&
+      validatedDataObjects.has(document.data)
+    ) {
+      return { success: true };
     }
 
-    const document = payload;
     const documentType = this.documentTypes.find((rt) => rt.key === document.type);
     const compiled = this.compiledSchemaRegistry.get(document.type);
     if (!compiled || !documentType) {
@@ -490,6 +493,37 @@ export class DocumentService implements DocumentServicePort {
         }
       }
     }
+
+    if (document.data && typeof document.data === 'object') {
+      validatedDataObjects.add(document.data);
+    }
+
+    return { success: true };
+  }
+
+  async processDocument(
+    payload?: unknown,
+    eventName?: string
+  ): Promise<ProcessDocumentResult> {
+    if (!Value.Check(DocumentModel, payload)) {
+      const errors = formatValidationErrors(DocumentModel, payload);
+      return {
+        success: false,
+        errors: errors.length > 0 ? errors : ['Invalid document payload'],
+      };
+    }
+
+    const document = payload;
+    const validationResult = await this.validateDocument(document);
+    if (!validationResult.success) {
+      return {
+        success: false,
+        errors: validationResult.errors ?? ['Invalid document data payload'],
+      };
+    }
+
+    const documentType = this.documentTypes.find((rt) => rt.key === document.type)!;
+    const rawData = document.data as { [key: string]: unknown };
 
     // Anti-Corruption Layer: Context Enrichment & Fallback Tuple Synthesis
     const schemaFieldKeys = new Set(documentType.documentSchema.fields.map((f) => f.key));

@@ -15,6 +15,7 @@ import {
   SAVE_EMAIL_TO_PDF_KEY,
   EPHEMERAL_UI_SELECTION_KEYS,
   isSelectionKey,
+  parseGoogleDriveUrl,
   extractSelectFilesSet,
 } from './ports';
 
@@ -137,6 +138,24 @@ describe('UI Process Manager Ports & DTOs', () => {
       expect(Value.Check(UiProcessSourceFileDtoSchema, { id: 123 })).toBe(false);
       expect(Value.Check(UiProcessSourceFileDtoSchema, { id: 'file-1', mimeType: 999 })).toBe(false);
     });
+
+    it('validates a UiProcessSourceFileDto with binary content', () => {
+      const dto = {
+        id: 'att-1',
+        name: 'receipt.pdf',
+        mimeType: 'application/pdf',
+        content: new Uint8Array([10, 20, 30]),
+      };
+      expect(Value.Check(UiProcessSourceFileDtoSchema, dto)).toBe(true);
+    });
+
+    it('rejects a UiProcessSourceFileDto with non-Uint8Array content', () => {
+      const dto = {
+        id: 'att-1',
+        content: 'not-bytes',
+      };
+      expect(Value.Check(UiProcessSourceFileDtoSchema, dto)).toBe(false);
+    });
   });
 
   describe('ProcessUiStateEventSchema & UiProcessEventContextSchema mimeType support', () => {
@@ -187,6 +206,7 @@ describe('UI Process Manager Ports & DTOs', () => {
       expect(EPHEMERAL_UI_SELECTION_KEYS).toBeInstanceOf(Set);
       expect(EPHEMERAL_UI_SELECTION_KEYS.size).toBe(5);
       expect(typeof isSelectionKey).toBe('function');
+      expect(typeof parseGoogleDriveUrl).toBe('function');
       expect(typeof extractSelectFilesSet).toBe('function');
     });
   });

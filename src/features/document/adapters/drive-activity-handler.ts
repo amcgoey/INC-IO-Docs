@@ -8,6 +8,7 @@ import {
   type ActivityHandler,
   type AppConfigurationProviderPort,
   type DriveFileResult,
+  type DriveFile,
   type DriveSearchQuery,
   type DriveServicePort,
 } from '../ports';
@@ -34,6 +35,38 @@ export function parsePathSegments(path: string): string[] {
   return segments;
 }
 
+function isAccessDeniedError(error: unknown): boolean {
+  if (typeof error === 'object' && error !== null) {
+    const err = error as { statusCode?: unknown; status?: unknown; code?: unknown; message?: unknown };
+    if (err.statusCode === 403 || err.status === 403 || err.code === 403) {
+      return true;
+    }
+    if (typeof err.message === 'string' && /403|insufficient permissions|access denied/i.test(err.message)) {
+      return true;
+    }
+  }
+  if (typeof error === 'string' && /403|insufficient permissions|access denied/i.test(error)) {
+    return true;
+  }
+  return false;
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  if (error instanceof FileNotFoundError) {
+    return true;
+  }
+  if (typeof error === 'object' && error !== null) {
+    const err = error as { name?: unknown; message?: unknown; statusCode?: unknown; status?: unknown };
+    if (err.name === 'FileNotFoundError' || err.statusCode === 404 || err.status === 404) {
+      return true;
+    }
+    if (typeof err.message === 'string' && (err.message.includes('FileNotFoundError') || /404|file not found/i.test(err.message))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export class DriveActivityHandler implements ActivityHandler {
   private readonly options: DriveActivityHandlerOptions;
   private readonly sourceFiles?: SourceFile[] | undefined;
@@ -50,7 +83,7 @@ export class DriveActivityHandler implements ActivityHandler {
       ...(options ?? {}),
       ...(validatedTargetId !== undefined ? { primaryTargetId: validatedTargetId } : {}),
     };
-    if (options?.sourceFiles && options.sourceFiles.length > 0) {
+    if (options?.sourceFiles !== undefined) {
       this.sourceFiles = options.sourceFiles;
     } else if (validatedTargetId) {
       this.sourceFiles = [{ id: validatedTargetId }];
@@ -260,7 +293,7 @@ export class DriveActivityHandler implements ActivityHandler {
         ? payload.fileId.trim()
         : undefined;
 
-    if (this.sourceFiles && this.sourceFiles.length > 0) {
+    if (this.sourceFiles !== undefined) {
       targetSourceFiles = [...this.sourceFiles];
     } else if (payloadFileId) {
       targetSourceFiles = [{ id: payloadFileId }];
@@ -280,7 +313,7 @@ export class DriveActivityHandler implements ActivityHandler {
       }
     }
 
-    if (targetSourceFiles.length === 0) {
+    if (this.sourceFiles === undefined && targetSourceFiles.length === 0) {
       throw new Error('DriveActivityHandler: No fileId found in activity payload or execution context');
     }
 
@@ -306,10 +339,22 @@ export class DriveActivityHandler implements ActivityHandler {
       parentPathSegments = parsePathSegments(payload.parentPath as string);
     }
 
-    const startingId =
-      rootStorageId ??
-      (await this.driveService.getFile(targetSourceFiles[0].id)).parents?.[0] ??
-      'root';
+    let startingId: string;
+    if (rootStorageId) {
+      startingId = rootStorageId;
+    } else if (targetSourceFiles.length === 0) {
+      throw new Error(
+        'DriveActivityHandler: Cannot create destination folder for zero-file filing because rootStorageId is missing or unresolved in activity payload'
+      );
+    } else if (targetSourceFiles[0]?.content instanceof Uint8Array) {
+      throw new Error(
+        'DriveActivityHandler: Cannot create destination folder for binary file filing because rootStorageId is missing or unresolved in activity payload'
+      );
+    } else {
+      startingId =
+        (await this.driveService.getFile(targetSourceFiles[0].id)).parents?.[0] ??
+        'root';
+    }
     const baseFolderId =
       parentPathSegments.length > 0
         ? (await this.driveService.resolveFolderPath(startingId, parentPathSegments)).id
@@ -335,32 +380,60 @@ export class DriveActivityHandler implements ActivityHandler {
     const movedFiles: FileLocator[] = [];
     for (const sourceFile of targetSourceFiles) {
       try {
-        const movedFile = await this.driveService.move(sourceFile.id, leafFolder.id);
+        if (sourceFile.content instanceof Uint8Array) {
+          const file = await this.driveService.saveBuffer(sourceFile.content, {
+            action: 'create',
+            targetFolderId: leafFolder.id,
+            name: sourceFile.name || sourceFile.id,
+            ...(sourceFile.mimeType !== undefined ? { mimeType: sourceFile.mimeType } : {}),
+          });
+          const fileLocator = this.createFileLocator(file, leafFolder.name, {
+            fallbackMimeType: sourceFile.mimeType,
+            defaultEmptyUri: true,
+          });
+          movedFiles.push(fileLocator);
+        } else {
+          const movedFile = await this.driveService.move(sourceFile.id, leafFolder.id);
 
-        let uri = movedFile.webViewLink;
-        let mimeType = movedFile.mimeType;
-        let name = movedFile.name;
+          let uri = movedFile.webViewLink;
+          let mimeType = movedFile.mimeType;
+          let name = movedFile.name;
 
-        if (!uri || !name) {
-          try {
-            const fileMeta = await this.driveService.getFile(sourceFile.id);
-            uri = uri ?? fileMeta.webViewLink;
-            mimeType = mimeType ?? fileMeta.mimeType;
-            name = name || fileMeta.name;
-          } catch {
-            // Ignore
+          if (!uri || !name) {
+            try {
+              const fileMeta = await this.driveService.getFile(sourceFile.id);
+              uri = uri ?? fileMeta.webViewLink;
+              mimeType = mimeType ?? fileMeta.mimeType;
+              name = name || fileMeta.name;
+            } catch {
+              // Ignore
+            }
           }
+
+          const fileLocator = this.createFileLocator(
+            { id: movedFile.id, name, mimeType, webViewLink: uri },
+            leafFolder.name,
+            { fallbackName: sourceFile.name }
+          );
+          movedFiles.push(fileLocator);
+        }
+      } catch (error) {
+        if (isFileNotFoundError(error)) {
+          return {
+            success: false,
+            error: 'The specified Google Drive file or folder was not found.',
+            files: movedFiles,
+          };
         }
 
-        const fileLocator: FileLocator = {
-          id: movedFile.id,
-          name: name || sourceFile.name || '',
-          parentName: leafFolder.name,
-          ...(mimeType ? { mimeType } : {}),
-          ...(uri ? { uri } : {}),
-        };
-        movedFiles.push(fileLocator);
-      } catch (error) {
+        if (isAccessDeniedError(error)) {
+          return {
+            success: false,
+            error: 'Access denied. You do not have permission to access this Google Drive file or folder.',
+            files: movedFiles,
+          };
+        }
+
         const errorMessage = error instanceof Error ? error.message : String(error);
         return {
           success: false,
@@ -373,6 +446,34 @@ export class DriveActivityHandler implements ActivityHandler {
     return {
       success: true,
       files: movedFiles,
+    };
+  }
+
+  private createFileLocator(
+    file:
+      | DriveFile
+      | {
+          id: string;
+          name?: string | undefined;
+          mimeType?: string | undefined;
+          webViewLink?: string | undefined;
+        },
+    parentName: string,
+    options?: {
+      fallbackMimeType?: string | undefined;
+      fallbackName?: string | undefined;
+      defaultEmptyUri?: boolean | undefined;
+    }
+  ): FileLocator {
+    const resolvedMimeType = file.mimeType ?? options?.fallbackMimeType;
+    const resolvedName = file.name || options?.fallbackName || '';
+    const resolvedUri = file.webViewLink ?? (options?.defaultEmptyUri ? '' : undefined);
+    return {
+      id: file.id,
+      name: resolvedName,
+      parentName,
+      ...(resolvedMimeType !== undefined ? { mimeType: resolvedMimeType } : {}),
+      ...(resolvedUri !== undefined ? { uri: resolvedUri } : {}),
     };
   }
 }

@@ -37,6 +37,7 @@ import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 import type { UiProcessGmailPort } from '../features/ui-process-manager';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
+import type { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
 
 export interface WorkspaceAddonWiringOptions {
   server: HttpServer;
@@ -59,6 +60,7 @@ export interface WorkspaceAddonWiringOptions {
   gmailPort?: UiProcessGmailPort | undefined;
   documentSpaceRegistry?: DocumentSpaceManifestRegistryAdapter | undefined;
   storageAdapter?: DocumentSpaceStoragePort | undefined;
+  pdfProcessor?: PdfProcessor | undefined;
 }
 
 export function wireWorkspaceAddonRoutes(
@@ -142,10 +144,13 @@ export function wireWorkspaceAddonRoutes(
       manifestProvider,
       documentService: options.documentService,
       createDocumentService,
+      ...(options.compiledSchemaRegistry !== undefined ? { compiledSchemaRegistry: options.compiledSchemaRegistry } : {}),
+      ...(options.documentSchemaRegistry !== undefined ? { documentSchemaRegistry: options.documentSchemaRegistry } : {}),
       ...(createSchemaDrivenUiService !== undefined ? { createSchemaDrivenUiService } : {}),
       ...(options.driveClient !== undefined ? { driveClient: options.driveClient } : {}),
       ...(options.gmailClient !== undefined ? { gmailClient: options.gmailClient } : {}),
       ...(options.gmailPort !== undefined ? { gmailPort: options.gmailPort } : {}),
+      ...(options.pdfProcessor !== undefined ? { pdfProcessor: options.pdfProcessor } : {}),
       evaluateFormChange,
     });
     uiOrchestrator = uiProcessWiring.requestScopedWrapper;

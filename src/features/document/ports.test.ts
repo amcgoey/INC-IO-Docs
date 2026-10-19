@@ -45,6 +45,18 @@ describe('Document Ports & DTOs', () => {
     expect(Value.Check(FormSchemaType, validFormSchema)).toBe(true);
   });
 
+  it('FormSchemaType validates FormSchema definitions with allowEmptySourceFiles', () => {
+    const formSchemaWithAllowEmpty: FormSchema = {
+      key: 'comm-project',
+      name: 'Communication Project',
+      documentSchema: { fields: [] },
+      allowEmptySourceFiles: true,
+    };
+    expect(Value.Check(FormSchemaType, formSchemaWithAllowEmpty)).toBe(true);
+    expect(formSchemaWithAllowEmpty.allowEmptySourceFiles).toBe(true);
+  });
+
+
   it('FormSchemaType validates FormSchema definitions without optional documentUiSchema', () => {
     const validFormSchema: FormSchema = {
       key: 'rfi',

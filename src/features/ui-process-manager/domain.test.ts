@@ -9,6 +9,7 @@ import {
   resolveSpaceId,
   evaluateProcessUiState,
   isSelectionKey,
+  parseGoogleDriveUrl,
   SELECT_FILES_KEY,
   SELECT_FILE_SOURCE_KEY,
   SELECT_ATTACHMENTS_KEY,
@@ -168,6 +169,278 @@ describe('ui-process-manager domain', () => {
         'proposalTitle_communication-proposal': 'Proposal A',
       });
       expect(result).not.toHaveProperty('SelectDocumentSpace');
+    });
+  });
+
+  describe('parseGoogleDriveUrl', () => {
+    describe('standard Drive files', () => {
+      it('parses standard https://drive.google.com/file/d/<id>/view URL', () => {
+        const result = parseGoogleDriveUrl(
+          'https://drive.google.com/file/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/view?usp=sharing'
+        );
+        expect(result).toEqual({
+          id: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms',
+          resourceType: 'file',
+        });
+      });
+
+      it('parses standard https://drive.google.com/d/<id> URL', () => {
+        const result = parseGoogleDriveUrl(
+          'https://drive.google.com/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms'
+        );
+        expect(result).toEqual({
+          id: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms',
+          resourceType: 'file',
+        });
+      });
+
+      it('parses standard https://drive.google.com/file/d/<id> without trailing subpath', () => {
+        const result = parseGoogleDriveUrl(
+          'https://drive.google.com/file/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms'
+        );
+        expect(result).toEqual({
+          id: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms',
+          resourceType: 'file',
+        });
+      });
+
+      it('parses multi-account /file/u/1/d/<id> URLs', () => {
+        const result = parseGoogleDriveUrl(
+          'https://drive.google.com/file/u/1/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/view'
+        );
+        expect(result).toEqual({
+          id: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms',
+          resourceType: 'file',
+        });
+      });
+
+      it('parses multi-account /u/2/file/d/<id> URLs', () => {
+        const result = parseGoogleDriveUrl(
+          'https://drive.google.com/u/2/file/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/view'
+        );
+        expect(result).toEqual({
+          id: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms',
+          resourceType: 'file',
+        });
+      });
+
+      it('parses http: protocol URLs', () => {
+        const result = parseGoogleDriveUrl(
+          'http://drive.google.com/file/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms'
+        );
+        expect(result).toEqual({
+          id: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms',
+          resourceType: 'file',
+        });
+      });
+
+      it('trims leading/trailing whitespace, tabs, and newlines', () => {
+        const result = parseGoogleDriveUrl(
+          '\n  \t https://drive.google.com/file/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/view?usp=sharing \r\n  '
+        );
+        expect(result).toEqual({
+          id: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms',
+          resourceType: 'file',
+        });
+      });
+
+      it('strips query parameters and hash fragments', () => {
+        const result = parseGoogleDriveUrl(
+          'https://drive.google.com/file/d/file_123-abc/view?usp=drivesdk&authuser=0#heading=h.xyz'
+        );
+        expect(result).toEqual({
+          id: 'file_123-abc',
+          resourceType: 'file',
+        });
+      });
+    });
+
+    describe('standard Drive folders', () => {
+      it('parses standard https://drive.google.com/drive/folders/<id>', () => {
+        const result = parseGoogleDriveUrl(
+          'https://drive.google.com/drive/folders/1ABC_xyz-789'
+        );
+        expect(result).toEqual({
+          id: '1ABC_xyz-789',
+          resourceType: 'folder',
+        });
+      });
+
+      it('parses multi-account /drive/u/0/folders/<id>', () => {
+        const result = parseGoogleDriveUrl(
+          'https://drive.google.com/drive/u/0/folders/1ABC_xyz-789'
+        );
+        expect(result).toEqual({
+          id: '1ABC_xyz-789',
+          resourceType: 'folder',
+        });
+      });
+
+      it('parses multi-account /u/1/folders/<id>', () => {
+        const result = parseGoogleDriveUrl(
+          'https://drive.google.com/u/1/folders/1ABC_xyz-789'
+        );
+        expect(result).toEqual({
+          id: '1ABC_xyz-789',
+          resourceType: 'folder',
+        });
+      });
+
+      it('parses bare /folders/<id>', () => {
+        const result = parseGoogleDriveUrl(
+          'https://drive.google.com/folders/1ABC_xyz-789'
+        );
+        expect(result).toEqual({
+          id: '1ABC_xyz-789',
+          resourceType: 'folder',
+        });
+      });
+
+      it('parses folder URL with query params and hash fragments', () => {
+        const result = parseGoogleDriveUrl(
+          'https://drive.google.com/drive/u/1/folders/1ABC_xyz-789?usp=drive_link&resourcekey=0-xyz#my-anchor'
+        );
+        expect(result).toEqual({
+          id: '1ABC_xyz-789',
+          resourceType: 'folder',
+        });
+      });
+    });
+
+    describe('Drive open links', () => {
+      it('parses https://drive.google.com/open?id=<id>', () => {
+        const result = parseGoogleDriveUrl(
+          'https://drive.google.com/open?id=1open_file-ID'
+        );
+        expect(result).toEqual({
+          id: '1open_file-ID',
+          resourceType: 'file',
+        });
+      });
+
+      it('parses open?id= with multiple query parameters in any order', () => {
+        const result = parseGoogleDriveUrl(
+          'https://drive.google.com/open?usp=sharing&id=1open_file-ID&authuser=0'
+        );
+        expect(result).toEqual({
+          id: '1open_file-ID',
+          resourceType: 'file',
+        });
+      });
+
+      it('parses open?id= with multi-account /u/1/open?id=<id>', () => {
+        const result = parseGoogleDriveUrl(
+          'https://drive.google.com/u/1/open?id=1open_file-ID'
+        );
+        expect(result).toEqual({
+          id: '1open_file-ID',
+          resourceType: 'file',
+        });
+      });
+    });
+
+    describe('Google Workspace Collaborative Docs', () => {
+      it('parses Google Docs https://docs.google.com/document/d/<id>/edit', () => {
+        const result = parseGoogleDriveUrl(
+          'https://docs.google.com/document/d/1doc_ID-123/edit?tab=t.0#heading=h.1'
+        );
+        expect(result).toEqual({
+          id: '1doc_ID-123',
+          resourceType: 'file',
+        });
+      });
+
+      it('parses Google Docs with multi-account /u/1/document/d/<id>/edit', () => {
+        const result = parseGoogleDriveUrl(
+          'https://docs.google.com/u/1/document/d/1doc_ID-123/edit'
+        );
+        expect(result).toEqual({
+          id: '1doc_ID-123',
+          resourceType: 'file',
+        });
+      });
+
+      it('parses Google Docs with multi-account /document/u/1/d/<id>/edit', () => {
+        const result = parseGoogleDriveUrl(
+          'https://docs.google.com/document/u/1/d/1doc_ID-123/edit'
+        );
+        expect(result).toEqual({
+          id: '1doc_ID-123',
+          resourceType: 'file',
+        });
+      });
+
+      it('parses Google Sheets https://docs.google.com/spreadsheets/d/<id>/edit#gid=0', () => {
+        const result = parseGoogleDriveUrl(
+          'https://docs.google.com/spreadsheets/d/1sheet_ID-456/edit#gid=0'
+        );
+        expect(result).toEqual({
+          id: '1sheet_ID-456',
+          resourceType: 'file',
+        });
+      });
+
+      it('parses Google Slides https://docs.google.com/presentation/d/<id>/edit#slide=id.p', () => {
+        const result = parseGoogleDriveUrl(
+          'https://docs.google.com/presentation/d/1pres_ID-789/edit#slide=id.p'
+        );
+        expect(result).toEqual({
+          id: '1pres_ID-789',
+          resourceType: 'file',
+        });
+      });
+
+      it('parses Google Forms https://docs.google.com/forms/d/1form_ID-000/viewform', () => {
+        const result = parseGoogleDriveUrl(
+          'https://docs.google.com/forms/d/1form_ID-000/viewform'
+        );
+        expect(result).toEqual({
+          id: '1form_ID-000',
+          resourceType: 'file',
+        });
+      });
+    });
+
+    describe('invalid URLs / rejection cases', () => {
+      it('returns undefined for empty strings or blank whitespace', () => {
+        expect(parseGoogleDriveUrl('')).toBeUndefined();
+        expect(parseGoogleDriveUrl('   \t\n  ')).toBeUndefined();
+      });
+
+      it('returns undefined for non-URL strings or missing protocol', () => {
+        expect(parseGoogleDriveUrl('not a url')).toBeUndefined();
+        expect(parseGoogleDriveUrl('drive.google.com/file/d/123')).toBeUndefined();
+      });
+
+      it('returns undefined for unsupported protocols', () => {
+        expect(parseGoogleDriveUrl('ftp://drive.google.com/file/d/123')).toBeUndefined();
+        expect(parseGoogleDriveUrl('file:///drive.google.com/file/d/123')).toBeUndefined();
+        expect(parseGoogleDriveUrl('javascript:alert(1)')).toBeUndefined();
+      });
+
+      it('returns undefined for external or lookalike hostnames', () => {
+        expect(parseGoogleDriveUrl('https://dropbox.com/s/123/file.pdf')).toBeUndefined();
+        expect(parseGoogleDriveUrl('https://onedrive.live.com/?id=123')).toBeUndefined();
+        expect(parseGoogleDriveUrl('https://drive.google.com.attacker.com/file/d/123')).toBeUndefined();
+        expect(parseGoogleDriveUrl('https://notdrive.google.com/file/d/123')).toBeUndefined();
+      });
+
+      it('returns undefined for Google Drive home/navigation URLs without resource ID', () => {
+        expect(parseGoogleDriveUrl('https://drive.google.com/')).toBeUndefined();
+        expect(parseGoogleDriveUrl('https://drive.google.com/drive/my-drive')).toBeUndefined();
+        expect(parseGoogleDriveUrl('https://drive.google.com/drive/starred')).toBeUndefined();
+        expect(parseGoogleDriveUrl('https://drive.google.com/drive/trash')).toBeUndefined();
+      });
+
+      it('returns undefined when ID segment is missing or empty', () => {
+        expect(parseGoogleDriveUrl('https://drive.google.com/file/d/')).toBeUndefined();
+        expect(parseGoogleDriveUrl('https://drive.google.com/drive/folders/')).toBeUndefined();
+        expect(parseGoogleDriveUrl('https://drive.google.com/open?id=')).toBeUndefined();
+      });
+
+      it('returns undefined when ID contains invalid characters', () => {
+        expect(parseGoogleDriveUrl('https://drive.google.com/file/d/invalid!id@test')).toBeUndefined();
+      });
     });
   });
 

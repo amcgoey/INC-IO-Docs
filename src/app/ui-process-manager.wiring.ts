@@ -36,6 +36,16 @@ import type { FormChangeEvaluatorFn as FormChangeEvaluator } from '../features/u
 import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
 import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
+import { GmailSourceFileHydrator } from './gmail-source-file-hydrator';
+import { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
+import type {
+  CompiledSchemaRegistryPort,
+  DocumentSchemaRegistryPort,
+  DocumentDynamicValidationPort,
+  DynamicValidationMessageFormatter,
+  DocumentServicePort,
+  DocumentModel,
+} from '../features/document/ports';
 
 export function resolveActionRoute(route: string, baseUrl?: string): string {
   try {
@@ -201,6 +211,11 @@ export interface UiProcessManagerWiringOptions {
   driveClient?: GoogleDriveClient | undefined;
   gmailClient?: GoogleGmailClient | undefined;
   gmailPort?: UiProcessGmailPort | undefined;
+  compiledSchemaRegistry?: CompiledSchemaRegistryPort | undefined;
+  documentSchemaRegistry?: DocumentSchemaRegistryPort | undefined;
+  dynamicValidator?: DocumentDynamicValidationPort | undefined;
+  validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
+  pdfProcessor?: PdfProcessor | undefined;
 }
 
 export type UiProcessOrchestratorResolver = (
@@ -377,24 +392,49 @@ export function createUiProcessManagerWiring(
     };
   }
 
+  const gmailClient = options.gmailClient ?? new GoogleGmailClient();
+  const pdfProcessor = options.pdfProcessor ?? new PdfProcessor();
+  const hydrator = new GmailSourceFileHydrator(gmailClient, pdfProcessor);
+
+async function runPreValidation(
+  docService: DocumentServicePort,
+  documentPayload: DocumentModel
+): Promise<{ success: boolean; errors?: string[] } | undefined> {
+  if (docService.validateDocument) {
+    const preValidation = await docService.validateDocument(documentPayload);
+    if (!preValidation.success) {
+      return {
+        success: false,
+        errors: preValidation.errors ?? ['Invalid document data payload'],
+      };
+    }
+  }
+  return undefined;
+}
+
   const fallbackDocumentRunner: UiProcessDocumentRunnerPort | undefined = options.documentService
     ? {
         processDocument: async (payload, eventName) => {
           const space = toStructuredDocumentSpace(payload.space);
+          const documentPayload: DocumentModel = {
+            type: payload.type,
+            data: payload.data,
+            ...(space ? { space } : {}),
+          };
+
+          const preValError = await runPreValidation(options.documentService!, documentPayload);
+          if (preValError) {
+            return preValError;
+          }
+
           return options.documentService!.processDocument(
-            {
-              type: payload.type,
-              data: payload.data,
-              ...(space ? { space } : {}),
-            },
+            documentPayload,
             eventName
           );
         },
-
       }
     : undefined;
 
-  const gmailClient = options.gmailClient ?? new GoogleGmailClient();
   const gmailPort: UiProcessGmailPort = options.gmailPort ?? {
     getMessageAttachments: async (messageId: string, accessToken?: string) => {
       const msg = await gmailClient.getMessage(messageId, { auth: accessToken });
@@ -445,33 +485,62 @@ export function createUiProcessManagerWiring(
         ? {
             processDocument: async (payload, eventName) => {
               const { sourceFiles, ...documentPayload } = payload;
-              const activeContext: WorkspaceExecutionContext = {
-                ...context,
-                ...(sourceFiles !== undefined
-                  ? {
-                      selectedItems: sourceFiles.map((file) => ({
-                        id: file.id,
-                        ...(file.name !== undefined ? { title: file.name } : {}),
-                        ...(file.mimeType !== undefined ? { mimeType: file.mimeType } : {}),
-                      })),
-                    }
-                  : {}),
+              const space = toStructuredDocumentSpace(documentPayload.space);
+              const targetDocPayload: DocumentModel = {
+                type: documentPayload.type,
+                data: documentPayload.data,
+                ...(space ? { space } : {}),
               };
 
-              const activeDocService = options.createDocumentService
+              const activeSourceFiles = sourceFiles ?? [];
+              const activeContext: WorkspaceExecutionContext = {
+                ...context,
+                sourceFiles: activeSourceFiles,
+                selectedItems: activeSourceFiles.map((file) => ({
+                  id: file.id,
+                  ...(file.name !== undefined ? { title: file.name } : {}),
+                  ...(file.mimeType !== undefined ? { mimeType: file.mimeType } : {}),
+                })),
+              };
+
+              const docService = options.createDocumentService
                 ? await options.createDocumentService(activeContext)
                 : options.documentService;
 
-              if (!activeDocService) {
+              if (!docService) {
                 throw new Error('DocumentService not provided');
               }
 
-              const space = toStructuredDocumentSpace(documentPayload.space);
-              return activeDocService.processDocument(
-                {
-                  ...documentPayload,
-                  ...(space ? { space } : {}),
-                },
+              const preValError = await runPreValidation(docService, targetDocPayload);
+              if (preValError) {
+                return preValError;
+              }
+
+              const needsHydration = Boolean(
+                hydrator &&
+                  (context.hostApp === 'GMAIL' || context.gmail?.messageId) &&
+                  activeSourceFiles.some((f) => !(f.content instanceof Uint8Array))
+              );
+
+              let finalDocService = docService;
+              if (needsHydration && hydrator) {
+                const hydratedSourceFiles = await hydrator.hydrate(activeSourceFiles, context);
+                const hydratedContext: WorkspaceExecutionContext = {
+                  ...context,
+                  sourceFiles: hydratedSourceFiles,
+                  selectedItems: hydratedSourceFiles.map((file) => ({
+                    id: file.id,
+                    ...(file.name !== undefined ? { title: file.name } : {}),
+                    ...(file.mimeType !== undefined ? { mimeType: file.mimeType } : {}),
+                  })),
+                };
+                finalDocService = options.createDocumentService
+                  ? await options.createDocumentService(hydratedContext)
+                  : docService;
+              }
+
+              return finalDocService.processDocument(
+                targetDocPayload,
                 eventName
               );
             },

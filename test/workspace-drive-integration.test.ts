@@ -13,6 +13,7 @@ import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/bloc
 
 describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () => {
   let app: AppInstance;
+  let manifestProvider: AppManifestProvider;
   let mockAuthVerifier: WorkspaceAuthVerifierPort;
   let mockStorageAdapter: DocumentSpaceStoragePort;
 
@@ -69,7 +70,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     };
 
     const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
-    const manifestProvider = new AppManifestProvider({ manifestPath });
+    manifestProvider = new AppManifestProvider({ manifestPath });
     app = createApp({
       manifestProvider,
       authVerifier: mockAuthVerifier,
@@ -82,6 +83,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
   afterEach(() => {
     nock.cleanAll();
+    vi.restoreAllMocks();
   });
 
   function mockDynamicValidationProject({
@@ -978,7 +980,61 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(nock.isDone()).toBe(true);
     });
 
-    it('returns pre-submit validation error card when submitting processDocument with zero selected files', async () => {
+    it('files communication-project with zero selected files, creating folder hierarchy in Drive and succeeding with notification', async () => {
+      const rootSharedDriveId = 'shared-drive-proj-root';
+      const adminFolderId = 'folder-admin-1';
+      const commFolderId = 'folder-comm-1';
+      const contactFolderId = 'folder-acme-corp';
+      const newSubfolderId = 'folder-meeting-subfolder';
+
+      // 1. Dynamic Options Validation
+      mockDynamicValidationProject({
+        sharedDriveId: rootSharedDriveId,
+        adminFolderId,
+        commFolderId,
+        contactFolderId,
+        contactName: 'Acme Corp',
+      });
+
+      // 2. DriveActivityHandler: resolveFolderPath('shared-drive-proj-root', ['1 Admin', 'Communication'])
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(rootSharedDriveId) && q.q.includes("name = '1 Admin'"))
+        .reply(200, {
+          files: [{ id: adminFolderId, name: '1 Admin', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(adminFolderId) && q.q.includes("name = 'Communication'"))
+        .reply(200, {
+          files: [{ id: commFolderId, name: 'Communication', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      // 3. DriveActivityHandler: findOrCreateFolder(commFolderId, 'Acme Corp') -> exists
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(commFolderId) && q.q.includes("name = 'Acme Corp'"))
+        .reply(200, {
+          files: [{ id: contactFolderId, name: 'Acme Corp', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      // 4. DriveActivityHandler: findOrCreateFolder(contactFolderId, '260920 IN - Meeting Notes') -> creates new
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(contactFolderId) && q.q.includes("name = '260920 IN - Meeting Notes'"))
+        .reply(200, { files: [] });
+
+      nock('https://www.googleapis.com')
+        .post('/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: newSubfolderId,
+          name: '260920 IN - Meeting Notes',
+          parents: [contactFolderId],
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+
       const response = await app.server.inject({
         method: 'POST',
         url: '/workspace/action',
@@ -1011,13 +1067,14 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      const updateCard = body.action?.navigations?.[0]?.updateCard;
-      expect(updateCard).toBeDefined();
-
-      const errorSection = updateCard.sections.find((s: { widgets?: Array<{ textParagraph?: { text?: string } }> }) =>
-        s.widgets?.some((w) => w.textParagraph?.text?.includes('Please select at least one file in Google Drive to process.'))
-      );
-      expect(errorSection).toBeDefined();
+      expect(body).toEqual({
+        action: {
+          notification: {
+            text: 'Document processed successfully',
+          },
+        },
+      });
+      expect(nock.isDone()).toBe(true);
     });
 
     it('returns error card when parentPath segment is missing (FileNotFoundError)', async () => {
@@ -1254,7 +1311,11 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(updateCard).toBeDefined();
 
       const errorSection = updateCard.sections.find((s: { widgets?: Array<{ textParagraph?: { text?: string } }> }) =>
-        s.widgets?.some((w) => w.textParagraph?.text?.includes('Drive service error (403) in move'))
+        s.widgets?.some(
+          (w) =>
+            w.textParagraph?.text?.includes('Access denied. You do not have permission to access this Google Drive file or folder.') ||
+            w.textParagraph?.text?.includes('Drive service error (403) in move')
+        )
       );
       expect(errorSection).toBeDefined();
     });
@@ -1528,11 +1589,20 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(nock.isDone()).toBe(true);
     });
 
-    it('aborts submission and returns error update card when all items in SelectFiles are unchecked, without invoking Drive move', async () => {
+    it('aborts submission and returns error update card when all items in SelectFiles are unchecked on a document type where allowEmptySourceFiles is false, without invoking Drive move', async () => {
       const file1Id = 'file-unchecked-1';
       const file1Name = 'First.pdf';
       const file2Id = 'file-unchecked-2';
       const file2Name = 'Second.png';
+
+      const originalRead = manifestProvider.readParsedSchema.bind(manifestProvider);
+      vi.spyOn(manifestProvider, 'readParsedSchema').mockImplementation(async (relPath: string) => {
+        const parsed = (await originalRead(relPath)) as Record<string, unknown>;
+        return {
+          ...parsed,
+          allowEmptySourceFiles: false,
+        };
+      });
 
       // No dynamic validation or Drive nocks since submission is blocked before activity engine is invoked!
 
@@ -1711,7 +1781,11 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(updateCard).toBeDefined();
 
       const errorSection = updateCard.sections.find((s: { widgets?: Array<{ textParagraph?: { text?: string } }> }) =>
-        s.widgets?.some((w) => w.textParagraph?.text?.includes('Drive service error (403) in move'))
+        s.widgets?.some(
+          (w) =>
+            w.textParagraph?.text?.includes('Access denied. You do not have permission to access this Google Drive file or folder.') ||
+            w.textParagraph?.text?.includes('Drive service error (403) in move')
+        )
       );
       expect(errorSection).toBeDefined();
       expect(nock.isDone()).toBe(true);

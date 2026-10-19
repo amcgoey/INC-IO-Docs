@@ -25,6 +25,7 @@ import {
   SAVE_EMAIL_TO_PDF_KEY,
   EPHEMERAL_UI_SELECTION_KEYS,
   isSelectionKey,
+  parseGoogleDriveUrl,
   extractSelectFilesSet,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
@@ -58,6 +59,7 @@ export {
   SAVE_EMAIL_TO_PDF_KEY,
   EPHEMERAL_UI_SELECTION_KEYS,
   isSelectionKey,
+  parseGoogleDriveUrl,
   extractSelectFilesSet,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
@@ -126,13 +128,18 @@ export interface RawManifestProviderPort {
 export interface UiProcessManifestPort {
   resolveDocumentTypeKey(nameOrKey: string): Promise<string | undefined>;
   getAllDocumentTypes(): Promise<Array<{ key: string; name?: string | undefined; displayName?: string | undefined }>>;
-  getDocumentTypeSchemas(key: string): Promise<{ docSchema?: unknown; uiSchema?: unknown }>;
+  getDocumentTypeSchemas(key: string): Promise<{
+    docSchema?: unknown;
+    uiSchema?: unknown;
+    allowEmptySourceFiles?: boolean | undefined;
+  }>;
 }
 
 export const UiProcessSourceFileDtoSchema = Type.Object({
   id: Type.String(),
   name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  content: Type.Optional(Type.Union([Type.Uint8Array(), Type.Undefined()])),
 });
 export type UiProcessSourceFileDto = Static<typeof UiProcessSourceFileDtoSchema>;
 

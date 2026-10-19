@@ -24,6 +24,12 @@ import {
   SELECT_DOCUMENT_TYPE_KEY,
   SELECT_DOCUMENT_SPACE_PREFIX,
   SELECT_DOCUMENT_TYPE_PREFIX,
+  SELECT_FILE_SOURCE_KEY,
+  SELECT_ATTACHMENTS_KEY,
+  INPUT_DRIVE_URL_KEY,
+  SAVE_EMAIL_TO_PDF_KEY,
+  extractSelectFilesSet,
+  parseGoogleDriveUrl,
   isGmailContext,
   type UiStateResolutionContext,
   type UiProcessSpaceItem,
@@ -248,31 +254,169 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         spaces,
       });
 
-      const checkedFileIds = new Set(
-        (currentUiState.selectionState.files ?? [])
-          .filter((f) => f.selected)
-          .map((f) => f.value.trim())
-      );
+      const isGmail = isGmailContext(normalizedContext);
+      const isDriveUrlSource =
+        isGmail &&
+        (normalizedContext.formData?.[SELECT_FILE_SOURCE_KEY] === 'Google Drive URL' ||
+          currentUiState.formData[SELECT_FILE_SOURCE_KEY] === 'Google Drive URL');
 
-      const validSelectedItems = (normalizedContext.selectedItems ?? []).filter(
-        (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
-          typeof item?.id === 'string' && item.id.trim().length > 0
-      );
+      let activeSourceFiles: UiProcessSourceFileDto[] = [];
 
-      const activeSourceFiles: UiProcessSourceFileDto[] = validSelectedItems
-        .filter((item) => checkedFileIds.has(item.id.trim()))
-        .map((item) => ({
-          id: item.id,
-          ...(item.title !== undefined ? { name: item.title } : {}),
-          ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
-        }));
+      if (isDriveUrlSource) {
+        const rawDriveUrl =
+          (normalizedContext.formData?.[INPUT_DRIVE_URL_KEY] ??
+            currentUiState.formData[INPUT_DRIVE_URL_KEY]) as string | undefined;
+        const driveUrl = typeof rawDriveUrl === 'string' ? rawDriveUrl.trim() : '';
+        if (driveUrl.length > 0) {
+          const parsed = parseGoogleDriveUrl(driveUrl);
+          if (!parsed) {
+            return createErrorRenderResult([
+              'Invalid Google Drive URL. Please enter a valid Google Drive file or folder link.',
+            ]);
+          }
+          activeSourceFiles.push({ id: parsed.id, name: parsed.id });
+        }
+      } else if (isGmail) {
+        const formAttachmentIds = extractSelectFilesSet(normalizedContext.formData, SELECT_ATTACHMENTS_KEY);
+        const stateCheckedIds = new Set(
+          (currentUiState.selectionState.files ?? [])
+            .filter((f) => f.selected)
+            .map((f) => f.value.trim())
+        );
+
+        let checkedIds = stateCheckedIds;
+        if (checkedIds.size === 0 && formAttachmentIds.size > 0) {
+          checkedIds = formAttachmentIds;
+        }
+        if (checkedIds.size === 0 && context.parameters?.previousAttachments) {
+          try {
+            const parsed = JSON.parse(context.parameters.previousAttachments);
+            if (Array.isArray(parsed)) {
+              checkedIds = new Set(parsed.map(String).map((s) => s.trim()));
+            }
+          } catch {
+            // ignore
+          }
+        }
+        if (checkedIds.size === 0 && context.parameters?.attachments) {
+          try {
+            const parsed = JSON.parse(context.parameters.attachments);
+            if (Array.isArray(parsed)) {
+              checkedIds = new Set(parsed.map(String).map((s) => s.trim()));
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        if (formAttachmentIds.size > 0) {
+          for (const id of formAttachmentIds) {
+            checkedIds.add(id);
+          }
+        }
+
+        const metaMap = new Map<string, { name?: string; mimeType?: string }>();
+        for (const item of normalizedContext.selectedItems ?? []) {
+          if (item?.id) {
+            metaMap.set(item.id.trim(), {
+              ...(item.title !== undefined ? { name: item.title } : {}),
+              ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
+            });
+          }
+        }
+
+        const gmailMsgDetails = (context.gmail as {
+          messageDetails?: {
+            attachments?: Array<{
+              id?: string;
+              attachmentId?: string;
+              filename?: string;
+              name?: string;
+              mimeType?: string;
+            }>;
+          };
+        } | undefined)?.messageDetails;
+
+        for (const att of gmailMsgDetails?.attachments ?? []) {
+          const attId = (att.attachmentId ?? att.id)?.trim();
+          if (attId) {
+            const existing = metaMap.get(attId) ?? {};
+            const resolvedName = att.filename ?? att.name ?? existing.name;
+            const resolvedMimeType = att.mimeType ?? existing.mimeType;
+            metaMap.set(attId, {
+              ...(resolvedName !== undefined ? { name: resolvedName } : {}),
+              ...(resolvedMimeType !== undefined ? { mimeType: resolvedMimeType } : {}),
+            });
+          }
+        }
+
+        activeSourceFiles = Array.from(checkedIds).map((id) => {
+          const meta = metaMap.get(id);
+          return {
+            id,
+            ...(meta?.name !== undefined ? { name: meta.name } : {}),
+            ...(meta?.mimeType !== undefined ? { mimeType: meta.mimeType } : {}),
+          };
+        });
+      } else {
+        const checkedFileIds = new Set(
+          (currentUiState.selectionState.files ?? [])
+            .filter((f) => f.selected)
+            .map((f) => f.value.trim())
+        );
+
+        const validSelectedItems = (normalizedContext.selectedItems ?? []).filter(
+          (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
+            typeof item?.id === 'string' && item.id.trim().length > 0
+        );
+
+        activeSourceFiles = validSelectedItems
+          .filter((item) => checkedFileIds.has(item.id.trim()))
+          .map((item) => ({
+            id: item.id,
+            ...(item.title !== undefined ? { name: item.title } : {}),
+            ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
+          }));
+      }
+
+      if (isGmail) {
+        const messageId = context.gmail?.messageId ?? normalizedContext.gmail?.messageId;
+        const isSaveEmail =
+          currentUiState.formData[SAVE_EMAIL_TO_PDF_KEY] === true ||
+          currentUiState.formData[SAVE_EMAIL_TO_PDF_KEY] === 'true' ||
+          normalizedContext.formData?.[SAVE_EMAIL_TO_PDF_KEY] === true ||
+          normalizedContext.formData?.[SAVE_EMAIL_TO_PDF_KEY] === 'true';
+
+        if (isSaveEmail && messageId) {
+          activeSourceFiles.push({
+            id: `email-pdf-${messageId}`,
+            mimeType: 'application/pdf',
+          });
+        }
+      }
+
+      let allowEmptySourceFiles = false;
+      if (resolvedDocumentTypeKey && manifestPort) {
+        try {
+          const schemas = await manifestPort.getDocumentTypeSchemas(resolvedDocumentTypeKey);
+          allowEmptySourceFiles = Boolean(schemas?.allowEmptySourceFiles);
+        } catch (e) {
+          console.warn(`Could not fetch schemas for: ${resolvedDocumentTypeKey}`, e);
+        }
+      }
 
       const hasExplicitFileId =
         typeof context.parameters?.fileId === 'string' &&
         context.parameters.fileId.trim().length > 0;
 
       if (activeSourceFiles.length === 0 && !hasExplicitFileId) {
-        return createErrorRenderResult(['Please select at least one file in Google Drive to process.']);
+        if (!allowEmptySourceFiles) {
+          const isGmail = isGmailContext(normalizedContext);
+          const errorMsg = isGmail
+            ? 'Please select at least one file to process or enable Save Email to PDF.'
+            : 'Please select at least one file in Google Drive to process.';
+          return createErrorRenderResult([errorMsg]);
+        }
       }
 
       const spaceResolution = resolveSpace(
@@ -313,7 +457,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
               type: resolvedDocumentTypeKey ?? 'default',
               data,
               space,
-              ...(activeSourceFiles.length > 0 ? { sourceFiles: activeSourceFiles } : {}),
+              sourceFiles: activeSourceFiles,
             },
             'onSubmit'
           );

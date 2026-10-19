@@ -90,16 +90,25 @@ export function createDocumentServiceFactory(
 ): DocumentServiceFactory {
   return async (context: WorkspaceExecutionContext): Promise<DocumentService> => {
     const primaryTargetId =
+      context.sourceFiles?.[0]?.id ??
       context.selectedItems?.[0]?.id ??
       context.parameters?.primaryTargetId ??
       context.parameters?.fileId ??
       (context.formData?.fileId as string | undefined);
 
-    const sourceFiles = context.selectedItems?.map((item) => ({
-      id: item.id,
-      ...(item.title !== undefined ? { name: item.title } : {}),
-      ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
-    }));
+    const sourceFiles =
+      context.sourceFiles !== undefined
+        ? context.sourceFiles.map((file) => ({
+            id: file.id,
+            ...(file.name !== undefined ? { name: file.name } : {}),
+            ...(file.mimeType !== undefined ? { mimeType: file.mimeType } : {}),
+            ...(file.content !== undefined ? { content: file.content } : {}),
+          }))
+        : context.selectedItems?.map((item) => ({
+            id: item.id,
+            ...(item.title !== undefined ? { name: item.title } : {}),
+            ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
+          }));
 
     const driveClient = context.userOAuthToken
       ? new GoogleDriveClient({

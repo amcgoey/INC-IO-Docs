@@ -6,6 +6,7 @@ interface RawDocDef {
   displayName?: string | undefined;
   documentSchema?: unknown;
   documentUiSchema?: unknown;
+  allowEmptySourceFiles?: boolean | undefined;
 }
 
 export class ManifestAdapter implements UiProcessManifestPort {
@@ -25,6 +26,7 @@ export class ManifestAdapter implements UiProcessManifestPort {
                   displayName?: string;
                   documentSchema?: unknown;
                   documentUiSchema?: unknown;
+                  allowEmptySourceFiles?: boolean;
                 }
               >;
         }
@@ -46,6 +48,7 @@ export class ManifestAdapter implements UiProcessManifestPort {
                 displayName?: string;
                 documentSchema?: unknown;
                 documentUiSchema?: unknown;
+                allowEmptySourceFiles?: boolean;
               }
             | undefined;
           if (parsed?.key) {
@@ -55,6 +58,9 @@ export class ManifestAdapter implements UiProcessManifestPort {
               displayName: parsed.displayName,
               documentSchema: parsed.documentSchema,
               documentUiSchema: parsed.documentUiSchema,
+              ...(parsed.allowEmptySourceFiles !== undefined
+                ? { allowEmptySourceFiles: parsed.allowEmptySourceFiles }
+                : {}),
             });
           }
         } catch {
@@ -69,6 +75,9 @@ export class ManifestAdapter implements UiProcessManifestPort {
           displayName: def?.displayName,
           documentSchema: def?.documentSchema,
           documentUiSchema: def?.documentUiSchema,
+          ...(def?.allowEmptySourceFiles !== undefined
+            ? { allowEmptySourceFiles: def.allowEmptySourceFiles }
+            : {}),
         });
       }
     }
@@ -104,7 +113,11 @@ export class ManifestAdapter implements UiProcessManifestPort {
 
   async getDocumentTypeSchemas(
     documentTypeKey: string
-  ): Promise<{ docSchema?: unknown; uiSchema?: unknown }> {
+  ): Promise<{
+    docSchema?: unknown;
+    uiSchema?: unknown;
+    allowEmptySourceFiles?: boolean | undefined;
+  }> {
     if (!documentTypeKey) {
       return {};
     }
@@ -118,6 +131,9 @@ export class ManifestAdapter implements UiProcessManifestPort {
     return {
       docSchema: found.documentSchema,
       uiSchema: found.documentUiSchema,
+      ...(found.allowEmptySourceFiles !== undefined
+        ? { allowEmptySourceFiles: found.allowEmptySourceFiles }
+        : {}),
     };
   }
 }

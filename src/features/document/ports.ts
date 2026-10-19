@@ -17,6 +17,8 @@ import {
   type DocumentType,
   type UiEvent,
   type UiEventRule,
+  type Document,
+  type DocumentModel,
 } from './domain';
 
 export {
@@ -94,6 +96,7 @@ export const FormSchemaType = Type.Object({
   name: Type.String(),
   documentSchema: FormDocumentSchemaType,
   documentUiSchema: Type.Optional(DocumentUiEventsSchema),
+  allowEmptySourceFiles: Type.Optional(Type.Boolean()),
 });
 
 export type FormSchema = Static<typeof FormSchemaType>;
@@ -103,6 +106,8 @@ export type {
   ActivityOutput,
   ProcessDocumentResult,
   DocumentType,
+  Document,
+  DocumentModel,
 };
 
 export interface ActivityHandler {
@@ -119,6 +124,9 @@ export interface ActivityDispatcherPort {
 }
 
 export interface DocumentServicePort {
+  validateDocument?(
+    document: Document
+  ): Promise<{ success: boolean; errors?: string[] }>;
   processDocument(
     payload?: unknown,
     eventName?: string
@@ -241,6 +249,8 @@ export interface DriveFileResult {
   mimeType?: string | undefined;
   webViewLink?: string | undefined;
 }
+
+export type DriveFile = DriveFileResult;
 
 export interface DriveConfiguration {
   defaultFolderName?: string | undefined;

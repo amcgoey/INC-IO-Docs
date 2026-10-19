@@ -11,6 +11,7 @@ import type { SchemaDrivenUiService } from '../features/schema-driven-ui/domain'
 import type { RawManifestProviderPort } from './schema-driven-ui.wiring';
 import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
 import type { UiProcessOrchestratorPort } from '../features/ui-process-manager/ports';
+import type { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 
 import type {
   GoogleWorkspaceActionResponse,
@@ -1252,6 +1253,130 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       // Ensure sourceFiles is not present on documentPayload per ADR-0005
       const calledPayload = mockProcessDocument.mock.calls[0][0];
       expect(calledPayload).not.toHaveProperty('sourceFiles');
+    });
+
+    it('pre-validation guard: aborts immediately on validation failure with zero attachment downloads', async () => {
+      const getAttachmentMock = vi.fn();
+      const mockGmailClient = {
+        getMessage: vi.fn(),
+        getAttachment: getAttachmentMock,
+      } as unknown as GoogleGmailClient;
+
+      const mockValidateDocument = vi.fn().mockResolvedValue({
+        success: false,
+        errors: ['Invalid document data payload: contact is required'],
+      });
+      const mockProcessDocument = vi.fn();
+
+      const createDocumentService = vi.fn().mockResolvedValue({
+        validateDocument: mockValidateDocument,
+        processDocument: mockProcessDocument,
+      });
+
+      const wiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: mockManifestProvider,
+        createDocumentService,
+        gmailClient: mockGmailClient,
+      });
+
+      const req: WorkspaceExecutionContext = {
+        actionName: 'processDocument',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-guard-test',
+        },
+        selectedItems: [
+          { id: 'att-1', title: 'Invoice.pdf', mimeType: 'application/pdf' },
+        ],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Alpha',
+          SelectDocumentType: 'communication-project',
+          SelectAttachments: ['att-1'],
+          // Missing required contact field!
+        },
+      };
+
+      const result = (await wiring.requestScopedWrapper.processUiEvent(req)) as GoogleWorkspaceActionResponse;
+
+      expect(result.action?.navigations?.[0]?.updateCard).toBeDefined();
+      expect(mockValidateDocument).toHaveBeenCalledTimes(1);
+      expect(getAttachmentMock).not.toHaveBeenCalled();
+      expect(mockProcessDocument).not.toHaveBeenCalled();
+    });
+
+    it('hydrates Gmail attachments and passes them in activeContext.sourceFiles when pre-validation succeeds', async () => {
+      const attachmentBytes = new Uint8Array([11, 22, 33]);
+      const mockGmailClient = {
+        getMessage: vi.fn().mockResolvedValue({
+          messageId: 'msg-valid-test',
+          attachments: [
+            {
+              attachmentId: 'att-1',
+              filename: 'Invoice.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        }),
+        getAttachment: vi.fn().mockResolvedValue(attachmentBytes),
+      } as unknown as GoogleGmailClient;
+
+      let passedContext: WorkspaceExecutionContext | undefined;
+      const mockProcessDocument = vi.fn().mockResolvedValue({ success: true });
+      const mockValidateDocument = vi.fn().mockResolvedValue({ success: true });
+      const createDocumentService = vi.fn(async (ctx: WorkspaceExecutionContext) => {
+        passedContext = ctx;
+        return {
+          validateDocument: mockValidateDocument,
+          processDocument: mockProcessDocument,
+        } as unknown as DocumentService;
+      });
+
+      const wiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: mockManifestProvider,
+        createDocumentService,
+        gmailClient: mockGmailClient,
+      });
+
+      const req: WorkspaceExecutionContext = {
+        actionName: 'processDocument',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-valid-test',
+        },
+        selectedItems: [
+          { id: 'att-1', title: 'Invoice.pdf', mimeType: 'application/pdf' },
+        ],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Alpha',
+          SelectDocumentType: 'communication-project',
+          SelectAttachments: ['att-1'],
+          contact: 'Acme Corp',
+        },
+      };
+
+      const result = (await wiring.requestScopedWrapper.processUiEvent(req)) as GoogleWorkspaceActionResponse;
+
+      expect(result.action?.notification?.text).toBe('Document processed successfully');
+      expect(mockValidateDocument).toHaveBeenCalledTimes(1);
+      expect(mockGmailClient.getAttachment).toHaveBeenCalledWith('msg-valid-test', 'att-1', {
+        auth: undefined,
+      });
+      expect(createDocumentService).toHaveBeenCalledTimes(2);
+      expect(mockProcessDocument).toHaveBeenCalledTimes(1);
+      expect(passedContext?.sourceFiles).toEqual([
+        {
+          id: 'att-1',
+          name: 'Invoice.pdf',
+          mimeType: 'application/pdf',
+          content: attachmentBytes,
+        },
+      ]);
     });
   });
 });
