@@ -46,7 +46,7 @@ const NAMED_ENTITIES: Record<string, string> = {
 /**
  * Decodes standard HTML entities, named typographical entities, and decimal/hex numeric entities.
  */
-export function decodeHtmlEntities(input: string): string {
+function decodeHtmlEntities(input: string): string {
   return input.replace(
     /&(#x[0-9a-fA-F]+|#[0-9]+|[a-zA-Z0-9]+);/g,
     (fullMatch, entity: string) => {
@@ -87,7 +87,7 @@ export function decodeHtmlEntities(input: string): string {
  * Normalizes a CID reference by stripping surrounding angle brackets (< >),
  * trimming whitespace, and URL-decoding (%20, etc.).
  */
-export function normalizeCid(rawCid: string): string {
+function normalizeCid(rawCid: string): string {
   let cleaned = rawCid.trim();
   if (cleaned.startsWith('<') && cleaned.endsWith('>')) {
     cleaned = cleaned.slice(1, -1).trim();
@@ -101,7 +101,7 @@ export function normalizeCid(rawCid: string): string {
   }
 }
 
-export type BodyToken =
+type BodyToken =
   | { type: 'text'; text: string }
   | { type: 'image'; cid: string };
 
@@ -111,7 +111,7 @@ export type BodyToken =
  * 2. Matches <img src="cid:..."> tags, emitting image tokens with normalized CIDs.
  * 3. Converts inter-image HTML chunks to text, normalizing block tags/breaks, stripping remaining tags, and decoding entities.
  */
-export function tokenizeHtmlBody(html: string): BodyToken[] {
+function tokenizeHtmlBody(html: string): BodyToken[] {
   const purged = html
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
@@ -160,22 +160,11 @@ export function tokenizeHtmlBody(html: string): BodyToken[] {
 }
 
 /**
- * Converts an HTML email body into clean, structured plain text by tokenizing and stripping non-text elements.
- */
-export function convertHtmlToPlainText(html: string): string {
-  const tokens = tokenizeHtmlBody(html);
-  return tokens
-    .filter((t): t is { type: 'text'; text: string } => t.type === 'text')
-    .map((t) => t.text)
-    .join('');
-}
-
-/**
  * Sanitizes input text to only include characters supported by standard WinAnsi encoding.
  * Converts Unicode typographical symbols (smart quotes, dashes, ellipsis, bullets) into
  * ASCII equivalents and replaces any remaining unsupported characters with '?'.
  */
-export function sanitizeWinAnsiText(text: string): string {
+function sanitizeWinAnsiText(text: string): string {
   return text
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
@@ -196,7 +185,7 @@ export function sanitizeWinAnsiText(text: string): string {
  * Greedily wraps words in a text string to fit within maxWidth.
  * If any single word exceeds maxWidth, it is broken character-by-character across lines.
  */
-export function wrapWords(
+function wrapWords(
   text: string,
   font: PDFFont,
   fontSize: number,

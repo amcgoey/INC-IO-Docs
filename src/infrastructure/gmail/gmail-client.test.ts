@@ -1046,6 +1046,93 @@ describe('GoogleGmailClient', () => {
       expect(result.inlineImages[0]?.data).toBeUndefined();
     });
 
+    it('matches bracketed CIDs in htmlBody (e.g. <img src="cid:<bracketed-cid@corp>">) and classifies into inlineImages not attachments', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-bracketed-cid',
+          payload: {
+            mimeType: 'multipart/mixed',
+            parts: [
+              {
+                partId: '0',
+                mimeType: 'text/html',
+                body: {
+                  data: Buffer.from('<p>Logo: <img src="cid:<bracketed-cid@corp>"></p>', 'utf-8').toString('base64url'),
+                },
+              },
+              {
+                partId: '1',
+                mimeType: 'image/png',
+                filename: 'bracketed-logo.png',
+                headers: [
+                  { name: 'Content-ID', value: '<bracketed-cid@corp>' },
+                ],
+                body: {
+                  size: 50,
+                  attachmentId: 'att-bracketed-1',
+                },
+              },
+            ],
+          },
+        },
+      });
+
+      const client = new GoogleGmailClient({
+        gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+      });
+
+      const result = await client.getMessage('msg-bracketed-cid');
+
+      expect(result.inlineImages).toHaveLength(1);
+      expect(result.inlineImages[0]?.cid).toBe('bracketed-cid@corp');
+      expect(result.inlineImages[0]?.filename).toBe('bracketed-logo.png');
+      expect(result.attachments).toHaveLength(0);
+    });
+
+    it('matches URL-encoded bracketed CIDs in htmlBody (e.g. <img src="cid:<bracketed%20cid@corp>">)', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-encoded-bracketed-cid',
+          payload: {
+            mimeType: 'multipart/mixed',
+            parts: [
+              {
+                partId: '0',
+                mimeType: 'text/html',
+                body: {
+                  data: Buffer.from('<p>Banner: <img src="cid:<bracketed%20cid@corp>"></p>', 'utf-8').toString('base64url'),
+                },
+              },
+              {
+                partId: '1',
+                mimeType: 'image/png',
+                filename: 'bracketed-space.png',
+                headers: [
+                  { name: 'Content-ID', value: '<bracketed cid@corp>' },
+                ],
+                body: {
+                  size: 60,
+                  attachmentId: 'att-bracketed-2',
+                },
+              },
+            ],
+          },
+        },
+      });
+
+      const client = new GoogleGmailClient({
+        gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+      });
+
+      const result = await client.getMessage('msg-encoded-bracketed-cid');
+
+      expect(result.inlineImages).toHaveLength(1);
+      expect(result.inlineImages[0]?.cid).toBe('bracketed cid@corp');
+      expect(result.inlineImages[0]?.filename).toBe('bracketed-space.png');
+      expect(result.attachments).toHaveLength(0);
+    });
+
+
     it('classifies an image residing strictly within multipart/related container as inline image even if not in htmlBody', async () => {
       const mockGet = vi.fn().mockResolvedValue({
         data: {

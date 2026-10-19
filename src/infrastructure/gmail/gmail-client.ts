@@ -97,10 +97,12 @@ function isCidReferencedInHtml(html: string | undefined, normalizedCid: string):
   let match: RegExpExecArray | null;
   while ((match = cidRegex.exec(html)) !== null) {
     const rawRef = match[1] ?? '';
-    const rawRefLower = rawRef.toLowerCase();
-    if (rawRefLower === targetLower || rawRefLower === encodedTarget) return true;
+    const cleanedRef = rawRef.replace(/^<+/, '').replace(/>+$/, '').trim();
+    const cleanedRefLower = cleanedRef.toLowerCase();
+    if (cleanedRefLower === targetLower || cleanedRefLower === encodedTarget) return true;
     try {
-      if (decodeURIComponent(rawRef).toLowerCase() === targetLower) return true;
+      const decoded = decodeURIComponent(cleanedRef).replace(/^<+/, '').replace(/>+$/, '').trim().toLowerCase();
+      if (decoded === targetLower) return true;
     } catch {
       // ignore URI malformed error
     }
