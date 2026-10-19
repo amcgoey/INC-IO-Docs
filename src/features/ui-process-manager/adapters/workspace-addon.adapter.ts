@@ -27,6 +27,7 @@ import {
   SELECT_FILE_SOURCE_KEY,
   SELECT_ATTACHMENTS_KEY,
   INPUT_DRIVE_URL_KEY,
+  SAVE_EMAIL_TO_PDF_KEY,
   extractSelectFilesSet,
   parseGoogleDriveUrl,
   isGmailContext,
@@ -376,6 +377,22 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
             ...(item.title !== undefined ? { name: item.title } : {}),
             ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
           }));
+      }
+
+      if (isGmail) {
+        const messageId = context.gmail?.messageId ?? normalizedContext.gmail?.messageId;
+        const isSaveEmail =
+          currentUiState.formData[SAVE_EMAIL_TO_PDF_KEY] === true ||
+          currentUiState.formData[SAVE_EMAIL_TO_PDF_KEY] === 'true' ||
+          normalizedContext.formData?.[SAVE_EMAIL_TO_PDF_KEY] === true ||
+          normalizedContext.formData?.[SAVE_EMAIL_TO_PDF_KEY] === 'true';
+
+        if (isSaveEmail && messageId) {
+          activeSourceFiles.push({
+            id: `email-pdf-${messageId}`,
+            mimeType: 'application/pdf',
+          });
+        }
       }
 
       let allowEmptySourceFiles = false;

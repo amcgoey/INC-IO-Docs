@@ -11,6 +11,7 @@ import {
 } from './document.wiring';
 import { createDocumentSpaceFeatureWiring } from './document-space.wiring';
 import { wireWorkspaceAddonRoutes } from './workspace-addon.wiring';
+import type { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
 
 import type { DocumentSpaceService } from '../features/document-space/domain';
 import type {
@@ -56,6 +57,7 @@ export interface AppOptions {
   logger?: boolean | undefined;
   skipSpaceValidation?: boolean | undefined;
   appBaseUrl?: string | undefined;
+  pdfProcessor?: PdfProcessor | undefined;
 }
 
 export interface AppInstance {
@@ -157,6 +159,7 @@ export function createApp(options?: AppOptions): AppInstance {
     gmailClient: options?.gmailClient,
     documentSpaceRegistry: documentSpaceWiring.documentSpaceRegistry,
     storageAdapter,
+    pdfProcessor: options?.pdfProcessor,
   });
 
   const initialize = async () => {

@@ -37,6 +37,7 @@ import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
 import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 import { GmailSourceFileHydrator } from './gmail-source-file-hydrator';
+import { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
 import {
   formatValidationErrors,
 } from '../features/document/domain';
@@ -216,6 +217,7 @@ export interface UiProcessManagerWiringOptions {
   documentSchemaRegistry?: DocumentSchemaRegistryPort | undefined;
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
   validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
+  pdfProcessor?: PdfProcessor | undefined;
 }
 
 export type UiProcessOrchestratorResolver = (
@@ -396,7 +398,8 @@ export function createUiProcessManagerWiring(
   const documentSchemaRegistry = options.documentSchemaRegistry;
 
   const gmailClient = options.gmailClient ?? new GoogleGmailClient();
-  const hydrator = new GmailSourceFileHydrator(gmailClient);
+  const pdfProcessor = options.pdfProcessor ?? new PdfProcessor();
+  const hydrator = new GmailSourceFileHydrator(gmailClient, pdfProcessor);
 
   const preValidateDocument = async (
     type: string,
