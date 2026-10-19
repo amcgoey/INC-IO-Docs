@@ -457,9 +457,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
               type: resolvedDocumentTypeKey ?? 'default',
               data,
               space,
-              ...(activeSourceFiles.length > 0 || allowEmptySourceFiles
-                ? { sourceFiles: activeSourceFiles }
-                : {}),
+              sourceFiles: activeSourceFiles,
             },
             'onSubmit'
           );

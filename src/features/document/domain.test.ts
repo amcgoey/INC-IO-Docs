@@ -5009,6 +5009,149 @@ describe('Document domain', () => {
       expect(fileName).toBe('Email - msg-id-456-test-draft-val.pdf');
     });
   });
+
+  describe('DocumentService.validateDocument', () => {
+    const testDocType: DocumentType = {
+      key: 'test-doc',
+      name: 'Test Document',
+      documentSchema: {
+        fields: [
+          {
+            key: 'title',
+            name: 'Title',
+            type: 'string',
+            required: true,
+          },
+          {
+            key: 'vendor',
+            name: 'Vendor',
+            type: 'string',
+            options: {
+              source: 'vendors',
+              key: 'id',
+              name: 'name',
+              allowUserInput: true,
+              dynamicConfig: { searchPath: 'Vendors' },
+            },
+          },
+        ],
+      },
+    };
+
+    it('returns success: true when document data matches compiled schema and dynamic validator passes', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const customRegistry = createCustomRegistry([testDocType]);
+      const mockDynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn().mockResolvedValue({
+          vendor: { isValid: true },
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        defaultEvaluator,
+        undefined,
+        mockDynamicValidator
+      );
+      await service.initialize();
+
+      const doc: DocumentModel = {
+        type: 'test-doc',
+        data: {
+          title: 'Quarterly Report',
+          vendor: 'Acme Corp',
+        },
+        space: {
+          id: 'sp-1',
+          name: 'Space 1',
+          typeId: 'projects',
+          abstractStorageId: 'drive-folder-123',
+        },
+      };
+
+      const result = await service.validateDocument(doc);
+      expect(result.success).toBe(true);
+      expect(result.errors).toBeUndefined();
+      expect(mockDynamicValidator.validateExistence).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns error when document type is unknown', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const customRegistry = createCustomRegistry([testDocType]);
+
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        defaultEvaluator
+      );
+      await service.initialize();
+
+      const doc: DocumentModel = {
+        type: 'non-existent-type',
+        data: { title: 'Report' },
+      };
+
+      const result = await service.validateDocument(doc);
+      expect(result.success).toBe(false);
+      expect(result.errors).toEqual(['Unknown document type: non-existent-type']);
+    });
+
+    it('returns error when document data violates compiled schema', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const customRegistry = createCustomRegistry([testDocType]);
+
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        defaultEvaluator
+      );
+      await service.initialize();
+
+      const doc: DocumentModel = {
+        type: 'test-doc',
+        data: {
+          // Missing required 'title'
+        },
+      };
+
+      const result = await service.validateDocument(doc);
+      expect(result.success).toBe(false);
+      expect(result.errors).toBeDefined();
+      expect(result.errors!.length).toBeGreaterThan(0);
+    });
+
+    it('returns errors when dynamic validator returns invalid or timeout', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const customRegistry = createCustomRegistry([testDocType]);
+      const mockDynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn().mockResolvedValue({
+          vendor: { isValid: false, errorMessage: 'Vendor does not exist' },
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        defaultEvaluator,
+        undefined,
+        mockDynamicValidator
+      );
+      await service.initialize();
+
+      const doc: DocumentModel = {
+        type: 'test-doc',
+        data: {
+          title: 'Report',
+          vendor: 'Bad Vendor',
+        },
+      };
+
+      const result = await service.validateDocument(doc);
+      expect(result.success).toBe(false);
+      expect(result.errors).toEqual(['Vendor does not exist']);
+    });
+  });
 });
 
 

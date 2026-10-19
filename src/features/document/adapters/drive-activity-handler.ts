@@ -8,6 +8,7 @@ import {
   type ActivityHandler,
   type AppConfigurationProviderPort,
   type DriveFileResult,
+  type DriveFile,
   type DriveSearchQuery,
   type DriveServicePort,
 } from '../ports';
@@ -341,14 +342,18 @@ export class DriveActivityHandler implements ActivityHandler {
     let startingId: string;
     if (rootStorageId) {
       startingId = rootStorageId;
-    } else if (targetSourceFiles.length > 0 && !(targetSourceFiles[0].content instanceof Uint8Array)) {
-      startingId =
-        (await this.driveService.getFile(targetSourceFiles[0].id)).parents?.[0] ??
-        'root';
-    } else {
+    } else if (targetSourceFiles.length === 0) {
       throw new Error(
         'DriveActivityHandler: Cannot create destination folder for zero-file filing because rootStorageId is missing or unresolved in activity payload'
       );
+    } else if (targetSourceFiles[0]?.content instanceof Uint8Array) {
+      throw new Error(
+        'DriveActivityHandler: Cannot create destination folder for binary file filing because rootStorageId is missing or unresolved in activity payload'
+      );
+    } else {
+      startingId =
+        (await this.driveService.getFile(targetSourceFiles[0].id)).parents?.[0] ??
+        'root';
     }
     const baseFolderId =
       parentPathSegments.length > 0
@@ -382,14 +387,10 @@ export class DriveActivityHandler implements ActivityHandler {
             name: sourceFile.name || sourceFile.id,
             ...(sourceFile.mimeType !== undefined ? { mimeType: sourceFile.mimeType } : {}),
           });
-          const resolvedMimeType = file.mimeType ?? sourceFile.mimeType;
-          const fileLocator: FileLocator = {
-            id: file.id,
-            name: file.name,
-            parentName: leafFolder.name,
-            ...(resolvedMimeType !== undefined ? { mimeType: resolvedMimeType } : {}),
-            uri: file.webViewLink ?? '',
-          };
+          const fileLocator = this.createFileLocator(file, leafFolder.name, {
+            fallbackMimeType: sourceFile.mimeType,
+            defaultEmptyUri: true,
+          });
           movedFiles.push(fileLocator);
         } else {
           const movedFile = await this.driveService.move(sourceFile.id, leafFolder.id);
@@ -409,13 +410,11 @@ export class DriveActivityHandler implements ActivityHandler {
             }
           }
 
-          const fileLocator: FileLocator = {
-            id: movedFile.id,
-            name: name || sourceFile.name || '',
-            parentName: leafFolder.name,
-            ...(mimeType ? { mimeType } : {}),
-            ...(uri ? { uri } : {}),
-          };
+          const fileLocator = this.createFileLocator(
+            { id: movedFile.id, name, mimeType, webViewLink: uri },
+            leafFolder.name,
+            { fallbackName: sourceFile.name }
+          );
           movedFiles.push(fileLocator);
         }
       } catch (error) {
@@ -447,6 +446,34 @@ export class DriveActivityHandler implements ActivityHandler {
     return {
       success: true,
       files: movedFiles,
+    };
+  }
+
+  private createFileLocator(
+    file:
+      | DriveFile
+      | {
+          id: string;
+          name?: string | undefined;
+          mimeType?: string | undefined;
+          webViewLink?: string | undefined;
+        },
+    parentName: string,
+    options?: {
+      fallbackMimeType?: string | undefined;
+      fallbackName?: string | undefined;
+      defaultEmptyUri?: boolean | undefined;
+    }
+  ): FileLocator {
+    const resolvedMimeType = file.mimeType ?? options?.fallbackMimeType;
+    const resolvedName = file.name || options?.fallbackName || '';
+    const resolvedUri = file.webViewLink ?? (options?.defaultEmptyUri ? '' : undefined);
+    return {
+      id: file.id,
+      name: resolvedName,
+      parentName,
+      ...(resolvedMimeType !== undefined ? { mimeType: resolvedMimeType } : {}),
+      ...(resolvedUri !== undefined ? { uri: resolvedUri } : {}),
     };
   }
 }
