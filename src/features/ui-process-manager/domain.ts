@@ -92,6 +92,19 @@ export const ProcessUiStateOutputSchema = Type.Object({
 export type ProcessUiStateOutput = Static<typeof ProcessUiStateOutputSchema>;
 
 export const SELECT_FILES_KEY = 'SelectFiles';
+export const SELECT_FILE_SOURCE_KEY = 'SelectFileSource';
+export const SELECT_ATTACHMENTS_KEY = 'SelectAttachments';
+export const INPUT_DRIVE_URL_KEY = 'InputDriveURL';
+export const SAVE_EMAIL_TO_PDF_KEY = 'SaveEmailToPdf';
+
+export const EPHEMERAL_UI_SELECTION_KEYS = new Set([
+  SELECT_FILES_KEY,
+  SELECT_FILE_SOURCE_KEY,
+  SELECT_ATTACHMENTS_KEY,
+  INPUT_DRIVE_URL_KEY,
+  SAVE_EMAIL_TO_PDF_KEY,
+]);
+
 export const SELECTION_KEY_PREFIX = 'SelectDocument';
 export const SELECT_DOCUMENT_SPACE_TYPE_KEY = 'SelectDocumentSpaceType';
 export const SELECT_DOCUMENT_SPACE_KEY = 'SelectDocumentSpace';
@@ -108,14 +121,17 @@ export function getDocTypeSelectorKey(spaceType: string): string {
 }
 
 export function isSelectionKey(key: string): boolean {
-  return key.startsWith(SELECTION_KEY_PREFIX) || key === SELECT_FILES_KEY;
+  return key.startsWith(SELECTION_KEY_PREFIX) || EPHEMERAL_UI_SELECTION_KEYS.has(key);
 }
 
 /**
- * Normalizes formData.SelectFiles (string | string[] | undefined) into a Set of non-empty trimmed strings.
+ * Normalizes formData[keyName] (string | string[] | undefined) into a Set of non-empty trimmed strings.
  */
-export function extractSelectFilesSet(formData?: Record<string, unknown>): Set<string> {
-  const raw = formData?.[SELECT_FILES_KEY];
+export function extractSelectFilesSet(
+  formData?: Record<string, unknown>,
+  keyName: string = SELECT_FILES_KEY
+): Set<string> {
+  const raw = formData?.[keyName];
   const set = new Set<string>();
   if (typeof raw === 'string') {
     const trimmed = raw.trim();

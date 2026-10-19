@@ -75,4 +75,39 @@ describe('File Selection Block', () => {
     expect(customEmpty.collapsible).toBe(false);
     expect(customEmpty.widgets[0].textParagraph?.text).toBe('Nothing to see here.');
   });
+
+  it('normalizes SelectionState object input correctly', () => {
+    const selectionState = {
+      spaceTypes: [],
+      spaces: [],
+      documentTypes: [],
+      files: sampleFiles,
+    };
+
+    const section = buildFileSelectionSection(selectionState);
+
+    expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+    expect(section.header).toBe('File Selection');
+    expect(section.widgets[0].selectionInput?.items).toEqual(sampleFiles);
+  });
+
+  it('handles SelectionState with undefined or empty files by rendering fallback', () => {
+    const stateEmptyFiles = {
+      spaceTypes: [],
+      spaces: [],
+      documentTypes: [],
+      files: [],
+    };
+    const sectionEmpty = buildFileSelectionSection(stateEmptyFiles);
+    expect(sectionEmpty.widgets[0].textParagraph?.text).toBe('No files selected.');
+
+    const stateUndefinedFiles = {
+      spaceTypes: [],
+      spaces: [],
+      documentTypes: [],
+    };
+    const sectionUndefined = buildFileSelectionSection(stateUndefinedFiles);
+    expect(sectionUndefined.widgets[0].textParagraph?.text).toBe('No files selected.');
+  });
 });
+

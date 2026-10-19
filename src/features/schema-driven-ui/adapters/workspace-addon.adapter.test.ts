@@ -4,6 +4,7 @@ import { UiViewModel, UiViewActionSchema, type UiView } from '../domain';
 import {
   WorkspaceAddonAdapter,
   WORKSPACE_ADDON_VIEW_ID,
+  createWorkspaceAddonViewSchema,
 } from './workspace-addon.adapter';
 import type { UiViewAdapterContext } from '../ports';
 
@@ -621,5 +622,135 @@ describe('WorkspaceAddonAdapter', () => {
       assertValidAgnosticAction(view.sections[3].widgets[0].buttonList?.buttons[0].onClick);
     });
   });
+
+  describe('createWorkspaceAddonViewSchema', () => {
+    it('composes a view with the injected viewId', async () => {
+      const composer = createWorkspaceAddonViewSchema({
+        viewId: 'gmail-document-process-card',
+      });
+
+      const context: UiViewAdapterContext = {
+        viewId: 'gmail-document-process-card',
+      };
+
+      const view = await composer(context);
+      expect(view.id).toBe('gmail-document-process-card');
+      expect(view.header?.title).toBe('INC-IO Engine');
+      expect(view.header?.subtitle).toBe('Process Document');
+      expect(view.sections).toHaveLength(1);
+      expect(view.sections[0].header).toBe('Admin');
+      assertValidUiView(view);
+    });
+
+    it('injects custom fileSelectionConfig section producer', async () => {
+      const customSection = {
+        header: 'Gmail Attachments',
+        collapsible: true,
+        widgets: [{ textParagraph: { text: '2 attachments found' } }],
+      };
+
+      const composer = createWorkspaceAddonViewSchema({
+        viewId: 'gmail-document-process-card',
+        fileSelectionConfig: () => customSection,
+      });
+
+      const context: UiViewAdapterContext = {
+        viewId: 'gmail-document-process-card',
+        selectionState: {
+          spaceTypes: [{ text: 'Department', value: 'dept' }],
+          spaces: ['Engineering'],
+          documentTypes: [{ text: 'Invoice', value: 'inv' }],
+        },
+      };
+
+      const view = await composer(context);
+      expect(view.sections).toHaveLength(3);
+      expect(view.sections[0].header).toBe('Document Type');
+      expect(view.sections[1].header).toBe('Gmail Attachments');
+      expect(view.sections[1].widgets[0].textParagraph?.text).toBe('2 attachments found');
+      expect(view.sections[2].header).toBe('Admin');
+      assertValidUiView(view);
+    });
+
+    it('defaults to standard file selection section when fileSelectionConfig is omitted', async () => {
+      const composer = createWorkspaceAddonViewSchema({
+        viewId: 'custom-view-card',
+      });
+
+      const context: UiViewAdapterContext = {
+        viewId: 'custom-view-card',
+        selectionState: {
+          spaceTypes: [{ text: 'Department', value: 'dept' }],
+          spaces: ['Engineering'],
+          documentTypes: [{ text: 'Invoice', value: 'inv' }],
+          files: [{ text: 'doc.pdf', value: 'f1', selected: true }],
+        },
+      };
+
+      const view = await composer(context);
+      expect(view.sections).toHaveLength(3);
+      expect(view.sections[1].header).toBe('File Selection');
+      expect(view.sections[1].widgets[0].selectionInput?.name).toBe('SelectFiles');
+      expect(view.sections[1].widgets[0].selectionInput?.items).toEqual([
+        { text: 'doc.pdf', value: 'f1', selected: true },
+      ]);
+      assertValidUiView(view);
+    });
+
+    it('executes shared async DocumentType display-name resolution pipeline', async () => {
+      const mockResolver = {
+        getDisplayName: vi.fn().mockImplementation(async (key: string) => {
+          if (key === 'email-doc') return 'Resolved Email Document';
+          return undefined;
+        }),
+      };
+
+      const composer = createWorkspaceAddonViewSchema({
+        viewId: 'gmail-document-process-card',
+      });
+
+      const context: UiViewAdapterContext = {
+        viewId: 'gmail-document-process-card',
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'email-doc', value: 'email-doc' }],
+        },
+      };
+
+      const view = await composer(context, mockResolver);
+      expect(mockResolver.getDisplayName).toHaveBeenCalledWith('email-doc');
+      const docTypeWidget = view.sections[0].widgets[2].selectionInput;
+      expect(docTypeWidget?.items?.[0].text).toBe('Resolved Email Document');
+      assertValidUiView(view);
+    });
+
+    it('supports direct invocation with (config, context, resolver)', async () => {
+      const mockResolver = {
+        getDisplayName: vi.fn().mockResolvedValue('Resolved Form'),
+      };
+
+      const context: UiViewAdapterContext = {
+        viewId: 'direct-card',
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'form-key', value: 'form-key' }],
+        },
+      };
+
+      const view = await createWorkspaceAddonViewSchema(
+        { viewId: 'direct-card' },
+        context,
+        mockResolver
+      );
+
+      expect(view.id).toBe('direct-card');
+      const docTypeWidget = view.sections[0].widgets[2].selectionInput;
+      expect(docTypeWidget?.items?.[0].text).toBe('Resolved Form');
+      assertValidUiView(view);
+    });
+  });
 });
+
 
