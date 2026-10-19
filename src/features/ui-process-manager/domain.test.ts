@@ -1967,6 +1967,185 @@ describe('ui-process-manager domain', () => {
             expect(evaluateProcessUiState(inputDrive).formData[SAVE_EMAIL_TO_PDF_KEY]).toBeUndefined();
           });
         });
+
+        describe('SelectFileSource, onFileSourceChange and stateless parameter retention', () => {
+          const sampleAttachments = [
+            { id: 'att-1', title: 'Invoice.pdf' },
+            { id: 'att-2', title: 'Statement.pdf' },
+            { id: 'att-3', title: 'Summary.pdf' },
+          ];
+
+          it('populates fileSources in Gmail context with Email Attachments selected by default', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                selectedItems: sampleAttachments,
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.selectionState.fileSources).toEqual([
+              { text: 'Email Attachments', value: 'Email Attachments', selected: true },
+              { text: 'Google Drive URL', value: 'Google Drive URL', selected: false },
+            ]);
+            expect(state.formData[SELECT_FILE_SOURCE_KEY]).toBe('Email Attachments');
+            expect(state.formData[INPUT_DRIVE_URL_KEY]).toBe('');
+          });
+
+          it('treats onFileSourceChange as an in-card action and sets isUpdateCard = true', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'onFileSourceChange',
+                selectedItems: sampleAttachments,
+                formData: {
+                  [SELECT_FILE_SOURCE_KEY]: 'Google Drive URL',
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.isUpdateCard).toBe(true);
+            expect(state.formData[SELECT_FILE_SOURCE_KEY]).toBe('Google Drive URL');
+            expect(state.selectionState.fileSources).toEqual([
+              { text: 'Email Attachments', value: 'Email Attachments', selected: false },
+              { text: 'Google Drive URL', value: 'Google Drive URL', selected: true },
+            ]);
+          });
+
+          it('restores Drive URL from context.parameters.previousDriveUrl when context.formData.InputDriveURL is undefined', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'onFileSourceChange',
+                selectedItems: sampleAttachments,
+                formData: {
+                  [SELECT_FILE_SOURCE_KEY]: 'Google Drive URL',
+                },
+                parameters: {
+                  previousDriveUrl: 'https://drive.google.com/folder/abc',
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.formData[INPUT_DRIVE_URL_KEY]).toBe('https://drive.google.com/folder/abc');
+          });
+
+          it('prefers context.formData.InputDriveURL over context.parameters.previousDriveUrl when present', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'onFormChange',
+                selectedItems: sampleAttachments,
+                formData: {
+                  [SELECT_FILE_SOURCE_KEY]: 'Google Drive URL',
+                  [INPUT_DRIVE_URL_KEY]: ' https://drive.google.com/folder/new ',
+                },
+                parameters: {
+                  previousDriveUrl: 'https://drive.google.com/folder/old',
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.formData[INPUT_DRIVE_URL_KEY]).toBe('https://drive.google.com/folder/new');
+          });
+
+          it('restores attachment selections from context.parameters.previousAttachments when formData.SelectAttachments is undefined', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'onFileSourceChange',
+                selectedItems: sampleAttachments,
+                formData: {
+                  [SELECT_FILE_SOURCE_KEY]: 'Email Attachments',
+                },
+                parameters: {
+                  previousAttachments: JSON.stringify(['att-2', 'att-3']),
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.selectionState.files).toEqual([
+              { text: 'Invoice.pdf', value: 'att-1', selected: false },
+              { text: 'Statement.pdf', value: 'att-2', selected: true },
+              { text: 'Summary.pdf', value: 'att-3', selected: true },
+            ]);
+          });
+
+          it('prefers context.formData.SelectAttachments when defined even if parameters.previousAttachments exists', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'onFormChange',
+                selectedItems: sampleAttachments,
+                formData: {
+                  [SELECT_FILE_SOURCE_KEY]: 'Email Attachments',
+                  [SELECT_ATTACHMENTS_KEY]: ['att-1'],
+                },
+                parameters: {
+                  previousAttachments: JSON.stringify(['att-2']),
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.selectionState.files).toEqual([
+              { text: 'Invoice.pdf', value: 'att-1', selected: true },
+              { text: 'Statement.pdf', value: 'att-2', selected: false },
+              { text: 'Summary.pdf', value: 'att-3', selected: false },
+            ]);
+          });
+
+          it('resets file source to Email Attachments, clears InputDriveURL, and selects all attachments on refresh', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'refresh',
+                selectedItems: sampleAttachments,
+                formData: {
+                  [SELECT_FILE_SOURCE_KEY]: 'Google Drive URL',
+                  [INPUT_DRIVE_URL_KEY]: 'https://drive.google.com/old',
+                  [SELECT_ATTACHMENTS_KEY]: ['att-1'],
+                },
+                parameters: {
+                  previousDriveUrl: 'https://drive.google.com/old',
+                  previousAttachments: JSON.stringify(['att-1']),
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.isUpdateCard).toBe(false);
+            expect(state.formData[SELECT_FILE_SOURCE_KEY]).toBe('Email Attachments');
+            expect(state.formData[INPUT_DRIVE_URL_KEY]).toBe('');
+            expect(state.selectionState.fileSources).toEqual([
+              { text: 'Email Attachments', value: 'Email Attachments', selected: true },
+              { text: 'Google Drive URL', value: 'Google Drive URL', selected: false },
+            ]);
+            expect(state.selectionState.files).toEqual([
+              { text: 'Invoice.pdf', value: 'att-1', selected: true },
+              { text: 'Statement.pdf', value: 'att-2', selected: true },
+              { text: 'Summary.pdf', value: 'att-3', selected: true },
+            ]);
+          });
+        });
       });
     });
   });
