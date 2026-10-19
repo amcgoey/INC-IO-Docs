@@ -154,7 +154,12 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
         {
           name: widgetName,
           label,
-          type: customProps.type ?? 'DROPDOWN',
+          type:
+            customProps.type === 'RADIO_BUTTON' ||
+            customProps.type === 'CHECK_BOX' ||
+            customProps.type === 'SWITCH'
+              ? customProps.type
+              : 'DROPDOWN',
           items,
         },
         onChangeAction

@@ -48,7 +48,14 @@ export type GoogleWorkspaceSelectionItem = Static<typeof GoogleWorkspaceSelectio
 export const GoogleWorkspaceSelectionInputSchema = Type.Object({
   name: Type.String(),
   label: Type.Optional(Type.String()),
-  type: Type.Union([Type.Literal('DROPDOWN'), Type.Literal('CHECK_BOX'), Type.Literal('RADIO_BUTTON')]),
+  type: Type.Optional(
+    Type.Union([
+      Type.Literal('DROPDOWN'),
+      Type.Literal('RADIO_BUTTON'),
+      Type.Literal('CHECK_BOX'),
+      Type.Literal('SWITCH'),
+    ])
+  ),
   items: Type.Array(GoogleWorkspaceSelectionItemSchema),
   onChangeAction: Type.Optional(GoogleWorkspaceActionSchema),
 });

@@ -822,6 +822,62 @@ describe('WorkspaceAddonAdapter', () => {
       assertValidUiView(view);
     });
 
+    it('produces SaveEmailToPdf SWITCH toggle in File Selection section reflecting formData', async () => {
+      // Test when SaveEmailToPdf is true in formData
+      const viewWithTrue = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        formData: { SaveEmailToPdf: true },
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'Invoice', value: 'invoice' }],
+          files: [],
+        },
+      });
+
+      const fileSectionTrue = viewWithTrue.sections.find((s) => s.header === 'File Selection');
+      expect(fileSectionTrue).toBeDefined();
+      expect(fileSectionTrue?.widgets).toHaveLength(2);
+      expect(fileSectionTrue?.widgets[0].textParagraph?.text).toBe('No attachments found.');
+
+      const switchTrue = fileSectionTrue?.widgets[1].selectionInput;
+      expect(switchTrue).toBeDefined();
+      expect(switchTrue?.name).toBe('SaveEmailToPdf');
+      expect(switchTrue?.type).toBe('SWITCH');
+      expect(switchTrue?.items).toEqual([
+        { text: 'Save Email to PDF', value: 'true', selected: true },
+      ]);
+      assertValidUiView(viewWithTrue);
+
+      // Test when SaveEmailToPdf is absent / false in formData
+      const viewWithFalse = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        formData: {},
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'Invoice', value: 'invoice' }],
+          files: [
+            { text: 'doc.pdf', value: 'att-1', selected: true },
+          ],
+        },
+      });
+
+      const fileSectionFalse = viewWithFalse.sections.find((s) => s.header === 'File Selection');
+      expect(fileSectionFalse).toBeDefined();
+      expect(fileSectionFalse?.widgets).toHaveLength(2);
+      expect(fileSectionFalse?.widgets[0].selectionInput?.name).toBe('SelectAttachments');
+
+      const switchFalse = fileSectionFalse?.widgets[1].selectionInput;
+      expect(switchFalse).toBeDefined();
+      expect(switchFalse?.name).toBe('SaveEmailToPdf');
+      expect(switchFalse?.type).toBe('SWITCH');
+      expect(switchFalse?.items).toEqual([
+        { text: 'Save Email to PDF', value: 'true', selected: false },
+      ]);
+      assertValidUiView(viewWithFalse);
+    });
+
     it('resolves document type display names via injected displayNameResolver', async () => {
       const mockResolver = {
         getDisplayName: vi.fn().mockImplementation(async (key: string) => {

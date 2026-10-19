@@ -100,8 +100,9 @@ export const UiViewSelectionInputWidgetSchema = Type.Object(
         type: Type.Optional(
           Type.Union([
             Type.Literal('DROPDOWN'),
-            Type.Literal('CHECK_BOX'),
             Type.Literal('RADIO_BUTTON'),
+            Type.Literal('CHECK_BOX'),
+            Type.Literal('SWITCH'),
           ])
         ),
         items: Type.Optional(Type.Array(UiSelectionItemSchema)),
@@ -296,6 +297,12 @@ export function translateUiViewToWorkspaceCard(
 
       if ('selectionInput' in w) {
         const selectionType = w.selectionInput.type ?? 'DROPDOWN';
+
+        if (selectionType === 'SWITCH') {
+          if (!w.selectionInput.items || w.selectionInput.items.length !== 1) {
+            throw new Error('SWITCH selection input must have exactly one item');
+          }
+        }
 
         const selectionInput: GoogleWorkspaceSelectionInput = {
           name: w.selectionInput.name,

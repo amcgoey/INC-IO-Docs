@@ -137,7 +137,7 @@ export function mapUiViewToWorkspaceUiView(view: UiView, baseUrl?: string | unde
                 ...(widget.selectionInput.label !== undefined ? { label: widget.selectionInput.label } : {}),
                 ...(widget.selectionInput.type !== undefined
                   ? {
-                      type: widget.selectionInput.type as 'DROPDOWN' | 'CHECK_BOX' | 'RADIO_BUTTON',
+                      type: widget.selectionInput.type as 'DROPDOWN' | 'RADIO_BUTTON' | 'CHECK_BOX' | 'SWITCH',
                     }
                   : {}),
                 ...(widget.selectionInput.items !== undefined
