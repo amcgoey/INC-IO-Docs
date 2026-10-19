@@ -1,4 +1,11 @@
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
+import {
+  PDFDocument,
+  StandardFonts,
+  rgb,
+  type PDFFont,
+  type PDFPage,
+  type PDFImage,
+} from 'pdf-lib';
 import type { EmailPdfRenderInput } from './types';
 
 const PAGE_WIDTH = 612;
@@ -77,28 +84,90 @@ export function decodeHtmlEntities(input: string): string {
 }
 
 /**
- * Converts an HTML email body into clean, structured plain text:
- * 1. Pre-purges <style>, <script>, <head>, and <!-- ... --> comments.
- * 2. Converts </td> and </th> to spaces.
- * 3. Converts <br>, <br/>, </p>, </div>, </li>, and </tr> to newlines.
- * 4. Strips all remaining HTML tags (<[^>]+>).
- * 5. Decodes HTML entities (standard, typographical, numeric decimal & hex, and normalizes &nbsp; to ASCII space).
+ * Normalizes a CID reference by stripping surrounding angle brackets (< >),
+ * trimming whitespace, and URL-decoding (%20, etc.).
  */
-export function convertHtmlToPlainText(html: string): string {
+export function normalizeCid(rawCid: string): string {
+  let cleaned = rawCid.trim();
+  if (cleaned.startsWith('<') && cleaned.endsWith('>')) {
+    cleaned = cleaned.slice(1, -1).trim();
+  } else {
+    cleaned = cleaned.replace(/^[<]+|[>]+$/g, '').trim();
+  }
+  try {
+    return decodeURIComponent(cleaned);
+  } catch {
+    return cleaned;
+  }
+}
+
+export type BodyToken =
+  | { type: 'text'; text: string }
+  | { type: 'image'; cid: string };
+
+/**
+ * Tokenizes an HTML email body into structured text chunks and inline CID image tokens:
+ * 1. Pre-purges <style>, <script>, <head>, and <!-- ... --> comments.
+ * 2. Matches <img src="cid:..."> tags, emitting image tokens with normalized CIDs.
+ * 3. Converts inter-image HTML chunks to text, normalizing block tags/breaks, stripping remaining tags, and decoding entities.
+ */
+export function tokenizeHtmlBody(html: string): BodyToken[] {
   const purged = html
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
     .replace(/<head\b[^>]*>[\s\S]*?<\/head>/gi, '')
     .replace(/<!--[\s\S]*?-->/g, '');
 
-  const whitespaceNormalized = purged
-    .replace(/<\/(td|th)>/gi, ' ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|li|tr)>/gi, '\n');
+  const tokens: BodyToken[] = [];
+  const imgRegex = /<img\b[^>]*src=["']cid:([^"']+)["'][^>]*>/gi;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
 
-  const strippedTags = whitespaceNormalized.replace(/<[^>]+>/g, '');
+  const processHtmlChunk = (chunk: string) => {
+    const whitespaceNormalized = chunk
+      .replace(/<\/(td|th)>/gi, ' ')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|div|li|tr)>/gi, '\n');
 
-  return decodeHtmlEntities(strippedTags);
+    const strippedTags = whitespaceNormalized.replace(/<[^>]+>/g, '');
+    const decoded = decodeHtmlEntities(strippedTags);
+    if (decoded.length > 0) {
+      tokens.push({ type: 'text', text: decoded });
+    }
+  };
+
+  while ((match = imgRegex.exec(purged)) !== null) {
+    const textBefore = purged.slice(lastIndex, match.index);
+    if (textBefore.length > 0) {
+      processHtmlChunk(textBefore);
+    }
+
+    const rawCid = match[1]!;
+    const cid = normalizeCid(rawCid);
+    tokens.push({ type: 'image', cid });
+
+    lastIndex = imgRegex.lastIndex;
+  }
+
+  if (lastIndex < purged.length) {
+    const remainingText = purged.slice(lastIndex);
+    if (remainingText.length > 0) {
+      processHtmlChunk(remainingText);
+    }
+  }
+
+  return tokens;
+}
+
+/**
+ * Converts an HTML email body into clean, structured plain text by tokenizing and stripping non-text elements.
+ */
+export function convertHtmlToPlainText(html: string): string {
+  const tokens = tokenizeHtmlBody(html);
+  return tokens
+    .filter((t): t is { type: 'text'; text: string } => t.type === 'text')
+    .map((t) => t.text)
+    .join('');
 }
 
 /**
@@ -345,25 +414,101 @@ export class EmailPdfRenderer {
     });
     cursorY -= DIVIDER_PADDING;
 
-    // 4. Render Body (HTML converted, or fallback to plain text)
-    const rawBody =
-      email.htmlBody !== undefined
-        ? convertHtmlToPlainText(email.htmlBody)
-        : email.plainTextBody;
+    // 4. Render Body: process text chunks and inline CID images
+    let tokens: BodyToken[] = [];
+    if (email.htmlBody !== undefined) {
+      tokens = tokenizeHtmlBody(email.htmlBody);
+    } else if (email.plainTextBody !== undefined && email.plainTextBody.length > 0) {
+      tokens = [{ type: 'text', text: email.plainTextBody }];
+    }
 
-    if (rawBody !== undefined && rawBody.length > 0) {
-      const bodyLines = wrapWords(rawBody, fontRegular, FONT_SIZE, PRINTABLE_WIDTH);
-      for (const line of bodyLines) {
-        ensureVerticalSpace(LINE_HEIGHT);
-        if (line.length > 0) {
-          currentPage.drawText(line, {
-            x: MARGIN,
-            y: cursorY - 10,
-            size: FONT_SIZE,
-            font: fontRegular,
-          });
+    const imageCache = new Map<string, PDFImage>();
+    const PRINTABLE_HEIGHT = TOP_Y - BOTTOM_MARGIN;
+
+    for (const token of tokens) {
+      if (token.type === 'text') {
+        const bodyLines = wrapWords(token.text, fontRegular, FONT_SIZE, PRINTABLE_WIDTH);
+        for (const line of bodyLines) {
+          ensureVerticalSpace(LINE_HEIGHT);
+          if (line.length > 0) {
+            currentPage.drawText(line, {
+              x: MARGIN,
+              y: cursorY - 10,
+              size: FONT_SIZE,
+              font: fontRegular,
+            });
+          }
+          cursorY -= LINE_HEIGHT;
         }
-        cursorY -= LINE_HEIGHT;
+      } else if (token.type === 'image') {
+        const normalizedCidLower = token.cid.toLowerCase();
+        const inlineImage = email.inlineImages?.find(
+          (img) => normalizeCid(img.cid).toLowerCase() === normalizedCidLower
+        );
+
+        if (!inlineImage || !inlineImage.data || inlineImage.data.length === 0) {
+          continue;
+        }
+
+        const mime = inlineImage.mimeType.toLowerCase();
+        let pdfImage: PDFImage | undefined = imageCache.get(normalizedCidLower);
+
+        if (!pdfImage) {
+          const imageBytes =
+            inlineImage.data.byteOffset === 0 &&
+            inlineImage.data.byteLength === inlineImage.data.buffer.byteLength
+              ? inlineImage.data
+              : new Uint8Array(inlineImage.data);
+
+          try {
+            if (mime === 'image/png') {
+              pdfImage = await doc.embedPng(imageBytes);
+            } else if (mime === 'image/jpeg' || mime === 'image/jpg') {
+              pdfImage = await doc.embedJpg(imageBytes);
+            } else {
+              continue;
+            }
+            imageCache.set(normalizedCidLower, pdfImage);
+          } catch {
+            continue;
+          }
+        }
+
+        const origWidth = pdfImage.width;
+        const origHeight = pdfImage.height;
+
+        if (origWidth <= 0 || origHeight <= 0) {
+          continue;
+        }
+
+        let scaledWidth = origWidth;
+        let scaledHeight = origHeight;
+
+        if (scaledWidth > PRINTABLE_WIDTH) {
+          const scale = PRINTABLE_WIDTH / scaledWidth;
+          scaledWidth = PRINTABLE_WIDTH;
+          scaledHeight = scaledHeight * scale;
+        }
+
+        if (scaledHeight > PRINTABLE_HEIGHT) {
+          const scale = PRINTABLE_HEIGHT / scaledHeight;
+          scaledHeight = PRINTABLE_HEIGHT;
+          scaledWidth = scaledWidth * scale;
+        }
+
+        if (cursorY - scaledHeight < BOTTOM_MARGIN) {
+          currentPage = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+          cursorY = TOP_Y;
+        }
+
+        currentPage.drawImage(pdfImage, {
+          x: MARGIN,
+          y: cursorY - scaledHeight,
+          width: scaledWidth,
+          height: scaledHeight,
+        });
+
+        cursorY -= scaledHeight + 10;
       }
     }
 

@@ -24,6 +24,9 @@ export const EmailPdfRenderInputSchema = Type.Object({
   inlineImages: Type.Optional(Type.Union([Type.Array(EmailPdfInlineImageSchema), Type.Undefined()])),
 });
 
-export type EmailPdfRenderInput = Static<typeof EmailPdfRenderInputSchema> & {
+export type EmailPdfRenderInput = Omit<
+  Static<typeof EmailPdfRenderInputSchema>,
+  'inlineImages'
+> & {
   inlineImages?: EmailPdfInlineImage[] | undefined;
 };

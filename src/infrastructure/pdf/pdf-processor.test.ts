@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { PDFDocument, PDFPage, StandardFonts } from 'pdf-lib';
 import { PdfProcessor } from './pdf-processor';
 import type { EmailPdfRenderInput } from './types';
 import {
@@ -988,6 +988,355 @@ describe('PdfProcessor', () => {
       expect(text).toContain('Decimal: ABC --');
       expect(text).toContain('Hexadecimal: ABC -');
       expect(text).toContain('NumericNbsp: Numeric and HexNbsp');
+    });
+
+    it('embeds inline PNG image referenced by CID in htmlBody', async () => {
+      const samplePng = new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          'base64'
+        )
+      );
+
+      const embedPngSpy = vi.spyOn(PDFDocument.prototype, 'embedPng');
+      const drawImageSpy = vi.spyOn(PDFPage.prototype, 'drawImage');
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'inline-png-test',
+        subject: 'Inline PNG Test',
+        htmlBody: `
+          <p>Paragraph before image.</p>
+          <p><img src="cid:chart-logo.png" alt="Company Chart" /></p>
+          <p>Paragraph after image.</p>
+        `,
+        inlineImages: [
+          {
+            cid: 'chart-logo.png',
+            mimeType: 'image/png',
+            data: samplePng,
+          },
+        ],
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+
+      expect(embedPngSpy).toHaveBeenCalledTimes(1);
+      expect(drawImageSpy).toHaveBeenCalledTimes(1);
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Paragraph before image.');
+      expect(text).toContain('Paragraph after image.');
+
+      embedPngSpy.mockRestore();
+      drawImageSpy.mockRestore();
+    });
+
+    it('embeds JPEG inline images and normalizes CID references with angle brackets and URL encoding', async () => {
+      const sampleJpeg = new Uint8Array(
+        Buffer.from(
+          '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=',
+          'base64'
+        )
+      );
+
+      const embedJpgSpy = vi.spyOn(PDFDocument.prototype, 'embedJpg');
+      const drawImageSpy = vi.spyOn(PDFPage.prototype, 'drawImage');
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'jpeg-cid-normalization-test',
+        subject: 'JPEG CID Test',
+        htmlBody: `
+          <p>Introductory text.</p>
+          <img src="cid:<photo.jpeg@enterprise.com>" />
+          <p>Middle text.</p>
+          <img src="cid:diagram%20report.jpg" />
+          <p>Closing text.</p>
+        `,
+        inlineImages: [
+          {
+            // CID in metadata without brackets, case-insensitive match
+            cid: 'PHOTO.JPEG@ENTERPRISE.COM',
+            mimeType: 'image/jpeg',
+            data: sampleJpeg,
+          },
+          {
+            // CID with spaces (matching %20 in HTML)
+            cid: '<diagram report.jpg>',
+            mimeType: 'image/jpg',
+            data: sampleJpeg,
+          },
+        ],
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+
+      expect(embedJpgSpy).toHaveBeenCalledTimes(2);
+      expect(drawImageSpy).toHaveBeenCalledTimes(2);
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Introductory text.');
+      expect(text).toContain('Middle text.');
+      expect(text).toContain('Closing text.');
+
+      embedJpgSpy.mockRestore();
+      drawImageSpy.mockRestore();
+    });
+
+    it('caches embedded PDFImage instances by CID so repeated CIDs embed only once', async () => {
+      const samplePng = new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          'base64'
+        )
+      );
+
+      const embedPngSpy = vi.spyOn(PDFDocument.prototype, 'embedPng');
+      const drawImageSpy = vi.spyOn(PDFPage.prototype, 'drawImage');
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'repeated-cid-caching-test',
+        subject: 'Repeated CID Test',
+        htmlBody: `
+          <p>Occurrence 1</p>
+          <img src="cid:signature-icon" />
+          <p>Occurrence 2</p>
+          <img src="cid:<SIGNATURE-ICON>" />
+          <p>Occurrence 3</p>
+          <img src="cid:signature-icon" />
+        `,
+        inlineImages: [
+          {
+            cid: 'signature-icon',
+            mimeType: 'image/png',
+            data: samplePng,
+          },
+        ],
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+
+      // Embedded only once, but drawn 3 times
+      expect(embedPngSpy).toHaveBeenCalledTimes(1);
+      expect(drawImageSpy).toHaveBeenCalledTimes(3);
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Occurrence 1');
+      expect(text).toContain('Occurrence 2');
+      expect(text).toContain('Occurrence 3');
+
+      embedPngSpy.mockRestore();
+      drawImageSpy.mockRestore();
+    });
+
+    it('scales oversized images proportionally to fit within 512 pt width and 692 pt height', async () => {
+      const samplePng = new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          'base64'
+        )
+      );
+
+      const realEmbedPng = PDFDocument.prototype.embedPng;
+      const embedPngSpy = vi.spyOn(PDFDocument.prototype, 'embedPng').mockImplementation(async function (this: PDFDocument, ...args) {
+        const realImg = await realEmbedPng.apply(this, args);
+        // Create an image object with simulated oversized dimensions 1024 x 512
+        return Object.create(realImg, {
+          width: { value: 1024 },
+          height: { value: 512 },
+        });
+      });
+
+      const drawImageSpy = vi.spyOn(PDFPage.prototype, 'drawImage');
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'proportional-scaling-test',
+        subject: 'Scaling Test',
+        htmlBody: '<p>Before</p><img src="cid:oversized.png" /><p>After</p>',
+        inlineImages: [
+          {
+            cid: 'oversized.png',
+            mimeType: 'image/png',
+            data: samplePng,
+          },
+        ],
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+
+      expect(drawImageSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          width: 512,
+          height: 256,
+        })
+      );
+
+      embedPngSpy.mockRestore();
+      drawImageSpy.mockRestore();
+    });
+
+    it('skips images with non-positive dimensions (width <= 0 or height <= 0)', async () => {
+      const samplePng = new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          'base64'
+        )
+      );
+
+      const realEmbedPng = PDFDocument.prototype.embedPng;
+      const embedPngSpy = vi.spyOn(PDFDocument.prototype, 'embedPng').mockImplementation(async function (this: PDFDocument, ...args) {
+        const realImg = await realEmbedPng.apply(this, args);
+        return Object.create(realImg, {
+          width: { value: 0 },
+          height: { value: 100 },
+        });
+      });
+
+      const drawImageSpy = vi.spyOn(PDFPage.prototype, 'drawImage');
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'zero-dimension-test',
+        subject: 'Zero Dimension Test',
+        htmlBody: '<p>Before</p><img src="cid:zero-dim.png" /><p>After</p>',
+        inlineImages: [
+          {
+            cid: 'zero-dim.png',
+            mimeType: 'image/png',
+            data: samplePng,
+          },
+        ],
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+
+      expect(drawImageSpy).not.toHaveBeenCalled();
+
+      embedPngSpy.mockRestore();
+      drawImageSpy.mockRestore();
+    });
+
+    it('allocates a new Letter page when remaining vertical space is insufficient for image', async () => {
+      const samplePng = new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          'base64'
+        )
+      );
+
+      // Simulate a tall image of 500 pt
+      const realEmbedPng = PDFDocument.prototype.embedPng;
+      const embedPngSpy = vi.spyOn(PDFDocument.prototype, 'embedPng').mockImplementation(async function (this: PDFDocument, ...args) {
+        const realImg = await realEmbedPng.apply(this, args);
+        return Object.create(realImg, {
+          width: { value: 400 },
+          height: { value: 500 },
+        });
+      });
+
+      // 30 lines of text take ~420 pt. With headers (~150 pt), cursor is ~172 pt.
+      // 500 pt image cannot fit on page 1 (172 - 500 < 50), so it must paginate onto page 2!
+      const paragraphs = Array.from({ length: 30 }, (_, i) => `<p>Paragraph ${i + 1}</p>`).join('');
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'image-pagination-test',
+        subject: 'Image Pagination Test',
+        htmlBody: `
+          ${paragraphs}
+          <img src="cid:tall-diagram.png" />
+          <p>Text on page 2 following tall image.</p>
+        `,
+        inlineImages: [
+          {
+            cid: 'tall-diagram.png',
+            mimeType: 'image/png',
+            data: samplePng,
+          },
+        ],
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      const doc = await PDFDocument.load(pdfBytes);
+
+      expect(doc.getPageCount()).toBeGreaterThanOrEqual(2);
+
+      const page1Text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(page1Text).toContain('Paragraph 1');
+      expect(page1Text).toContain('Page 1 of 2');
+
+      const page2Text = await processor.extractTextFromPages(pdfBytes, [2]);
+      expect(page2Text).toContain('Text on page 2 following tall image.');
+      expect(page2Text).toContain('Page 2 of 2');
+
+      embedPngSpy.mockRestore();
+    });
+
+    it('gracefully degrades when CID images are missing, corrupted, empty, or unsupported without throwing', async () => {
+      const corruptedBytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+      const emptyBytes = new Uint8Array([]);
+      const dummyBytes = new Uint8Array([1, 2, 3, 4]);
+
+      const drawImageSpy = vi.spyOn(PDFPage.prototype, 'drawImage');
+
+      const email: EmailPdfRenderInput = {
+        messageId: 'graceful-degradation-test',
+        subject: 'Graceful Degradation Test',
+        htmlBody: `
+          <p>Start of body.</p>
+          <img src="cid:missing-reference" />
+          <img src="cid:corrupted-png" />
+          <img src="cid:empty-jpeg" />
+          <img src="cid:animated.gif" />
+          <img src="cid:modern.webp" />
+          <img src="cid:vector.svg" />
+          <p>End of body.</p>
+        `,
+        inlineImages: [
+          {
+            cid: 'corrupted-png',
+            mimeType: 'image/png',
+            data: corruptedBytes,
+          },
+          {
+            cid: 'empty-jpeg',
+            mimeType: 'image/jpeg',
+            data: emptyBytes,
+          },
+          {
+            cid: 'animated.gif',
+            mimeType: 'image/gif',
+            data: dummyBytes,
+          },
+          {
+            cid: 'modern.webp',
+            mimeType: 'image/webp',
+            data: dummyBytes,
+          },
+          {
+            cid: 'vector.svg',
+            mimeType: 'image/svg+xml',
+            data: dummyBytes,
+          },
+        ],
+      };
+
+      const pdfBytes = await processor.generateEmailPdf(email);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+
+      expect(drawImageSpy).not.toHaveBeenCalled();
+
+      const text = await processor.extractTextFromPages(pdfBytes, [1]);
+      expect(text).toContain('Start of body.');
+      expect(text).toContain('End of body.');
+
+      const doc = await PDFDocument.load(pdfBytes);
+      expect(doc.getPageCount()).toBe(1);
+
+      drawImageSpy.mockRestore();
     });
   });
 });
