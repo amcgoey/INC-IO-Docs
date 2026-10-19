@@ -11,7 +11,6 @@ import type { SchemaDrivenUiService } from '../features/schema-driven-ui/domain'
 import type { RawManifestProviderPort } from './schema-driven-ui.wiring';
 import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
 import type { UiProcessOrchestratorPort } from '../features/ui-process-manager/ports';
-import type { CompiledSchemaRegistryPort } from '../features/document/ports';
 import type { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 
 import type {
@@ -1256,28 +1255,23 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       expect(calledPayload).not.toHaveProperty('sourceFiles');
     });
 
-    it('pre-validation guard: aborts immediately on schema validation failure with zero attachment downloads or document service instantiation', async () => {
+    it('pre-validation guard: aborts immediately on validation failure with zero attachment downloads', async () => {
       const getAttachmentMock = vi.fn();
       const mockGmailClient = {
         getMessage: vi.fn(),
         getAttachment: getAttachmentMock,
       } as unknown as GoogleGmailClient;
 
-      const createDocumentService = vi.fn();
+      const mockValidateDocument = vi.fn().mockResolvedValue({
+        success: false,
+        errors: ['Invalid document data payload: contact is required'],
+      });
+      const mockProcessDocument = vi.fn();
 
-      const mockCompiledRegistry = {
-        initialize: vi.fn().mockResolvedValue(undefined),
-        get: vi.fn().mockReturnValue({
-          Check: vi.fn().mockReturnValue(false),
-          Schema: vi.fn().mockReturnValue({
-            type: 'object',
-            properties: {
-              contact: { type: 'string' },
-            },
-            required: ['contact'],
-          }),
-        }),
-      } as unknown as CompiledSchemaRegistryPort;
+      const createDocumentService = vi.fn().mockResolvedValue({
+        validateDocument: mockValidateDocument,
+        processDocument: mockProcessDocument,
+      });
 
       const wiring = createUiProcessManagerWiring({
         configProvider: mockConfigProvider,
@@ -1285,7 +1279,6 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         manifestProvider: mockManifestProvider,
         createDocumentService,
         gmailClient: mockGmailClient,
-        compiledSchemaRegistry: mockCompiledRegistry,
       });
 
       const req: WorkspaceExecutionContext = {
@@ -1309,8 +1302,9 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       const result = (await wiring.requestScopedWrapper.processUiEvent(req)) as GoogleWorkspaceActionResponse;
 
       expect(result.action?.navigations?.[0]?.updateCard).toBeDefined();
+      expect(mockValidateDocument).toHaveBeenCalledTimes(1);
       expect(getAttachmentMock).not.toHaveBeenCalled();
-      expect(createDocumentService).not.toHaveBeenCalled();
+      expect(mockProcessDocument).not.toHaveBeenCalled();
     });
 
     it('hydrates Gmail attachments and passes them in activeContext.sourceFiles when pre-validation succeeds', async () => {
@@ -1331,20 +1325,14 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
 
       let passedContext: WorkspaceExecutionContext | undefined;
       const mockProcessDocument = vi.fn().mockResolvedValue({ success: true });
+      const mockValidateDocument = vi.fn().mockResolvedValue({ success: true });
       const createDocumentService = vi.fn(async (ctx: WorkspaceExecutionContext) => {
         passedContext = ctx;
         return {
+          validateDocument: mockValidateDocument,
           processDocument: mockProcessDocument,
         } as unknown as DocumentService;
       });
-
-      const mockCompiledRegistry = {
-        initialize: vi.fn().mockResolvedValue(undefined),
-        get: vi.fn().mockReturnValue({
-          Check: vi.fn().mockReturnValue(true),
-          Schema: vi.fn().mockReturnValue({}),
-        }),
-      } as unknown as CompiledSchemaRegistryPort;
 
       const wiring = createUiProcessManagerWiring({
         configProvider: mockConfigProvider,
@@ -1352,7 +1340,6 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         manifestProvider: mockManifestProvider,
         createDocumentService,
         gmailClient: mockGmailClient,
-        compiledSchemaRegistry: mockCompiledRegistry,
       });
 
       const req: WorkspaceExecutionContext = {
@@ -1376,10 +1363,12 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       const result = (await wiring.requestScopedWrapper.processUiEvent(req)) as GoogleWorkspaceActionResponse;
 
       expect(result.action?.notification?.text).toBe('Document processed successfully');
+      expect(mockValidateDocument).toHaveBeenCalledTimes(1);
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith('msg-valid-test', 'att-1', {
         auth: undefined,
       });
-      expect(createDocumentService).toHaveBeenCalledTimes(1);
+      expect(createDocumentService).toHaveBeenCalledTimes(2);
+      expect(mockProcessDocument).toHaveBeenCalledTimes(1);
       expect(passedContext?.sourceFiles).toEqual([
         {
           id: 'att-1',

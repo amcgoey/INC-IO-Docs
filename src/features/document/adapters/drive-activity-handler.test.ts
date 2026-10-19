@@ -1167,7 +1167,7 @@ describe('DriveActivityHandler', () => {
         };
 
         await expect(binaryHandler.handle(activity)).rejects.toThrow(
-          'DriveActivityHandler: Cannot create destination folder for zero-file filing because rootStorageId is missing or unresolved in activity payload'
+          'DriveActivityHandler: Cannot create destination folder for binary file filing because rootStorageId is missing or unresolved in activity payload'
         );
         expect(mockDriveService.getFile).not.toHaveBeenCalled();
       });
