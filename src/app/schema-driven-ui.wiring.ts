@@ -1,6 +1,7 @@
 import { SchemaDrivenUiService, type UiSchema } from '../features/schema-driven-ui/domain';
 import {
   WorkspaceAddonAdapter,
+  GmailWorkspaceAddonAdapter,
   ManifestUiAdapter,
   type RawManifestProviderPort,
   type EvaluationOrderEnsurer,
@@ -33,10 +34,15 @@ export function createSchemaDrivenUiWiring(
 
   const manifestAdapter = new ManifestUiAdapter(options.manifestProvider, ensurer);
   const workspaceAddonAdapter = new WorkspaceAddonAdapter(manifestAdapter);
+  const gmailWorkspaceAddonAdapter = new GmailWorkspaceAddonAdapter(manifestAdapter);
   const optionsFetcher =
     options.optionsFetcher ??
     (options.driveClient ? new DynamicOptionsAdapter(options.driveClient) : undefined);
-  const service = new SchemaDrivenUiService(manifestAdapter, [workspaceAddonAdapter], optionsFetcher);
+  const service = new SchemaDrivenUiService(
+    manifestAdapter,
+    [workspaceAddonAdapter, gmailWorkspaceAddonAdapter],
+    optionsFetcher
+  );
 
   return {
     schemaDrivenUiService: service,

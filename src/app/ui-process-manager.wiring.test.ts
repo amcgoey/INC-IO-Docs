@@ -557,6 +557,40 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       );
     });
 
+    it('forwards hostApp and gmail context from WorkspaceExecutionContext to UiProcessEventContext', async () => {
+      const mockOrchestrator = {
+        processUiEvent: vi.fn().mockResolvedValue({
+          type: 'notification',
+          text: 'Gmail event received',
+        }),
+      };
+      const mockSchemaDrivenUi = {} as unknown as SchemaDrivenUiService;
+
+      const wrapper = createUiProcessRequestWrapper(mockOrchestrator, mockSchemaDrivenUi);
+
+      const context: WorkspaceExecutionContext = {
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-987',
+          threadId: 'th-654',
+          accessToken: 'ya29.token',
+        },
+      };
+
+      await wrapper(context);
+
+      expect(mockOrchestrator.processUiEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-987',
+            threadId: 'th-654',
+            accessToken: 'ya29.token',
+          },
+        })
+      );
+    });
+
     it('supports asynchronous resolver functions for per-request instantiation', async () => {
       const mockOrchestrator = {
         processUiEvent: vi.fn().mockResolvedValue({

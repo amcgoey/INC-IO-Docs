@@ -99,6 +99,12 @@ export function registerWorkspaceAddonRoutes(
 
   router.registerRoute({
     method: 'POST',
+    url: '/workspace/gmail-contextual',
+    handler: handleUiRoute('/workspace/gmail-contextual'),
+  });
+
+  router.registerRoute({
+    method: 'POST',
     url: '/workspace/homepage',
     handler: handleUiRoute('/workspace/homepage'),
   });

@@ -26,6 +26,10 @@ import {
   EPHEMERAL_UI_SELECTION_KEYS,
   isSelectionKey,
   extractSelectFilesSet,
+  DRIVE_WORKSPACE_ADDON_VIEW_ID,
+  GMAIL_WORKSPACE_ADDON_VIEW_ID,
+  UiProcessGmailEventContextSchema,
+  type UiProcessGmailEventContext,
 } from './domain';
 
 export {
@@ -55,6 +59,10 @@ export {
   EPHEMERAL_UI_SELECTION_KEYS,
   isSelectionKey,
   extractSelectFilesSet,
+  DRIVE_WORKSPACE_ADDON_VIEW_ID,
+  GMAIL_WORKSPACE_ADDON_VIEW_ID,
+  UiProcessGmailEventContextSchema,
+  type UiProcessGmailEventContext,
 };
 
 export const UiProcessEventContextSchema = ProcessUiStateEventSchema;
