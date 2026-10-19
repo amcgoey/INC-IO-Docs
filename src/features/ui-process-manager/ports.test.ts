@@ -161,6 +161,17 @@ describe('UI Process Manager Ports & DTOs', () => {
       expect(Value.Check(UiProcessEventContextSchema, context)).toBe(true);
     });
 
+    it('validates userOAuthToken in ProcessUiStateEventSchema', () => {
+      const event = {
+        hostApp: 'GMAIL',
+        userOAuthToken: 'ya29.user-token-123',
+        gmail: {
+          messageId: 'msg-123',
+        },
+      };
+      expect(Value.Check(ProcessUiStateEventSchema, event)).toBe(true);
+    });
+
     it('aliases ProcessUiStateEventSchema to adhere to Rule 2 schema deduplication', () => {
       expect(UiProcessEventContextSchema).toBe(ProcessUiStateEventSchema);
     });

@@ -9,6 +9,7 @@ import type {
   UiProcessFormEvaluatorPort,
   UiProcessDocumentSpaceDto,
   UiProcessSourceFileDto,
+  UiProcessGmailPort,
 } from '../ports';
 
 import {
@@ -33,6 +34,7 @@ export interface WorkspaceAddonAdapterOptions {
   manifestPort?: UiProcessManifestPort | undefined;
   documentRunner?: UiProcessDocumentRunnerPort | undefined;
   formEvaluator?: UiProcessFormEvaluatorPort | undefined;
+  gmailPort?: UiProcessGmailPort | undefined;
 }
 
 
@@ -81,15 +83,49 @@ export function normalizeFormData(
 }
 
 export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
-  constructor(private readonly options: WorkspaceAddonAdapterOptions) {}
+  private readonly gmailPort?: UiProcessGmailPort | undefined;
+
+  constructor(private readonly options: WorkspaceAddonAdapterOptions) {
+    this.gmailPort = options.gmailPort;
+  }
 
   async processUiEvent(context: UiProcessEventContext): Promise<UiProcessResult> {
     const { spaceProvider, configProvider, manifestPort, documentRunner, formEvaluator } =
       this.options;
 
-    const config = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
-    const currentSpaceType = resolveSpaceType({ formData: context.formData, config });
     const actionName = context.actionName ?? context.parameters?.action;
+    let effectiveContext = context;
+
+    const isGmailContext =
+      context.hostApp?.toUpperCase() === 'GMAIL' || Boolean(context.gmail?.messageId);
+
+    if (
+      isGmailContext &&
+      (actionName === 'refresh' || !actionName) &&
+      this.gmailPort &&
+      context.gmail?.messageId
+    ) {
+      try {
+        const token = context.userOAuthToken ?? context.gmail.accessToken;
+        const attachments = await this.gmailPort.getMessageAttachments(
+          context.gmail.messageId,
+          token
+        );
+        effectiveContext = {
+          ...effectiveContext,
+          selectedItems: attachments.map((att) => ({
+            id: att.id,
+            title: att.title,
+            mimeType: att.mimeType,
+          })),
+        };
+      } catch (e) {
+        console.warn(`Could not fetch attachments for message: ${context.gmail.messageId}`, e);
+      }
+    }
+
+    const config = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
+    const currentSpaceType = resolveSpaceType({ formData: effectiveContext.formData, config });
     const isSpaceTypeChange = actionName === 'onSpaceTypeChange';
 
     const spaceTypes = spaceProvider.getAllTypes();
@@ -100,10 +136,10 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       isSpaceTypeChange && allowedDocTypes.length > 0
         ? allowedDocTypes[0]
         : resolveDocumentType({
-            formData: context.formData,
+            formData: effectiveContext.formData,
             config,
             activeSpaceType: currentSpaceType,
-            parameters: context.parameters,
+            parameters: effectiveContext.parameters,
           });
 
     let resolvedDocumentTypeKey = rawSelectedDocType;
@@ -127,16 +163,16 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
     const normalizedFormData = normalizeFormData(
       {
-        formData: context.formData,
+        formData: effectiveContext.formData,
         activeSpaceType: currentSpaceType,
         config,
       },
       resolvedDocumentTypeKey
     );
     const normalizedContext: UiProcessEventContext =
-      normalizedFormData !== context.formData
-        ? { ...context, formData: normalizedFormData }
-        : context;
+      normalizedFormData !== effectiveContext.formData
+        ? { ...effectiveContext, formData: normalizedFormData }
+        : effectiveContext;
 
     let spaces: UiProcessSpaceItem[] = [];
     const collectionErrors: string[] = [];
@@ -218,7 +254,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           .map((f) => f.value.trim())
       );
 
-      const validSelectedItems = (context.selectedItems ?? []).filter(
+      const validSelectedItems = (normalizedContext.selectedItems ?? []).filter(
         (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
           typeof item?.id === 'string' && item.id.trim().length > 0
       );

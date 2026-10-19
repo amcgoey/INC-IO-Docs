@@ -63,6 +63,7 @@ export const ProcessUiStateEventSchema = Type.Object({
   isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
   hostApp: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   gmail: Type.Optional(Type.Union([UiProcessGmailEventContextSchema, Type.Undefined()])),
+  userOAuthToken: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   selectedItems: Type.Optional(
     Type.Union([
       Type.Array(
@@ -429,22 +430,56 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const isResetOrInitialLoad =
     isRefresh || (!hasInCardAction && !hasSelectionKeysInFormData);
 
-  const selectedFilesSet = extractSelectFilesSet(context.formData);
+  const isGmailContext =
+    context.hostApp?.toUpperCase() === 'GMAIL' || Boolean(context.gmail?.messageId);
 
   const validSelectedItems = (context.selectedItems ?? []).filter(
     (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
       typeof item?.id === 'string' && item.id.trim().length > 0
   );
 
-  const files: UiSelectionItem[] = validSelectedItems.map((item) => {
-    const trimmedTitle = typeof item.title === 'string' ? item.title.trim() : '';
-    const fileId = item.id.trim();
-    return {
-      text: trimmedTitle.length > 0 ? trimmedTitle : fileId,
-      value: item.id,
-      selected: isResetOrInitialLoad ? true : selectedFilesSet.has(fileId),
-    };
-  });
+  let files: UiSelectionItem[];
+  if (isGmailContext) {
+    if (validSelectedItems.length > 0) {
+      const hasAttachmentFormKey = context.formData?.[SELECT_ATTACHMENTS_KEY] !== undefined;
+      const selectedSet = hasAttachmentFormKey
+        ? extractSelectFilesSet(context.formData, SELECT_ATTACHMENTS_KEY)
+        : undefined;
+
+      files = validSelectedItems.map((item) => {
+        const trimmedTitle = typeof item.title === 'string' ? item.title.trim() : '';
+        const fileId = item.id.trim();
+        let selected: boolean;
+        if (isRefresh) {
+          selected = true;
+        } else if (hasAttachmentFormKey) {
+          selected = selectedSet!.has(fileId) || selectedSet!.has(item.id);
+        } else if (isResetOrInitialLoad) {
+          selected = true;
+        } else {
+          selected = true;
+        }
+        return {
+          text: trimmedTitle.length > 0 ? trimmedTitle : fileId,
+          value: item.id,
+          selected,
+        };
+      });
+    } else {
+      files = [];
+    }
+  } else {
+    const selectedFilesSet = extractSelectFilesSet(context.formData, SELECT_FILES_KEY);
+    files = validSelectedItems.map((item) => {
+      const trimmedTitle = typeof item.title === 'string' ? item.title.trim() : '';
+      const fileId = item.id.trim();
+      return {
+        text: trimmedTitle.length > 0 ? trimmedTitle : fileId,
+        value: item.id,
+        selected: isResetOrInitialLoad ? true : selectedFilesSet.has(fileId),
+      };
+    });
+  }
 
   const selectionState: UiSelectionState = {
     spaceTypes,
@@ -495,13 +530,11 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     isUpdateCard = true;
   }
 
-  const isGmail =
-    context.hostApp?.toUpperCase() === 'GMAIL' || Boolean(context.gmail?.messageId);
-  const viewId = isGmail
+  const viewId = isGmailContext
     ? GMAIL_WORKSPACE_ADDON_VIEW_ID
     : DRIVE_WORKSPACE_ADDON_VIEW_ID;
 
-  if (isGmail) {
+  if (isGmailContext) {
     if (isResetOrInitialLoad) {
       effectiveFormData[SAVE_EMAIL_TO_PDF_KEY] = false;
     } else {

@@ -9,6 +9,7 @@ import {
   type UiProcessEventContext,
   type UiProcessRenderResult,
   type UiProcessFormEvaluatorPort,
+  type UiProcessGmailPort,
 } from '../ports';
 
 describe('WorkspaceAddonAdapter in ui-process-manager', () => {
@@ -1740,6 +1741,170 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         { text: 'File 2.pdf', value: 'drive-file-2', selected: true },
       ]);
       expect(renderResult.isUpdateCard).toBe(false);
+    });
+  });
+
+  describe('Gmail attachment discovery via UiProcessGmailPort (Ticket #195)', () => {
+    it('calls gmailPort.getMessageAttachments on initial load and maps returned attachments to selectionState.files', async () => {
+      const getAttachmentsMock = vi.fn().mockResolvedValue([
+        { id: 'att-1', title: 'Invoice.pdf', mimeType: 'application/pdf' },
+        { id: 'att-2', title: 'Specs.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+      ]);
+      const gmailPort: UiProcessGmailPort = {
+        getMessageAttachments: getAttachmentsMock,
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        gmailPort,
+      });
+
+      const context: UiProcessEventContext = {
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-load-123',
+          threadId: 'th-load-456',
+          accessToken: 'token-gmail-123',
+        },
+      };
+
+      const result = await adapter.processUiEvent(context);
+      expect(result.type).toBe('render');
+      const render = result as UiProcessRenderResult;
+
+      expect(getAttachmentsMock).toHaveBeenCalledWith('msg-load-123', 'token-gmail-123');
+      expect(render.selectionState?.files).toEqual([
+        { text: 'Invoice.pdf', value: 'att-1', selected: true },
+        { text: 'Specs.docx', value: 'att-2', selected: true },
+      ]);
+    });
+
+    it('uses userOAuthToken over gmail.accessToken when calling gmailPort', async () => {
+      const getAttachmentsMock = vi.fn().mockResolvedValue([]);
+      const gmailPort: UiProcessGmailPort = {
+        getMessageAttachments: getAttachmentsMock,
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        gmailPort,
+      });
+
+      const context: UiProcessEventContext = {
+        hostApp: 'GMAIL',
+        userOAuthToken: 'ya29.user-oauth-token',
+        gmail: {
+          messageId: 'msg-token-123',
+          accessToken: 'ya29.fallback-gmail-token',
+        },
+      };
+
+      await adapter.processUiEvent(context);
+      expect(getAttachmentsMock).toHaveBeenCalledWith('msg-token-123', 'ya29.user-oauth-token');
+    });
+
+    it('calls gmailPort.getMessageAttachments on refresh action', async () => {
+      const getAttachmentsMock = vi.fn().mockResolvedValue([
+        { id: 'att-ref-1', title: 'Refreshed.pdf', mimeType: 'application/pdf' },
+      ]);
+      const gmailPort: UiProcessGmailPort = {
+        getMessageAttachments: getAttachmentsMock,
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        gmailPort,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'refresh',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-refresh-789',
+          accessToken: 'ya29.refresh-token',
+        },
+      };
+
+      const result = await adapter.processUiEvent(context);
+      expect(result.type).toBe('render');
+      const render = result as UiProcessRenderResult;
+
+      expect(getAttachmentsMock).toHaveBeenCalledWith('msg-refresh-789', 'ya29.refresh-token');
+      expect(render.selectionState?.files).toEqual([
+        { text: 'Refreshed.pdf', value: 'att-ref-1', selected: true },
+      ]);
+    });
+
+    it('does not call gmailPort on in-card action like onFormChange', async () => {
+      const getAttachmentsMock = vi.fn().mockResolvedValue([]);
+      const gmailPort: UiProcessGmailPort = {
+        getMessageAttachments: getAttachmentsMock,
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        gmailPort,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'onFormChange',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-form-change',
+          accessToken: 'ya29.token',
+        },
+        selectedItems: [
+          { id: 'att-cached', title: 'Cached.pdf', mimeType: 'application/pdf' },
+        ],
+        formData: {
+          SelectAttachments: ['att-cached'],
+        },
+      };
+
+      const result = await adapter.processUiEvent(context);
+      expect(result.type).toBe('render');
+      expect(getAttachmentsMock).not.toHaveBeenCalled();
+    });
+
+    it('logs warning and continues gracefully without throwing when gmailPort fails', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const failingGmailPort: UiProcessGmailPort = {
+        getMessageAttachments: vi.fn().mockRejectedValue(new Error('Gmail API 500 Internal Error')),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        gmailPort: failingGmailPort,
+      });
+
+      const context: UiProcessEventContext = {
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-error-test',
+          accessToken: 'token-error',
+        },
+      };
+
+      const result = await adapter.processUiEvent(context);
+      expect(result.type).toBe('render');
+      const render = result as UiProcessRenderResult;
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        'Could not fetch attachments for message: msg-error-test',
+        expect.any(Error)
+      );
+      expect(render.selectionState?.files).toEqual([]);
+      warnSpy.mockRestore();
     });
   });
 });

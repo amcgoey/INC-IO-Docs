@@ -3,6 +3,7 @@ import { createHttpServer, type HttpServer } from '../infrastructure/http';
 import { AppManifestProvider } from '../infrastructure/manifest/app-manifest-provider';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
+import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 import {
   createDocumentFeatureWiring,
   wireDocumentServicesAndRoutes,
@@ -46,6 +47,7 @@ export interface AppOptions {
   templateEvaluator?: TemplateEvaluatorPort | undefined;
   authVerifier?: WorkspaceAuthVerifierPort | undefined;
   driveService?: DriveServicePort | undefined;
+  gmailClient?: GoogleGmailClient | undefined;
   storageAdapter?: DocumentSpaceStoragePort | undefined;
   documentSpaceStoragePort?: DocumentSpaceStoragePort | undefined;
   documentSpaceService?: DocumentSpaceService | undefined;
@@ -152,6 +154,7 @@ export function createApp(options?: AppOptions): AppInstance {
     documentSchemaRegistry,
     templateEvaluator,
     driveClient,
+    gmailClient: options?.gmailClient,
     documentSpaceRegistry: documentSpaceWiring.documentSpaceRegistry,
     storageAdapter,
   });
