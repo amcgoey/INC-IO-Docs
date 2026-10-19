@@ -347,12 +347,6 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           threadId: 'th-test-live',
           accessToken: 'ya29.live-token',
         },
-        drive: {
-          selectedItems: [
-            { id: 'att-1', title: 'Invoice.pdf', mimeType: 'application/pdf' },
-            { id: 'att-2', title: 'Statement.pdf', mimeType: 'application/pdf' },
-          ],
-        },
       },
     });
 
@@ -406,12 +400,6 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           threadId: 'th-test-live',
           accessToken: 'ya29.live-token',
         },
-        drive: {
-          selectedItems: [
-            { id: 'att-1', title: 'Invoice.pdf', mimeType: 'application/pdf' },
-            { id: 'att-2', title: 'Statement.pdf', mimeType: 'application/pdf' },
-          ],
-        },
       },
     });
 
@@ -442,6 +430,85 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
     // Widget 2: SaveEmailToPdf SWITCH
     expect(fileSecEmail.widgets[2].selectionInput?.name).toBe('SaveEmailToPdf');
+  });
+
+  it('retains attachments during in-card actions (onSpaceTypeChange) when drive.selectedItems is omitted', async () => {
+    const res = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/on-form-change',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'onSpaceTypeChange',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
+            SelectAttachments: { stringInputs: { value: ['att-2'] } },
+          },
+        },
+        gmail: {
+          messageId: 'msg-with-live-attachments',
+          threadId: 'th-test-live',
+          accessToken: 'ya29.live-token',
+        },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+    expect(body.action?.navigations?.[0].updateCard).toBeDefined();
+    const updateCard = body.action!.navigations![0].updateCard!;
+    const fileSec = updateCard.sections.find((s) => s.header === 'File Selection')!;
+    expect(fileSec).toBeDefined();
+    expect(fileSec.widgets[1].selectionInput?.name).toBe('SelectAttachments');
+    expect(fileSec.widgets[1].selectionInput?.items).toEqual([
+      { text: 'Invoice.pdf', value: 'att-1', selected: false },
+      { text: 'Statement.pdf', value: 'att-2', selected: true },
+    ]);
+  });
+
+  it('unchecks all attachments (selected: false) when submitting empty formData in Email Attachments mode without drive.selectedItems', async () => {
+    const res = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/on-form-change',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'onSpaceTypeChange',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+            SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+            // Note: SelectAttachments omitted by Google Workspace when 0 checkboxes are checked
+          },
+        },
+        gmail: {
+          messageId: 'msg-with-live-attachments',
+          threadId: 'th-test-live',
+          accessToken: 'ya29.live-token',
+        },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+    expect(body.action?.navigations?.[0].updateCard).toBeDefined();
+    const updateCard = body.action!.navigations![0].updateCard!;
+    const fileSec = updateCard.sections.find((s) => s.header === 'File Selection')!;
+    expect(fileSec).toBeDefined();
+    expect(fileSec.widgets[1].selectionInput?.name).toBe('SelectAttachments');
+    expect(fileSec.widgets[1].selectionInput?.items).toEqual([
+      { text: 'Invoice.pdf', value: 'att-1', selected: false },
+      { text: 'Statement.pdf', value: 'att-2', selected: false },
+    ]);
   });
 
   it('returns fallback error card if orchestrator fails', async () => {

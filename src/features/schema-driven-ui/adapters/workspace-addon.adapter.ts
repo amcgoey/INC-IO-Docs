@@ -97,7 +97,7 @@ export function createWorkspaceAddonViewSchema(
     config.fileSelectionConfig ??
     ((ctx) =>
       ctx.selectionState
-        ? buildFileSelectionSection(ctx.selectionState)
+        ? buildFileSelectionSection(ctx.selectionState, { formData: ctx.formData })
         : undefined);
 
   const schema: readonly SectionProducer[] = [
@@ -169,7 +169,12 @@ export class WorkspaceAddonAdapter implements UiViewSchemaAdapterPort {
       viewId: this.viewId,
       fileSelectionConfig: (context) =>
         context.selectionState
-          ? buildFileSelectionSection(context.selectionState)
+          ? buildFileSelectionSection(context.selectionState, {
+              collapsible: true,
+              inputName: 'SelectFiles',
+              emptyText: 'No files selected.',
+              formData: context.formData,
+            })
           : undefined,
     });
   }
