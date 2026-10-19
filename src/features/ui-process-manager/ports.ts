@@ -168,6 +168,19 @@ export interface UiProcessFormEvaluatorPort {
   ): Promise<UiProcessFormEvaluationResult>;
 }
 
+export interface UiProcessGmailAttachmentDescriptor {
+  id: string;
+  title: string;
+  mimeType: string;
+}
+
+export interface UiProcessGmailPort {
+  getMessageAttachments(
+    messageId: string,
+    accessToken?: string
+  ): Promise<UiProcessGmailAttachmentDescriptor[]>;
+}
+
 // --- Driving Port ---
 
 export interface UiProcessOrchestratorPort {

@@ -34,6 +34,8 @@ import type {
 import type { DocumentSpaceManifestRegistryAdapter } from '../features/document-space/adapters/document-space-manifest-registry';
 import type { DocumentSpaceStoragePort } from '../features/document-space/ports';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
+import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
+import type { UiProcessGmailPort } from '../features/ui-process-manager';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 
 export interface WorkspaceAddonWiringOptions {
@@ -53,6 +55,8 @@ export interface WorkspaceAddonWiringOptions {
   documentSchemaRegistry?: DocumentSchemaRegistryPort | undefined;
   templateEvaluator?: TemplateEvaluatorPort | undefined;
   driveClient?: GoogleDriveClient | undefined;
+  gmailClient?: GoogleGmailClient | undefined;
+  gmailPort?: UiProcessGmailPort | undefined;
   documentSpaceRegistry?: DocumentSpaceManifestRegistryAdapter | undefined;
   storageAdapter?: DocumentSpaceStoragePort | undefined;
 }
@@ -140,6 +144,8 @@ export function wireWorkspaceAddonRoutes(
       createDocumentService,
       ...(createSchemaDrivenUiService !== undefined ? { createSchemaDrivenUiService } : {}),
       ...(options.driveClient !== undefined ? { driveClient: options.driveClient } : {}),
+      ...(options.gmailClient !== undefined ? { gmailClient: options.gmailClient } : {}),
+      ...(options.gmailPort !== undefined ? { gmailPort: options.gmailPort } : {}),
       evaluateFormChange,
     });
     uiOrchestrator = uiProcessWiring.requestScopedWrapper;

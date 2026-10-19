@@ -14,6 +14,7 @@ import {
   type RawManifestProviderPort,
   type UiProcessSpaceItem,
   type UiProcessDocumentSpaceDto,
+  type UiProcessGmailPort,
 } from '../features/ui-process-manager';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import {
@@ -34,6 +35,7 @@ import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-ad
 import type { FormChangeEvaluatorFn as FormChangeEvaluator } from '../features/ui-process-manager';
 import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
 import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
+import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 
 export function resolveActionRoute(route: string, baseUrl?: string): string {
   try {
@@ -197,6 +199,8 @@ export interface UiProcessManagerWiringOptions {
   createOrchestrator?: UiProcessOrchestratorFactory | undefined;
   optionsFetcher?: OptionsFetcherPort | undefined;
   driveClient?: GoogleDriveClient | undefined;
+  gmailClient?: GoogleGmailClient | undefined;
+  gmailPort?: UiProcessGmailPort | undefined;
 }
 
 export type UiProcessOrchestratorResolver = (
@@ -231,6 +235,7 @@ export function createUiProcessRequestWrapper(
       validationErrors: context.validationErrors,
       hostApp: context.hostApp,
       gmail: context.gmail,
+      userOAuthToken: context.userOAuthToken,
       selectedItems: context.selectedItems?.map((item) => ({
         id: item.id,
         ...(item.title !== undefined ? { title: item.title } : {}),
@@ -386,12 +391,25 @@ export function createUiProcessManagerWiring(
       }
     : undefined;
 
+  const gmailClient = options.gmailClient ?? new GoogleGmailClient();
+  const gmailPort: UiProcessGmailPort = options.gmailPort ?? {
+    getMessageAttachments: async (messageId: string, accessToken?: string) => {
+      const msg = await gmailClient.getMessage(messageId, { auth: accessToken });
+      return (msg.attachments ?? []).map((att) => ({
+        id: att.attachmentId,
+        title: att.filename,
+        mimeType: att.mimeType,
+      }));
+    },
+  };
+
   const orchestrator = new WorkspaceAddonAdapter({
     spaceProvider: fallbackSpaceProvider,
     configProvider,
     manifestPort,
     documentRunner: fallbackDocumentRunner,
     formEvaluator,
+    gmailPort,
   });
 
   const orchestratorResolver: UiProcessOrchestratorResolver = async (
@@ -464,6 +482,7 @@ export function createUiProcessManagerWiring(
       manifestPort,
       documentRunner: reqDocumentRunner,
       formEvaluator,
+      gmailPort,
     });
   };
 

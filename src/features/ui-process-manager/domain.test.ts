@@ -1691,6 +1691,168 @@ describe('ui-process-manager domain', () => {
           const state = evaluateProcessUiState(input);
           expect(state.viewId).toBe(GMAIL_WORKSPACE_ADDON_VIEW_ID);
         });
+
+        describe('Gmail attachment selection & SelectAttachments state persistence (Ticket #195)', () => {
+          const sampleAttachments = [
+            { id: 'att-1', title: 'Invoice.pdf', mimeType: 'application/pdf' },
+            { id: 'att-2', title: 'Specs.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+            { id: 'att-3', title: 'Receipt.png', mimeType: 'image/png' },
+          ];
+
+          it('resolves selectionState.files using SELECT_ATTACHMENTS_KEY', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                selectedItems: sampleAttachments,
+                formData: {
+                  SelectAttachments: ['att-1', 'att-3'],
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.selectionState.files).toEqual([
+              { text: 'Invoice.pdf', value: 'att-1', selected: true },
+              { text: 'Specs.docx', value: 'att-2', selected: false },
+              { text: 'Receipt.png', value: 'att-3', selected: true },
+            ]);
+          });
+
+          it('defaults all attachments to selected: true on initial load', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                selectedItems: sampleAttachments,
+                formData: {},
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.selectionState.files).toEqual([
+              { text: 'Invoice.pdf', value: 'att-1', selected: true },
+              { text: 'Specs.docx', value: 'att-2', selected: true },
+              { text: 'Receipt.png', value: 'att-3', selected: true },
+            ]);
+          });
+
+          it('defaults all attachments to selected: true on refresh action even with previous selection in formData', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                actionName: 'refresh',
+                hostApp: 'GMAIL',
+                selectedItems: sampleAttachments,
+                formData: {
+                  SelectAttachments: ['att-2'],
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.selectionState.files).toEqual([
+              { text: 'Invoice.pdf', value: 'att-1', selected: true },
+              { text: 'Specs.docx', value: 'att-2', selected: true },
+              { text: 'Receipt.png', value: 'att-3', selected: true },
+            ]);
+          });
+
+          it('persists checked and unchecked attachments across in-card actions', () => {
+            const inCardActions = ['onFormChange', 'onSpaceTypeChange', 'onDocumentTypeChange'];
+
+            for (const action of inCardActions) {
+              const input: ProcessUiStateInput = {
+                context: {
+                  actionName: action,
+                  hostApp: 'GMAIL',
+                  selectedItems: sampleAttachments,
+                  formData: {
+                    SelectAttachments: ['att-2'],
+                  },
+                },
+                spaceTypes: sampleSpaceTypes,
+                spaces: [],
+              };
+
+              const state = evaluateProcessUiState(input);
+              expect(state.selectionState.files).toEqual([
+                { text: 'Invoice.pdf', value: 'att-1', selected: false },
+                { text: 'Specs.docx', value: 'att-2', selected: true },
+                { text: 'Receipt.png', value: 'att-3', selected: false },
+              ]);
+            }
+          });
+
+          it('persists empty selection when user unchecks all attachments in SelectAttachments', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                actionName: 'onFormChange',
+                hostApp: 'GMAIL',
+                selectedItems: sampleAttachments,
+                formData: {
+                  SelectAttachments: [],
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.selectionState.files).toEqual([
+              { text: 'Invoice.pdf', value: 'att-1', selected: false },
+              { text: 'Specs.docx', value: 'att-2', selected: false },
+              { text: 'Receipt.png', value: 'att-3', selected: false },
+            ]);
+          });
+
+          it('returns empty array when context.selectedItems is empty or undefined in Gmail context', () => {
+            const stateEmpty = evaluateProcessUiState({
+              context: {
+                hostApp: 'GMAIL',
+                selectedItems: [],
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            });
+            expect(stateEmpty.selectionState.files).toEqual([]);
+
+            const stateUndefined = evaluateProcessUiState({
+              context: {
+                hostApp: 'GMAIL',
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            });
+            expect(stateUndefined.selectionState.files).toEqual([]);
+          });
+
+          it('ensures Drive context continues using SELECT_FILES_KEY unchanged', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                actionName: 'onFormChange',
+                hostApp: 'DRIVE',
+                selectedItems: sampleAttachments,
+                formData: {
+                  SelectFiles: ['att-2'],
+                  SelectAttachments: ['att-1', 'att-3'],
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.selectionState.files).toEqual([
+              { text: 'Invoice.pdf', value: 'att-1', selected: false },
+              { text: 'Specs.docx', value: 'att-2', selected: true },
+              { text: 'Receipt.png', value: 'att-3', selected: false },
+            ]);
+          });
+        });
       });
     });
   });

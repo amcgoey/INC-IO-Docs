@@ -4,6 +4,7 @@ import { createApp, type AppInstance } from '../src/app/server';
 import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import type { DocumentSpaceStoragePort } from '../src/features/document-space/ports';
+import type { GoogleGmailClient } from '../src/infrastructure/gmail/gmail-client';
 import type {
   GoogleWorkspaceActionResponse,
   GoogleWorkspaceSection,
@@ -13,6 +14,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
   let app: AppInstance;
   let mockAuthVerifier: WorkspaceAuthVerifierPort;
   let mockStorageAdapter: DocumentSpaceStoragePort;
+  let mockGmailClient: Partial<GoogleGmailClient>;
 
   beforeEach(async () => {
     mockAuthVerifier = {
@@ -26,6 +28,36 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         return {
           isValid: false,
           error: 'Invalid ID token signature',
+        };
+      }),
+    };
+
+    mockGmailClient = {
+      getMessage: vi.fn().mockImplementation(async (messageId: string) => {
+        if (messageId === 'msg-with-live-attachments' || messageId === 'msg-test-with-files') {
+          return {
+            messageId,
+            attachments: [
+              {
+                partId: 'att-part-1',
+                attachmentId: 'att-1',
+                filename: 'Invoice.pdf',
+                mimeType: 'application/pdf',
+                size: 1024,
+              },
+              {
+                partId: 'att-part-2',
+                attachmentId: 'att-2',
+                filename: 'Statement.pdf',
+                mimeType: 'application/pdf',
+                size: 2048,
+              },
+            ],
+          };
+        }
+        return {
+          messageId,
+          attachments: [],
         };
       }),
     };
@@ -67,6 +99,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       authVerifier: mockAuthVerifier,
       skipSpaceValidation: true,
       storageAdapter: mockStorageAdapter,
+      gmailClient: mockGmailClient as GoogleGmailClient,
     });
 
     await app.initialize();
@@ -200,6 +233,46 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     expect(fileSection?.widgets[0].selectionInput?.name).toBe('SelectAttachments');
     expect(fileSection?.widgets[0].selectionInput?.items).toHaveLength(2);
     expect(fileSection?.widgets[0].selectionInput?.items[0].text).toBe('Invoice.pdf');
+  });
+
+  it('discovers live email attachments via gmailClient and populates SelectAttachments checkboxes on POST /workspace/gmail-contextual', async () => {
+    const res = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/gmail-contextual',
+      headers: {
+        authorization: 'Bearer valid-jwt-token',
+      },
+      payload: {
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-with-live-attachments',
+          threadId: 'th-test-live',
+          accessToken: 'ya29.live-token',
+        },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+    const pushCard = body.action!.navigations![0].pushCard!;
+    const fileSection = pushCard.sections.find((s) => s.header === 'File Selection');
+    expect(fileSection).toBeDefined();
+    expect(fileSection?.collapsible).toBe(false);
+    expect(fileSection?.widgets[0].selectionInput?.name).toBe('SelectAttachments');
+    expect(fileSection?.widgets[0].selectionInput?.items).toHaveLength(2);
+    expect(fileSection?.widgets[0].selectionInput?.items[0]).toEqual({
+      text: 'Invoice.pdf',
+      value: 'att-1',
+      selected: true,
+    });
+    expect(fileSection?.widgets[0].selectionInput?.items[1]).toEqual({
+      text: 'Statement.pdf',
+      value: 'att-2',
+      selected: true,
+    });
+    expect(mockGmailClient.getMessage).toHaveBeenCalledWith('msg-with-live-attachments', {
+      auth: 'ya29.live-token',
+    });
   });
 
   it('returns fallback error card if orchestrator fails', async () => {
