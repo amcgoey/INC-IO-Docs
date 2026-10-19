@@ -94,6 +94,7 @@ export const FormSchemaType = Type.Object({
   name: Type.String(),
   documentSchema: FormDocumentSchemaType,
   documentUiSchema: Type.Optional(DocumentUiEventsSchema),
+  allowEmptySourceFiles: Type.Optional(Type.Boolean()),
 });
 
 export type FormSchema = Static<typeof FormSchemaType>;

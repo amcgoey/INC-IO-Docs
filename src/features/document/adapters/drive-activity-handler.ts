@@ -50,7 +50,7 @@ export class DriveActivityHandler implements ActivityHandler {
       ...(options ?? {}),
       ...(validatedTargetId !== undefined ? { primaryTargetId: validatedTargetId } : {}),
     };
-    if (options?.sourceFiles && options.sourceFiles.length > 0) {
+    if (options?.sourceFiles !== undefined) {
       this.sourceFiles = options.sourceFiles;
     } else if (validatedTargetId) {
       this.sourceFiles = [{ id: validatedTargetId }];
@@ -260,7 +260,7 @@ export class DriveActivityHandler implements ActivityHandler {
         ? payload.fileId.trim()
         : undefined;
 
-    if (this.sourceFiles && this.sourceFiles.length > 0) {
+    if (this.sourceFiles !== undefined) {
       targetSourceFiles = [...this.sourceFiles];
     } else if (payloadFileId) {
       targetSourceFiles = [{ id: payloadFileId }];
@@ -280,7 +280,7 @@ export class DriveActivityHandler implements ActivityHandler {
       }
     }
 
-    if (targetSourceFiles.length === 0) {
+    if (this.sourceFiles === undefined && targetSourceFiles.length === 0) {
       throw new Error('DriveActivityHandler: No fileId found in activity payload or execution context');
     }
 
@@ -306,10 +306,18 @@ export class DriveActivityHandler implements ActivityHandler {
       parentPathSegments = parsePathSegments(payload.parentPath as string);
     }
 
-    const startingId =
-      rootStorageId ??
-      (await this.driveService.getFile(targetSourceFiles[0].id)).parents?.[0] ??
-      'root';
+    let startingId: string;
+    if (rootStorageId) {
+      startingId = rootStorageId;
+    } else if (targetSourceFiles.length > 0) {
+      startingId =
+        (await this.driveService.getFile(targetSourceFiles[0].id)).parents?.[0] ??
+        'root';
+    } else {
+      throw new Error(
+        'DriveActivityHandler: Cannot create destination folder for zero-file filing because rootStorageId is missing or unresolved in activity payload'
+      );
+    }
     const baseFolderId =
       parentPathSegments.length > 0
         ? (await this.driveService.resolveFolderPath(startingId, parentPathSegments)).id

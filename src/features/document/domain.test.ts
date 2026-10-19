@@ -676,6 +676,18 @@ describe('Document domain', () => {
     expect(Value.Check(DocumentTypeSchema, validDocumentType)).toBe(true);
   });
 
+  it('DocumentTypeSchema validates definitions with allowEmptySourceFiles', () => {
+    const documentTypeWithAllowEmpty: DocumentType = {
+      key: 'comm-project',
+      name: 'Communication Project',
+      documentSchema: { fields: [] },
+      allowEmptySourceFiles: true,
+    };
+    expect(Value.Check(DocumentTypeSchema, documentTypeWithAllowEmpty)).toBe(true);
+    expect(documentTypeWithAllowEmpty.allowEmptySourceFiles).toBe(true);
+  });
+
+
   it('DocumentFieldOptionType requires source, key, and name', () => {
     const validOption = {
       source: 'direction',

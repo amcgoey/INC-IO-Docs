@@ -126,5 +126,6 @@
         ]
       }
     ]
-  }
+  },
+  "allowEmptySourceFiles": true
 }

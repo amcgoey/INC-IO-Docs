@@ -126,7 +126,11 @@ export interface RawManifestProviderPort {
 export interface UiProcessManifestPort {
   resolveDocumentTypeKey(nameOrKey: string): Promise<string | undefined>;
   getAllDocumentTypes(): Promise<Array<{ key: string; name?: string | undefined; displayName?: string | undefined }>>;
-  getDocumentTypeSchemas(key: string): Promise<{ docSchema?: unknown; uiSchema?: unknown }>;
+  getDocumentTypeSchemas(key: string): Promise<{
+    docSchema?: unknown;
+    uiSchema?: unknown;
+    allowEmptySourceFiles?: boolean | undefined;
+  }>;
 }
 
 export const UiProcessSourceFileDtoSchema = Type.Object({

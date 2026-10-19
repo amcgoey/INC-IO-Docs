@@ -267,12 +267,28 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
         }));
 
+      let allowEmptySourceFiles = false;
+      if (resolvedDocumentTypeKey && manifestPort) {
+        try {
+          const schemas = await manifestPort.getDocumentTypeSchemas(resolvedDocumentTypeKey);
+          allowEmptySourceFiles = Boolean(schemas?.allowEmptySourceFiles);
+        } catch (e) {
+          console.warn(`Could not fetch schemas for: ${resolvedDocumentTypeKey}`, e);
+        }
+      }
+
       const hasExplicitFileId =
         typeof context.parameters?.fileId === 'string' &&
         context.parameters.fileId.trim().length > 0;
 
       if (activeSourceFiles.length === 0 && !hasExplicitFileId) {
-        return createErrorRenderResult(['Please select at least one file in Google Drive to process.']);
+        if (!allowEmptySourceFiles) {
+          const isGmail = isGmailContext(normalizedContext);
+          const errorMsg = isGmail
+            ? 'Please select at least one file to process or enable Save Email to PDF.'
+            : 'Please select at least one file in Google Drive to process.';
+          return createErrorRenderResult([errorMsg]);
+        }
       }
 
       const spaceResolution = resolveSpace(
@@ -313,7 +329,9 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
               type: resolvedDocumentTypeKey ?? 'default',
               data,
               space,
-              ...(activeSourceFiles.length > 0 ? { sourceFiles: activeSourceFiles } : {}),
+              ...(activeSourceFiles.length > 0 || allowEmptySourceFiles
+                ? { sourceFiles: activeSourceFiles }
+                : {}),
             },
             'onSubmit'
           );

@@ -449,6 +449,7 @@ export function createUiProcessManagerWiring(
                 ...context,
                 ...(sourceFiles !== undefined
                   ? {
+                      sourceFiles,
                       selectedItems: sourceFiles.map((file) => ({
                         id: file.id,
                         ...(file.name !== undefined ? { title: file.name } : {}),

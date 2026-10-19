@@ -75,6 +75,7 @@ export interface WorkspaceExecutionContext {
   traceId?: string | undefined;
   baseUrl?: string | undefined;
   selectedItems?: WorkspaceDriveSelectedItem[] | undefined;
+  sourceFiles?: Array<{ id: string; name?: string | undefined; mimeType?: string | undefined }> | undefined;
   validationErrors?: string[] | undefined;
   formData?: Record<string, unknown> | undefined;
   actionName?: string | undefined;
