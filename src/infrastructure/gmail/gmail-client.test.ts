@@ -1919,6 +1919,39 @@ describe('GoogleGmailClient', () => {
       gmailSpy.mockRestore();
     });
 
+    it('isolates cache entries across distinct OAuth2Client instances based on access_token', async () => {
+      const mockGet = vi.fn().mockImplementation(async () => ({
+        data: {
+          id: 'msg-shared-oauth-id',
+          threadId: 'th-shared',
+        },
+      }));
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      const oauthClient1 = new OAuth2Client();
+      oauthClient1.setCredentials({ access_token: 'oauth-token-1' });
+
+      const oauthClient2 = new OAuth2Client();
+      oauthClient2.setCredentials({ access_token: 'oauth-token-2' });
+
+      await client.getMessage('msg-shared-oauth-id', { auth: oauthClient1 });
+      await client.getMessage('msg-shared-oauth-id', { auth: oauthClient2 });
+
+      expect(mockGet).toHaveBeenCalledTimes(2);
+
+      // Re-calling with oauthClient1 should use cached entry
+      await client.getMessage('msg-shared-oauth-id', { auth: oauthClient1 });
+      expect(mockGet).toHaveBeenCalledTimes(2);
+
+      gmailSpy.mockRestore();
+    });
+
     it('isolates cache entries across distinct message IDs for the same auth token', async () => {
       const mockGet = vi.fn().mockImplementation(async (params: { id: string }) => ({
         data: {

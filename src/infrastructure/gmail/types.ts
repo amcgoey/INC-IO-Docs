@@ -10,7 +10,7 @@ export interface GmailRetryOptions {
 }
 
 export interface GmailOperationOptions {
-  auth?: string | undefined;
+  auth?: OAuth2Client | string | undefined;
   accessToken?: string | undefined;
 }
 

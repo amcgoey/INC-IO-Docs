@@ -11,10 +11,11 @@ export interface GmailSourceFileHydratorAdapterOptions {
   isFileSourceEmailAttachments?: boolean | undefined;
   pdfProcessor?: PdfProcessor | undefined;
 }
+export type GmailSourceFileHydratorOptions = GmailSourceFileHydratorAdapterOptions;
 
 export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
   private readonly gmailClient: GoogleGmailClient;
-  private readonly pdfProcessor: PdfProcessor;
+  private readonly pdfProcessor?: PdfProcessor | undefined;
   public readonly auth?: string | undefined;
   public readonly messageId?: string | undefined;
   public readonly isFileSourceEmailAttachments?: boolean | undefined;
@@ -28,7 +29,7 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
       this.auth = options?.auth;
       this.messageId = options?.messageId;
       this.isFileSourceEmailAttachments = options?.isFileSourceEmailAttachments;
-      this.pdfProcessor = options?.pdfProcessor ?? new PdfProcessor();
+      this.pdfProcessor = options?.pdfProcessor;
     } else {
       if (!clientOrOptions.gmailClient) {
         throw new Error('GmailSourceFileHydratorAdapter: gmailClient is required');
@@ -37,7 +38,7 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
       this.auth = clientOrOptions.auth;
       this.messageId = clientOrOptions.messageId;
       this.isFileSourceEmailAttachments = clientOrOptions.isFileSourceEmailAttachments;
-      this.pdfProcessor = clientOrOptions.pdfProcessor ?? new PdfProcessor();
+      this.pdfProcessor = clientOrOptions.pdfProcessor;
     }
   }
 
@@ -210,6 +211,9 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
 
         let pdfBytes: Uint8Array;
         try {
+          if (!this.pdfProcessor) {
+            throw new Error('PdfProcessor not configured');
+          }
           pdfBytes = await this.pdfProcessor.generateEmailPdf(renderInput);
         } catch {
           throw new DriveServiceError('Could not generate the Email PDF. Please try again.');
@@ -243,13 +247,8 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
           matchedAtt = attachmentIdMap.get(fileId);
         }
 
-        if (!matchedAtt) {
-          if (fileName) {
-            matchedAtt = uniqueFilenameMap.get(fileName);
-          }
-          if (!matchedAtt) {
-            matchedAtt = uniqueFilenameMap.get(fileId);
-          }
+        if (!matchedAtt && this.isFileSourceEmailAttachments === true && fileName) {
+          matchedAtt = uniqueFilenameMap.get(fileName);
         }
 
         if (matchedAtt) {

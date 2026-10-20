@@ -117,35 +117,27 @@ export class DriveActivityHandler implements ActivityHandler {
       return false;
     }
     let isFileSourceEmailAttachments = this.options.isFileSourceEmailAttachments;
-    if (
-      isFileSourceEmailAttachments === undefined &&
-      this.sourceFileHydrator &&
-      'isFileSourceEmailAttachments' in this.sourceFileHydrator
-    ) {
-      isFileSourceEmailAttachments = (
-        this.sourceFileHydrator as { isFileSourceEmailAttachments?: boolean }
-      ).isFileSourceEmailAttachments;
-    }
-    if (isFileSourceEmailAttachments === undefined) {
-      if (payload?.SelectFileSource !== undefined) {
+    if (isFileSourceEmailAttachments === undefined && payload) {
+      if (payload.SelectFileSource !== undefined) {
         isFileSourceEmailAttachments = payload.SelectFileSource === 'Email Attachments';
-      } else if (payload?.fileSource !== undefined) {
+      } else if (payload.fileSource !== undefined) {
         isFileSourceEmailAttachments = payload.fileSource === 'Email Attachments';
-      } else if (payload?.isFileSourceEmailAttachments !== undefined) {
+      } else if (payload.isFileSourceEmailAttachments !== undefined) {
         isFileSourceEmailAttachments = Boolean(payload.isFileSourceEmailAttachments);
       }
     }
 
-    if (isFileSourceEmailAttachments === true) {
-      return true;
-    }
     if (isFileSourceEmailAttachments === false) {
       return false;
     }
-    if (sourceFile.id.startsWith('part-') || sourceFile.id.startsWith('att-')) {
-      return true;
-    }
-    return false;
+
+    const id = sourceFile.id;
+    return (
+      id.startsWith('inline-') ||
+      id.startsWith('part-') ||
+      id.startsWith('att-') ||
+      isFileSourceEmailAttachments === true
+    );
   }
 
   canHandle(activity: Activity): boolean {
