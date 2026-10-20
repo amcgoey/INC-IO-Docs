@@ -439,8 +439,8 @@ export function createUiProcessManagerWiring(
         if (typeof clientWithThread.getThread === 'function') {
           try {
             const details = await clientWithThread.getThread(threadId, {
-              auth: token,
-              skipCache: opts?.skipCache,
+              ...(token !== undefined ? { auth: token } : {}),
+              ...(opts?.skipCache !== undefined ? { skipCache: opts.skipCache } : {}),
             });
             return (details?.messages ?? []).map((msg: GmailMessageDetails) => ({
               id: (msg.id && typeof msg.id === 'string' && msg.id.trim().length > 0)

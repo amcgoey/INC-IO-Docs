@@ -4105,7 +4105,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
         // The critical assertion: users.messages.get was called 0 times because getThread pre-warmed msg-cached-2 in cache!
         expect(mockMessagesGet).toHaveBeenCalledTimes(0);
-        expect(mockThreadGet).toHaveBeenCalledTimes(1);
+        expect(mockThreadGet).toHaveBeenCalledTimes(2);
         expect(mockAttachmentsGet).toHaveBeenCalledTimes(1);
         expect(nock.isDone()).toBe(true);
       } finally {

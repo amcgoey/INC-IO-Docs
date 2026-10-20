@@ -2169,7 +2169,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       ]);
     });
 
-    it('does not call gmailPort on in-card action like onFormChange', async () => {
+    it('calls gmailPort on in-card action like onFormChange when only getMessageAttachments is mocked to construct threadMessages fallback', async () => {
       const getAttachmentsMock = vi.fn().mockResolvedValue([]);
       const gmailPort: UiProcessGmailPort = {
         getMessageAttachments: getAttachmentsMock,
@@ -2199,7 +2199,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
 
       const result = await adapter.processUiEvent(context);
       expect(result.type).toBe('render');
-      expect(getAttachmentsMock).not.toHaveBeenCalled();
+      expect(getAttachmentsMock).toHaveBeenCalledWith('msg-form-change', 'ya29.token');
     });
 
     it('logs warning and continues gracefully without throwing when gmailPort fails', async () => {
@@ -2389,6 +2389,45 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       const result = await adapter.processUiEvent(context);
       expect(result.type).toBe('render');
       expect(getMessageDetailsMock).toHaveBeenCalledWith('msg-single', { skipCache: false });
+    });
+
+    it('preserves selectionState.threadMessages on in-card actions when only getMessageAttachments is mocked on gmailPort', async () => {
+      const getMessageAttachmentsMock = vi.fn().mockResolvedValue([
+        { id: 'att-double-1', title: 'Double1.pdf', mimeType: 'application/pdf' },
+      ]);
+
+      const gmailPort: UiProcessGmailPort = {
+        getMessageAttachments: getMessageAttachmentsMock,
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        gmailPort,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'onFormChange',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-double',
+          accessToken: 'ya29.token',
+        },
+        selectedItems: [
+          { id: 'att-double-1', title: 'Double1.pdf', mimeType: 'application/pdf' },
+        ],
+        formData: {
+          SelectFileSource: 'Email Attachments',
+        },
+      };
+
+      const result = await adapter.processUiEvent(context);
+      expect(result.type).toBe('render');
+      const render = result as UiProcessRenderResult;
+      expect(render.selectionState?.threadMessages).toBeDefined();
+      expect(render.selectionState?.threadMessages).toHaveLength(1);
+      expect(render.selectionState?.threadMessages?.[0].value).toBe('msg-double');
     });
 
     it('handles onEmailMessageChange action returning isUpdateCard = true, updates SelectEmailMessage, selects all attachments, and updates formData[SelectAttachments]', async () => {

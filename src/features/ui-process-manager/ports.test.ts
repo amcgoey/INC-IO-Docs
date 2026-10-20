@@ -263,7 +263,7 @@ describe('UI Process Manager Ports & DTOs', () => {
         'onSubmit'
       );
 
-      expect(capturedPayload.targetMessageId).toBe('msg-selected-456');
+      expect(capturedPayload!.targetMessageId).toBe('msg-selected-456');
     });
   });
 });

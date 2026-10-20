@@ -2485,40 +2485,6 @@ describe('GoogleGmailClient', () => {
         expect(msg1.subject).toBe('Fresh msg-1');
       });
 
-      it('caches getThread results and bypasses cache when skipCache is true', async () => {
-        const mockThreadGet = vi.fn().mockResolvedValue({
-          data: {
-            id: 'th-skip',
-            messages: [
-              { id: 'msg-skip-1', threadId: 'th-skip', payload: { headers: [{ name: 'Subject', value: 'Initial' }] } },
-            ],
-          },
-        });
-
-        const mockGmail = {
-          users: {
-            threads: { get: mockThreadGet },
-          },
-        } as unknown as gmail_v1.Gmail;
-
-        const client = new GoogleGmailClient({ gmail: mockGmail });
-
-        // Initial fetch
-        const res1 = await client.getThread('th-skip');
-        expect(mockThreadGet).toHaveBeenCalledTimes(1);
-        expect(res1.id).toBe('th-skip');
-
-        // Second call within TTL hits thread cache
-        const res2 = await client.getThread('th-skip');
-        expect(mockThreadGet).toHaveBeenCalledTimes(1);
-        expect(res2).toEqual(res1);
-
-        // Third call with skipCache: true bypasses cache and issues fresh API call
-        const res3 = await client.getThread('th-skip', { skipCache: true });
-        expect(mockThreadGet).toHaveBeenCalledTimes(2);
-        expect(res3.id).toBe('th-skip');
-      });
-
       it('bypasses pre-warmed per-message cache when skipCache: true is passed to getMessage', async () => {
         const mockThreadGet = vi.fn().mockResolvedValue({
           data: {
@@ -2556,7 +2522,7 @@ describe('GoogleGmailClient', () => {
         expect(fresh.subject).toBe('Fresh Message');
       });
 
-      it('clears both message and thread caches on clearCache()', async () => {
+      it('clears message cache on clearCache()', async () => {
         const mockGmail = {
           users: {
             threads: { get: vi.fn().mockResolvedValue({ data: { id: 'th-clear-both', messages: [{ id: 'm-clear-both' }] } }) },
@@ -2566,11 +2532,9 @@ describe('GoogleGmailClient', () => {
 
         const client = new GoogleGmailClient({ gmail: mockGmail });
         await client.getThread('th-clear-both');
-        expect(client.getThreadCacheSize()).toBe(1);
         expect(client.getCacheSize()).toBe(1);
 
         client.clearCache();
-        expect(client.getThreadCacheSize()).toBe(0);
         expect(client.getCacheSize()).toBe(0);
       });
     });

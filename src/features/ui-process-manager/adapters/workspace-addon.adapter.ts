@@ -31,6 +31,7 @@ import {
   SAVE_EMAIL_TO_PDF_KEY,
   SELECT_EMAIL_MESSAGE_KEY,
   extractSelectFilesSet,
+  resolveAttachmentId,
   parseGoogleDriveUrl,
   isGmailContext,
   type UiStateResolutionContext,
@@ -148,10 +149,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           } catch (e) {
             console.warn(`Could not fetch message details for message: ${context.gmail.messageId}`, e);
           }
-        } else if (
-          (!isInCardAction || !effectiveContext.selectedItems || effectiveContext.selectedItems.length === 0) &&
-          typeof this.gmailPort.getMessageAttachments === 'function'
-        ) {
+        } else if (typeof this.gmailPort.getMessageAttachments === 'function') {
           try {
             const attachments = await this.gmailPort.getMessageAttachments(
               context.gmail.messageId,
@@ -192,19 +190,11 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         ) {
           effectiveContext = {
             ...effectiveContext,
-            selectedItems: (activeMsg?.attachments ?? []).map((att) => {
-              const resolvedId =
-                (att.partId && att.partId.trim().length > 0)
-                  ? att.partId.trim()
-                  : (att.id && att.id.trim().length > 0)
-                    ? att.id.trim()
-                    : (att.attachmentId?.trim() ?? '');
-              return {
-                id: resolvedId,
-                title: att.title,
-                mimeType: att.mimeType,
-              };
-            }),
+            selectedItems: (activeMsg?.attachments ?? []).map((att) => ({
+              id: resolveAttachmentId(att),
+              title: att.title,
+              mimeType: att.mimeType,
+            })),
           };
         }
       }
@@ -398,11 +388,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         const selectedMsg = threadMessages?.find((m) => m.id === selectedMessageId);
         if (selectedMsg?.attachments) {
           for (const att of selectedMsg.attachments) {
-            const attId = (att.partId && att.partId.trim().length > 0)
-              ? att.partId.trim()
-              : (att.id && att.id.trim().length > 0)
-                ? att.id.trim()
-                : (att.attachmentId?.trim() ?? '');
+            const attId = resolveAttachmentId(att);
             const meta = {
               ...(att.title !== undefined ? { name: att.title } : {}),
               ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),

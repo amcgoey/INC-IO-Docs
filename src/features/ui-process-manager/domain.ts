@@ -309,17 +309,29 @@ export function parseRfc2822DateToYymmdd(dateString?: string): string {
     }
   }
 
-  let parsed = new Date(trimmed);
-  if (isNaN(parsed.getTime())) {
-    const namedMatch = trimmed.match(/\b(EDT|EST|CDT|CST|MDT|MST|PDT|PST|GMT|UT|UTC)\b/);
-    if (namedMatch && NAMED_TIMEZONE_OFFSETS[namedMatch[1]] !== undefined) {
-      const offsetMin = NAMED_TIMEZONE_OFFSETS[namedMatch[1]];
-      const sign = offsetMin < 0 ? '-' : '+';
-      const absMin = Math.abs(offsetMin);
-      const h = String(Math.floor(absMin / 60)).padStart(2, '0');
-      const m = String(absMin % 60).padStart(2, '0');
-      const replaced = trimmed.replace(namedMatch[1], `${sign}${h}${m}`);
-      parsed = new Date(replaced);
+  let parsed: Date;
+  if (offsetMinutes === undefined) {
+    if (trimmed.includes('T')) {
+      parsed = new Date(trimmed.endsWith('Z') || trimmed.endsWith('z') ? trimmed : `${trimmed}Z`);
+    } else {
+      parsed = new Date(`${trimmed} UTC`);
+    }
+    if (isNaN(parsed.getTime())) {
+      parsed = new Date(trimmed);
+    }
+  } else {
+    parsed = new Date(trimmed);
+    if (isNaN(parsed.getTime())) {
+      const namedMatch = trimmed.match(/\b(EDT|EST|CDT|CST|MDT|MST|PDT|PST|GMT|UT|UTC)\b/);
+      if (namedMatch && NAMED_TIMEZONE_OFFSETS[namedMatch[1]] !== undefined) {
+        const offsetMin = NAMED_TIMEZONE_OFFSETS[namedMatch[1]];
+        const sign = offsetMin < 0 ? '-' : '+';
+        const absMin = Math.abs(offsetMin);
+        const h = String(Math.floor(absMin / 60)).padStart(2, '0');
+        const m = String(absMin % 60).padStart(2, '0');
+        const replaced = trimmed.replace(namedMatch[1], `${sign}${h}${m}`);
+        parsed = new Date(replaced);
+      }
     }
   }
 
@@ -336,6 +348,14 @@ export function parseRfc2822DateToYymmdd(dateString?: string): string {
   const dd = String(targetDate.getUTCDate()).padStart(2, '0');
 
   return `${yy}${mm}${dd}`;
+}
+
+export function resolveAttachmentId(att: { partId?: string; id?: string; attachmentId?: string }): string {
+  return (att.partId && att.partId.trim().length > 0)
+    ? att.partId.trim()
+    : (att.id && att.id.trim().length > 0)
+      ? att.id.trim()
+      : (att.attachmentId?.trim() ?? '');
 }
 
 export function formatThreadEmailOptionLabel(descriptor: UiProcessGmailMessageDescriptor): string {
@@ -713,11 +733,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const candidateGmailItems: Array<{ id: string; title?: string | undefined; mimeType?: string | undefined }> =
     isGmail && threadMessages && threadMessages.length > 0
       ? (matchedThreadMessage?.attachments ?? []).map((att) => ({
-          id: (att.partId && att.partId.trim().length > 0)
-            ? att.partId.trim()
-            : (att.id && att.id.trim().length > 0)
-              ? att.id.trim()
-              : (att.attachmentId?.trim() ?? ''),
+          id: resolveAttachmentId(att),
           title: att.title,
           mimeType: att.mimeType,
         }))
