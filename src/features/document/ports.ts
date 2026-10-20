@@ -117,6 +117,10 @@ export interface ActivityHandler {
   ): Promise<ActivityOutput | void> | ActivityOutput | void;
 }
 
+export interface SourceFileHydratorPort {
+  hydrate(sourceFiles: SourceFile[]): Promise<SourceFile[]>;
+}
+
 export interface ActivityDispatcherPort {
   dispatch(
     activity: Activity

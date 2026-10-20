@@ -1,26 +1,53 @@
-import type { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
-import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
-import type { UiProcessSourceFileDto } from '../features/ui-process-manager/ports';
-import { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
-import type { EmailPdfInlineImage, EmailPdfRenderInput } from '../infrastructure/pdf/types';
-import { formatEmailPdfFileName } from '../features/document/domain';
+import type { SourceFile, SourceFileHydratorPort } from '../ports';
+import { GoogleGmailClient } from '../../../infrastructure/gmail/gmail-client';
+import { PdfProcessor } from '../../../infrastructure/pdf/pdf-processor';
+import type { EmailPdfInlineImage, EmailPdfRenderInput } from '../../../infrastructure/pdf/types';
+import { formatEmailPdfFileName } from '../domain';
 
-export class GmailSourceFileHydrator {
+export interface GmailSourceFileHydratorAdapterOptions {
+  gmailClient?: GoogleGmailClient | undefined;
+  auth?: string | undefined;
+  messageId?: string | undefined;
+  isFileSourceEmailAttachments?: boolean | undefined;
+  pdfProcessor?: PdfProcessor | undefined;
+}
+
+export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
+  private readonly gmailClient: GoogleGmailClient;
+  private readonly pdfProcessor: PdfProcessor;
+  private readonly auth?: string | undefined;
+  private readonly messageId?: string | undefined;
+  private readonly isFileSourceEmailAttachments?: boolean | undefined;
+
   constructor(
-    private readonly gmailClient: GoogleGmailClient,
-    private readonly pdfProcessor: PdfProcessor = new PdfProcessor()
-  ) {}
+    clientOrOptions: GoogleGmailClient | GmailSourceFileHydratorAdapterOptions,
+    options?: GmailSourceFileHydratorAdapterOptions
+  ) {
+    if ('getMessage' in clientOrOptions) {
+      this.gmailClient = clientOrOptions;
+      this.auth = options?.auth;
+      this.messageId = options?.messageId;
+      this.isFileSourceEmailAttachments = options?.isFileSourceEmailAttachments;
+      this.pdfProcessor = options?.pdfProcessor ?? new PdfProcessor();
+    } else {
+      if (!clientOrOptions.gmailClient) {
+        throw new Error('GmailSourceFileHydratorAdapter: gmailClient is required');
+      }
+      this.gmailClient = clientOrOptions.gmailClient;
+      this.auth = clientOrOptions.auth;
+      this.messageId = clientOrOptions.messageId;
+      this.isFileSourceEmailAttachments = clientOrOptions.isFileSourceEmailAttachments;
+      this.pdfProcessor = clientOrOptions.pdfProcessor ?? new PdfProcessor();
+    }
+  }
 
-  async hydrate(
-    sourceFiles: UiProcessSourceFileDto[],
-    context: WorkspaceExecutionContext
-  ): Promise<UiProcessSourceFileDto[]> {
+  async hydrate(sourceFiles: SourceFile[]): Promise<SourceFile[]> {
     if (!sourceFiles || sourceFiles.length === 0) {
       return [];
     }
 
     const messageId =
-      context.gmail?.messageId ??
+      this.messageId ??
       sourceFiles.find((f) => f.id.startsWith('email-pdf-'))?.id.slice('email-pdf-'.length);
     if (!messageId) {
       return [...sourceFiles];
@@ -34,7 +61,16 @@ export class GmailSourceFileHydrator {
       return [...sourceFiles];
     }
 
-    const token = context.userOAuthToken ?? context.gmail?.accessToken;
+    const hasEmailPdf = candidates.some((f) => f.id.startsWith('email-pdf-'));
+    const canHydrateAttachments = this.isFileSourceEmailAttachments !== false;
+    const hasAttachmentCandidates =
+      canHydrateAttachments && candidates.some((f) => !f.id.startsWith('email-pdf-'));
+
+    if (!hasEmailPdf && !hasAttachmentCandidates) {
+      return [...sourceFiles];
+    }
+
+    const token = this.auth;
 
     let messageDetails;
     try {
@@ -56,7 +92,7 @@ export class GmailSourceFileHydrator {
       });
     }
 
-    const hydrated: UiProcessSourceFileDto[] = [];
+    const hydrated: SourceFile[] = [];
     for (const file of sourceFiles) {
       if (file.content instanceof Uint8Array) {
         hydrated.push(file);
@@ -119,24 +155,27 @@ export class GmailSourceFileHydrator {
         continue;
       }
 
-      const attMeta = attachmentMap.get(file.id);
-      if (attMeta) {
-        let content = attMeta.data;
-        if (!content) {
-          content = await this.gmailClient.getAttachment(messageId, file.id, {
-            auth: token,
-          });
-        }
+      if (canHydrateAttachments) {
+        const attMeta = attachmentMap.get(file.id);
+        if (attMeta) {
+          let content = attMeta.data;
+          if (!content) {
+            content = await this.gmailClient.getAttachment(messageId, file.id, {
+              auth: token,
+            });
+          }
 
-        hydrated.push({
-          id: file.id,
-          name: file.name || attMeta.filename,
-          mimeType: file.mimeType || attMeta.mimeType,
-          content,
-        });
-      } else {
-        hydrated.push(file);
+          hydrated.push({
+            id: file.id,
+            name: file.name || attMeta.filename,
+            mimeType: file.mimeType || attMeta.mimeType,
+            content,
+          });
+          continue;
+        }
       }
+
+      hydrated.push(file);
     }
 
     return hydrated;
