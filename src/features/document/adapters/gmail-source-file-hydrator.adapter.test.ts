@@ -601,6 +601,89 @@ describe('GmailSourceFileHydratorAdapter', () => {
       expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
     });
 
+    it('does NOT fallback to filename match when isFileSourceEmailAttachments is undefined', async () => {
+      const mockGmailClient = {
+        getMessage: vi.fn().mockResolvedValue({
+          id: 'msg-unique-fallback-no-opt',
+          attachments: [
+            {
+              partId: 'part-0.5',
+              attachmentId: 'att-token-555',
+              filename: 'UniqueContract.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        }),
+        getAttachment: vi.fn(),
+      } as unknown as GoogleGmailClient;
+
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-unique-fallback-no-opt',
+        // isFileSourceEmailAttachments is undefined
+      });
+
+      const files: SourceFile[] = [{ id: 'drive-file-id-123', name: 'UniqueContract.pdf' }];
+
+      const result = await hydrator.hydrate(files);
+
+      expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
+      expect(result).toEqual(files);
+      expect(result[0].content).toBeUndefined();
+    });
+
+    it('does NOT treat fileId as a candidate filename during unique filename fallback', async () => {
+      const mockGmailClient = {
+        getMessage: vi.fn().mockResolvedValue({
+          id: 'msg-fileid-not-filename',
+          attachments: [
+            {
+              partId: 'part-1',
+              attachmentId: 'att-token-1',
+              filename: 'UniqueContract.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        }),
+        getAttachment: vi.fn(),
+      } as unknown as GoogleGmailClient;
+
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-fileid-not-filename',
+        isFileSourceEmailAttachments: true,
+      });
+
+      // fileId matches the attachment filename, but name is undefined / different
+      const files: SourceFile[] = [{ id: 'UniqueContract.pdf' }];
+
+      await expect(hydrator.hydrate(files)).rejects.toThrow(
+        'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+      );
+
+      expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
+    });
+
+    it('throws DriveServiceError when pdfProcessor is omitted and an email-pdf file is hydrated', async () => {
+      const mockGmailClient = {
+        getMessage: vi.fn().mockResolvedValue({
+          id: 'msg-no-pdf-processor',
+          subject: 'No PDF Processor',
+          attachments: [],
+        }),
+        getAttachment: vi.fn(),
+      } as unknown as GoogleGmailClient;
+
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-no-pdf-processor',
+        // pdfProcessor omitted
+      });
+
+      const files: SourceFile[] = [{ id: 'email-pdf-msg-no-pdf-processor' }];
+
+      await expect(hydrator.hydrate(files)).rejects.toThrow(
+        'Could not generate the Email PDF. Please try again.'
+      );
+    });
+
     it('processes source files sequentially in order', async () => {
       const callOrder: string[] = [];
       const mockGmailClient = {

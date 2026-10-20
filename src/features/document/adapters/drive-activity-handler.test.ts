@@ -1438,6 +1438,35 @@ describe('DriveActivityHandler', () => {
           expect(mockDriveService.move).not.toHaveBeenCalled();
         });
 
+        it('returns error without calling driveService.move when an unhydrated email attachment has inline- prefix', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'target-folder-id',
+            name: 'Target Folder',
+          });
+
+          const handler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [{ id: 'inline-part-0.2', name: 'small-photo.png' }],
+          });
+
+          const activity: Activity = {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'root-id',
+              folderName: 'Target Folder',
+            },
+          };
+
+          const result = await handler.handle(activity);
+
+          expect(result.success).toBe(false);
+          expect(result.error).toBe(
+            'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+          );
+          expect(result.files).toEqual([]);
+          expect(mockDriveService.findOrCreateFolder).toHaveBeenCalled();
+          expect(mockDriveService.move).not.toHaveBeenCalled();
+        });
+
         it('preserves created folder and already-saved files when an unhydrated email-pdf follows a successfully saved binary file', async () => {
           (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
             id: 'target-folder-id',

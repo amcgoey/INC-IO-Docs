@@ -149,7 +149,7 @@ export function createDocumentServiceFactory(
         auth,
         messageId,
         isFileSourceEmailAttachments,
-        pdfProcessor: options.pdfProcessor,
+        pdfProcessor: options.pdfProcessor ?? new PdfProcessor(),
       });
     }
 

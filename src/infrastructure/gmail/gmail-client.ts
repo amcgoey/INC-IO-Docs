@@ -162,6 +162,19 @@ export class GoogleGmailClient {
     if (typeof token === 'string' && token.trim().length > 0) {
       return token.trim();
     }
+    if (typeof token === 'object' && token !== null) {
+      const client = token as {
+        credentials?: { access_token?: string | null; id_token?: string | null };
+        apiKey?: string;
+      };
+      const candidate =
+        client.credentials?.access_token ??
+        client.credentials?.id_token ??
+        (client as { apiKey?: string }).apiKey;
+      if (typeof candidate === 'string' && candidate.trim().length > 0) {
+        return candidate.trim();
+      }
+    }
     if (typeof this.defaultAuthToken === 'string' && this.defaultAuthToken.trim().length > 0) {
       return this.defaultAuthToken.trim();
     }
@@ -226,7 +239,11 @@ export class GoogleGmailClient {
   private getGmail(options?: GmailOperationOptions): gmail_v1.Gmail {
     const token = options?.accessToken ?? options?.auth;
     if (token) {
-      return this.createGmailClientFromToken(token);
+      if (typeof token === 'string') {
+        return this.createGmailClientFromToken(token);
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return google.gmail({ version: 'v1', auth: token as any });
     }
     return this.defaultGmail;
   }
