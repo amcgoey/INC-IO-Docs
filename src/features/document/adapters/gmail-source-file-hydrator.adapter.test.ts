@@ -695,7 +695,7 @@ describe('GmailSourceFileHydratorAdapter', () => {
         ]);
       });
 
-      it('does NOT invoke getAttachment when matched attachment id starts with inline- even if data is undefined', async () => {
+      it('does NOT invoke getAttachment and throws fail-fast error when matched attachment id starts with inline- even if data is undefined', async () => {
         const mockGmailClient = {
           getMessage: vi.fn().mockResolvedValue({
             id: 'msg-inline-nodata',
@@ -719,10 +719,11 @@ describe('GmailSourceFileHydratorAdapter', () => {
         });
 
         const files: SourceFile[] = [{ id: 'part-inline-nodata' }];
-        const result = await hydrator.hydrate(files);
+        await expect(hydrator.hydrate(files)).rejects.toThrow(
+          'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+        );
 
         expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
-        expect(result[0]?.content).toBeUndefined();
       });
 
       it('resolves binary content directly from descriptor data when matched by unique filename without invoking getAttachment', async () => {
