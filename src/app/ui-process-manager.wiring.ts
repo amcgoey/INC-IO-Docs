@@ -35,6 +35,10 @@ import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-ad
 import type { FormChangeEvaluatorFn as FormChangeEvaluator } from '../features/ui-process-manager';
 import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
 import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
+import type {
+  GmailThreadDetails,
+  GmailMessageDetails,
+} from '../infrastructure/gmail/types';
 import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 import { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
 import type {
@@ -426,24 +430,28 @@ export function createUiProcessManagerWiring(
         }));
       },
       getThreadMessages: async (threadId: string, opts?: { skipCache?: boolean }) => {
-        if (typeof (gmailClient as any).getThread === 'function') {
+        const clientWithThread = gmailClient as {
+          getThread?: (
+            threadId: string,
+            options?: { auth?: string; skipCache?: boolean }
+          ) => Promise<GmailThreadDetails>;
+        };
+        if (typeof clientWithThread.getThread === 'function') {
           try {
-            const details = await (gmailClient as any).getThread(threadId, {
+            const details = await clientWithThread.getThread(threadId, {
               auth: token,
               skipCache: opts?.skipCache,
             });
-            return (details?.messages ?? []).map((msg: any) => ({
+            return (details?.messages ?? []).map((msg: GmailMessageDetails) => ({
               id: (msg.id && typeof msg.id === 'string' && msg.id.trim().length > 0)
                 ? msg.id
                 : (typeof msg.messageId === 'string' ? msg.messageId : threadId),
               ...(msg.from !== undefined ? { from: msg.from } : {}),
               ...(msg.date !== undefined ? { date: msg.date } : {}),
-              attachments: (msg.attachments ?? []).map((att: any) => ({
+              attachments: (msg.attachments ?? []).map((att) => ({
                 id: (att.partId && att.partId.trim().length > 0)
                   ? att.partId.trim()
-                  : (att.id && att.id.trim().length > 0)
-                    ? att.id.trim()
-                    : att.attachmentId,
+                  : att.attachmentId,
                 ...(att.partId !== undefined ? { partId: att.partId } : {}),
                 ...(att.attachmentId !== undefined ? { attachmentId: att.attachmentId } : {}),
                 title: att.filename,
@@ -470,9 +478,7 @@ export function createUiProcessManagerWiring(
           attachments: (msg.attachments ?? []).map((att) => ({
             id: (att.partId && att.partId.trim().length > 0)
               ? att.partId.trim()
-              : ((att as any).id && typeof (att as any).id === 'string' && (att as any).id.trim().length > 0)
-                ? (att as any).id.trim()
-                : att.attachmentId,
+              : att.attachmentId,
             ...(att.partId !== undefined ? { partId: att.partId } : {}),
             ...(att.attachmentId !== undefined ? { attachmentId: att.attachmentId } : {}),
             title: att.filename,

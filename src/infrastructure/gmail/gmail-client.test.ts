@@ -2336,7 +2336,7 @@ describe('GoogleGmailClient', () => {
         attempts++;
         if (attempts < 2) {
           const err = new Error('Rate limit exceeded');
-          (err as any).statusCode = 429;
+          Object.assign(err, { statusCode: 429 });
           throw err;
         }
         return {

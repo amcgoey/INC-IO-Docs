@@ -246,9 +246,9 @@ describe('UI Process Manager Ports & DTOs', () => {
     });
 
     it('allows UiProcessDocumentRunnerPort to accept optional targetMessageId in payload', async () => {
-      let capturedPayload: any;
+      let capturedPayload: Parameters<UiProcessDocumentRunnerPort['processDocument']>[0] | undefined;
       const runner: UiProcessDocumentRunnerPort = {
-        processDocument: async (payload, _event) => {
+        processDocument: async (payload) => {
           capturedPayload = payload;
           return { success: true };
         },
