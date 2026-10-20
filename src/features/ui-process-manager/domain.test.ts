@@ -2384,6 +2384,155 @@ describe('ui-process-manager domain', () => {
             ]);
           });
 
+          it('evaluates absent SelectAttachments key as intentional zero-selection in Email Attachments mode on in-card action even if previousAttachments exists', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'onDocumentTypeChange',
+                selectedItems: sampleAttachments,
+                formData: {
+                  [SELECT_FILE_SOURCE_KEY]: 'Email Attachments',
+                  // SelectAttachments is absent (user unchecked all attachments)
+                },
+                parameters: {
+                  previousAttachments: JSON.stringify(['att-1', 'att-2']),
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.selectionState.files).toEqual([
+              { text: 'Invoice.pdf', value: 'att-1', selected: false },
+              { text: 'Statement.pdf', value: 'att-2', selected: false },
+              { text: 'Summary.pdf', value: 'att-3', selected: false },
+            ]);
+          });
+
+          it('restores attachment selections from previousAttachments in Google Drive URL mode across intermediate in-card actions', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'onSpaceTypeChange',
+                selectedItems: sampleAttachments,
+                formData: {
+                  [SELECT_FILE_SOURCE_KEY]: 'Google Drive URL',
+                  // SelectAttachments is hidden in Google Drive URL mode
+                },
+                parameters: {
+                  previousAttachments: JSON.stringify(['att-1', 'att-3']),
+                  previousDriveUrl: 'https://drive.google.com/test-doc',
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.selectionState.files).toEqual([
+              { text: 'Invoice.pdf', value: 'att-1', selected: true },
+              { text: 'Statement.pdf', value: 'att-2', selected: false },
+              { text: 'Summary.pdf', value: 'att-3', selected: true },
+            ]);
+            expect(state.formData[INPUT_DRIVE_URL_KEY]).toBe('https://drive.google.com/test-doc');
+          });
+
+          it('restores attachment selections when switching File Source back to Email Attachments (onFileSourceChange)', () => {
+            const input: ProcessUiStateInput = {
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'onFileSourceChange',
+                selectedItems: sampleAttachments,
+                formData: {
+                  [SELECT_FILE_SOURCE_KEY]: 'Email Attachments',
+                  // SelectAttachments was absent on the Google Drive URL card
+                },
+                parameters: {
+                  previousAttachments: JSON.stringify(['att-2']),
+                  previousDriveUrl: 'https://drive.google.com/my-folder',
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            };
+
+            const state = evaluateProcessUiState(input);
+            expect(state.selectionState.files).toEqual([
+              { text: 'Invoice.pdf', value: 'att-1', selected: false },
+              { text: 'Statement.pdf', value: 'att-2', selected: true },
+              { text: 'Summary.pdf', value: 'att-3', selected: false },
+            ]);
+            expect(state.formData[INPUT_DRIVE_URL_KEY]).toBe('https://drive.google.com/my-folder');
+          });
+
+          it('preserves InputDriveURL when switching to Email Attachments, modifying dropdowns, and switching back', () => {
+            // Step 1: Switch from Google Drive URL to Email Attachments
+            const step1 = evaluateProcessUiState({
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'onFileSourceChange',
+                selectedItems: sampleAttachments,
+                formData: {
+                  [SELECT_FILE_SOURCE_KEY]: 'Email Attachments',
+                },
+                parameters: {
+                  previousAttachments: JSON.stringify(['att-1']),
+                  previousDriveUrl: 'https://drive.google.com/preserved-url',
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            });
+            expect(step1.formData[INPUT_DRIVE_URL_KEY]).toBe('https://drive.google.com/preserved-url');
+
+            // Step 2: In Email Attachments mode, modify Document Type (onDocumentTypeChange)
+            const step2 = evaluateProcessUiState({
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'onDocumentTypeChange',
+                selectedItems: sampleAttachments,
+                formData: {
+                  [SELECT_FILE_SOURCE_KEY]: 'Email Attachments',
+                  [SELECT_ATTACHMENTS_KEY]: ['att-1'],
+                  // InputDriveURL is hidden and absent in formData
+                },
+                parameters: {
+                  previousAttachments: JSON.stringify(['att-1']),
+                  previousDriveUrl: 'https://drive.google.com/preserved-url',
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            });
+            expect(step2.formData[INPUT_DRIVE_URL_KEY]).toBe('https://drive.google.com/preserved-url');
+
+            // Step 3: Switch back to Google Drive URL
+            const step3 = evaluateProcessUiState({
+              context: {
+                hostApp: 'GMAIL',
+                actionName: 'onFileSourceChange',
+                selectedItems: sampleAttachments,
+                formData: {
+                  [SELECT_FILE_SOURCE_KEY]: 'Google Drive URL',
+                  // InputDriveURL absent in formData
+                },
+                parameters: {
+                  previousAttachments: JSON.stringify(['att-1']),
+                  previousDriveUrl: 'https://drive.google.com/preserved-url',
+                },
+              },
+              spaceTypes: sampleSpaceTypes,
+              spaces: [],
+            });
+            expect(step3.formData[INPUT_DRIVE_URL_KEY]).toBe('https://drive.google.com/preserved-url');
+            expect(step3.selectionState.files).toEqual([
+              { text: 'Invoice.pdf', value: 'att-1', selected: true },
+              { text: 'Statement.pdf', value: 'att-2', selected: false },
+              { text: 'Summary.pdf', value: 'att-3', selected: false },
+            ]);
+          });
+
           it('resets file source to Email Attachments, clears InputDriveURL, and selects all attachments on refresh', () => {
             const input: ProcessUiStateInput = {
               context: {

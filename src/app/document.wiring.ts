@@ -30,6 +30,9 @@ import { ActivityEngine } from '../features/document/adapters/activity-engine';
 import { registerDocumentFeatureRoutes } from '../features/document/adapters/api';
 import type { HttpServer } from '../infrastructure/http';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
+import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
+import { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
+import { GmailSourceFileHydratorAdapter } from '../features/document/adapters/gmail-source-file-hydrator.adapter';
 
 export interface DocumentFeatureWiringOptions {
   manifestProvider: RawManifestProviderPort;
@@ -81,6 +84,8 @@ export interface CreateDocumentServiceFactoryOptions {
   compiledSchemaRegistry: CompiledSchemaRegistryPort;
   configProvider?: AppConfigurationProviderPort | undefined;
   driveClient?: GoogleDriveClient | undefined;
+  gmailClient?: GoogleGmailClient | undefined;
+  pdfProcessor?: PdfProcessor | undefined;
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
   validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
 }
@@ -120,10 +125,40 @@ export function createDocumentServiceFactory(
 
     const driveService = new DriveServiceAdapter(driveClient);
 
+    const hasGmailContext = Boolean(
+      context.hostApp === 'GMAIL' ||
+      context.gmail?.messageId ||
+      context.gmail?.accessToken
+    );
+
+    let sourceFileHydrator: GmailSourceFileHydratorAdapter | undefined;
+    let isFileSourceEmailAttachments: boolean | undefined;
+    if (hasGmailContext) {
+      const auth = context.userOAuthToken ?? context.gmail?.accessToken;
+      const messageId = context.gmail?.messageId;
+      const selectFileSource =
+        (context.formData?.SelectFileSource as string | undefined) ??
+        context.parameters?.SelectFileSource;
+      isFileSourceEmailAttachments =
+        selectFileSource !== undefined
+          ? selectFileSource === 'Email Attachments'
+          : true;
+
+      const gmailClient = options.gmailClient ?? new GoogleGmailClient();
+      sourceFileHydrator = new GmailSourceFileHydratorAdapter(gmailClient, {
+        auth,
+        messageId,
+        isFileSourceEmailAttachments,
+        pdfProcessor: options.pdfProcessor ?? new PdfProcessor(),
+      });
+    }
+
     const driveActivityHandler = new DriveActivityHandler(driveService, {
       configProvider: options.configProvider,
       primaryTargetId,
       sourceFiles,
+      sourceFileHydrator,
+      isFileSourceEmailAttachments,
     });
 
     const activityEngine = new ActivityEngine([driveActivityHandler]);

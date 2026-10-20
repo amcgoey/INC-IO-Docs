@@ -177,6 +177,8 @@ export interface UiProcessFormEvaluatorPort {
 
 export interface UiProcessGmailAttachmentDescriptor {
   id: string;
+  partId?: string;
+  attachmentId?: string;
   title: string;
   mimeType: string;
 }

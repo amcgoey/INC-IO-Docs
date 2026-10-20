@@ -10,19 +10,26 @@ export interface GmailRetryOptions {
 }
 
 export interface GmailOperationOptions {
-  auth?: string | undefined;
+  auth?: OAuth2Client | string | undefined;
   accessToken?: string | undefined;
+}
+
+export interface GmailCacheOptions {
+  ttlMs?: number | undefined;
+  maxEntries?: number | undefined;
+  clock?: (() => number) | undefined;
 }
 
 export interface GoogleGmailClientOptions {
   auth?: OAuth2Client | string | undefined;
   gmail?: gmail_v1.Gmail | undefined;
   retryOptions?: GmailRetryOptions | undefined;
+  cacheOptions?: GmailCacheOptions | undefined;
 }
 
 export const GmailInlineImageDescriptorSchema = Type.Object({
   cid: Type.String({ minLength: 1 }),
-  partId: Type.String(),
+  partId: Type.String({ minLength: 1 }),
   attachmentId: Type.Optional(Type.String()),
   filename: Type.Optional(Type.String()),
   mimeType: Type.String(),
@@ -34,7 +41,7 @@ export interface GmailInlineImageDescriptor extends Static<typeof GmailInlineIma
 }
 
 export const GmailAttachmentDescriptorSchema = Type.Object({
-  partId: Type.String(),
+  partId: Type.String({ minLength: 1 }),
   attachmentId: Type.String({ minLength: 1 }),
   filename: Type.String({ minLength: 1 }),
   mimeType: Type.String(),

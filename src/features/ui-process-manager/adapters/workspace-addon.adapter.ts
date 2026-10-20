@@ -119,11 +119,19 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         );
         effectiveContext = {
           ...effectiveContext,
-          selectedItems: attachments.map((att) => ({
-            id: att.id,
-            title: att.title,
-            mimeType: att.mimeType,
-          })),
+          selectedItems: attachments.map((att) => {
+            const resolvedId =
+              (att.partId && att.partId.trim().length > 0)
+                ? att.partId.trim()
+                : (att.id && att.id.trim().length > 0)
+                  ? att.id.trim()
+                  : (att.attachmentId?.trim() ?? '');
+            return {
+              id: resolvedId,
+              title: att.title,
+              mimeType: att.mimeType,
+            };
+          }),
         };
       } catch (e) {
         console.warn(`Could not fetch attachments for message: ${context.gmail.messageId}`, e);
@@ -288,26 +296,6 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         if (checkedIds.size === 0 && formAttachmentIds.size > 0) {
           checkedIds = formAttachmentIds;
         }
-        if (checkedIds.size === 0 && context.parameters?.previousAttachments) {
-          try {
-            const parsed = JSON.parse(context.parameters.previousAttachments);
-            if (Array.isArray(parsed)) {
-              checkedIds = new Set(parsed.map(String).map((s) => s.trim()));
-            }
-          } catch {
-            // ignore
-          }
-        }
-        if (checkedIds.size === 0 && context.parameters?.attachments) {
-          try {
-            const parsed = JSON.parse(context.parameters.attachments);
-            if (Array.isArray(parsed)) {
-              checkedIds = new Set(parsed.map(String).map((s) => s.trim()));
-            }
-          } catch {
-            // ignore
-          }
-        }
 
         if (formAttachmentIds.size > 0) {
           for (const id of formAttachmentIds) {
@@ -321,31 +309,6 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
             metaMap.set(item.id.trim(), {
               ...(item.title !== undefined ? { name: item.title } : {}),
               ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
-            });
-          }
-        }
-
-        const gmailMsgDetails = (context.gmail as {
-          messageDetails?: {
-            attachments?: Array<{
-              id?: string;
-              attachmentId?: string;
-              filename?: string;
-              name?: string;
-              mimeType?: string;
-            }>;
-          };
-        } | undefined)?.messageDetails;
-
-        for (const att of gmailMsgDetails?.attachments ?? []) {
-          const attId = (att.attachmentId ?? att.id)?.trim();
-          if (attId) {
-            const existing = metaMap.get(attId) ?? {};
-            const resolvedName = att.filename ?? att.name ?? existing.name;
-            const resolvedMimeType = att.mimeType ?? existing.mimeType;
-            metaMap.set(attId, {
-              ...(resolvedName !== undefined ? { name: resolvedName } : {}),
-              ...(resolvedMimeType !== undefined ? { mimeType: resolvedMimeType } : {}),
             });
           }
         }

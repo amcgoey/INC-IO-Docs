@@ -82,6 +82,11 @@ function decodeBase64UrlToUtf8(data: string): string {
   return Buffer.from(data, 'base64url').toString('utf-8');
 }
 
+function decodeBase64ToBytes(data: string): Uint8Array {
+  const normalized = data.replace(/-/g, '+').replace(/_/g, '/');
+  return new Uint8Array(Buffer.from(normalized, 'base64'));
+}
+
 function normalizeContentId(rawCid?: string): string | undefined {
   if (!rawCid) return undefined;
   const trimmed = rawCid.trim();
@@ -112,20 +117,116 @@ function isCidReferencedInHtml(html: string | undefined, normalizedCid: string):
 
 export class GoogleGmailClient {
   private readonly defaultGmail: gmail_v1.Gmail;
+  private readonly defaultAuthToken?: string | undefined;
   private readonly retryOptions: GmailRetryOptions;
+  private readonly cacheTtlMs: number;
+  private readonly cacheMaxEntries: number;
+  private readonly clock: () => number;
+  private readonly cache = new Map<
+    string,
+    { promise: Promise<GmailMessageDetails>; expiresAt: number }
+  >();
 
   constructor(options: GoogleGmailClientOptions = {}) {
     this.retryOptions = options.retryOptions ?? {};
+    this.cacheTtlMs = options.cacheOptions?.ttlMs ?? 60_000;
+    this.cacheMaxEntries = Math.max(1, options.cacheOptions?.maxEntries ?? 100);
+    this.clock = options.cacheOptions?.clock ?? Date.now;
+
     if (options.gmail) {
       this.defaultGmail = options.gmail;
     } else if (typeof options.auth === 'string') {
+      this.defaultAuthToken = options.auth;
       this.defaultGmail = this.createGmailClientFromToken(options.auth);
     } else if (options.auth) {
+      if ('credentials' in options.auth && typeof options.auth.credentials?.access_token === 'string') {
+        this.defaultAuthToken = options.auth.credentials.access_token;
+      }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.defaultGmail = google.gmail({ version: 'v1', auth: options.auth as any });
     } else {
       this.defaultGmail = google.gmail({ version: 'v1' });
     }
+  }
+
+  clearCache(): void {
+    this.cache.clear();
+  }
+
+  getCacheSize(): number {
+    return this.cache.size;
+  }
+
+  private getAuthCacheKey(options?: GmailOperationOptions): string {
+    const token = options?.accessToken ?? options?.auth;
+    if (typeof token === 'string' && token.trim().length > 0) {
+      return token.trim();
+    }
+    if (typeof token === 'object' && token !== null) {
+      const client = token as {
+        credentials?: { access_token?: string | null; id_token?: string | null };
+        apiKey?: string;
+      };
+      const candidate =
+        client.credentials?.access_token ??
+        client.credentials?.id_token ??
+        (client as { apiKey?: string }).apiKey;
+      if (typeof candidate === 'string' && candidate.trim().length > 0) {
+        return candidate.trim();
+      }
+    }
+    if (typeof this.defaultAuthToken === 'string' && this.defaultAuthToken.trim().length > 0) {
+      return this.defaultAuthToken.trim();
+    }
+    return '__default__';
+  }
+
+  async getMessage(
+    messageId: string,
+    options?: GmailOperationOptions
+  ): Promise<GmailMessageDetails> {
+    const key = `${this.getAuthCacheKey(options)}\0${messageId.trim()}`;
+    const now = this.clock();
+
+    const existing = this.cache.get(key);
+    if (existing) {
+      if (now <= existing.expiresAt) {
+        // Cache hit: move to end for LRU order
+        this.cache.delete(key);
+        this.cache.set(key, existing);
+        return existing.promise;
+      }
+      // Expired entry
+      this.cache.delete(key);
+    }
+
+    // Prune expired entries to maintain bounds
+    for (const [k, entry] of this.cache.entries()) {
+      if (now > entry.expiresAt) {
+        this.cache.delete(k);
+      }
+    }
+
+    // Evict oldest (least recently used) entries if at capacity
+    while (this.cache.size >= this.cacheMaxEntries) {
+      const oldestKey = this.cache.keys().next().value;
+      if (!oldestKey) break;
+      this.cache.delete(oldestKey);
+    }
+
+    const expiresAt = now + this.cacheTtlMs;
+    const promise = this.fetchMessageDetails(messageId, options);
+
+    const newEntry = { promise, expiresAt };
+
+    promise.catch(() => {
+      if (this.cache.get(key) === newEntry) {
+        this.cache.delete(key);
+      }
+    });
+
+    this.cache.set(key, newEntry);
+    return promise;
   }
 
   private createGmailClientFromToken(token: string): gmail_v1.Gmail {
@@ -138,7 +239,11 @@ export class GoogleGmailClient {
   private getGmail(options?: GmailOperationOptions): gmail_v1.Gmail {
     const token = options?.accessToken ?? options?.auth;
     if (token) {
-      return this.createGmailClientFromToken(token);
+      if (typeof token === 'string') {
+        return this.createGmailClientFromToken(token);
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return google.gmail({ version: 'v1', auth: token as any });
     }
     return this.defaultGmail;
   }
@@ -183,7 +288,7 @@ export class GoogleGmailClient {
     }
   }
 
-  async getMessage(messageId: string, options?: GmailOperationOptions): Promise<GmailMessageDetails> {
+  private async fetchMessageDetails(messageId: string, options?: GmailOperationOptions): Promise<GmailMessageDetails> {
     const gmail = this.getGmail(options);
     let res: { data: gmail_v1.Schema$Message };
     try {
@@ -229,17 +334,25 @@ export class GoogleGmailClient {
       interface PartContext {
         part: gmail_v1.Schema$MessagePart;
         isInsideMultipartRelated: boolean;
+        fallbackPartId: string;
       }
       const candidateParts: PartContext[] = [];
 
-      const traverse = (parts: gmail_v1.Schema$MessagePart[], isInsideMultipartRelated: boolean) => {
-        for (const part of parts) {
+      const traverse = (
+        parts: gmail_v1.Schema$MessagePart[],
+        isInsideMultipartRelated: boolean,
+        pathPrefix = ''
+      ) => {
+        parts.forEach((part, index) => {
+          const currentPath = pathPrefix ? `${pathPrefix}.${index}` : `${index}`;
+          const fallbackPartId = `part-${currentPath}`;
+
           const mimeType = part.mimeType?.toLowerCase();
           const isRelated = isInsideMultipartRelated || mimeType === 'multipart/related';
 
           if (mimeType === 'message/rfc822') {
-            candidateParts.push({ part, isInsideMultipartRelated: isRelated });
-            continue;
+            candidateParts.push({ part, isInsideMultipartRelated: isRelated, fallbackPartId });
+            return;
           }
 
           const filename = part.filename;
@@ -258,20 +371,24 @@ export class GoogleGmailClient {
           }
 
           if (part.parts && part.parts.length > 0) {
-            traverse(part.parts, isRelated);
+            traverse(part.parts, isRelated, currentPath);
           } else {
-            candidateParts.push({ part, isInsideMultipartRelated: isInsideMultipartRelated });
+            candidateParts.push({ part, isInsideMultipartRelated: isInsideMultipartRelated, fallbackPartId });
           }
-        }
+        });
       };
 
-      traverse(payload.parts, false);
+      traverse(payload.parts, false, '');
 
-      for (const { part, isInsideMultipartRelated } of candidateParts) {
+      for (const { part, isInsideMultipartRelated, fallbackPartId } of candidateParts) {
         const mimeType = part.mimeType?.toLowerCase() ?? '';
         const rawCid = getHeaderValue(part.headers, 'Content-ID');
         const normalizedCid = normalizeContentId(rawCid);
         const isImage = mimeType.startsWith('image/');
+        const resolvedPartId =
+          typeof part.partId === 'string' && part.partId.trim().length > 0
+            ? part.partId.trim()
+            : fallbackPartId;
 
         let isInlineImage = false;
         if (isImage && normalizedCid) {
@@ -283,12 +400,12 @@ export class GoogleGmailClient {
         if (isInlineImage && normalizedCid) {
           let data: Uint8Array | undefined;
           if (part.body?.data) {
-            data = new Uint8Array(Buffer.from(part.body.data, 'base64url'));
+            data = decodeBase64ToBytes(part.body.data);
           }
 
           const inlineImage: GmailInlineImageDescriptor = {
             cid: normalizedCid,
-            partId: part.partId ?? '',
+            partId: resolvedPartId,
             mimeType: part.mimeType ?? 'image/png',
             ...(part.body?.attachmentId ? { attachmentId: part.body.attachmentId } : {}),
             ...(part.filename && part.filename.trim().length > 0 ? { filename: part.filename } : {}),
@@ -298,20 +415,24 @@ export class GoogleGmailClient {
           inlineImages.push(inlineImage);
         } else {
           const filename = part.filename?.trim();
-          const attachmentId = part.body?.attachmentId?.trim();
+          const rawAttachmentId = part.body?.attachmentId?.trim();
+          const hasAttachmentId = Boolean(rawAttachmentId && rawAttachmentId.length > 0);
+          const rawBodyData = part.body?.data?.trim();
+          const hasInlineData = Boolean(rawBodyData && rawBodyData.length > 0);
 
-          if (filename && filename.length > 0 && attachmentId && attachmentId.length > 0) {
+          if (filename && filename.length > 0 && (hasAttachmentId || hasInlineData)) {
+            const attachmentId = hasAttachmentId ? rawAttachmentId! : `inline-${resolvedPartId}`;
             let data: Uint8Array | undefined;
-            if (part.body?.data) {
-              data = new Uint8Array(Buffer.from(part.body.data, 'base64url'));
+            if (hasInlineData && rawBodyData) {
+              data = decodeBase64ToBytes(rawBodyData);
             }
 
             const attachment: GmailAttachmentDescriptor = {
-              partId: part.partId ?? '',
+              partId: resolvedPartId,
               attachmentId,
               filename: part.filename ?? filename,
               mimeType: part.mimeType ?? 'application/octet-stream',
-              size: typeof part.body?.size === 'number' ? part.body.size : 0,
+              size: typeof part.body?.size === 'number' ? part.body.size : (data ? data.length : 0),
               ...(data ? { data } : {}),
             };
             attachments.push(attachment);

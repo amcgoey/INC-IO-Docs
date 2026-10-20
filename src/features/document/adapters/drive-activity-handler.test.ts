@@ -5,6 +5,7 @@ import {
   DriveServiceError,
   FileNotFoundError,
   type DriveServicePort,
+  type SourceFileHydratorPort,
 } from '../ports';
 import type { Activity } from '../domain';
 
@@ -1228,6 +1229,368 @@ describe('DriveActivityHandler', () => {
         expect(result.files?.[0].id).toBe('drive-saved-1');
         expect(result.files?.[1].id).toBe('drive-item-123');
       });
+
+      describe('sourceFileHydrator integration', () => {
+        it('invokes sourceFileHydrator.hydrate in handleMove after findOrCreateFolder and before saving/moving files', async () => {
+          const callOrder: string[] = [];
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+            callOrder.push('findOrCreateFolder');
+            return { id: 'target-folder-id', name: 'Target Folder' };
+          });
+
+          const hydratedBytes = new Uint8Array([5, 6, 7]);
+          const mockHydrator: SourceFileHydratorPort = {
+            hydrate: vi.fn().mockImplementation(async (files) => {
+              callOrder.push('hydrate');
+              return files.map((f: { id: string }) => ({
+                id: f.id,
+                name: 'Hydrated.pdf',
+                mimeType: 'application/pdf',
+                content: hydratedBytes,
+              }));
+            }),
+          };
+
+          (mockDriveService.saveBuffer as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+            callOrder.push('saveBuffer');
+            return {
+              id: 'saved-file-1',
+              name: 'Hydrated.pdf',
+              mimeType: 'application/pdf',
+              webViewLink: 'https://drive.google.com/file/d/saved-file-1/view',
+            };
+          });
+
+          const hydratorHandler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [{ id: 'att-raw-1' }],
+            sourceFileHydrator: mockHydrator,
+          });
+
+          const activity: Activity = {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'root-id',
+              folderName: 'Target Folder',
+            },
+          };
+
+          const result = await hydratorHandler.handle(activity);
+
+          expect(callOrder).toEqual(['findOrCreateFolder', 'hydrate', 'saveBuffer']);
+          expect(mockHydrator.hydrate).toHaveBeenCalledWith([{ id: 'att-raw-1' }]);
+          expect(mockDriveService.saveBuffer).toHaveBeenCalledWith(hydratedBytes, {
+            action: 'create',
+            targetFolderId: 'target-folder-id',
+            name: 'Hydrated.pdf',
+            mimeType: 'application/pdf',
+          });
+          expect(result.success).toBe(true);
+        });
+
+        it('does not invoke hydrate if findOrCreateFolder fails', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockRejectedValue(
+            new FileNotFoundError('Folder not found')
+          );
+
+          const mockHydrator: SourceFileHydratorPort = {
+            hydrate: vi.fn(),
+          };
+
+          const hydratorHandler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [{ id: 'att-raw-1' }],
+            sourceFileHydrator: mockHydrator,
+          });
+
+          const activity: Activity = {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'root-id',
+              folderName: 'NonExistent',
+            },
+          };
+
+          const result = await hydratorHandler.handle(activity);
+
+          expect(result.success).toBe(false);
+          expect(mockHydrator.hydrate).not.toHaveBeenCalled();
+        });
+
+        it('skips hydrate call if all sourceFiles already have binary content', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'target-folder-id',
+            name: 'Target Folder',
+          });
+          (mockDriveService.saveBuffer as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'saved-file-1',
+            name: 'AlreadyBinary.pdf',
+          });
+
+          const mockHydrator: SourceFileHydratorPort = {
+            hydrate: vi.fn(),
+          };
+
+          const binaryContent = new Uint8Array([1, 2]);
+          const hydratorHandler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [{ id: 'already-binary', content: binaryContent, name: 'AlreadyBinary.pdf' }],
+            sourceFileHydrator: mockHydrator,
+          });
+
+          const activity: Activity = {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'root-id',
+              folderName: 'Target Folder',
+            },
+          };
+
+          const result = await hydratorHandler.handle(activity);
+
+          expect(mockHydrator.hydrate).not.toHaveBeenCalled();
+          expect(mockDriveService.saveBuffer).toHaveBeenCalled();
+          expect(result.success).toBe(true);
+        });
+      });
+
+      describe('unhydrated SourceFile guards (Ticket #207)', () => {
+        it('returns error without calling driveService.move when an unhydrated email-pdf reaches the move loop', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'target-folder-id',
+            name: 'Target Folder',
+          });
+
+          const handler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [{ id: 'email-pdf-msg-123' }],
+          });
+
+          const activity: Activity = {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'root-id',
+              folderName: 'Target Folder',
+            },
+          };
+
+          const result = await handler.handle(activity);
+
+          expect(result.success).toBe(false);
+          expect(result.error).toBe('Could not generate the Email PDF. Please try again.');
+          expect(result.files).toEqual([]);
+          expect(mockDriveService.findOrCreateFolder).toHaveBeenCalled();
+          expect(mockDriveService.move).not.toHaveBeenCalled();
+        });
+
+        it('returns error without calling driveService.move when an unhydrated email attachment reaches the move loop with isFileSourceEmailAttachments: true', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'target-folder-id',
+            name: 'Target Folder',
+          });
+
+          const handler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [{ id: 'some-att-id', name: 'Invoice.pdf' }],
+            isFileSourceEmailAttachments: true,
+          });
+
+          const activity: Activity = {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'root-id',
+              folderName: 'Target Folder',
+            },
+          };
+
+          const result = await handler.handle(activity);
+
+          expect(result.success).toBe(false);
+          expect(result.error).toBe(
+            'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+          );
+          expect(result.files).toEqual([]);
+          expect(mockDriveService.findOrCreateFolder).toHaveBeenCalled();
+          expect(mockDriveService.move).not.toHaveBeenCalled();
+        });
+
+        it('returns error without calling driveService.move when an unhydrated email attachment has part- prefix', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'target-folder-id',
+            name: 'Target Folder',
+          });
+
+          const handler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [{ id: 'part-0.1', name: 'Receipt.pdf' }],
+          });
+
+          const activity: Activity = {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'root-id',
+              folderName: 'Target Folder',
+            },
+          };
+
+          const result = await handler.handle(activity);
+
+          expect(result.success).toBe(false);
+          expect(result.error).toBe(
+            'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+          );
+          expect(result.files).toEqual([]);
+          expect(mockDriveService.findOrCreateFolder).toHaveBeenCalled();
+          expect(mockDriveService.move).not.toHaveBeenCalled();
+        });
+
+        it('returns error without calling driveService.move when an unhydrated email attachment has inline- prefix', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'target-folder-id',
+            name: 'Target Folder',
+          });
+
+          const handler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [{ id: 'inline-part-0.2', name: 'small-photo.png' }],
+          });
+
+          const activity: Activity = {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'root-id',
+              folderName: 'Target Folder',
+            },
+          };
+
+          const result = await handler.handle(activity);
+
+          expect(result.success).toBe(false);
+          expect(result.error).toBe(
+            'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+          );
+          expect(result.files).toEqual([]);
+          expect(mockDriveService.findOrCreateFolder).toHaveBeenCalled();
+          expect(mockDriveService.move).not.toHaveBeenCalled();
+        });
+
+        it('preserves created folder and already-saved files when an unhydrated email-pdf follows a successfully saved binary file', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'target-folder-id',
+            name: 'Target Folder',
+          });
+          (mockDriveService.saveBuffer as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'saved-att-1',
+            name: 'Invoice.pdf',
+            mimeType: 'application/pdf',
+            webViewLink: 'https://drive.google.com/file/d/saved-att-1/view',
+          });
+
+          const binaryBytes = new Uint8Array([1, 2, 3]);
+          const handler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [
+              { id: 'att-1', name: 'Invoice.pdf', content: binaryBytes, mimeType: 'application/pdf' },
+              { id: 'email-pdf-msg-123' },
+            ],
+          });
+
+          const activity: Activity = {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'root-id',
+              folderName: 'Target Folder',
+            },
+          };
+
+          const result = await handler.handle(activity);
+
+          expect(result.success).toBe(false);
+          expect(result.error).toBe('Could not generate the Email PDF. Please try again.');
+          expect(result.files).toHaveLength(1);
+          expect(result.files?.[0]).toEqual({
+            id: 'saved-att-1',
+            name: 'Invoice.pdf',
+            parentName: 'Target Folder',
+            mimeType: 'application/pdf',
+            uri: 'https://drive.google.com/file/d/saved-att-1/view',
+          });
+          expect(mockDriveService.saveBuffer).toHaveBeenCalledTimes(1);
+          expect(mockDriveService.move).not.toHaveBeenCalled();
+        });
+
+        it('preserves created folder and already-saved files when an unhydrated email attachment follows a successfully saved binary file', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'target-folder-id',
+            name: 'Target Folder',
+          });
+          (mockDriveService.saveBuffer as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'saved-att-1',
+            name: 'Invoice.pdf',
+            mimeType: 'application/pdf',
+            webViewLink: 'https://drive.google.com/file/d/saved-att-1/view',
+          });
+
+          const binaryBytes = new Uint8Array([1, 2, 3]);
+          const handler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [
+              { id: 'att-1', name: 'Invoice.pdf', content: binaryBytes, mimeType: 'application/pdf' },
+              { id: 'part-2', name: 'SecondAttachment.pdf' },
+            ],
+          });
+
+          const activity: Activity = {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'root-id',
+              folderName: 'Target Folder',
+            },
+          };
+
+          const result = await handler.handle(activity);
+
+          expect(result.success).toBe(false);
+          expect(result.error).toBe(
+            'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+          );
+          expect(result.files).toHaveLength(1);
+          expect(result.files?.[0].id).toBe('saved-att-1');
+          expect(mockDriveService.saveBuffer).toHaveBeenCalledTimes(1);
+          expect(mockDriveService.move).not.toHaveBeenCalled();
+        });
+
+        it('propagates DriveServiceError from sourceFileHydrator.hydrate preserving created folder', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'target-folder-id',
+            name: 'Target Folder',
+          });
+
+          const mockHydrator: SourceFileHydratorPort = {
+            hydrate: vi.fn().mockRejectedValue(
+              new DriveServiceError(
+                'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+              )
+            ),
+          };
+
+          const handler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [{ id: 'att-1' }],
+            sourceFileHydrator: mockHydrator,
+          });
+
+          const activity: Activity = {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'root-id',
+              folderName: 'Target Folder',
+            },
+          };
+
+          const result = await handler.handle(activity);
+
+          expect(result.success).toBe(false);
+          expect(result.error).toBe(
+            'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+          );
+          expect(result.files).toEqual([]);
+          expect(mockDriveService.findOrCreateFolder).toHaveBeenCalled();
+          expect(mockDriveService.move).not.toHaveBeenCalled();
+          expect(mockDriveService.saveBuffer).not.toHaveBeenCalled();
+        });
+      });
+
     });
   });
 });

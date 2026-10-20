@@ -1450,6 +1450,751 @@ describe('GoogleGmailClient', () => {
       expect(result.attachments).toHaveLength(1);
       expect(result.attachments[0]?.filename).toBe('data.bin');
     });
+
+    it('generates globally monotonic hierarchical part-<path> fallback when partId is omitted in deeply nested multipart MIME trees', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-nested-omitted-partid',
+          payload: {
+            mimeType: 'multipart/mixed',
+            parts: [
+              {
+                mimeType: 'multipart/related',
+                parts: [
+                  {
+                    mimeType: 'text/html',
+                    body: {
+                      data: Buffer.from('<p>Hello <img src="cid:nested-img-1"></p>', 'utf-8').toString('base64url'),
+                    },
+                  },
+                  {
+                    mimeType: 'image/png',
+                    headers: [{ name: 'Content-ID', value: '<nested-img-1>' }],
+                    filename: 'nested-photo.png',
+                    body: {
+                      attachmentId: 'att-img-nested',
+                      size: 512,
+                    },
+                  },
+                ],
+              },
+              {
+                mimeType: 'multipart/mixed',
+                parts: [
+                  {
+                    mimeType: 'application/pdf',
+                    filename: 'first-doc.pdf',
+                    body: {
+                      attachmentId: 'att-doc-1',
+                      size: 1024,
+                    },
+                  },
+                  {
+                    mimeType: 'application/pdf',
+                    filename: 'second-doc.pdf',
+                    body: {
+                      attachmentId: 'att-doc-2',
+                      size: 2048,
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      });
+
+      const client = new GoogleGmailClient({
+        gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+      });
+
+      const result = await client.getMessage('msg-nested-omitted-partid');
+
+      expect(result.inlineImages).toHaveLength(1);
+      expect(result.inlineImages[0]?.cid).toBe('nested-img-1');
+      expect(result.inlineImages[0]?.partId).toBe('part-0.1');
+
+      expect(result.attachments).toHaveLength(2);
+      expect(result.attachments[0]?.filename).toBe('first-doc.pdf');
+      expect(result.attachments[0]?.partId).toBe('part-1.0');
+      expect(result.attachments[1]?.filename).toBe('second-doc.pdf');
+      expect(result.attachments[1]?.partId).toBe('part-1.1');
+    });
+
+    it('preserves canonical non-empty partId and only falls back to part-<path> when partId is missing or empty', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-mixed-partid',
+          payload: {
+            mimeType: 'multipart/mixed',
+            parts: [
+              {
+                partId: 'custom-part-explicit',
+                mimeType: 'application/pdf',
+                filename: 'explicit.pdf',
+                body: {
+                  attachmentId: 'att-explicit',
+                  size: 100,
+                },
+              },
+              {
+                partId: '   ',
+                mimeType: 'application/pdf',
+                filename: 'fallback.pdf',
+                body: {
+                  attachmentId: 'att-fallback',
+                  size: 200,
+                },
+              },
+            ],
+          },
+        },
+      });
+
+      const client = new GoogleGmailClient({
+        gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+      });
+
+      const result = await client.getMessage('msg-mixed-partid');
+
+      expect(result.attachments).toHaveLength(2);
+      expect(result.attachments[0]?.filename).toBe('explicit.pdf');
+      expect(result.attachments[0]?.partId).toBe('custom-part-explicit');
+      expect(result.attachments[1]?.filename).toBe('fallback.pdf');
+      expect(result.attachments[1]?.partId).toBe('part-1');
+    });
+    describe('Small Inline Attachments (body.data without attachmentId) (Ticket #205)', () => {
+      it('extracts non-image MIME part with filename and inline body.data (without attachmentId) as attachment with inline-<partId> fallback', async () => {
+        const textContent = 'Small inline configuration payload';
+        const base64urlData = Buffer.from(textContent, 'utf-8').toString('base64url');
+
+        const mockGet = vi.fn().mockResolvedValue({
+          data: {
+            id: 'msg-inline-att-1',
+            payload: {
+              mimeType: 'multipart/mixed',
+              parts: [
+                {
+                  partId: '0',
+                  mimeType: 'text/plain',
+                  body: {
+                    data: Buffer.from('Email body', 'utf-8').toString('base64url'),
+                  },
+                },
+                {
+                  partId: '1',
+                  mimeType: 'application/json',
+                  filename: 'config.json',
+                  body: {
+                    size: 34,
+                    data: base64urlData,
+                    // Note: attachmentId is omitted by Gmail API for small inline payloads
+                  },
+                },
+              ],
+            },
+          },
+        });
+
+        const client = new GoogleGmailClient({
+          gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        });
+
+        const result = await client.getMessage('msg-inline-att-1');
+
+        expect(result.attachments).toHaveLength(1);
+        const att = result.attachments[0]!;
+        expect(att.partId).toBe('1');
+        expect(att.attachmentId).toBe('inline-1');
+        expect(att.filename).toBe('config.json');
+        expect(att.mimeType).toBe('application/json');
+        expect(att.size).toBe(34);
+        expect(att.data).toBeInstanceOf(Uint8Array);
+        expect(Buffer.from(att.data!).toString('utf-8')).toBe(textContent);
+      });
+
+      it('extracts attachment using fallbackPartId for inline-<partId> when partId is missing or empty', async () => {
+        const textContent = 'No partId inline payload';
+        const base64urlData = Buffer.from(textContent, 'utf-8').toString('base64url');
+
+        const mockGet = vi.fn().mockResolvedValue({
+          data: {
+            id: 'msg-inline-att-fallback-partid',
+            payload: {
+              mimeType: 'multipart/mixed',
+              parts: [
+                {
+                  mimeType: 'text/plain',
+                  body: {
+                    data: Buffer.from('Email body', 'utf-8').toString('base64url'),
+                  },
+                },
+                {
+                  // partId omitted
+                  mimeType: 'text/csv',
+                  filename: 'data.csv',
+                  body: {
+                    size: 24,
+                    data: base64urlData,
+                  },
+                },
+              ],
+            },
+          },
+        });
+
+        const client = new GoogleGmailClient({
+          gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        });
+
+        const result = await client.getMessage('msg-inline-att-fallback-partid');
+
+        expect(result.attachments).toHaveLength(1);
+        const att = result.attachments[0]!;
+        expect(att.partId).toBe('part-1');
+        expect(att.attachmentId).toBe('inline-part-1');
+        expect(att.filename).toBe('data.csv');
+        expect(att.mimeType).toBe('text/csv');
+        expect(att.size).toBe(24);
+        expect(att.data).toBeInstanceOf(Uint8Array);
+        expect(Buffer.from(att.data!).toString('utf-8')).toBe(textContent);
+      });
+
+      it('extracts unreferenced image MIME part with filename and inline body.data (without attachmentId) as attachment with inline-<partId>', async () => {
+        const samplePng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+        const mockGet = vi.fn().mockResolvedValue({
+          data: {
+            id: 'msg-unreferenced-image-inline-att',
+            payload: {
+              mimeType: 'multipart/mixed',
+              parts: [
+                {
+                  partId: '0',
+                  mimeType: 'text/plain',
+                  body: {
+                    data: Buffer.from('Here is the image.', 'utf-8').toString('base64url'),
+                  },
+                },
+                {
+                  partId: '1',
+                  mimeType: 'image/png',
+                  filename: 'unreferenced.png',
+                  headers: [
+                    { name: 'Content-ID', value: '<not-in-html>' },
+                  ],
+                  body: {
+                    size: 67,
+                    data: Buffer.from(samplePng, 'base64').toString('base64url'),
+                    // No attachmentId
+                  },
+                },
+              ],
+            },
+          },
+        });
+
+        const client = new GoogleGmailClient({
+          gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        });
+
+        const result = await client.getMessage('msg-unreferenced-image-inline-att');
+
+        expect(result.inlineImages).toHaveLength(0);
+        expect(result.attachments).toHaveLength(1);
+        const att = result.attachments[0]!;
+        expect(att.partId).toBe('1');
+        expect(att.attachmentId).toBe('inline-1');
+        expect(att.filename).toBe('unreferenced.png');
+        expect(att.mimeType).toBe('image/png');
+        expect(att.size).toBe(67);
+        expect(att.data).toBeInstanceOf(Uint8Array);
+        expect(Buffer.from(att.data!).toString('base64')).toBe(samplePng);
+      });
+
+      it('continues to classify CID-referenced multipart/related image with body.data (without attachmentId) as inlineImage, NOT as attachment', async () => {
+        const samplePng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+        const mockGet = vi.fn().mockResolvedValue({
+          data: {
+            id: 'msg-related-inline-image-data-only',
+            payload: {
+              mimeType: 'multipart/mixed',
+              parts: [
+                {
+                  mimeType: 'multipart/related',
+                  parts: [
+                    {
+                      partId: '0.0',
+                      mimeType: 'text/html',
+                      body: {
+                        data: Buffer.from('<p>Hello <img src="cid:sig-logo"></p>', 'utf-8').toString('base64url'),
+                      },
+                    },
+                    {
+                      partId: '0.1',
+                      mimeType: 'image/png',
+                      filename: 'signature.png',
+                      headers: [
+                        { name: 'Content-ID', value: '<sig-logo>' },
+                      ],
+                      body: {
+                        size: 67,
+                        data: Buffer.from(samplePng, 'base64').toString('base64url'),
+                        // No attachmentId
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        });
+
+        const client = new GoogleGmailClient({
+          gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        });
+
+        const result = await client.getMessage('msg-related-inline-image-data-only');
+
+        expect(result.inlineImages).toHaveLength(1);
+        expect(result.inlineImages[0]?.cid).toBe('sig-logo');
+        expect(result.inlineImages[0]?.partId).toBe('0.1');
+        expect(result.inlineImages[0]?.data).toBeInstanceOf(Uint8Array);
+        expect(result.attachments).toHaveLength(0);
+      });
+
+      it('decodes both base64 and base64url data and defaults size to data.length when body.size is undefined', async () => {
+        const rawBytes = new Uint8Array([251, 239, 10, 20]); // contains + / in base64, - _ in base64url
+        const standardBase64 = Buffer.from(rawBytes).toString('base64'); // "++8KFA=="
+
+        const mockGet = vi.fn().mockResolvedValue({
+          data: {
+            id: 'msg-std-b64',
+            payload: {
+              mimeType: 'multipart/mixed',
+              parts: [
+                {
+                  partId: 'part-b64',
+                  mimeType: 'application/octet-stream',
+                  filename: 'binary.dat',
+                  body: {
+                    data: standardBase64,
+                    // size undefined
+                  },
+                },
+              ],
+            },
+          },
+        });
+
+        const client = new GoogleGmailClient({
+          gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        });
+
+        const result = await client.getMessage('msg-std-b64');
+
+        expect(result.attachments).toHaveLength(1);
+        const att = result.attachments[0]!;
+        expect(att.attachmentId).toBe('inline-part-b64');
+        expect(att.size).toBe(rawBytes.length);
+        expect(att.data).toEqual(rawBytes);
+      });
+
+      it('does NOT extract as attachment when MIME part has filename but neither attachmentId nor non-empty body.data', async () => {
+        const mockGet = vi.fn().mockResolvedValue({
+          data: {
+            id: 'msg-empty-part',
+            payload: {
+              mimeType: 'multipart/mixed',
+              parts: [
+                {
+                  partId: '0',
+                  mimeType: 'text/plain',
+                  filename: 'empty-file.txt',
+                  body: {
+                    // No attachmentId and no data (or empty string)
+                    data: '   ',
+                  },
+                },
+              ],
+            },
+          },
+        });
+
+        const client = new GoogleGmailClient({
+          gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        });
+
+        const result = await client.getMessage('msg-empty-part');
+
+        expect(result.attachments).toHaveLength(0);
+      });
+    });
+
+  });
+
+  describe('Bounded getMessage memoization', () => {
+    it('resolves sequential calls with same auth token and message ID within TTL from cache, calling users.messages.get only once', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-memo-1',
+          threadId: 'th-memo-1',
+        },
+      });
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+
+      const client = new GoogleGmailClient();
+
+      const res1 = await client.getMessage('msg-memo-1', { auth: 'token-abc' });
+      const res2 = await client.getMessage('msg-memo-1', { auth: 'token-abc' });
+
+      expect(mockGet).toHaveBeenCalledTimes(1);
+      expect(res1).toEqual(res2);
+      expect(res1.id).toBe('msg-memo-1');
+
+      gmailSpy.mockRestore();
+    });
+
+    it('shares in-flight promise for concurrent getMessage calls with same auth token and message ID', async () => {
+      let resolvePromise: (value: unknown) => void;
+      const deferred = new Promise((resolve) => {
+        resolvePromise = resolve;
+      });
+
+      const mockGet = vi.fn().mockReturnValue(deferred);
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      const promise1 = client.getMessage('msg-concurrent', { auth: 'token-abc' });
+      const promise2 = client.getMessage('msg-concurrent', { auth: 'token-abc' });
+
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      resolvePromise!({
+        data: {
+          id: 'msg-concurrent',
+          threadId: 'th-concurrent',
+        },
+      });
+
+      const [res1, res2] = await Promise.all([promise1, promise2]);
+
+      expect(mockGet).toHaveBeenCalledTimes(1);
+      expect(res1).toBe(res2);
+      expect(res1.id).toBe('msg-concurrent');
+
+      gmailSpy.mockRestore();
+    });
+
+    it('isolates cache entries across distinct auth tokens for the same message ID', async () => {
+      const mockGet = vi.fn().mockImplementation(async () => ({
+        data: {
+          id: 'msg-shared-id',
+          threadId: 'th-shared',
+        },
+      }));
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      await client.getMessage('msg-shared-id', { auth: 'token-user-1' });
+      await client.getMessage('msg-shared-id', { auth: 'token-user-2' });
+
+      expect(mockGet).toHaveBeenCalledTimes(2);
+
+      gmailSpy.mockRestore();
+    });
+
+    it('isolates cache entries across distinct OAuth2Client instances based on access_token', async () => {
+      const mockGet = vi.fn().mockImplementation(async () => ({
+        data: {
+          id: 'msg-shared-oauth-id',
+          threadId: 'th-shared',
+        },
+      }));
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      const oauthClient1 = new OAuth2Client();
+      oauthClient1.setCredentials({ access_token: 'oauth-token-1' });
+
+      const oauthClient2 = new OAuth2Client();
+      oauthClient2.setCredentials({ access_token: 'oauth-token-2' });
+
+      await client.getMessage('msg-shared-oauth-id', { auth: oauthClient1 });
+      await client.getMessage('msg-shared-oauth-id', { auth: oauthClient2 });
+
+      expect(mockGet).toHaveBeenCalledTimes(2);
+
+      // Re-calling with oauthClient1 should use cached entry
+      await client.getMessage('msg-shared-oauth-id', { auth: oauthClient1 });
+      expect(mockGet).toHaveBeenCalledTimes(2);
+
+      gmailSpy.mockRestore();
+    });
+
+    it('isolates cache entries across distinct message IDs for the same auth token', async () => {
+      const mockGet = vi.fn().mockImplementation(async (params: { id: string }) => ({
+        data: {
+          id: params.id,
+          threadId: `${params.id}_thread`,
+        },
+      }));
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      const res1 = await client.getMessage('msg-alpha', { auth: 'token-same' });
+      const res2 = await client.getMessage('msg-beta', { auth: 'token-same' });
+
+      expect(mockGet).toHaveBeenCalledTimes(2);
+      expect(res1.id).toBe('msg-alpha');
+      expect(res2.id).toBe('msg-beta');
+
+      gmailSpy.mockRestore();
+    });
+
+    it('maps auth and accessToken options to the same cache entry', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-mapped',
+          threadId: 'th-mapped',
+        },
+      });
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      await client.getMessage('msg-mapped', { auth: 'token-mapped' });
+      await client.getMessage('msg-mapped', { accessToken: 'token-mapped' });
+
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      gmailSpy.mockRestore();
+    });
+
+    it('re-fetches expired entries after TTL elapses and evicts stale entries', async () => {
+      let currentTime = 1000;
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-ttl',
+          threadId: 'th-ttl',
+        },
+      });
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient({
+        cacheOptions: {
+          ttlMs: 60_000,
+          clock: () => currentTime,
+        },
+      });
+
+      // Call 1 at t=1000 -> API called
+      await client.getMessage('msg-ttl', { auth: 'token-ttl' });
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      // Call 2 at t=60_999 (within 60s TTL window) -> cached
+      currentTime = 60_999;
+      await client.getMessage('msg-ttl', { auth: 'token-ttl' });
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      // Call 3 at t=61_001 (> 60s TTL window) -> expired and re-fetched
+      currentTime = 61_001;
+      await client.getMessage('msg-ttl', { auth: 'token-ttl' });
+      expect(mockGet).toHaveBeenCalledTimes(2);
+
+      gmailSpy.mockRestore();
+    });
+
+    it('evicts rejected getMessage promises so transient failures can be retried', async () => {
+      let failCount = 1;
+      const mockGet = vi.fn().mockImplementation(async () => {
+        if (failCount > 0) {
+          failCount--;
+          const err = new Error('Transient 500 error');
+          (err as { status?: number }).status = 500;
+          throw err;
+        }
+        return {
+          data: {
+            id: 'msg-transient',
+            threadId: 'th-transient',
+          },
+        };
+      });
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      // Attempt 1 fails
+      await expect(client.getMessage('msg-transient', { auth: 'tok' })).rejects.toThrow();
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      // Attempt 2 retries and succeeds because failed promise was evicted
+      const res = await client.getMessage('msg-transient', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(2);
+      expect(res.id).toBe('msg-transient');
+
+      // Attempt 3 within TTL uses cached success
+      await client.getMessage('msg-transient', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(2);
+
+      gmailSpy.mockRestore();
+    });
+
+    it('enforces maximum entry bound via LRU eviction', async () => {
+      const mockGet = vi.fn().mockImplementation(async (params: { id: string }) => ({
+        data: {
+          id: params.id,
+          threadId: `${params.id}_thread`,
+        },
+      }));
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient({
+        cacheOptions: {
+          maxEntries: 2,
+        },
+      });
+
+      // Fetch msg-1 and msg-2 -> cache has [msg-1, msg-2]
+      await client.getMessage('msg-1', { auth: 'tok' });
+      await client.getMessage('msg-2', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(2);
+
+      // Access msg-1 -> refreshes msg-1 as MRU; msg-2 is now LRU
+      await client.getMessage('msg-1', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(2);
+
+      // Fetch msg-3 -> exceeds capacity (maxEntries: 2) -> evicts msg-2
+      await client.getMessage('msg-3', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(3);
+
+      // msg-1 is still in cache -> no API call
+      await client.getMessage('msg-1', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(3);
+
+      // msg-2 was evicted -> triggers fresh API call
+      await client.getMessage('msg-2', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(4);
+
+      gmailSpy.mockRestore();
+    });
+
+    it('normalizes message ID whitespace in cache keys', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-trim',
+          threadId: 'th-trim',
+        },
+      });
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      await client.getMessage('  msg-trim  ', { auth: 'tok' });
+      await client.getMessage('msg-trim', { auth: 'tok' });
+
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      gmailSpy.mockRestore();
+    });
+
+    it('uses constructor auth token in cache key when per-request options are omitted', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-ctor-auth',
+          threadId: 'th-ctor-auth',
+        },
+      });
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient({ auth: 'ya29.ctor-token' });
+
+      await client.getMessage('msg-ctor-auth');
+      await client.getMessage('msg-ctor-auth');
+
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      gmailSpy.mockRestore();
+    });
+
+    it('clears cache on clearCache() and reports cache size via getCacheSize()', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-clear',
+          threadId: 'th-clear',
+        },
+      });
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      expect(client.getCacheSize()).toBe(0);
+      await client.getMessage('msg-clear', { auth: 'tok' });
+      expect(client.getCacheSize()).toBe(1);
+
+      client.clearCache();
+      expect(client.getCacheSize()).toBe(0);
+
+      await client.getMessage('msg-clear', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(2);
+      expect(client.getCacheSize()).toBe(1);
+
+      gmailSpy.mockRestore();
+    });
   });
 });
 

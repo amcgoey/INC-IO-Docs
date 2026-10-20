@@ -10,6 +10,7 @@ import {
   SourceFileSchema,
   type SourceFile,
   OPTION_NOT_FOUND_MSG,
+  type SourceFileHydratorPort,
   VALIDATION_TIMEOUT_MSG,
   type DocumentDynamicValidationPort,
   type DynamicValidationQuery,
@@ -202,6 +203,18 @@ describe('Document Ports & DTOs', () => {
       name: 'invoice.pdf',
     };
     expect(Value.Check(SourceFileSchema, invalidSourceFile)).toBe(false);
+  });
+
+  it('SourceFileHydratorPort satisfies interface contract', async () => {
+    const hydrator: SourceFileHydratorPort = {
+      hydrate: async (files: SourceFile[]) => {
+        return files.map((f) => ({ ...f, content: new Uint8Array([1, 2, 3]) }));
+      },
+    };
+
+    const result = await hydrator.hydrate([{ id: 'file-1', name: 'test.pdf' }]);
+    expect(result).toHaveLength(1);
+    expect(result[0].content).toEqual(new Uint8Array([1, 2, 3]));
   });
 });
 
