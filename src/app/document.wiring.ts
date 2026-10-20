@@ -132,13 +132,14 @@ export function createDocumentServiceFactory(
     );
 
     let sourceFileHydrator: GmailSourceFileHydratorAdapter | undefined;
+    let isFileSourceEmailAttachments: boolean | undefined;
     if (hasGmailContext) {
       const auth = context.userOAuthToken ?? context.gmail?.accessToken;
       const messageId = context.gmail?.messageId;
       const selectFileSource =
         (context.formData?.SelectFileSource as string | undefined) ??
         context.parameters?.SelectFileSource;
-      const isFileSourceEmailAttachments =
+      isFileSourceEmailAttachments =
         selectFileSource !== undefined
           ? selectFileSource === 'Email Attachments'
           : true;
@@ -157,6 +158,7 @@ export function createDocumentServiceFactory(
       primaryTargetId,
       sourceFiles,
       sourceFileHydrator,
+      isFileSourceEmailAttachments,
     });
 
     const activityEngine = new ActivityEngine([driveActivityHandler]);

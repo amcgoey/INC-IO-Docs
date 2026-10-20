@@ -2591,6 +2591,145 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
       expect(nock.isDone()).toBe(true);
     });
+
+    it('aborts with "Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again." when getAttachment fails, preserving target folder and form inputs', async () => {
+      mockFolderResolution('Meeting Notes');
+
+      mockGmailClient.getAttachment = vi.fn().mockRejectedValue(new Error('Gmail API attachment download failed'));
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-with-live-attachments',
+            threadId: 'th-test-live',
+            accessToken: 'ya29.live-token',
+          },
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+              SelectAttachments: { stringInputs: { value: ['att-part-1'] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+      const updateCard = body.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+
+      const errorSection = updateCard!.sections.find((s) =>
+        s.widgets?.some((w) =>
+          w.textParagraph?.text?.includes(
+            'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+          )
+        )
+      );
+      expect(errorSection).toBeDefined();
+
+      // Form inputs preserved
+      const infoSection = updateCard!.sections.find((s) => s.header === 'Document Data');
+      expect(infoSection).toBeDefined();
+      const contactWidget = infoSection!.widgets.find(
+        (w) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-project')
+      );
+      expect(contactWidget?.textInput?.value).toBe('Acme Corp');
+
+      // Verify destination folder creation occurred via nock
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('aborts with "Could not generate the Email PDF. Please try again." when generateEmailPdf fails, preserving target folder and form inputs', async () => {
+      mockFolderResolution('Meeting Notes');
+
+      const pdfProcessorSpy = vi
+        .spyOn(PdfProcessor.prototype, 'generateEmailPdf')
+        .mockRejectedValueOnce(new Error('PDF generation failure'));
+
+      try {
+        const response = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/action',
+          headers: {
+            authorization: 'Bearer valid-jwt-token',
+          },
+          payload: {
+            authorizationEventObject: {
+              userOAuthToken: 'ya29.valid-oauth-token',
+            },
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-with-live-attachments',
+              threadId: 'th-test-live',
+              accessToken: 'ya29.live-token',
+            },
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: {
+                action: 'processDocument',
+              },
+              formInputs: {
+                SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+                [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+                [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+                SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+                SaveEmailToPdf: { stringInputs: { value: ['true'] } },
+                [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+                [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+                [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+                [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+              },
+            },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+        const updateCard = body.action?.navigations?.[0]?.updateCard;
+        expect(updateCard).toBeDefined();
+
+        const errorSection = updateCard!.sections.find((s) =>
+          s.widgets?.some((w) =>
+            w.textParagraph?.text?.includes('Could not generate the Email PDF. Please try again.')
+          )
+        );
+        expect(errorSection).toBeDefined();
+
+        // Form inputs preserved
+        const infoSection = updateCard!.sections.find((s) => s.header === 'Document Data');
+        expect(infoSection).toBeDefined();
+        const contactWidget = infoSection!.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-project')
+        );
+        expect(contactWidget?.textInput?.value).toBe('Acme Corp');
+
+        // Target folder created in Drive
+        expect(nock.isDone()).toBe(true);
+      } finally {
+        pdfProcessorSpy.mockRestore();
+      }
+    });
+
   });
   describe('Small Inline Gmail Attachments Filing (Ticket #205)', () => {
     const rootSharedDriveId = 'shared-drive-proj-root';
