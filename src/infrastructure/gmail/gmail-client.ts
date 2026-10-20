@@ -82,6 +82,11 @@ function decodeBase64UrlToUtf8(data: string): string {
   return Buffer.from(data, 'base64url').toString('utf-8');
 }
 
+function decodeBase64ToBytes(data: string): Uint8Array {
+  const normalized = data.replace(/-/g, '+').replace(/_/g, '/');
+  return new Uint8Array(Buffer.from(normalized, 'base64'));
+}
+
 function normalizeContentId(rawCid?: string): string | undefined {
   if (!rawCid) return undefined;
   const trimmed = rawCid.trim();
@@ -295,7 +300,7 @@ export class GoogleGmailClient {
         if (isInlineImage && normalizedCid) {
           let data: Uint8Array | undefined;
           if (part.body?.data) {
-            data = new Uint8Array(Buffer.from(part.body.data, 'base64url'));
+            data = decodeBase64ToBytes(part.body.data);
           }
 
           const inlineImage: GmailInlineImageDescriptor = {
@@ -310,12 +315,16 @@ export class GoogleGmailClient {
           inlineImages.push(inlineImage);
         } else {
           const filename = part.filename?.trim();
-          const attachmentId = part.body?.attachmentId?.trim();
+          const rawAttachmentId = part.body?.attachmentId?.trim();
+          const hasAttachmentId = Boolean(rawAttachmentId && rawAttachmentId.length > 0);
+          const rawBodyData = part.body?.data?.trim();
+          const hasInlineData = Boolean(rawBodyData && rawBodyData.length > 0);
 
-          if (filename && filename.length > 0 && attachmentId && attachmentId.length > 0) {
+          if (filename && filename.length > 0 && (hasAttachmentId || hasInlineData)) {
+            const attachmentId = hasAttachmentId ? rawAttachmentId! : `inline-${resolvedPartId}`;
             let data: Uint8Array | undefined;
-            if (part.body?.data) {
-              data = new Uint8Array(Buffer.from(part.body.data, 'base64url'));
+            if (hasInlineData && rawBodyData) {
+              data = decodeBase64ToBytes(rawBodyData);
             }
 
             const attachment: GmailAttachmentDescriptor = {
@@ -323,7 +332,7 @@ export class GoogleGmailClient {
               attachmentId,
               filename: part.filename ?? filename,
               mimeType: part.mimeType ?? 'application/octet-stream',
-              size: typeof part.body?.size === 'number' ? part.body.size : 0,
+              size: typeof part.body?.size === 'number' ? part.body.size : (data ? data.length : 0),
               ...(data ? { data } : {}),
             };
             attachments.push(attachment);
