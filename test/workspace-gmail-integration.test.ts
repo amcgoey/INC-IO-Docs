@@ -2270,6 +2270,206 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       expect(nock.isDone()).toBe(true);
     });
   });
+  describe('Small Inline Gmail Attachments Filing (Ticket #205)', () => {
+    const rootSharedDriveId = 'shared-drive-proj-root';
+    const adminFolderId = 'folder-admin-1';
+    const commFolderId = 'folder-comm-1';
+    const contactFolderId = 'folder-acme-corp';
+    const newSubfolderId = 'folder-meeting-subfolder';
+
+    function mockFolderResolution() {
+      mockDynamicValidationProject({
+        sharedDriveId: rootSharedDriveId,
+        adminFolderId,
+        commFolderId,
+        contactFolderId,
+        contactName: 'Acme Corp',
+      });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(rootSharedDriveId) && q.q.includes("name = '1 Admin'"))
+        .reply(200, {
+          files: [{ id: adminFolderId, name: '1 Admin', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(adminFolderId) && q.q.includes("name = 'Communication'"))
+        .reply(200, {
+          files: [{ id: commFolderId, name: 'Communication', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(commFolderId) && q.q.includes("name = 'Acme Corp'"))
+        .reply(200, {
+          files: [{ id: contactFolderId, name: 'Acme Corp', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(contactFolderId) && q.q.includes("name = '260920 IN - Meeting Notes'"))
+        .reply(200, { files: [] });
+
+      nock('https://www.googleapis.com')
+        .post('/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: newSubfolderId,
+          name: '260920 IN - Meeting Notes',
+          parents: [contactFolderId],
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+    }
+
+    it('displays small inline attachment in File Selection checkboxes on POST /workspace/gmail-contextual', async () => {
+      const messageId = 'msg-with-small-inline-attachment';
+      const inlineData = new Uint8Array([10, 20, 30, 40]);
+
+      mockGmailClient.getMessage = vi.fn().mockResolvedValue({
+        id: messageId,
+        messageId,
+        subject: 'Inline Attachment Email',
+        attachments: [
+          {
+            partId: 'part-inline-0.1',
+            attachmentId: 'inline-part-inline-0.1',
+            filename: 'inline-notes.txt',
+            mimeType: 'text/plain',
+            size: 4,
+            data: inlineData,
+          },
+        ],
+        inlineImages: [],
+      });
+
+      const res = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/gmail-contextual',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId,
+            threadId: 'th-test-inline',
+            accessToken: 'ya29.live-token',
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+      const pushCard = body.action!.navigations![0].pushCard!;
+      const fileSection = pushCard.sections.find((s) => s.header === 'File Selection');
+      expect(fileSection).toBeDefined();
+
+      const attachmentCheckboxWidget = fileSection?.widgets.find(
+        (w) => w.selectionInput?.name === 'SelectAttachments'
+      );
+      expect(attachmentCheckboxWidget).toBeDefined();
+      expect(attachmentCheckboxWidget?.selectionInput?.items).toContainEqual({
+        text: 'inline-notes.txt',
+        value: 'part-inline-0.1',
+        selected: true,
+      });
+    });
+
+    it('files checked small inline attachment into Drive destination without calling getAttachment', async () => {
+      mockFolderResolution();
+
+      const messageId = 'msg-with-small-inline-attachment';
+      const inlineData = new Uint8Array([10, 20, 30, 40]);
+
+      mockGmailClient.getMessage = vi.fn().mockResolvedValue({
+        id: messageId,
+        messageId,
+        subject: 'Inline Attachment Email',
+        attachments: [
+          {
+            partId: 'part-inline-0.1',
+            attachmentId: 'inline-part-inline-0.1',
+            filename: 'inline-notes.txt',
+            mimeType: 'text/plain',
+            size: 4,
+            data: inlineData,
+          },
+        ],
+        inlineImages: [],
+      });
+
+      mockGmailClient.getAttachment = vi.fn();
+
+      let uploadedPayload: Buffer | undefined;
+      nock('https://www.googleapis.com')
+        .post('/upload/drive/v3/files')
+        .query(true)
+        .reply(200, (uri, requestBody) => {
+          uploadedPayload = Buffer.isBuffer(requestBody)
+            ? requestBody
+            : Buffer.from(requestBody as string, 'binary');
+          return {
+            id: 'drive-saved-inline-note',
+            name: 'inline-notes.txt',
+            mimeType: 'text/plain',
+            parents: [newSubfolderId],
+            webViewLink: 'https://drive.google.com/file/d/drive-saved-inline-note/view',
+          };
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId,
+            threadId: 'th-test-inline',
+            accessToken: 'ya29.live-token',
+          },
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+              SelectAttachments: { stringInputs: { value: ['part-inline-0.1'] } },
+              SaveEmailToPdf: { stringInputs: { value: ['false'] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+      expect(body.action?.notification?.text).toBe('Document processed successfully');
+
+      // Crucial assertion: getAttachment must NOT have been called!
+      expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
+
+      // Check uploaded bytes
+      expect(uploadedPayload).toBeDefined();
+      expect(uploadedPayload!.includes(Buffer.from(inlineData))).toBe(true);
+
+      expect(nock.isDone()).toBe(true);
+    });
+  });
 
   describe('Bounded getMessage memoization across request lifecycle (Ticket #208)', () => {
     const rootSharedDriveId = 'shared-drive-proj-root';

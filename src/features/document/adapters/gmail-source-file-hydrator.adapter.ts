@@ -192,7 +192,13 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
 
         if (matchedAtt) {
           let content = matchedAtt.data;
-          if (!content) {
+          const isInline =
+            matchedAtt.data instanceof Uint8Array ||
+            matchedAtt.attachmentId?.startsWith('inline-') ||
+            matchedAtt.partId?.startsWith('inline-') ||
+            fileId.startsWith('inline-');
+
+          if (!content && !isInline) {
             content = await this.gmailClient.getAttachment(messageId, matchedAtt.attachmentId, {
               auth: token,
             });
@@ -202,7 +208,7 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
             id: file.id,
             name: file.name || matchedAtt.filename,
             mimeType: file.mimeType || matchedAtt.mimeType,
-            content,
+            ...(content !== undefined ? { content } : {}),
           });
           continue;
         }
