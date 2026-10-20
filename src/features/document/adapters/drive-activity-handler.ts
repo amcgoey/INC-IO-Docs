@@ -20,6 +20,7 @@ export interface DriveActivityHandlerOptions {
   primaryTargetId?: string | undefined;
   sourceFiles?: SourceFile[] | undefined;
   sourceFileHydrator?: SourceFileHydratorPort | undefined;
+  isFileSourceEmailAttachments?: boolean | undefined;
 }
 
 export function parsePathSegments(path: string): string[] {
@@ -73,6 +74,7 @@ export class DriveActivityHandler implements ActivityHandler {
   private readonly options: DriveActivityHandlerOptions;
   private readonly sourceFiles?: SourceFile[] | undefined;
   private readonly sourceFileHydrator?: SourceFileHydratorPort | undefined;
+  private readonly isFileSourceEmailAttachments?: boolean | undefined;
 
   constructor(
     private readonly driveService: DriveServicePort,
@@ -87,6 +89,7 @@ export class DriveActivityHandler implements ActivityHandler {
       ...(validatedTargetId !== undefined ? { primaryTargetId: validatedTargetId } : {}),
     };
     this.sourceFileHydrator = options?.sourceFileHydrator;
+    this.isFileSourceEmailAttachments = options?.isFileSourceEmailAttachments;
     if (options?.sourceFiles !== undefined) {
       this.sourceFiles = options.sourceFiles;
     } else if (validatedTargetId) {
@@ -94,6 +97,55 @@ export class DriveActivityHandler implements ActivityHandler {
     } else {
       this.sourceFiles = undefined;
     }
+  }
+
+  private isEmailPdf(sourceFile: SourceFile): boolean {
+    return (
+      sourceFile.id.startsWith('email-pdf-') &&
+      !(sourceFile.content instanceof Uint8Array)
+    );
+  }
+
+  private isUnhydratedEmailAttachment(
+    sourceFile: SourceFile,
+    payload?: Record<string, unknown>
+  ): boolean {
+    if (sourceFile.content instanceof Uint8Array) {
+      return false;
+    }
+    if (this.isEmailPdf(sourceFile)) {
+      return false;
+    }
+    let isFileSourceEmailAttachments = this.options.isFileSourceEmailAttachments;
+    if (
+      isFileSourceEmailAttachments === undefined &&
+      this.sourceFileHydrator &&
+      'isFileSourceEmailAttachments' in this.sourceFileHydrator
+    ) {
+      isFileSourceEmailAttachments = (
+        this.sourceFileHydrator as { isFileSourceEmailAttachments?: boolean }
+      ).isFileSourceEmailAttachments;
+    }
+    if (isFileSourceEmailAttachments === undefined) {
+      if (payload?.SelectFileSource !== undefined) {
+        isFileSourceEmailAttachments = payload.SelectFileSource === 'Email Attachments';
+      } else if (payload?.fileSource !== undefined) {
+        isFileSourceEmailAttachments = payload.fileSource === 'Email Attachments';
+      } else if (payload?.isFileSourceEmailAttachments !== undefined) {
+        isFileSourceEmailAttachments = Boolean(payload.isFileSourceEmailAttachments);
+      }
+    }
+
+    if (isFileSourceEmailAttachments === true) {
+      return true;
+    }
+    if (isFileSourceEmailAttachments === false) {
+      return false;
+    }
+    if (sourceFile.id.startsWith('part-') || sourceFile.id.startsWith('att-')) {
+      return true;
+    }
+    return false;
   }
 
   canHandle(activity: Activity): boolean {
@@ -354,6 +406,13 @@ export class DriveActivityHandler implements ActivityHandler {
       throw new Error(
         'DriveActivityHandler: Cannot create destination folder for binary file filing because rootStorageId is missing or unresolved in activity payload'
       );
+    } else if (
+      this.isEmailPdf(targetSourceFiles[0]) ||
+      this.isUnhydratedEmailAttachment(targetSourceFiles[0], payload)
+    ) {
+      throw new Error(
+        'DriveActivityHandler: Cannot create destination folder for unhydrated email item because rootStorageId is missing or unresolved in activity payload'
+      );
     } else {
       startingId =
         (await this.driveService.getFile(targetSourceFiles[0].id)).parents?.[0] ??
@@ -381,14 +440,26 @@ export class DriveActivityHandler implements ActivityHandler {
       currentParentId = leafFolder.id;
     }
 
+    const movedFiles: FileLocator[] = [];
+
     if (
       this.sourceFileHydrator &&
       targetSourceFiles.some((f) => !(f.content instanceof Uint8Array))
     ) {
-      targetSourceFiles = await this.sourceFileHydrator.hydrate(targetSourceFiles);
+      try {
+        targetSourceFiles = await this.sourceFileHydrator.hydrate(targetSourceFiles);
+      } catch (error) {
+        if (error instanceof DriveServiceError) {
+          return {
+            success: false,
+            error: error.message,
+            files: movedFiles,
+          };
+        }
+        throw error;
+      }
     }
 
-    const movedFiles: FileLocator[] = [];
     for (const sourceFile of targetSourceFiles) {
       try {
         if (sourceFile.content instanceof Uint8Array) {
@@ -404,6 +475,22 @@ export class DriveActivityHandler implements ActivityHandler {
           });
           movedFiles.push(fileLocator);
         } else {
+          if (this.isEmailPdf(sourceFile)) {
+            return {
+              success: false,
+              error: 'Could not generate the Email PDF. Please try again.',
+              files: movedFiles,
+            };
+          }
+
+          if (this.isUnhydratedEmailAttachment(sourceFile, payload)) {
+            return {
+              success: false,
+              error: 'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.',
+              files: movedFiles,
+            };
+          }
+
           const movedFile = await this.driveService.move(sourceFile.id, leafFolder.id);
 
           let uri = movedFile.webViewLink;

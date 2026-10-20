@@ -1,4 +1,4 @@
-import type { SourceFile, SourceFileHydratorPort } from '../ports';
+import { DriveServiceError, type SourceFile, type SourceFileHydratorPort } from '../ports';
 import { GoogleGmailClient } from '../../../infrastructure/gmail/gmail-client';
 import { PdfProcessor } from '../../../infrastructure/pdf/pdf-processor';
 import type { EmailPdfInlineImage, EmailPdfRenderInput } from '../../../infrastructure/pdf/types';
@@ -15,9 +15,9 @@ export interface GmailSourceFileHydratorAdapterOptions {
 export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
   private readonly gmailClient: GoogleGmailClient;
   private readonly pdfProcessor: PdfProcessor;
-  private readonly auth?: string | undefined;
-  private readonly messageId?: string | undefined;
-  private readonly isFileSourceEmailAttachments?: boolean | undefined;
+  public readonly auth?: string | undefined;
+  public readonly messageId?: string | undefined;
+  public readonly isFileSourceEmailAttachments?: boolean | undefined;
 
   constructor(
     clientOrOptions: GoogleGmailClient | GmailSourceFileHydratorAdapterOptions,
@@ -46,13 +46,6 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
       return [];
     }
 
-    const messageId =
-      this.messageId ??
-      sourceFiles.find((f) => f.id.startsWith('email-pdf-'))?.id.slice('email-pdf-'.length);
-    if (!messageId) {
-      return [...sourceFiles];
-    }
-
     const candidates = sourceFiles.filter(
       (file) => !(file.content instanceof Uint8Array)
     );
@@ -70,43 +63,99 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
       return [...sourceFiles];
     }
 
-    const token = this.auth;
+    const messageId =
+      this.messageId ??
+      sourceFiles.find((f) => f.id.startsWith('email-pdf-'))?.id.slice('email-pdf-'.length);
 
-    let messageDetails;
-    try {
-      messageDetails = await this.gmailClient.getMessage(messageId, { auth: token });
-    } catch {
+    if (!messageId) {
+      if (this.isFileSourceEmailAttachments === true && hasAttachmentCandidates) {
+        throw new DriveServiceError(
+          'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+        );
+      }
+      if (hasEmailPdf) {
+        throw new DriveServiceError('Could not generate the Email PDF. Please try again.');
+      }
       return [...sourceFiles];
     }
 
-    const attachments = messageDetails.attachments ?? [];
+    const token = this.auth;
 
-    const partIdMap = new Map<string, (typeof attachments)[number]>();
-    const attachmentIdMap = new Map<string, (typeof attachments)[number]>();
-    const filenameCounts = new Map<string, number>();
+    let primaryMessageDetails:
+      | Awaited<ReturnType<GoogleGmailClient['getMessage']>>
+      | undefined;
 
-    for (const att of attachments) {
-      if (att.partId && att.partId.trim().length > 0) {
-        partIdMap.set(att.partId.trim(), att);
+    const fetchMessage = async (msgId: string, forAttachment: boolean) => {
+      if (msgId === messageId && primaryMessageDetails) {
+        return primaryMessageDetails;
       }
-      if (att.attachmentId && att.attachmentId.trim().length > 0) {
-        attachmentIdMap.set(att.attachmentId.trim(), att);
-      }
-      const rawName = att.filename?.trim();
-      if (rawName) {
-        filenameCounts.set(rawName, (filenameCounts.get(rawName) ?? 0) + 1);
-      }
-    }
-
-    const uniqueFilenameMap = new Map<string, (typeof attachments)[number]>();
-    if (canHydrateAttachments) {
-      for (const att of attachments) {
-        const rawName = att.filename?.trim();
-        if (rawName && filenameCounts.get(rawName) === 1) {
-          uniqueFilenameMap.set(rawName, att);
+      try {
+        const details = await this.gmailClient.getMessage(msgId, { auth: token });
+        if (!details) {
+          throw new Error('Message details not found');
+        }
+        if (msgId === messageId) {
+          primaryMessageDetails = details;
+        }
+        return details;
+      } catch (err) {
+        if (err instanceof DriveServiceError) {
+          throw err;
+        }
+        if (forAttachment) {
+          throw new DriveServiceError(
+            'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+          );
+        } else {
+          throw new DriveServiceError('Could not generate the Email PDF. Please try again.');
         }
       }
-    }
+    };
+
+    let attachmentMapsPromise:
+      | Promise<{
+          partIdMap: Map<string, NonNullable<Awaited<ReturnType<GoogleGmailClient['getMessage']>>['attachments']>[number]>;
+          attachmentIdMap: Map<string, NonNullable<Awaited<ReturnType<GoogleGmailClient['getMessage']>>['attachments']>[number]>;
+          uniqueFilenameMap: Map<string, NonNullable<Awaited<ReturnType<GoogleGmailClient['getMessage']>>['attachments']>[number]>;
+        }>
+      | undefined;
+
+    const getAttachmentMaps = async () => {
+      if (!attachmentMapsPromise) {
+        attachmentMapsPromise = (async () => {
+          const details = await fetchMessage(messageId, true);
+          const attachments = details.attachments ?? [];
+
+          const partIdMap = new Map<string, (typeof attachments)[number]>();
+          const attachmentIdMap = new Map<string, (typeof attachments)[number]>();
+          const filenameCounts = new Map<string, number>();
+
+          for (const att of attachments) {
+            if (att.partId && att.partId.trim().length > 0) {
+              partIdMap.set(att.partId.trim(), att);
+            }
+            if (att.attachmentId && att.attachmentId.trim().length > 0) {
+              attachmentIdMap.set(att.attachmentId.trim(), att);
+            }
+            const rawName = att.filename?.trim();
+            if (rawName) {
+              filenameCounts.set(rawName, (filenameCounts.get(rawName) ?? 0) + 1);
+            }
+          }
+
+          const uniqueFilenameMap = new Map<string, (typeof attachments)[number]>();
+          for (const att of attachments) {
+            const rawName = att.filename?.trim();
+            if (rawName && filenameCounts.get(rawName) === 1) {
+              uniqueFilenameMap.set(rawName, att);
+            }
+          }
+
+          return { partIdMap, attachmentIdMap, uniqueFilenameMap };
+        })();
+      }
+      return attachmentMapsPromise;
+    };
 
     const hydrated: SourceFile[] = [];
     for (const file of sourceFiles) {
@@ -117,18 +166,19 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
 
       if (file.id.startsWith('email-pdf-')) {
         const emailMessageId = file.id.slice('email-pdf-'.length) || messageId;
-        const msgDetails =
-          emailMessageId === messageId
-            ? messageDetails
-            : await this.gmailClient.getMessage(emailMessageId, { auth: token });
+        const msgDetails = await fetchMessage(emailMessageId, false);
 
         const resolvedInlineImages: EmailPdfInlineImage[] = [];
         for (const img of msgDetails.inlineImages ?? []) {
           let data = img.data;
           if (!data && img.attachmentId) {
-            data = await this.gmailClient.getAttachment(emailMessageId, img.attachmentId, {
-              auth: token,
-            });
+            try {
+              data = await this.gmailClient.getAttachment(emailMessageId, img.attachmentId, {
+                auth: token,
+              });
+            } catch {
+              throw new DriveServiceError('Could not generate the Email PDF. Please try again.');
+            }
           }
           if (data) {
             resolvedInlineImages.push({
@@ -158,7 +208,17 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
           ...(resolvedInlineImages.length > 0 ? { inlineImages: resolvedInlineImages } : {}),
         };
 
-        const pdfBytes = await this.pdfProcessor.generateEmailPdf(renderInput);
+        let pdfBytes: Uint8Array;
+        try {
+          pdfBytes = await this.pdfProcessor.generateEmailPdf(renderInput);
+        } catch {
+          throw new DriveServiceError('Could not generate the Email PDF. Please try again.');
+        }
+
+        if (!(pdfBytes instanceof Uint8Array)) {
+          throw new DriveServiceError('Could not generate the Email PDF. Please try again.');
+        }
+
         const pdfFileName =
           file.name || formatEmailPdfFileName(msgDetails.subject, emailMessageId);
 
@@ -174,6 +234,8 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
       if (canHydrateAttachments) {
         const fileId = file.id.trim();
         const fileName = file.name?.trim();
+
+        const { partIdMap, attachmentIdMap, uniqueFilenameMap } = await getAttachmentMaps();
 
         let matchedAtt = partIdMap.get(fileId);
 
@@ -193,9 +255,26 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
         if (matchedAtt) {
           let content = matchedAtt.data;
           if (!content) {
-            content = await this.gmailClient.getAttachment(messageId, matchedAtt.attachmentId, {
-              auth: token,
-            });
+            if (!matchedAtt.attachmentId) {
+              throw new DriveServiceError(
+                'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+              );
+            }
+            try {
+              content = await this.gmailClient.getAttachment(messageId, matchedAtt.attachmentId, {
+                auth: token,
+              });
+            } catch {
+              throw new DriveServiceError(
+                'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+              );
+            }
+          }
+
+          if (!(content instanceof Uint8Array)) {
+            throw new DriveServiceError(
+              'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+            );
           }
 
           hydrated.push({
@@ -205,6 +284,12 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
             content,
           });
           continue;
+        }
+
+        if (this.isFileSourceEmailAttachments === true) {
+          throw new DriveServiceError(
+            'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+          );
         }
       }
 

@@ -96,7 +96,6 @@ describe('GmailSourceFileHydratorAdapter', () => {
     });
     const files: SourceFile[] = [
       { id: 'att-1' },
-      { id: 'drive-folder-456', name: 'Existing Folder' }, // not in attachments
     ];
 
     const result = await hydrator.hydrate(files);
@@ -108,6 +107,42 @@ describe('GmailSourceFileHydratorAdapter', () => {
     expect(mockGmailClient.getAttachment).toHaveBeenCalledWith('msg-123', 'att-1', {
       auth: 'ya29.user-token',
     });
+
+    expect(result).toEqual([
+      {
+        id: 'att-1',
+        name: 'Invoice.pdf',
+        mimeType: 'application/pdf',
+        content: attachmentBytes,
+      },
+    ]);
+  });
+
+  it('leaves non-attachment files unchanged when isFileSourceEmailAttachments is undefined', async () => {
+    const attachmentBytes = new Uint8Array([10, 20]);
+    const mockGmailClient = {
+      getMessage: vi.fn().mockResolvedValue({
+        messageId: 'msg-123',
+        attachments: [
+          {
+            attachmentId: 'att-1',
+            filename: 'Invoice.pdf',
+            mimeType: 'application/pdf',
+          },
+        ],
+      }),
+      getAttachment: vi.fn().mockResolvedValue(attachmentBytes),
+    } as unknown as GoogleGmailClient;
+
+    const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+      messageId: 'msg-123',
+    });
+    const files: SourceFile[] = [
+      { id: 'att-1' },
+      { id: 'drive-folder-456', name: 'Existing Folder' },
+    ];
+
+    const result = await hydrator.hydrate(files);
 
     expect(result).toEqual([
       {
@@ -558,11 +593,12 @@ describe('GmailSourceFileHydratorAdapter', () => {
       // An unidentifiable file with id 'unknown' and non-unique name 'photo.jpg'
       const files: SourceFile[] = [{ id: 'unknown', name: 'photo.jpg' }];
 
-      const result = await hydrator.hydrate(files);
+      await expect(hydrator.hydrate(files)).rejects.toThrow(
+        'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+      );
 
       // Should not guess or download an arbitrary attachment
       expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
-      expect(result[0].content).toBeUndefined();
     });
 
     it('processes source files sequentially in order', async () => {
@@ -616,6 +652,161 @@ describe('GmailSourceFileHydratorAdapter', () => {
       await hydrator.hydrate(files);
 
       expect(callOrder).toEqual(['att-1', 'email-pdf', 'att-2']);
+    });
+  });
+  describe('Ticket #207: Fail-fast hydration error attribution', () => {
+    it('throws DriveServiceError with attachment message when getMessage fails and isFileSourceEmailAttachments is true', async () => {
+      const mockGmailClient = {
+        getMessage: vi.fn().mockRejectedValue(new Error('Network error')),
+        getAttachment: vi.fn(),
+      } as unknown as GoogleGmailClient;
+
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-err',
+        isFileSourceEmailAttachments: true,
+      });
+
+      await expect(hydrator.hydrate([{ id: 'att-1' }])).rejects.toThrow(
+        'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+      );
+    });
+
+    it('throws DriveServiceError with attachment message when getAttachment fails for an attachment', async () => {
+      const mockGmailClient = {
+        getMessage: vi.fn().mockResolvedValue({
+          messageId: 'msg-ok',
+          attachments: [
+            {
+              attachmentId: 'att-fail',
+              filename: 'Fail.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        }),
+        getAttachment: vi.fn().mockRejectedValue(new Error('Download failed')),
+      } as unknown as GoogleGmailClient;
+
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-ok',
+        isFileSourceEmailAttachments: true,
+      });
+
+      await expect(hydrator.hydrate([{ id: 'att-fail' }])).rejects.toThrow(
+        'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+      );
+    });
+
+    it('throws DriveServiceError with attachment message when selected attachment cannot be matched in attachments', async () => {
+      const mockGmailClient = {
+        getMessage: vi.fn().mockResolvedValue({
+          messageId: 'msg-ok',
+          attachments: [
+            {
+              attachmentId: 'att-other',
+              filename: 'Other.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        }),
+        getAttachment: vi.fn(),
+      } as unknown as GoogleGmailClient;
+
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-ok',
+        isFileSourceEmailAttachments: true,
+      });
+
+      await expect(hydrator.hydrate([{ id: 'att-unmatched' }])).rejects.toThrow(
+        'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+      );
+    });
+
+    it('throws DriveServiceError with attachment message when getAttachment returns non-Uint8Array', async () => {
+      const mockGmailClient = {
+        getMessage: vi.fn().mockResolvedValue({
+          messageId: 'msg-ok',
+          attachments: [
+            {
+              attachmentId: 'att-bad-content',
+              filename: 'Bad.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        }),
+        getAttachment: vi.fn().mockResolvedValue('not bytes' as unknown as Uint8Array),
+      } as unknown as GoogleGmailClient;
+
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-ok',
+        isFileSourceEmailAttachments: true,
+      });
+
+      await expect(hydrator.hydrate([{ id: 'att-bad-content' }])).rejects.toThrow(
+        'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
+      );
+    });
+
+    it('throws DriveServiceError with PDF message when getMessage fails for email-pdf', async () => {
+      const mockGmailClient = {
+        getMessage: vi.fn().mockRejectedValue(new Error('Gmail message not found')),
+        getAttachment: vi.fn(),
+      } as unknown as GoogleGmailClient;
+
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-missing',
+      });
+
+      await expect(hydrator.hydrate([{ id: 'email-pdf-msg-missing' }])).rejects.toThrow(
+        'Could not generate the Email PDF. Please try again.'
+      );
+    });
+
+    it('throws DriveServiceError with PDF message when inline image getAttachment fails for email-pdf', async () => {
+      const mockGmailClient = {
+        getMessage: vi.fn().mockResolvedValue({
+          id: 'msg-with-inline',
+          subject: 'Test',
+          inlineImages: [
+            {
+              cid: 'cid-img-1',
+              attachmentId: 'att-img-1',
+              mimeType: 'image/png',
+            },
+          ],
+        }),
+        getAttachment: vi.fn().mockRejectedValue(new Error('Image fetch failed')),
+      } as unknown as GoogleGmailClient;
+
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-with-inline',
+      });
+
+      await expect(hydrator.hydrate([{ id: 'email-pdf-msg-with-inline' }])).rejects.toThrow(
+        'Could not generate the Email PDF. Please try again.'
+      );
+    });
+
+    it('throws DriveServiceError with PDF message when generateEmailPdf fails', async () => {
+      const mockGmailClient = {
+        getMessage: vi.fn().mockResolvedValue({
+          id: 'msg-pdf-fail',
+          subject: 'Test',
+        }),
+        getAttachment: vi.fn(),
+      } as unknown as GoogleGmailClient;
+
+      const mockPdfProcessor = {
+        generateEmailPdf: vi.fn().mockRejectedValue(new Error('PDF generation crash')),
+      };
+
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-pdf-fail',
+        pdfProcessor: mockPdfProcessor as unknown as PdfProcessor,
+      });
+
+      await expect(hydrator.hydrate([{ id: 'email-pdf-msg-pdf-fail' }])).rejects.toThrow(
+        'Could not generate the Email PDF. Please try again.'
+      );
     });
   });
 });
