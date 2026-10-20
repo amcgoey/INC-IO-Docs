@@ -617,5 +617,111 @@ describe('GmailSourceFileHydratorAdapter', () => {
 
       expect(callOrder).toEqual(['att-1', 'email-pdf', 'att-2']);
     });
+    describe('Small Inline Attachments (Ticket #205)', () => {
+      it('resolves binary content directly from descriptor data without calling getAttachment when data is present', async () => {
+        const inlineBytes = new Uint8Array([11, 22, 33, 44]);
+        const mockGmailClient = {
+          getMessage: vi.fn().mockResolvedValue({
+            id: 'msg-inline-hydrator',
+            attachments: [
+              {
+                partId: 'part-inline-1',
+                attachmentId: 'inline-part-inline-1',
+                filename: 'inline-note.txt',
+                mimeType: 'text/plain',
+                size: 4,
+                data: inlineBytes,
+              },
+            ],
+          }),
+          getAttachment: vi.fn(),
+        } as unknown as GoogleGmailClient;
+
+        const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+          messageId: 'msg-inline-hydrator',
+          isFileSourceEmailAttachments: true,
+        });
+
+        const files: SourceFile[] = [{ id: 'part-inline-1' }];
+        const result = await hydrator.hydrate(files);
+
+        expect(mockGmailClient.getMessage).toHaveBeenCalledWith('msg-inline-hydrator', {
+          auth: undefined,
+        });
+        expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
+        expect(result).toEqual([
+          {
+            id: 'part-inline-1',
+            name: 'inline-note.txt',
+            mimeType: 'text/plain',
+            content: inlineBytes,
+          },
+        ]);
+      });
+
+      it('does NOT invoke getAttachment when matched attachment id starts with inline- even if data is undefined', async () => {
+        const mockGmailClient = {
+          getMessage: vi.fn().mockResolvedValue({
+            id: 'msg-inline-nodata',
+            attachments: [
+              {
+                partId: 'part-inline-nodata',
+                attachmentId: 'inline-part-inline-nodata',
+                filename: 'no-data.txt',
+                mimeType: 'text/plain',
+                size: 0,
+                // data undefined
+              },
+            ],
+          }),
+          getAttachment: vi.fn(),
+        } as unknown as GoogleGmailClient;
+
+        const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+          messageId: 'msg-inline-nodata',
+          isFileSourceEmailAttachments: true,
+        });
+
+        const files: SourceFile[] = [{ id: 'part-inline-nodata' }];
+        const result = await hydrator.hydrate(files);
+
+        expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
+        expect(result[0]?.content).toBeUndefined();
+      });
+
+      it('resolves binary content directly from descriptor data when matched by unique filename without invoking getAttachment', async () => {
+        const inlineBytes = new Uint8Array([99, 88, 77]);
+        const mockGmailClient = {
+          getMessage: vi.fn().mockResolvedValue({
+            id: 'msg-unique-filename-inline',
+            attachments: [
+              {
+                partId: 'part-0.3',
+                attachmentId: 'inline-part-0.3',
+                filename: 'manifest.json',
+                mimeType: 'application/json',
+                size: 3,
+                data: inlineBytes,
+              },
+            ],
+          }),
+          getAttachment: vi.fn(),
+        } as unknown as GoogleGmailClient;
+
+        const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+          messageId: 'msg-unique-filename-inline',
+          isFileSourceEmailAttachments: true,
+        });
+
+        // Request file with non-partId id but matching unique filename
+        const files: SourceFile[] = [{ id: 'legacy-form-item-id', name: 'manifest.json' }];
+        const result = await hydrator.hydrate(files);
+
+        expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
+        expect(result[0]?.content).toEqual(inlineBytes);
+        expect(result[0]?.name).toBe('manifest.json');
+      });
+    });
+
   });
 });
