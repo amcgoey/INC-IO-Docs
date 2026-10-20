@@ -43,6 +43,51 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     };
 
     mockGmailClient = {
+      getThread: vi.fn().mockImplementation(async (threadId: string) => {
+        if (threadId === 'th-multi-message') {
+          return {
+            id: threadId,
+            messages: [
+              {
+                id: 'msg-email-1',
+                from: 'Alice <alice@example.com>',
+                date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+                attachments: [
+                  {
+                    partId: 'part-email-1-att-1',
+                    attachmentId: 'att-email-1-1',
+                    filename: 'Email1Doc.pdf',
+                    mimeType: 'application/pdf',
+                    size: 1024,
+                  },
+                ],
+              },
+              {
+                id: 'msg-email-2',
+                from: 'Bob <bob@example.com>',
+                date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+                attachments: [
+                  {
+                    partId: 'part-email-2-att-1',
+                    attachmentId: 'att-email-2-1',
+                    filename: 'Email2DocA.pdf',
+                    mimeType: 'application/pdf',
+                    size: 2048,
+                  },
+                  {
+                    partId: 'part-email-2-att-2',
+                    attachmentId: 'att-email-2-2',
+                    filename: 'Email2DocB.pdf',
+                    mimeType: 'application/pdf',
+                    size: 4096,
+                  },
+                ],
+              },
+            ],
+          };
+        }
+        return undefined;
+      }),
       getMessage: vi.fn().mockImplementation(async (messageId: string) => {
         if (messageId === 'msg-with-live-attachments' || messageId === 'msg-test-with-files') {
           return {
@@ -3304,6 +3349,141 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       gmailSpy.mockRestore();
       expect(nock.isDone()).toBe(true);
+    });
+  });
+
+  describe('Reactive email switching and cross-action persistence (Ticket #211)', () => {
+    it('switches emails with onEmailMessageChange, resets attachments to all selected, and persists choice across other in-card actions', async () => {
+      // Step 1: Initial load on multi-message thread with msg-email-1
+      const resInitial = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/gmail-contextual',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-email-1',
+            threadId: 'th-multi-message',
+            accessToken: 'ya29.live-token',
+          },
+        },
+      });
+
+      expect(resInitial.statusCode).toBe(200);
+      const bodyInitial = JSON.parse(resInitial.payload) as GoogleWorkspaceActionResponse;
+      const pushCard = bodyInitial.action!.navigations![0].pushCard!;
+      const fileSecInitial = pushCard.sections.find((s) => s.header === 'File Selection')!;
+
+      // Dropdown SelectEmailMessage is widget 0 with msg-email-1 selected
+      const emailDropdown = fileSecInitial.widgets[0].selectionInput;
+      expect(emailDropdown?.name).toBe('SelectEmailMessage');
+      expect(emailDropdown?.items).toHaveLength(2);
+      expect(emailDropdown?.items?.[0].value).toBe('msg-email-1');
+      expect(emailDropdown?.items?.[0].selected).toBe(true);
+      expect(emailDropdown?.items?.[1].value).toBe('msg-email-2');
+      expect(emailDropdown?.items?.[1].selected).toBe(false);
+
+      // Email 1 has 1 attachment (Email1Doc.pdf) checked
+      const attsInitial = fileSecInitial.widgets[2].selectionInput;
+      expect(attsInitial?.name).toBe('SelectAttachments');
+      expect(attsInitial?.items).toEqual([
+        { text: 'Email1Doc.pdf', value: 'part-email-1-att-1', selected: true },
+      ]);
+
+      // Step 2: Switch email to msg-email-2 via POST /workspace/action
+      const resSwitch = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'onEmailMessageChange',
+              previousMessageId: 'msg-email-1',
+              previousAttachments: JSON.stringify(['part-email-1-att-1']),
+            },
+            formInputs: {
+              SelectEmailMessage: { stringInputs: { value: ['msg-email-2'] } },
+              SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+              SelectAttachments: { stringInputs: { value: ['part-email-1-att-1'] } }, // stale input from old email
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+            },
+          },
+          gmail: {
+            messageId: 'msg-email-1',
+            threadId: 'th-multi-message',
+            accessToken: 'ya29.live-token',
+          },
+        },
+      });
+
+      expect(resSwitch.statusCode).toBe(200);
+      const bodySwitch = JSON.parse(resSwitch.payload) as GoogleWorkspaceActionResponse;
+      expect(bodySwitch.action?.navigations?.[0].updateCard).toBeDefined();
+      const updateCardSwitch = bodySwitch.action!.navigations![0].updateCard!;
+      const fileSecSwitch = updateCardSwitch.sections.find((s) => s.header === 'File Selection')!;
+
+      // Dropdown now has msg-email-2 selected
+      const emailDropdownSwitch = fileSecSwitch.widgets[0].selectionInput;
+      expect(emailDropdownSwitch?.items?.[0].selected).toBe(false);
+      expect(emailDropdownSwitch?.items?.[1].selected).toBe(true);
+
+      // Attachments for msg-email-2 are both checked (stale part-email-1-att-1 was cleansed)
+      const attsSwitch = fileSecSwitch.widgets[2].selectionInput;
+      expect(attsSwitch?.name).toBe('SelectAttachments');
+      expect(attsSwitch?.items).toEqual([
+        { text: 'Email2DocA.pdf', value: 'part-email-2-att-1', selected: true },
+        { text: 'Email2DocB.pdf', value: 'part-email-2-att-2', selected: true },
+      ]);
+
+      // Verify parameters on interactive controls now propagate previousMessageId = msg-email-2
+      const fileSourceParams = fileSecSwitch.widgets[1].selectionInput?.onChangeAction?.parameters;
+      expect(fileSourceParams?.find((p: { key: string }) => p.key === 'previousMessageId')?.value).toBe('msg-email-2');
+      expect(fileSourceParams?.find((p: { key: string }) => p.key === 'previousAttachments')?.value).toBe(
+        JSON.stringify(['part-email-2-att-1', 'part-email-2-att-2'])
+      );
+
+      // Step 3: Trigger onSpaceTypeChange and verify SelectEmailMessage remains msg-email-2
+      const resSpaceChange = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'onSpaceTypeChange',
+              previousMessageId: 'msg-email-2',
+              previousAttachments: JSON.stringify(['part-email-2-att-1', 'part-email-2-att-2']),
+            },
+            formInputs: {
+              SelectEmailMessage: { stringInputs: { value: ['msg-email-2'] } },
+              SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
+              SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+              SelectAttachments: { stringInputs: { value: ['part-email-2-att-1'] } }, // user unchecked doc B
+            },
+          },
+          gmail: {
+            messageId: 'msg-email-1',
+            threadId: 'th-multi-message',
+            accessToken: 'ya29.live-token',
+          },
+        },
+      });
+
+      expect(resSpaceChange.statusCode).toBe(200);
+      const bodySpaceChange = JSON.parse(resSpaceChange.payload) as GoogleWorkspaceActionResponse;
+      const updateCardSpace = bodySpaceChange.action!.navigations![0].updateCard!;
+      const fileSecSpace = updateCardSpace.sections.find((s) => s.header === 'File Selection')!;
+
+      // SelectEmailMessage is still msg-email-2
+      expect(fileSecSpace.widgets[0].selectionInput?.items?.[1].selected).toBe(true);
+      // Uncheck of doc B was preserved across space type change (isEmailSwitch was false)
+      expect(fileSecSpace.widgets[2].selectionInput?.items).toEqual([
+        { text: 'Email2DocA.pdf', value: 'part-email-2-att-1', selected: true },
+        { text: 'Email2DocB.pdf', value: 'part-email-2-att-2', selected: false },
+      ]);
     });
   });
 });

@@ -672,7 +672,9 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
       }
       selectedMessageId = matchedThreadMessage.id;
     } else {
-      const formVal = context.formData?.[SELECT_EMAIL_MESSAGE_KEY];
+      const formVal =
+        (context.formData?.[SELECT_EMAIL_MESSAGE_KEY] as string | undefined) ??
+        context.parameters?.previousMessageId;
       const formTarget = typeof formVal === 'string' && formVal.trim().length > 0 ? formVal.trim() : undefined;
       matchedThreadMessage = formTarget
         ? threadMessages.find((m) => m.id === formTarget)
@@ -753,7 +755,26 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
 
   let files: UiSelectionItem[];
   if (isGmail) {
-    if (candidateGmailItems.length > 0) {
+    const isEmailSwitch =
+      !isResetOrInitialLoad &&
+      (action === 'onEmailMessageChange' ||
+        Boolean(
+          context.parameters?.previousMessageId &&
+            context.parameters.previousMessageId !== selectedMessageId
+        ));
+
+    if (isEmailSwitch) {
+      effectiveFormData[SELECT_ATTACHMENTS_KEY] = candidateGmailItems.map((item) => item.id);
+      files = candidateGmailItems.map((item) => {
+        const trimmedTitle = typeof item.title === 'string' ? item.title.trim() : '';
+        const fileId = item.id.trim();
+        return {
+          text: trimmedTitle.length > 0 ? trimmedTitle : fileId,
+          value: item.id,
+          selected: true,
+        };
+      });
+    } else if (candidateGmailItems.length > 0) {
       const hasAttachmentFormKey = context.formData?.[SELECT_ATTACHMENTS_KEY] !== undefined;
       const selectedSet = hasAttachmentFormKey
         ? extractSelectFilesSet(context.formData, SELECT_ATTACHMENTS_KEY)
@@ -804,6 +825,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
         };
       });
     } else {
+      effectiveFormData[SELECT_ATTACHMENTS_KEY] = [];
       files = [];
     }
   } else {
