@@ -108,11 +108,20 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     const isGmail = isGmailContext(context);
     let threadMessages: UiProcessGmailMessageDescriptor[] | undefined;
 
+    const inCardActions = new Set([
+      'onSpaceTypeChange',
+      'onDocumentTypeChange',
+      'onFormChange',
+      'onFileSourceChange',
+      'onEmailMessageChange',
+    ]);
+    const isInCardAction = actionName !== undefined && inCardActions.has(actionName);
+
     const needsGmailFetch =
       !effectiveContext.selectedItems ||
       effectiveContext.selectedItems.length === 0 ||
       actionName === 'refresh' ||
-      actionName === 'onEmailMessageChange';
+      isInCardAction;
 
     if (isGmail && this.gmailPort && needsGmailFetch) {
       const token = context.userOAuthToken ?? context.gmail?.accessToken;
@@ -139,7 +148,10 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           } catch (e) {
             console.warn(`Could not fetch message details for message: ${context.gmail.messageId}`, e);
           }
-        } else if (typeof this.gmailPort.getMessageAttachments === 'function') {
+        } else if (
+          (!isInCardAction || !effectiveContext.selectedItems || effectiveContext.selectedItems.length === 0) &&
+          typeof this.gmailPort.getMessageAttachments === 'function'
+        ) {
           try {
             const attachments = await this.gmailPort.getMessageAttachments(
               context.gmail.messageId,
@@ -163,7 +175,19 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           threadMessages.find((m) => m.id === (formMsgId ?? context.gmail?.messageId)) ??
           threadMessages[threadMessages.length - 1];
 
-        if (!effectiveContext.selectedItems || effectiveContext.selectedItems.length === 0 || actionName === 'refresh') {
+        const isEmailSwitch =
+          actionName === 'onEmailMessageChange' ||
+          Boolean(
+            effectiveContext.parameters?.previousMessageId &&
+              effectiveContext.parameters.previousMessageId !== activeMsg?.id
+          );
+
+        if (
+          !effectiveContext.selectedItems ||
+          effectiveContext.selectedItems.length === 0 ||
+          actionName === 'refresh' ||
+          isEmailSwitch
+        ) {
           effectiveContext = {
             ...effectiveContext,
             selectedItems: (activeMsg?.attachments ?? []).map((att) => {

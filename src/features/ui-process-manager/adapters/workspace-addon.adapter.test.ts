@@ -2283,6 +2283,178 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         { text: 'File1.pdf', value: 'att-1', selected: true },
       ]);
     });
+
+    it('calls gmailPort.getThreadMessages on in-card actions (onEmailMessageChange, onFormChange, onSpaceTypeChange, onDocumentTypeChange, onFileSourceChange)', async () => {
+      const getThreadMessagesMock = vi.fn().mockResolvedValue([
+        {
+          id: 'msg-1',
+          from: 'Alice <alice@example.com>',
+          date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+          attachments: [{ id: 'att-1', title: 'File1.pdf', mimeType: 'application/pdf' }],
+        },
+        {
+          id: 'msg-2',
+          from: 'Bob <bob@example.com>',
+          date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+          attachments: [{ id: 'att-2', title: 'File2.pdf', mimeType: 'application/pdf' }],
+        },
+      ]);
+
+      const gmailPort: UiProcessGmailPort = {
+        getMessageAttachments: vi.fn(),
+        getThreadMessages: getThreadMessagesMock,
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        gmailPort,
+      });
+
+      const inCardActions = [
+        'onEmailMessageChange',
+        'onFormChange',
+        'onSpaceTypeChange',
+        'onDocumentTypeChange',
+        'onFileSourceChange',
+      ] as const;
+
+      for (const actionName of inCardActions) {
+        getThreadMessagesMock.mockClear();
+
+        const context: UiProcessEventContext = {
+          actionName,
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-1',
+            threadId: 'th-card-actions',
+            accessToken: 'ya29.token',
+          },
+          selectedItems: [
+            { id: 'att-1', title: 'File1.pdf', mimeType: 'application/pdf' },
+          ],
+          formData: {
+            SelectEmailMessage: 'msg-2',
+            SelectFileSource: 'Email Attachments',
+          },
+        };
+
+        const result = await adapter.processUiEvent(context);
+        expect(result.type).toBe('render');
+        const render = result as UiProcessRenderResult;
+
+        expect(getThreadMessagesMock).toHaveBeenCalledWith('th-card-actions', { skipCache: false });
+        expect(render.selectionState?.threadMessages).toHaveLength(2);
+        expect(render.formData?.SelectEmailMessage).toBe('msg-2');
+      }
+    });
+
+    it('falls back to gmailPort.getMessageDetails on in-card action when threadId is absent', async () => {
+      const getMessageDetailsMock = vi.fn().mockResolvedValue({
+        id: 'msg-single',
+        from: 'Alice <alice@example.com>',
+        date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+        attachments: [{ id: 'att-single', title: 'Single.pdf', mimeType: 'application/pdf' }],
+      });
+
+      const gmailPort: UiProcessGmailPort = {
+        getMessageAttachments: vi.fn(),
+        getMessageDetails: getMessageDetailsMock,
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        gmailPort,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'onFormChange',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-single',
+          accessToken: 'ya29.token',
+        },
+        selectedItems: [
+          { id: 'att-single', title: 'Single.pdf', mimeType: 'application/pdf' },
+        ],
+        formData: {
+          SelectFileSource: 'Email Attachments',
+        },
+      };
+
+      const result = await adapter.processUiEvent(context);
+      expect(result.type).toBe('render');
+      expect(getMessageDetailsMock).toHaveBeenCalledWith('msg-single', { skipCache: false });
+    });
+
+    it('handles onEmailMessageChange action returning isUpdateCard = true, updates SelectEmailMessage, selects all attachments, and updates formData[SelectAttachments]', async () => {
+      const getThreadMessagesMock = vi.fn().mockResolvedValue([
+        {
+          id: 'msg-1',
+          from: 'Alice <alice@example.com>',
+          date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+          attachments: [{ id: 'att-1', title: 'File1.pdf', mimeType: 'application/pdf' }],
+        },
+        {
+          id: 'msg-2',
+          from: 'Bob <bob@example.com>',
+          date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+          attachments: [
+            { id: 'att-2a', title: 'Doc2a.pdf', mimeType: 'application/pdf' },
+            { id: 'att-2b', title: 'Doc2b.pdf', mimeType: 'application/pdf' },
+          ],
+        },
+      ]);
+
+      const gmailPort: UiProcessGmailPort = {
+        getMessageAttachments: vi.fn(),
+        getThreadMessages: getThreadMessagesMock,
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        gmailPort,
+      });
+
+      const context: UiProcessEventContext = {
+        actionName: 'onEmailMessageChange',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-1',
+          threadId: 'th-switch-test',
+          accessToken: 'ya29.token',
+        },
+        selectedItems: [
+          { id: 'att-1', title: 'File1.pdf', mimeType: 'application/pdf' },
+        ],
+        formData: {
+          SelectEmailMessage: 'msg-2',
+          SelectAttachments: ['att-1'],
+          SelectFileSource: 'Email Attachments',
+        },
+        parameters: {
+          previousMessageId: 'msg-1',
+          previousAttachments: JSON.stringify(['att-1']),
+        },
+      };
+
+      const result = await adapter.processUiEvent(context);
+      expect(result.type).toBe('render');
+      const render = result as UiProcessRenderResult;
+
+      expect(render.isUpdateCard).toBe(true);
+      expect(render.formData?.SelectEmailMessage).toBe('msg-2');
+      expect(render.formData?.SelectAttachments).toEqual(['att-2a', 'att-2b']);
+      expect(render.selectionState?.files).toEqual([
+        { text: 'Doc2a.pdf', value: 'att-2a', selected: true },
+        { text: 'Doc2b.pdf', value: 'att-2b', selected: true },
+      ]);
+    });
   });
 
   describe('Gmail attachment mapping during processDocument (Ticket #200)', () => {

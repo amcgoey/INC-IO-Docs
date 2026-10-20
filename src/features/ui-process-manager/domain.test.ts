@@ -16,6 +16,8 @@ import {
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
   SELECT_EMAIL_MESSAGE_KEY,
+  SELECT_DOCUMENT_SPACE_TYPE_KEY,
+  SELECT_DOCUMENT_TYPE_KEY,
   EPHEMERAL_UI_SELECTION_KEYS,
   extractSelectFilesSet,
   formatThreadEmailOptionLabel,
@@ -2794,6 +2796,391 @@ describe('ui-process-manager domain', () => {
       expect(result.selectionState.files).toEqual([
         { text: 'Doc2.pdf', value: 'att-2', selected: true },
       ]);
+    });
+  });
+
+  describe('evaluateProcessUiState reactive email switching and state persistence (Ticket #211)', () => {
+    const sampleSpaceTypes = [
+      {
+        id: 'projects',
+        displayName: 'Projects',
+        spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+      },
+      {
+        id: 'proposals',
+        displayName: 'Proposals',
+        spaceSchema: { allowedDocumentTypes: ['proposal-document'] },
+      },
+    ];
+
+    const sampleSpaces = [
+      { id: 'proj-1', name: 'Alpha Project', typeId: 'projects' },
+      { id: 'prop-1', name: 'Q4 Proposal', typeId: 'proposals' },
+    ];
+
+    const threadMessages = [
+      {
+        id: 'msg-1',
+        from: 'Alice <alice@example.com>',
+        date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+        attachments: [
+          { id: 'att-1a', title: 'Invoice.pdf', mimeType: 'application/pdf' },
+          { id: 'att-1b', title: 'Receipt.pdf', mimeType: 'application/pdf' },
+        ],
+      },
+      {
+        id: 'msg-2',
+        from: 'Bob <bob@example.com>',
+        date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+        attachments: [
+          { id: 'att-2a', title: 'Specs.pdf', mimeType: 'application/pdf' },
+          { id: 'att-2b', title: 'Diagram.png', mimeType: 'image/png' },
+        ],
+      },
+      {
+        id: 'msg-empty',
+        from: 'Charlie <charlie@example.com>',
+        date: 'Mon, 19 Oct 2026 12:00:00 +0000',
+        attachments: [],
+      },
+    ];
+
+    it('email switch updates attachments to new email with all selected: true and cleanses effectiveFormData[SELECT_ATTACHMENTS_KEY]', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          hostApp: 'GMAIL',
+          actionName: 'onEmailMessageChange',
+          formData: {
+            [SELECT_EMAIL_MESSAGE_KEY]: 'msg-2',
+            [SELECT_ATTACHMENTS_KEY]: ['att-1a'], // old selection from msg-1
+          },
+          parameters: {
+            previousMessageId: 'msg-1',
+            previousAttachments: JSON.stringify(['att-1a']),
+          },
+          gmail: { messageId: 'msg-1', threadId: 'th-100' },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: sampleSpaces,
+        threadMessages,
+      };
+
+      const result = evaluateProcessUiState(input);
+
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.selectedMessageId).toBe('msg-2');
+      expect(result.formData[SELECT_EMAIL_MESSAGE_KEY]).toBe('msg-2');
+      expect(result.formData[SELECT_ATTACHMENTS_KEY]).toEqual(['att-2a', 'att-2b']);
+      expect(result.selectionState.files).toEqual([
+        { text: 'Specs.pdf', value: 'att-2a', selected: true },
+        { text: 'Diagram.png', value: 'att-2b', selected: true },
+      ]);
+    });
+
+    it('email switch from 0-attachment email to multi-attachment email checks all attachments', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          hostApp: 'GMAIL',
+          actionName: 'onEmailMessageChange',
+          formData: {
+            [SELECT_EMAIL_MESSAGE_KEY]: 'msg-1',
+          },
+          parameters: {
+            previousMessageId: 'msg-empty',
+            previousAttachments: JSON.stringify([]),
+          },
+          gmail: { messageId: 'msg-empty', threadId: 'th-100' },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: sampleSpaces,
+        threadMessages,
+      };
+
+      const result = evaluateProcessUiState(input);
+
+      expect(result.selectedMessageId).toBe('msg-1');
+      expect(result.formData[SELECT_ATTACHMENTS_KEY]).toEqual(['att-1a', 'att-1b']);
+      expect(result.selectionState.files).toEqual([
+        { text: 'Invoice.pdf', value: 'att-1a', selected: true },
+        { text: 'Receipt.pdf', value: 'att-1b', selected: true },
+      ]);
+    });
+
+    it('email switch from multi-attachment email to 0-attachment email results in empty files and empty effectiveFormData[SELECT_ATTACHMENTS_KEY]', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          hostApp: 'GMAIL',
+          actionName: 'onEmailMessageChange',
+          formData: {
+            [SELECT_EMAIL_MESSAGE_KEY]: 'msg-empty',
+            [SELECT_ATTACHMENTS_KEY]: ['att-1a'],
+          },
+          parameters: {
+            previousMessageId: 'msg-1',
+            previousAttachments: JSON.stringify(['att-1a']),
+          },
+          gmail: { messageId: 'msg-1', threadId: 'th-100' },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: sampleSpaces,
+        threadMessages,
+      };
+
+      const result = evaluateProcessUiState(input);
+
+      expect(result.selectedMessageId).toBe('msg-empty');
+      expect(result.formData[SELECT_ATTACHMENTS_KEY]).toEqual([]);
+      expect(result.selectionState.files).toEqual([]);
+    });
+
+    it('email switch from email with unchecked attachments checks all attachments on new email', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          hostApp: 'GMAIL',
+          actionName: 'onEmailMessageChange',
+          formData: {
+            [SELECT_EMAIL_MESSAGE_KEY]: 'msg-2',
+            // SELECT_ATTACHMENTS_KEY omitted by Workspace when all unchecked
+          },
+          parameters: {
+            previousMessageId: 'msg-1',
+            previousAttachments: JSON.stringify([]),
+          },
+          gmail: { messageId: 'msg-1', threadId: 'th-100' },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: sampleSpaces,
+        threadMessages,
+      };
+
+      const result = evaluateProcessUiState(input);
+
+      expect(result.selectedMessageId).toBe('msg-2');
+      expect(result.formData[SELECT_ATTACHMENTS_KEY]).toEqual(['att-2a', 'att-2b']);
+      expect(result.selectionState.files).toEqual([
+        { text: 'Specs.pdf', value: 'att-2a', selected: true },
+        { text: 'Diagram.png', value: 'att-2b', selected: true },
+      ]);
+    });
+
+    it('switching email preserves DocumentSpaceType, DocumentSpace, DocumentType, DocumentField inputs, SelectFileSource, InputDriveURL, SaveEmailToPdf', () => {
+      const input: ProcessUiStateInput = {
+        context: {
+          hostApp: 'GMAIL',
+          actionName: 'onEmailMessageChange',
+          formData: {
+            [SELECT_DOCUMENT_SPACE_TYPE_KEY]: 'projects',
+            SelectDocumentSpace_projects: 'Alpha Project',
+            [SELECT_DOCUMENT_TYPE_KEY]: 'communication-project',
+            'client_name_communication-project': 'Apollo Client',
+            'notes_communication-project': 'Call transcript',
+            [SELECT_FILE_SOURCE_KEY]: 'Google Drive URL',
+            [INPUT_DRIVE_URL_KEY]: 'https://drive.google.com/drive/folders/folder-123',
+            [SAVE_EMAIL_TO_PDF_KEY]: true,
+            [SELECT_EMAIL_MESSAGE_KEY]: 'msg-2',
+          },
+          parameters: {
+            previousMessageId: 'msg-1',
+            previousDriveUrl: 'https://drive.google.com/drive/folders/folder-123',
+          },
+          gmail: { messageId: 'msg-1', threadId: 'th-100' },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: sampleSpaces,
+        threadMessages,
+      };
+
+      const result = evaluateProcessUiState(input);
+
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.selectedMessageId).toBe('msg-2');
+      expect(result.formData[SELECT_DOCUMENT_SPACE_TYPE_KEY]).toBe('projects');
+      expect(result.formData['SelectDocumentSpace_projects']).toBe('Alpha Project');
+      expect(result.formData[SELECT_DOCUMENT_TYPE_KEY]).toBe('communication-project');
+      expect(result.formData['client_name_communication-project']).toBe('Apollo Client');
+      expect(result.formData['notes_communication-project']).toBe('Call transcript');
+      expect(result.formData[SELECT_FILE_SOURCE_KEY]).toBe('Google Drive URL');
+      expect(result.formData[INPUT_DRIVE_URL_KEY]).toBe('https://drive.google.com/drive/folders/folder-123');
+      expect(result.formData[SAVE_EMAIL_TO_PDF_KEY]).toBe(true);
+      expect(result.formData[SELECT_EMAIL_MESSAGE_KEY]).toBe('msg-2');
+    });
+
+    it('other in-card actions (onSpaceTypeChange, onDocumentTypeChange, onFormChange, onFileSourceChange) preserve SelectEmailMessage', () => {
+      const actions = [
+        'onSpaceTypeChange',
+        'onDocumentTypeChange',
+        'onFormChange',
+        'onFileSourceChange',
+      ] as const;
+
+      for (const actionName of actions) {
+        const input: ProcessUiStateInput = {
+          context: {
+            hostApp: 'GMAIL',
+            actionName,
+            formData: {
+              [SELECT_EMAIL_MESSAGE_KEY]: 'msg-2',
+              [SELECT_DOCUMENT_SPACE_TYPE_KEY]: 'projects',
+              SelectDocumentSpace_projects: 'Alpha Project',
+              [SELECT_DOCUMENT_TYPE_KEY]: 'communication-project',
+              [SELECT_FILE_SOURCE_KEY]: 'Email Attachments',
+            },
+            parameters: {
+              previousMessageId: 'msg-2',
+            },
+            gmail: { messageId: 'msg-1', threadId: 'th-100' }, // initial trigger message was msg-1
+          },
+          spaceTypes: sampleSpaceTypes,
+          spaces: sampleSpaces,
+          threadMessages,
+        };
+
+        const result = evaluateProcessUiState(input);
+
+        expect(result.selectedMessageId).toBe('msg-2');
+        expect(result.formData[SELECT_EMAIL_MESSAGE_KEY]).toBe('msg-2');
+        const selectedOption = result.selectionState.threadMessages?.find((m) => m.selected);
+        expect(selectedOption?.value).toBe('msg-2');
+      }
+    });
+
+    describe('file source round-trips with email switching', () => {
+      it('unchecking attachments on Email 1, switching to Drive URL, switching back to Email Attachments preserves unchecks', () => {
+        // Step 1: On Email 1, user unchecks att-1b (keeps att-1a). Switches to Google Drive URL.
+        const step1 = evaluateProcessUiState({
+          context: {
+            hostApp: 'GMAIL',
+            actionName: 'onFileSourceChange',
+            formData: {
+              [SELECT_EMAIL_MESSAGE_KEY]: 'msg-1',
+              [SELECT_FILE_SOURCE_KEY]: 'Google Drive URL',
+              [SELECT_ATTACHMENTS_KEY]: ['att-1a'],
+            },
+            parameters: {
+              previousMessageId: 'msg-1',
+              previousAttachments: JSON.stringify(['att-1a']),
+            },
+            gmail: { messageId: 'msg-1', threadId: 'th-100' },
+          },
+          spaceTypes: sampleSpaceTypes,
+          spaces: sampleSpaces,
+          threadMessages,
+        });
+
+        expect(step1.selectionState.files).toEqual([
+          { text: 'Invoice.pdf', value: 'att-1a', selected: true },
+          { text: 'Receipt.pdf', value: 'att-1b', selected: false },
+        ]);
+
+        // Step 2: In Google Drive URL mode, user performs an in-card action (onSpaceTypeChange)
+        const step2 = evaluateProcessUiState({
+          context: {
+            hostApp: 'GMAIL',
+            actionName: 'onSpaceTypeChange',
+            formData: {
+              [SELECT_EMAIL_MESSAGE_KEY]: 'msg-1',
+              [SELECT_FILE_SOURCE_KEY]: 'Google Drive URL',
+              [SELECT_DOCUMENT_SPACE_TYPE_KEY]: 'proposals',
+            },
+            parameters: {
+              previousMessageId: 'msg-1',
+              previousAttachments: JSON.stringify(['att-1a']),
+            },
+            gmail: { messageId: 'msg-1', threadId: 'th-100' },
+          },
+          spaceTypes: sampleSpaceTypes,
+          spaces: sampleSpaces,
+          threadMessages,
+        });
+
+        expect(step2.selectionState.files).toEqual([
+          { text: 'Invoice.pdf', value: 'att-1a', selected: true },
+          { text: 'Receipt.pdf', value: 'att-1b', selected: false },
+        ]);
+
+        // Step 3: Switch back to Email Attachments (onFileSourceChange)
+        const step3 = evaluateProcessUiState({
+          context: {
+            hostApp: 'GMAIL',
+            actionName: 'onFileSourceChange',
+            formData: {
+              [SELECT_EMAIL_MESSAGE_KEY]: 'msg-1',
+              [SELECT_FILE_SOURCE_KEY]: 'Email Attachments',
+            },
+            parameters: {
+              previousMessageId: 'msg-1',
+              previousAttachments: JSON.stringify(['att-1a']),
+            },
+            gmail: { messageId: 'msg-1', threadId: 'th-100' },
+          },
+          spaceTypes: sampleSpaceTypes,
+          spaces: sampleSpaces,
+          threadMessages,
+        });
+
+        expect(step3.selectionState.files).toEqual([
+          { text: 'Invoice.pdf', value: 'att-1a', selected: true },
+          { text: 'Receipt.pdf', value: 'att-1b', selected: false },
+        ]);
+      });
+
+      it('switching to Email 2 while in Drive URL, then switching back to Email Attachments checks all attachments on Email 2', () => {
+        // Step 1: In Drive URL mode, user switches Email dropdown to Email 2 (onEmailMessageChange)
+        const step1 = evaluateProcessUiState({
+          context: {
+            hostApp: 'GMAIL',
+            actionName: 'onEmailMessageChange',
+            formData: {
+              [SELECT_EMAIL_MESSAGE_KEY]: 'msg-2',
+              [SELECT_FILE_SOURCE_KEY]: 'Google Drive URL',
+              [INPUT_DRIVE_URL_KEY]: 'https://drive.google.com/test',
+            },
+            parameters: {
+              previousMessageId: 'msg-1',
+              previousAttachments: JSON.stringify(['att-1a']), // from Email 1
+              previousDriveUrl: 'https://drive.google.com/test',
+            },
+            gmail: { messageId: 'msg-1', threadId: 'th-100' },
+          },
+          spaceTypes: sampleSpaceTypes,
+          spaces: sampleSpaces,
+          threadMessages,
+        });
+
+        expect(step1.selectedMessageId).toBe('msg-2');
+        expect(step1.formData[SELECT_ATTACHMENTS_KEY]).toEqual(['att-2a', 'att-2b']);
+        expect(step1.selectionState.files).toEqual([
+          { text: 'Specs.pdf', value: 'att-2a', selected: true },
+          { text: 'Diagram.png', value: 'att-2b', selected: true },
+        ]);
+
+        // Step 2: User switches File Source back to Email Attachments (onFileSourceChange)
+        const step2 = evaluateProcessUiState({
+          context: {
+            hostApp: 'GMAIL',
+            actionName: 'onFileSourceChange',
+            formData: {
+              [SELECT_EMAIL_MESSAGE_KEY]: 'msg-2',
+              [SELECT_FILE_SOURCE_KEY]: 'Email Attachments',
+            },
+            parameters: {
+              previousMessageId: 'msg-2',
+              previousAttachments: JSON.stringify(['att-2a', 'att-2b']),
+              previousDriveUrl: 'https://drive.google.com/test',
+            },
+            gmail: { messageId: 'msg-1', threadId: 'th-100' },
+          },
+          spaceTypes: sampleSpaceTypes,
+          spaces: sampleSpaces,
+          threadMessages,
+        });
+
+        expect(step2.selectedMessageId).toBe('msg-2');
+        expect(step2.selectionState.files).toEqual([
+          { text: 'Specs.pdf', value: 'att-2a', selected: true },
+          { text: 'Diagram.png', value: 'att-2b', selected: true },
+        ]);
+      });
     });
   });
 });
