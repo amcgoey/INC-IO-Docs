@@ -144,6 +144,8 @@ export function createApp(options?: AppOptions): AppInstance {
 
   const appBaseUrl = options?.appBaseUrl ?? process.env.APP_BASE_URL;
 
+  const gmailClient = options?.gmailClient ?? new GoogleGmailClient();
+
   wireWorkspaceAddonRoutes({
     server,
     documentService: options?.documentService,
@@ -156,7 +158,7 @@ export function createApp(options?: AppOptions): AppInstance {
     documentSchemaRegistry,
     templateEvaluator,
     driveClient,
-    gmailClient: options?.gmailClient,
+    gmailClient,
     documentSpaceRegistry: documentSpaceWiring.documentSpaceRegistry,
     storageAdapter,
     pdfProcessor: options?.pdfProcessor,

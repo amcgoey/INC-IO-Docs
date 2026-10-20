@@ -112,20 +112,103 @@ function isCidReferencedInHtml(html: string | undefined, normalizedCid: string):
 
 export class GoogleGmailClient {
   private readonly defaultGmail: gmail_v1.Gmail;
+  private readonly defaultAuthToken?: string | undefined;
   private readonly retryOptions: GmailRetryOptions;
+  private readonly cacheTtlMs: number;
+  private readonly cacheMaxEntries: number;
+  private readonly clock: () => number;
+  private readonly cache = new Map<
+    string,
+    { promise: Promise<GmailMessageDetails>; expiresAt: number }
+  >();
 
   constructor(options: GoogleGmailClientOptions = {}) {
     this.retryOptions = options.retryOptions ?? {};
+    this.cacheTtlMs = options.cacheOptions?.ttlMs ?? 60_000;
+    this.cacheMaxEntries = Math.max(1, options.cacheOptions?.maxEntries ?? 100);
+    this.clock = options.cacheOptions?.clock ?? Date.now;
+
     if (options.gmail) {
       this.defaultGmail = options.gmail;
     } else if (typeof options.auth === 'string') {
+      this.defaultAuthToken = options.auth;
       this.defaultGmail = this.createGmailClientFromToken(options.auth);
     } else if (options.auth) {
+      if ('credentials' in options.auth && typeof options.auth.credentials?.access_token === 'string') {
+        this.defaultAuthToken = options.auth.credentials.access_token;
+      }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.defaultGmail = google.gmail({ version: 'v1', auth: options.auth as any });
     } else {
       this.defaultGmail = google.gmail({ version: 'v1' });
     }
+  }
+
+  clearCache(): void {
+    this.cache.clear();
+  }
+
+  getCacheSize(): number {
+    return this.cache.size;
+  }
+
+  private getAuthCacheKey(options?: GmailOperationOptions): string {
+    const token = options?.accessToken ?? options?.auth;
+    if (typeof token === 'string' && token.trim().length > 0) {
+      return token.trim();
+    }
+    if (typeof this.defaultAuthToken === 'string' && this.defaultAuthToken.trim().length > 0) {
+      return this.defaultAuthToken.trim();
+    }
+    return '__default__';
+  }
+
+  async getMessage(
+    messageId: string,
+    options?: GmailOperationOptions
+  ): Promise<GmailMessageDetails> {
+    const key = `${this.getAuthCacheKey(options)}\0${messageId.trim()}`;
+    const now = this.clock();
+
+    const existing = this.cache.get(key);
+    if (existing) {
+      if (now <= existing.expiresAt) {
+        // Cache hit: move to end for LRU order
+        this.cache.delete(key);
+        this.cache.set(key, existing);
+        return existing.promise;
+      }
+      // Expired entry
+      this.cache.delete(key);
+    }
+
+    // Prune expired entries to maintain bounds
+    for (const [k, entry] of this.cache.entries()) {
+      if (now > entry.expiresAt) {
+        this.cache.delete(k);
+      }
+    }
+
+    // Evict oldest (least recently used) entries if at capacity
+    while (this.cache.size >= this.cacheMaxEntries) {
+      const oldestKey = this.cache.keys().next().value;
+      if (!oldestKey) break;
+      this.cache.delete(oldestKey);
+    }
+
+    const expiresAt = now + this.cacheTtlMs;
+    const promise = this.fetchMessageDetails(messageId, options);
+
+    const newEntry = { promise, expiresAt };
+
+    promise.catch(() => {
+      if (this.cache.get(key) === newEntry) {
+        this.cache.delete(key);
+      }
+    });
+
+    this.cache.set(key, newEntry);
+    return promise;
   }
 
   private createGmailClientFromToken(token: string): gmail_v1.Gmail {
@@ -183,7 +266,7 @@ export class GoogleGmailClient {
     }
   }
 
-  async getMessage(messageId: string, options?: GmailOperationOptions): Promise<GmailMessageDetails> {
+  private async fetchMessageDetails(messageId: string, options?: GmailOperationOptions): Promise<GmailMessageDetails> {
     const gmail = this.getGmail(options);
     let res: { data: gmail_v1.Schema$Message };
     try {

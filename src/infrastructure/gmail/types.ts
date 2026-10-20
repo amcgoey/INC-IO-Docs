@@ -14,10 +14,17 @@ export interface GmailOperationOptions {
   accessToken?: string | undefined;
 }
 
+export interface GmailCacheOptions {
+  ttlMs?: number | undefined;
+  maxEntries?: number | undefined;
+  clock?: (() => number) | undefined;
+}
+
 export interface GoogleGmailClientOptions {
   auth?: OAuth2Client | string | undefined;
   gmail?: gmail_v1.Gmail | undefined;
   retryOptions?: GmailRetryOptions | undefined;
+  cacheOptions?: GmailCacheOptions | undefined;
 }
 
 export const GmailInlineImageDescriptorSchema = Type.Object({

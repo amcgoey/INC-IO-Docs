@@ -5,7 +5,9 @@ import { createApp, type AppInstance } from '../src/app/server';
 import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import type { DocumentSpaceStoragePort } from '../src/features/document-space/ports';
-import type { GoogleGmailClient } from '../src/infrastructure/gmail/gmail-client';
+import { GoogleGmailClient } from '../src/infrastructure/gmail/gmail-client';
+// nosemgrep: adapter-leakage-warning
+import { google, type gmail_v1 } from 'googleapis';
 import type {
   GoogleWorkspaceActionResponse,
   GoogleWorkspaceSection,
@@ -2265,6 +2267,366 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       // Crucial: getAttachment should NOT have been called for the email attachment!
       expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
+      expect(nock.isDone()).toBe(true);
+    });
+  });
+
+  describe('Bounded getMessage memoization across request lifecycle (Ticket #208)', () => {
+    const rootSharedDriveId = 'shared-drive-proj-root';
+    const adminFolderId = 'folder-admin-1';
+    const commFolderId = 'folder-comm-1';
+    const contactFolderId = 'folder-acme-corp';
+    const newSubfolderId = 'folder-memo-subfolder';
+
+    function mockFolderResolution(description = 'Meeting Notes') {
+      mockDynamicValidationProject({
+        sharedDriveId: rootSharedDriveId,
+        adminFolderId,
+        commFolderId,
+        contactFolderId,
+        contactName: 'Acme Corp',
+      });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(rootSharedDriveId) && q.q.includes("name = '1 Admin'"))
+        .reply(200, {
+          files: [{ id: adminFolderId, name: '1 Admin', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(adminFolderId) && q.q.includes("name = 'Communication'"))
+        .reply(200, {
+          files: [{ id: commFolderId, name: 'Communication', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(commFolderId) && q.q.includes("name = 'Acme Corp'"))
+        .reply(200, {
+          files: [{ id: contactFolderId, name: 'Acme Corp', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      const leafFolderName = `260920 IN - ${description}`;
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(contactFolderId) && q.q.includes(`name = '${leafFolderName}'`))
+        .reply(200, { files: [] });
+
+      nock('https://www.googleapis.com')
+        .post('/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: newSubfolderId,
+          name: leafFolderName,
+          parents: [contactFolderId],
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+    }
+
+    it('reuses memoized GmailMessageDetails across UiProcessManager and GmailSourceFileHydratorAdapter issuing only one users.messages.get call', async () => {
+      mockFolderResolution('Project Scope Review');
+
+      const messageId = 'msg-memoized-integration-test';
+      const fileBytes = new Uint8Array([10, 20, 30]);
+
+      const mockMessagesGet = vi.fn().mockResolvedValue({
+        data: {
+          id: messageId,
+          threadId: 'th-memoized-test',
+          payload: {
+            headers: [
+              { name: 'Subject', value: 'Project Scope Review' },
+              { name: 'From', value: 'alice@example.com' },
+              { name: 'Date', value: 'Mon, 18 Oct 2026 12:00:00 GMT' },
+            ],
+            mimeType: 'multipart/mixed',
+            parts: [
+              {
+                partId: 'part-0',
+                mimeType: 'application/pdf',
+                filename: 'Scope.pdf',
+                body: {
+                  attachmentId: 'att-memo-scope-1',
+                  size: 1024,
+                },
+              },
+            ],
+          },
+        },
+      });
+
+      const mockAttachmentsGet = vi.fn().mockResolvedValue({
+        data: {
+          data: Buffer.from(fileBytes).toString('base64url'),
+        },
+      });
+
+      const mockGmailApi = {
+        users: {
+          messages: {
+            get: mockMessagesGet,
+            attachments: {
+              get: mockAttachmentsGet,
+            },
+          },
+        },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmailApi);
+
+      const memoizedGmailClient = new GoogleGmailClient({
+        gmail: mockGmailApi,
+      });
+
+      const testApp = createApp({
+        manifestProvider,
+        authVerifier: mockAuthVerifier,
+        skipSpaceValidation: true,
+        storageAdapter: mockStorageAdapter,
+        gmailClient: memoizedGmailClient,
+      });
+      await testApp.initialize();
+
+      // Expect two uploads to Drive: one for attachment, one for email PDF
+      nock('https://www.googleapis.com')
+        .post('/upload/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: 'drive-saved-scope-att',
+          name: 'Scope.pdf',
+          mimeType: 'application/pdf',
+          parents: [newSubfolderId],
+          webViewLink: 'https://drive.google.com/file/d/drive-saved-scope-att/view',
+        });
+
+      nock('https://www.googleapis.com')
+        .post('/upload/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: 'drive-saved-scope-email-pdf',
+          name: 'Email - Project Scope Review.pdf',
+          mimeType: 'application/pdf',
+          parents: [newSubfolderId],
+          webViewLink: 'https://drive.google.com/file/d/drive-saved-scope-email-pdf/view',
+        });
+
+      const response = await testApp.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId,
+            threadId: 'th-memoized-test',
+            accessToken: 'ya29.valid-oauth-token',
+          },
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+              SelectAttachments: { stringInputs: { value: ['part-0'] } },
+              SaveEmailToPdf: { stringInputs: { value: ['true'] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Project Scope Review'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+      expect(body.action?.notification?.text).toBe('Document processed successfully');
+
+      // The critical assertion: users.messages.get was called ONLY ONCE across the entire request!
+      expect(mockMessagesGet).toHaveBeenCalledTimes(1);
+      expect(mockMessagesGet).toHaveBeenCalledWith({
+        userId: 'me',
+        id: messageId,
+        format: 'full',
+      });
+
+      // Attachment was retrieved via attachment API
+      expect(mockAttachmentsGet).toHaveBeenCalledTimes(1);
+      expect(mockAttachmentsGet).toHaveBeenCalledWith({
+        userId: 'me',
+        messageId,
+        id: 'att-memo-scope-1',
+      });
+
+      gmailSpy.mockRestore();
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('reuses memoized GmailMessageDetails across in-card event and subsequent processDocument submission within TTL window', async () => {
+      mockFolderResolution('Sequential Lifecycle Review');
+
+      const messageId = 'msg-lifecycle-test';
+      const fileBytes = new Uint8Array([40, 50, 60]);
+
+      const mockMessagesGet = vi.fn().mockResolvedValue({
+        data: {
+          id: messageId,
+          threadId: 'th-lifecycle',
+          payload: {
+            headers: [
+              { name: 'Subject', value: 'Lifecycle Review' },
+              { name: 'From', value: 'bob@example.com' },
+              { name: 'Date', value: 'Tue, 19 Oct 2026 10:00:00 GMT' },
+            ],
+            mimeType: 'multipart/mixed',
+            parts: [
+              {
+                partId: 'part-0',
+                mimeType: 'application/pdf',
+                filename: 'Report.pdf',
+                body: {
+                  attachmentId: 'att-lifecycle-1',
+                  size: 2048,
+                },
+              },
+            ],
+          },
+        },
+      });
+
+      const mockAttachmentsGet = vi.fn().mockResolvedValue({
+        data: {
+          data: Buffer.from(fileBytes).toString('base64url'),
+        },
+      });
+
+      const mockGmailApi = {
+        users: {
+          messages: {
+            get: mockMessagesGet,
+            attachments: {
+              get: mockAttachmentsGet,
+            },
+          },
+        },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmailApi);
+
+      const memoizedGmailClient = new GoogleGmailClient({
+        gmail: mockGmailApi,
+      });
+
+      const testApp = createApp({
+        manifestProvider,
+        authVerifier: mockAuthVerifier,
+        skipSpaceValidation: true,
+        storageAdapter: mockStorageAdapter,
+        gmailClient: memoizedGmailClient,
+      });
+      await testApp.initialize();
+
+      // Step 1: In-card update / on-form-change (user changes space type or toggles switch)
+      const formChangeResponse = await testApp.server.inject({
+        method: 'POST',
+        url: '/workspace/on-form-change',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId,
+            threadId: 'th-lifecycle',
+            accessToken: 'ya29.valid-oauth-token',
+          },
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: { action: 'onSpaceTypeChange' },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+            },
+          },
+        },
+      });
+
+      expect(formChangeResponse.statusCode).toBe(200);
+      expect(mockMessagesGet).toHaveBeenCalledTimes(1);
+
+      // Step 2: User files document with attachments and SaveEmailToPdf = true
+      nock('https://www.googleapis.com')
+        .post('/upload/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: 'drive-saved-report-att',
+          name: 'Report.pdf',
+          mimeType: 'application/pdf',
+          parents: [newSubfolderId],
+          webViewLink: 'https://drive.google.com/file/d/drive-saved-report-att/view',
+        });
+
+      nock('https://www.googleapis.com')
+        .post('/upload/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: 'drive-saved-report-email-pdf',
+          name: 'Email - Lifecycle Review.pdf',
+          mimeType: 'application/pdf',
+          parents: [newSubfolderId],
+          webViewLink: 'https://drive.google.com/file/d/drive-saved-report-email-pdf/view',
+        });
+
+      const actionResponse = await testApp.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId,
+            threadId: 'th-lifecycle',
+            accessToken: 'ya29.valid-oauth-token',
+          },
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: { action: 'processDocument' },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+              SelectAttachments: { stringInputs: { value: ['part-0'] } },
+              SaveEmailToPdf: { stringInputs: { value: ['true'] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Sequential Lifecycle Review'] } },
+            },
+          },
+        },
+      });
+
+      expect(actionResponse.statusCode).toBe(200);
+      const actionBody = JSON.parse(actionResponse.payload) as GoogleWorkspaceActionResponse;
+      expect(actionBody.action?.notification?.text).toBe('Document processed successfully');
+
+      // Across both the on-form-change and processDocument with hydrator + UI manager, users.messages.get was called ONLY ONCE!
+      expect(mockMessagesGet).toHaveBeenCalledTimes(1);
+
+      gmailSpy.mockRestore();
       expect(nock.isDone()).toBe(true);
     });
   });

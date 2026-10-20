@@ -1564,5 +1564,335 @@ describe('GoogleGmailClient', () => {
       expect(result.attachments[1]?.partId).toBe('part-1');
     });
   });
+
+  describe('Bounded getMessage memoization', () => {
+    it('resolves sequential calls with same auth token and message ID within TTL from cache, calling users.messages.get only once', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-memo-1',
+          threadId: 'th-memo-1',
+        },
+      });
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+
+      const client = new GoogleGmailClient();
+
+      const res1 = await client.getMessage('msg-memo-1', { auth: 'token-abc' });
+      const res2 = await client.getMessage('msg-memo-1', { auth: 'token-abc' });
+
+      expect(mockGet).toHaveBeenCalledTimes(1);
+      expect(res1).toEqual(res2);
+      expect(res1.id).toBe('msg-memo-1');
+
+      gmailSpy.mockRestore();
+    });
+
+    it('shares in-flight promise for concurrent getMessage calls with same auth token and message ID', async () => {
+      let resolvePromise: (value: unknown) => void;
+      const deferred = new Promise((resolve) => {
+        resolvePromise = resolve;
+      });
+
+      const mockGet = vi.fn().mockReturnValue(deferred);
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      const promise1 = client.getMessage('msg-concurrent', { auth: 'token-abc' });
+      const promise2 = client.getMessage('msg-concurrent', { auth: 'token-abc' });
+
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      resolvePromise!({
+        data: {
+          id: 'msg-concurrent',
+          threadId: 'th-concurrent',
+        },
+      });
+
+      const [res1, res2] = await Promise.all([promise1, promise2]);
+
+      expect(mockGet).toHaveBeenCalledTimes(1);
+      expect(res1).toBe(res2);
+      expect(res1.id).toBe('msg-concurrent');
+
+      gmailSpy.mockRestore();
+    });
+
+    it('isolates cache entries across distinct auth tokens for the same message ID', async () => {
+      const mockGet = vi.fn().mockImplementation(async () => ({
+        data: {
+          id: 'msg-shared-id',
+          threadId: 'th-shared',
+        },
+      }));
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      await client.getMessage('msg-shared-id', { auth: 'token-user-1' });
+      await client.getMessage('msg-shared-id', { auth: 'token-user-2' });
+
+      expect(mockGet).toHaveBeenCalledTimes(2);
+
+      gmailSpy.mockRestore();
+    });
+
+    it('isolates cache entries across distinct message IDs for the same auth token', async () => {
+      const mockGet = vi.fn().mockImplementation(async (params: { id: string }) => ({
+        data: {
+          id: params.id,
+          threadId: `${params.id}_thread`,
+        },
+      }));
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      const res1 = await client.getMessage('msg-alpha', { auth: 'token-same' });
+      const res2 = await client.getMessage('msg-beta', { auth: 'token-same' });
+
+      expect(mockGet).toHaveBeenCalledTimes(2);
+      expect(res1.id).toBe('msg-alpha');
+      expect(res2.id).toBe('msg-beta');
+
+      gmailSpy.mockRestore();
+    });
+
+    it('maps auth and accessToken options to the same cache entry', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-mapped',
+          threadId: 'th-mapped',
+        },
+      });
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      await client.getMessage('msg-mapped', { auth: 'token-mapped' });
+      await client.getMessage('msg-mapped', { accessToken: 'token-mapped' });
+
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      gmailSpy.mockRestore();
+    });
+
+    it('re-fetches expired entries after TTL elapses and evicts stale entries', async () => {
+      let currentTime = 1000;
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-ttl',
+          threadId: 'th-ttl',
+        },
+      });
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient({
+        cacheOptions: {
+          ttlMs: 60_000,
+          clock: () => currentTime,
+        },
+      });
+
+      // Call 1 at t=1000 -> API called
+      await client.getMessage('msg-ttl', { auth: 'token-ttl' });
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      // Call 2 at t=60_999 (within 60s TTL window) -> cached
+      currentTime = 60_999;
+      await client.getMessage('msg-ttl', { auth: 'token-ttl' });
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      // Call 3 at t=61_001 (> 60s TTL window) -> expired and re-fetched
+      currentTime = 61_001;
+      await client.getMessage('msg-ttl', { auth: 'token-ttl' });
+      expect(mockGet).toHaveBeenCalledTimes(2);
+
+      gmailSpy.mockRestore();
+    });
+
+    it('evicts rejected getMessage promises so transient failures can be retried', async () => {
+      let failCount = 1;
+      const mockGet = vi.fn().mockImplementation(async () => {
+        if (failCount > 0) {
+          failCount--;
+          const err = new Error('Transient 500 error');
+          (err as { status?: number }).status = 500;
+          throw err;
+        }
+        return {
+          data: {
+            id: 'msg-transient',
+            threadId: 'th-transient',
+          },
+        };
+      });
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      // Attempt 1 fails
+      await expect(client.getMessage('msg-transient', { auth: 'tok' })).rejects.toThrow();
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      // Attempt 2 retries and succeeds because failed promise was evicted
+      const res = await client.getMessage('msg-transient', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(2);
+      expect(res.id).toBe('msg-transient');
+
+      // Attempt 3 within TTL uses cached success
+      await client.getMessage('msg-transient', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(2);
+
+      gmailSpy.mockRestore();
+    });
+
+    it('enforces maximum entry bound via LRU eviction', async () => {
+      const mockGet = vi.fn().mockImplementation(async (params: { id: string }) => ({
+        data: {
+          id: params.id,
+          threadId: `${params.id}_thread`,
+        },
+      }));
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient({
+        cacheOptions: {
+          maxEntries: 2,
+        },
+      });
+
+      // Fetch msg-1 and msg-2 -> cache has [msg-1, msg-2]
+      await client.getMessage('msg-1', { auth: 'tok' });
+      await client.getMessage('msg-2', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(2);
+
+      // Access msg-1 -> refreshes msg-1 as MRU; msg-2 is now LRU
+      await client.getMessage('msg-1', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(2);
+
+      // Fetch msg-3 -> exceeds capacity (maxEntries: 2) -> evicts msg-2
+      await client.getMessage('msg-3', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(3);
+
+      // msg-1 is still in cache -> no API call
+      await client.getMessage('msg-1', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(3);
+
+      // msg-2 was evicted -> triggers fresh API call
+      await client.getMessage('msg-2', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(4);
+
+      gmailSpy.mockRestore();
+    });
+
+    it('normalizes message ID whitespace in cache keys', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-trim',
+          threadId: 'th-trim',
+        },
+      });
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      await client.getMessage('  msg-trim  ', { auth: 'tok' });
+      await client.getMessage('msg-trim', { auth: 'tok' });
+
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      gmailSpy.mockRestore();
+    });
+
+    it('uses constructor auth token in cache key when per-request options are omitted', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-ctor-auth',
+          threadId: 'th-ctor-auth',
+        },
+      });
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient({ auth: 'ya29.ctor-token' });
+
+      await client.getMessage('msg-ctor-auth');
+      await client.getMessage('msg-ctor-auth');
+
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      gmailSpy.mockRestore();
+    });
+
+    it('clears cache on clearCache() and reports cache size via getCacheSize()', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-clear',
+          threadId: 'th-clear',
+        },
+      });
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      expect(client.getCacheSize()).toBe(0);
+      await client.getMessage('msg-clear', { auth: 'tok' });
+      expect(client.getCacheSize()).toBe(1);
+
+      client.clearCache();
+      expect(client.getCacheSize()).toBe(0);
+
+      await client.getMessage('msg-clear', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(2);
+      expect(client.getCacheSize()).toBe(1);
+
+      gmailSpy.mockRestore();
+    });
+  });
 });
 

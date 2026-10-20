@@ -82,6 +82,8 @@ export function wireWorkspaceAddonRoutes(
         ? (options.configProvider as AppConfigurationProviderPort)
         : undefined);
 
+    const gmailClient = options.gmailClient ?? new GoogleGmailClient();
+
     let createDocumentSpaceService = options.createDocumentSpaceService;
     if (!createDocumentSpaceService) {
       if (options.documentSpaceService) {
@@ -107,7 +109,7 @@ export function wireWorkspaceAddonRoutes(
           compiledSchemaRegistry: options.compiledSchemaRegistry,
           configProvider: appConfigProvider,
           driveClient: options.driveClient,
-          gmailClient: options.gmailClient,
+          gmailClient,
           pdfProcessor: options.pdfProcessor,
         });
       }
@@ -150,7 +152,7 @@ export function wireWorkspaceAddonRoutes(
       ...(options.documentSchemaRegistry !== undefined ? { documentSchemaRegistry: options.documentSchemaRegistry } : {}),
       ...(createSchemaDrivenUiService !== undefined ? { createSchemaDrivenUiService } : {}),
       ...(options.driveClient !== undefined ? { driveClient: options.driveClient } : {}),
-      ...(options.gmailClient !== undefined ? { gmailClient: options.gmailClient } : {}),
+      gmailClient,
       ...(options.gmailPort !== undefined ? { gmailPort: options.gmailPort } : {}),
       ...(options.pdfProcessor !== undefined ? { pdfProcessor: options.pdfProcessor } : {}),
       evaluateFormChange,
