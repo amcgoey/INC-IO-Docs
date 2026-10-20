@@ -2456,6 +2456,132 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         { text: 'Doc2b.pdf', value: 'att-2b', selected: true },
       ]);
     });
+
+    describe('Refresh action handling with skipCache and state reset (Ticket #213)', () => {
+      it('passes skipCache: true to getThreadMessages on refresh, resets SelectEmailMessage to trigger messageId, selects all its attachments, and resets SaveEmailToPdf to false', async () => {
+        const getThreadMessagesMock = vi.fn().mockResolvedValue([
+          {
+            id: 'msg-trigger-1',
+            from: 'Alice <alice@example.com>',
+            date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+            attachments: [
+              { id: 'att-trig-1', title: 'TriggerDoc1.pdf', mimeType: 'application/pdf' },
+              { id: 'att-trig-2', title: 'TriggerDoc2.pdf', mimeType: 'application/pdf' },
+            ],
+          },
+          {
+            id: 'msg-other-2',
+            from: 'Bob <bob@example.com>',
+            date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+            attachments: [
+              { id: 'att-other-1', title: 'OtherDoc.pdf', mimeType: 'application/pdf' },
+            ],
+          },
+        ]);
+
+        const gmailPort: UiProcessGmailPort = {
+          getMessageAttachments: vi.fn(),
+          getThreadMessages: getThreadMessagesMock,
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          gmailPort,
+        });
+
+        // User previously switched to msg-other-2, checked its attachment, and enabled SaveEmailToPdf
+        const context: UiProcessEventContext = {
+          actionName: 'refresh',
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-trigger-1',
+            threadId: 'th-refresh-test',
+            accessToken: 'ya29.refresh-token',
+          },
+          formData: {
+            SelectEmailMessage: 'msg-other-2',
+            SelectAttachments: ['att-other-1'],
+            SaveEmailToPdf: true,
+            SelectFileSource: 'Email Attachments',
+          },
+        };
+
+        const result = await adapter.processUiEvent(context);
+        expect(result.type).toBe('render');
+        const render = result as UiProcessRenderResult;
+
+        // Passed skipCache: true to getThreadMessages
+        expect(getThreadMessagesMock).toHaveBeenCalledWith('th-refresh-test', { skipCache: true });
+
+        // isUpdateCard is false on refresh
+        expect(render.isUpdateCard).toBe(false);
+
+        // SelectEmailMessage is reset to trigger messageId (msg-trigger-1)
+        expect(render.formData?.SelectEmailMessage).toBe('msg-trigger-1');
+
+        // SaveEmailToPdf is reset to false
+        expect(render.formData?.SaveEmailToPdf).toBe(false);
+
+        // Selection items for threadMessages show msg-trigger-1 selected
+        const threadItems = render.selectionState?.threadMessages;
+        expect(threadItems).toHaveLength(2);
+        expect(threadItems?.find((t) => t.value === 'msg-trigger-1')?.selected).toBe(true);
+        expect(threadItems?.find((t) => t.value === 'msg-other-2')?.selected).toBe(false);
+
+        // Files are reset to msg-trigger-1's attachments, all selected: true
+        expect(render.selectionState?.files).toEqual([
+          { text: 'TriggerDoc1.pdf', value: 'att-trig-1', selected: true },
+          { text: 'TriggerDoc2.pdf', value: 'att-trig-2', selected: true },
+        ]);
+      });
+
+      it('passes skipCache: true to getMessageDetails on refresh when threadId is absent', async () => {
+        const getMessageDetailsMock = vi.fn().mockResolvedValue({
+          id: 'msg-single-refresh',
+          from: 'Alice <alice@example.com>',
+          date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+          attachments: [
+            { id: 'att-sr-1', title: 'SingleRefreshed.pdf', mimeType: 'application/pdf' },
+          ],
+        });
+
+        const gmailPort: UiProcessGmailPort = {
+          getMessageAttachments: vi.fn(),
+          getMessageDetails: getMessageDetailsMock,
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          gmailPort,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'refresh',
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-single-refresh',
+            accessToken: 'ya29.refresh-token',
+          },
+          formData: {
+            SaveEmailToPdf: true,
+          },
+        };
+
+        const result = await adapter.processUiEvent(context);
+        expect(result.type).toBe('render');
+        const render = result as UiProcessRenderResult;
+
+        expect(getMessageDetailsMock).toHaveBeenCalledWith('msg-single-refresh', { skipCache: true });
+        expect(render.formData?.SaveEmailToPdf).toBe(false);
+        expect(render.selectionState?.files).toEqual([
+          { text: 'SingleRefreshed.pdf', value: 'att-sr-1', selected: true },
+        ]);
+      });
+    });
   });
 
   describe('Gmail attachment mapping during processDocument (Ticket #200)', () => {
