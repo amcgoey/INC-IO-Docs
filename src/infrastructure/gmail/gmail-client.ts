@@ -4,6 +4,7 @@ import type {
   GoogleGmailClientOptions,
   GmailOperationOptions,
   GmailMessageDetails,
+  GmailThreadDetails,
   GmailRetryOptions,
   GmailInlineImageDescriptor,
   GmailAttachmentDescriptor,
@@ -115,6 +116,165 @@ function isCidReferencedInHtml(html: string | undefined, normalizedCid: string):
   return false;
 }
 
+export function parseMessageDetails(
+  message: gmail_v1.Schema$Message,
+  fallbackId?: string
+): GmailMessageDetails {
+  const payload = message.payload;
+  const headers = payload?.headers;
+  const rfcMessageId = getHeaderValue(headers, 'Message-ID');
+  const rawSubject = getHeaderValue(headers, 'Subject');
+  const subject = rawSubject && rawSubject.trim().length > 0 ? rawSubject : undefined;
+  const from = getHeaderValue(headers, 'From');
+  const to = getHeaderValue(headers, 'To');
+  const cc = getHeaderValue(headers, 'Cc');
+  const date = getHeaderValue(headers, 'Date');
+
+  let plainTextBody: string | undefined;
+  let htmlBody: string | undefined;
+  const inlineImages: GmailInlineImageDescriptor[] = [];
+  const attachments: GmailAttachmentDescriptor[] = [];
+
+  if (!payload?.parts || payload.parts.length === 0) {
+    const bodyData = payload?.body?.data;
+    if (bodyData) {
+      const decoded = decodeBase64UrlToUtf8(bodyData);
+      const mimeType = payload.mimeType?.toLowerCase();
+      if (mimeType === 'text/plain') {
+        plainTextBody = decoded;
+      } else if (mimeType === 'text/html') {
+        htmlBody = decoded;
+      }
+    }
+  } else {
+    interface PartContext {
+      part: gmail_v1.Schema$MessagePart;
+      isInsideMultipartRelated: boolean;
+      fallbackPartId: string;
+    }
+    const candidateParts: PartContext[] = [];
+
+    const traverse = (
+      parts: gmail_v1.Schema$MessagePart[],
+      isInsideMultipartRelated: boolean,
+      pathPrefix = ''
+    ) => {
+      parts.forEach((part, index) => {
+        const currentPath = pathPrefix ? `${pathPrefix}.${index}` : `${index}`;
+        const fallbackPartId = `part-${currentPath}`;
+
+        const mimeType = part.mimeType?.toLowerCase();
+        const isRelated = isInsideMultipartRelated || mimeType === 'multipart/related';
+
+        if (mimeType === 'message/rfc822') {
+          candidateParts.push({ part, isInsideMultipartRelated: isRelated, fallbackPartId });
+          return;
+        }
+
+        const filename = part.filename;
+        const hasFilename = Boolean(filename && filename.trim().length > 0);
+        const disposition = getHeaderValue(part.headers, 'Content-Disposition');
+        const isAttachmentDisposition = disposition
+          ? disposition.toLowerCase().includes('attachment')
+          : false;
+
+        if (!hasFilename && !isAttachmentDisposition) {
+          if (mimeType === 'text/plain' && plainTextBody === undefined && part.body?.data) {
+            plainTextBody = decodeBase64UrlToUtf8(part.body.data);
+          } else if (mimeType === 'text/html' && htmlBody === undefined && part.body?.data) {
+            htmlBody = decodeBase64UrlToUtf8(part.body.data);
+          }
+        }
+
+        if (part.parts && part.parts.length > 0) {
+          traverse(part.parts, isRelated, currentPath);
+        } else {
+          candidateParts.push({ part, isInsideMultipartRelated: isInsideMultipartRelated, fallbackPartId });
+        }
+      });
+    };
+
+    traverse(payload.parts, false, '');
+
+    for (const { part, isInsideMultipartRelated, fallbackPartId } of candidateParts) {
+      const mimeType = part.mimeType?.toLowerCase() ?? '';
+      const rawCid = getHeaderValue(part.headers, 'Content-ID');
+      const normalizedCid = normalizeContentId(rawCid);
+      const isImage = mimeType.startsWith('image/');
+      const resolvedPartId =
+        typeof part.partId === 'string' && part.partId.trim().length > 0
+          ? part.partId.trim()
+          : fallbackPartId;
+
+      let isInlineImage = false;
+      if (isImage && normalizedCid) {
+        if (isInsideMultipartRelated || isCidReferencedInHtml(htmlBody, normalizedCid)) {
+          isInlineImage = true;
+        }
+      }
+
+      if (isInlineImage && normalizedCid) {
+        let data: Uint8Array | undefined;
+        if (part.body?.data) {
+          data = decodeBase64ToBytes(part.body.data);
+        }
+
+        const inlineImage: GmailInlineImageDescriptor = {
+          cid: normalizedCid,
+          partId: resolvedPartId,
+          mimeType: part.mimeType ?? 'image/png',
+          ...(part.body?.attachmentId ? { attachmentId: part.body.attachmentId } : {}),
+          ...(part.filename && part.filename.trim().length > 0 ? { filename: part.filename } : {}),
+          ...(typeof part.body?.size === 'number' ? { size: part.body.size } : {}),
+          ...(data ? { data } : {}),
+        };
+        inlineImages.push(inlineImage);
+      } else {
+        const filename = part.filename?.trim();
+        const rawAttachmentId = part.body?.attachmentId?.trim();
+        const hasAttachmentId = Boolean(rawAttachmentId && rawAttachmentId.length > 0);
+        const rawBodyData = part.body?.data?.trim();
+        const hasInlineData = Boolean(rawBodyData && rawBodyData.length > 0);
+
+        if (filename && filename.length > 0 && (hasAttachmentId || hasInlineData)) {
+          const attachmentId = hasAttachmentId ? rawAttachmentId! : `inline-${resolvedPartId}`;
+          let data: Uint8Array | undefined;
+          if (hasInlineData && rawBodyData) {
+            data = decodeBase64ToBytes(rawBodyData);
+          }
+
+          const attachment: GmailAttachmentDescriptor = {
+            partId: resolvedPartId,
+            attachmentId,
+            filename: part.filename ?? filename,
+            mimeType: part.mimeType ?? 'application/octet-stream',
+            size: typeof part.body?.size === 'number' ? part.body.size : (data ? data.length : 0),
+            ...(data ? { data } : {}),
+          };
+          attachments.push(attachment);
+        }
+      }
+    }
+  }
+
+  const details: GmailMessageDetails = {
+    id: message.id ?? fallbackId ?? '',
+    inlineImages,
+    attachments,
+    ...(message.threadId ? { threadId: message.threadId } : {}),
+    ...(rfcMessageId !== undefined ? { rfcMessageId, messageId: rfcMessageId } : {}),
+    ...(subject !== undefined ? { subject } : {}),
+    ...(from !== undefined ? { from } : {}),
+    ...(to !== undefined ? { to } : {}),
+    ...(cc !== undefined ? { cc } : {}),
+    ...(date !== undefined ? { date } : {}),
+    ...(plainTextBody !== undefined ? { plainTextBody } : {}),
+    ...(htmlBody !== undefined ? { htmlBody } : {}),
+  };
+
+  return details;
+}
+
 export class GoogleGmailClient {
   private readonly defaultGmail: gmail_v1.Gmail;
   private readonly defaultAuthToken?: string | undefined;
@@ -188,16 +348,18 @@ export class GoogleGmailClient {
     const key = `${this.getAuthCacheKey(options)}\0${messageId.trim()}`;
     const now = this.clock();
 
-    const existing = this.cache.get(key);
-    if (existing) {
-      if (now <= existing.expiresAt) {
-        // Cache hit: move to end for LRU order
+    if (!options?.skipCache) {
+      const existing = this.cache.get(key);
+      if (existing) {
+        if (now <= existing.expiresAt) {
+          // Cache hit: move to end for LRU order
+          this.cache.delete(key);
+          this.cache.set(key, existing);
+          return existing.promise;
+        }
+        // Expired entry
         this.cache.delete(key);
-        this.cache.set(key, existing);
-        return existing.promise;
       }
-      // Expired entry
-      this.cache.delete(key);
     }
 
     // Prune expired entries to maintain bounds
@@ -288,6 +450,37 @@ export class GoogleGmailClient {
     }
   }
 
+  async getThread(
+    threadId: string,
+    options?: GmailOperationOptions
+  ): Promise<GmailThreadDetails> {
+    const gmail = this.getGmail(options);
+    if (!gmail?.users?.threads?.get) {
+      throw new GoogleGmailApiError('Google Gmail API error in getThread: threads API is not available');
+    }
+    let res: { data: gmail_v1.Schema$Thread };
+    try {
+      res = await this.executeWithRetry(() =>
+        gmail.users.threads.get({
+          userId: 'me',
+          id: threadId,
+          format: 'full',
+        })
+      );
+    } catch (error) {
+      this.wrapApiError('getThread', error);
+    }
+
+    const messages = (res.data.messages ?? []).map((msg) =>
+      parseMessageDetails(msg, msg.id ?? undefined)
+    );
+
+    return {
+      id: res.data.id ?? threadId,
+      messages,
+    };
+  }
+
   private async fetchMessageDetails(messageId: string, options?: GmailOperationOptions): Promise<GmailMessageDetails> {
     const gmail = this.getGmail(options);
     let res: { data: gmail_v1.Schema$Message };
@@ -303,160 +496,7 @@ export class GoogleGmailClient {
       this.wrapApiError('getMessage', error);
     }
 
-
-    const payload = res.data.payload;
-    const headers = payload?.headers;
-    const rfcMessageId = getHeaderValue(headers, 'Message-ID');
-    const rawSubject = getHeaderValue(headers, 'Subject');
-    const subject = rawSubject && rawSubject.trim().length > 0 ? rawSubject : undefined;
-    const from = getHeaderValue(headers, 'From');
-    const to = getHeaderValue(headers, 'To');
-    const cc = getHeaderValue(headers, 'Cc');
-    const date = getHeaderValue(headers, 'Date');
-
-    let plainTextBody: string | undefined;
-    let htmlBody: string | undefined;
-    const inlineImages: GmailInlineImageDescriptor[] = [];
-    const attachments: GmailAttachmentDescriptor[] = [];
-
-    if (!payload?.parts || payload.parts.length === 0) {
-      const bodyData = payload?.body?.data;
-      if (bodyData) {
-        const decoded = decodeBase64UrlToUtf8(bodyData);
-        const mimeType = payload.mimeType?.toLowerCase();
-        if (mimeType === 'text/plain') {
-          plainTextBody = decoded;
-        } else if (mimeType === 'text/html') {
-          htmlBody = decoded;
-        }
-      }
-    } else {
-      interface PartContext {
-        part: gmail_v1.Schema$MessagePart;
-        isInsideMultipartRelated: boolean;
-        fallbackPartId: string;
-      }
-      const candidateParts: PartContext[] = [];
-
-      const traverse = (
-        parts: gmail_v1.Schema$MessagePart[],
-        isInsideMultipartRelated: boolean,
-        pathPrefix = ''
-      ) => {
-        parts.forEach((part, index) => {
-          const currentPath = pathPrefix ? `${pathPrefix}.${index}` : `${index}`;
-          const fallbackPartId = `part-${currentPath}`;
-
-          const mimeType = part.mimeType?.toLowerCase();
-          const isRelated = isInsideMultipartRelated || mimeType === 'multipart/related';
-
-          if (mimeType === 'message/rfc822') {
-            candidateParts.push({ part, isInsideMultipartRelated: isRelated, fallbackPartId });
-            return;
-          }
-
-          const filename = part.filename;
-          const hasFilename = Boolean(filename && filename.trim().length > 0);
-          const disposition = getHeaderValue(part.headers, 'Content-Disposition');
-          const isAttachmentDisposition = disposition
-            ? disposition.toLowerCase().includes('attachment')
-            : false;
-
-          if (!hasFilename && !isAttachmentDisposition) {
-            if (mimeType === 'text/plain' && plainTextBody === undefined && part.body?.data) {
-              plainTextBody = decodeBase64UrlToUtf8(part.body.data);
-            } else if (mimeType === 'text/html' && htmlBody === undefined && part.body?.data) {
-              htmlBody = decodeBase64UrlToUtf8(part.body.data);
-            }
-          }
-
-          if (part.parts && part.parts.length > 0) {
-            traverse(part.parts, isRelated, currentPath);
-          } else {
-            candidateParts.push({ part, isInsideMultipartRelated: isInsideMultipartRelated, fallbackPartId });
-          }
-        });
-      };
-
-      traverse(payload.parts, false, '');
-
-      for (const { part, isInsideMultipartRelated, fallbackPartId } of candidateParts) {
-        const mimeType = part.mimeType?.toLowerCase() ?? '';
-        const rawCid = getHeaderValue(part.headers, 'Content-ID');
-        const normalizedCid = normalizeContentId(rawCid);
-        const isImage = mimeType.startsWith('image/');
-        const resolvedPartId =
-          typeof part.partId === 'string' && part.partId.trim().length > 0
-            ? part.partId.trim()
-            : fallbackPartId;
-
-        let isInlineImage = false;
-        if (isImage && normalizedCid) {
-          if (isInsideMultipartRelated || isCidReferencedInHtml(htmlBody, normalizedCid)) {
-            isInlineImage = true;
-          }
-        }
-
-        if (isInlineImage && normalizedCid) {
-          let data: Uint8Array | undefined;
-          if (part.body?.data) {
-            data = decodeBase64ToBytes(part.body.data);
-          }
-
-          const inlineImage: GmailInlineImageDescriptor = {
-            cid: normalizedCid,
-            partId: resolvedPartId,
-            mimeType: part.mimeType ?? 'image/png',
-            ...(part.body?.attachmentId ? { attachmentId: part.body.attachmentId } : {}),
-            ...(part.filename && part.filename.trim().length > 0 ? { filename: part.filename } : {}),
-            ...(typeof part.body?.size === 'number' ? { size: part.body.size } : {}),
-            ...(data ? { data } : {}),
-          };
-          inlineImages.push(inlineImage);
-        } else {
-          const filename = part.filename?.trim();
-          const rawAttachmentId = part.body?.attachmentId?.trim();
-          const hasAttachmentId = Boolean(rawAttachmentId && rawAttachmentId.length > 0);
-          const rawBodyData = part.body?.data?.trim();
-          const hasInlineData = Boolean(rawBodyData && rawBodyData.length > 0);
-
-          if (filename && filename.length > 0 && (hasAttachmentId || hasInlineData)) {
-            const attachmentId = hasAttachmentId ? rawAttachmentId! : `inline-${resolvedPartId}`;
-            let data: Uint8Array | undefined;
-            if (hasInlineData && rawBodyData) {
-              data = decodeBase64ToBytes(rawBodyData);
-            }
-
-            const attachment: GmailAttachmentDescriptor = {
-              partId: resolvedPartId,
-              attachmentId,
-              filename: part.filename ?? filename,
-              mimeType: part.mimeType ?? 'application/octet-stream',
-              size: typeof part.body?.size === 'number' ? part.body.size : (data ? data.length : 0),
-              ...(data ? { data } : {}),
-            };
-            attachments.push(attachment);
-          }
-        }
-      }
-    }
-
-    const details: GmailMessageDetails = {
-      id: res.data.id ?? messageId,
-      inlineImages,
-      attachments,
-      ...(res.data.threadId ? { threadId: res.data.threadId } : {}),
-      ...(rfcMessageId !== undefined ? { rfcMessageId, messageId: rfcMessageId } : {}),
-      ...(subject !== undefined ? { subject } : {}),
-      ...(from !== undefined ? { from } : {}),
-      ...(to !== undefined ? { to } : {}),
-      ...(cc !== undefined ? { cc } : {}),
-      ...(date !== undefined ? { date } : {}),
-      ...(plainTextBody !== undefined ? { plainTextBody } : {}),
-      ...(htmlBody !== undefined ? { htmlBody } : {}),
-    };
-
-    return details;
+    return parseMessageDetails(res.data, messageId);
   }
 
   async getAttachment(

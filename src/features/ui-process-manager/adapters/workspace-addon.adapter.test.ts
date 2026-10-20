@@ -2233,6 +2233,56 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(render.selectionState?.files).toEqual([]);
       warnSpy.mockRestore();
     });
+
+    it('calls gmailPort.getThreadMessages on initial load when threadId is present', async () => {
+      const getThreadMessagesMock = vi.fn().mockResolvedValue([
+        {
+          id: 'msg-1',
+          from: 'Alice <alice@example.com>',
+          date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+          attachments: [{ id: 'att-1', title: 'File1.pdf', mimeType: 'application/pdf' }],
+        },
+        {
+          id: 'msg-2',
+          from: 'Bob <bob@example.com>',
+          date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+          attachments: [{ id: 'att-2', title: 'File2.pdf', mimeType: 'application/pdf' }],
+        },
+      ]);
+
+      const gmailPort: UiProcessGmailPort = {
+        getMessageAttachments: vi.fn(),
+        getThreadMessages: getThreadMessagesMock,
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        gmailPort,
+      });
+
+      const context: UiProcessEventContext = {
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-1',
+          threadId: 'th-1',
+          accessToken: 'ya29.token',
+        },
+      };
+
+      const result = await adapter.processUiEvent(context);
+      expect(result.type).toBe('render');
+      const render = result as UiProcessRenderResult;
+
+      expect(getThreadMessagesMock).toHaveBeenCalledWith('th-1', { skipCache: false });
+      expect(render.selectionState?.threadMessages).toHaveLength(2);
+      expect(render.selectionState?.threadMessages?.[0].value).toBe('msg-1');
+      expect(render.selectionState?.threadMessages?.[0].selected).toBe(true);
+      expect(render.selectionState?.files).toEqual([
+        { text: 'File1.pdf', value: 'att-1', selected: true },
+      ]);
+    });
   });
 
   describe('Gmail attachment mapping during processDocument (Ticket #200)', () => {

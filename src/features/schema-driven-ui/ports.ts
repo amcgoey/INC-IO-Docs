@@ -17,6 +17,7 @@ export const SelectionStateSchema = Type.Object({
   documentTypes: Type.Array(SelectionItemSchema),
   files: Type.Optional(Type.Union([Type.Array(SelectionItemSchema), Type.Undefined()])),
   fileSources: Type.Optional(Type.Union([Type.Array(SelectionItemSchema), Type.Undefined()])),
+  threadMessages: Type.Optional(Type.Union([Type.Array(SelectionItemSchema), Type.Undefined()])),
 });
 
 export type SelectionState = Static<typeof SelectionStateSchema>;

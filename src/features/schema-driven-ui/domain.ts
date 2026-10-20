@@ -11,9 +11,19 @@ import type {
 } from './ports';
 import {
   SelectionItemSchema,
+  type SelectionItem,
+  SelectionStateSchema,
+  type SelectionState,
   GenerateViewRequestSchema,
   type GenerateViewRequest,
 } from './ports';
+
+export {
+  SelectionItemSchema,
+  type SelectionItem,
+  SelectionStateSchema,
+  type SelectionState,
+};
 import { DEFAULT_MESSAGE_CATALOG, formatStatusSectionMessage } from './message-catalog';
 
 // --- JSON Logic Schema ---

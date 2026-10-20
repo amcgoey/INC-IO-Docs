@@ -393,6 +393,138 @@ describe('File Selection Block', () => {
       // Widget 2: SWITCH toggle
       expect(section.widgets[2].selectionInput?.name).toBe('SaveEmailToPdf');
     });
+
+    it('renders itemDropdown at widget index 0 above SelectFileSource in both Email Attachments and Google Drive URL modes', () => {
+      const threadMessages: SelectionItem[] = [
+        { text: '(1) Alice | 261019', value: 'msg-1', selected: true },
+        { text: '(2) Bob | 261019', value: 'msg-2', selected: false },
+      ];
+
+      // Email Attachments mode
+      const emailSection = buildFileSelectionSection(
+        {
+          spaceTypes: [],
+          spaces: [],
+          documentTypes: [],
+          files: sampleFiles,
+          fileSources: sampleSources,
+          threadMessages,
+        },
+        {
+          formData: {
+            SelectEmailMessage: 'msg-1',
+            SelectFileSource: 'Email Attachments',
+          },
+          itemDropdown: {
+            name: 'SelectEmailMessage',
+            label: 'Email',
+          },
+          fileSourceDropdown: {
+            name: 'SelectFileSource',
+            label: 'File Source',
+          },
+          urlInput: {
+            name: 'InputDriveURL',
+            label: 'Google Drive URL',
+            hintText: 'Enter URL',
+            activeOnSourceValue: 'Google Drive URL',
+          },
+          toggleInput: {
+            name: 'SaveEmailToPdf',
+            text: 'Save Email to PDF',
+            value: 'true',
+          },
+        }
+      );
+
+      expect(Value.Check(UiViewSectionSchema, emailSection)).toBe(true);
+      expect(emailSection.widgets).toHaveLength(4);
+      // Widget 0: itemDropdown
+      expect(emailSection.widgets[0].selectionInput?.name).toBe('SelectEmailMessage');
+      expect(emailSection.widgets[0].selectionInput?.label).toBe('Email');
+      expect(emailSection.widgets[0].selectionInput?.type).toBe('DROPDOWN');
+      expect(emailSection.widgets[0].selectionInput?.items).toEqual(threadMessages);
+      // Widget 1: fileSourceDropdown
+      expect(emailSection.widgets[1].selectionInput?.name).toBe('SelectFileSource');
+      // Widget 2: CHECK_BOX
+      expect(emailSection.widgets[2].selectionInput?.name).toBe('SelectFiles');
+      // Widget 3: SWITCH
+      expect(emailSection.widgets[3].selectionInput?.name).toBe('SaveEmailToPdf');
+
+      // Google Drive URL mode
+      const driveSection = buildFileSelectionSection(
+        {
+          spaceTypes: [],
+          spaces: [],
+          documentTypes: [],
+          files: sampleFiles,
+          fileSources: sampleSources,
+          threadMessages,
+        },
+        {
+          formData: {
+            SelectEmailMessage: 'msg-1',
+            SelectFileSource: 'Google Drive URL',
+            InputDriveURL: 'https://drive.google.com/file/d/123/view',
+          },
+          itemDropdown: {
+            name: 'SelectEmailMessage',
+            label: 'Email',
+            items: threadMessages,
+          },
+          fileSourceDropdown: {
+            name: 'SelectFileSource',
+            label: 'File Source',
+          },
+          urlInput: {
+            name: 'InputDriveURL',
+            label: 'Google Drive URL',
+            hintText: 'Enter URL',
+            activeOnSourceValue: 'Google Drive URL',
+          },
+          toggleInput: {
+            name: 'SaveEmailToPdf',
+            text: 'Save Email to PDF',
+            value: 'true',
+          },
+        }
+      );
+
+      expect(Value.Check(UiViewSectionSchema, driveSection)).toBe(true);
+      expect(driveSection.widgets).toHaveLength(4);
+      // Widget 0: itemDropdown
+      expect(driveSection.widgets[0].selectionInput?.name).toBe('SelectEmailMessage');
+      expect(driveSection.widgets[0].selectionInput?.label).toBe('Email');
+      expect(driveSection.widgets[0].selectionInput?.type).toBe('DROPDOWN');
+      // Widget 1: fileSourceDropdown
+      expect(driveSection.widgets[1].selectionInput?.name).toBe('SelectFileSource');
+      // Widget 2: textInput (InputDriveURL)
+      expect(driveSection.widgets[2].textInput?.name).toBe('InputDriveURL');
+      // Widget 3: SWITCH
+      expect(driveSection.widgets[3].selectionInput?.name).toBe('SaveEmailToPdf');
+    });
+
+    it('omits itemDropdown when itemDropdown option is not provided or items are empty', () => {
+      const section = buildFileSelectionSection(
+        {
+          spaceTypes: [],
+          spaces: [],
+          documentTypes: [],
+          files: sampleFiles,
+          fileSources: sampleSources,
+        },
+        {
+          fileSourceDropdown: {
+            name: 'SelectFileSource',
+            label: 'File Source',
+          },
+        }
+      );
+
+      expect(section.widgets).toHaveLength(2);
+      expect(section.widgets[0].selectionInput?.name).toBe('SelectFileSource');
+      expect(section.widgets[1].selectionInput?.name).toBe('SelectFiles');
+    });
   });
 });
 

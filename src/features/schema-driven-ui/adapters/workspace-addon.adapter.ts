@@ -219,10 +219,15 @@ export function extractGmailActionParameters(ctx: UiViewAdapterContext): Record<
   }
 
   const currentDriveUrl = (ctx.formData?.['InputDriveURL'] as string) ?? '';
+  const selectedThreadMsg = ctx.selectionState?.threadMessages?.find((m) => m.selected)?.value;
+  const previousMessageId = (ctx.formData?.['SelectEmailMessage'] as string) ?? selectedThreadMsg;
 
   return {
     previousAttachments: JSON.stringify(checkedAttachmentIds),
     previousDriveUrl: currentDriveUrl,
+    ...(previousMessageId !== undefined && previousMessageId.trim().length > 0
+      ? { previousMessageId: previousMessageId.trim() }
+      : {}),
   };
 }
 
@@ -248,6 +253,15 @@ export class GmailWorkspaceAddonAdapter implements UiViewSchemaAdapterPort {
           inputName: 'SelectAttachments',
           emptyText: 'No attachments found.',
           formData: ctx.formData,
+          itemDropdown: {
+            name: 'SelectEmailMessage',
+            label: 'Email',
+            items: ctx.selectionState.threadMessages,
+            onChangeAction: {
+              action: 'onEmailMessageChange',
+              parameters: actionParams,
+            },
+          },
           fileSourceDropdown: {
             name: 'SelectFileSource',
             label: 'File Source',

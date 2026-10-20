@@ -12,6 +12,7 @@ export interface GmailRetryOptions {
 export interface GmailOperationOptions {
   auth?: OAuth2Client | string | undefined;
   accessToken?: string | undefined;
+  skipCache?: boolean | undefined;
 }
 
 export interface GmailCacheOptions {
@@ -71,4 +72,13 @@ export const GmailMessageDetailsSchema = Type.Object({
 export type GmailMessageDetails = Static<typeof GmailMessageDetailsSchema> & {
   inlineImages: GmailInlineImageDescriptor[];
   attachments: GmailAttachmentDescriptor[];
+};
+
+export const GmailThreadDetailsSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  messages: Type.Array(GmailMessageDetailsSchema),
+});
+
+export type GmailThreadDetails = Static<typeof GmailThreadDetailsSchema> & {
+  messages: GmailMessageDetails[];
 };
