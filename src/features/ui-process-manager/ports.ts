@@ -168,6 +168,7 @@ export interface UiProcessDocumentRunnerPort {
       data: Record<string, unknown>;
       space?: UiProcessDocumentSpaceDto | undefined;
       sourceFiles?: UiProcessSourceFileDto[] | undefined;
+      targetMessageId?: string | undefined;
     },
     eventName: string
   ): Promise<UiProcessDocumentExecutionResult>;

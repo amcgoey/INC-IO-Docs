@@ -110,6 +110,55 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
             ],
           };
         }
+        if (messageId === 'msg-email-1') {
+          return {
+            id: 'msg-email-1',
+            messageId: 'msg-email-1',
+            subject: 'Initial Meeting Kickoff',
+            from: 'Alice <alice@example.com>',
+            to: 'Team <team@example.com>',
+            date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+            plainTextBody: 'Here is the kickoff document.',
+            htmlBody: '<p>Here is the kickoff document.</p>',
+            attachments: [
+              {
+                partId: 'part-email-1-att-1',
+                attachmentId: 'att-email-1-1',
+                filename: 'Email1Doc.pdf',
+                mimeType: 'application/pdf',
+                size: 1024,
+              },
+            ],
+          };
+        }
+        if (messageId === 'msg-email-2') {
+          return {
+            id: 'msg-email-2',
+            messageId: 'msg-email-2',
+            subject: 'Project Scope Revision',
+            from: 'Bob <bob@example.com>',
+            to: 'Team <team@example.com>',
+            date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+            plainTextBody: 'Please find the revised project documents attached.',
+            htmlBody: '<p>Please find the revised project documents attached.</p>',
+            attachments: [
+              {
+                partId: 'part-email-2-att-1',
+                attachmentId: 'att-email-2-1',
+                filename: 'Email2DocA.pdf',
+                mimeType: 'application/pdf',
+                size: 2048,
+              },
+              {
+                partId: 'part-email-2-att-2',
+                attachmentId: 'att-email-2-2',
+                filename: 'Email2DocB.pdf',
+                mimeType: 'application/pdf',
+                size: 4096,
+              },
+            ],
+          };
+        }
         return {
           messageId,
           attachments: [],
@@ -3484,6 +3533,294 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         { text: 'Email2DocA.pdf', value: 'part-email-2-att-1', selected: true },
         { text: 'Email2DocB.pdf', value: 'part-email-2-att-2', selected: false },
       ]);
+    });
+  });
+
+  describe('End-to-End processDocument filing for selected thread email (Ticket #212)', () => {
+    const rootSharedDriveId = 'shared-drive-proj-root';
+    const adminFolderId = 'folder-admin-1';
+    const commFolderId = 'folder-comm-1';
+    const contactFolderId = 'folder-acme-corp';
+    const newSubfolderId = 'folder-meeting-subfolder';
+
+    function mockFolderResolution() {
+      mockDynamicValidationProject({
+        sharedDriveId: rootSharedDriveId,
+        adminFolderId,
+        commFolderId,
+        contactFolderId,
+        contactName: 'Acme Corp',
+      });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(rootSharedDriveId) && q.q.includes("name = '1 Admin'"))
+        .reply(200, {
+          files: [{ id: adminFolderId, name: '1 Admin', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(adminFolderId) && q.q.includes("name = 'Communication'"))
+        .reply(200, {
+          files: [{ id: commFolderId, name: 'Communication', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(commFolderId) && q.q.includes("name = 'Acme Corp'"))
+        .reply(200, {
+          files: [{ id: contactFolderId, name: 'Acme Corp', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(contactFolderId) && q.q.includes("name = '260920 IN - Meeting Notes'"))
+        .reply(200, { files: [] });
+
+      nock('https://www.googleapis.com')
+        .post('/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: newSubfolderId,
+          name: '260920 IN - Meeting Notes',
+          parents: [contactFolderId],
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+    }
+
+    it('files checked attachments from a non-initial email in a multi-message thread into Drive', async () => {
+      mockFolderResolution();
+
+      const attachmentBytes = new Uint8Array([10, 20, 30, 40]);
+      mockGmailClient.getAttachment = vi.fn().mockResolvedValue(attachmentBytes);
+
+      nock('https://www.googleapis.com')
+        .post('/upload/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: 'drive-saved-att-2a',
+          name: 'Email2DocA.pdf',
+          mimeType: 'application/pdf',
+          parents: [newSubfolderId],
+          webViewLink: 'https://drive.google.com/file/d/drive-saved-att-2a/view',
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-email-1',
+            threadId: 'th-multi-message',
+            accessToken: 'ya29.live-token',
+          },
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectEmailMessage: { stringInputs: { value: ['msg-email-2'] } },
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+              SelectAttachments: { stringInputs: { value: ['part-email-2-att-1'] } },
+              SaveEmailToPdf: { stringInputs: { value: ['false'] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+      expect(body.action?.notification?.text).toBe('Document processed successfully');
+
+      // Crucial: getAttachment was called with the selected email ID (msg-email-2) rather than initial trigger (msg-email-1)
+      expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(
+        'msg-email-2',
+        'att-email-2-1',
+        { auth: 'ya29.valid-oauth-token' }
+      );
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('files Email PDF from a non-initial email in a multi-message thread (renders headers, subject, body from selected email)', async () => {
+      mockFolderResolution();
+
+      const generateEmailPdfSpy = vi.spyOn(PdfProcessor.prototype, 'generateEmailPdf');
+
+      nock('https://www.googleapis.com')
+        .post('/upload/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: 'drive-saved-pdf-2',
+          name: 'Email - Project Scope Revision.pdf',
+          mimeType: 'application/pdf',
+          parents: [newSubfolderId],
+          webViewLink: 'https://drive.google.com/file/d/drive-saved-pdf-2/view',
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-email-1',
+            threadId: 'th-multi-message',
+            accessToken: 'ya29.live-token',
+          },
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectEmailMessage: { stringInputs: { value: ['msg-email-2'] } },
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+              SelectAttachments: { stringInputs: { value: [] } },
+              SaveEmailToPdf: { stringInputs: { value: ['true'] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+      expect(body.action?.notification?.text).toBe('Document processed successfully');
+
+      // Crucial: generateEmailPdf received headers, subject, and body from msg-email-2
+      expect(generateEmailPdfSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subject: 'Project Scope Revision',
+          from: 'Bob <bob@example.com>',
+          to: 'Team <team@example.com>',
+          date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+          plainTextBody: 'Please find the revised project documents attached.',
+        })
+      );
+
+      generateEmailPdfSpy.mockRestore();
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('files both attachments and Email PDF from a non-initial email in a multi-message thread', async () => {
+      mockFolderResolution();
+
+      const attachmentBytes = new Uint8Array([50, 60, 70]);
+      mockGmailClient.getAttachment = vi.fn().mockResolvedValue(attachmentBytes);
+      const generateEmailPdfSpy = vi.spyOn(PdfProcessor.prototype, 'generateEmailPdf');
+
+      nock('https://www.googleapis.com')
+        .post('/upload/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: 'drive-saved-att-2a',
+          name: 'Email2DocA.pdf',
+          mimeType: 'application/pdf',
+          parents: [newSubfolderId],
+          webViewLink: 'https://drive.google.com/file/d/drive-saved-att-2a/view',
+        });
+
+      nock('https://www.googleapis.com')
+        .post('/upload/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: 'drive-saved-pdf-2',
+          name: 'Email - Project Scope Revision.pdf',
+          mimeType: 'application/pdf',
+          parents: [newSubfolderId],
+          webViewLink: 'https://drive.google.com/file/d/drive-saved-pdf-2/view',
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-email-1',
+            threadId: 'th-multi-message',
+            accessToken: 'ya29.live-token',
+          },
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'processDocument',
+            },
+            formInputs: {
+              SelectEmailMessage: { stringInputs: { value: ['msg-email-2'] } },
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+              SelectAttachments: { stringInputs: { value: ['part-email-2-att-1'] } },
+              SaveEmailToPdf: { stringInputs: { value: ['true'] } },
+              [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+              [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+              [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+              [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+      expect(body.action?.notification?.text).toBe('Document processed successfully');
+
+      // Attachment downloaded from msg-email-2
+      expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(
+        'msg-email-2',
+        'att-email-2-1',
+        { auth: 'ya29.valid-oauth-token' }
+      );
+
+      // Email PDF generated with msg-email-2 headers and body
+      expect(generateEmailPdfSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subject: 'Project Scope Revision',
+          from: 'Bob <bob@example.com>',
+          to: 'Team <team@example.com>',
+          date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+          plainTextBody: 'Please find the revised project documents attached.',
+        })
+      );
+
+      generateEmailPdfSpy.mockRestore();
+      expect(nock.isDone()).toBe(true);
     });
   });
 });
