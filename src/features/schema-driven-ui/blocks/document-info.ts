@@ -25,6 +25,7 @@ export interface DocumentInfoOptions {
   onProcessAction?: UiViewAction | string | undefined;
   documentTypeKey?: string | undefined;
   dynamicOptions?: Record<string, DynamicOptionResolution | DynamicOptionItem[]> | undefined;
+  onChangeActionParameters?: Record<string, unknown> | undefined;
 }
 
 export function getDocumentInfoWidgetName(fieldKey: string, documentTypeKey?: string): string {
@@ -57,6 +58,7 @@ interface WidgetBuilderContext {
   formValue: unknown | undefined;
   dataSchema?: AbstractDataSchema | undefined;
   dynamicOptions?: Record<string, DynamicOptionResolution | DynamicOptionItem[]> | undefined;
+  onChangeActionParameters?: Record<string, unknown> | undefined;
 }
 
 type WidgetBuilder = (ctx: WidgetBuilderContext) => UiViewWidget;
@@ -239,9 +241,15 @@ export function buildDocumentInfoSection(
 
     const onChangeAction: UiViewAction | undefined =
       typeof uiField?.onChange === 'string'
-        ? { action: uiField.onChange }
+        ? {
+            action: uiField.onChange,
+            ...(options?.onChangeActionParameters ? { parameters: options.onChangeActionParameters } : {}),
+          }
         : uiField?.onChange === true
-          ? { action: 'onFormChange' }
+          ? {
+              action: 'onFormChange',
+              ...(options?.onChangeActionParameters ? { parameters: options.onChangeActionParameters } : {}),
+            }
           : undefined;
 
     const widgetName = getDocumentInfoWidgetName(field.key, options?.documentTypeKey);

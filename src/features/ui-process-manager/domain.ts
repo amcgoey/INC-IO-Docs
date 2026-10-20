@@ -568,8 +568,16 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
         ? extractSelectFilesSet(context.formData, SELECT_ATTACHMENTS_KEY)
         : undefined;
 
+      const shouldRestoreFromPrevious =
+        effectiveFileSource === 'Google Drive URL' || isFileSourceChange;
+
       let parsedParamSet: Set<string> | undefined;
-      if (!hasAttachmentFormKey && !isResetOrInitialLoad && context.parameters?.previousAttachments) {
+      if (
+        !hasAttachmentFormKey &&
+        !isResetOrInitialLoad &&
+        shouldRestoreFromPrevious &&
+        context.parameters?.previousAttachments
+      ) {
         try {
           const parsed = JSON.parse(context.parameters.previousAttachments);
           if (Array.isArray(parsed)) {
