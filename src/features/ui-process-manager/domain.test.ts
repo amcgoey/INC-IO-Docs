@@ -15,8 +15,11 @@ import {
   SELECT_ATTACHMENTS_KEY,
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
+  SELECT_EMAIL_MESSAGE_KEY,
   EPHEMERAL_UI_SELECTION_KEYS,
   extractSelectFilesSet,
+  formatThreadEmailOptionLabel,
+  parseRfc2822DateToYymmdd,
   ResolveSpaceResultSchema,
   UiProcessSpaceItemSchema,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
@@ -76,12 +79,13 @@ describe('ui-process-manager domain', () => {
   });
 
   describe('isSelectionKey and EPHEMERAL_UI_SELECTION_KEYS', () => {
-    it('defines EPHEMERAL_UI_SELECTION_KEYS containing all five ephemeral selection keys', () => {
+    it('defines EPHEMERAL_UI_SELECTION_KEYS containing all six ephemeral selection keys', () => {
       expect(SELECT_FILES_KEY).toBe('SelectFiles');
       expect(SELECT_FILE_SOURCE_KEY).toBe('SelectFileSource');
       expect(SELECT_ATTACHMENTS_KEY).toBe('SelectAttachments');
       expect(INPUT_DRIVE_URL_KEY).toBe('InputDriveURL');
       expect(SAVE_EMAIL_TO_PDF_KEY).toBe('SaveEmailToPdf');
+      expect(SELECT_EMAIL_MESSAGE_KEY).toBe('SelectEmailMessage');
 
       expect(EPHEMERAL_UI_SELECTION_KEYS).toEqual(
         new Set([
@@ -90,6 +94,7 @@ describe('ui-process-manager domain', () => {
           'SelectAttachments',
           'InputDriveURL',
           'SaveEmailToPdf',
+          'SelectEmailMessage',
         ])
       );
     });
@@ -100,6 +105,7 @@ describe('ui-process-manager domain', () => {
       expect(isSelectionKey('SelectAttachments')).toBe(true);
       expect(isSelectionKey('InputDriveURL')).toBe(true);
       expect(isSelectionKey('SaveEmailToPdf')).toBe(true);
+      expect(isSelectionKey('SelectEmailMessage')).toBe(true);
 
       expect(isSelectionKey('SelectDocumentSpaceType')).toBe(true);
       expect(isSelectionKey('SelectDocumentSpace')).toBe(true);
@@ -114,7 +120,7 @@ describe('ui-process-manager domain', () => {
   });
 
   describe('extractDocumentData', () => {
-    it('extracts only non-SelectDocument keys from formData and strips all five ephemeral keys', () => {
+    it('extracts only non-SelectDocument keys from formData and strips all six ephemeral keys', () => {
       const formData = {
         SelectDocumentSpaceType: 'projects',
         SelectDocumentSpace: 'Project Alpha',
@@ -124,6 +130,7 @@ describe('ui-process-manager domain', () => {
         SelectAttachments: ['att-1', 'att-2'],
         InputDriveURL: 'https://drive.google.com/open?id=123',
         SaveEmailToPdf: true,
+        SelectEmailMessage: 'msg-123',
         contact: 'John Doe',
         date: '260920',
         direction: 'IN',
@@ -144,6 +151,7 @@ describe('ui-process-manager domain', () => {
       expect(result).not.toHaveProperty('SelectAttachments');
       expect(result).not.toHaveProperty('InputDriveURL');
       expect(result).not.toHaveProperty('SaveEmailToPdf');
+      expect(result).not.toHaveProperty('SelectEmailMessage');
     });
 
     it('returns empty object when formData is undefined or empty', () => {
@@ -2599,6 +2607,193 @@ describe('ui-process-manager domain', () => {
       };
       expect(Value.Check(ResolveSpaceResultSchema, resultWithNotFound)).toBe(true);
       expect(Value.Check(PortsResolveSpaceResultSchema, resultWithNotFound)).toBe(true);
+    });
+  });
+
+  describe('formatThreadEmailOptionLabel & parseRfc2822DateToYymmdd', () => {
+    describe('parseRfc2822DateToYymmdd', () => {
+      it('returns Unknown Date for missing or invalid dates', () => {
+        expect(parseRfc2822DateToYymmdd(undefined)).toBe('Unknown Date');
+        expect(parseRfc2822DateToYymmdd('')).toBe('Unknown Date');
+        expect(parseRfc2822DateToYymmdd('invalid date')).toBe('Unknown Date');
+      });
+
+      it('parses standard RFC 2822 dates with numeric offsets correctly', () => {
+        expect(parseRfc2822DateToYymmdd('Mon, 19 Oct 2026 14:30:00 +0000')).toBe('261019');
+        expect(parseRfc2822DateToYymmdd('Mon, 19 Oct 2026 23:59:00 -0400')).toBe('261019');
+        expect(parseRfc2822DateToYymmdd('Tue, 20 Oct 2026 00:30:00 +02:00')).toBe('261020');
+      });
+
+      it('parses named timezone tokens EDT, EST, CDT, CST, MDT, MST, PDT, PST, GMT, UT, UTC', () => {
+        // Oct 19 23:59:00 EDT is Oct 20 03:59:00 UTC. Offset -240min calculates calendar date 261019
+        expect(parseRfc2822DateToYymmdd('19 Oct 2026 23:59:00 EDT')).toBe('261019');
+        expect(parseRfc2822DateToYymmdd('19 Oct 2026 23:59:00 EST')).toBe('261019');
+        expect(parseRfc2822DateToYymmdd('19 Oct 2026 23:59:00 CDT')).toBe('261019');
+        expect(parseRfc2822DateToYymmdd('19 Oct 2026 23:59:00 CST')).toBe('261019');
+        expect(parseRfc2822DateToYymmdd('19 Oct 2026 23:59:00 MDT')).toBe('261019');
+        expect(parseRfc2822DateToYymmdd('19 Oct 2026 23:59:00 MST')).toBe('261019');
+        expect(parseRfc2822DateToYymmdd('19 Oct 2026 23:59:00 PDT')).toBe('261019');
+        expect(parseRfc2822DateToYymmdd('19 Oct 2026 23:59:00 PST')).toBe('261019');
+        expect(parseRfc2822DateToYymmdd('19 Oct 2026 23:59:00 GMT')).toBe('261019');
+        expect(parseRfc2822DateToYymmdd('19 Oct 2026 23:59:00 UT')).toBe('261019');
+        expect(parseRfc2822DateToYymmdd('19 Oct 2026 23:59:00 UTC')).toBe('261019');
+      });
+    });
+
+    describe('formatThreadEmailOptionLabel', () => {
+      it('formats label with attachments count, unquoted sender display name, and YYMMDD date', () => {
+        const label = formatThreadEmailOptionLabel({
+          id: 'msg-1',
+          from: '"Alice Smith" <alice@example.com>',
+          date: 'Mon, 19 Oct 2026 14:30:00 +0000',
+          attachments: [
+            { id: 'att-1', title: 'File1.pdf', mimeType: 'application/pdf' },
+            { id: 'att-2', title: 'File2.pdf', mimeType: 'application/pdf' },
+          ],
+        });
+        expect(label).toBe('(2) Alice Smith | 261019');
+      });
+
+      it('strips single quotes from display name', () => {
+        const label = formatThreadEmailOptionLabel({
+          id: 'msg-2',
+          from: "'Bob Jones' <bob@example.com>",
+          date: 'Mon, 19 Oct 2026 14:30:00 +0000',
+          attachments: [],
+        });
+        expect(label).toBe('(0) Bob Jones | 261019');
+      });
+
+      it('falls back to email address when display name is missing or empty', () => {
+        const label1 = formatThreadEmailOptionLabel({
+          id: 'msg-3',
+          from: '<support@example.com>',
+          date: 'Mon, 19 Oct 2026 14:30:00 +0000',
+          attachments: [{ id: 'att-1', title: 'Invoice.pdf', mimeType: 'application/pdf' }],
+        });
+        expect(label1).toBe('(1) support@example.com | 261019');
+
+        const label2 = formatThreadEmailOptionLabel({
+          id: 'msg-4',
+          from: 'user@example.com',
+          date: 'Mon, 19 Oct 2026 14:30:00 +0000',
+          attachments: [],
+        });
+        expect(label2).toBe('(0) user@example.com | 261019');
+      });
+
+      it('falls back to Unknown Sender when sender is completely missing or empty', () => {
+        const label = formatThreadEmailOptionLabel({
+          id: 'msg-5',
+          attachments: [],
+        });
+        expect(label).toBe('(0) Unknown Sender | Unknown Date');
+      });
+
+      it('clamps sender name to 24 characters (21 chars + "...") when longer than 24', () => {
+        const label = formatThreadEmailOptionLabel({
+          id: 'msg-6',
+          from: '"Alexander Supertramp The Great Adventurer" <alex@example.com>',
+          date: 'Mon, 19 Oct 2026 14:30:00 +0000',
+          attachments: [],
+        });
+        // "Alexander Supertramp The Great Adventurer".slice(0, 21) = "Alexander Supertramp "
+        expect(label).toBe('(0) Alexander Supertramp ... | 261019');
+      });
+    });
+  });
+
+  describe('evaluateProcessUiState with threadMessages', () => {
+    const sampleSpaceTypes = [
+      {
+        id: 'projects',
+        displayName: 'Projects',
+        spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+      },
+    ];
+
+    it('selects context.gmail.messageId on initial load if present in threadMessages', () => {
+      const threadMessages = [
+        {
+          id: 'msg-1',
+          from: 'Alice <alice@example.com>',
+          date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+          attachments: [{ id: 'att-1', title: 'Doc1.pdf', mimeType: 'application/pdf' }],
+        },
+        {
+          id: 'msg-2',
+          from: 'Bob <bob@example.com>',
+          date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+          attachments: [
+            { id: 'att-2a', title: 'Doc2a.pdf', mimeType: 'application/pdf' },
+            { id: 'att-2b', title: 'Doc2b.pdf', mimeType: 'application/pdf' },
+          ],
+        },
+      ];
+
+      const input: ProcessUiStateInput = {
+        context: {
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-1',
+            threadId: 'th-100',
+          },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: [],
+        threadMessages,
+      };
+
+      const result = evaluateProcessUiState(input);
+
+      expect(result.selectedMessageId).toBe('msg-1');
+      expect(result.formData[SELECT_EMAIL_MESSAGE_KEY]).toBe('msg-1');
+      expect(result.selectionState.threadMessages).toEqual([
+        { text: '(1) Alice | 261019', value: 'msg-1', selected: true },
+        { text: '(2) Bob | 261019', value: 'msg-2', selected: false },
+      ]);
+      expect(result.selectionState.files).toEqual([
+        { text: 'Doc1.pdf', value: 'att-1', selected: true },
+      ]);
+    });
+
+    it('falls back to the last message in threadMessages if context.gmail.messageId is missing or not matched', () => {
+      const threadMessages = [
+        {
+          id: 'msg-1',
+          from: 'Alice <alice@example.com>',
+          date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+          attachments: [{ id: 'att-1', title: 'Doc1.pdf', mimeType: 'application/pdf' }],
+        },
+        {
+          id: 'msg-2',
+          from: 'Bob <bob@example.com>',
+          date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+          attachments: [{ id: 'att-2', title: 'Doc2.pdf', mimeType: 'application/pdf' }],
+        },
+      ];
+
+      const input: ProcessUiStateInput = {
+        context: {
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-unmatched',
+            threadId: 'th-100',
+          },
+        },
+        spaceTypes: sampleSpaceTypes,
+        spaces: [],
+        threadMessages,
+      };
+
+      const result = evaluateProcessUiState(input);
+
+      expect(result.selectedMessageId).toBe('msg-2');
+      expect(result.formData[SELECT_EMAIL_MESSAGE_KEY]).toBe('msg-2');
+      expect(result.selectionState.threadMessages?.[1].selected).toBe(true);
+      expect(result.selectionState.files).toEqual([
+        { text: 'Doc2.pdf', value: 'att-2', selected: true },
+      ]);
     });
   });
 });

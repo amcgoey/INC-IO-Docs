@@ -13,10 +13,14 @@ import {
   SELECT_ATTACHMENTS_KEY,
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
+  SELECT_EMAIL_MESSAGE_KEY,
   EPHEMERAL_UI_SELECTION_KEYS,
   isSelectionKey,
   parseGoogleDriveUrl,
   extractSelectFilesSet,
+  UiProcessGmailAttachmentDescriptorSchema,
+  UiProcessGmailMessageDescriptorSchema,
+  formatThreadEmailOptionLabel,
 } from './ports';
 
 describe('UI Process Manager Ports & DTOs', () => {
@@ -103,6 +107,16 @@ describe('UI Process Manager Ports & DTOs', () => {
         spaces: ['space-1'],
         documentTypes: [{ text: 'Invoice', value: 'invoice' }],
         files: [{ text: 'File A', value: 'file-1', selected: true }],
+      };
+      expect(Value.Check(UiSelectionStateSchema, state)).toBe(true);
+    });
+
+    it('validates selection state with optional threadMessages array', () => {
+      const state = {
+        spaceTypes: [{ text: 'Projects', value: 'projects' }],
+        spaces: ['space-1'],
+        documentTypes: [{ text: 'Invoice', value: 'invoice' }],
+        threadMessages: [{ text: '(1) Alice | 261019', value: 'msg-1', selected: true }],
       };
       expect(Value.Check(UiSelectionStateSchema, state)).toBe(true);
     });
@@ -203,11 +217,31 @@ describe('UI Process Manager Ports & DTOs', () => {
       expect(SELECT_ATTACHMENTS_KEY).toBe('SelectAttachments');
       expect(INPUT_DRIVE_URL_KEY).toBe('InputDriveURL');
       expect(SAVE_EMAIL_TO_PDF_KEY).toBe('SaveEmailToPdf');
+      expect(SELECT_EMAIL_MESSAGE_KEY).toBe('SelectEmailMessage');
       expect(EPHEMERAL_UI_SELECTION_KEYS).toBeInstanceOf(Set);
-      expect(EPHEMERAL_UI_SELECTION_KEYS.size).toBe(5);
+      expect(EPHEMERAL_UI_SELECTION_KEYS.size).toBe(6);
       expect(typeof isSelectionKey).toBe('function');
       expect(typeof parseGoogleDriveUrl).toBe('function');
       expect(typeof extractSelectFilesSet).toBe('function');
+    });
+
+    it('validates UiProcessGmailAttachmentDescriptorSchema and UiProcessGmailMessageDescriptorSchema', () => {
+      const validAttachment = {
+        id: 'att-1',
+        title: 'Report.pdf',
+        mimeType: 'application/pdf',
+      };
+      expect(Value.Check(UiProcessGmailAttachmentDescriptorSchema, validAttachment)).toBe(true);
+
+      const validMessage = {
+        id: 'msg-1',
+        from: 'Alice <alice@example.com>',
+        date: 'Mon, 19 Oct 2026 14:00:00 -0400',
+        attachments: [validAttachment],
+      };
+      expect(Value.Check(UiProcessGmailMessageDescriptorSchema, validMessage)).toBe(true);
+
+      expect(typeof formatThreadEmailOptionLabel).toBe('function');
     });
   });
 });

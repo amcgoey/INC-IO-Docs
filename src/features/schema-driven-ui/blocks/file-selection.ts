@@ -7,6 +7,12 @@ export interface FileSelectionOptions {
   emptyText?: string | undefined;
   inputName?: string | undefined;
   formData?: Record<string, unknown> | undefined;
+  itemDropdown?: {
+    name: string;
+    label?: string | undefined;
+    items?: SelectionItem[] | undefined;
+    onChangeAction?: UiViewAction | undefined;
+  } | undefined;
   toggleInput?: {
     name: string;
     text: string;
@@ -36,12 +42,30 @@ export function buildFileSelectionSection(
   const inputName = options?.inputName ?? 'SelectFiles';
 
   const normSelectionState = Array.isArray(selectionState)
-    ? { files: selectionState, fileSources: undefined }
+    ? { files: selectionState, fileSources: undefined, threadMessages: undefined }
     : selectionState;
   const files = normSelectionState?.files;
   const fileSources = normSelectionState?.fileSources;
+  const threadMessages = normSelectionState?.threadMessages;
 
   const widgets: UiViewWidget[] = [];
+
+  const itemDropdownItems = options?.itemDropdown?.items ?? threadMessages;
+  if (options?.itemDropdown && itemDropdownItems && itemDropdownItems.length > 0) {
+    widgets.push({
+      selectionInput: {
+        name: options.itemDropdown.name,
+        ...(options.itemDropdown.label !== undefined
+          ? { label: options.itemDropdown.label }
+          : {}),
+        type: 'DROPDOWN',
+        items: itemDropdownItems,
+        ...(options.itemDropdown.onChangeAction
+          ? { onChangeAction: options.itemDropdown.onChangeAction }
+          : {}),
+      },
+    });
+  }
 
   if (options?.fileSourceDropdown && fileSources && fileSources.length > 0) {
     widgets.push({

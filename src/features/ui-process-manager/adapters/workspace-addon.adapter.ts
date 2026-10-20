@@ -10,6 +10,7 @@ import type {
   UiProcessDocumentSpaceDto,
   UiProcessSourceFileDto,
   UiProcessGmailPort,
+  UiProcessGmailMessageDescriptor,
 } from '../ports';
 
 import {
@@ -28,6 +29,7 @@ import {
   SELECT_ATTACHMENTS_KEY,
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
+  SELECT_EMAIL_MESSAGE_KEY,
   extractSelectFilesSet,
   parseGoogleDriveUrl,
   isGmailContext,
@@ -104,37 +106,81 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     let effectiveContext = context;
 
     const isGmail = isGmailContext(context);
+    let threadMessages: UiProcessGmailMessageDescriptor[] | undefined;
 
-    if (
-      isGmail &&
-      this.gmailPort &&
-      context.gmail?.messageId &&
-      (!effectiveContext.selectedItems || effectiveContext.selectedItems.length === 0 || actionName === 'refresh')
-    ) {
-      try {
-        const token = context.userOAuthToken ?? context.gmail.accessToken;
-        const attachments = await this.gmailPort.getMessageAttachments(
-          context.gmail.messageId,
-          token
-        );
-        effectiveContext = {
-          ...effectiveContext,
-          selectedItems: attachments.map((att) => {
-            const resolvedId =
-              (att.partId && att.partId.trim().length > 0)
-                ? att.partId.trim()
-                : (att.id && att.id.trim().length > 0)
-                  ? att.id.trim()
-                  : (att.attachmentId?.trim() ?? '');
-            return {
-              id: resolvedId,
-              title: att.title,
-              mimeType: att.mimeType,
-            };
-          }),
-        };
-      } catch (e) {
-        console.warn(`Could not fetch attachments for message: ${context.gmail.messageId}`, e);
+    const needsGmailFetch =
+      !effectiveContext.selectedItems ||
+      effectiveContext.selectedItems.length === 0 ||
+      actionName === 'refresh' ||
+      actionName === 'onEmailMessageChange';
+
+    if (isGmail && this.gmailPort && needsGmailFetch) {
+      const token = context.userOAuthToken ?? context.gmail?.accessToken;
+      const skipCache = actionName === 'refresh';
+
+      if (context.gmail?.threadId && typeof this.gmailPort.getThreadMessages === 'function') {
+        try {
+          const msgs = await this.gmailPort.getThreadMessages(context.gmail.threadId, { skipCache });
+          if (msgs && msgs.length > 0) {
+            threadMessages = msgs;
+          }
+        } catch (e) {
+          console.warn(`Could not fetch thread messages for thread: ${context.gmail.threadId}`, e);
+        }
+      }
+
+      if (!threadMessages && context.gmail?.messageId) {
+        if (typeof this.gmailPort.getMessageDetails === 'function') {
+          try {
+            const msg = await this.gmailPort.getMessageDetails(context.gmail.messageId, { skipCache });
+            if (msg) {
+              threadMessages = [msg];
+            }
+          } catch (e) {
+            console.warn(`Could not fetch message details for message: ${context.gmail.messageId}`, e);
+          }
+        } else if (typeof this.gmailPort.getMessageAttachments === 'function') {
+          try {
+            const attachments = await this.gmailPort.getMessageAttachments(
+              context.gmail.messageId,
+              token
+            );
+            threadMessages = [
+              {
+                id: context.gmail.messageId,
+                attachments,
+              },
+            ];
+          } catch (e) {
+            console.warn(`Could not fetch attachments for message: ${context.gmail.messageId}`, e);
+          }
+        }
+      }
+
+      if (threadMessages && threadMessages.length > 0) {
+        const formMsgId = effectiveContext.formData?.[SELECT_EMAIL_MESSAGE_KEY] as string | undefined;
+        const activeMsg =
+          threadMessages.find((m) => m.id === (formMsgId ?? context.gmail?.messageId)) ??
+          threadMessages[threadMessages.length - 1];
+
+        if (!effectiveContext.selectedItems || effectiveContext.selectedItems.length === 0 || actionName === 'refresh') {
+          effectiveContext = {
+            ...effectiveContext,
+            selectedItems: (activeMsg?.attachments ?? []).map((att) => {
+              const resolvedId =
+                (att.partId && att.partId.trim().length > 0)
+                  ? att.partId.trim()
+                  : (att.id && att.id.trim().length > 0)
+                    ? att.id.trim()
+                    : (att.attachmentId?.trim() ?? '');
+              return {
+                id: resolvedId,
+                title: att.title,
+                mimeType: att.mimeType,
+              };
+            }),
+          };
+        }
       }
     }
 
@@ -233,6 +279,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         config,
         spaceTypes,
         spaces,
+        threadMessages,
       });
 
       return {
@@ -260,6 +307,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         config,
         spaceTypes,
         spaces,
+        threadMessages,
       });
 
       const isGmail = isGmailContext(normalizedContext);

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { google, type gmail_v1 } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
-import { GoogleGmailClient } from './gmail-client';
+import { GoogleGmailClient, parseMessageDetails } from './gmail-client';
 import { GoogleGmailApiError, GoogleGmailNotFoundError } from './errors';
 
 describe('GoogleGmailClient', () => {
@@ -2194,6 +2194,207 @@ describe('GoogleGmailClient', () => {
       expect(client.getCacheSize()).toBe(1);
 
       gmailSpy.mockRestore();
+    });
+
+    it('bypasses cache when options.skipCache is true in getMessage', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-skip-cache',
+          threadId: 'th-skip-cache',
+        },
+      });
+
+      const mockGmail = {
+        users: { messages: { get: mockGet } },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const client = new GoogleGmailClient();
+
+      await client.getMessage('msg-skip-cache', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      // Normal read hits cache
+      await client.getMessage('msg-skip-cache', { auth: 'tok' });
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      // skipCache: true forces fresh fetch
+      await client.getMessage('msg-skip-cache', { auth: 'tok', skipCache: true });
+      expect(mockGet).toHaveBeenCalledTimes(2);
+
+      gmailSpy.mockRestore();
+    });
+  });
+
+  describe('getThread', () => {
+    it('fetches full thread and parses all messages in chronological order', async () => {
+      const mockThreadGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'thread-123',
+          messages: [
+            {
+              id: 'msg-1',
+              threadId: 'thread-123',
+              payload: {
+                headers: [
+                  { name: 'From', value: 'Alice <alice@example.com>' },
+                  { name: 'Subject', value: 'Hello' },
+                  { name: 'Date', value: 'Mon, 19 Oct 2026 10:00:00 +0000' },
+                ],
+                body: { data: Buffer.from('Message 1').toString('base64url') },
+                mimeType: 'text/plain',
+              },
+            },
+            {
+              id: 'msg-2',
+              threadId: 'thread-123',
+              payload: {
+                headers: [
+                  { name: 'From', value: 'Bob <bob@example.com>' },
+                  { name: 'Subject', value: 'Re: Hello' },
+                  { name: 'Date', value: 'Mon, 19 Oct 2026 11:00:00 +0000' },
+                ],
+                parts: [
+                  {
+                    partId: '0.1',
+                    filename: 'attachment.pdf',
+                    mimeType: 'application/pdf',
+                    body: { attachmentId: 'att-99', size: 1024 },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      });
+
+      const mockGmail = {
+        users: {
+          threads: {
+            get: mockThreadGet,
+          },
+        },
+      } as unknown as gmail_v1.Gmail;
+
+      const client = new GoogleGmailClient({ gmail: mockGmail });
+      const result = await client.getThread('thread-123');
+
+      expect(mockThreadGet).toHaveBeenCalledWith({
+        userId: 'me',
+        id: 'thread-123',
+        format: 'full',
+      });
+      expect(result.id).toBe('thread-123');
+      expect(result.messages).toHaveLength(2);
+      expect(result.messages[0].id).toBe('msg-1');
+      expect(result.messages[0].from).toBe('Alice <alice@example.com>');
+      expect(result.messages[0].plainTextBody).toBe('Message 1');
+      expect(result.messages[1].id).toBe('msg-2');
+      expect(result.messages[1].attachments).toHaveLength(1);
+      expect(result.messages[1].attachments[0].filename).toBe('attachment.pdf');
+    });
+
+    it('wraps 404 into GoogleGmailNotFoundError', async () => {
+      const mockThreadGet = vi.fn().mockRejectedValue({
+        message: 'Thread not found',
+        status: 404,
+      });
+
+      const mockGmail = {
+        users: {
+          threads: {
+            get: mockThreadGet,
+          },
+        },
+      } as unknown as gmail_v1.Gmail;
+
+      const client = new GoogleGmailClient({ gmail: mockGmail });
+      await expect(client.getThread('non-existent')).rejects.toThrow(GoogleGmailNotFoundError);
+    });
+
+    it('wraps API errors into GoogleGmailApiError', async () => {
+      const mockThreadGet = vi.fn().mockRejectedValue({
+        message: 'Internal server error',
+        status: 500,
+      });
+
+      const mockGmail = {
+        users: {
+          threads: {
+            get: mockThreadGet,
+          },
+        },
+      } as unknown as gmail_v1.Gmail;
+
+      const client = new GoogleGmailClient({ gmail: mockGmail });
+      await expect(client.getThread('th-500')).rejects.toThrow(GoogleGmailApiError);
+    });
+
+    it('retries on rate limit (429) errors during getThread', async () => {
+      let attempts = 0;
+      const mockThreadGet = vi.fn().mockImplementation(async () => {
+        attempts++;
+        if (attempts < 2) {
+          const err = new Error('Rate limit exceeded');
+          (err as any).statusCode = 429;
+          throw err;
+        }
+        return {
+          data: {
+            id: 'th-retry',
+            messages: [{ id: 'msg-retry' }],
+          },
+        };
+      });
+
+      const mockSleep = vi.fn().mockResolvedValue(undefined);
+      const mockGmail = {
+        users: {
+          threads: {
+            get: mockThreadGet,
+          },
+        },
+      } as unknown as gmail_v1.Gmail;
+
+      const client = new GoogleGmailClient({
+        gmail: mockGmail,
+        retryOptions: { maxRetries: 3, initialDelayMs: 10, backoffFactor: 2, sleep: mockSleep },
+      });
+
+      const result = await client.getThread('th-retry');
+      expect(result.id).toBe('th-retry');
+      expect(attempts).toBe(2);
+      expect(mockSleep).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('parseMessageDetails', () => {
+    it('parses message headers, body, and fallback id correctly', () => {
+      const parsed = parseMessageDetails(
+        {
+          id: 'msg-direct',
+          payload: {
+            headers: [
+              { name: 'Subject', value: 'Test Subject' },
+              { name: 'From', value: 'sender@example.com' },
+              { name: 'Date', value: 'Tue, 20 Oct 2026 12:00:00 GMT' },
+            ],
+            body: { data: Buffer.from('Direct body').toString('base64url') },
+            mimeType: 'text/plain',
+          },
+        },
+        'fallback-id'
+      );
+
+      expect(parsed.id).toBe('msg-direct');
+      expect(parsed.subject).toBe('Test Subject');
+      expect(parsed.from).toBe('sender@example.com');
+      expect(parsed.plainTextBody).toBe('Direct body');
+    });
+
+    it('uses fallbackId when message.id is missing', () => {
+      const parsed = parseMessageDetails({}, 'fallback-id');
+      expect(parsed.id).toBe('fallback-id');
     });
   });
 });
