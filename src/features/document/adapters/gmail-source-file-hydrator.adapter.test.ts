@@ -392,5 +392,230 @@ describe('GmailSourceFileHydratorAdapter', () => {
         content: generatedPdfBytes,
       });
     });
+
+    it('matches attachments by partId and invokes getAttachment with matched descriptor fresh attachmentId rather than SourceFile.id', async () => {
+      const attachmentBytes = new Uint8Array([1, 2, 3]);
+      const mockGmailClient = {
+        getMessage: vi.fn().mockResolvedValue({
+          id: 'msg-fresh-token',
+          attachments: [
+            {
+              partId: 'part-0.1',
+              attachmentId: 'att-rotated-fresh-token-xyz',
+              filename: 'Report.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        }),
+        getAttachment: vi.fn().mockResolvedValue(attachmentBytes),
+      } as unknown as GoogleGmailClient;
+
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-fresh-token',
+        auth: 'ya29.auth',
+        isFileSourceEmailAttachments: true,
+      });
+
+      // SourceFile.id has partId 'part-0.1'
+      const files: SourceFile[] = [{ id: 'part-0.1', name: 'Report.pdf' }];
+
+      const result = await hydrator.hydrate(files);
+
+      expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(
+        'msg-fresh-token',
+        'att-rotated-fresh-token-xyz',
+        { auth: 'ya29.auth' }
+      );
+      expect(result).toEqual([
+        {
+          id: 'part-0.1',
+          name: 'Report.pdf',
+          mimeType: 'application/pdf',
+          content: attachmentBytes,
+        },
+      ]);
+    });
+
+    it('hydrates multiple attachments sharing the same filename with distinct partIds using fresh attachmentIds', async () => {
+      const bytes1 = new Uint8Array([10, 11]);
+      const bytes2 = new Uint8Array([20, 21]);
+
+      const mockGmailClient = {
+        getMessage: vi.fn().mockResolvedValue({
+          id: 'msg-duplicate-names',
+          attachments: [
+            {
+              partId: 'part-0',
+              attachmentId: 'att-fresh-1',
+              filename: 'invoice.pdf',
+              mimeType: 'application/pdf',
+            },
+            {
+              partId: 'part-1',
+              attachmentId: 'att-fresh-2',
+              filename: 'invoice.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        }),
+        getAttachment: vi.fn().mockImplementation(async (_msgId: string, attId: string) => {
+          if (attId === 'att-fresh-1') return bytes1;
+          if (attId === 'att-fresh-2') return bytes2;
+          throw new Error('Unknown attId');
+        }),
+      } as unknown as GoogleGmailClient;
+
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-duplicate-names',
+        isFileSourceEmailAttachments: true,
+      });
+
+      const files: SourceFile[] = [
+        { id: 'part-0', name: 'invoice.pdf' },
+        { id: 'part-1', name: 'invoice.pdf' },
+      ];
+
+      const result = await hydrator.hydrate(files);
+
+      expect(mockGmailClient.getAttachment).toHaveBeenCalledTimes(2);
+      expect(mockGmailClient.getAttachment).toHaveBeenCalledWith('msg-duplicate-names', 'att-fresh-1', expect.anything());
+      expect(mockGmailClient.getAttachment).toHaveBeenCalledWith('msg-duplicate-names', 'att-fresh-2', expect.anything());
+
+      expect(result).toEqual([
+        {
+          id: 'part-0',
+          name: 'invoice.pdf',
+          mimeType: 'application/pdf',
+          content: bytes1,
+        },
+        {
+          id: 'part-1',
+          name: 'invoice.pdf',
+          mimeType: 'application/pdf',
+          content: bytes2,
+        },
+      ]);
+    });
+
+    it('matches by unique filename fallback when active File Source is Email Attachments and filename is unique', async () => {
+      const bytes = new Uint8Array([99]);
+      const mockGmailClient = {
+        getMessage: vi.fn().mockResolvedValue({
+          id: 'msg-unique-fallback',
+          attachments: [
+            {
+              partId: 'part-0.5',
+              attachmentId: 'att-token-555',
+              filename: 'UniqueContract.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        }),
+        getAttachment: vi.fn().mockResolvedValue(bytes),
+      } as unknown as GoogleGmailClient;
+
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-unique-fallback',
+        isFileSourceEmailAttachments: true,
+      });
+
+      // File has legacy / mismatched id but matching unique filename
+      const files: SourceFile[] = [{ id: 'legacy-id-or-stale-token', name: 'UniqueContract.pdf' }];
+
+      const result = await hydrator.hydrate(files);
+
+      expect(mockGmailClient.getAttachment).toHaveBeenCalledWith('msg-unique-fallback', 'att-token-555', expect.anything());
+      expect(result[0].content).toEqual(bytes);
+    });
+
+    it('does NOT fallback to filename match when filename is duplicated among message attachments', async () => {
+      const mockGmailClient = {
+        getMessage: vi.fn().mockResolvedValue({
+          id: 'msg-ambiguous-names',
+          attachments: [
+            {
+              partId: 'part-1',
+              attachmentId: 'att-1',
+              filename: 'photo.jpg',
+              mimeType: 'image/jpeg',
+            },
+            {
+              partId: 'part-2',
+              attachmentId: 'att-2',
+              filename: 'photo.jpg',
+              mimeType: 'image/jpeg',
+            },
+          ],
+        }),
+        getAttachment: vi.fn(),
+      } as unknown as GoogleGmailClient;
+
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-ambiguous-names',
+        isFileSourceEmailAttachments: true,
+      });
+
+      // An unidentifiable file with id 'unknown' and non-unique name 'photo.jpg'
+      const files: SourceFile[] = [{ id: 'unknown', name: 'photo.jpg' }];
+
+      const result = await hydrator.hydrate(files);
+
+      // Should not guess or download an arbitrary attachment
+      expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
+      expect(result[0].content).toBeUndefined();
+    });
+
+    it('processes source files sequentially in order', async () => {
+      const callOrder: string[] = [];
+      const mockGmailClient = {
+        getMessage: vi.fn().mockResolvedValue({
+          id: 'msg-seq',
+          subject: 'Sequential Order',
+          attachments: [
+            {
+              partId: 'part-1',
+              attachmentId: 'att-1',
+              filename: 'First.pdf',
+              mimeType: 'application/pdf',
+            },
+            {
+              partId: 'part-2',
+              attachmentId: 'att-2',
+              filename: 'Second.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        }),
+        getAttachment: vi.fn().mockImplementation(async (_msgId: string, attId: string) => {
+          callOrder.push(attId);
+          await new Promise((r) => setTimeout(r, 10));
+          return new Uint8Array([1]);
+        }),
+      } as unknown as GoogleGmailClient;
+
+      const mockPdfProcessor = {
+        generateEmailPdf: vi.fn().mockImplementation(async () => {
+          callOrder.push('email-pdf');
+          await new Promise((r) => setTimeout(r, 10));
+          return new Uint8Array([2]);
+        }),
+      };
+
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-seq',
+        isFileSourceEmailAttachments: true,
+        pdfProcessor: mockPdfProcessor as unknown as PdfProcessor,
+      });
+
+      const files: SourceFile[] = [
+        { id: 'part-1' },
+        { id: 'email-pdf-msg-seq', mimeType: 'application/pdf' },
+        { id: 'part-2' },
+      ];
+
+      await hydrator.hydrate(files);
+
+      expect(callOrder).toEqual(['att-1', 'email-pdf', 'att-2']);
+    });
   });
 });

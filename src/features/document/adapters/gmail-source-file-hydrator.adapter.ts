@@ -79,17 +79,33 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
       return [...sourceFiles];
     }
 
-    const attachmentMap = new Map<
-      string,
-      { filename: string; mimeType: string; data?: Uint8Array | undefined }
-    >();
+    const attachments = messageDetails.attachments ?? [];
 
-    for (const att of messageDetails.attachments ?? []) {
-      attachmentMap.set(att.attachmentId, {
-        filename: att.filename,
-        mimeType: att.mimeType,
-        ...(att.data !== undefined ? { data: att.data } : {}),
-      });
+    const partIdMap = new Map<string, (typeof attachments)[number]>();
+    const attachmentIdMap = new Map<string, (typeof attachments)[number]>();
+    const filenameCounts = new Map<string, number>();
+
+    for (const att of attachments) {
+      if (att.partId && att.partId.trim().length > 0) {
+        partIdMap.set(att.partId.trim(), att);
+      }
+      if (att.attachmentId && att.attachmentId.trim().length > 0) {
+        attachmentIdMap.set(att.attachmentId.trim(), att);
+      }
+      const rawName = att.filename?.trim();
+      if (rawName) {
+        filenameCounts.set(rawName, (filenameCounts.get(rawName) ?? 0) + 1);
+      }
+    }
+
+    const uniqueFilenameMap = new Map<string, (typeof attachments)[number]>();
+    if (canHydrateAttachments) {
+      for (const att of attachments) {
+        const rawName = att.filename?.trim();
+        if (rawName && filenameCounts.get(rawName) === 1) {
+          uniqueFilenameMap.set(rawName, att);
+        }
+      }
     }
 
     const hydrated: SourceFile[] = [];
@@ -156,19 +172,36 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
       }
 
       if (canHydrateAttachments) {
-        const attMeta = attachmentMap.get(file.id);
-        if (attMeta) {
-          let content = attMeta.data;
+        const fileId = file.id.trim();
+        const fileName = file.name?.trim();
+
+        let matchedAtt = partIdMap.get(fileId);
+
+        if (!matchedAtt) {
+          matchedAtt = attachmentIdMap.get(fileId);
+        }
+
+        if (!matchedAtt) {
+          if (fileName) {
+            matchedAtt = uniqueFilenameMap.get(fileName);
+          }
+          if (!matchedAtt) {
+            matchedAtt = uniqueFilenameMap.get(fileId);
+          }
+        }
+
+        if (matchedAtt) {
+          let content = matchedAtt.data;
           if (!content) {
-            content = await this.gmailClient.getAttachment(messageId, file.id, {
+            content = await this.gmailClient.getAttachment(messageId, matchedAtt.attachmentId, {
               auth: token,
             });
           }
 
           hydrated.push({
             id: file.id,
-            name: file.name || attMeta.filename,
-            mimeType: file.mimeType || attMeta.mimeType,
+            name: file.name || matchedAtt.filename,
+            mimeType: file.mimeType || matchedAtt.mimeType,
             content,
           });
           continue;

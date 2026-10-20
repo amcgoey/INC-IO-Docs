@@ -229,17 +229,25 @@ export class GoogleGmailClient {
       interface PartContext {
         part: gmail_v1.Schema$MessagePart;
         isInsideMultipartRelated: boolean;
+        fallbackPartId: string;
       }
       const candidateParts: PartContext[] = [];
 
-      const traverse = (parts: gmail_v1.Schema$MessagePart[], isInsideMultipartRelated: boolean) => {
-        for (const part of parts) {
+      const traverse = (
+        parts: gmail_v1.Schema$MessagePart[],
+        isInsideMultipartRelated: boolean,
+        pathPrefix = ''
+      ) => {
+        parts.forEach((part, index) => {
+          const currentPath = pathPrefix ? `${pathPrefix}.${index}` : `${index}`;
+          const fallbackPartId = `part-${currentPath}`;
+
           const mimeType = part.mimeType?.toLowerCase();
           const isRelated = isInsideMultipartRelated || mimeType === 'multipart/related';
 
           if (mimeType === 'message/rfc822') {
-            candidateParts.push({ part, isInsideMultipartRelated: isRelated });
-            continue;
+            candidateParts.push({ part, isInsideMultipartRelated: isRelated, fallbackPartId });
+            return;
           }
 
           const filename = part.filename;
@@ -258,20 +266,24 @@ export class GoogleGmailClient {
           }
 
           if (part.parts && part.parts.length > 0) {
-            traverse(part.parts, isRelated);
+            traverse(part.parts, isRelated, currentPath);
           } else {
-            candidateParts.push({ part, isInsideMultipartRelated: isInsideMultipartRelated });
+            candidateParts.push({ part, isInsideMultipartRelated: isInsideMultipartRelated, fallbackPartId });
           }
-        }
+        });
       };
 
-      traverse(payload.parts, false);
+      traverse(payload.parts, false, '');
 
-      for (const { part, isInsideMultipartRelated } of candidateParts) {
+      for (const { part, isInsideMultipartRelated, fallbackPartId } of candidateParts) {
         const mimeType = part.mimeType?.toLowerCase() ?? '';
         const rawCid = getHeaderValue(part.headers, 'Content-ID');
         const normalizedCid = normalizeContentId(rawCid);
         const isImage = mimeType.startsWith('image/');
+        const resolvedPartId =
+          typeof part.partId === 'string' && part.partId.trim().length > 0
+            ? part.partId.trim()
+            : fallbackPartId;
 
         let isInlineImage = false;
         if (isImage && normalizedCid) {
@@ -288,7 +300,7 @@ export class GoogleGmailClient {
 
           const inlineImage: GmailInlineImageDescriptor = {
             cid: normalizedCid,
-            partId: part.partId ?? '',
+            partId: resolvedPartId,
             mimeType: part.mimeType ?? 'image/png',
             ...(part.body?.attachmentId ? { attachmentId: part.body.attachmentId } : {}),
             ...(part.filename && part.filename.trim().length > 0 ? { filename: part.filename } : {}),
@@ -307,7 +319,7 @@ export class GoogleGmailClient {
             }
 
             const attachment: GmailAttachmentDescriptor = {
-              partId: part.partId ?? '',
+              partId: resolvedPartId,
               attachmentId,
               filename: part.filename ?? filename,
               mimeType: part.mimeType ?? 'application/octet-stream',
