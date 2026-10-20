@@ -10,7 +10,11 @@ import type { DocumentService } from '../features/document/domain';
 import type { SchemaDrivenUiService } from '../features/schema-driven-ui/domain';
 import type { RawManifestProviderPort } from './schema-driven-ui.wiring';
 import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
-import type { UiProcessOrchestratorPort } from '../features/ui-process-manager/ports';
+import type {
+  UiProcessOrchestratorPort,
+  UiProcessGmailPort,
+} from '../features/ui-process-manager/ports';
+import type { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 
 import type {
   GoogleWorkspaceActionResponse,
@@ -1301,6 +1305,116 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           mimeType: 'application/pdf',
         },
       ]);
+    });
+
+    it('propagates targetMessageId from runner payload to activeContext.gmail.messageId when instantiating DocumentService on processDocument', async () => {
+      let passedContext: WorkspaceExecutionContext | undefined;
+      const mockProcessDocument = vi.fn().mockResolvedValue({ success: true });
+      const createDocumentService = vi.fn(async (ctx: WorkspaceExecutionContext) => {
+        passedContext = ctx;
+        return {
+          processDocument: mockProcessDocument,
+        } as unknown as DocumentService;
+      });
+
+      const mockGmailPort: UiProcessGmailPort = {
+        getMessageAttachments: vi.fn(),
+        getThreadMessages: vi.fn().mockResolvedValue([
+          {
+            id: 'msg-thread-1',
+            attachments: [{ id: 'att-1', title: 'Doc1.pdf', mimeType: 'application/pdf' }],
+          },
+          {
+            id: 'msg-thread-2',
+            attachments: [{ id: 'att-2', title: 'Doc2.pdf', mimeType: 'application/pdf' }],
+          },
+        ]),
+        getMessageDetails: vi.fn(),
+      };
+
+      const wiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: mockManifestProvider,
+        createDocumentService,
+        gmailPort: mockGmailPort,
+      });
+
+      const req: WorkspaceExecutionContext = {
+        actionName: 'processDocument',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-thread-1',
+          threadId: 'th-thread-123',
+          accessToken: 'tok-gmail-test',
+        },
+        formData: {
+          SelectEmailMessage: 'msg-thread-2',
+          SelectFileSource: 'Email Attachments',
+          SelectAttachments: ['att-2'],
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Alpha',
+          SelectDocumentType: 'communication-project',
+          contact: 'Acme Corp',
+        },
+      };
+
+      const result = (await wiring.requestScopedWrapper.processUiEvent(req)) as GoogleWorkspaceActionResponse;
+
+      expect(result.action?.notification?.text).toBe('Document processed successfully');
+      expect(createDocumentService).toHaveBeenCalledTimes(1);
+      expect(passedContext?.gmail?.messageId).toBe('msg-thread-2');
+      expect(passedContext?.gmail?.threadId).toBe('th-thread-123');
+      expect(passedContext?.gmail?.accessToken).toBe('tok-gmail-test');
+    });
+
+    it('forwards skipCache: true from refresh event to gmailClient.getThread and gmailClient.getMessage', async () => {
+      const mockGetThread = vi.fn().mockResolvedValue({
+        id: 'th-skip-wiring',
+        messages: [
+          {
+            id: 'msg-w-1',
+            from: 'Alice <alice@example.com>',
+            date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+            attachments: [{ id: 'att-w-1', filename: 'W1.pdf', mimeType: 'application/pdf', size: 100 }],
+          },
+        ],
+      });
+      const mockGetMessage = vi.fn().mockResolvedValue({
+        id: 'msg-w-1',
+        from: 'Alice <alice@example.com>',
+        date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+        attachments: [{ id: 'att-w-1', filename: 'W1.pdf', mimeType: 'application/pdf', size: 100 }],
+      });
+
+      const mockGmailClient = {
+        getThread: mockGetThread,
+        getMessage: mockGetMessage,
+      } as unknown as GoogleGmailClient;
+
+      const wiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: mockManifestProvider,
+        gmailClient: mockGmailClient,
+      });
+
+      const refreshReq: WorkspaceExecutionContext = {
+        actionName: 'refresh',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-w-1',
+          threadId: 'th-skip-wiring',
+          accessToken: 'tok-refresh-wiring',
+        },
+      };
+
+      await wiring.requestScopedWrapper.processUiEvent(refreshReq);
+
+      expect(mockGetThread).toHaveBeenCalledWith('th-skip-wiring', {
+        auth: 'tok-refresh-wiring',
+        skipCache: true,
+      });
     });
   });
 });

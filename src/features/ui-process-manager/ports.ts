@@ -23,14 +23,21 @@ import {
   SELECT_ATTACHMENTS_KEY,
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
+  SELECT_EMAIL_MESSAGE_KEY,
   EPHEMERAL_UI_SELECTION_KEYS,
   isSelectionKey,
   parseGoogleDriveUrl,
   extractSelectFilesSet,
+  resolveAttachmentId,
+  formatThreadEmailOptionLabel,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
   UiProcessGmailEventContextSchema,
   type UiProcessGmailEventContext,
+  UiProcessGmailAttachmentDescriptorSchema,
+  type UiProcessGmailAttachmentDescriptor,
+  UiProcessGmailMessageDescriptorSchema,
+  type UiProcessGmailMessageDescriptor,
 } from './domain';
 
 export {
@@ -57,14 +64,21 @@ export {
   SELECT_ATTACHMENTS_KEY,
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
+  SELECT_EMAIL_MESSAGE_KEY,
   EPHEMERAL_UI_SELECTION_KEYS,
   isSelectionKey,
   parseGoogleDriveUrl,
   extractSelectFilesSet,
+  resolveAttachmentId,
+  formatThreadEmailOptionLabel,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
   UiProcessGmailEventContextSchema,
   type UiProcessGmailEventContext,
+  UiProcessGmailAttachmentDescriptorSchema,
+  type UiProcessGmailAttachmentDescriptor,
+  UiProcessGmailMessageDescriptorSchema,
+  type UiProcessGmailMessageDescriptor,
 };
 
 export const UiProcessEventContextSchema = ProcessUiStateEventSchema;
@@ -156,6 +170,7 @@ export interface UiProcessDocumentRunnerPort {
       data: Record<string, unknown>;
       space?: UiProcessDocumentSpaceDto | undefined;
       sourceFiles?: UiProcessSourceFileDto[] | undefined;
+      targetMessageId?: string | undefined;
     },
     eventName: string
   ): Promise<UiProcessDocumentExecutionResult>;
@@ -175,19 +190,21 @@ export interface UiProcessFormEvaluatorPort {
   ): Promise<UiProcessFormEvaluationResult>;
 }
 
-export interface UiProcessGmailAttachmentDescriptor {
-  id: string;
-  partId?: string;
-  attachmentId?: string;
-  title: string;
-  mimeType: string;
-}
-
 export interface UiProcessGmailPort {
   getMessageAttachments(
     messageId: string,
     accessToken?: string
   ): Promise<UiProcessGmailAttachmentDescriptor[]>;
+
+  getThreadMessages?(
+    threadId: string,
+    options?: { skipCache?: boolean }
+  ): Promise<UiProcessGmailMessageDescriptor[]>;
+
+  getMessageDetails?(
+    messageId: string,
+    options?: { skipCache?: boolean }
+  ): Promise<UiProcessGmailMessageDescriptor>;
 }
 
 // --- Driving Port ---

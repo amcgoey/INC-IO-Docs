@@ -35,6 +35,10 @@ import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-ad
 import type { FormChangeEvaluatorFn as FormChangeEvaluator } from '../features/ui-process-manager';
 import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
 import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
+import type {
+  GmailThreadDetails,
+  GmailMessageDetails,
+} from '../infrastructure/gmail/types';
 import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 import { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
 import type {
@@ -288,6 +292,9 @@ export function createUiProcessRequestWrapper(
               ...(intent.selectionState.fileSources !== undefined
                 ? { fileSources: mapSelectionItems(intent.selectionState.fileSources) }
                 : {}),
+              ...(intent.selectionState.threadMessages !== undefined
+                ? { threadMessages: mapSelectionItems(intent.selectionState.threadMessages) }
+                : {}),
             },
           }
         : {}),
@@ -410,18 +417,79 @@ export function createUiProcessManagerWiring(
       }
     : undefined;
 
-  const gmailPort: UiProcessGmailPort = options.gmailPort ?? {
-    getMessageAttachments: async (messageId: string, accessToken?: string) => {
-      const msg = await gmailClient.getMessage(messageId, { auth: accessToken });
-      return (msg.attachments ?? []).map((att) => ({
-        id: (att.partId && att.partId.trim().length > 0) ? att.partId.trim() : att.attachmentId,
-        partId: att.partId,
-        attachmentId: att.attachmentId,
-        title: att.filename,
-        mimeType: att.mimeType,
-      }));
-    },
-  };
+  function createGmailPortForToken(token?: string): UiProcessGmailPort {
+    return {
+      getMessageAttachments: async (messageId: string, accessToken?: string) => {
+        const msg = await gmailClient.getMessage(messageId, { auth: accessToken ?? token });
+        return (msg.attachments ?? []).map((att) => ({
+          id: (att.partId && att.partId.trim().length > 0) ? att.partId.trim() : att.attachmentId,
+          partId: att.partId,
+          attachmentId: att.attachmentId,
+          title: att.filename,
+          mimeType: att.mimeType,
+        }));
+      },
+      getThreadMessages: async (threadId: string, opts?: { skipCache?: boolean }) => {
+        const clientWithThread = gmailClient as {
+          getThread?: (
+            threadId: string,
+            options?: { auth?: string; skipCache?: boolean }
+          ) => Promise<GmailThreadDetails>;
+        };
+        if (typeof clientWithThread.getThread === 'function') {
+          try {
+            const details = await clientWithThread.getThread(threadId, {
+              ...(token !== undefined ? { auth: token } : {}),
+              ...(opts?.skipCache !== undefined ? { skipCache: opts.skipCache } : {}),
+            });
+            return (details?.messages ?? []).map((msg: GmailMessageDetails) => ({
+              id: (msg.id && typeof msg.id === 'string' && msg.id.trim().length > 0)
+                ? msg.id
+                : (typeof msg.messageId === 'string' ? msg.messageId : threadId),
+              ...(msg.from !== undefined ? { from: msg.from } : {}),
+              ...(msg.date !== undefined ? { date: msg.date } : {}),
+              attachments: (msg.attachments ?? []).map((att) => ({
+                id: (att.partId && att.partId.trim().length > 0)
+                  ? att.partId.trim()
+                  : att.attachmentId,
+                ...(att.partId !== undefined ? { partId: att.partId } : {}),
+                ...(att.attachmentId !== undefined ? { attachmentId: att.attachmentId } : {}),
+                title: att.filename,
+                mimeType: att.mimeType,
+              })),
+            }));
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      },
+      getMessageDetails: async (messageId: string, opts?: { skipCache?: boolean }) => {
+        const msg = await gmailClient.getMessage(messageId, {
+          auth: token,
+          skipCache: opts?.skipCache,
+        });
+        return {
+          id: (msg.id && typeof msg.id === 'string' && msg.id.trim().length > 0)
+            ? msg.id
+            : (typeof msg.messageId === 'string' ? msg.messageId : messageId),
+          ...(msg.from !== undefined ? { from: msg.from } : {}),
+          ...(msg.date !== undefined ? { date: msg.date } : {}),
+          attachments: (msg.attachments ?? []).map((att) => ({
+            id: (att.partId && att.partId.trim().length > 0)
+              ? att.partId.trim()
+              : att.attachmentId,
+            ...(att.partId !== undefined ? { partId: att.partId } : {}),
+            ...(att.attachmentId !== undefined ? { attachmentId: att.attachmentId } : {}),
+            title: att.filename,
+            mimeType: att.mimeType,
+          })),
+        };
+      },
+    };
+  }
+
+  const gmailPort: UiProcessGmailPort = options.gmailPort ?? createGmailPortForToken(undefined);
 
   const orchestrator = new WorkspaceAddonAdapter({
     spaceProvider: fallbackSpaceProvider,
@@ -439,7 +507,10 @@ export function createUiProcessManagerWiring(
       return options.createOrchestrator(context);
     }
 
-    if (!options.createDocumentSpaceService && !options.createDocumentService) {
+    const token = context.userOAuthToken ?? context.gmail?.accessToken;
+    const reqGmailPort: UiProcessGmailPort = options.gmailPort ?? createGmailPortForToken(token);
+
+    if (!options.createDocumentSpaceService && !options.createDocumentService && !token) {
       return orchestrator;
     }
 
@@ -461,7 +532,7 @@ export function createUiProcessManagerWiring(
       options.documentService || options.createDocumentService
         ? {
             processDocument: async (payload, eventName) => {
-              const { sourceFiles, ...documentPayload } = payload;
+              const { sourceFiles, targetMessageId, ...documentPayload } = payload;
               const space = toStructuredDocumentSpace(documentPayload.space);
               const targetDocPayload: DocumentModel = {
                 type: documentPayload.type,
@@ -472,6 +543,14 @@ export function createUiProcessManagerWiring(
               const activeSourceFiles = sourceFiles ?? [];
               const activeContext: WorkspaceExecutionContext = {
                 ...context,
+                ...(targetMessageId
+                  ? {
+                      gmail: {
+                        ...(context.gmail ?? {}),
+                        messageId: targetMessageId,
+                      },
+                    }
+                  : {}),
                 sourceFiles: activeSourceFiles,
                 selectedItems: activeSourceFiles.map((file) => ({
                   id: file.id,
@@ -503,7 +582,7 @@ export function createUiProcessManagerWiring(
       manifestPort,
       documentRunner: reqDocumentRunner,
       formEvaluator,
-      gmailPort,
+      gmailPort: reqGmailPort,
     });
   };
 

@@ -1061,6 +1061,66 @@ describe('WorkspaceAddonAdapter', () => {
       assertValidUiView(view);
     });
 
+    it('renders SelectEmailMessage dropdown at widget index 0 when threadMessages are present in selectionState', async () => {
+      const threadMessages = [
+        { text: '(1) Alice | 261019', value: 'msg-1', selected: true },
+        { text: '(2) Bob | 261019', value: 'msg-2', selected: false },
+      ];
+
+      const view = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        formData: {
+          SelectEmailMessage: 'msg-1',
+          SelectFileSource: 'Email Attachments',
+          SaveEmailToPdf: false,
+        },
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default' }],
+          spaces: [],
+          documentTypes: [{ text: 'Invoice', value: 'invoice' }],
+          fileSources: [
+            { text: 'Email Attachments', value: 'Email Attachments', selected: true },
+            { text: 'Google Drive URL', value: 'Google Drive URL', selected: false },
+          ],
+          files: [
+            { text: 'Invoice.pdf', value: 'att-1', selected: true },
+          ],
+          threadMessages,
+        },
+      });
+
+      const fileSection = view.sections.find((s) => s.header === 'File Selection');
+      expect(fileSection).toBeDefined();
+      expect(fileSection?.widgets).toHaveLength(4);
+
+      // Widget 0: SelectEmailMessage dropdown
+      const emailDropdown = fileSection?.widgets[0].selectionInput;
+      expect(emailDropdown?.name).toBe('SelectEmailMessage');
+      expect(emailDropdown?.label).toBe('Email');
+      expect(emailDropdown?.type).toBe('DROPDOWN');
+      expect(emailDropdown?.items).toEqual(threadMessages);
+      expect(emailDropdown?.onChangeAction?.action).toBe('onEmailMessageChange');
+      expect(emailDropdown?.onChangeAction?.parameters?.previousMessageId).toBe('msg-1');
+
+      // Widget 1: SelectFileSource dropdown
+      const fileSourceDropdown = fileSection?.widgets[1].selectionInput;
+      expect(fileSourceDropdown?.name).toBe('SelectFileSource');
+      expect(fileSourceDropdown?.label).toBe('File Source');
+      expect(fileSourceDropdown?.type).toBe('DROPDOWN');
+
+      // Widget 2: SelectAttachments checkboxes
+      const attachmentsWidget = fileSection?.widgets[2].selectionInput;
+      expect(attachmentsWidget?.name).toBe('SelectAttachments');
+      expect(attachmentsWidget?.type).toBe('CHECK_BOX');
+
+      // Widget 3: SaveEmailToPdf switch
+      const saveEmailSwitch = fileSection?.widgets[3].selectionInput;
+      expect(saveEmailSwitch?.name).toBe('SaveEmailToPdf');
+      expect(saveEmailSwitch?.type).toBe('SWITCH');
+
+      assertValidUiView(view);
+    });
+
     it('propagates empty previousAttachments ("[]") when all attachments are unchecked', async () => {
       const view = await gmailAdapter.composeView({
         viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,

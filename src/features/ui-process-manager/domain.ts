@@ -13,6 +13,7 @@ export const UiSelectionStateSchema = Type.Object({
   documentTypes: Type.Array(UiSelectionItemSchema),
   files: Type.Optional(Type.Union([Type.Array(UiSelectionItemSchema), Type.Undefined()])),
   fileSources: Type.Optional(Type.Union([Type.Array(UiSelectionItemSchema), Type.Undefined()])),
+  threadMessages: Type.Optional(Type.Union([Type.Array(UiSelectionItemSchema), Type.Undefined()])),
 });
 export type UiSelectionState = Static<typeof UiSelectionStateSchema>;
 
@@ -55,6 +56,23 @@ export const UiProcessGmailEventContextSchema = Type.Object({
 });
 export type UiProcessGmailEventContext = Static<typeof UiProcessGmailEventContextSchema>;
 
+export const UiProcessGmailAttachmentDescriptorSchema = Type.Object({
+  id: Type.String(),
+  partId: Type.Optional(Type.String()),
+  attachmentId: Type.Optional(Type.String()),
+  title: Type.String(),
+  mimeType: Type.String(),
+});
+export type UiProcessGmailAttachmentDescriptor = Static<typeof UiProcessGmailAttachmentDescriptorSchema>;
+
+export const UiProcessGmailMessageDescriptorSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  from: Type.Optional(Type.String()),
+  date: Type.Optional(Type.String()),
+  attachments: Type.Array(UiProcessGmailAttachmentDescriptorSchema),
+});
+export type UiProcessGmailMessageDescriptor = Static<typeof UiProcessGmailMessageDescriptorSchema>;
+
 export const ProcessUiStateEventSchema = Type.Object({
   actionName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
@@ -87,6 +105,7 @@ export const ProcessUiStateInputSchema = Type.Object({
   config: Type.Optional(Type.Union([ProcessUiStateConfigSchema, Type.Undefined()])),
   spaceTypes: Type.Array(UiProcessSpaceTypeSchema),
   spaces: Type.Array(UiProcessSpaceItemSchema),
+  threadMessages: Type.Optional(Type.Union([Type.Array(UiProcessGmailMessageDescriptorSchema), Type.Undefined()])),
 });
 export type ProcessUiStateInput = Static<typeof ProcessUiStateInputSchema>;
 
@@ -99,6 +118,7 @@ export const ProcessUiStateOutputSchema = Type.Object({
   isUpdateCard: Type.Boolean(),
   validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   statusMessages: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  selectedMessageId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
 });
 export type ProcessUiStateOutput = Static<typeof ProcessUiStateOutputSchema>;
 
@@ -110,6 +130,7 @@ export const SELECT_FILE_SOURCE_KEY = 'SelectFileSource';
 export const SELECT_ATTACHMENTS_KEY = 'SelectAttachments';
 export const INPUT_DRIVE_URL_KEY = 'InputDriveURL';
 export const SAVE_EMAIL_TO_PDF_KEY = 'SaveEmailToPdf';
+export const SELECT_EMAIL_MESSAGE_KEY = 'SelectEmailMessage';
 
 export const EPHEMERAL_UI_SELECTION_KEYS = new Set([
   SELECT_FILES_KEY,
@@ -117,6 +138,7 @@ export const EPHEMERAL_UI_SELECTION_KEYS = new Set([
   SELECT_ATTACHMENTS_KEY,
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
+  SELECT_EMAIL_MESSAGE_KEY,
 ]);
 
 export const SELECTION_KEY_PREFIX = 'SelectDocument';
@@ -248,6 +270,138 @@ export function extractSelectFilesSet(
     }
   }
   return set;
+}
+
+const NAMED_TIMEZONE_OFFSETS: Record<string, number> = {
+  EDT: -240,
+  EST: -300,
+  CDT: -300,
+  CST: -360,
+  MDT: -360,
+  MST: -420,
+  PDT: -420,
+  PST: -480,
+  GMT: 0,
+  UT: 0,
+  UTC: 0,
+};
+
+export function parseRfc2822DateToYymmdd(dateString?: string): string {
+  if (!dateString || typeof dateString !== 'string') {
+    return 'Unknown Date';
+  }
+  const trimmed = dateString.trim();
+  if (trimmed.length === 0) {
+    return 'Unknown Date';
+  }
+
+  let offsetMinutes: number | undefined;
+  const numericMatch = trimmed.match(/([+-])(\d{2}):?(\d{2})\b/);
+  if (numericMatch) {
+    const sign = numericMatch[1] === '-' ? -1 : 1;
+    const hours = parseInt(numericMatch[2], 10);
+    const minutes = parseInt(numericMatch[3], 10);
+    offsetMinutes = sign * (hours * 60 + minutes);
+  } else {
+    const namedMatch = trimmed.match(/\b(EDT|EST|CDT|CST|MDT|MST|PDT|PST|GMT|UT|UTC)\b/);
+    if (namedMatch && NAMED_TIMEZONE_OFFSETS[namedMatch[1]] !== undefined) {
+      offsetMinutes = NAMED_TIMEZONE_OFFSETS[namedMatch[1]];
+    }
+  }
+
+  let parsed: Date;
+  if (offsetMinutes === undefined) {
+    if (trimmed.includes('T')) {
+      parsed = new Date(trimmed.endsWith('Z') || trimmed.endsWith('z') ? trimmed : `${trimmed}Z`);
+    } else {
+      parsed = new Date(`${trimmed} UTC`);
+    }
+    if (isNaN(parsed.getTime())) {
+      parsed = new Date(trimmed);
+    }
+  } else {
+    parsed = new Date(trimmed);
+    if (isNaN(parsed.getTime())) {
+      const namedMatch = trimmed.match(/\b(EDT|EST|CDT|CST|MDT|MST|PDT|PST|GMT|UT|UTC)\b/);
+      if (namedMatch && NAMED_TIMEZONE_OFFSETS[namedMatch[1]] !== undefined) {
+        const offsetMin = NAMED_TIMEZONE_OFFSETS[namedMatch[1]];
+        const sign = offsetMin < 0 ? '-' : '+';
+        const absMin = Math.abs(offsetMin);
+        const h = String(Math.floor(absMin / 60)).padStart(2, '0');
+        const m = String(absMin % 60).padStart(2, '0');
+        const replaced = trimmed.replace(namedMatch[1], `${sign}${h}${m}`);
+        parsed = new Date(replaced);
+      }
+    }
+  }
+
+  if (isNaN(parsed.getTime())) {
+    return 'Unknown Date';
+  }
+
+  const effectiveOffset = offsetMinutes ?? 0;
+  const targetMs = parsed.getTime() + effectiveOffset * 60_000;
+  const targetDate = new Date(targetMs);
+
+  const yy = String(targetDate.getUTCFullYear()).slice(-2);
+  const mm = String(targetDate.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(targetDate.getUTCDate()).padStart(2, '0');
+
+  return `${yy}${mm}${dd}`;
+}
+
+export function resolveAttachmentId(att: { partId?: string; id?: string; attachmentId?: string }): string {
+  return (att.partId && att.partId.trim().length > 0)
+    ? att.partId.trim()
+    : (att.id && att.id.trim().length > 0)
+      ? att.id.trim()
+      : (att.attachmentId?.trim() ?? '');
+}
+
+export function formatThreadEmailOptionLabel(descriptor: UiProcessGmailMessageDescriptor): string {
+  const count = descriptor.attachments ? descriptor.attachments.length : 0;
+  let sender = 'Unknown Sender';
+
+  if (descriptor.from && typeof descriptor.from === 'string' && descriptor.from.trim().length > 0) {
+    const trimmedFrom = descriptor.from.trim();
+    const match = trimmedFrom.match(/^(.*?)\s*<([^>]+)>/);
+    if (match) {
+      let namePart = match[1].trim();
+      if (
+        (namePart.startsWith('"') && namePart.endsWith('"')) ||
+        (namePart.startsWith("'") && namePart.endsWith("'"))
+      ) {
+        namePart = namePart.slice(1, -1).trim();
+      }
+      if (namePart.length > 0) {
+        sender = namePart;
+      } else {
+        const emailPart = match[2].trim();
+        if (emailPart.length > 0) {
+          sender = emailPart;
+        }
+      }
+    } else {
+      let raw = trimmedFrom;
+      if (
+        (raw.startsWith('"') && raw.endsWith('"')) ||
+        (raw.startsWith("'") && raw.endsWith("'"))
+      ) {
+        raw = raw.slice(1, -1).trim();
+      }
+      if (raw.length > 0) {
+        sender = raw;
+      }
+    }
+  }
+
+  if (sender.length > 24) {
+    sender = sender.slice(0, 21) + '...';
+  }
+
+  const dateStr = parseRfc2822DateToYymmdd(descriptor.date);
+
+  return `(${count}) ${sender} | ${dateStr}`;
 }
 
 function filterFormData(
@@ -448,6 +602,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const isSpaceTypeChange = action === 'onSpaceTypeChange';
   const isDocTypeChange = action === 'onDocumentTypeChange';
   const isFileSourceChange = action === 'onFileSourceChange';
+  const isEmailMessageChange = action === 'onEmailMessageChange';
 
   const currentSpaceType =
     input.resolvedSpaceType ?? resolveSpaceType({ formData: context.formData, config: input.config });
@@ -459,7 +614,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const isRefresh = action === 'refresh';
   let isUpdateCard = isRefresh
     ? false
-    : Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange || isFileSourceChange);
+    : Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange || isFileSourceChange || isEmailMessageChange);
 
   const rawSelectedDocType =
     resolveDocumentType({
@@ -505,6 +660,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     'onDocumentTypeChange',
     'onFormChange',
     'onFileSourceChange',
+    'onEmailMessageChange',
     'processDocument',
     'viewJson',
   ]);
@@ -520,10 +676,68 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
 
   const isGmail = isGmailContext(context);
 
+  // nosemgrep: domain-pass-through-read
+  const threadMessages = input.threadMessages;
+  let selectedMessageId: string | undefined;
+  let threadSelectionItems: UiSelectionItem[] | undefined;
+  let matchedThreadMessage: UiProcessGmailMessageDescriptor | undefined;
+
+  if (isGmail && threadMessages && threadMessages.length > 0) {
+    if (isResetOrInitialLoad) {
+      // nosemgrep: domain-pass-through-read
+      const initialTarget = context.gmail?.messageId;
+      matchedThreadMessage = initialTarget
+        ? threadMessages.find((m) => m.id === initialTarget)
+        : undefined;
+      if (!matchedThreadMessage) {
+        matchedThreadMessage = threadMessages[threadMessages.length - 1];
+      }
+      // nosemgrep: domain-pass-through-read
+      selectedMessageId = matchedThreadMessage.id;
+    } else {
+      const formVal =
+        (context.formData?.[SELECT_EMAIL_MESSAGE_KEY] as string | undefined) ??
+        context.parameters?.previousMessageId;
+      const formTarget = typeof formVal === 'string' && formVal.trim().length > 0 ? formVal.trim() : undefined;
+      matchedThreadMessage = formTarget
+        ? threadMessages.find((m) => m.id === formTarget)
+        : undefined;
+      if (!matchedThreadMessage) {
+        // nosemgrep: domain-pass-through-read
+        const initialTarget = context.gmail?.messageId;
+        matchedThreadMessage = initialTarget
+          ? threadMessages.find((m) => m.id === initialTarget)
+          : undefined;
+      }
+      if (!matchedThreadMessage) {
+        matchedThreadMessage = threadMessages[threadMessages.length - 1];
+      }
+      // nosemgrep: domain-pass-through-read
+      selectedMessageId = matchedThreadMessage.id;
+    }
+
+    effectiveFormData[SELECT_EMAIL_MESSAGE_KEY] = selectedMessageId;
+
+    threadSelectionItems = threadMessages.map((m) => ({
+      text: formatThreadEmailOptionLabel(m),
+      value: m.id,
+      selected: m.id === selectedMessageId,
+    }));
+  }
+
   const validSelectedItems = (context.selectedItems ?? []).filter(
     (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
       typeof item?.id === 'string' && item.id.trim().length > 0
   );
+
+  const candidateGmailItems: Array<{ id: string; title?: string | undefined; mimeType?: string | undefined }> =
+    isGmail && threadMessages && threadMessages.length > 0
+      ? (matchedThreadMessage?.attachments ?? []).map((att) => ({
+          id: resolveAttachmentId(att),
+          title: att.title,
+          mimeType: att.mimeType,
+        }))
+      : validSelectedItems;
 
   let fileSources: UiSelectionItem[] | undefined;
   let effectiveFileSource: string | undefined;
@@ -562,7 +776,26 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
 
   let files: UiSelectionItem[];
   if (isGmail) {
-    if (validSelectedItems.length > 0) {
+    const isEmailSwitch =
+      !isResetOrInitialLoad &&
+      (action === 'onEmailMessageChange' ||
+        Boolean(
+          context.parameters?.previousMessageId &&
+            context.parameters.previousMessageId !== selectedMessageId
+        ));
+
+    if (isEmailSwitch || isRefresh) {
+      effectiveFormData[SELECT_ATTACHMENTS_KEY] = candidateGmailItems.map((item) => item.id);
+      files = candidateGmailItems.map((item) => {
+        const trimmedTitle = typeof item.title === 'string' ? item.title.trim() : '';
+        const fileId = item.id.trim();
+        return {
+          text: trimmedTitle.length > 0 ? trimmedTitle : fileId,
+          value: item.id,
+          selected: true,
+        };
+      });
+    } else if (candidateGmailItems.length > 0) {
       const hasAttachmentFormKey = context.formData?.[SELECT_ATTACHMENTS_KEY] !== undefined;
       const selectedSet = hasAttachmentFormKey
         ? extractSelectFilesSet(context.formData, SELECT_ATTACHMENTS_KEY)
@@ -588,7 +821,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
         }
       }
 
-      files = validSelectedItems.map((item) => {
+      files = candidateGmailItems.map((item) => {
         const trimmedTitle = typeof item.title === 'string' ? item.title.trim() : '';
         const fileId = item.id.trim();
         let selected: boolean;
@@ -613,6 +846,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
         };
       });
     } else {
+      effectiveFormData[SELECT_ATTACHMENTS_KEY] = [];
       files = [];
     }
   } else {
@@ -634,6 +868,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     documentTypes,
     files,
     ...(fileSources !== undefined ? { fileSources } : {}),
+    ...(threadSelectionItems !== undefined ? { threadMessages: threadSelectionItems } : {}),
   };
 
   const spaceResolution = resolveSpace(
@@ -707,5 +942,6 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     ...(context.statusMessages && context.statusMessages.length > 0
       ? { statusMessages: context.statusMessages }
       : {}),
+    ...(selectedMessageId !== undefined ? { selectedMessageId } : {}),
   };
 }

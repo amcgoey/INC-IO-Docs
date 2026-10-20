@@ -10,6 +10,7 @@ import type {
   UiProcessDocumentSpaceDto,
   UiProcessSourceFileDto,
   UiProcessGmailPort,
+  UiProcessGmailMessageDescriptor,
 } from '../ports';
 
 import {
@@ -28,7 +29,9 @@ import {
   SELECT_ATTACHMENTS_KEY,
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
+  SELECT_EMAIL_MESSAGE_KEY,
   extractSelectFilesSet,
+  resolveAttachmentId,
   parseGoogleDriveUrl,
   isGmailContext,
   type UiStateResolutionContext,
@@ -104,37 +107,96 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     let effectiveContext = context;
 
     const isGmail = isGmailContext(context);
+    let threadMessages: UiProcessGmailMessageDescriptor[] | undefined;
 
-    if (
-      isGmail &&
-      this.gmailPort &&
-      context.gmail?.messageId &&
-      (!effectiveContext.selectedItems || effectiveContext.selectedItems.length === 0 || actionName === 'refresh')
-    ) {
-      try {
-        const token = context.userOAuthToken ?? context.gmail.accessToken;
-        const attachments = await this.gmailPort.getMessageAttachments(
-          context.gmail.messageId,
-          token
-        );
-        effectiveContext = {
-          ...effectiveContext,
-          selectedItems: attachments.map((att) => {
-            const resolvedId =
-              (att.partId && att.partId.trim().length > 0)
-                ? att.partId.trim()
-                : (att.id && att.id.trim().length > 0)
-                  ? att.id.trim()
-                  : (att.attachmentId?.trim() ?? '');
-            return {
-              id: resolvedId,
+    const inCardActions = new Set([
+      'onSpaceTypeChange',
+      'onDocumentTypeChange',
+      'onFormChange',
+      'onFileSourceChange',
+      'onEmailMessageChange',
+    ]);
+    const isInCardAction = actionName !== undefined && inCardActions.has(actionName);
+
+    const needsGmailFetch =
+      !effectiveContext.selectedItems ||
+      effectiveContext.selectedItems.length === 0 ||
+      actionName === 'refresh' ||
+      isInCardAction;
+
+    if (isGmail && this.gmailPort && needsGmailFetch) {
+      const token = context.userOAuthToken ?? context.gmail?.accessToken;
+      const skipCache = actionName === 'refresh';
+
+      if (context.gmail?.threadId && typeof this.gmailPort.getThreadMessages === 'function') {
+        try {
+          const msgs = await this.gmailPort.getThreadMessages(context.gmail.threadId, { skipCache });
+          if (msgs && msgs.length > 0) {
+            threadMessages = msgs;
+          }
+        } catch (e) {
+          console.warn(`Could not fetch thread messages for thread: ${context.gmail.threadId}`, e);
+        }
+      }
+
+      if (!threadMessages && context.gmail?.messageId) {
+        if (typeof this.gmailPort.getMessageDetails === 'function') {
+          try {
+            const msg = await this.gmailPort.getMessageDetails(context.gmail.messageId, { skipCache });
+            if (msg) {
+              threadMessages = [msg];
+            }
+          } catch (e) {
+            console.warn(`Could not fetch message details for message: ${context.gmail.messageId}`, e);
+          }
+        } else if (typeof this.gmailPort.getMessageAttachments === 'function') {
+          try {
+            const attachments = await this.gmailPort.getMessageAttachments(
+              context.gmail.messageId,
+              token
+            );
+            threadMessages = [
+              {
+                id: context.gmail.messageId,
+                attachments,
+              },
+            ];
+          } catch (e) {
+            console.warn(`Could not fetch attachments for message: ${context.gmail.messageId}`, e);
+          }
+        }
+      }
+
+      if (threadMessages && threadMessages.length > 0) {
+        const formMsgId = actionName === 'refresh'
+          ? undefined
+          : (effectiveContext.formData?.[SELECT_EMAIL_MESSAGE_KEY] as string | undefined);
+        const activeMsg =
+          threadMessages.find((m) => m.id === (formMsgId ?? context.gmail?.messageId)) ??
+          threadMessages[threadMessages.length - 1];
+
+        const isEmailSwitch =
+          actionName === 'onEmailMessageChange' ||
+          Boolean(
+            effectiveContext.parameters?.previousMessageId &&
+              effectiveContext.parameters.previousMessageId !== activeMsg?.id
+          );
+
+        if (
+          !effectiveContext.selectedItems ||
+          effectiveContext.selectedItems.length === 0 ||
+          actionName === 'refresh' ||
+          isEmailSwitch
+        ) {
+          effectiveContext = {
+            ...effectiveContext,
+            selectedItems: (activeMsg?.attachments ?? []).map((att) => ({
+              id: resolveAttachmentId(att),
               title: att.title,
               mimeType: att.mimeType,
-            };
-          }),
-        };
-      } catch (e) {
-        console.warn(`Could not fetch attachments for message: ${context.gmail.messageId}`, e);
+            })),
+          };
+        }
       }
     }
 
@@ -233,6 +295,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         config,
         spaceTypes,
         spaces,
+        threadMessages,
       });
 
       return {
@@ -260,9 +323,18 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         config,
         spaceTypes,
         spaces,
+        threadMessages,
       });
 
       const isGmail = isGmailContext(normalizedContext);
+      const triggerMessageId = context.gmail?.messageId ?? normalizedContext.gmail?.messageId;
+      const selectedMessageId = isGmail
+        ? (currentUiState.selectedMessageId ??
+            (currentUiState.formData[SELECT_EMAIL_MESSAGE_KEY] as string | undefined) ??
+            (normalizedContext.formData?.[SELECT_EMAIL_MESSAGE_KEY] as string | undefined) ??
+            triggerMessageId)
+        : undefined;
+
       const isDriveUrlSource =
         isGmail &&
         (normalizedContext.formData?.[SELECT_FILE_SOURCE_KEY] === 'Google Drive URL' ||
@@ -313,6 +385,31 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           }
         }
 
+        const selectedMsg = threadMessages?.find((m) => m.id === selectedMessageId);
+        if (selectedMsg?.attachments) {
+          for (const att of selectedMsg.attachments) {
+            const attId = resolveAttachmentId(att);
+            const meta = {
+              ...(att.title !== undefined ? { name: att.title } : {}),
+              ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
+            };
+            if (attId) metaMap.set(attId, meta);
+            if (att.id && att.id.trim()) metaMap.set(att.id.trim(), meta);
+            if (att.partId && att.partId.trim()) metaMap.set(att.partId.trim(), meta);
+            if (att.attachmentId && att.attachmentId.trim()) metaMap.set(att.attachmentId.trim(), meta);
+          }
+        }
+
+        for (const f of currentUiState.selectionState.files ?? []) {
+          const val = f.value.trim();
+          const existing = metaMap.get(val);
+          if (!existing) {
+            metaMap.set(val, { name: f.text });
+          } else if (!existing.name && f.text) {
+            existing.name = f.text;
+          }
+        }
+
         activeSourceFiles = Array.from(checkedIds).map((id) => {
           const meta = metaMap.get(id);
           return {
@@ -343,16 +440,15 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       }
 
       if (isGmail) {
-        const messageId = context.gmail?.messageId ?? normalizedContext.gmail?.messageId;
         const isSaveEmail =
           currentUiState.formData[SAVE_EMAIL_TO_PDF_KEY] === true ||
           currentUiState.formData[SAVE_EMAIL_TO_PDF_KEY] === 'true' ||
           normalizedContext.formData?.[SAVE_EMAIL_TO_PDF_KEY] === true ||
           normalizedContext.formData?.[SAVE_EMAIL_TO_PDF_KEY] === 'true';
 
-        if (isSaveEmail && messageId) {
+        if (isSaveEmail && selectedMessageId) {
           activeSourceFiles.push({
-            id: `email-pdf-${messageId}`,
+            id: `email-pdf-${selectedMessageId}`,
             mimeType: 'application/pdf',
           });
         }
@@ -421,6 +517,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
               data,
               space,
               sourceFiles: activeSourceFiles,
+              ...(selectedMessageId !== undefined ? { targetMessageId: selectedMessageId } : {}),
             },
             'onSubmit'
           );
