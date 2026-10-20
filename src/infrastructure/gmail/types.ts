@@ -22,7 +22,7 @@ export interface GoogleGmailClientOptions {
 
 export const GmailInlineImageDescriptorSchema = Type.Object({
   cid: Type.String({ minLength: 1 }),
-  partId: Type.String(),
+  partId: Type.String({ minLength: 1 }),
   attachmentId: Type.Optional(Type.String()),
   filename: Type.Optional(Type.String()),
   mimeType: Type.String(),
@@ -34,7 +34,7 @@ export interface GmailInlineImageDescriptor extends Static<typeof GmailInlineIma
 }
 
 export const GmailAttachmentDescriptorSchema = Type.Object({
-  partId: Type.String(),
+  partId: Type.String({ minLength: 1 }),
   attachmentId: Type.String({ minLength: 1 }),
   filename: Type.String({ minLength: 1 }),
   mimeType: Type.String(),

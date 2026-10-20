@@ -10,7 +10,6 @@ import {
   type UiProcessRenderResult,
   type UiProcessFormEvaluatorPort,
   type UiProcessGmailPort,
-  type UiProcessGmailEventContext,
 } from '../ports';
 
 describe('WorkspaceAddonAdapter in ui-process-manager', () => {
@@ -2283,55 +2282,39 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       );
     });
 
-    it('maps checked attachments from context.gmail.messageDetails.attachments when selectedItems is empty', async () => {
-      const mockDocumentRunner = {
-        processDocument: vi.fn().mockResolvedValue({ success: true }),
+    it('maps attachment selection item id and checkbox value to partId when partId is present', async () => {
+      const getAttachmentsMock = vi.fn().mockResolvedValue([
+        { id: 'att-1', partId: 'part-0.1', attachmentId: 'att-1', title: 'Invoice.pdf', mimeType: 'application/pdf' },
+        { id: 'att-2', partId: '', attachmentId: 'att-2', title: 'Specs.docx', mimeType: 'application/pdf' },
+      ]);
+      const gmailPort: UiProcessGmailPort = {
+        getMessageAttachments: getAttachmentsMock,
       };
 
       const adapter = new WorkspaceAddonAdapter({
         spaceProvider: mockSpaceProvider,
         configProvider: mockConfigProvider,
         manifestPort: mockManifestPort,
-        documentRunner: mockDocumentRunner,
+        gmailPort,
       });
 
       const context: UiProcessEventContext = {
-        actionName: 'processDocument',
         hostApp: 'GMAIL',
         gmail: {
-          messageId: 'msg-details-test',
-          messageDetails: {
-            attachments: [
-              {
-                attachmentId: 'att-x',
-                filename: 'Doc.pdf',
-                mimeType: 'application/pdf',
-              },
-            ],
-          },
-        } as unknown as UiProcessGmailEventContext,
-        formData: {
-          SelectDocumentSpaceType: 'projects',
-          SelectDocumentSpace_projects: 'Project Main',
-          SelectDocumentType: 'communication-project',
-          SelectAttachments: ['att-x'],
+          messageId: 'msg-part-test',
+          threadId: 'th-part-test',
+          accessToken: 'token-part',
         },
       };
 
-      const response = await adapter.processUiEvent(context);
-      expect(response.type).toBe('notification');
-      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
-        expect.objectContaining({
-          sourceFiles: [
-            {
-              id: 'att-x',
-              name: 'Doc.pdf',
-              mimeType: 'application/pdf',
-            },
-          ],
-        }),
-        'onSubmit'
-      );
+      const result = await adapter.processUiEvent(context);
+      expect(result.type).toBe('render');
+      const render = result as UiProcessRenderResult;
+
+      expect(render.selectionState?.files).toEqual([
+        { text: 'Invoice.pdf', value: 'part-0.1', selected: true },
+        { text: 'Specs.docx', value: 'att-2', selected: true },
+      ]);
     });
 
     it('maps checked attachments to { id } fallback when metadata is not provided', async () => {

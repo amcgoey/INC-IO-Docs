@@ -414,7 +414,9 @@ export function createUiProcessManagerWiring(
     getMessageAttachments: async (messageId: string, accessToken?: string) => {
       const msg = await gmailClient.getMessage(messageId, { auth: accessToken });
       return (msg.attachments ?? []).map((att) => ({
-        id: att.attachmentId,
+        id: (att.partId && att.partId.trim().length > 0) ? att.partId.trim() : att.attachmentId,
+        partId: att.partId,
+        attachmentId: att.attachmentId,
         title: att.filename,
         mimeType: att.mimeType,
       }));

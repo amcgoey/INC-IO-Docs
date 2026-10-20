@@ -1450,6 +1450,119 @@ describe('GoogleGmailClient', () => {
       expect(result.attachments).toHaveLength(1);
       expect(result.attachments[0]?.filename).toBe('data.bin');
     });
+
+    it('generates globally monotonic hierarchical part-<path> fallback when partId is omitted in deeply nested multipart MIME trees', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-nested-omitted-partid',
+          payload: {
+            mimeType: 'multipart/mixed',
+            parts: [
+              {
+                mimeType: 'multipart/related',
+                parts: [
+                  {
+                    mimeType: 'text/html',
+                    body: {
+                      data: Buffer.from('<p>Hello <img src="cid:nested-img-1"></p>', 'utf-8').toString('base64url'),
+                    },
+                  },
+                  {
+                    mimeType: 'image/png',
+                    headers: [{ name: 'Content-ID', value: '<nested-img-1>' }],
+                    filename: 'nested-photo.png',
+                    body: {
+                      attachmentId: 'att-img-nested',
+                      size: 512,
+                    },
+                  },
+                ],
+              },
+              {
+                mimeType: 'multipart/mixed',
+                parts: [
+                  {
+                    mimeType: 'application/pdf',
+                    filename: 'first-doc.pdf',
+                    body: {
+                      attachmentId: 'att-doc-1',
+                      size: 1024,
+                    },
+                  },
+                  {
+                    mimeType: 'application/pdf',
+                    filename: 'second-doc.pdf',
+                    body: {
+                      attachmentId: 'att-doc-2',
+                      size: 2048,
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      });
+
+      const client = new GoogleGmailClient({
+        gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+      });
+
+      const result = await client.getMessage('msg-nested-omitted-partid');
+
+      expect(result.inlineImages).toHaveLength(1);
+      expect(result.inlineImages[0]?.cid).toBe('nested-img-1');
+      expect(result.inlineImages[0]?.partId).toBe('part-0.1');
+
+      expect(result.attachments).toHaveLength(2);
+      expect(result.attachments[0]?.filename).toBe('first-doc.pdf');
+      expect(result.attachments[0]?.partId).toBe('part-1.0');
+      expect(result.attachments[1]?.filename).toBe('second-doc.pdf');
+      expect(result.attachments[1]?.partId).toBe('part-1.1');
+    });
+
+    it('preserves canonical non-empty partId and only falls back to part-<path> when partId is missing or empty', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-mixed-partid',
+          payload: {
+            mimeType: 'multipart/mixed',
+            parts: [
+              {
+                partId: 'custom-part-explicit',
+                mimeType: 'application/pdf',
+                filename: 'explicit.pdf',
+                body: {
+                  attachmentId: 'att-explicit',
+                  size: 100,
+                },
+              },
+              {
+                partId: '   ',
+                mimeType: 'application/pdf',
+                filename: 'fallback.pdf',
+                body: {
+                  attachmentId: 'att-fallback',
+                  size: 200,
+                },
+              },
+            ],
+          },
+        },
+      });
+
+      const client = new GoogleGmailClient({
+        gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+      });
+
+      const result = await client.getMessage('msg-mixed-partid');
+
+      expect(result.attachments).toHaveLength(2);
+      expect(result.attachments[0]?.filename).toBe('explicit.pdf');
+      expect(result.attachments[0]?.partId).toBe('custom-part-explicit');
+      expect(result.attachments[1]?.filename).toBe('fallback.pdf');
+      expect(result.attachments[1]?.partId).toBe('part-1');
+    });
   });
 });
 
