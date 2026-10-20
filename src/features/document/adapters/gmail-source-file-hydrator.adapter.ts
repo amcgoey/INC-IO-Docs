@@ -254,7 +254,13 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
 
         if (matchedAtt) {
           let content = matchedAtt.data;
-          if (!content) {
+          const isInline =
+            matchedAtt.data instanceof Uint8Array ||
+            matchedAtt.attachmentId?.startsWith('inline-') ||
+            matchedAtt.partId?.startsWith('inline-') ||
+            fileId.startsWith('inline-');
+
+          if (!content && !isInline) {
             if (!matchedAtt.attachmentId) {
               throw new DriveServiceError(
                 'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.'
@@ -281,7 +287,7 @@ export class GmailSourceFileHydratorAdapter implements SourceFileHydratorPort {
             id: file.id,
             name: file.name || matchedAtt.filename,
             mimeType: file.mimeType || matchedAtt.mimeType,
-            content,
+            ...(content !== undefined ? { content } : {}),
           });
           continue;
         }

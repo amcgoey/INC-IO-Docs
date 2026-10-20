@@ -1563,6 +1563,275 @@ describe('GoogleGmailClient', () => {
       expect(result.attachments[1]?.filename).toBe('fallback.pdf');
       expect(result.attachments[1]?.partId).toBe('part-1');
     });
+    describe('Small Inline Attachments (body.data without attachmentId) (Ticket #205)', () => {
+      it('extracts non-image MIME part with filename and inline body.data (without attachmentId) as attachment with inline-<partId> fallback', async () => {
+        const textContent = 'Small inline configuration payload';
+        const base64urlData = Buffer.from(textContent, 'utf-8').toString('base64url');
+
+        const mockGet = vi.fn().mockResolvedValue({
+          data: {
+            id: 'msg-inline-att-1',
+            payload: {
+              mimeType: 'multipart/mixed',
+              parts: [
+                {
+                  partId: '0',
+                  mimeType: 'text/plain',
+                  body: {
+                    data: Buffer.from('Email body', 'utf-8').toString('base64url'),
+                  },
+                },
+                {
+                  partId: '1',
+                  mimeType: 'application/json',
+                  filename: 'config.json',
+                  body: {
+                    size: 34,
+                    data: base64urlData,
+                    // Note: attachmentId is omitted by Gmail API for small inline payloads
+                  },
+                },
+              ],
+            },
+          },
+        });
+
+        const client = new GoogleGmailClient({
+          gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        });
+
+        const result = await client.getMessage('msg-inline-att-1');
+
+        expect(result.attachments).toHaveLength(1);
+        const att = result.attachments[0]!;
+        expect(att.partId).toBe('1');
+        expect(att.attachmentId).toBe('inline-1');
+        expect(att.filename).toBe('config.json');
+        expect(att.mimeType).toBe('application/json');
+        expect(att.size).toBe(34);
+        expect(att.data).toBeInstanceOf(Uint8Array);
+        expect(Buffer.from(att.data!).toString('utf-8')).toBe(textContent);
+      });
+
+      it('extracts attachment using fallbackPartId for inline-<partId> when partId is missing or empty', async () => {
+        const textContent = 'No partId inline payload';
+        const base64urlData = Buffer.from(textContent, 'utf-8').toString('base64url');
+
+        const mockGet = vi.fn().mockResolvedValue({
+          data: {
+            id: 'msg-inline-att-fallback-partid',
+            payload: {
+              mimeType: 'multipart/mixed',
+              parts: [
+                {
+                  mimeType: 'text/plain',
+                  body: {
+                    data: Buffer.from('Email body', 'utf-8').toString('base64url'),
+                  },
+                },
+                {
+                  // partId omitted
+                  mimeType: 'text/csv',
+                  filename: 'data.csv',
+                  body: {
+                    size: 24,
+                    data: base64urlData,
+                  },
+                },
+              ],
+            },
+          },
+        });
+
+        const client = new GoogleGmailClient({
+          gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        });
+
+        const result = await client.getMessage('msg-inline-att-fallback-partid');
+
+        expect(result.attachments).toHaveLength(1);
+        const att = result.attachments[0]!;
+        expect(att.partId).toBe('part-1');
+        expect(att.attachmentId).toBe('inline-part-1');
+        expect(att.filename).toBe('data.csv');
+        expect(att.mimeType).toBe('text/csv');
+        expect(att.size).toBe(24);
+        expect(att.data).toBeInstanceOf(Uint8Array);
+        expect(Buffer.from(att.data!).toString('utf-8')).toBe(textContent);
+      });
+
+      it('extracts unreferenced image MIME part with filename and inline body.data (without attachmentId) as attachment with inline-<partId>', async () => {
+        const samplePng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+        const mockGet = vi.fn().mockResolvedValue({
+          data: {
+            id: 'msg-unreferenced-image-inline-att',
+            payload: {
+              mimeType: 'multipart/mixed',
+              parts: [
+                {
+                  partId: '0',
+                  mimeType: 'text/plain',
+                  body: {
+                    data: Buffer.from('Here is the image.', 'utf-8').toString('base64url'),
+                  },
+                },
+                {
+                  partId: '1',
+                  mimeType: 'image/png',
+                  filename: 'unreferenced.png',
+                  headers: [
+                    { name: 'Content-ID', value: '<not-in-html>' },
+                  ],
+                  body: {
+                    size: 67,
+                    data: Buffer.from(samplePng, 'base64').toString('base64url'),
+                    // No attachmentId
+                  },
+                },
+              ],
+            },
+          },
+        });
+
+        const client = new GoogleGmailClient({
+          gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        });
+
+        const result = await client.getMessage('msg-unreferenced-image-inline-att');
+
+        expect(result.inlineImages).toHaveLength(0);
+        expect(result.attachments).toHaveLength(1);
+        const att = result.attachments[0]!;
+        expect(att.partId).toBe('1');
+        expect(att.attachmentId).toBe('inline-1');
+        expect(att.filename).toBe('unreferenced.png');
+        expect(att.mimeType).toBe('image/png');
+        expect(att.size).toBe(67);
+        expect(att.data).toBeInstanceOf(Uint8Array);
+        expect(Buffer.from(att.data!).toString('base64')).toBe(samplePng);
+      });
+
+      it('continues to classify CID-referenced multipart/related image with body.data (without attachmentId) as inlineImage, NOT as attachment', async () => {
+        const samplePng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+        const mockGet = vi.fn().mockResolvedValue({
+          data: {
+            id: 'msg-related-inline-image-data-only',
+            payload: {
+              mimeType: 'multipart/mixed',
+              parts: [
+                {
+                  mimeType: 'multipart/related',
+                  parts: [
+                    {
+                      partId: '0.0',
+                      mimeType: 'text/html',
+                      body: {
+                        data: Buffer.from('<p>Hello <img src="cid:sig-logo"></p>', 'utf-8').toString('base64url'),
+                      },
+                    },
+                    {
+                      partId: '0.1',
+                      mimeType: 'image/png',
+                      filename: 'signature.png',
+                      headers: [
+                        { name: 'Content-ID', value: '<sig-logo>' },
+                      ],
+                      body: {
+                        size: 67,
+                        data: Buffer.from(samplePng, 'base64').toString('base64url'),
+                        // No attachmentId
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        });
+
+        const client = new GoogleGmailClient({
+          gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        });
+
+        const result = await client.getMessage('msg-related-inline-image-data-only');
+
+        expect(result.inlineImages).toHaveLength(1);
+        expect(result.inlineImages[0]?.cid).toBe('sig-logo');
+        expect(result.inlineImages[0]?.partId).toBe('0.1');
+        expect(result.inlineImages[0]?.data).toBeInstanceOf(Uint8Array);
+        expect(result.attachments).toHaveLength(0);
+      });
+
+      it('decodes both base64 and base64url data and defaults size to data.length when body.size is undefined', async () => {
+        const rawBytes = new Uint8Array([251, 239, 10, 20]); // contains + / in base64, - _ in base64url
+        const standardBase64 = Buffer.from(rawBytes).toString('base64'); // "++8KFA=="
+
+        const mockGet = vi.fn().mockResolvedValue({
+          data: {
+            id: 'msg-std-b64',
+            payload: {
+              mimeType: 'multipart/mixed',
+              parts: [
+                {
+                  partId: 'part-b64',
+                  mimeType: 'application/octet-stream',
+                  filename: 'binary.dat',
+                  body: {
+                    data: standardBase64,
+                    // size undefined
+                  },
+                },
+              ],
+            },
+          },
+        });
+
+        const client = new GoogleGmailClient({
+          gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        });
+
+        const result = await client.getMessage('msg-std-b64');
+
+        expect(result.attachments).toHaveLength(1);
+        const att = result.attachments[0]!;
+        expect(att.attachmentId).toBe('inline-part-b64');
+        expect(att.size).toBe(rawBytes.length);
+        expect(att.data).toEqual(rawBytes);
+      });
+
+      it('does NOT extract as attachment when MIME part has filename but neither attachmentId nor non-empty body.data', async () => {
+        const mockGet = vi.fn().mockResolvedValue({
+          data: {
+            id: 'msg-empty-part',
+            payload: {
+              mimeType: 'multipart/mixed',
+              parts: [
+                {
+                  partId: '0',
+                  mimeType: 'text/plain',
+                  filename: 'empty-file.txt',
+                  body: {
+                    // No attachmentId and no data (or empty string)
+                    data: '   ',
+                  },
+                },
+              ],
+            },
+          },
+        });
+
+        const client = new GoogleGmailClient({
+          gmail: { users: { messages: { get: mockGet } } } as unknown as gmail_v1.Gmail,
+        });
+
+        const result = await client.getMessage('msg-empty-part');
+
+        expect(result.attachments).toHaveLength(0);
+      });
+    });
+
   });
 });
 
