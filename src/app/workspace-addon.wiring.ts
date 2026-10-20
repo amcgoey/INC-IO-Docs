@@ -107,6 +107,8 @@ export function wireWorkspaceAddonRoutes(
           compiledSchemaRegistry: options.compiledSchemaRegistry,
           configProvider: appConfigProvider,
           driveClient: options.driveClient,
+          gmailClient: options.gmailClient,
+          pdfProcessor: options.pdfProcessor,
         });
       }
     }

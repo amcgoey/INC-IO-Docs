@@ -1,31 +1,35 @@
 import { describe, it, expect, vi } from 'vitest';
-import { GmailSourceFileHydrator } from './gmail-source-file-hydrator';
-import type { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
-import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
-import type { UiProcessSourceFileDto } from '../features/ui-process-manager/ports';
-import type { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
+import { GmailSourceFileHydratorAdapter } from './gmail-source-file-hydrator.adapter';
+import type { GoogleGmailClient } from '../../../infrastructure/gmail/gmail-client';
+import type { SourceFile } from '../ports';
+import type { PdfProcessor } from '../../../infrastructure/pdf/pdf-processor';
 
-describe('GmailSourceFileHydrator', () => {
+describe('GmailSourceFileHydratorAdapter', () => {
   it('returns empty array when sourceFiles is empty or undefined', async () => {
     const mockGmailClient = {
       getMessage: vi.fn(),
       getAttachment: vi.fn(),
     } as unknown as GoogleGmailClient;
 
-    const hydrator = new GmailSourceFileHydrator(mockGmailClient);
-    const result = await hydrator.hydrate([], {} as WorkspaceExecutionContext);
+    const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+      messageId: 'msg-123',
+    });
+    const result = await hydrator.hydrate([]);
     expect(result).toEqual([]);
+    expect(mockGmailClient.getMessage).not.toHaveBeenCalled();
   });
 
-  it('returns sourceFiles unchanged when context.gmail.messageId is undefined', async () => {
+  it('returns sourceFiles unchanged when messageId is undefined and no email-pdf files', async () => {
     const mockGmailClient = {
       getMessage: vi.fn(),
       getAttachment: vi.fn(),
     } as unknown as GoogleGmailClient;
 
-    const hydrator = new GmailSourceFileHydrator(mockGmailClient);
-    const files: UiProcessSourceFileDto[] = [{ id: 'drive-file-1', name: 'File.pdf' }];
-    const result = await hydrator.hydrate(files, {} as WorkspaceExecutionContext);
+    const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+      auth: 'ya29.auth',
+    });
+    const files: SourceFile[] = [{ id: 'drive-file-1', name: 'File.pdf' }];
+    const result = await hydrator.hydrate(files);
     expect(result).toEqual(files);
     expect(mockGmailClient.getMessage).not.toHaveBeenCalled();
   });
@@ -36,14 +40,30 @@ describe('GmailSourceFileHydrator', () => {
       getAttachment: vi.fn(),
     } as unknown as GoogleGmailClient;
 
-    const hydrator = new GmailSourceFileHydrator(mockGmailClient);
-    const files: UiProcessSourceFileDto[] = [
+    const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+      messageId: 'msg-123',
+      isFileSourceEmailAttachments: true,
+    });
+    const files: SourceFile[] = [
       { id: 'att-1', content: new Uint8Array([1, 2, 3]) },
     ];
-    const context: WorkspaceExecutionContext = {
-      gmail: { messageId: 'msg-123' },
-    };
-    const result = await hydrator.hydrate(files, context);
+    const result = await hydrator.hydrate(files);
+    expect(result).toEqual(files);
+    expect(mockGmailClient.getMessage).not.toHaveBeenCalled();
+  });
+
+  it('returns sourceFiles unchanged without calling getMessage when isFileSourceEmailAttachments is false and no email-pdf files exist', async () => {
+    const mockGmailClient = {
+      getMessage: vi.fn(),
+      getAttachment: vi.fn(),
+    } as unknown as GoogleGmailClient;
+
+    const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+      messageId: 'msg-123',
+      isFileSourceEmailAttachments: false,
+    });
+    const files: SourceFile[] = [{ id: 'drive-file-999', name: 'DriveDoc.pdf' }];
+    const result = await hydrator.hydrate(files);
     expect(result).toEqual(files);
     expect(mockGmailClient.getMessage).not.toHaveBeenCalled();
   });
@@ -69,17 +89,17 @@ describe('GmailSourceFileHydrator', () => {
       getAttachment: vi.fn().mockResolvedValue(attachmentBytes),
     } as unknown as GoogleGmailClient;
 
-    const hydrator = new GmailSourceFileHydrator(mockGmailClient);
-    const files: UiProcessSourceFileDto[] = [
+    const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+      messageId: 'msg-123',
+      auth: 'ya29.user-token',
+      isFileSourceEmailAttachments: true,
+    });
+    const files: SourceFile[] = [
       { id: 'att-1' },
       { id: 'drive-folder-456', name: 'Existing Folder' }, // not in attachments
     ];
-    const context: WorkspaceExecutionContext = {
-      gmail: { messageId: 'msg-123', accessToken: 'ya29.live-token' },
-      userOAuthToken: 'ya29.user-token',
-    };
 
-    const result = await hydrator.hydrate(files, context);
+    const result = await hydrator.hydrate(files);
 
     expect(mockGmailClient.getMessage).toHaveBeenCalledWith('msg-123', {
       auth: 'ya29.user-token',
@@ -119,15 +139,15 @@ describe('GmailSourceFileHydrator', () => {
       getAttachment: vi.fn().mockResolvedValue(attachmentBytes),
     } as unknown as GoogleGmailClient;
 
-    const hydrator = new GmailSourceFileHydrator(mockGmailClient);
-    const files: UiProcessSourceFileDto[] = [
+    const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+      messageId: 'msg-123',
+      isFileSourceEmailAttachments: true,
+    });
+    const files: SourceFile[] = [
       { id: 'att-1', name: 'CustomRenamed.pdf', mimeType: 'application/x-custom' },
     ];
-    const context: WorkspaceExecutionContext = {
-      gmail: { messageId: 'msg-123' },
-    };
 
-    const result = await hydrator.hydrate(files, context);
+    const result = await hydrator.hydrate(files);
 
     expect(result).toEqual([
       {
@@ -185,27 +205,25 @@ describe('GmailSourceFileHydrator', () => {
         generateEmailPdf: vi.fn().mockResolvedValue(generatedPdfBytes),
       };
 
-      const hydrator = new GmailSourceFileHydrator(mockGmailClient, mockPdfProcessor as unknown as PdfProcessor);
-      const files: UiProcessSourceFileDto[] = [
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-abc',
+        auth: 'ya29.auth-token',
+        pdfProcessor: mockPdfProcessor as unknown as PdfProcessor,
+      });
+      const files: SourceFile[] = [
         { id: 'email-pdf-msg-abc', mimeType: 'application/pdf' },
       ];
-      const context: WorkspaceExecutionContext = {
-        gmail: { messageId: 'msg-abc' },
-        userOAuthToken: 'ya29.auth-token',
-      };
 
-      const result = await hydrator.hydrate(files, context);
+      const result = await hydrator.hydrate(files);
 
       expect(mockGmailClient.getMessage).toHaveBeenCalledWith('msg-abc', {
         auth: 'ya29.auth-token',
       });
-      // Fetch only the inline image that lacks binary data
       expect(mockGmailClient.getAttachment).toHaveBeenCalledTimes(1);
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith('msg-abc', 'att-inline-1', {
         auth: 'ya29.auth-token',
       });
 
-      // generateEmailPdf called with all headers, bodies, attachment names, and inline images
       expect(mockPdfProcessor.generateEmailPdf).toHaveBeenCalledWith({
         messageId: 'msg-abc',
         rfcMessageId: '<abc@example.com>',
@@ -260,15 +278,15 @@ describe('GmailSourceFileHydrator', () => {
         generateEmailPdf: vi.fn().mockResolvedValue(generatedPdfBytes),
       };
 
-      const hydrator = new GmailSourceFileHydrator(mockGmailClient, mockPdfProcessor as unknown as PdfProcessor);
-      const files: UiProcessSourceFileDto[] = [
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-no-subject',
+        pdfProcessor: mockPdfProcessor as unknown as PdfProcessor,
+      });
+      const files: SourceFile[] = [
         { id: 'email-pdf-msg-no-subject', mimeType: 'application/pdf' },
       ];
-      const context: WorkspaceExecutionContext = {
-        gmail: { messageId: 'msg-no-subject' },
-      };
 
-      const result = await hydrator.hydrate(files, context);
+      const result = await hydrator.hydrate(files);
 
       expect(result[0].name).toBe('Email - msg-no-subject.pdf');
       expect(result[0].content).toEqual(generatedPdfBytes);
@@ -298,18 +316,18 @@ describe('GmailSourceFileHydrator', () => {
         generateEmailPdf: vi.fn().mockResolvedValue(generatedPdfBytes),
       };
 
-      const hydrator = new GmailSourceFileHydrator(mockGmailClient, mockPdfProcessor as unknown as PdfProcessor);
-      const files: UiProcessSourceFileDto[] = [
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-combo',
+        isFileSourceEmailAttachments: true,
+        pdfProcessor: mockPdfProcessor as unknown as PdfProcessor,
+      });
+      const files: SourceFile[] = [
         { id: 'att-1' },
         { id: 'email-pdf-msg-combo', mimeType: 'application/pdf' },
       ];
-      const context: WorkspaceExecutionContext = {
-        gmail: { messageId: 'msg-combo' },
-      };
 
-      const result = await hydrator.hydrate(files, context);
+      const result = await hydrator.hydrate(files);
 
-      // getMessage must be called only ONCE for both attachments and PDF
       expect(mockGmailClient.getMessage).toHaveBeenCalledTimes(1);
       expect(result).toHaveLength(2);
       expect(result[0]).toEqual({
@@ -321,6 +339,55 @@ describe('GmailSourceFileHydrator', () => {
       expect(result[1]).toEqual({
         id: 'email-pdf-msg-combo',
         name: 'Email - Project Combo.pdf',
+        mimeType: 'application/pdf',
+        content: generatedPdfBytes,
+      });
+    });
+
+    it('hydrates email-pdf descriptor and leaves Drive item unchanged when isFileSourceEmailAttachments is false', async () => {
+      const generatedPdfBytes = new Uint8Array([1, 2, 3]);
+      const mockGmailClient = {
+        getMessage: vi.fn().mockResolvedValue({
+          id: 'msg-drive-and-pdf',
+          subject: 'Drive and PDF',
+          plainTextBody: 'Body',
+          attachments: [
+            {
+              attachmentId: 'drive-file-abc', // Even if an attachment ID collided, it should NOT be touched
+              filename: 'CollidedAttachment.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+          inlineImages: [],
+        }),
+        getAttachment: vi.fn(),
+      } as unknown as GoogleGmailClient;
+
+      const mockPdfProcessor = {
+        generateEmailPdf: vi.fn().mockResolvedValue(generatedPdfBytes),
+      };
+
+      const hydrator = new GmailSourceFileHydratorAdapter(mockGmailClient, {
+        messageId: 'msg-drive-and-pdf',
+        isFileSourceEmailAttachments: false,
+        pdfProcessor: mockPdfProcessor as unknown as PdfProcessor,
+      });
+      const files: SourceFile[] = [
+        { id: 'drive-file-abc', name: 'GoogleDoc.gdoc' },
+        { id: 'email-pdf-msg-drive-and-pdf', mimeType: 'application/pdf' },
+      ];
+
+      const result = await hydrator.hydrate(files);
+
+      expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual({
+        id: 'drive-file-abc',
+        name: 'GoogleDoc.gdoc',
+      });
+      expect(result[1]).toEqual({
+        id: 'email-pdf-msg-drive-and-pdf',
+        name: 'Email - Drive and PDF.pdf',
         mimeType: 'application/pdf',
         content: generatedPdfBytes,
       });

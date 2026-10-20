@@ -13,8 +13,12 @@ import type {
 } from '../features/document/ports';
 import { CompiledSchemaRegistry } from '../features/document/adapters/compiled-schema-registry';
 import { DocumentService } from '../features/document/domain';
+import * as driveActivityHandlerModule from '../features/document/adapters/drive-activity-handler';
+import { GmailSourceFileHydratorAdapter } from '../features/document/adapters/gmail-source-file-hydrator.adapter';
 import type { HttpServer } from '../infrastructure/http';
 import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
+import type { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
+import type { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
 
 describe('document.wiring', () => {
   const dummyDocType: DocumentType = {
@@ -117,6 +121,87 @@ describe('document.wiring', () => {
       await factory(context);
       // initialize() on compiled registry was called, but schemas are already compiled
       expect(initSpy).toHaveBeenCalled();
+    });
+
+    it('injects GmailSourceFileHydratorAdapter into DriveActivityHandler when request has Gmail credentials/context', async () => {
+      const handlerSpy = vi.spyOn(driveActivityHandlerModule, 'DriveActivityHandler');
+      const compiledRegistry = new CompiledSchemaRegistry(mockSchemaRegistry);
+      await compiledRegistry.initialize();
+
+      const factory = createDocumentServiceFactory({
+        documentSchemaRegistry: mockSchemaRegistry,
+        templateEvaluator: mockEvaluator,
+        compiledSchemaRegistry: compiledRegistry,
+      });
+
+      const context: WorkspaceExecutionContext = {
+        hostApp: 'GMAIL',
+        userOAuthToken: 'ya29.user-token',
+        gmail: {
+          messageId: 'msg-test-123',
+          accessToken: 'ya29.gmail-token',
+        },
+        formData: {
+          SelectFileSource: 'Email Attachments',
+        },
+        sourceFiles: [{ id: 'att-1', name: 'Invoice.pdf' }],
+      };
+
+      await factory(context);
+
+      expect(handlerSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          sourceFileHydrator: expect.any(GmailSourceFileHydratorAdapter),
+        })
+      );
+      handlerSpy.mockRestore();
+    });
+
+    it('never dispatches DriveActivityHandler or fetches/generates Gmail items when validateDocument fails on missing DocumentField', async () => {
+      const mockGmailClient = {
+        getMessage: vi.fn(),
+        getAttachment: vi.fn(),
+      } as unknown as GoogleGmailClient;
+
+      const mockPdfProcessor = {
+        generateEmailPdf: vi.fn(),
+      } as unknown as PdfProcessor;
+
+      const compiledRegistry = new CompiledSchemaRegistry(mockSchemaRegistry);
+      await compiledRegistry.initialize();
+
+      const factory = createDocumentServiceFactory({
+        documentSchemaRegistry: mockSchemaRegistry,
+        templateEvaluator: mockEvaluator,
+        compiledSchemaRegistry: compiledRegistry,
+        gmailClient: mockGmailClient,
+        pdfProcessor: mockPdfProcessor,
+      });
+
+      const context: WorkspaceExecutionContext = {
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-validation-fail-test',
+        },
+        sourceFiles: [
+          { id: 'att-1' },
+          { id: 'email-pdf-msg-validation-fail-test' },
+        ],
+      };
+
+      const service = (await factory(context)) as DocumentService;
+
+      // test-doc requires `name`, but we pass empty data payload {}
+      const result = await service.processDocument({
+        type: 'test-doc',
+        data: {},
+      });
+
+      expect(result.success).toBe(false);
+      expect(mockGmailClient.getMessage).not.toHaveBeenCalled();
+      expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
+      expect(mockPdfProcessor.generateEmailPdf).not.toHaveBeenCalled();
     });
   });
 

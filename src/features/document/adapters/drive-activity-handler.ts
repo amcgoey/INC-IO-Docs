@@ -11,6 +11,7 @@ import {
   type DriveFile,
   type DriveSearchQuery,
   type DriveServicePort,
+  type SourceFileHydratorPort,
 } from '../ports';
 
 export interface DriveActivityHandlerOptions {
@@ -18,6 +19,7 @@ export interface DriveActivityHandlerOptions {
   configProvider?: AppConfigurationProviderPort | undefined;
   primaryTargetId?: string | undefined;
   sourceFiles?: SourceFile[] | undefined;
+  sourceFileHydrator?: SourceFileHydratorPort | undefined;
 }
 
 export function parsePathSegments(path: string): string[] {
@@ -70,6 +72,7 @@ function isFileNotFoundError(error: unknown): boolean {
 export class DriveActivityHandler implements ActivityHandler {
   private readonly options: DriveActivityHandlerOptions;
   private readonly sourceFiles?: SourceFile[] | undefined;
+  private readonly sourceFileHydrator?: SourceFileHydratorPort | undefined;
 
   constructor(
     private readonly driveService: DriveServicePort,
@@ -83,6 +86,7 @@ export class DriveActivityHandler implements ActivityHandler {
       ...(options ?? {}),
       ...(validatedTargetId !== undefined ? { primaryTargetId: validatedTargetId } : {}),
     };
+    this.sourceFileHydrator = options?.sourceFileHydrator;
     if (options?.sourceFiles !== undefined) {
       this.sourceFiles = options.sourceFiles;
     } else if (validatedTargetId) {
@@ -375,6 +379,13 @@ export class DriveActivityHandler implements ActivityHandler {
     for (const segment of folderSegments) {
       leafFolder = await this.driveService.findOrCreateFolder(currentParentId, segment);
       currentParentId = leafFolder.id;
+    }
+
+    if (
+      this.sourceFileHydrator &&
+      targetSourceFiles.some((f) => !(f.content instanceof Uint8Array))
+    ) {
+      targetSourceFiles = await this.sourceFileHydrator.hydrate(targetSourceFiles);
     }
 
     const movedFiles: FileLocator[] = [];
