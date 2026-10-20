@@ -286,10 +286,6 @@ export class GoogleGmailClient {
     string,
     { promise: Promise<GmailMessageDetails>; expiresAt: number }
   >();
-  private readonly threadCache = new Map<
-    string,
-    { promise: Promise<GmailThreadDetails>; expiresAt: number }
-  >();
 
   constructor(options: GoogleGmailClientOptions = {}) {
     this.retryOptions = options.retryOptions ?? {};
@@ -315,15 +311,10 @@ export class GoogleGmailClient {
 
   clearCache(): void {
     this.cache.clear();
-    this.threadCache.clear();
   }
 
   getCacheSize(): number {
     return this.cache.size;
-  }
-
-  getThreadCacheSize(): number {
-    return this.threadCache.size;
   }
 
   private getAuthCacheKey(options?: GmailOperationOptions): string {
@@ -350,6 +341,39 @@ export class GoogleGmailClient {
     return '__default__';
   }
 
+  private setCacheEntry(
+    key: string,
+    promise: Promise<GmailMessageDetails>,
+    expiresAt: number
+  ): void {
+    const now = this.clock();
+    this.cache.delete(key);
+
+    // Prune expired entries to maintain bounds
+    for (const [k, entry] of this.cache.entries()) {
+      if (now > entry.expiresAt) {
+        this.cache.delete(k);
+      }
+    }
+
+    // Evict oldest (least recently used) entries if at capacity
+    while (this.cache.size >= this.cacheMaxEntries) {
+      const oldestKey = this.cache.keys().next().value;
+      if (!oldestKey) break;
+      this.cache.delete(oldestKey);
+    }
+
+    const newEntry = { promise, expiresAt };
+
+    promise.catch(() => {
+      if (this.cache.get(key) === newEntry) {
+        this.cache.delete(key);
+      }
+    });
+
+    this.cache.set(key, newEntry);
+  }
+
   async getMessage(
     messageId: string,
     options?: GmailOperationOptions
@@ -373,32 +397,9 @@ export class GoogleGmailClient {
       this.cache.delete(key);
     }
 
-    // Prune expired entries to maintain bounds
-    for (const [k, entry] of this.cache.entries()) {
-      if (now > entry.expiresAt) {
-        this.cache.delete(k);
-      }
-    }
-
-    // Evict oldest (least recently used) entries if at capacity
-    while (this.cache.size >= this.cacheMaxEntries) {
-      const oldestKey = this.cache.keys().next().value;
-      if (!oldestKey) break;
-      this.cache.delete(oldestKey);
-    }
-
     const expiresAt = now + this.cacheTtlMs;
     const promise = this.fetchMessageDetails(messageId, options);
-
-    const newEntry = { promise, expiresAt };
-
-    promise.catch(() => {
-      if (this.cache.get(key) === newEntry) {
-        this.cache.delete(key);
-      }
-    });
-
-    this.cache.set(key, newEntry);
+    this.setCacheEntry(key, promise, expiresAt);
     return promise;
   }
 
@@ -465,52 +466,7 @@ export class GoogleGmailClient {
     threadId: string,
     options?: GmailOperationOptions
   ): Promise<GmailThreadDetails> {
-    const key = `${this.getAuthCacheKey(options)}\0${threadId.trim()}`;
-    const now = this.clock();
-
-    if (!options?.skipCache) {
-      const existing = this.threadCache.get(key);
-      if (existing) {
-        if (now <= existing.expiresAt) {
-          // Cache hit: move to end for LRU order
-          this.threadCache.delete(key);
-          this.threadCache.set(key, existing);
-          return existing.promise;
-        }
-        // Expired entry
-        this.threadCache.delete(key);
-      }
-    } else {
-      this.threadCache.delete(key);
-    }
-
-    // Prune expired entries to maintain bounds
-    for (const [k, entry] of this.threadCache.entries()) {
-      if (now > entry.expiresAt) {
-        this.threadCache.delete(k);
-      }
-    }
-
-    // Evict oldest (least recently used) entries if at capacity
-    while (this.threadCache.size >= this.cacheMaxEntries) {
-      const oldestKey = this.threadCache.keys().next().value;
-      if (!oldestKey) break;
-      this.threadCache.delete(oldestKey);
-    }
-
-    const expiresAt = now + this.cacheTtlMs;
-    const promise = this.fetchThreadDetails(threadId, options);
-
-    const newEntry = { promise, expiresAt };
-
-    promise.catch(() => {
-      if (this.threadCache.get(key) === newEntry) {
-        this.threadCache.delete(key);
-      }
-    });
-
-    this.threadCache.set(key, newEntry);
-    return promise;
+    return this.fetchThreadDetails(threadId, options);
   }
 
   private async fetchThreadDetails(
@@ -546,21 +502,7 @@ export class GoogleGmailClient {
     for (const msg of messages) {
       if (!msg.id || msg.id.trim().length === 0) continue;
       const msgKey = `${authKey}\0${msg.id.trim()}`;
-      this.cache.delete(msgKey);
-
-      for (const [k, entry] of this.cache.entries()) {
-        if (now > entry.expiresAt) {
-          this.cache.delete(k);
-        }
-      }
-
-      while (this.cache.size >= this.cacheMaxEntries) {
-        const oldestKey = this.cache.keys().next().value;
-        if (!oldestKey) break;
-        this.cache.delete(oldestKey);
-      }
-
-      this.cache.set(msgKey, { promise: Promise.resolve(msg), expiresAt });
+      this.setCacheEntry(msgKey, Promise.resolve(msg), expiresAt);
     }
 
     return {

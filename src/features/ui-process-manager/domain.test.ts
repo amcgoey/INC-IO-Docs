@@ -22,6 +22,7 @@ import {
   extractSelectFilesSet,
   formatThreadEmailOptionLabel,
   parseRfc2822DateToYymmdd,
+  resolveAttachmentId,
   ResolveSpaceResultSchema,
   UiProcessSpaceItemSchema,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
@@ -2639,6 +2640,30 @@ describe('ui-process-manager domain', () => {
         expect(parseRfc2822DateToYymmdd('19 Oct 2026 23:59:00 GMT')).toBe('261019');
         expect(parseRfc2822DateToYymmdd('19 Oct 2026 23:59:00 UT')).toBe('261019');
         expect(parseRfc2822DateToYymmdd('19 Oct 2026 23:59:00 UTC')).toBe('261019');
+      });
+
+      it('parses timezone-less date strings using explicit UTC fallback', () => {
+        expect(parseRfc2822DateToYymmdd('19 Oct 2026 23:59:00')).toBe('261019');
+        expect(parseRfc2822DateToYymmdd('2026-10-19T23:59:00')).toBe('261019');
+      });
+    });
+
+    describe('resolveAttachmentId', () => {
+      it('prioritizes partId when non-empty', () => {
+        expect(resolveAttachmentId({ partId: 'part-1', id: 'id-1', attachmentId: 'att-1' })).toBe('part-1');
+        expect(resolveAttachmentId({ partId: '  part-trimmed  ', id: 'id-1' })).toBe('part-trimmed');
+      });
+
+      it('falls back to id when partId is missing or empty', () => {
+        expect(resolveAttachmentId({ partId: '', id: 'id-1', attachmentId: 'att-1' })).toBe('id-1');
+        expect(resolveAttachmentId({ partId: '   ', id: '  id-trimmed  ' })).toBe('id-trimmed');
+        expect(resolveAttachmentId({ id: 'id-1' })).toBe('id-1');
+      });
+
+      it('falls back to attachmentId when partId and id are missing or empty', () => {
+        expect(resolveAttachmentId({ partId: '', id: '', attachmentId: 'att-1' })).toBe('att-1');
+        expect(resolveAttachmentId({ attachmentId: '  att-trimmed  ' })).toBe('att-trimmed');
+        expect(resolveAttachmentId({})).toBe('');
       });
     });
 
