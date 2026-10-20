@@ -763,7 +763,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
             context.parameters.previousMessageId !== selectedMessageId
         ));
 
-    if (isEmailSwitch) {
+    if (isEmailSwitch || isRefresh) {
       effectiveFormData[SELECT_ATTACHMENTS_KEY] = candidateGmailItems.map((item) => item.id);
       files = candidateGmailItems.map((item) => {
         const trimmedTitle = typeof item.title === 'string' ? item.title.trim() : '';

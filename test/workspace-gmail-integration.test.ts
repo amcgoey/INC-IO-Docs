@@ -3823,5 +3823,295 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       expect(nock.isDone()).toBe(true);
     });
   });
+
+  describe('Bounded Per-Message Cache Warming in getThread & skipCache Refresh Reset (Ticket #213)', () => {
+    const rootSharedDriveId = 'shared-drive-proj-root';
+    const adminFolderId = 'folder-admin-1';
+    const commFolderId = 'folder-comm-1';
+    const contactFolderId = 'folder-acme-corp';
+    const newSubfolderId = 'folder-meeting-subfolder';
+
+    function mockFolderResolution() {
+      mockDynamicValidationProject({
+        sharedDriveId: rootSharedDriveId,
+        adminFolderId,
+        commFolderId,
+        contactFolderId,
+        contactName: 'Acme Corp',
+      });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(rootSharedDriveId) && q.q.includes("name = '1 Admin'"))
+        .reply(200, {
+          files: [{ id: adminFolderId, name: '1 Admin', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(adminFolderId) && q.q.includes("name = 'Communication'"))
+        .reply(200, {
+          files: [{ id: commFolderId, name: 'Communication', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(commFolderId) && q.q.includes("name = 'Acme Corp'"))
+        .reply(200, {
+          files: [{ id: contactFolderId, name: 'Acme Corp', mimeType: 'application/vnd.google-apps.folder' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files')
+        .query((q) => typeof q.q === 'string' && q.q.includes(contactFolderId) && q.q.includes("name = '260920 IN - Meeting Notes'"))
+        .reply(200, { files: [] });
+
+      nock('https://www.googleapis.com')
+        .post('/drive/v3/files')
+        .query(true)
+        .reply(200, {
+          id: newSubfolderId,
+          name: '260920 IN - Meeting Notes',
+          parents: [contactFolderId],
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+    }
+
+    it('clicking Refresh (action: "refresh") passes skipCache: true to Gmail client/port, re-fetches thread, and resets SelectEmailMessage to trigger messageId with attachments checked and SaveEmailToPdf: false', async () => {
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.valid-oauth-token',
+          },
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-email-1',
+            threadId: 'th-multi-message',
+            accessToken: 'ya29.live-token',
+          },
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'refresh',
+            },
+            formInputs: {
+              SelectEmailMessage: { stringInputs: { value: ['msg-email-2'] } },
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+              SelectAttachments: { stringInputs: { value: ['part-email-2-att-1'] } },
+              SaveEmailToPdf: { stringInputs: { value: ['true'] } },
+            },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+
+      // Crucial: getThread called with skipCache: true
+      expect(mockGmailClient.getThread).toHaveBeenCalledWith(
+        'th-multi-message',
+        expect.objectContaining({ skipCache: true })
+      );
+
+      const nav = body.action?.navigations?.[0];
+      const card = nav?.pushCard ?? nav?.updateCard;
+      expect(card).toBeDefined();
+
+      const fileSelectionSection = card!.sections.find((s) => s.header === 'File Selection');
+      expect(fileSelectionSection).toBeDefined();
+
+      // Widget 0: SelectEmailMessage is reset to trigger msg-email-1
+      const emailDropdown = fileSelectionSection?.widgets[0]?.selectionInput;
+      expect(emailDropdown?.name).toBe('SelectEmailMessage');
+      expect(emailDropdown?.items?.find((item) => item.value === 'msg-email-1')?.selected).toBe(true);
+      expect(emailDropdown?.items?.find((item) => item.value === 'msg-email-2')?.selected).toBe(false);
+
+      // Widget 2: Attachments checkbox group contains msg-email-1's attachment (Email1Doc.pdf) with selected: true
+      const attGroup = fileSelectionSection?.widgets[2]?.selectionInput;
+      expect(attGroup?.name).toBe('SelectAttachments');
+      expect(attGroup?.items).toEqual([
+        { text: 'Email1Doc.pdf', value: 'part-email-1-att-1', selected: true },
+      ]);
+
+      // Widget 3: SaveEmailToPdf switch is reset to false
+      const savePdfSwitch = fileSelectionSection?.widgets[3]?.selectionInput;
+      expect(savePdfSwitch?.name).toBe('SaveEmailToPdf');
+      expect(savePdfSwitch?.items?.[0]?.selected).toBe(false);
+    });
+
+    it('submitting processDocument after getThread reuses cached GmailMessageDetails for selected email with zero additional users.messages.get calls', async () => {
+      mockFolderResolution();
+
+      const mockThreadGet = vi.fn().mockResolvedValue({
+        data: {
+          id: 'th-cached-thread',
+          messages: [
+            {
+              id: 'msg-cached-1',
+              threadId: 'th-cached-thread',
+              payload: {
+                headers: [
+                  { name: 'Subject', value: 'First Email' },
+                  { name: 'From', value: 'Alice <alice@example.com>' },
+                  { name: 'Date', value: 'Mon, 19 Oct 2026 10:00:00 +0000' },
+                ],
+                body: { data: Buffer.from('Email 1 text').toString('base64url') },
+                mimeType: 'text/plain',
+              },
+            },
+            {
+              id: 'msg-cached-2',
+              threadId: 'th-cached-thread',
+              payload: {
+                headers: [
+                  { name: 'Subject', value: 'Second Email' },
+                  { name: 'From', value: 'Bob <bob@example.com>' },
+                  { name: 'Date', value: 'Mon, 19 Oct 2026 11:00:00 +0000' },
+                ],
+                mimeType: 'multipart/mixed',
+                parts: [
+                  {
+                    partId: 'part-c2',
+                    filename: 'CachedDoc.pdf',
+                    mimeType: 'application/pdf',
+                    body: { attachmentId: 'att-c2', size: 1024 },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      });
+
+      const mockMessagesGet = vi.fn().mockResolvedValue({
+        data: { id: 'unexpected-call', threadId: 'unexpected-call' },
+      });
+
+      const mockAttachmentsGet = vi.fn().mockResolvedValue({
+        data: {
+          data: Buffer.from(new Uint8Array([1, 2, 3])).toString('base64url'),
+        },
+      });
+
+      const mockGmailApi = {
+        users: {
+          threads: { get: mockThreadGet },
+          messages: {
+            get: mockMessagesGet,
+            attachments: { get: mockAttachmentsGet },
+          },
+        },
+      } as unknown as gmail_v1.Gmail;
+
+      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmailApi);
+
+      const realGmailClient = new GoogleGmailClient({
+        gmail: mockGmailApi,
+      });
+
+      const cachingApp = createApp({
+        manifestProvider,
+        authVerifier: mockAuthVerifier,
+        skipSpaceValidation: true,
+        storageAdapter: mockStorageAdapter,
+        gmailClient: realGmailClient,
+      });
+      await cachingApp.initialize();
+
+      try {
+        // Step 1: Initial context load calls getThread, pre-warming per-message cache for msg-cached-1 and msg-cached-2
+        const initRes = await cachingApp.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: {
+            authorization: 'Bearer valid-jwt-token',
+          },
+          payload: {
+            authorizationEventObject: {
+              userOAuthToken: 'ya29.valid-oauth-token',
+            },
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-cached-1',
+              threadId: 'th-cached-thread',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+        expect(initRes.statusCode).toBe(200);
+        expect(mockThreadGet).toHaveBeenCalledTimes(1);
+
+        // Step 2: processDocument submitting msg-cached-2
+        nock('https://www.googleapis.com')
+          .post('/upload/drive/v3/files')
+          .query(true)
+          .reply(200, {
+            id: 'drive-saved-cached-doc',
+            name: 'CachedDoc.pdf',
+            mimeType: 'application/pdf',
+            parents: [newSubfolderId],
+            webViewLink: 'https://drive.google.com/file/d/drive-saved-cached-doc/view',
+          });
+
+        const processRes = await cachingApp.server.inject({
+          method: 'POST',
+          url: '/workspace/action',
+          headers: {
+            authorization: 'Bearer valid-jwt-token',
+          },
+          payload: {
+            authorizationEventObject: {
+              userOAuthToken: 'ya29.valid-oauth-token',
+            },
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-cached-1',
+              threadId: 'th-cached-thread',
+              accessToken: 'ya29.live-token',
+            },
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: {
+                action: 'processDocument',
+              },
+              formInputs: {
+                SelectEmailMessage: { stringInputs: { value: ['msg-cached-2'] } },
+                SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+                [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+                [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+                SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+                SelectAttachments: { stringInputs: { value: ['part-c2'] } },
+                SaveEmailToPdf: { stringInputs: { value: ['false'] } },
+                [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+                [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+                [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+                [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+              },
+            },
+          },
+        });
+
+        expect(processRes.statusCode).toBe(200);
+        const processBody = JSON.parse(processRes.payload) as GoogleWorkspaceActionResponse;
+        expect(processBody.action?.notification?.text).toBe('Document processed successfully');
+
+        // The critical assertion: users.messages.get was called 0 times because getThread pre-warmed msg-cached-2 in cache!
+        expect(mockMessagesGet).toHaveBeenCalledTimes(0);
+        expect(mockThreadGet).toHaveBeenCalledTimes(1);
+        expect(mockAttachmentsGet).toHaveBeenCalledTimes(1);
+        expect(nock.isDone()).toBe(true);
+      } finally {
+        gmailSpy.mockRestore();
+      }
+    });
+  });
 });
 

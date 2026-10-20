@@ -170,7 +170,9 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       }
 
       if (threadMessages && threadMessages.length > 0) {
-        const formMsgId = effectiveContext.formData?.[SELECT_EMAIL_MESSAGE_KEY] as string | undefined;
+        const formMsgId = actionName === 'refresh'
+          ? undefined
+          : (effectiveContext.formData?.[SELECT_EMAIL_MESSAGE_KEY] as string | undefined);
         const activeMsg =
           threadMessages.find((m) => m.id === (formMsgId ?? context.gmail?.messageId)) ??
           threadMessages[threadMessages.length - 1];

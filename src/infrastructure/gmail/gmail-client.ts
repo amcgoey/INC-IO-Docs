@@ -286,6 +286,10 @@ export class GoogleGmailClient {
     string,
     { promise: Promise<GmailMessageDetails>; expiresAt: number }
   >();
+  private readonly threadCache = new Map<
+    string,
+    { promise: Promise<GmailThreadDetails>; expiresAt: number }
+  >();
 
   constructor(options: GoogleGmailClientOptions = {}) {
     this.retryOptions = options.retryOptions ?? {};
@@ -311,10 +315,15 @@ export class GoogleGmailClient {
 
   clearCache(): void {
     this.cache.clear();
+    this.threadCache.clear();
   }
 
   getCacheSize(): number {
     return this.cache.size;
+  }
+
+  getThreadCacheSize(): number {
+    return this.threadCache.size;
   }
 
   private getAuthCacheKey(options?: GmailOperationOptions): string {
@@ -360,6 +369,8 @@ export class GoogleGmailClient {
         // Expired entry
         this.cache.delete(key);
       }
+    } else {
+      this.cache.delete(key);
     }
 
     // Prune expired entries to maintain bounds
@@ -454,6 +465,58 @@ export class GoogleGmailClient {
     threadId: string,
     options?: GmailOperationOptions
   ): Promise<GmailThreadDetails> {
+    const key = `${this.getAuthCacheKey(options)}\0${threadId.trim()}`;
+    const now = this.clock();
+
+    if (!options?.skipCache) {
+      const existing = this.threadCache.get(key);
+      if (existing) {
+        if (now <= existing.expiresAt) {
+          // Cache hit: move to end for LRU order
+          this.threadCache.delete(key);
+          this.threadCache.set(key, existing);
+          return existing.promise;
+        }
+        // Expired entry
+        this.threadCache.delete(key);
+      }
+    } else {
+      this.threadCache.delete(key);
+    }
+
+    // Prune expired entries to maintain bounds
+    for (const [k, entry] of this.threadCache.entries()) {
+      if (now > entry.expiresAt) {
+        this.threadCache.delete(k);
+      }
+    }
+
+    // Evict oldest (least recently used) entries if at capacity
+    while (this.threadCache.size >= this.cacheMaxEntries) {
+      const oldestKey = this.threadCache.keys().next().value;
+      if (!oldestKey) break;
+      this.threadCache.delete(oldestKey);
+    }
+
+    const expiresAt = now + this.cacheTtlMs;
+    const promise = this.fetchThreadDetails(threadId, options);
+
+    const newEntry = { promise, expiresAt };
+
+    promise.catch(() => {
+      if (this.threadCache.get(key) === newEntry) {
+        this.threadCache.delete(key);
+      }
+    });
+
+    this.threadCache.set(key, newEntry);
+    return promise;
+  }
+
+  private async fetchThreadDetails(
+    threadId: string,
+    options?: GmailOperationOptions
+  ): Promise<GmailThreadDetails> {
     const gmail = this.getGmail(options);
     if (!gmail?.users?.threads?.get) {
       throw new GoogleGmailApiError('Google Gmail API error in getThread: threads API is not available');
@@ -474,6 +537,31 @@ export class GoogleGmailClient {
     const messages = (res.data.messages ?? []).map((msg) =>
       parseMessageDetails(msg, msg.id ?? undefined)
     );
+
+    // Warm per-message cache with bounded LRU eviction
+    const authKey = this.getAuthCacheKey(options);
+    const now = this.clock();
+    const expiresAt = now + this.cacheTtlMs;
+
+    for (const msg of messages) {
+      if (!msg.id || msg.id.trim().length === 0) continue;
+      const msgKey = `${authKey}\0${msg.id.trim()}`;
+      this.cache.delete(msgKey);
+
+      for (const [k, entry] of this.cache.entries()) {
+        if (now > entry.expiresAt) {
+          this.cache.delete(k);
+        }
+      }
+
+      while (this.cache.size >= this.cacheMaxEntries) {
+        const oldestKey = this.cache.keys().next().value;
+        if (!oldestKey) break;
+        this.cache.delete(oldestKey);
+      }
+
+      this.cache.set(msgKey, { promise: Promise.resolve(msg), expiresAt });
+    }
 
     return {
       id: res.data.id ?? threadId,

@@ -14,6 +14,7 @@ import type {
   UiProcessOrchestratorPort,
   UiProcessGmailPort,
 } from '../features/ui-process-manager/ports';
+import type { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 
 import type {
   GoogleWorkspaceActionResponse,
@@ -1365,6 +1366,55 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       expect(passedContext?.gmail?.messageId).toBe('msg-thread-2');
       expect(passedContext?.gmail?.threadId).toBe('th-thread-123');
       expect(passedContext?.gmail?.accessToken).toBe('tok-gmail-test');
+    });
+
+    it('forwards skipCache: true from refresh event to gmailClient.getThread and gmailClient.getMessage', async () => {
+      const mockGetThread = vi.fn().mockResolvedValue({
+        id: 'th-skip-wiring',
+        messages: [
+          {
+            id: 'msg-w-1',
+            from: 'Alice <alice@example.com>',
+            date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+            attachments: [{ id: 'att-w-1', filename: 'W1.pdf', mimeType: 'application/pdf', size: 100 }],
+          },
+        ],
+      });
+      const mockGetMessage = vi.fn().mockResolvedValue({
+        id: 'msg-w-1',
+        from: 'Alice <alice@example.com>',
+        date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+        attachments: [{ id: 'att-w-1', filename: 'W1.pdf', mimeType: 'application/pdf', size: 100 }],
+      });
+
+      const mockGmailClient = {
+        getThread: mockGetThread,
+        getMessage: mockGetMessage,
+      } as unknown as GoogleGmailClient;
+
+      const wiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: mockManifestProvider,
+        gmailClient: mockGmailClient,
+      });
+
+      const refreshReq: WorkspaceExecutionContext = {
+        actionName: 'refresh',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-w-1',
+          threadId: 'th-skip-wiring',
+          accessToken: 'tok-refresh-wiring',
+        },
+      };
+
+      await wiring.requestScopedWrapper.processUiEvent(refreshReq);
+
+      expect(mockGetThread).toHaveBeenCalledWith('th-skip-wiring', {
+        auth: 'tok-refresh-wiring',
+        skipCache: true,
+      });
     });
   });
 });
