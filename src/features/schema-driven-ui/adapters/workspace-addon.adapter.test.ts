@@ -966,6 +966,165 @@ describe('WorkspaceAddonAdapter', () => {
       });
       assertValidUiView(viewFromFormData);
     });
+
+    it('attaches previousAttachments and previousDriveUrl to onSpaceTypeChange, onSpaceChange, onDocumentTypeChange, and onFormChange', async () => {
+      const view = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        formData: {
+          InputDriveURL: 'https://drive.google.com/test-url',
+        },
+        selectionState: {
+          spaceTypes: [
+            { text: 'Projects', value: 'projects', selected: true },
+            { text: 'Clients', value: 'clients', selected: false },
+          ],
+          spaces: ['Active Projects'],
+          documentTypes: [
+            { text: 'Communication', value: 'communication-project', selected: true },
+          ],
+          fileSources: [
+            { text: 'Email Attachments', value: 'Email Attachments', selected: true },
+            { text: 'Google Drive URL', value: 'Google Drive URL', selected: false },
+          ],
+          files: [
+            { text: 'part-1.pdf', value: 'part-1', selected: true },
+            { text: 'part-2.pdf', value: 'part-2', selected: false },
+          ],
+        },
+        documentSchema: {
+          fields: [
+            { key: 'contact', type: 'string' },
+            { key: 'reactiveField', type: 'string' },
+          ],
+        },
+        uiSchema: {
+          fields: {
+            reactiveField: { onChange: true },
+          },
+        },
+        documentTypeKey: 'communication-project',
+      });
+
+      const expectedParams = {
+        previousAttachments: JSON.stringify(['part-1']),
+        previousDriveUrl: 'https://drive.google.com/test-url',
+      };
+
+      // 1. Document Type Selection Section
+      const docTypeSection = view.sections.find((s) => s.header === 'Document Type');
+      expect(docTypeSection).toBeDefined();
+
+      // onSpaceTypeChange dropdown (SelectDocumentSpaceType)
+      const spaceTypeWidget = docTypeSection?.widgets[0].selectionInput;
+      expect(spaceTypeWidget?.name).toBe('SelectDocumentSpaceType');
+      expect(spaceTypeWidget?.onChangeAction).toEqual({
+        action: 'onSpaceTypeChange',
+        parameters: expectedParams,
+      });
+
+      // onSpaceChange text input (SelectDocumentSpace_projects)
+      const spaceWidget = docTypeSection?.widgets[1].textInput;
+      expect(spaceWidget?.name).toBe('SelectDocumentSpace_projects');
+      expect(spaceWidget?.onChangeAction).toEqual({
+        action: 'onFormChange',
+        parameters: expectedParams,
+      });
+
+      // onDocumentTypeChange dropdown (SelectDocumentType_projects)
+      const docTypeWidget = docTypeSection?.widgets[2].selectionInput;
+      expect(docTypeWidget?.name).toBe('SelectDocumentType_projects');
+      expect(docTypeWidget?.onChangeAction).toEqual({
+        action: 'onDocumentTypeChange',
+        parameters: expectedParams,
+      });
+
+      // 2. File Selection Section: onFileSourceChange
+      const fileSection = view.sections.find((s) => s.header === 'File Selection');
+      const fileSourceDropdown = fileSection?.widgets[0].selectionInput;
+      expect(fileSourceDropdown?.name).toBe('SelectFileSource');
+      expect(fileSourceDropdown?.onChangeAction).toEqual({
+        action: 'onFileSourceChange',
+        parameters: expectedParams,
+      });
+
+      // 3. Document Info Section: onFormChange on reactiveField
+      const infoSection = view.sections.find((s) => s.header === 'Document Data');
+      expect(infoSection).toBeDefined();
+      const reactiveFieldWidget = infoSection?.widgets.find(
+        (w) => w.textInput?.name === 'reactiveField_communication-project'
+      );
+      expect(reactiveFieldWidget?.textInput?.onChangeAction).toEqual({
+        action: 'onFormChange',
+        parameters: expectedParams,
+      });
+
+      assertValidUiView(view);
+    });
+
+    it('propagates empty previousAttachments ("[]") when all attachments are unchecked', async () => {
+      const view = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default', selected: true }],
+          spaces: [],
+          documentTypes: [{ text: 'Invoice', value: 'invoice', selected: true }],
+          fileSources: [
+            { text: 'Email Attachments', value: 'Email Attachments', selected: true },
+            { text: 'Google Drive URL', value: 'Google Drive URL', selected: false },
+          ],
+          files: [
+            { text: 'att-1.pdf', value: 'att-1', selected: false },
+            { text: 'att-2.pdf', value: 'att-2', selected: false },
+          ],
+        },
+      });
+
+      const fileSection = view.sections.find((s) => s.header === 'File Selection');
+      const fileSourceDropdown = fileSection?.widgets[0].selectionInput;
+      expect(fileSourceDropdown?.onChangeAction?.parameters).toEqual({
+        previousAttachments: '[]',
+        previousDriveUrl: '',
+      });
+      assertValidUiView(view);
+    });
+
+    it('ensures standard Drive WorkspaceAddonAdapter does NOT attach previousAttachments or previousDriveUrl', async () => {
+      const driveAdapter = new WorkspaceAddonAdapter();
+      const view = await driveAdapter.composeView({
+        viewId: WORKSPACE_ADDON_VIEW_ID,
+        selectionState: {
+          spaceTypes: [{ text: 'Projects', value: 'projects', selected: true }],
+          spaces: [],
+          documentTypes: [{ text: 'Invoice', value: 'invoice', selected: true }],
+          files: [{ text: 'file1.pdf', value: 'f-1', selected: true }],
+        },
+        documentSchema: {
+          fields: [{ key: 'notes', type: 'string' }],
+        },
+        uiSchema: {
+          fields: {
+            notes: { onChange: true },
+          },
+        },
+        documentTypeKey: 'invoice',
+      });
+
+      const docTypeSection = view.sections.find((s) => s.header === 'Document Type');
+      expect(docTypeSection?.widgets[0].selectionInput?.onChangeAction).toEqual({
+        action: 'onSpaceTypeChange',
+      });
+      expect(docTypeSection?.widgets[1].textInput?.onChangeAction).toEqual({
+        action: 'onFormChange',
+      });
+      expect(docTypeSection?.widgets[2].selectionInput?.onChangeAction).toEqual({
+        action: 'onDocumentTypeChange',
+      });
+
+      const infoSection = view.sections.find((s) => s.header === 'Document Data');
+      expect(infoSection?.widgets[0].textInput?.onChangeAction).toEqual({
+        action: 'onFormChange',
+      });
+    });
   });
 });
 

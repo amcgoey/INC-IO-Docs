@@ -2547,6 +2547,164 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         );
         expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
       });
+      it('does NOT restore previousAttachments on processDocument when SelectAttachments is absent and files are unchecked in Email Attachments mode', async () => {
+        const mockDocumentRunner = {
+          processDocument: vi.fn().mockResolvedValue({ success: true }),
+        };
+
+        const manifestPortWithEmptyPolicy: UiProcessManifestPort = {
+          ...mockManifestPort,
+          getDocumentTypeSchemas: vi.fn().mockResolvedValue({
+            allowEmptySourceFiles: false,
+          }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: manifestPortWithEmptyPolicy,
+          documentRunner: mockDocumentRunner,
+        });
+
+        // The user unchecked all attachments and clicked Process Document
+        // Google Workspace omits SelectAttachments from formData completely
+        // Action parameters from the card still contain previousAttachments: '["att-1"]'
+        const context: UiProcessEventContext = {
+          actionName: 'processDocument',
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-uncheck-all',
+          },
+          parameters: {
+            previousAttachments: JSON.stringify(['att-1']),
+          },
+          selectedItems: [
+            { id: 'att-1', title: 'Invoice.pdf' },
+          ],
+          formData: {
+            SelectFileSource: 'Email Attachments',
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            SelectDocumentType: 'communication-project',
+            SaveEmailToPdf: false,
+            // SelectAttachments is absent
+          },
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('render');
+        const renderResult = response as UiProcessRenderResult;
+        expect(renderResult.validationErrors).toContain(
+          'Please select at least one file to process or enable Save Email to PDF.'
+        );
+        expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
+      });
+
+      it('saves only the generated Email PDF when all attachments are unchecked and SaveEmailToPdf is true', async () => {
+        const mockDocumentRunner = {
+          processDocument: vi.fn().mockResolvedValue({ success: true }),
+        };
+
+        const manifestPortWithEmptyPolicy: UiProcessManifestPort = {
+          ...mockManifestPort,
+          getDocumentTypeSchemas: vi.fn().mockResolvedValue({
+            allowEmptySourceFiles: false,
+          }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: manifestPortWithEmptyPolicy,
+          documentRunner: mockDocumentRunner,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'processDocument',
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-save-only-pdf',
+          },
+          parameters: {
+            previousAttachments: JSON.stringify(['att-1']),
+          },
+          selectedItems: [
+            { id: 'att-1', title: 'Invoice.pdf' },
+          ],
+          formData: {
+            SelectFileSource: 'Email Attachments',
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            SelectDocumentType: 'communication-project',
+            SaveEmailToPdf: true,
+            // SelectAttachments is absent
+          },
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('notification');
+        expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sourceFiles: [
+              {
+                id: 'email-pdf-msg-save-only-pdf',
+                mimeType: 'application/pdf',
+              },
+            ],
+          }),
+          'onSubmit'
+        );
+      });
+
+      it('creates target folder without errors when all attachments are unchecked for DocumentType with allowEmptySourceFiles: true', async () => {
+        const mockDocumentRunner = {
+          processDocument: vi.fn().mockResolvedValue({ success: true }),
+        };
+
+        const manifestPortWithAllowEmpty: UiProcessManifestPort = {
+          ...mockManifestPort,
+          getDocumentTypeSchemas: vi.fn().mockResolvedValue({
+            allowEmptySourceFiles: true,
+          }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: manifestPortWithAllowEmpty,
+          documentRunner: mockDocumentRunner,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'processDocument',
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-allow-empty',
+          },
+          parameters: {
+            previousAttachments: JSON.stringify(['att-1']),
+          },
+          selectedItems: [
+            { id: 'att-1', title: 'Invoice.pdf' },
+          ],
+          formData: {
+            SelectFileSource: 'Email Attachments',
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            SelectDocumentType: 'communication-project',
+            SaveEmailToPdf: false,
+          },
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('notification');
+        expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sourceFiles: [],
+          }),
+          'onSubmit'
+        );
+      });
     });
   });
 });

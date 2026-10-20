@@ -922,6 +922,42 @@ describe('Document Info Block', () => {
     });
   });
 
+  it('attaches onChangeActionParameters to onChangeAction when provided in options', () => {
+    const schema: AbstractDataSchema = {
+      fields: [
+        { key: 'amount', type: 'number' },
+        { key: 'category', type: 'string', options: ['A', 'B'] },
+      ],
+    };
+    const uiSchema: UiSchema = {
+      fields: {
+        amount: { onChange: true },
+        category: { onChange: 'customCategoryChange' },
+      },
+    };
+    const section = buildDocumentInfoSection(schema, uiSchema, {
+      onChangeActionParameters: {
+        previousAttachments: '["att-1"]',
+        previousDriveUrl: 'https://drive.google.com/test',
+      },
+    });
+
+    expect(section.widgets[0].textInput?.onChangeAction).toEqual({
+      action: 'onFormChange',
+      parameters: {
+        previousAttachments: '["att-1"]',
+        previousDriveUrl: 'https://drive.google.com/test',
+      },
+    });
+    expect(section.widgets[1].selectionInput?.onChangeAction).toEqual({
+      action: 'customCategoryChange',
+      parameters: {
+        previousAttachments: '["att-1"]',
+        previousDriveUrl: 'https://drive.google.com/test',
+      },
+    });
+  });
+
   describe('getDocumentInfoWidgetName', () => {
     it('appends documentTypeKey suffix when provided', () => {
       expect(getDocumentInfoWidgetName('contact', 'communication-project')).toBe(

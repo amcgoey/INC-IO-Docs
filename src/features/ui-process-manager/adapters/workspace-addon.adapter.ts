@@ -296,16 +296,6 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         if (checkedIds.size === 0 && formAttachmentIds.size > 0) {
           checkedIds = formAttachmentIds;
         }
-        if (checkedIds.size === 0 && context.parameters?.previousAttachments) {
-          try {
-            const parsed = JSON.parse(context.parameters.previousAttachments);
-            if (Array.isArray(parsed)) {
-              checkedIds = new Set(parsed.map(String).map((s) => s.trim()));
-            }
-          } catch {
-            // ignore
-          }
-        }
 
         if (formAttachmentIds.size > 0) {
           for (const id of formAttachmentIds) {

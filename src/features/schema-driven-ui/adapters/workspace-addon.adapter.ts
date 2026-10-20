@@ -20,6 +20,7 @@ export type SectionProducer = (context: UiViewAdapterContext) => UiViewSection |
 export interface WorkspaceAddonViewSchemaConfig {
   viewId: string;
   fileSelectionConfig?: (context: UiViewAdapterContext) => UiViewSection | undefined;
+  getActionParameters?: (context: UiViewAdapterContext) => Record<string, unknown> | undefined;
 }
 
 export type WorkspaceAddonViewComposer = (
@@ -111,31 +112,47 @@ export function createWorkspaceAddonViewSchema(
         : undefined,
 
     // 2. Document Type Selection Section
-    (ctx) =>
-      ctx.selectionState
-        ? buildDocumentTypeSelectionSection(ctx.selectionState, {
-            onSpaceTypeChangeAction: { action: 'onSpaceTypeChange' },
-            onSpaceChangeAction: { action: 'onFormChange' },
-            onDocumentTypeChangeAction: { action: 'onDocumentTypeChange' },
-            formData: ctx.formData,
-          })
-        : undefined,
+    (ctx) => {
+      if (!ctx.selectionState) {
+        return undefined;
+      }
+      const actionParams = config.getActionParameters ? config.getActionParameters(ctx) : undefined;
+      return buildDocumentTypeSelectionSection(ctx.selectionState, {
+        onSpaceTypeChangeAction: {
+          action: 'onSpaceTypeChange',
+          ...(actionParams ? { parameters: actionParams } : {}),
+        },
+        onSpaceChangeAction: {
+          action: 'onFormChange',
+          ...(actionParams ? { parameters: actionParams } : {}),
+        },
+        onDocumentTypeChangeAction: {
+          action: 'onDocumentTypeChange',
+          ...(actionParams ? { parameters: actionParams } : {}),
+        },
+        formData: ctx.formData,
+      });
+    },
 
     // 3. File Selection Section
     fileSelectionProducer,
 
     // 4. Document Info Section
-    (ctx) =>
-      ctx.documentSchema
-        ? buildDocumentInfoSection(ctx.documentSchema, ctx.uiSchema, {
-            sectionHeader: 'Document Data',
-            formData: ctx.formData,
-            hiddenFields: ctx.hiddenFields,
-            documentTypeKey: ctx.documentTypeKey,
-            dynamicOptions: ctx.dynamicOptions,
-            ...(ctx.documentTypeKey ? { onProcessAction: { action: 'processDocument' } } : {}),
-          })
-        : undefined,
+    (ctx) => {
+      if (!ctx.documentSchema) {
+        return undefined;
+      }
+      const actionParams = config.getActionParameters ? config.getActionParameters(ctx) : undefined;
+      return buildDocumentInfoSection(ctx.documentSchema, ctx.uiSchema, {
+        sectionHeader: 'Document Data',
+        formData: ctx.formData,
+        hiddenFields: ctx.hiddenFields,
+        documentTypeKey: ctx.documentTypeKey,
+        dynamicOptions: ctx.dynamicOptions,
+        ...(actionParams ? { onChangeActionParameters: actionParams } : {}),
+        ...(ctx.documentTypeKey ? { onProcessAction: { action: 'processDocument' } } : {}),
+      });
+    },
 
     // 5. Admin Section (always present)
     () => buildDocumentAdminSection(),
@@ -184,6 +201,31 @@ export class WorkspaceAddonAdapter implements UiViewSchemaAdapterPort {
   }
 }
 
+export function extractGmailActionParameters(ctx: UiViewAdapterContext): Record<string, string> {
+  const rawAttachmentForm = ctx.formData?.['SelectAttachments'];
+  let checkedAttachmentIds: string[];
+  if (rawAttachmentForm !== undefined) {
+    if (Array.isArray(rawAttachmentForm)) {
+      checkedAttachmentIds = rawAttachmentForm.map(String);
+    } else if (typeof rawAttachmentForm === 'string') {
+      checkedAttachmentIds =
+        rawAttachmentForm.trim().length > 0 ? [rawAttachmentForm.trim()] : [];
+    } else {
+      checkedAttachmentIds = [];
+    }
+  } else {
+    checkedAttachmentIds =
+      ctx.selectionState?.files?.filter((f) => f.selected).map((f) => f.value) ?? [];
+  }
+
+  const currentDriveUrl = (ctx.formData?.['InputDriveURL'] as string) ?? '';
+
+  return {
+    previousAttachments: JSON.stringify(checkedAttachmentIds),
+    previousDriveUrl: currentDriveUrl,
+  };
+}
+
 export class GmailWorkspaceAddonAdapter implements UiViewSchemaAdapterPort {
   public readonly viewId = GMAIL_WORKSPACE_ADDON_VIEW_ID;
   private readonly composer: WorkspaceAddonViewComposer;
@@ -193,28 +235,13 @@ export class GmailWorkspaceAddonAdapter implements UiViewSchemaAdapterPort {
   ) {
     this.composer = createWorkspaceAddonViewSchema({
       viewId: this.viewId,
+      getActionParameters: (ctx) => extractGmailActionParameters(ctx),
       fileSelectionConfig: (ctx) => {
         if (!ctx.selectionState) {
           return undefined;
         }
 
-        const rawAttachmentForm = ctx.formData?.['SelectAttachments'];
-        let checkedAttachmentIds: string[];
-        if (rawAttachmentForm !== undefined) {
-          if (Array.isArray(rawAttachmentForm)) {
-            checkedAttachmentIds = rawAttachmentForm.map(String);
-          } else if (typeof rawAttachmentForm === 'string') {
-            checkedAttachmentIds =
-              rawAttachmentForm.trim().length > 0 ? [rawAttachmentForm.trim()] : [];
-          } else {
-            checkedAttachmentIds = [];
-          }
-        } else {
-          checkedAttachmentIds =
-            ctx.selectionState.files?.filter((f) => f.selected).map((f) => f.value) ?? [];
-        }
-
-        const currentDriveUrl = (ctx.formData?.['InputDriveURL'] as string) ?? '';
+        const actionParams = extractGmailActionParameters(ctx);
 
         return buildFileSelectionSection(ctx.selectionState, {
           collapsible: false,
@@ -226,10 +253,7 @@ export class GmailWorkspaceAddonAdapter implements UiViewSchemaAdapterPort {
             label: 'File Source',
             onChangeAction: {
               action: 'onFileSourceChange',
-              parameters: {
-                previousAttachments: JSON.stringify(checkedAttachmentIds),
-                previousDriveUrl: currentDriveUrl,
-              },
+              parameters: actionParams,
             },
           },
           urlInput: {

@@ -558,6 +558,328 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     ]);
   });
 
+  it('preserves attachment selections across File Source round-trips with intermediate in-card changes', async () => {
+    // Step 1: Switch to Google Drive URL with previousAttachments=['att-part-1']
+    const resStep1 = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/on-form-change',
+      headers: { authorization: 'Bearer valid-jwt-token' },
+      payload: {
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'onFileSourceChange',
+            previousAttachments: JSON.stringify(['att-part-1']),
+            previousDriveUrl: '',
+          },
+          formInputs: {
+            SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+          },
+        },
+        gmail: {
+          messageId: 'msg-with-live-attachments',
+          threadId: 'th-test-live',
+          accessToken: 'ya29.live-token',
+        },
+      },
+    });
+
+    expect(resStep1.statusCode).toBe(200);
+    const bodyStep1 = JSON.parse(resStep1.payload) as GoogleWorkspaceActionResponse;
+    const updateCard1 = bodyStep1.action!.navigations![0].updateCard!;
+    const docTypeSec1 = updateCard1.sections.find((s) => s.header === 'Document Type')!;
+
+    // Verify onSpaceTypeChange, onSpaceChange, onDocumentTypeChange have previousAttachments
+    const spaceTypeWidget = docTypeSec1.widgets[0].selectionInput;
+    const spaceTypeParams = spaceTypeWidget?.onChangeAction?.parameters;
+    expect(spaceTypeParams?.find((p: { key: string }) => p.key === 'previousAttachments')?.value).toBe(
+      JSON.stringify(['att-part-1'])
+    );
+
+    // Step 2: In Google Drive URL mode, modify DocumentSpaceType (onSpaceTypeChange)
+    const resStep2 = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/action',
+      headers: { authorization: 'Bearer valid-jwt-token' },
+      payload: {
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'onSpaceTypeChange',
+            previousAttachments: JSON.stringify(['att-part-1']),
+            previousDriveUrl: '',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
+            SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+          },
+        },
+        gmail: {
+          messageId: 'msg-with-live-attachments',
+          threadId: 'th-test-live',
+          accessToken: 'ya29.live-token',
+        },
+      },
+    });
+
+    expect(resStep2.statusCode).toBe(200);
+    const bodyStep2 = JSON.parse(resStep2.payload) as GoogleWorkspaceActionResponse;
+    const updateCard2 = bodyStep2.action!.navigations![0].updateCard!;
+    const fileSec2 = updateCard2.sections.find((s) => s.header === 'File Selection')!;
+    const fileSourceDropdown2 = fileSec2.widgets[0].selectionInput;
+    expect(fileSourceDropdown2?.onChangeAction?.parameters?.find((p: { key: string }) => p.key === 'previousAttachments')?.value).toBe(
+      JSON.stringify(['att-part-1'])
+    );
+
+    // Step 3: Switch back to Email Attachments (onFileSourceChange)
+    const resStep3 = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/on-form-change',
+      headers: { authorization: 'Bearer valid-jwt-token' },
+      payload: {
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'onFileSourceChange',
+            previousAttachments: JSON.stringify(['att-part-1']),
+            previousDriveUrl: '',
+          },
+          formInputs: {
+            SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+            SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
+          },
+        },
+        gmail: {
+          messageId: 'msg-with-live-attachments',
+          threadId: 'th-test-live',
+          accessToken: 'ya29.live-token',
+        },
+      },
+    });
+
+    expect(resStep3.statusCode).toBe(200);
+    const bodyStep3 = JSON.parse(resStep3.payload) as GoogleWorkspaceActionResponse;
+    const updateCard3 = bodyStep3.action!.navigations![0].updateCard!;
+    const fileSec3 = updateCard3.sections.find((s) => s.header === 'File Selection')!;
+
+    expect(fileSec3.widgets[1].selectionInput?.name).toBe('SelectAttachments');
+    expect(fileSec3.widgets[1].selectionInput?.items).toEqual([
+      { text: 'Invoice.pdf', value: 'att-part-1', selected: true },
+      { text: 'Statement.pdf', value: 'att-part-2', selected: false },
+    ]);
+  });
+
+  it('preserves Google Drive URL input across File Source round-trips with intermediate in-card changes', async () => {
+    const driveUrl = 'https://drive.google.com/file/d/drive-url-12345/view';
+
+    // Step 1: User switches from Google Drive URL to Email Attachments
+    const resStep1 = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/on-form-change',
+      headers: { authorization: 'Bearer valid-jwt-token' },
+      payload: {
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'onFileSourceChange',
+            previousAttachments: JSON.stringify(['att-part-1']),
+            previousDriveUrl: driveUrl,
+          },
+          formInputs: {
+            SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+            InputDriveURL: { stringInputs: { value: [driveUrl] } },
+          },
+        },
+        gmail: {
+          messageId: 'msg-with-live-attachments',
+          threadId: 'th-test-live',
+          accessToken: 'ya29.live-token',
+        },
+      },
+    });
+
+    expect(resStep1.statusCode).toBe(200);
+    const bodyStep1 = JSON.parse(resStep1.payload) as GoogleWorkspaceActionResponse;
+    const updateCard1 = bodyStep1.action!.navigations![0].updateCard!;
+    const docTypeSec1 = updateCard1.sections.find((s) => s.header === 'Document Type')!;
+
+    // In Email Attachments mode, onSpaceTypeChange has previousDriveUrl attached
+    const spaceTypeWidget = docTypeSec1.widgets[0].selectionInput;
+    expect(spaceTypeWidget?.onChangeAction?.parameters?.find((p: { key: string }) => p.key === 'previousDriveUrl')?.value).toBe(driveUrl);
+
+    // Step 2: In Email Attachments mode, user modifies DocumentSpaceType (onSpaceTypeChange)
+    const resStep2 = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/action',
+      headers: { authorization: 'Bearer valid-jwt-token' },
+      payload: {
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'onSpaceTypeChange',
+            previousAttachments: JSON.stringify(['att-part-1']),
+            previousDriveUrl: driveUrl,
+          },
+          formInputs: {
+            SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
+            SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+            SelectAttachments: { stringInputs: { value: ['att-part-1'] } },
+          },
+        },
+        gmail: {
+          messageId: 'msg-with-live-attachments',
+          threadId: 'th-test-live',
+          accessToken: 'ya29.live-token',
+        },
+      },
+    });
+
+    expect(resStep2.statusCode).toBe(200);
+    const bodyStep2 = JSON.parse(resStep2.payload) as GoogleWorkspaceActionResponse;
+    const updateCard2 = bodyStep2.action!.navigations![0].updateCard!;
+    const fileSec2 = updateCard2.sections.find((s) => s.header === 'File Selection')!;
+    const fileSourceDropdown2 = fileSec2.widgets[0].selectionInput;
+    expect(fileSourceDropdown2?.onChangeAction?.parameters?.find((p: { key: string }) => p.key === 'previousDriveUrl')?.value).toBe(driveUrl);
+
+    // Step 3: Switch back to Google Drive URL (onFileSourceChange)
+    const resStep3 = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/on-form-change',
+      headers: { authorization: 'Bearer valid-jwt-token' },
+      payload: {
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'onFileSourceChange',
+            previousAttachments: JSON.stringify(['att-part-1']),
+            previousDriveUrl: driveUrl,
+          },
+          formInputs: {
+            SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+            SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
+          },
+        },
+        gmail: {
+          messageId: 'msg-with-live-attachments',
+          threadId: 'th-test-live',
+          accessToken: 'ya29.live-token',
+        },
+      },
+    });
+
+    expect(resStep3.statusCode).toBe(200);
+    const bodyStep3 = JSON.parse(resStep3.payload) as GoogleWorkspaceActionResponse;
+    const updateCard3 = bodyStep3.action!.navigations![0].updateCard!;
+    const fileSec3 = updateCard3.sections.find((s) => s.header === 'File Selection')!;
+
+    // InputDriveURL restored with entered URL value!
+    expect(fileSec3.widgets[1].textInput?.name).toBe('InputDriveURL');
+    expect(fileSec3.widgets[1].textInput?.value).toBe(driveUrl);
+  });
+
+  it('unchecking all attachments in Email Attachments mode keeps all attachments unchecked and propagates empty previousAttachments "[]"', async () => {
+    const res = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/on-form-change',
+      headers: { authorization: 'Bearer valid-jwt-token' },
+      payload: {
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'onFormChange',
+            previousAttachments: JSON.stringify(['att-part-1']),
+            previousDriveUrl: '',
+          },
+          formInputs: {
+            SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+            SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+            // SelectAttachments is omitted because user unchecked all checkboxes!
+          },
+        },
+        gmail: {
+          messageId: 'msg-with-live-attachments',
+          threadId: 'th-test-live',
+          accessToken: 'ya29.live-token',
+        },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+    const updateCard = body.action!.navigations![0].updateCard!;
+    const fileSec = updateCard.sections.find((s) => s.header === 'File Selection')!;
+
+    // All checkboxes remain unchecked
+    expect(fileSec.widgets[1].selectionInput?.name).toBe('SelectAttachments');
+    expect(fileSec.widgets[1].selectionInput?.items).toEqual([
+      { text: 'Invoice.pdf', value: 'att-part-1', selected: false },
+      { text: 'Statement.pdf', value: 'att-part-2', selected: false },
+    ]);
+
+    // Propagates empty "[]" to action parameters
+    const onChangeParams = fileSec.widgets[0].selectionInput?.onChangeAction?.parameters;
+    const previousAttachmentsParam = onChangeParams?.find((p: { key: string }) => p.key === 'previousAttachments')?.value;
+    expect(previousAttachmentsParam).toBe('[]');
+  });
+
+  it('rejects submission on processDocument when zero attachments checked, SaveEmailToPdf is false, and allowEmptySourceFiles is false even if previousAttachments exists in parameters', async () => {
+    const originalRead = manifestProvider.readParsedSchema.bind(manifestProvider);
+    vi.spyOn(manifestProvider, 'readParsedSchema').mockImplementation(async (relPath: string) => {
+      const parsed = (await originalRead(relPath)) as Record<string, unknown>;
+      return {
+        ...parsed,
+        allowEmptySourceFiles: false,
+      };
+    });
+
+    const response = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/action',
+      headers: { authorization: 'Bearer valid-jwt-token' },
+      payload: {
+        authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-with-live-attachments',
+          threadId: 'th-test-live',
+          accessToken: 'ya29.live-token',
+        },
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'processDocument',
+            previousAttachments: JSON.stringify(['att-part-1']),
+          },
+          formInputs: {
+            SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+            SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+            [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+            SaveEmailToPdf: { stringInputs: { value: ['false'] } },
+            // SelectAttachments omitted (0 attachments checked)
+            [getDocumentInfoWidgetName('contact', 'communication-project')]: { stringInputs: { value: ['Acme Corp'] } },
+            [getDocumentInfoWidgetName('date', 'communication-project')]: { stringInputs: { value: ['260920'] } },
+            [getDocumentInfoWidgetName('direction', 'communication-project')]: { stringInputs: { value: ['IN'] } },
+            [getDocumentInfoWidgetName('description', 'communication-project')]: { stringInputs: { value: ['Meeting Notes'] } },
+          },
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+    const updateCard = body.action?.navigations?.[0]?.updateCard;
+    expect(updateCard).toBeDefined();
+
+    const errorSection = updateCard!.sections.find((s) =>
+      s.widgets?.some((w) =>
+        w.textParagraph?.text?.includes('Please select at least one file to process or enable Save Email to PDF.')
+      )
+    );
+    expect(errorSection).toBeDefined();
+  });
+
+
   it('returns fallback error card if orchestrator fails', async () => {
     // Pass corrupted/unsupported payload structure that throws in execution
     const res = await app.server.inject({
