@@ -21,6 +21,7 @@ import {
   UiProcessGmailAttachmentDescriptorSchema,
   UiProcessGmailMessageDescriptorSchema,
   formatThreadEmailOptionLabel,
+  type UiProcessDocumentRunnerPort,
 } from './ports';
 
 describe('UI Process Manager Ports & DTOs', () => {
@@ -242,6 +243,27 @@ describe('UI Process Manager Ports & DTOs', () => {
       expect(Value.Check(UiProcessGmailMessageDescriptorSchema, validMessage)).toBe(true);
 
       expect(typeof formatThreadEmailOptionLabel).toBe('function');
+    });
+
+    it('allows UiProcessDocumentRunnerPort to accept optional targetMessageId in payload', async () => {
+      let capturedPayload: any;
+      const runner: UiProcessDocumentRunnerPort = {
+        processDocument: async (payload, _event) => {
+          capturedPayload = payload;
+          return { success: true };
+        },
+      };
+
+      await runner.processDocument(
+        {
+          type: 'communication-project',
+          data: { contact: 'Acme' },
+          targetMessageId: 'msg-selected-456',
+        },
+        'onSubmit'
+      );
+
+      expect(capturedPayload.targetMessageId).toBe('msg-selected-456');
     });
   });
 });

@@ -526,7 +526,7 @@ export function createUiProcessManagerWiring(
       options.documentService || options.createDocumentService
         ? {
             processDocument: async (payload, eventName) => {
-              const { sourceFiles, ...documentPayload } = payload;
+              const { sourceFiles, targetMessageId, ...documentPayload } = payload;
               const space = toStructuredDocumentSpace(documentPayload.space);
               const targetDocPayload: DocumentModel = {
                 type: documentPayload.type,
@@ -537,6 +537,14 @@ export function createUiProcessManagerWiring(
               const activeSourceFiles = sourceFiles ?? [];
               const activeContext: WorkspaceExecutionContext = {
                 ...context,
+                ...(targetMessageId
+                  ? {
+                      gmail: {
+                        ...(context.gmail ?? {}),
+                        messageId: targetMessageId,
+                      },
+                    }
+                  : {}),
                 sourceFiles: activeSourceFiles,
                 selectedItems: activeSourceFiles.map((file) => ({
                   id: file.id,

@@ -335,6 +335,14 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       });
 
       const isGmail = isGmailContext(normalizedContext);
+      const triggerMessageId = context.gmail?.messageId ?? normalizedContext.gmail?.messageId;
+      const selectedMessageId = isGmail
+        ? (currentUiState.selectedMessageId ??
+            (currentUiState.formData[SELECT_EMAIL_MESSAGE_KEY] as string | undefined) ??
+            (normalizedContext.formData?.[SELECT_EMAIL_MESSAGE_KEY] as string | undefined) ??
+            triggerMessageId)
+        : undefined;
+
       const isDriveUrlSource =
         isGmail &&
         (normalizedContext.formData?.[SELECT_FILE_SOURCE_KEY] === 'Google Drive URL' ||
@@ -385,6 +393,35 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           }
         }
 
+        const selectedMsg = threadMessages?.find((m) => m.id === selectedMessageId);
+        if (selectedMsg?.attachments) {
+          for (const att of selectedMsg.attachments) {
+            const attId = (att.partId && att.partId.trim().length > 0)
+              ? att.partId.trim()
+              : (att.id && att.id.trim().length > 0)
+                ? att.id.trim()
+                : (att.attachmentId?.trim() ?? '');
+            const meta = {
+              ...(att.title !== undefined ? { name: att.title } : {}),
+              ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
+            };
+            if (attId) metaMap.set(attId, meta);
+            if (att.id && att.id.trim()) metaMap.set(att.id.trim(), meta);
+            if (att.partId && att.partId.trim()) metaMap.set(att.partId.trim(), meta);
+            if (att.attachmentId && att.attachmentId.trim()) metaMap.set(att.attachmentId.trim(), meta);
+          }
+        }
+
+        for (const f of currentUiState.selectionState.files ?? []) {
+          const val = f.value.trim();
+          const existing = metaMap.get(val);
+          if (!existing) {
+            metaMap.set(val, { name: f.text });
+          } else if (!existing.name && f.text) {
+            existing.name = f.text;
+          }
+        }
+
         activeSourceFiles = Array.from(checkedIds).map((id) => {
           const meta = metaMap.get(id);
           return {
@@ -415,16 +452,15 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       }
 
       if (isGmail) {
-        const messageId = context.gmail?.messageId ?? normalizedContext.gmail?.messageId;
         const isSaveEmail =
           currentUiState.formData[SAVE_EMAIL_TO_PDF_KEY] === true ||
           currentUiState.formData[SAVE_EMAIL_TO_PDF_KEY] === 'true' ||
           normalizedContext.formData?.[SAVE_EMAIL_TO_PDF_KEY] === true ||
           normalizedContext.formData?.[SAVE_EMAIL_TO_PDF_KEY] === 'true';
 
-        if (isSaveEmail && messageId) {
+        if (isSaveEmail && selectedMessageId) {
           activeSourceFiles.push({
-            id: `email-pdf-${messageId}`,
+            id: `email-pdf-${selectedMessageId}`,
             mimeType: 'application/pdf',
           });
         }
@@ -493,6 +529,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
               data,
               space,
               sourceFiles: activeSourceFiles,
+              ...(selectedMessageId !== undefined ? { targetMessageId: selectedMessageId } : {}),
             },
             'onSubmit'
           );

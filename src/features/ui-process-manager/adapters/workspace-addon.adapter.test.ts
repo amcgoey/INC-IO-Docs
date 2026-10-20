@@ -10,6 +10,7 @@ import {
   type UiProcessRenderResult,
   type UiProcessFormEvaluatorPort,
   type UiProcessGmailPort,
+  type UiProcessGmailMessageDescriptor,
 } from '../ports';
 
 describe('WorkspaceAddonAdapter in ui-process-manager', () => {
@@ -2924,6 +2925,246 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           expect.objectContaining({
             sourceFiles: [],
           }),
+          'onSubmit'
+        );
+      });
+    });
+
+    describe('processDocument with thread message selection (Ticket #212)', () => {
+      const threadMessages: UiProcessGmailMessageDescriptor[] = [
+        {
+          id: 'msg-email-1',
+          from: 'Alice <alice@example.com>',
+          date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+          attachments: [
+            {
+              id: 'att-1-part',
+              partId: 'att-1-part',
+              attachmentId: 'att-1-id',
+              title: 'Invoice.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
+        },
+        {
+          id: 'msg-email-2',
+          from: 'Bob <bob@example.com>',
+          date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+          attachments: [
+            {
+              id: 'att-2-part-a',
+              partId: 'att-2-part-a',
+              attachmentId: 'att-2-id-a',
+              title: 'Email2A.pdf',
+              mimeType: 'application/pdf',
+            },
+            {
+              id: 'att-2-part-b',
+              partId: 'att-2-part-b',
+              attachmentId: 'att-2-id-b',
+              title: 'Email2B.png',
+              mimeType: 'image/png',
+            },
+          ],
+        },
+      ];
+
+      const createGmailPort = (): UiProcessGmailPort => ({
+        getMessageAttachments: vi.fn(),
+        getThreadMessages: vi.fn().mockResolvedValue(threadMessages),
+        getMessageDetails: vi.fn(),
+      });
+
+      it('passes targetMessageId to runner, constructs correct attachment SourceFiles from non-initial email, and strips SelectEmailMessage from data', async () => {
+        const mockDocumentRunner = {
+          processDocument: vi.fn().mockResolvedValue({ success: true }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          documentRunner: mockDocumentRunner,
+          gmailPort: createGmailPort(),
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'processDocument',
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-email-1',
+            threadId: 'th-multi-123',
+          },
+          formData: {
+            SelectEmailMessage: 'msg-email-2',
+            SelectFileSource: 'Email Attachments',
+            SelectAttachments: ['att-2-part-a', 'att-2-part-b'],
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            SelectDocumentType: 'communication-project',
+            contact: 'Acme Corp',
+            SaveEmailToPdf: false,
+          },
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('notification');
+        expect(mockDocumentRunner.processDocument).toHaveBeenCalledTimes(1);
+        expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+          {
+            type: 'communication-project',
+            data: {
+              contact: 'Acme Corp',
+            },
+            space: {
+              id: 'proj1',
+              name: 'Project Main',
+              typeId: 'projects',
+              abstractStorageId: 'proj1',
+            },
+            sourceFiles: [
+              {
+                id: 'att-2-part-a',
+                name: 'Email2A.pdf',
+                mimeType: 'application/pdf',
+              },
+              {
+                id: 'att-2-part-b',
+                name: 'Email2B.png',
+                mimeType: 'image/png',
+              },
+            ],
+            targetMessageId: 'msg-email-2',
+          },
+          'onSubmit'
+        );
+      });
+
+      it('constructs id: email-pdf-${selectedMessageId} and passes targetMessageId for non-initial email with SaveEmailToPdf enabled', async () => {
+        const mockDocumentRunner = {
+          processDocument: vi.fn().mockResolvedValue({ success: true }),
+        };
+
+        const manifestPortWithAllowEmpty: UiProcessManifestPort = {
+          ...mockManifestPort,
+          getDocumentTypeSchemas: vi.fn().mockResolvedValue({
+            allowEmptySourceFiles: true,
+          }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: manifestPortWithAllowEmpty,
+          documentRunner: mockDocumentRunner,
+          gmailPort: createGmailPort(),
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'processDocument',
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-email-1',
+            threadId: 'th-multi-123',
+          },
+          formData: {
+            SelectEmailMessage: 'msg-email-2',
+            SelectFileSource: 'Email Attachments',
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            SelectDocumentType: 'communication-project',
+            contact: 'Acme Corp',
+            SaveEmailToPdf: true,
+          },
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('notification');
+        expect(mockDocumentRunner.processDocument).toHaveBeenCalledTimes(1);
+        expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+          {
+            type: 'communication-project',
+            data: {
+              contact: 'Acme Corp',
+            },
+            space: {
+              id: 'proj1',
+              name: 'Project Main',
+              typeId: 'projects',
+              abstractStorageId: 'proj1',
+            },
+            sourceFiles: [
+              {
+                id: 'email-pdf-msg-email-2',
+                mimeType: 'application/pdf',
+              },
+            ],
+            targetMessageId: 'msg-email-2',
+          },
+          'onSubmit'
+        );
+      });
+
+      it('constructs both attachment SourceFiles and email-pdf-${selectedMessageId} with targetMessageId for non-initial email', async () => {
+        const mockDocumentRunner = {
+          processDocument: vi.fn().mockResolvedValue({ success: true }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          documentRunner: mockDocumentRunner,
+          gmailPort: createGmailPort(),
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'processDocument',
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-email-1',
+            threadId: 'th-multi-123',
+          },
+          formData: {
+            SelectEmailMessage: 'msg-email-2',
+            SelectFileSource: 'Email Attachments',
+            SelectAttachments: ['att-2-part-a'],
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            SelectDocumentType: 'communication-project',
+            contact: 'Acme Corp',
+            SaveEmailToPdf: true,
+          },
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('notification');
+        expect(mockDocumentRunner.processDocument).toHaveBeenCalledTimes(1);
+        expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+          {
+            type: 'communication-project',
+            data: {
+              contact: 'Acme Corp',
+            },
+            space: {
+              id: 'proj1',
+              name: 'Project Main',
+              typeId: 'projects',
+              abstractStorageId: 'proj1',
+            },
+            sourceFiles: [
+              {
+                id: 'att-2-part-a',
+                name: 'Email2A.pdf',
+                mimeType: 'application/pdf',
+              },
+              {
+                id: 'email-pdf-msg-email-2',
+                mimeType: 'application/pdf',
+              },
+            ],
+            targetMessageId: 'msg-email-2',
+          },
           'onSubmit'
         );
       });
