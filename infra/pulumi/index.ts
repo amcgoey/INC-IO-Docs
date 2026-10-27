@@ -1,4 +1,4 @@
-﻿import * as pulumi from "@pulumi/pulumi";
+import * as pulumi from "@pulumi/pulumi";
 import { AppInfrastructure } from "./app-infrastructure";
 
 const infraConfig = new pulumi.Config("inc-io-docs-infra");
@@ -7,6 +7,7 @@ const infra = new AppInfrastructure("app-infra", {
   repositoryName: infraConfig.get("repositoryName"),
   serviceName: infraConfig.get("serviceName"),
   invokerName: infraConfig.get("invokerName"),
+  runtimeAccountName: infraConfig.get("runtimeAccountName"),
   image: infraConfig.get("image"),
   port: infraConfig.getNumber("port"),
 });
