@@ -76,12 +76,16 @@ describe("AppInfrastructure ComponentResource", () => {
     const repoUrl = await promiseOf(infra.repositoryUrl);
     const serviceUrl = await promiseOf(infra.serviceUrl);
     const invokerEmail = await promiseOf(infra.invokerServiceAccountEmail);
+    const runtimeSaEmail = await promiseOf(infra.runtimeServiceAccount.email);
+    const runtimeSaAccountId = await promiseOf(infra.runtimeServiceAccount.accountId);
     const invokerIamId = await promiseOf(infra.invokerIamMember.id);
     const workspaceIamId = await promiseOf(infra.workspaceIamMember.id);
 
     expect(repoUrl).toContain("us-east4-docker.pkg.dev/inc-io-docs-dev/inc-io-docs");
     expect(serviceUrl).toBe("https://inc-io-docs-dev-mock.a.run.app");
     expect(invokerEmail).toBe("addon-invoker@mock-project.iam.gserviceaccount.com");
+    expect(runtimeSaEmail).toBe("addon-runtime@mock-project.iam.gserviceaccount.com");
+    expect(runtimeSaAccountId).toBe("addon-runtime");
     expect(invokerIamId).toBeDefined();
     expect(workspaceIamId).toBeDefined();
 
@@ -199,11 +203,15 @@ describe("AppInfrastructure ComponentResource", () => {
 
     const repoUrl = await promiseOf(prodInfra.repositoryUrl);
     const serviceUrl = await promiseOf(prodInfra.serviceUrl);
+    const prodRuntimeSaEmail = await promiseOf(prodInfra.runtimeServiceAccount.email);
+    const prodRuntimeSaAccountId = await promiseOf(prodInfra.runtimeServiceAccount.accountId);
     const invokerIamId = await promiseOf(prodInfra.invokerIamMember.id);
     const workspaceIamId = await promiseOf(prodInfra.workspaceIamMember.id);
 
     expect(repoUrl).toContain("us-east4-docker.pkg.dev/inc-io-docs-prod/inc-io-docs");
     expect(serviceUrl).toBe("https://inc-io-docs-prod-mock.a.run.app");
+    expect(prodRuntimeSaEmail).toBe("addon-runtime@mock-project.iam.gserviceaccount.com");
+    expect(prodRuntimeSaAccountId).toBe("addon-runtime");
     expect(invokerIamId).toBeDefined();
     expect(workspaceIamId).toBeDefined();
 
@@ -262,6 +270,11 @@ describe("AppInfrastructure ComponentResource", () => {
 
     await promiseOf(infra.serviceUrl);
     await promiseOf(infra.workspaceIamMember.id);
+    const customRuntimeEmail = await promiseOf(infra.runtimeServiceAccount.email);
+    const customRuntimeAccountId = await promiseOf(infra.runtimeServiceAccount.accountId);
+
+    expect(customRuntimeEmail).toBe("custom-addon-runtime@mock-project.iam.gserviceaccount.com");
+    expect(customRuntimeAccountId).toBe("custom-addon-runtime");
 
     const runtimeSaRes = Object.values(resources).find(
       (r) => r.type.includes("serviceaccount/account:Account") && r.inputs.accountId === "custom-addon-runtime"

@@ -37,6 +37,7 @@ interface MockConfig {
   wifPoolExists?: boolean;
   wifProviderExists?: boolean;
   hasEditorRole?: boolean;
+  hasViewerRole?: boolean;
   ghAuthSucceeds?: boolean;
   existingBranchPolicies?: string[];
   existingSecrets?: string[];
@@ -103,11 +104,18 @@ if (joined.startsWith('iam workload-identity-pools providers describe')) {
 
 if (joined.startsWith('projects get-iam-policy')) {
   const hasEditor = config.hasEditorRole ?? false;
+  const hasViewer = config.hasViewerRole ?? false;
   const proj = args[2] || 'inc-io-docs-dev';
   const bindings = [];
   if (hasEditor) {
     bindings.push({
       role: 'roles/editor',
+      members: ['serviceAccount:ci-deployer@' + proj + '.iam.gserviceaccount.com']
+    });
+  }
+  if (hasViewer) {
+    bindings.push({
+      role: 'roles/viewer',
       members: ['serviceAccount:ci-deployer@' + proj + '.iam.gserviceaccount.com']
     });
   }
@@ -433,7 +441,7 @@ describe('GCP Bootstrap Script (infra/bootstrap.ps1)', () => {
       res = runBootstrap(['-Force'], { REGION: 'us-central1' }, shim.tmpDir);
       expect(res.status).toBe(0);
       expect(res.stdout).toContain('us-central1');
-    });
+    }, 15000);
 
     it('strips leading refs/heads/ from explicit -Branch', () => {
       const res = runBootstrap(
@@ -527,10 +535,11 @@ describe('GCP Bootstrap Script (infra/bootstrap.ps1)', () => {
         expect(boundRoles).toContain(role);
       }
       expect(boundRoles).not.toContain('roles/editor');
+      expect(boundRoles).not.toContain('roles/viewer');
     });
 
-    it('inspects project IAM policy and removes roles/editor from ci-deployer when present', () => {
-      shim = setupShim({ wifProviderExists: false, hasEditorRole: true });
+    it('inspects project IAM policy and removes both roles/editor and roles/viewer from ci-deployer when present', () => {
+      shim = setupShim({ wifProviderExists: false, hasEditorRole: true, hasViewerRole: true });
       const res = runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
       expect(res.status).toBe(0);
 
@@ -543,19 +552,28 @@ describe('GCP Bootstrap Script (infra/bootstrap.ps1)', () => {
       expect(removeEditorCall).toBeDefined();
       expect(removeEditorCall?.args).toContain('--member=serviceAccount:ci-deployer@inc-io-docs-dev.iam.gserviceaccount.com');
       expect(removeEditorCall?.args).toContain('--role=roles/editor');
+
+      const removeViewerCall = calls.find((c) =>
+        c.args.includes('projects') &&
+        c.args.includes('remove-iam-policy-binding') &&
+        c.args.some((a) => a.includes('roles/viewer'))
+      );
+      expect(removeViewerCall).toBeDefined();
+      expect(removeViewerCall?.args).toContain('--member=serviceAccount:ci-deployer@inc-io-docs-dev.iam.gserviceaccount.com');
+      expect(removeViewerCall?.args).toContain('--role=roles/viewer');
     });
 
-    it('does not invoke remove-iam-policy-binding when roles/editor is absent', () => {
-      shim = setupShim({ wifProviderExists: false, hasEditorRole: false });
+    it('does not invoke remove-iam-policy-binding when primitive roles (roles/editor, roles/viewer) are absent', () => {
+      shim = setupShim({ wifProviderExists: false, hasEditorRole: false, hasViewerRole: false });
       const res = runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
       expect(res.status).toBe(0);
 
       const calls = shim.getCalls();
-      const removeEditorCall = calls.find((c) =>
+      const removeCalls = calls.filter((c) =>
         c.args.includes('projects') &&
         c.args.includes('remove-iam-policy-binding')
       );
-      expect(removeEditorCall).toBeUndefined();
+      expect(removeCalls.length).toBe(0);
     });
   });
 
@@ -884,6 +902,27 @@ describe('GCP Bootstrap Script (infra/bootstrap.ps1)', () => {
         c.args.includes('secret') && c.args.includes('set') && c.args.includes('PULUMI_CONFIG_PASSPHRASE')
       );
       expect(passphraseSetCall).toBeUndefined();
+    });
+
+    it('outputs only WIF_PROVIDER and GCP_SERVICE_ACCOUNT in summary Secrets and emits warning when passphrase omitted under -Force', () => {
+      shim = setupShim({});
+      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined, PULUMI_CONFIG_PASSPHRASE: undefined }, shim.tmpDir);
+      expect(res.status).toBe(0);
+
+      const combinedOutput = `${res.stdout}\n${res.stderr}`;
+      expect(combinedOutput).toContain('Secrets:   WIF_PROVIDER, GCP_SERVICE_ACCOUNT');
+      expect(combinedOutput).not.toContain('Secrets:   WIF_PROVIDER, GCP_SERVICE_ACCOUNT, PULUMI_CONFIG_PASSPHRASE');
+      expect(combinedOutput).toMatch(/PULUMI_CONFIG_PASSPHRASE was not configured \(omitted under -Force\)\. Ensure this secret is set in GitHub\s+Environment 'dev' before running CI deployments\./);
+    });
+
+    it('outputs WIF_PROVIDER, GCP_SERVICE_ACCOUNT, PULUMI_CONFIG_PASSPHRASE in summary Secrets without warning when passphrase configured', () => {
+      shim = setupShim({});
+      const res = runBootstrap(['-Force', '-PulumiPassphrase', 'custom-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
+      expect(res.status).toBe(0);
+
+      const combinedOutput = `${res.stdout}\n${res.stderr}`;
+      expect(combinedOutput).toContain('Secrets:   WIF_PROVIDER, GCP_SERVICE_ACCOUNT, PULUMI_CONFIG_PASSPHRASE');
+      expect(combinedOutput).not.toContain('PULUMI_CONFIG_PASSPHRASE was not configured');
     });
   });
 

@@ -139,29 +139,32 @@ gcloud storage buckets add-iam-policy-binding "gs://$BUCKET_NAME" `
     --role="roles/storage.admin" | Out-Null
 Assert-Success "Failed to bind roles/storage.admin on bucket gs://$BUCKET_NAME to Service Account."
 
-Write-Host "Inspecting project IAM policy for legacy roles/editor on $SA_EMAIL..."
+Write-Host "Inspecting project IAM policy for legacy primitive roles on $SA_EMAIL..."
 $policyJson = gcloud projects get-iam-policy $PROJECT_ID --format=json 2>$null
 if ($policyJson) {
     try {
         $policy = ($policyJson -join "`n") | ConvertFrom-Json
-        $hasEditor = $false
-        if ($policy -and $policy.bindings) {
-            foreach ($binding in $policy.bindings) {
-                if ($binding.role -eq "roles/editor" -and $binding.members -contains "serviceAccount:$SA_EMAIL") {
-                    $hasEditor = $true
-                    break
+        $legacyRoles = @("roles/editor", "roles/viewer")
+        foreach ($role in $legacyRoles) {
+            $hasRole = $false
+            if ($policy -and $policy.bindings) {
+                foreach ($binding in $policy.bindings) {
+                    if ($binding.role -eq $role -and $binding.members -contains "serviceAccount:$SA_EMAIL") {
+                        $hasRole = $true
+                        break
+                    }
                 }
             }
-        }
-        if ($hasEditor) {
-            Write-Host "Removing legacy roles/editor from $SA_EMAIL..." -ForegroundColor Yellow
-            gcloud projects remove-iam-policy-binding $PROJECT_ID `
-                --member="serviceAccount:$SA_EMAIL" `
-                --role="roles/editor" `
-                --condition=None | Out-Null
-            Assert-Success "Failed to remove roles/editor from Service Account."
-        } else {
-            Write-Host "Service Account does not have roles/editor." -ForegroundColor Cyan
+            if ($hasRole) {
+                Write-Host "Removing legacy $role from $SA_EMAIL..." -ForegroundColor Yellow
+                gcloud projects remove-iam-policy-binding $PROJECT_ID `
+                    --member="serviceAccount:$SA_EMAIL" `
+                    --role="$role" `
+                    --condition=None | Out-Null
+                Assert-Success "Failed to remove $role from Service Account."
+            } else {
+                Write-Host "Service Account does not have $role." -ForegroundColor Cyan
+            }
         }
     } catch {
         Write-Warning "Failed to parse project IAM policy: $_"
@@ -304,6 +307,8 @@ $passphrase = if ([bool]$PulumiPassphrase) {
     $null
 }
 
+$passphraseConfigured = $false
+
 if (-not $passphrase) {
     Write-Host "Checking if PULUMI_CONFIG_PASSPHRASE secret already exists in GitHub Environment '$Environment'..."
     $secretList = gh secret list --env "$Environment" --repo "$REPO" 2>$null
@@ -319,6 +324,7 @@ if (-not $passphrase) {
     }
     if ($hasPassphrase) {
         Write-Host "PULUMI_CONFIG_PASSPHRASE already configured in GitHub Environment '$Environment'; retaining existing secret." -ForegroundColor Cyan
+        $passphraseConfigured = $true
     } elseif (-not $Force) {
         $passphrase = Read-Host "Enter PULUMI_CONFIG_PASSPHRASE for $Environment"
     }
@@ -328,6 +334,7 @@ if ($passphrase) {
     Write-Host "Setting PULUMI_CONFIG_PASSPHRASE secret..."
     gh secret set PULUMI_CONFIG_PASSPHRASE --body "$passphrase" --env "$Environment" --repo "$REPO" | Out-Null
     Assert-Success "Failed to set PULUMI_CONFIG_PASSPHRASE secret."
+    $passphraseConfigured = $true
 }
 
 Write-Host ""
@@ -336,6 +343,11 @@ Write-Host " Bootstrap complete! " -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host "GitHub Environment '$Environment' in $REPO configured successfully."
 Write-Host "Variables: PROJECT_ID, REGION, REPO_NAME, SERVICE_NAME, PULUMI_STACK, PULUMI_STATE_BUCKET"
-Write-Host "Secrets:   WIF_PROVIDER, GCP_SERVICE_ACCOUNT, PULUMI_CONFIG_PASSPHRASE"
+if ($passphraseConfigured) {
+    Write-Host "Secrets:   WIF_PROVIDER, GCP_SERVICE_ACCOUNT, PULUMI_CONFIG_PASSPHRASE"
+} else {
+    Write-Host "Secrets:   WIF_PROVIDER, GCP_SERVICE_ACCOUNT"
+    Write-Warning "PULUMI_CONFIG_PASSPHRASE was not configured (omitted under -Force). Ensure this secret is set in GitHub Environment '$Environment' before running CI deployments."
+}
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host ""
