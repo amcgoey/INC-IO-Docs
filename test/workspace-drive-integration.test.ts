@@ -5,6 +5,7 @@ import { createApp, type AppInstance } from '../src/app/server';
 import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import type { DocumentSpaceStoragePort } from '../src/features/document-space/ports';
+import { mockAllowedDocumentTypes } from './utils/manifest-test-helper';
 import {
   getDocumentTypeWidgetName,
   getDocumentSpaceWidgetName,
@@ -457,6 +458,9 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     });
 
     it('files communication-proposal into existing <contact> folder under projects Shared Drive space', async () => {
+      // Inject test-scoped Manifest override at AppManifestProvider seam to allow communication-proposal under projects space
+      mockAllowedDocumentTypes(manifestProvider, 'projects', ['communication-project', 'communication-proposal']);
+
       const fileId = 'file-prop-proj-456';
       const fileName = 'RFP_Proposal_Response.pdf';
       const rootSharedDriveId = 'projects-shared-drive-001';

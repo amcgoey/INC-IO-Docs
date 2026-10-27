@@ -4,11 +4,8 @@
   ],
   "configuration": {
     "workspace": {
-      "appTitle": "INC-IO Engine",
-      "actionButtonText": "Process",
       "defaultDocumentType": "showif-test-document",
-      "defaultDocumentSpaceType": "projects",
-      "defaultEventName": "onSubmit"
+      "defaultDocumentSpaceType": "projects"
     }
   },
   "DocumentSpaceTypes": [

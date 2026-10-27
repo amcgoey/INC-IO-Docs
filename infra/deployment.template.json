@@ -8,25 +8,25 @@
   ],
   "addOns": {
     "common": {
-      "name": "INC-IO Docs",
+      "name": "{{ADDON_NAME}}",
       "logoUrl": "https://www.gstatic.com/images/branding/product/1x/drive_2020q4_48dp.png",
       "homepageTrigger": {
-        "runFunction": "https://example.ngrok-free.app/workspace/homepage"
+        "runFunction": "{{BASE_URL}}/workspace/homepage"
       }
     },
     "drive": {
       "homepageTrigger": {
-        "runFunction": "https://example.ngrok-free.app/workspace/homepage"
+        "runFunction": "{{BASE_URL}}/workspace/homepage"
       },
       "onItemsSelectedTrigger": {
-        "runFunction": "https://example.ngrok-free.app/workspace/drive-items-selected"
+        "runFunction": "{{BASE_URL}}/workspace/drive-items-selected"
       }
     },
     "gmail": {
       "contextualTriggers": [
         {
           "unconditional": {},
-          "onTriggerFunction": "https://example.ngrok-free.app/workspace/gmail-contextual"
+          "onTriggerFunction": "{{BASE_URL}}/workspace/gmail-contextual"
         }
       ]
     }

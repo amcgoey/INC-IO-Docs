@@ -74,9 +74,19 @@ describe('Integration: CQRS UI Orchestration (Issue 140)', () => {
     vi.spyOn(GoogleDriveClient.prototype, 'move').mockImplementation(async (fileId, targetFolderId) => {
       return { id: fileId, name: 'Sample_Doc.pdf', parents: [targetFolderId] };
     });
-    vi.spyOn(GoogleDriveClient.prototype, 'listFolders').mockImplementation(async () => {
+    vi.spyOn(GoogleDriveClient.prototype, 'listFolders').mockImplementation(async (options) => {
+      if (options?.parentFolderId === 'folder-projects-1') {
+        return { folders: [{ id: 'admin-id', name: '1 Admin' }] };
+      }
+      if (options?.parentFolderId === 'admin-id') {
+        return { folders: [{ id: 'comm-folder-id', name: 'Communication' }] };
+      }
+      if (options?.parentFolderId === 'comm-folder-id') {
+        return { folders: [{ id: 'contact-acme-id', name: 'Acme Corp' }] };
+      }
       return {
         folders: [
+          { id: 'admin-id', name: '1 Admin' },
           { id: 'comm-folder-id', name: 'Communication' },
           { id: 'comm-folder-props-id', name: 'Communications' },
           { id: 'acme-id', name: 'Acme Corp' },
@@ -195,7 +205,7 @@ describe('Integration: CQRS UI Orchestration (Issue 140)', () => {
         },
         formInputs: {
           SelectFiles: { stringInputs: { value: ['drive-file-101'] } },
-          SelectDocumentType_projects: { stringInputs: { value: ['communication-proposal'] } },
+          SelectDocumentType_projects: { stringInputs: { value: ['communication-project'] } },
           SelectDocumentSpace_projects: { stringInputs: { value: ['Project 1'] } },
           contact: { stringInputs: { value: ['Acme Corp'] } },
           date: { stringInputs: { value: ['260920'] } },

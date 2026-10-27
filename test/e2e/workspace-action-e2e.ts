@@ -80,14 +80,14 @@ async function runE2E(): Promise<void> {
               parents: ['root'],
             }),
             findOrCreateFolder: async () => ({
-              id: 'mock-testmove-folder-id',
-              name: '!TestMove',
+              id: 'mock-unfiled-folder-id',
+              name: 'Unfiled',
               parents: ['root'],
             }),
             move: async (fileId: string) => ({
               id: fileId,
               name: 'E2E_Test_Document.pdf',
-              parents: ['mock-testmove-folder-id'],
+              parents: ['mock-unfiled-folder-id'],
             }),
             rename: async (fileId: string, newName: string) => ({
               id: fileId,

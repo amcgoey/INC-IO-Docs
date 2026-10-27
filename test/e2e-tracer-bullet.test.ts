@@ -75,9 +75,19 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
     vi.spyOn(GoogleDriveClient.prototype, 'move').mockImplementation(async (fileId, targetFolderId) => {
       return { id: fileId, name: 'Q3_Financial_Review.pdf', parents: [targetFolderId] };
     });
-    vi.spyOn(GoogleDriveClient.prototype, 'listFolders').mockImplementation(async () => {
+    vi.spyOn(GoogleDriveClient.prototype, 'listFolders').mockImplementation(async (options) => {
+      if (options?.parentFolderId === 'folder-projects-1') {
+        return { folders: [{ id: 'admin-id', name: '1 Admin' }] };
+      }
+      if (options?.parentFolderId === 'admin-id') {
+        return { folders: [{ id: 'comm-folder-id', name: 'Communication' }] };
+      }
+      if (options?.parentFolderId === 'comm-folder-id') {
+        return { folders: [{ id: 'contact-acme-id', name: 'Acme Corp' }] };
+      }
       return {
         folders: [
+          { id: 'admin-id', name: '1 Admin' },
           { id: 'comm-folder-id', name: 'Communication' },
           { id: 'comm-folder-props-id', name: 'Communications' },
           { id: 'acme-id', name: 'Acme Corp' },
@@ -480,7 +490,7 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
           },
           formInputs: {
             SelectFiles: { stringInputs: { value: ['drive-file-999'] } },
-            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-proposal'] } },
+            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
             [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Project 1'] } },
             contact: { stringInputs: { value: ['Acme Corp'] } },
             date: { stringInputs: { value: ['260920'] } },

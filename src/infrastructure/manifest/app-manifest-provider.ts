@@ -4,11 +4,8 @@ import { Type, type Static } from '@sinclair/typebox';
 import { parseJson, validateAndCleanSchema } from '../validation/json-schema';
 
 export const WorkspaceConfigurationSchema = Type.Object({
-  appTitle: Type.Optional(Type.String()),
-  actionButtonText: Type.Optional(Type.String()),
   defaultDocumentType: Type.Optional(Type.String()),
   defaultDocumentSpaceType: Type.Optional(Type.String()),
-  defaultEventName: Type.Optional(Type.String()),
 });
 
 export const DriveConfigurationSchema = Type.Object({
@@ -80,19 +77,19 @@ export class AppManifestProvider {
         { cause: err }
       );
     }
-    const manifestData = parseJson(manifestContent, {
+    const rawData = parseJson(manifestContent, {
       filePath: this.manifestPath,
       description: 'manifest file',
-    });
+    }) as Record<string, unknown>;
 
     const validatedManifest = validateAndCleanSchema(
       ManifestSchema,
-      manifestData,
+      rawData,
       `Invalid manifest file structure at "${this.manifestPath}"`
     );
 
     this.cachedConfiguration = validatedManifest.configuration;
-    this.cachedRawManifest = manifestData;
+    this.cachedRawManifest = rawData;
     this.cachedValidatedManifest = validatedManifest;
     this.isManifestLoaded = true;
     return validatedManifest;

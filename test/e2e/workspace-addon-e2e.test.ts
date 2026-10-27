@@ -7,6 +7,7 @@ import {
   injectWorkspaceRequest,
   DEFAULT_WORKSPACE_BASE_URL,
 } from './utils/workspace-request';
+import { mockAllowedDocumentTypes } from '../utils/manifest-test-helper';
 import { AppManifestProvider } from '../../src/infrastructure/manifest/app-manifest-provider';
 import { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
 import type { WorkspaceAuthVerifierPort } from '../../src/infrastructure/workspace-addon/api';
@@ -115,7 +116,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
 
     mockDriveService = {
       getFile: vi.fn().mockResolvedValue({ id: 'file-123', name: 'Invoice.pdf', parents: ['root'] }),
-      findOrCreateFolder: vi.fn().mockResolvedValue({ id: 'folder-1', name: '!TestMove', parents: ['root'] }),
+      findOrCreateFolder: vi.fn().mockResolvedValue({ id: 'folder-1', name: 'Unfiled', parents: ['root'] }),
       move: vi.fn().mockResolvedValue({ id: 'file-123', name: 'Invoice.pdf', parents: ['folder-1'] }),
       rename: vi.fn().mockResolvedValue({ id: 'file-123', name: 'Renamed.pdf', parents: ['root'] }),
       duplicate: vi.fn().mockResolvedValue({ id: 'file-123-copy', name: 'Invoice.pdf', parents: ['root'] }),
@@ -536,6 +537,9 @@ describe('Workspace Addon UI E2E Test Suite', () => {
     });
 
     it('executes onDocumentTypeChange, avoids field collisions on switching document type, and retains data when switching back', async () => {
+      // Inject test-scoped Manifest override at AppManifestProvider seam to permit multi-document-type intra-space switching
+      mockAllowedDocumentTypes(manifestProvider, 'projects', ['communication-project', 'communication-proposal']);
+
       // Step 1: Switch document type from 'communication-project' to 'communication-proposal' within 'projects' space
       const docTypeChangeToProposalPayload = {
         authorizationEventObject: {

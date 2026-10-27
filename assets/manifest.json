@@ -5,13 +5,11 @@
   ],
   "configuration": {
     "workspace": {
-      "appTitle": "INC-IO Docs",
-      "actionButtonText": "Move Selected File",
-      "defaultDocumentType": "communication-project",
-      "defaultEventName": "onSubmit"
+      "defaultDocumentSpaceType": "projects",
+      "defaultDocumentType": "communication-project"
     },
     "drive": {
-      "defaultFolderName": "!TestMove",
+      "defaultFolderName": "Unfiled",
       "maxRetries": 3,
       "initialDelayMs": 1000,
       "backoffFactor": 2
@@ -27,8 +25,7 @@
       "displayName": "Projects",
       "spaceSchema": {
         "allowedDocumentTypes": [
-          "communication-project",
-          "communication-proposal"
+          "communication-project"
         ]
       },
       "storageConfig": {

@@ -41,7 +41,7 @@ The deployment manifest defines the entry points and security scopes for the Add
         "runFunction": "https://<TUNNEL_OR_DEPLOYED_URL>/workspace/homepage"
       },
       "onItemsSelectedTrigger": {
-        "runFunction": "https://<TUNNEL_OR_DEPLOYED_URL>/workspace/homepage"
+        "runFunction": "https://<TUNNEL_OR_DEPLOYED_URL>/workspace/drive-items-selected"
       }
     }
   }
@@ -49,7 +49,7 @@ The deployment manifest defines the entry points and security scopes for the Add
 ```
 
 ### OAuth Scopes
-* `https://www.googleapis.com/auth/drive`: Required to execute file and folder operations (such as moving selected items to `!TestMove`).
+* `https://www.googleapis.com/auth/drive`: Required to execute file and folder operations (such as moving selected items to `Unfiled`).
 * `https://www.googleapis.com/auth/drive.addons.metadata.readonly`: Allows Workspace to pass contextual file metadata (`drive.selectedItems`) in event payloads.
 * `https://www.googleapis.com/auth/userinfo.email`: Identifies the executing user context.
 

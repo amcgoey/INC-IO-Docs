@@ -8,6 +8,7 @@
     "test:all": "vitest run && npm --prefix infra/pulumi test",
     "test:watch": "vitest",
     "dev": "tsx src/app/server.ts",
+    "generate:manifest": "tsx infra/generate-deployment-manifest.ts",
     "lint": "eslint . && npm run lint:semgrep",
     "lint:eslint": "eslint .",
     "lint:semgrep": "semgrep scan --config semgrep.yml --error",

@@ -139,6 +139,14 @@ describe('DocumentType JSON files schema validation', () => {
       expect(retrieved).toEqual(spaceType);
       expect(['shared_drives', 'folders']).toContain(retrieved.storageConfig.fetchMethod);
     }
+
+    const projects = spaceTypes.find((s) => s.id === 'projects');
+    expect(projects).toBeDefined();
+    expect(projects?.spaceSchema.allowedDocumentTypes).toEqual(['communication-project']);
+
+    const proposals = spaceTypes.find((s) => s.id === 'proposals');
+    expect(proposals).toBeDefined();
+    expect(proposals?.spaceSchema.allowedDocumentTypes).toEqual(['communication-proposal']);
   });
 
   it('should have defaultValue: IN on direction field for communication schemas', async () => {
@@ -220,6 +228,39 @@ describe('DocumentType JSON files schema validation', () => {
       id: '{{contact.key}}-{{date}}-{{direction.key}}-{{description}}',
       idDocument: '{{contact.key}}-{{date}}-{{direction.key}}-{{description}}',
       idGroup: '{{contact.name}}',
+    });
+  });
+
+  describe('Production Manifest AppConfiguration defaults', () => {
+    it('should configure workspace defaults and unfiled drive folder in production manifest.json', async () => {
+      const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
+      const manifestProvider = new AppManifestProvider({ manifestPath });
+
+      const rawManifest = (await manifestProvider.getRawManifest()) as {
+        configuration?: {
+          workspace?: Record<string, unknown>;
+          drive?: { defaultFolderName?: string; [key: string]: unknown };
+        };
+      };
+
+      expect(rawManifest.configuration?.workspace).toEqual({
+        defaultDocumentSpaceType: 'projects',
+        defaultDocumentType: 'communication-project',
+      });
+      expect(rawManifest.configuration?.workspace).not.toHaveProperty('appTitle');
+      expect(rawManifest.configuration?.workspace).not.toHaveProperty('actionButtonText');
+      expect(rawManifest.configuration?.workspace).not.toHaveProperty('defaultEventName');
+
+      expect(rawManifest.configuration?.drive?.defaultFolderName).toBe('Unfiled');
+
+      const workspaceConfig = await manifestProvider.getWorkspaceConfig();
+      expect(workspaceConfig).toEqual({
+        defaultDocumentSpaceType: 'projects',
+        defaultDocumentType: 'communication-project',
+      });
+
+      const driveConfig = await manifestProvider.getDriveConfig();
+      expect(driveConfig?.defaultFolderName).toBe('Unfiled');
     });
   });
 });
