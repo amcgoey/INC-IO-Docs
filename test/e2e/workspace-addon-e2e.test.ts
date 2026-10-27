@@ -115,7 +115,7 @@ describe('Workspace Addon UI E2E Test Suite', () => {
 
     mockDriveService = {
       getFile: vi.fn().mockResolvedValue({ id: 'file-123', name: 'Invoice.pdf', parents: ['root'] }),
-      findOrCreateFolder: vi.fn().mockResolvedValue({ id: 'folder-1', name: '!TestMove', parents: ['root'] }),
+      findOrCreateFolder: vi.fn().mockResolvedValue({ id: 'folder-1', name: 'Unfiled', parents: ['root'] }),
       move: vi.fn().mockResolvedValue({ id: 'file-123', name: 'Invoice.pdf', parents: ['folder-1'] }),
       rename: vi.fn().mockResolvedValue({ id: 'file-123', name: 'Renamed.pdf', parents: ['root'] }),
       duplicate: vi.fn().mockResolvedValue({ id: 'file-123-copy', name: 'Invoice.pdf', parents: ['root'] }),

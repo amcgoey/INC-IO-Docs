@@ -230,6 +230,39 @@ describe('DocumentType JSON files schema validation', () => {
       idGroup: '{{contact.name}}',
     });
   });
+
+  describe('Production Manifest AppConfiguration defaults', () => {
+    it('should configure workspace defaults and unfiled drive folder in production manifest.json', async () => {
+      const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
+      const manifestProvider = new AppManifestProvider({ manifestPath });
+
+      const rawManifest = (await manifestProvider.getRawManifest()) as {
+        configuration?: {
+          workspace?: Record<string, unknown>;
+          drive?: { defaultFolderName?: string; [key: string]: unknown };
+        };
+      };
+
+      expect(rawManifest.configuration?.workspace).toEqual({
+        defaultDocumentSpaceType: 'projects',
+        defaultDocumentType: 'communication-project',
+      });
+      expect(rawManifest.configuration?.workspace).not.toHaveProperty('appTitle');
+      expect(rawManifest.configuration?.workspace).not.toHaveProperty('actionButtonText');
+      expect(rawManifest.configuration?.workspace).not.toHaveProperty('defaultEventName');
+
+      expect(rawManifest.configuration?.drive?.defaultFolderName).toBe('Unfiled');
+
+      const workspaceConfig = await manifestProvider.getWorkspaceConfig();
+      expect(workspaceConfig).toEqual({
+        defaultDocumentSpaceType: 'projects',
+        defaultDocumentType: 'communication-project',
+      });
+
+      const driveConfig = await manifestProvider.getDriveConfig();
+      expect(driveConfig?.defaultFolderName).toBe('Unfiled');
+    });
+  });
 });
 
 

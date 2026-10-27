@@ -841,10 +841,7 @@ describe('App integration tests', () => {
           documentTypes: ['./custom-Document.json'],
           configuration: {
             workspace: {
-              appTitle: 'Custom Enterprise Workspace',
-              actionButtonText: 'File In Custom Folder',
               defaultDocumentType: 'configured-Document-type',
-              defaultEventName: 'onConfiguredSubmit',
             },
             drive: {
               defaultFolderName: '!CustomDestination',

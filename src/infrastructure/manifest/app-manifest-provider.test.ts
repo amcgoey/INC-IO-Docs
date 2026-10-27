@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { AppManifestProvider } from './app-manifest-provider';
+import { AppManifestProvider, WorkspaceConfigurationSchema } from './app-manifest-provider';
 
 describe('AppManifestProvider', () => {
   let tempDir: string;
@@ -133,6 +133,11 @@ describe('AppManifestProvider', () => {
   });
 
   describe('Configuration Provider', () => {
+    it('exposes only defaultDocumentType and defaultDocumentSpaceType on WorkspaceConfigurationSchema', () => {
+      const keys = Object.keys(WorkspaceConfigurationSchema.properties);
+      expect(keys.sort()).toEqual(['defaultDocumentSpaceType', 'defaultDocumentType']);
+    });
+
     it('loads and returns drive and workspace configuration when defined in manifest', async () => {
       const manifestPath = path.join(tempDir, 'manifest.json');
       await fs.writeFile(
@@ -141,10 +146,8 @@ describe('AppManifestProvider', () => {
           documentTypes: [],
           configuration: {
             workspace: {
-              appTitle: 'Custom Docs App',
-              actionButtonText: 'Submit Document',
+              defaultDocumentSpaceType: 'projects',
               defaultDocumentType: 'custom-type',
-              defaultEventName: 'onCustomSubmit',
             },
             drive: {
               defaultFolderName: 'SpecialFolder',
@@ -169,10 +172,8 @@ describe('AppManifestProvider', () => {
 
       const wsConfig = await provider.getWorkspaceConfig();
       expect(wsConfig).toEqual({
-        appTitle: 'Custom Docs App',
-        actionButtonText: 'Submit Document',
+        defaultDocumentSpaceType: 'projects',
         defaultDocumentType: 'custom-type',
-        defaultEventName: 'onCustomSubmit',
       });
     });
 
@@ -230,7 +231,7 @@ describe('AppManifestProvider', () => {
         JSON.stringify({
           documentTypes: [],
           configuration: {
-            workspace: { appTitle: 'Initial Title' },
+            workspace: { defaultDocumentType: 'Initial Type' },
           },
         }),
         'utf-8'
@@ -239,20 +240,20 @@ describe('AppManifestProvider', () => {
       const provider = new AppManifestProvider({ manifestPath });
 
       const wsConfig1 = await provider.getWorkspaceConfig();
-      expect(wsConfig1?.appTitle).toBe('Initial Title');
+      expect(wsConfig1?.defaultDocumentType).toBe('Initial Type');
 
       // Mutate file on disk to verify cache is used
       await fs.writeFile(
         manifestPath,
         JSON.stringify({
           documentTypes: [],
-          configuration: { workspace: { appTitle: 'Mutated Title' } },
+          configuration: { workspace: { defaultDocumentType: 'Mutated Type' } },
         }),
         'utf-8'
       );
 
       const wsConfig2 = await provider.getWorkspaceConfig();
-      expect(wsConfig2?.appTitle).toBe('Initial Title');
+      expect(wsConfig2?.defaultDocumentType).toBe('Initial Type');
     });
 
     it('throws error when manifest contains invalid configuration types', async () => {
@@ -282,7 +283,7 @@ describe('AppManifestProvider', () => {
         JSON.stringify({
           documentTypes: ['./original.json'],
           configuration: {
-            workspace: { appTitle: 'Original Title' },
+            workspace: { defaultDocumentType: 'Original Type' },
           },
           DocumentSpaceTypes: [
             {
