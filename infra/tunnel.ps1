@@ -16,8 +16,11 @@
 .PARAMETER ManifestPath
     Path to deployment.json. Default is "$PSScriptRoot/deployment.json".
 
+.PARAMETER TemplatePath
+    Path to deployment.template.json. Default is "$PSScriptRoot/deployment.template.json".
+
 .PARAMETER DeploymentId
-    Optional GCP Workspace Add-on deployment ID.
+    Optional GCP Workspace Add-on deployment ID. Default is "inc-io-docs".
 
 .PARAMETER ProjectId
     Optional GCP Project ID. Default is $env:PROJECT_ID.
@@ -35,6 +38,7 @@ param (
     [int]$Port = 8080,
     [string]$AuthToken = "",
     [string]$ManifestPath = "$PSScriptRoot/deployment.json",
+    [string]$TemplatePath = "$PSScriptRoot/deployment.template.json",
     [string]$DeploymentId = "",
     [string]$ProjectId = $env:PROJECT_ID,
     [switch]$AutoDeploy,
@@ -80,6 +84,7 @@ Write-Host " INC-IO Docs: Workspace Add-on Tunnel & Dev Helper" -ForegroundColor
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "Target Port:   $Port"
 Write-Host "Manifest Path: $ManifestPath"
+Write-Host "Template Path: $TemplatePath"
 if ($ProjectId) { Write-Host "GCP Project:   $ProjectId" }
 if ($DeploymentId) { Write-Host "Deployment ID: $DeploymentId" }
 Write-Host "=========================================================="
@@ -155,52 +160,27 @@ if (-not $publicHttpsUrl) {
 
 Write-Host "Active HTTPS Tunnel: $publicHttpsUrl" -ForegroundColor Green
 
-# 4. Update deployment.json
-if (-not (Test-Path $ManifestPath)) {
-    Write-Host "ERROR: Manifest file not found at '$ManifestPath'." -ForegroundColor Red
-    Stop-TunnelProcess -Process $tunnelProcess
-    exit 1
-}
+# 4. Generate deployment manifest
+Write-Host "Generating manifest at '$ManifestPath'..." -ForegroundColor Cyan
 
-Write-Host "Updating manifest at '$ManifestPath'..." -ForegroundColor Cyan
-$manifestContent = Get-Content -Path $ManifestPath -Raw | ConvertFrom-Json
+npm run generate:manifest -- --service-url "$publicHttpsUrl" --environment dev --template "$TemplatePath" --output "$ManifestPath"
+Assert-Success "Failed to generate deployment manifest."
 
 $homepageUrl = "$publicHttpsUrl/workspace/homepage"
 
-if ($manifestContent.addOns) {
-    if ($manifestContent.addOns.common -and $manifestContent.addOns.common.homepageTrigger) {
-        $manifestContent.addOns.common.homepageTrigger.runFunction = $homepageUrl
-    }
-    if ($manifestContent.addOns.drive) {
-        if ($manifestContent.addOns.drive.homepageTrigger) {
-            $manifestContent.addOns.drive.homepageTrigger.runFunction = $homepageUrl
-        }
-        if ($manifestContent.addOns.drive.onItemsSelectedTrigger) {
-            $manifestContent.addOns.drive.onItemsSelectedTrigger.runFunction = $homepageUrl
-        }
-    }
-    if ($manifestContent.addOns.gmail -and $manifestContent.addOns.gmail.contextualTriggers -and $manifestContent.addOns.gmail.contextualTriggers.Count -gt 0) {
-        $manifestContent.addOns.gmail.contextualTriggers[0].onTriggerFunction = "$publicHttpsUrl/workspace/gmail-contextual"
-    }
-}
-
-$updatedJson = $manifestContent | ConvertTo-Json -Depth 10
-$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-[System.IO.File]::WriteAllText((Resolve-Path $ManifestPath).Path, $updatedJson, $utf8NoBom)
-
-Write-Host "Manifest updated successfully with $homepageUrl" -ForegroundColor Green
+Write-Host "Manifest generated successfully with $homepageUrl" -ForegroundColor Green
 Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host " Workspace Add-on Endpoints:" -ForegroundColor Green
 Write-Host "   Homepage: $homepageUrl"
-Write-Host "   Action:   $publicHttpsUrl/workspace/action"
+Write-Host "   Drive:    $publicHttpsUrl/workspace/drive-items-selected"
 Write-Host "   Gmail:    $publicHttpsUrl/workspace/gmail-contextual"
 Write-Host "   Web UI:   http://127.0.0.1:4040"
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host ""
 
 # 5. Deployment helper
-$targetDeployment = if ($DeploymentId) { $DeploymentId } else { "inc-io-docs-dev" }
+$targetDeployment = if ($DeploymentId) { $DeploymentId } else { "inc-io-docs" }
 $projectArg = if ($ProjectId) { " --project=$ProjectId" } else { "" }
 
 if ($AutoDeploy) {
