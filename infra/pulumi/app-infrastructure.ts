@@ -3,7 +3,7 @@ import * as gcp from "@pulumi/gcp";
 
 export interface AppInfrastructureArgs {
   /**
-   * GCP Project ID. Defaults to GCP provider project or 'inc-io-docs-dev'.
+   * GCP Project ID. Defaults to GCP provider project.
    */
   projectId?: pulumi.Input<string>;
 
@@ -28,6 +28,11 @@ export interface AppInfrastructureArgs {
   invokerName?: pulumi.Input<string>;
 
   /**
+   * Dedicated runtime Service Account accountId. Defaults to 'addon-runtime'.
+   */
+  runtimeAccountName?: pulumi.Input<string>;
+
+  /**
    * Container image to deploy on Cloud Run. Defaults to a standard hello/placeholder image or registry image.
    */
   image?: pulumi.Input<string>;
@@ -42,21 +47,25 @@ export class AppInfrastructure extends pulumi.ComponentResource {
   public readonly repository: gcp.artifactregistry.Repository;
   public readonly service: gcp.cloudrunv2.Service;
   public readonly invokerServiceAccount: gcp.serviceaccount.Account;
+  public readonly runtimeServiceAccount: gcp.serviceaccount.Account;
   public readonly invokerIamMember: gcp.cloudrunv2.ServiceIamMember;
+  public readonly workspaceIamMember: gcp.cloudrunv2.ServiceIamMember;
 
   public readonly repositoryUrl: pulumi.Output<string>;
   public readonly serviceUrl: pulumi.Output<string>;
   public readonly invokerServiceAccountEmail: pulumi.Output<string>;
 
   constructor(name: string, args: AppInfrastructureArgs = {}, opts?: pulumi.ComponentResourceOptions) {
+    const gcpConfig = new pulumi.Config("gcp");
+    const projectId = args.projectId ?? gcpConfig.require("project");
+
     super("custom:app:AppInfrastructure", name, {}, opts);
 
-    const gcpConfig = new pulumi.Config("gcp");
-    const projectId = args.projectId ?? gcpConfig.get("project") ?? "inc-io-docs-dev";
     const region = args.region ?? gcpConfig.get("region") ?? "us-east4";
     const repositoryName = args.repositoryName ?? "inc-io-docs";
     const serviceName = args.serviceName ?? name;
     const invokerName = args.invokerName ?? "addon-invoker";
+    const runtimeAccountName = args.runtimeAccountName ?? "addon-runtime";
     const port = args.port ?? 8080;
     const image = args.image ?? "us-docker.pkg.dev/cloudrun/container/hello";
 
@@ -108,7 +117,18 @@ export class AppInfrastructure extends pulumi.ComponentResource {
       { parent: this }
     );
 
-    // 4. Private Cloud Run Service (IAM-protected)
+    // 4. Zero-Privilege Cloud Run Runtime Service Account
+    const runtimeServiceAccount = new gcp.serviceaccount.Account(
+      `${name}-runtime-sa`,
+      {
+        accountId: runtimeAccountName,
+        displayName: "Zero-Privilege Cloud Run Runtime Service Account",
+        project: projectId,
+      },
+      { parent: this }
+    );
+
+    // 5. Private Cloud Run Service (IAM-protected)
     const service = new gcp.cloudrunv2.Service(
       `${name}-service`,
       {
@@ -117,6 +137,7 @@ export class AppInfrastructure extends pulumi.ComponentResource {
         project: projectId,
         ingress: "INGRESS_TRAFFIC_ALL",
         template: {
+          serviceAccount: runtimeServiceAccount.email,
           containers: [
             {
               image: image,
@@ -130,6 +151,10 @@ export class AppInfrastructure extends pulumi.ComponentResource {
                 },
               },
               envs: [
+                {
+                  name: "NODE_ENV",
+                  value: "production",
+                },
                 {
                   name: "NODE_OPTIONS",
                   value: "--max-old-space-size=3584",
@@ -146,7 +171,7 @@ export class AppInfrastructure extends pulumi.ComponentResource {
       { parent: this, dependsOn: enabledApis }
     );
 
-    // 5. Dedicated IAM Binding: Grant roles/run.invoker to the invoker Service Account ONLY
+    // 6. Dedicated IAM Binding: Grant roles/run.invoker to the invoker Service Account ONLY
     const invokerIamMember = new gcp.cloudrunv2.ServiceIamMember(
       `${name}-invoker-iam`,
       {
@@ -159,23 +184,40 @@ export class AppInfrastructure extends pulumi.ComponentResource {
       { parent: this }
     );
 
-    // 6. Grant roles/run.invoker to the Google Workspace Add-ons system service account
-    new gcp.cloudrunv2.ServiceIamMember(
+    // 7. Workspace Add-ons Service Identity & Dynamic Project Number Resolution
+    const workspaceServiceIdentity = new gcp.projects.ServiceIdentity(
+      `${name}-workspace-sa-identity`,
+      {
+        service: "gsuiteaddons.googleapis.com",
+        project: projectId,
+      },
+      { parent: this, dependsOn: enabledApis }
+    );
+
+    const project = gcp.organizations.getProjectOutput(
+      { projectId },
+      { parent: this, dependsOn: enabledApis }
+    );
+
+    // 8. Grant roles/run.invoker to the Google Workspace Add-ons system service agent
+    const workspaceIamMember = new gcp.cloudrunv2.ServiceIamMember(
       `${name}-workspace-iam`,
       {
         name: service.name,
         location: service.location,
         project: projectId,
         role: "roles/run.invoker",
-        member: "serviceAccount:service-137115190443@gcp-sa-gsuiteaddons.iam.gserviceaccount.com",
+        member: pulumi.interpolate`serviceAccount:service-${project.number}@gcp-sa-gsuiteaddons.iam.gserviceaccount.com`,
       },
-      { parent: this }
+      { parent: this, dependsOn: workspaceServiceIdentity }
     );
 
     this.repository = repository;
     this.service = service;
     this.invokerServiceAccount = invokerServiceAccount;
+    this.runtimeServiceAccount = runtimeServiceAccount;
     this.invokerIamMember = invokerIamMember;
+    this.workspaceIamMember = workspaceIamMember;
 
     this.repositoryUrl = pulumi.interpolate`${region}-docker.pkg.dev/${projectId}/${repository.repositoryId}`;
     this.serviceUrl = service.uri;
