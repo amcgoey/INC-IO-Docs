@@ -7,6 +7,21 @@ import { GoogleDriveStorageAdapter } from '../../src/features/document-space/ada
 import { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
 
 describe('DocumentSpaceTypes E2E Validation', () => {
+  it('should verify production runtime manifest configures projects with ["communication-project"] and proposals with ["communication-proposal"]', async () => {
+    const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
+    const manifestProvider = new AppManifestProvider({ manifestPath });
+    const registry = new DocumentSpaceManifestRegistryAdapter(manifestProvider);
+    const spaceTypes = await registry.getDocumentSpaceTypes();
+
+    const projects = spaceTypes.find((st) => st.id === 'projects');
+    expect(projects).toBeDefined();
+    expect(projects?.spaceSchema.allowedDocumentTypes).toEqual(['communication-project']);
+
+    const proposals = spaceTypes.find((st) => st.id === 'proposals');
+    expect(proposals).toBeDefined();
+    expect(proposals?.spaceSchema.allowedDocumentTypes).toEqual(['communication-proposal']);
+  });
+
   it.skipIf(process.env.CI || !process.env.GOOGLE_APPLICATION_CREDENTIALS)(
     'should validate all DocumentSpaceTypes against the real storage backend',
     async () => {
