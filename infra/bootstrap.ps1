@@ -67,6 +67,10 @@ Write-Host "Checking gcloud authentication..."
 $null = gcloud auth print-access-token 2>&1
 Assert-Success "You are not authenticated with gcloud. Please run 'gcloud auth login' and try again."
 
+Write-Host "Checking gh authentication..."
+$null = gh auth status 2>&1
+Assert-Success "You are not authenticated with the GitHub CLI (gh). Please run 'gh auth login' and try again."
+
 Write-Host ""
 Write-Host "=========================================================="
 Write-Host " Bootstrap Configuration Summary"
@@ -234,23 +238,104 @@ Assert-Success "Failed to bind Service Account to WIF Pool."
 
 $fullWifProvider = "projects/$projectNumber/locations/global/workloadIdentityPools/$WIF_POOL/providers/$WIF_PROVIDER"
 
+Write-Host "Configuring GitHub Environment '$Environment' in repository '$REPO'..."
+$envPolicy = '{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
+$envPolicy | gh api --method PUT "repos/$REPO/environments/$Environment" --input - | Out-Null
+Assert-Success "Failed to configure GitHub Environment '$Environment'."
+
+Write-Host "Checking deployment branch policies for Environment '$Environment'..."
+$branchPoliciesJson = gh api "repos/$REPO/environments/$Environment/deployment-branch-policies" 2>$null
+$hasBranchPolicy = $false
+if ($branchPoliciesJson) {
+    try {
+        $policies = ($branchPoliciesJson -join "`n") | ConvertFrom-Json
+        if ($policies -and $policies.branch_policies) {
+            foreach ($bp in $policies.branch_policies) {
+                if ($bp.name -eq $BRANCH) {
+                    $hasBranchPolicy = $true
+                    break
+                }
+            }
+        }
+    } catch {
+        Write-Warning "Failed to parse deployment branch policies: $_"
+    }
+}
+
+if ($hasBranchPolicy) {
+    Write-Host "Deployment branch policy for '$BRANCH' already exists on Environment '$Environment'." -ForegroundColor Cyan
+} else {
+    Write-Host "Adding deployment branch policy for branch '$BRANCH' on Environment '$Environment'..."
+    $bpBody = (@{ name = $BRANCH } | ConvertTo-Json -Compress)
+    $bpBody | gh api --method POST "repos/$REPO/environments/$Environment/deployment-branch-policies" --input - | Out-Null
+    Assert-Success "Failed to create deployment branch policy for branch '$BRANCH'."
+}
+
+Write-Host "Configuring GitHub Environment variables for '$Environment'..."
+$envVars = [ordered]@{
+    "PROJECT_ID"          = $PROJECT_ID
+    "REGION"              = $REGION
+    "REPO_NAME"           = "inc-io-docs"
+    "SERVICE_NAME"        = $ServiceName
+    "PULUMI_STACK"        = $PulumiStack
+    "PULUMI_STATE_BUCKET" = "gs://$BUCKET_NAME"
+}
+foreach ($varName in $envVars.Keys) {
+    $varValue = $envVars[$varName]
+    Write-Host "Setting variable $varName = $varValue on Environment '$Environment'..."
+    gh variable set $varName --body "$varValue" --env "$Environment" --repo "$REPO" | Out-Null
+    Assert-Success "Failed to set GitHub Environment variable '$varName'."
+}
+
+Write-Host "Configuring GitHub Environment secrets for '$Environment'..."
+Write-Host "Setting WIF_PROVIDER secret..."
+gh secret set WIF_PROVIDER --body "$fullWifProvider" --env "$Environment" --repo "$REPO" | Out-Null
+Assert-Success "Failed to set WIF_PROVIDER secret."
+
+Write-Host "Setting GCP_SERVICE_ACCOUNT secret..."
+gh secret set GCP_SERVICE_ACCOUNT --body "$SA_EMAIL" --env "$Environment" --repo "$REPO" | Out-Null
+Assert-Success "Failed to set GCP_SERVICE_ACCOUNT secret."
+
+$passphrase = if ([bool]$PulumiPassphrase) {
+    $PulumiPassphrase
+} elseif ([bool]$env:PULUMI_CONFIG_PASSPHRASE) {
+    $env:PULUMI_CONFIG_PASSPHRASE
+} else {
+    $null
+}
+
+if (-not $passphrase) {
+    Write-Host "Checking if PULUMI_CONFIG_PASSPHRASE secret already exists in GitHub Environment '$Environment'..."
+    $secretList = gh secret list --env "$Environment" --repo "$REPO" 2>$null
+    $hasPassphrase = $false
+    if ($secretList) {
+        $lines = $secretList -split "`r?`n"
+        foreach ($line in $lines) {
+            if ($line -match '^\s*PULUMI_CONFIG_PASSPHRASE\b') {
+                $hasPassphrase = $true
+                break
+            }
+        }
+    }
+    if ($hasPassphrase) {
+        Write-Host "PULUMI_CONFIG_PASSPHRASE already configured in GitHub Environment '$Environment'; retaining existing secret." -ForegroundColor Cyan
+    } elseif (-not $Force) {
+        $passphrase = Read-Host "Enter PULUMI_CONFIG_PASSPHRASE for $Environment"
+    }
+}
+
+if ($passphrase) {
+    Write-Host "Setting PULUMI_CONFIG_PASSPHRASE secret..."
+    gh secret set PULUMI_CONFIG_PASSPHRASE --body "$passphrase" --env "$Environment" --repo "$REPO" | Out-Null
+    Assert-Success "Failed to set PULUMI_CONFIG_PASSPHRASE secret."
+}
+
 Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host " Bootstrap complete! " -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Green
-Write-Host "Please ensure the following secrets are set in your GitHub Environment ($Environment):"
-Write-Host ""
-Write-Host "1. WIF_PROVIDER" -ForegroundColor Cyan
-Write-Host "   $fullWifProvider"
-Write-Host ""
-Write-Host "2. GCP_SERVICE_ACCOUNT" -ForegroundColor Cyan
-Write-Host "   $SA_EMAIL"
-Write-Host ""
-Write-Host "3. PULUMI_CONFIG_PASSPHRASE" -ForegroundColor Cyan
-if ($PulumiPassphrase) {
-    Write-Host "   $PulumiPassphrase"
-} else {
-    Write-Host "   (Enter a strong, custom passphrase. Pulumi will use this to encrypt secrets in your state file.)"
-}
+Write-Host "GitHub Environment '$Environment' in $REPO configured successfully."
+Write-Host "Variables: PROJECT_ID, REGION, REPO_NAME, SERVICE_NAME, PULUMI_STACK, PULUMI_STATE_BUCKET"
+Write-Host "Secrets:   WIF_PROVIDER, GCP_SERVICE_ACCOUNT, PULUMI_CONFIG_PASSPHRASE"
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host ""

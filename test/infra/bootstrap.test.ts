@@ -25,7 +25,9 @@ function getPowerShellCommand(): string {
 }
 
 interface ShimCall {
+  bin?: string;
   args: string[];
+  stdin?: string;
 }
 
 interface MockConfig {
@@ -35,6 +37,10 @@ interface MockConfig {
   wifPoolExists?: boolean;
   wifProviderExists?: boolean;
   hasEditorRole?: boolean;
+  ghAuthSucceeds?: boolean;
+  existingBranchPolicies?: string[];
+  existingSecrets?: string[];
+  preventDuplicateBranchPolicy?: boolean;
 }
 
 function setupShim(mockConfig: MockConfig = {}) {
@@ -46,7 +52,7 @@ function setupShim(mockConfig: MockConfig = {}) {
   fs.writeFileSync(callsFile, '[]', 'utf8');
 
   // gcloud-shim.js
-  const shimJs = `
+  const gcloudShimJs = `
 const fs = require('fs');
 const path = require('path');
 
@@ -60,7 +66,7 @@ let calls = [];
 try {
   calls = JSON.parse(fs.readFileSync(callsFile, 'utf8'));
 } catch (e) {}
-calls.push({ args });
+calls.push({ bin: 'gcloud', args });
 fs.writeFileSync(callsFile, JSON.stringify(calls, null, 2), 'utf8');
 
 let config = {};
@@ -118,20 +124,125 @@ if (joined.startsWith('projects describe')) {
 process.exit(0);
 `;
 
-  fs.writeFileSync(path.join(tmpDir, 'gcloud-shim.js'), shimJs, 'utf8');
+  // gh-shim.js
+  const ghShimJs = `
+const fs = require('fs');
+const path = require('path');
 
-  // Windows cmd shim
+const dir = __dirname;
+const callsFile = path.join(dir, 'calls.json');
+const configFile = path.join(dir, 'config.json');
+
+const args = process.argv.slice(2);
+
+let stdin = '';
+if (args.includes('--input') && args.includes('-')) {
+  try {
+    stdin = fs.readFileSync(0, 'utf8');
+  } catch (e) {}
+}
+
+let calls = [];
+try {
+  calls = JSON.parse(fs.readFileSync(callsFile, 'utf8'));
+} catch (e) {}
+calls.push({ bin: 'gh', args, stdin });
+fs.writeFileSync(callsFile, JSON.stringify(calls, null, 2), 'utf8');
+
+let config = {};
+try {
+  config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+} catch (e) {}
+
+const joined = args.join(' ');
+
+if (joined.startsWith('auth status')) {
+  if (config.ghAuthSucceeds === false) {
+    process.stderr.write('You are not logged into any GitHub hosts. Run gh auth login to authenticate.\\n');
+    process.exit(1);
+  }
+  process.stdout.write('Logged in to github.com account testuser (keyring)\\n');
+  process.exit(0);
+}
+
+if (joined.startsWith('api')) {
+  if (joined.includes('deployment-branch-policies')) {
+    const isPost = args.includes('POST') || (args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST');
+    if (isPost) {
+      let branchName = '';
+      const fArg = args.find(a => a.startsWith('name='));
+      if (fArg) {
+        branchName = fArg.split('=')[1];
+      } else if (stdin) {
+        try {
+          const parsed = JSON.parse(stdin);
+          branchName = parsed.name;
+        } catch (e) {}
+      }
+      if (config.preventDuplicateBranchPolicy && branchName && config.existingBranchPolicies && config.existingBranchPolicies.includes(branchName)) {
+        process.stderr.write(\`HTTP 422: Validation Failed: Branch policy for '\${branchName}' already exists\\n\`);
+        process.exit(1);
+      }
+      process.stdout.write(JSON.stringify({ id: 99, name: branchName }) + '\\n');
+      process.exit(0);
+    } else {
+      const policies = (config.existingBranchPolicies || []).map((name, idx) => ({ id: idx + 1, name }));
+      process.stdout.write(JSON.stringify({ total_count: policies.length, branch_policies: policies }) + '\\n');
+      process.exit(0);
+    }
+  }
+  // Default API call (e.g. PUT environments)
+  process.stdout.write('{}\\n');
+  process.exit(0);
+}
+
+if (joined.startsWith('variable set')) {
+  process.exit(0);
+}
+
+if (joined.startsWith('secret list')) {
+  const secrets = config.existingSecrets || [];
+  const lines = secrets.map(s => \`\${s}\\tUpdated 2026-01-01\`);
+  process.stdout.write(lines.join('\\n') + (lines.length > 0 ? '\\n' : ''));
+  process.exit(0);
+}
+
+if (joined.startsWith('secret set')) {
+  process.exit(0);
+}
+
+process.exit(0);
+`;
+
+  fs.writeFileSync(path.join(tmpDir, 'gcloud-shim.js'), gcloudShimJs, 'utf8');
   fs.writeFileSync(path.join(tmpDir, 'gcloud.cmd'), '@node "%~dp0gcloud-shim.js" %*\n', 'utf8');
+  fs.writeFileSync(path.join(tmpDir, 'gcloud'), '#!/bin/sh\nexec node "$(dirname "$0")/gcloud-shim.js" "$@"\n', { encoding: 'utf8', mode: 0o755 });
 
-  // Unix / bash shim
-  const unixShim = '#!/bin/sh\nexec node "$(dirname "$0")/gcloud-shim.js" "$@"\n';
-  fs.writeFileSync(path.join(tmpDir, 'gcloud'), unixShim, { encoding: 'utf8', mode: 0o755 });
+  fs.writeFileSync(path.join(tmpDir, 'gh-shim.js'), ghShimJs, 'utf8');
+  fs.writeFileSync(path.join(tmpDir, 'gh.cmd'), '@node "%~dp0gh-shim.js" %*\n', 'utf8');
+  fs.writeFileSync(path.join(tmpDir, 'gh'), '#!/bin/sh\nexec node "$(dirname "$0")/gh-shim.js" "$@"\n', { encoding: 'utf8', mode: 0o755 });
 
   return {
     tmpDir,
     getCalls: (): ShimCall[] => {
       try {
         return JSON.parse(fs.readFileSync(callsFile, 'utf8'));
+      } catch {
+        return [];
+      }
+    },
+    getGcloudCalls: (): ShimCall[] => {
+      try {
+        const calls: ShimCall[] = JSON.parse(fs.readFileSync(callsFile, 'utf8'));
+        return calls.filter((c) => c.bin === 'gcloud');
+      } catch {
+        return [];
+      }
+    },
+    getGhCalls: (): ShimCall[] => {
+      try {
+        const calls: ShimCall[] = JSON.parse(fs.readFileSync(callsFile, 'utf8'));
+        return calls.filter((c) => c.bin === 'gh');
       } catch {
         return [];
       }
@@ -496,6 +607,283 @@ describe('GCP Bootstrap Script (infra/bootstrap.ps1)', () => {
       expect(conditionArg).toBe(
         "--attribute-condition=has(assertion.environment) && assertion.environment == 'dev' && assertion.repository == 'amcgoey/INC-IO-Docs' && assertion.ref == 'refs/heads/develop'"
       );
+    });
+  });
+
+  describe('Pre-Flight gh Authentication Check', () => {
+    let shim: ReturnType<typeof setupShim>;
+
+    afterEach(() => {
+      if (shim) shim.cleanup();
+    });
+
+    it('verifies gh auth status during pre-flight and aborts with a clear error before mutating GCP or GitHub state', () => {
+      shim = setupShim({ ghAuthSucceeds: false });
+      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
+
+      expect(res.status).not.toBe(0);
+      expect(res.stdout).toContain(
+        "FATAL ERROR: You are not authenticated with the GitHub CLI (gh). Please run 'gh auth login' and try again."
+      );
+
+      // Verify no mutating GCP commands were invoked
+      const mutatingGcloudCalls = shim.getGcloudCalls().filter((c) =>
+        c.args.includes('enable') ||
+        c.args.includes('create') ||
+        c.args.includes('add-iam-policy-binding') ||
+        c.args.includes('remove-iam-policy-binding')
+      );
+      expect(mutatingGcloudCalls).toHaveLength(0);
+
+      // Verify no mutating gh commands were invoked
+      const mutatingGhCalls = shim.getGhCalls().filter((c) =>
+        c.args.includes('api') ||
+        c.args.includes('set')
+      );
+      expect(mutatingGhCalls).toHaveLength(0);
+    });
+  });
+
+  describe('Idempotent GitHub Environment & Deployment Branch Policy Provisioning', () => {
+    let shim: ReturnType<typeof setupShim>;
+
+    afterEach(() => {
+      if (shim) shim.cleanup();
+    });
+
+    it('provisions dev GitHub Environment with custom_branch_policies and registers develop branch policy when missing', () => {
+      shim = setupShim({ existingBranchPolicies: [], preventDuplicateBranchPolicy: true });
+      const res = runBootstrap(['-Force', '-PulumiPassphrase', 'dev-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
+      expect(res.status).toBe(0);
+
+      const ghCalls = shim.getGhCalls();
+
+      // PUT repos/amcgoey/INC-IO-Docs/environments/dev
+      const envPutCall = ghCalls.find((c) =>
+        c.args.includes('api') &&
+        c.args.includes('repos/amcgoey/INC-IO-Docs/environments/dev') &&
+        c.args.includes('PUT')
+      );
+      expect(envPutCall).toBeDefined();
+      if (envPutCall?.stdin) {
+        expect(envPutCall.stdin).toContain('"custom_branch_policies":true');
+        expect(envPutCall.stdin).toContain('"protected_branches":false');
+      }
+
+      // GET branch policies was performed
+      const getPolicyCall = ghCalls.find((c) =>
+        c.args.includes('api') &&
+        c.args.includes('repos/amcgoey/INC-IO-Docs/environments/dev/deployment-branch-policies') &&
+        !c.args.includes('POST')
+      );
+      expect(getPolicyCall).toBeDefined();
+
+      // POST develop branch policy was performed
+      const postPolicyCall = ghCalls.find((c) =>
+        c.args.includes('api') &&
+        c.args.includes('repos/amcgoey/INC-IO-Docs/environments/dev/deployment-branch-policies') &&
+        c.args.includes('POST')
+      );
+      expect(postPolicyCall).toBeDefined();
+      const hasDevelopInArgsOrStdin =
+        postPolicyCall?.args.some((a) => a.includes('develop')) ||
+        Boolean(postPolicyCall?.stdin && postPolicyCall.stdin.includes('develop'));
+      expect(hasDevelopInArgsOrStdin).toBe(true);
+    });
+
+    it('provisions prod GitHub Environment with custom_branch_policies and registers main branch policy when missing', () => {
+      shim = setupShim({ existingBranchPolicies: [], preventDuplicateBranchPolicy: true });
+      const res = runBootstrap(['-Environment', 'prod', '-Force', '-PulumiPassphrase', 'prod-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
+      expect(res.status).toBe(0);
+
+      const ghCalls = shim.getGhCalls();
+
+      // PUT repos/amcgoey/INC-IO-Docs/environments/prod
+      const envPutCall = ghCalls.find((c) =>
+        c.args.includes('api') &&
+        c.args.includes('repos/amcgoey/INC-IO-Docs/environments/prod') &&
+        c.args.includes('PUT')
+      );
+      expect(envPutCall).toBeDefined();
+
+      // POST main branch policy was performed
+      const postPolicyCall = ghCalls.find((c) =>
+        c.args.includes('api') &&
+        c.args.includes('repos/amcgoey/INC-IO-Docs/environments/prod/deployment-branch-policies') &&
+        c.args.includes('POST')
+      );
+      expect(postPolicyCall).toBeDefined();
+      const hasMainInArgsOrStdin =
+        postPolicyCall?.args.some((a) => a.includes('main')) ||
+        Boolean(postPolicyCall?.stdin && postPolicyCall.stdin.includes('main'));
+      expect(hasMainInArgsOrStdin).toBe(true);
+    });
+
+    it('idempotently skips POST when branch policy already exists and avoids duplicate 422 errors on re-runs', () => {
+      shim = setupShim({ existingBranchPolicies: ['develop'], preventDuplicateBranchPolicy: true });
+      const res = runBootstrap(['-Force', '-PulumiPassphrase', 'dev-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
+      expect(res.status).toBe(0);
+
+      const ghCalls = shim.getGhCalls();
+
+      // GET branch policies was performed
+      const getPolicyCall = ghCalls.find((c) =>
+        c.args.includes('api') &&
+        c.args.includes('repos/amcgoey/INC-IO-Docs/environments/dev/deployment-branch-policies') &&
+        !c.args.includes('POST')
+      );
+      expect(getPolicyCall).toBeDefined();
+
+      // POST branch policy was NOT performed
+      const postPolicyCall = ghCalls.find((c) =>
+        c.args.includes('api') &&
+        c.args.includes('repos/amcgoey/INC-IO-Docs/environments/dev/deployment-branch-policies') &&
+        c.args.includes('POST')
+      );
+      expect(postPolicyCall).toBeUndefined();
+    });
+  });
+
+  describe('Automated GitHub Environment Variables', () => {
+    let shim: ReturnType<typeof setupShim>;
+
+    afterEach(() => {
+      if (shim) shim.cleanup();
+    });
+
+    it('sets the 6 required environment variables for dev environment', () => {
+      shim = setupShim({ existingBranchPolicies: ['develop'] });
+      const res = runBootstrap(['-Force', '-PulumiPassphrase', 'dev-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
+      expect(res.status).toBe(0);
+
+      const ghCalls = shim.getGhCalls();
+      const varCalls = ghCalls.filter((c) => c.args.includes('variable') && c.args.includes('set'));
+
+      const getVarValue = (varName: string) => {
+        const call = varCalls.find((c) => c.args.includes(varName));
+        if (!call) return undefined;
+        const bodyIdx = call.args.indexOf('--body');
+        return bodyIdx !== -1 ? call.args[bodyIdx + 1] : undefined;
+      };
+
+      expect(getVarValue('PROJECT_ID')).toBe('inc-io-docs-dev');
+      expect(getVarValue('REGION')).toBe('us-east4');
+      expect(getVarValue('REPO_NAME')).toBe('inc-io-docs');
+      expect(getVarValue('SERVICE_NAME')).toBe('inc-io-docs-dev');
+      expect(getVarValue('PULUMI_STACK')).toBe('dev');
+      expect(getVarValue('PULUMI_STATE_BUCKET')).toBe('gs://inc-io-docs-dev-pulumi-state');
+
+      // Verify all variable calls target the dev environment and amcgoey/INC-IO-Docs repo
+      for (const call of varCalls) {
+        expect(call.args).toContain('--env');
+        expect(call.args[call.args.indexOf('--env') + 1]).toBe('dev');
+        expect(call.args).toContain('--repo');
+        expect(call.args[call.args.indexOf('--repo') + 1]).toBe('amcgoey/INC-IO-Docs');
+      }
+    });
+
+    it('sets the 6 required environment variables for prod environment', () => {
+      shim = setupShim({ existingBranchPolicies: ['main'] });
+      const res = runBootstrap(['-Environment', 'prod', '-Force', '-PulumiPassphrase', 'prod-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
+      expect(res.status).toBe(0);
+
+      const ghCalls = shim.getGhCalls();
+      const varCalls = ghCalls.filter((c) => c.args.includes('variable') && c.args.includes('set'));
+
+      const getVarValue = (varName: string) => {
+        const call = varCalls.find((c) => c.args.includes(varName));
+        if (!call) return undefined;
+        const bodyIdx = call.args.indexOf('--body');
+        return bodyIdx !== -1 ? call.args[bodyIdx + 1] : undefined;
+      };
+
+      expect(getVarValue('PROJECT_ID')).toBe('inc-io-docs-prod');
+      expect(getVarValue('REGION')).toBe('us-east4');
+      expect(getVarValue('REPO_NAME')).toBe('inc-io-docs');
+      expect(getVarValue('SERVICE_NAME')).toBe('inc-io-docs-prod');
+      expect(getVarValue('PULUMI_STACK')).toBe('prod');
+      expect(getVarValue('PULUMI_STATE_BUCKET')).toBe('gs://inc-io-docs-prod-pulumi-state');
+
+      for (const call of varCalls) {
+        expect(call.args).toContain('--env');
+        expect(call.args[call.args.indexOf('--env') + 1]).toBe('prod');
+      }
+    });
+  });
+
+  describe('Automated GitHub Environment Secrets & Passphrase Resolution', () => {
+    let shim: ReturnType<typeof setupShim>;
+
+    afterEach(() => {
+      if (shim) shim.cleanup();
+    });
+
+    it('sets WIF_PROVIDER and GCP_SERVICE_ACCOUNT secrets for dev environment', () => {
+      shim = setupShim({ projectNumber: '112233445566', existingSecrets: ['PULUMI_CONFIG_PASSPHRASE'] });
+      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
+      expect(res.status).toBe(0);
+
+      const ghCalls = shim.getGhCalls();
+      const secretCalls = ghCalls.filter((c) => c.args.includes('secret') && c.args.includes('set'));
+
+      const getSecretValue = (secretName: string) => {
+        const call = secretCalls.find((c) => c.args.includes(secretName));
+        if (!call) return undefined;
+        const bodyIdx = call.args.indexOf('--body');
+        return bodyIdx !== -1 ? call.args[bodyIdx + 1] : undefined;
+      };
+
+      expect(getSecretValue('WIF_PROVIDER')).toBe(
+        'projects/112233445566/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider'
+      );
+      expect(getSecretValue('GCP_SERVICE_ACCOUNT')).toBe('ci-deployer@inc-io-docs-dev.iam.gserviceaccount.com');
+    });
+
+    it('sets PULUMI_CONFIG_PASSPHRASE from explicit -PulumiPassphrase argument', () => {
+      shim = setupShim({});
+      const res = runBootstrap(['-Force', '-PulumiPassphrase', 'explicit-custom-passphrase'], { PROJECT_ID: undefined }, shim.tmpDir);
+      expect(res.status).toBe(0);
+
+      const ghCalls = shim.getGhCalls();
+      const passphraseCall = ghCalls.find((c) =>
+        c.args.includes('secret') && c.args.includes('set') && c.args.includes('PULUMI_CONFIG_PASSPHRASE')
+      );
+      expect(passphraseCall).toBeDefined();
+      const bodyIdx = passphraseCall?.args.indexOf('--body');
+      expect(bodyIdx).toBeDefined();
+      expect(passphraseCall?.args[bodyIdx! + 1]).toBe('explicit-custom-passphrase');
+    });
+
+    it('sets PULUMI_CONFIG_PASSPHRASE from ambient env var $env:PULUMI_CONFIG_PASSPHRASE when argument omitted', () => {
+      shim = setupShim({});
+      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined, PULUMI_CONFIG_PASSPHRASE: 'env-custom-passphrase' }, shim.tmpDir);
+      expect(res.status).toBe(0);
+
+      const ghCalls = shim.getGhCalls();
+      const passphraseCall = ghCalls.find((c) =>
+        c.args.includes('secret') && c.args.includes('set') && c.args.includes('PULUMI_CONFIG_PASSPHRASE')
+      );
+      expect(passphraseCall).toBeDefined();
+      const bodyIdx = passphraseCall?.args.indexOf('--body');
+      expect(bodyIdx).toBeDefined();
+      expect(passphraseCall?.args[bodyIdx! + 1]).toBe('env-custom-passphrase');
+    });
+
+    it('preserves existing PULUMI_CONFIG_PASSPHRASE without overwriting when secret already exists and argument omitted', () => {
+      shim = setupShim({ existingSecrets: ['PULUMI_CONFIG_PASSPHRASE'] });
+      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined, PULUMI_CONFIG_PASSPHRASE: undefined }, shim.tmpDir);
+      expect(res.status).toBe(0);
+
+      const ghCalls = shim.getGhCalls();
+      // Verifies secret list was queried
+      const listCall = ghCalls.find((c) => c.args.includes('secret') && c.args.includes('list'));
+      expect(listCall).toBeDefined();
+
+      // Verifies PULUMI_CONFIG_PASSPHRASE was NOT set
+      const passphraseSetCall = ghCalls.find((c) =>
+        c.args.includes('secret') && c.args.includes('set') && c.args.includes('PULUMI_CONFIG_PASSPHRASE')
+      );
+      expect(passphraseSetCall).toBeUndefined();
     });
   });
 
