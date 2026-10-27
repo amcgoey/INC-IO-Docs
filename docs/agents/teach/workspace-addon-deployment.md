@@ -41,7 +41,7 @@ The deployment manifest defines the entry points and security scopes for the Add
         "runFunction": "https://<TUNNEL_OR_DEPLOYED_URL>/workspace/homepage"
       },
       "onItemsSelectedTrigger": {
-        "runFunction": "https://<TUNNEL_OR_DEPLOYED_URL>/workspace/homepage"
+        "runFunction": "https://<TUNNEL_OR_DEPLOYED_URL>/workspace/drive-items-selected"
       }
     }
   }
