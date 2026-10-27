@@ -1,11 +1,59 @@
-$PROJECT_ID = if ([bool]$env:PROJECT_ID) { $env:PROJECT_ID } else { "inc-io-docs-dev" }
-$REGION = if ([bool]$env:REGION) { $env:REGION } else { "us-east4" }
+param(
+    [ValidateSet("dev", "prod")]
+    [string]$Environment = "dev",
+
+    [string]$ProjectId,
+
+    [string]$Region,
+
+    [string]$Repo = "amcgoey/INC-IO-Docs",
+
+    [string]$Branch,
+
+    [string]$PulumiPassphrase,
+
+    [switch]$Force
+)
+
+# Enforce strict parameter precedence:
+# CLI -ProjectId wins first.
+# If omitted and -Environment was explicitly passed, map from preset ($Environment).
+# Else fall back to ambient $env:PROJECT_ID.
+# Else default to preset ($Environment).
+if ([bool]$ProjectId) {
+    $PROJECT_ID = $ProjectId
+} elseif ($PSBoundParameters.ContainsKey('Environment')) {
+    $PROJECT_ID = if ($Environment -eq "prod") { "inc-io-docs-prod" } else { "inc-io-docs-dev" }
+} elseif ([bool]$env:PROJECT_ID) {
+    $PROJECT_ID = $env:PROJECT_ID
+} else {
+    $PROJECT_ID = if ($Environment -eq "prod") { "inc-io-docs-prod" } else { "inc-io-docs-dev" }
+}
+
+# Region precedence: explicit -Region > ambient $env:REGION > default "us-east4"
+$REGION = if ([bool]$Region) {
+    $Region
+} elseif ([bool]$env:REGION) {
+    $env:REGION
+} else {
+    "us-east4"
+}
+
+# Branch precedence: explicit -Branch (stripping refs/heads/) > default ("develop" for dev, "main" for prod)
+if ([bool]$Branch) {
+    $BRANCH = $Branch -replace '^refs/heads/', ''
+} else {
+    $BRANCH = if ($Environment -eq "prod") { "main" } else { "develop" }
+}
+
+$REPO = if ([bool]$Repo) { $Repo } else { "amcgoey/INC-IO-Docs" }
+$ServiceName = "inc-io-docs-$Environment"
 $BUCKET_NAME = "${PROJECT_ID}-pulumi-state"
+$PulumiStack = $Environment
 $SA_NAME = "ci-deployer"
 $SA_EMAIL = "${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 $WIF_POOL = "github-actions-pool"
 $WIF_PROVIDER = "github-provider"
-$REPO = "amcgoey/INC-IO-Docs"
 
 function Assert-Success {
     param([string]$Message)
@@ -23,9 +71,13 @@ Write-Host ""
 Write-Host "=========================================================="
 Write-Host " Bootstrap Configuration Summary"
 Write-Host "=========================================================="
+Write-Host "Environment:     $Environment"
 Write-Host "Project ID:      $PROJECT_ID"
 Write-Host "Region:          $REGION"
+Write-Host "Branch:          $BRANCH"
+Write-Host "Service Name:    $ServiceName"
 Write-Host "Bucket Name:     $BUCKET_NAME"
+Write-Host "Pulumi Stack:    $PulumiStack"
 Write-Host "Service Account: $SA_NAME"
 Write-Host "WIF Pool:        $WIF_POOL"
 Write-Host "WIF Provider:    $WIF_PROVIDER"
@@ -33,10 +85,12 @@ Write-Host "Repository:      $REPO"
 Write-Host "=========================================================="
 Write-Host ""
 
-$response = Read-Host "Proceed? [y/N]"
-if ($response -notmatch '^[Yy]$') {
-    Write-Host "Aborted." -ForegroundColor Yellow
-    exit 1
+if (-not $Force) {
+    $response = Read-Host "Proceed? [y/N]"
+    if ($response -notmatch '^[Yy]$') {
+        Write-Host "Aborted." -ForegroundColor Yellow
+        exit 1
+    }
 }
 
 Write-Host "Enabling foundational GCP APIs..."
@@ -44,6 +98,8 @@ gcloud services enable `
     iamcredentials.googleapis.com `
     cloudresourcemanager.googleapis.com `
     iam.googleapis.com `
+    serviceusage.googleapis.com `
+    storage.googleapis.com `
     --project $PROJECT_ID
 Assert-Success "Failed to enable GCP APIs. Make sure the project '$PROJECT_ID' exists and you have permissions."
 
@@ -56,6 +112,7 @@ if ($LASTEXITCODE -eq 0) {
     gcloud storage buckets create "gs://$BUCKET_NAME" --project "$PROJECT_ID" --location "$REGION"
     Assert-Success "Failed to create GCS bucket."
 }
+
 Write-Host "Enabling Object Versioning on bucket..."
 gcloud storage buckets update "gs://$BUCKET_NAME" --versioning --project "$PROJECT_ID" | Out-Null
 Assert-Success "Failed to enable bucket versioning."
@@ -72,12 +129,50 @@ if ($LASTEXITCODE -eq 0) {
     Assert-Success "Failed to create Service Account."
 }
 
-Write-Host "Granting roles to Service Account..."
+Write-Host "Granting bucket-scoped roles/storage.admin to $SA_NAME on gs://$BUCKET_NAME..."
+gcloud storage buckets add-iam-policy-binding "gs://$BUCKET_NAME" `
+    --member="serviceAccount:$SA_EMAIL" `
+    --role="roles/storage.admin" | Out-Null
+Assert-Success "Failed to bind roles/storage.admin on bucket gs://$BUCKET_NAME to Service Account."
+
+Write-Host "Inspecting project IAM policy for legacy roles/editor on $SA_EMAIL..."
+$policyJson = gcloud projects get-iam-policy $PROJECT_ID --format=json 2>$null
+if ($policyJson) {
+    try {
+        $policy = ($policyJson -join "`n") | ConvertFrom-Json
+        $hasEditor = $false
+        if ($policy -and $policy.bindings) {
+            foreach ($binding in $policy.bindings) {
+                if ($binding.role -eq "roles/editor" -and $binding.members -contains "serviceAccount:$SA_EMAIL") {
+                    $hasEditor = $true
+                    break
+                }
+            }
+        }
+        if ($hasEditor) {
+            Write-Host "Removing legacy roles/editor from $SA_EMAIL..." -ForegroundColor Yellow
+            gcloud projects remove-iam-policy-binding $PROJECT_ID `
+                --member="serviceAccount:$SA_EMAIL" `
+                --role="roles/editor" `
+                --condition=None | Out-Null
+            Assert-Success "Failed to remove roles/editor from Service Account."
+        } else {
+            Write-Host "Service Account does not have roles/editor." -ForegroundColor Cyan
+        }
+    } catch {
+        Write-Warning "Failed to parse project IAM policy: $_"
+    }
+}
+
+Write-Host "Granting least-privilege project roles to Service Account..."
 $ROLES = @(
-    "roles/editor",
-    "roles/run.admin",
+    "roles/serviceusage.serviceUsageAdmin",
+    "roles/browser",
+    "roles/iam.serviceAccountAdmin",
     "roles/iam.serviceAccountUser",
-    "roles/artifactregistry.admin"
+    "roles/run.admin",
+    "roles/artifactregistry.admin",
+    "roles/gsuiteaddons.developer"
 )
 foreach ($role in $ROLES) {
     gcloud projects add-iam-policy-binding $PROJECT_ID `
@@ -101,11 +196,21 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 Write-Host "Configuring WIF Provider: $WIF_PROVIDER..."
+$attributeMapping = "google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment"
+$attributeCondition = "has(assertion.environment) && assertion.environment == '$Environment' && assertion.repository == '$REPO' && assertion.ref == 'refs/heads/$BRANCH'"
+
 $null = gcloud iam workload-identity-pools providers describe $WIF_PROVIDER `
     --workload-identity-pool="$WIF_POOL" `
     --location="global" --project="$PROJECT_ID" 2>&1
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "WIF Provider $WIF_PROVIDER already exists." -ForegroundColor Cyan
+    Write-Host "WIF Provider $WIF_PROVIDER already exists. Updating in place..." -ForegroundColor Cyan
+    gcloud iam workload-identity-pools providers update-oidc $WIF_PROVIDER `
+        --workload-identity-pool="$WIF_POOL" `
+        --location="global" `
+        --attribute-mapping="$attributeMapping" `
+        --attribute-condition="$attributeCondition" `
+        --project="$PROJECT_ID"
+    Assert-Success "Failed to update WIF Provider."
 } else {
     Write-Host "Creating WIF Provider $WIF_PROVIDER..."
     gcloud iam workload-identity-pools providers create-oidc $WIF_PROVIDER `
@@ -113,8 +218,8 @@ if ($LASTEXITCODE -eq 0) {
         --location="global" `
         --display-name="GitHub Provider" `
         --issuer-uri="https://token.actions.githubusercontent.com" `
-        --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository" `
-        --attribute-condition="attribute.repository == '$REPO'" `
+        --attribute-mapping="$attributeMapping" `
+        --attribute-condition="$attributeCondition" `
         --project="$PROJECT_ID"
     Assert-Success "Failed to create WIF Provider."
 }
@@ -133,7 +238,7 @@ Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host " Bootstrap complete! " -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Green
-Write-Host "Please ensure the following secrets are set in your GitHub Repository:"
+Write-Host "Please ensure the following secrets are set in your GitHub Environment ($Environment):"
 Write-Host ""
 Write-Host "1. WIF_PROVIDER" -ForegroundColor Cyan
 Write-Host "   $fullWifProvider"
@@ -142,6 +247,10 @@ Write-Host "2. GCP_SERVICE_ACCOUNT" -ForegroundColor Cyan
 Write-Host "   $SA_EMAIL"
 Write-Host ""
 Write-Host "3. PULUMI_CONFIG_PASSPHRASE" -ForegroundColor Cyan
-Write-Host "   (Enter a strong, custom passphrase. Pulumi will use this to encrypt secrets in your state file.)"
+if ($PulumiPassphrase) {
+    Write-Host "   $PulumiPassphrase"
+} else {
+    Write-Host "   (Enter a strong, custom passphrase. Pulumi will use this to encrypt secrets in your state file.)"
+}
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host ""
