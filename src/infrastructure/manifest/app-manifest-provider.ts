@@ -48,9 +48,11 @@ export type Manifest = Static<typeof ManifestSchema>;
 
 export interface AppManifestProviderOptions {
   manifestPath?: string;
+  manifestOverride?: Record<string, unknown> | undefined;
 }
 
 export class AppManifestProvider {
+  private readonly options?: AppManifestProviderOptions | undefined;
   private readonly manifestPath: string;
   private cachedConfiguration: AppConfiguration | undefined = undefined;
   private cachedRawManifest: unknown = undefined;
@@ -58,6 +60,7 @@ export class AppManifestProvider {
   private isManifestLoaded = false;
 
   constructor(options?: AppManifestProviderOptions) {
+    this.options = options;
     const manifestPath = options?.manifestPath ?? process.env.APP_MANIFEST_PATH;
     if (!manifestPath) {
       throw new Error(
@@ -80,10 +83,14 @@ export class AppManifestProvider {
         { cause: err }
       );
     }
-    const manifestData = parseJson(manifestContent, {
+    const rawData = parseJson(manifestContent, {
       filePath: this.manifestPath,
       description: 'manifest file',
-    });
+    }) as Record<string, unknown>;
+
+    const manifestData = this.options?.manifestOverride
+      ? { ...rawData, ...this.options.manifestOverride }
+      : rawData;
 
     const validatedManifest = validateAndCleanSchema(
       ManifestSchema,

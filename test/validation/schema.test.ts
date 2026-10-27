@@ -139,6 +139,14 @@ describe('DocumentType JSON files schema validation', () => {
       expect(retrieved).toEqual(spaceType);
       expect(['shared_drives', 'folders']).toContain(retrieved.storageConfig.fetchMethod);
     }
+
+    const projects = spaceTypes.find((s) => s.id === 'projects');
+    expect(projects).toBeDefined();
+    expect(projects?.spaceSchema.allowedDocumentTypes).toEqual(['communication-project']);
+
+    const proposals = spaceTypes.find((s) => s.id === 'proposals');
+    expect(proposals).toBeDefined();
+    expect(proposals?.spaceSchema.allowedDocumentTypes).toEqual(['communication-proposal']);
   });
 
   it('should have defaultValue: IN on direction field for communication schemas', async () => {

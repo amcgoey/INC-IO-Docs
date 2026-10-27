@@ -274,6 +274,46 @@ describe('AppManifestProvider', () => {
 
       await expect(provider.getDriveConfig()).rejects.toThrow(/invalid manifest/i);
     });
+
+    it('applies manifestOverride when provided in AppManifestProviderOptions', async () => {
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({
+          documentTypes: ['./original.json'],
+          configuration: {
+            workspace: { appTitle: 'Original Title' },
+          },
+          DocumentSpaceTypes: [
+            {
+              id: 'projects',
+              spaceSchema: { allowedDocumentTypes: ['communication-project'] },
+            },
+          ],
+        }),
+        'utf-8'
+      );
+
+      const provider = new AppManifestProvider({
+        manifestPath,
+        manifestOverride: {
+          DocumentSpaceTypes: [
+            {
+              id: 'projects',
+              spaceSchema: { allowedDocumentTypes: ['communication-project', 'communication-proposal'] },
+            },
+          ],
+        },
+      });
+
+      const raw = (await provider.getRawManifest()) as { DocumentSpaceTypes?: Array<Record<string, unknown>> };
+      expect(raw.DocumentSpaceTypes).toEqual([
+        {
+          id: 'projects',
+          spaceSchema: { allowedDocumentTypes: ['communication-project', 'communication-proposal'] },
+        },
+      ]);
+    });
   });
 });
 

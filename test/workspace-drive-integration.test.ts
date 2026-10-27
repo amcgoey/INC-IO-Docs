@@ -457,6 +457,26 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     });
 
     it('files communication-proposal into existing <contact> folder under projects Shared Drive space', async () => {
+      // Inject test-scoped Manifest override at AppManifestProvider seam to allow communication-proposal under projects space
+      const originalGetRaw = manifestProvider.getRawManifest.bind(manifestProvider);
+      vi.spyOn(manifestProvider, 'getRawManifest').mockImplementation(async () => {
+        const raw = (await originalGetRaw()) as { DocumentSpaceTypes?: Array<Record<string, unknown>> };
+        return {
+          ...raw,
+          DocumentSpaceTypes: raw?.DocumentSpaceTypes?.map((st) =>
+            st.id === 'projects'
+              ? {
+                  ...st,
+                  spaceSchema: {
+                    ...(st.spaceSchema as Record<string, unknown>),
+                    allowedDocumentTypes: ['communication-project', 'communication-proposal'],
+                  },
+                }
+              : st
+          ),
+        };
+      });
+
       const fileId = 'file-prop-proj-456';
       const fileName = 'RFP_Proposal_Response.pdf';
       const rootSharedDriveId = 'projects-shared-drive-001';
