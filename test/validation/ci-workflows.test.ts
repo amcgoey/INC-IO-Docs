@@ -296,5 +296,93 @@ describe('CI/CD & Release Workflow Contract Validation', () => {
       expect(runScript).toContain('$REPO_NAME');
       expect(runScript).toContain('$PROJECT_ID');
     });
+
+    it('executes Verify Deployment Readiness (Smoke Test) immediately following the Workspace Add-on deployment step', () => {
+      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+      const doc = YAML.parse(content);
+      const steps: Array<{ name?: string; run?: string }> = doc.jobs?.deploy?.steps || [];
+
+      const addonDeployIdx = steps.findIndex(
+        (s) => s.name === 'Deploy Google Workspace Add-on Manifest'
+      );
+      expect(addonDeployIdx).toBeGreaterThanOrEqual(0);
+
+      const smokeTestIdx = steps.findIndex(
+        (s) => s.name === 'Verify Deployment Readiness (Smoke Test)'
+      );
+      expect(smokeTestIdx).toBe(addonDeployIdx + 1);
+    });
+
+    it('verifies Cloud Run readiness via gcloud run services describe in smoke verification step', () => {
+      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+      const doc = YAML.parse(content);
+      const steps: Array<{ name?: string; run?: string }> = doc.jobs?.deploy?.steps || [];
+
+      const smokeStep = steps.find(
+        (s) => s.name === 'Verify Deployment Readiness (Smoke Test)'
+      );
+      expect(smokeStep).toBeDefined();
+      const run = smokeStep!.run!;
+
+      expect(run).toContain('gcloud run services describe');
+      expect(run).toContain('$SERVICE_NAME');
+      expect(run).toContain('$REGION');
+      expect(run).toContain('$PROJECT_ID');
+      expect(run).toContain('--format=json');
+      expect(run).toContain('latestReadyRevisionName');
+      expect(run).toContain('latestCreatedRevisionName');
+      expect(run).toContain('Ready');
+    });
+
+    it('verifies Workspace Add-on trigger alignment via gcloud workspace-add-ons deployments describe', () => {
+      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+      const doc = YAML.parse(content);
+      const steps: Array<{ name?: string; run?: string }> = doc.jobs?.deploy?.steps || [];
+
+      const smokeStep = steps.find(
+        (s) => s.name === 'Verify Deployment Readiness (Smoke Test)'
+      );
+      expect(smokeStep).toBeDefined();
+      const run = smokeStep!.run!;
+
+      expect(run).toContain('gcloud workspace-add-ons deployments describe');
+      expect(run).toContain('$REPO_NAME');
+      expect(run).toContain('$PROJECT_ID');
+      expect(run).toContain('homepageTrigger');
+      expect(run).toContain('/workspace/homepage');
+    });
+
+    it('sends an unauthenticated POST and asserts HTTP 401 or 403', () => {
+      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+      const doc = YAML.parse(content);
+      const steps: Array<{ name?: string; run?: string }> = doc.jobs?.deploy?.steps || [];
+
+      const smokeStep = steps.find(
+        (s) => s.name === 'Verify Deployment Readiness (Smoke Test)'
+      );
+      expect(smokeStep).toBeDefined();
+      const run = smokeStep!.run!;
+
+      expect(run).toContain('POST');
+      expect(run).toContain('/workspace/homepage');
+      expect(run).toContain('401');
+      expect(run).toContain('403');
+    });
+
+    it('mints an OIDC identity token and verifies authenticated POST returns 200 with valid Workspace Card JSON', () => {
+      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+      const doc = YAML.parse(content);
+      const steps: Array<{ name?: string; run?: string }> = doc.jobs?.deploy?.steps || [];
+
+      const smokeStep = steps.find(
+        (s) => s.name === 'Verify Deployment Readiness (Smoke Test)'
+      );
+      expect(smokeStep).toBeDefined();
+      const run = smokeStep!.run!;
+
+      expect(run).toContain('gcloud auth print-identity-token --audiences=');
+      expect(run).toContain('Authorization: Bearer');
+      expect(run).toContain('200');
+    });
   });
 });
