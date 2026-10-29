@@ -194,7 +194,7 @@ describe('Infrastructure and Build Isolation Workflow (#239)', () => {
     );
   });
 
-  describe('CI/CD deployment workflow step order and bootstrap image handling (#240)', () => {
+  describe('CI/CD deployment workflow step order, conditional bootstrap, and create-or-replace manifest rollout (#242)', () => {
     interface WorkflowStep {
       name?: string;
       id?: string;
@@ -207,28 +207,25 @@ describe('Infrastructure and Build Isolation Workflow (#239)', () => {
       expect(fs.existsSync(DEPLOY_YML_PATH)).toBe(true);
       const content = fs.readFileSync(DEPLOY_YML_PATH, 'utf8');
       const parsed = YAML.parse(content);
-      const steps = parsed?.jobs?.['build-and-deploy']?.steps;
+      const steps = parsed?.jobs?.deploy?.steps;
       expect(Array.isArray(steps)).toBe(true);
       return steps;
     }
 
-    it('orders pre-flight Docker build, bootstrap image resolution, and deployment passes correctly', () => {
+    it('orders GCP auth, conditional bootstrap, Docker build & push, and Cloud Run & Addon rollout passes correctly', () => {
       const steps = getDeployWorkflowSteps();
 
-      const buildLocalIdx = steps.findIndex(
-        (s) => s.name === 'Build Docker Image (Local)'
-      );
       const authIdx = steps.findIndex(
         (s) => s.name === 'Authenticate to Google Cloud (WIF)'
       );
-      const resolveBootstrapIdx = steps.findIndex(
-        (s) => s.name === 'Resolve Bootstrap Image for Base Service'
-      );
-      const provisionInfraIdx = steps.findIndex(
-        (s) => s.name === 'Provision Infrastructure (Artifact Registry & Base Service)'
+      const bootstrapIdx = steps.findIndex(
+        (s) => s.name === 'Conditional First-Run Infrastructure Bootstrap'
       );
       const dockerAuthIdx = steps.findIndex(
         (s) => s.name === 'Configure Docker Authentication for Artifact Registry'
+      );
+      const buildDockerIdx = steps.findIndex(
+        (s) => s.name === 'Build Docker Image with Version Tags'
       );
       const pushDockerIdx = steps.findIndex(
         (s) => s.name === 'Push Docker Image'
@@ -236,131 +233,263 @@ describe('Infrastructure and Build Isolation Workflow (#239)', () => {
       const deployAppIdx = steps.findIndex(
         (s) => s.name === 'Deploy App to Cloud Run'
       );
+      const pulumiOutputIdx = steps.findIndex(
+        (s) => s.name === 'Get Cloud Run URL from Pulumi'
+      );
+      const generateManifestIdx = steps.findIndex(
+        (s) => s.name === 'Generate Google Workspace Add-on Manifest'
+      );
+      const deployManifestIdx = steps.findIndex(
+        (s) => s.name === 'Deploy Google Workspace Add-on Manifest'
+      );
 
-      // 1) "Build Docker Image (Local)" occurs before GCP auth and before "Provision Infrastructure"
-      expect(buildLocalIdx).toBeGreaterThanOrEqual(0);
+      // 1) Auth occurs before conditional bootstrap
       expect(authIdx).toBeGreaterThanOrEqual(0);
-      expect(provisionInfraIdx).toBeGreaterThanOrEqual(0);
-      expect(buildLocalIdx).toBeLessThan(authIdx);
-      expect(buildLocalIdx).toBeLessThan(provisionInfraIdx);
+      expect(bootstrapIdx).toBeGreaterThan(authIdx);
 
-      // Verify "Build Docker Image (Local)" builds with IMAGE_TAG and IMAGE_LATEST and exports them
-      const buildStep = steps[buildLocalIdx];
-      expect(buildStep.run).toContain('docker build');
-      expect(buildStep.run).toContain('IMAGE_TAG=');
-      expect(buildStep.run).toContain('IMAGE_LATEST=');
-      expect(buildStep.run).toContain('>> $GITHUB_ENV');
+      // 2) Conditional bootstrap occurs before Docker auth and build
+      expect(dockerAuthIdx).toBeGreaterThan(bootstrapIdx);
+      expect(buildDockerIdx).toBeGreaterThan(bootstrapIdx);
 
-      // 2) "Resolve Bootstrap Image for Base Service" occurs before "Provision Infrastructure"
-      expect(resolveBootstrapIdx).toBeGreaterThanOrEqual(0);
-      expect(resolveBootstrapIdx).toBeLessThan(provisionInfraIdx);
+      // 3) Docker build and auth occur before Docker push
+      expect(pushDockerIdx).toBeGreaterThan(buildDockerIdx);
+      expect(pushDockerIdx).toBeGreaterThan(dockerAuthIdx);
 
-      // 3) "Provision Infrastructure" config-map binds image to ${{ env.BOOTSTRAP_IMAGE }}
-      const provisionStep = steps[provisionInfraIdx];
-      expect(provisionStep.with).toBeDefined();
-      const provisionConfigMap = String(provisionStep.with?.['config-map'] ?? '');
-      expect(provisionConfigMap).toContain('image:');
-      expect(provisionConfigMap).toContain('${{ env.BOOTSTRAP_IMAGE }}');
+      // 4) Docker push occurs before Deploy App to Cloud Run
+      expect(deployAppIdx).toBeGreaterThan(pushDockerIdx);
 
-      // 4) Docker authentication and push steps occur after "Provision Infrastructure" and before "Deploy App to Cloud Run"
-      expect(dockerAuthIdx).toBeGreaterThan(provisionInfraIdx);
-      expect(pushDockerIdx).toBeGreaterThan(provisionInfraIdx);
-      expect(dockerAuthIdx).toBeLessThan(deployAppIdx);
-      expect(pushDockerIdx).toBeLessThan(deployAppIdx);
-
-      // Verify "Push Docker Image" pushes IMAGE_TAG and IMAGE_LATEST
-      const pushStep = steps[pushDockerIdx];
-      expect(pushStep.run).toContain('docker push "$IMAGE_TAG"');
-      expect(pushStep.run).toContain('docker push "$IMAGE_LATEST"');
-
-      // 5) "Deploy App to Cloud Run" config-map binds image to ${{ env.IMAGE_TAG }}
+      // Verify Cloud Run deployment binds image to ${{ env.IMAGE_SHA_TAG }}
       const deployStep = steps[deployAppIdx];
       expect(deployStep.with).toBeDefined();
       const deployConfigMap = String(deployStep.with?.['config-map'] ?? '');
       expect(deployConfigMap).toContain('image:');
-      expect(deployConfigMap).toContain('${{ env.IMAGE_TAG }}');
+      expect(deployConfigMap).toContain('${{ env.IMAGE_SHA_TAG }}');
+
+      // 5) Pulumi output, manifest generation, and manifest deployment sequence
+      expect(pulumiOutputIdx).toBeGreaterThan(deployAppIdx);
+      expect(generateManifestIdx).toBeGreaterThan(pulumiOutputIdx);
+      expect(deployManifestIdx).toBeGreaterThan(generateManifestIdx);
+
+      // Verify manifest generation uses dynamic env
+      const manifestStep = steps[generateManifestIdx];
+      expect(manifestStep.run).toContain('--environment "$DEPLOY_ENV"');
+      expect(manifestStep.run).toContain('--service-url "$SERVICE_URL"');
     });
 
-    describe('BOOTSTRAP_IMAGE resolution script behavior', () => {
-      function runBootstrapResolutionScript(mockGcloudBody: string): string {
+    describe('Conditional bootstrap script execution behavior', () => {
+      function runBootstrapScript(repoExists: boolean): { calls: string[]; scriptOutput: string } {
         const bashBin = findBash();
         if (!bashBin) {
           throw new Error('Bash is not available in the current environment');
         }
 
-        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bootstrap-img-test-'));
-        const githubEnvFile = path.join(tempDir, 'github_env');
-        fs.writeFileSync(githubEnvFile, '', 'utf8');
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bootstrap-cond-test-'));
+        const callsLogFile = path.join(tempDir, 'calls.log');
+        fs.writeFileSync(callsLogFile, '', 'utf8');
 
+        // Fake gcloud binary
         const fakeGcloud = path.join(tempDir, 'gcloud');
-        const scriptContent = mockGcloudBody.startsWith('#!')
-          ? mockGcloudBody
-          : `#!/usr/bin/env bash\n${mockGcloudBody}\n`;
-        fs.writeFileSync(fakeGcloud, scriptContent, { mode: 0o755 });
+        const gcloudScript = `#!/usr/bin/env bash
+echo "gcloud $*" >> "${toBashPath(callsLogFile)}"
+if [ "$1" = "artifacts" ] && [ "$2" = "repositories" ] && [ "$3" = "describe" ]; then
+  ${repoExists ? 'exit 0' : 'exit 1'}
+fi
+exit 0
+`;
+        fs.writeFileSync(fakeGcloud, gcloudScript, { mode: 0o755 });
+
+        // Fake pulumi binary
+        const fakePulumi = path.join(tempDir, 'pulumi');
+        const pulumiScript = `#!/usr/bin/env bash
+echo "pulumi $*" >> "${toBashPath(callsLogFile)}"
+exit 0
+`;
+        fs.writeFileSync(fakePulumi, pulumiScript, { mode: 0o755 });
 
         try {
           const steps = getDeployWorkflowSteps();
-          const resolveBootstrapStep = steps.find(
-            (s) => s.name === 'Resolve Bootstrap Image for Base Service'
+          const bootstrapStep = steps.find(
+            (s) => s.name === 'Conditional First-Run Infrastructure Bootstrap'
           );
-          expect(resolveBootstrapStep).toBeDefined();
-
-          const interpolatedScript = resolveBootstrapStep!.run!
-            .replace(/\$\{\{\s*env\.SERVICE_NAME\s*\}\}/g, 'test-service')
-            .replace(/\$\{\{\s*env\.REGION\s*\}\}/g, 'us-east4')
-            .replace(/\$\{\{\s*env\.PROJECT_ID\s*\}\}/g, 'test-project');
+          expect(bootstrapStep).toBeDefined();
 
           const testScript = `
 export PATH="${toBashPath(tempDir)}:$PATH"
-export GITHUB_ENV="${toBashPath(githubEnvFile)}"
+export REPO_NAME="inc-io-docs"
+export REGION="us-east4"
+export PROJECT_ID="inc-io-docs-dev"
+export PULUMI_STATE_BUCKET="gs://inc-io-docs-dev-pulumi-state"
+export PULUMI_STACK="dev"
 
-${interpolatedScript}
+${bootstrapStep!.run!}
 `;
-          execFileSync(bashBin, ['-c', testScript], { encoding: 'utf8' });
+          const output = execFileSync(bashBin, ['-c', testScript], { encoding: 'utf8' });
+          const calls = fs
+            .readFileSync(callsLogFile, 'utf8')
+            .split(/\r?\n/)
+            .filter((l) => l.trim().length > 0);
 
-          return fs.readFileSync(githubEnvFile, 'utf8');
+          return { calls, scriptOutput: output };
         } finally {
           fs.rmSync(tempDir, { recursive: true, force: true });
         }
       }
 
-      it('contains robust query syntax with fallback to us-docker.pkg.dev/cloudrun/container/hello', () => {
-        const steps = getDeployWorkflowSteps();
-        const resolveBootstrapStep = steps.find(
-          (s) => s.name === 'Resolve Bootstrap Image for Base Service'
-        );
-        expect(resolveBootstrapStep).toBeDefined();
-        const runScript = resolveBootstrapStep?.run ?? '';
+      it('skips pulumi up when Artifact Registry repository already exists', () => {
+        if (!findBash()) return;
 
-        expect(runScript).toContain('gcloud run services describe');
-        expect(runScript).toContain('--format="value(spec.template.spec.containers[0].image)"');
-        expect(runScript).toContain('2>/dev/null || true');
-        expect(runScript).toContain('us-docker.pkg.dev/cloudrun/container/hello');
-        expect(runScript).toContain('echo "BOOTSTRAP_IMAGE=$BOOTSTRAP_IMAGE" >> $GITHUB_ENV');
+        const { calls, scriptOutput } = runBootstrapScript(true);
+        expect(scriptOutput).toContain('Skipping');
+        const pulumiCalls = calls.filter((c) => c.startsWith('pulumi'));
+        expect(pulumiCalls).toHaveLength(0);
       });
 
-      it('resolves active image when gcloud run services describe returns an image', () => {
-        if (!findBash()) {
-          return;
+      it('executes pulumi login, stack select, and pulumi up when Artifact Registry repository does not exist', () => {
+        if (!findBash()) return;
+
+        const { calls, scriptOutput } = runBootstrapScript(false);
+        expect(scriptOutput).toContain('Executing initial bootstrap pulumi up');
+        const pulumiCalls = calls.filter((c) => c.startsWith('pulumi'));
+        expect(pulumiCalls.some((c) => c.includes('login'))).toBe(true);
+        expect(pulumiCalls.some((c) => c.includes('stack select'))).toBe(true);
+        expect(pulumiCalls.some((c) => c.includes('up'))).toBe(true);
+      });
+    });
+
+    describe('Workspace Add-on create-or-replace deployment script behavior', () => {
+      function runAddonDeployScript(deploymentExists: boolean): { calls: string[]; scriptOutput: string } {
+        const bashBin = findBash();
+        if (!bashBin) {
+          throw new Error('Bash is not available in the current environment');
         }
 
-        const envContent = runBootstrapResolutionScript(
-          'echo "us-east4-docker.pkg.dev/inc-io-docs-dev/inc-io-docs/inc-io-docs:active-tag-1234"'
-        );
-        expect(envContent).toContain(
-          'BOOTSTRAP_IMAGE=us-east4-docker.pkg.dev/inc-io-docs-dev/inc-io-docs/inc-io-docs:active-tag-1234'
-        );
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'addon-deploy-test-'));
+        const callsLogFile = path.join(tempDir, 'calls.log');
+        fs.writeFileSync(callsLogFile, '', 'utf8');
+
+        // Fake gcloud binary
+        const fakeGcloud = path.join(tempDir, 'gcloud');
+        const gcloudScript = `#!/usr/bin/env bash
+echo "gcloud $*" >> "${toBashPath(callsLogFile)}"
+if [ "$1" = "workspace-add-ons" ] && [ "$2" = "deployments" ] && [ "$3" = "describe" ]; then
+  ${deploymentExists ? 'exit 0' : 'exit 1'}
+fi
+exit 0
+`;
+        fs.writeFileSync(fakeGcloud, gcloudScript, { mode: 0o755 });
+
+        try {
+          const steps = getDeployWorkflowSteps();
+          const addonDeployStep = steps.find(
+            (s) => s.name === 'Deploy Google Workspace Add-on Manifest'
+          );
+          expect(addonDeployStep).toBeDefined();
+
+          const testScript = `
+export PATH="${toBashPath(tempDir)}:$PATH"
+export REPO_NAME="inc-io-docs"
+export PROJECT_ID="inc-io-docs-dev"
+
+${addonDeployStep!.run!}
+`;
+          const output = execFileSync(bashBin, ['-c', testScript], { encoding: 'utf8' });
+          const calls = fs
+            .readFileSync(callsLogFile, 'utf8')
+            .split(/\r?\n/)
+            .filter((l) => l.trim().length > 0);
+
+          return { calls, scriptOutput: output };
+        } finally {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+      }
+
+      it('executes deployments replace when deployment already exists', () => {
+        if (!findBash()) return;
+
+        const { calls, scriptOutput } = runAddonDeployScript(true);
+        expect(scriptOutput).toContain('Running deployments replace');
+        const replaceCall = calls.find((c) => c.includes('deployments replace'));
+        expect(replaceCall).toBeDefined();
+        const createCall = calls.find((c) => c.includes('deployments create'));
+        expect(createCall).toBeUndefined();
       });
 
-      it('falls back to hello container when gcloud run services describe errors or returns empty', () => {
-        if (!findBash()) {
-          return;
-        }
+      it('executes deployments create when deployment does not exist', () => {
+        if (!findBash()) return;
 
-        const envContent = runBootstrapResolutionScript(
-          'echo "ERROR: (gcloud.run.services.describe) Cannot find service" >&2\nexit 1'
-        );
-        expect(envContent).toContain('BOOTSTRAP_IMAGE=us-docker.pkg.dev/cloudrun/container/hello');
+        const { calls, scriptOutput } = runAddonDeployScript(false);
+        expect(scriptOutput).toContain('Running deployments create');
+        const createCall = calls.find((c) => c.includes('deployments create'));
+        expect(createCall).toBeDefined();
+        const replaceCall = calls.find((c) => c.includes('deployments replace'));
+        expect(replaceCall).toBeUndefined();
+      });
+    });
+
+    describe('Docker version tagging script behavior', () => {
+      it('exports SHA and latest on develop, and adds v${PACKAGE_VERSION} on prod', () => {
+        const bashBin = findBash();
+        if (!bashBin) return;
+
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docker-tag-test-'));
+        const githubEnvDev = path.join(tempDir, 'github_env_dev');
+        const githubEnvProd = path.join(tempDir, 'github_env_prod');
+        fs.writeFileSync(githubEnvDev, '', 'utf8');
+        fs.writeFileSync(githubEnvProd, '', 'utf8');
+
+        // Fake docker binary
+        const fakeDocker = path.join(tempDir, 'docker');
+        const dockerScript = `#!/usr/bin/env bash
+exit 0
+`;
+        fs.writeFileSync(fakeDocker, dockerScript, { mode: 0o755 });
+
+        try {
+          const steps = getDeployWorkflowSteps();
+          const buildStep = steps.find(
+            (s) => s.name === 'Build Docker Image with Version Tags'
+          );
+          expect(buildStep).toBeDefined();
+
+          // Dev execution
+          const devScript = `
+export PATH="${toBashPath(tempDir)}:$PATH"
+export GITHUB_ENV="${toBashPath(githubEnvDev)}"
+export GITHUB_SHA="mocksha123456"
+export DEPLOY_ENV="dev"
+export REGION="us-east4"
+export PROJECT_ID="inc-io-docs-dev"
+export REPO_NAME="inc-io-docs"
+
+${buildStep!.run!}
+`;
+          execFileSync(bashBin, ['-c', devScript], { cwd: ROOT_DIR, encoding: 'utf8' });
+          const devEnv = fs.readFileSync(githubEnvDev, 'utf8');
+          expect(devEnv).toContain('IMAGE_SHA_TAG=us-east4-docker.pkg.dev/inc-io-docs-dev/inc-io-docs/inc-io-docs:mocksha123456');
+          expect(devEnv).toContain('IMAGE_LATEST=us-east4-docker.pkg.dev/inc-io-docs-dev/inc-io-docs/inc-io-docs:latest');
+          expect(devEnv).not.toContain('IMAGE_VERSION_TAG=');
+
+          // Prod execution
+          const prodScript = `
+export PATH="${toBashPath(tempDir)}:$PATH"
+export GITHUB_ENV="${toBashPath(githubEnvProd)}"
+export GITHUB_SHA="mocksha123456"
+export DEPLOY_ENV="prod"
+export REGION="us-east4"
+export PROJECT_ID="inc-io-docs-prod"
+export REPO_NAME="inc-io-docs"
+
+${buildStep!.run!}
+`;
+          execFileSync(bashBin, ['-c', prodScript], { cwd: ROOT_DIR, encoding: 'utf8' });
+          const prodEnv = fs.readFileSync(githubEnvProd, 'utf8');
+          expect(prodEnv).toContain('IMAGE_SHA_TAG=us-east4-docker.pkg.dev/inc-io-docs-prod/inc-io-docs/inc-io-docs:mocksha123456');
+          expect(prodEnv).toContain('IMAGE_LATEST=us-east4-docker.pkg.dev/inc-io-docs-prod/inc-io-docs/inc-io-docs:latest');
+          expect(prodEnv).toContain('IMAGE_VERSION_TAG=us-east4-docker.pkg.dev/inc-io-docs-prod/inc-io-docs/inc-io-docs:v0.5.0');
+        } finally {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        }
       });
     });
   });

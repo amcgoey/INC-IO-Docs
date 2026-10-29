@@ -142,4 +142,159 @@ describe('CI/CD & Release Workflow Contract Validation', () => {
       expect(content).not.toMatch(/\bknip\b/i);
     });
   });
+
+  describe('Deployment Workflow Contract (deploy.yml)', () => {
+    it('is valid YAML', () => {
+      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+      expect(() => YAML.parse(content)).not.toThrow();
+    });
+
+    it('triggers on push to develop and main', () => {
+      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+      const doc = YAML.parse(content);
+
+      expect(doc.on).toBeDefined();
+      expect(doc.on.push).toBeDefined();
+      const branches = doc.on.push.branches;
+      expect(branches).toEqual(expect.arrayContaining(['develop', 'main']));
+    });
+
+    it('enforces per-branch concurrency with cancel-in-progress: false', () => {
+      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+      const doc = YAML.parse(content);
+
+      expect(doc.concurrency).toBeDefined();
+      expect(doc.concurrency.group).toBe('deploy-${{ github.ref_name }}');
+      expect(doc.concurrency['cancel-in-progress']).toBe(false);
+    });
+
+    it('invokes reusable ci.yml as upstream quality-gates job', () => {
+      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+      const doc = YAML.parse(content);
+
+      expect(doc.jobs).toBeDefined();
+      expect(doc.jobs['quality-gates']).toBeDefined();
+      expect(doc.jobs['quality-gates'].uses).toBe('./.github/workflows/ci.yml');
+    });
+
+    it('gates deploy job on quality-gates with dynamic environment binding and permissions', () => {
+      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+      const doc = YAML.parse(content);
+
+      const deployJob = doc.jobs?.deploy;
+      expect(deployJob).toBeDefined();
+      expect(deployJob.needs).toEqual(expect.arrayContaining(['quality-gates']));
+      expect(deployJob.environment).toBe("${{ github.ref_name == 'main' && 'prod' || 'dev' }}");
+      expect(deployJob.permissions).toEqual({
+        contents: 'write',
+        'id-token': 'write',
+      });
+    });
+
+    it('consumes required GitHub Environment variables and secrets', () => {
+      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+      const doc = YAML.parse(content);
+      const deployJob = doc.jobs?.deploy;
+      expect(deployJob).toBeDefined();
+
+      const envConfig = deployJob.env || {};
+      expect(envConfig.DEPLOY_ENV).toBe("${{ github.ref_name == 'main' && 'prod' || 'dev' }}");
+      expect(envConfig.PROJECT_ID).toBe('${{ vars.PROJECT_ID }}');
+      expect(envConfig.REGION).toBe('${{ vars.REGION }}');
+      expect(envConfig.REPO_NAME).toBe('${{ vars.REPO_NAME }}');
+      expect(envConfig.SERVICE_NAME).toBe('${{ vars.SERVICE_NAME }}');
+      expect(envConfig.PULUMI_STACK).toBe('${{ vars.PULUMI_STACK }}');
+      expect(envConfig.PULUMI_STATE_BUCKET).toBe('${{ vars.PULUMI_STATE_BUCKET }}');
+
+      // Verify WIF and Pulumi secrets authentication
+      expect(content).toContain('${{ secrets.WIF_PROVIDER }}');
+      expect(content).toContain('${{ secrets.GCP_SERVICE_ACCOUNT }}');
+      expect(content).toContain('${{ secrets.PULUMI_CONFIG_PASSPHRASE');
+    });
+
+    it('guards pre-Docker bootstrap pulumi up with gcloud artifacts repositories describe existence check', () => {
+      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+      const doc = YAML.parse(content);
+      const steps: Array<{ name?: string; run?: string }> = doc.jobs?.deploy?.steps || [];
+
+      const bootstrapStep = steps.find(
+        (s) => s.run && s.run.includes('artifacts repositories describe')
+      );
+      expect(bootstrapStep).toBeDefined();
+      const runScript = bootstrapStep!.run!;
+
+      // Guarded by describe check
+      expect(runScript).toContain('gcloud artifacts repositories describe');
+      expect(runScript).toContain('$REPO_NAME');
+      expect(runScript).toContain('$REGION');
+      expect(runScript).toContain('$PROJECT_ID');
+
+      // Only logs in and runs pulumi up when repo does not exist
+      expect(runScript).toContain('pulumi login');
+      expect(runScript).toContain('pulumi stack select');
+      expect(runScript).toContain('pulumi up');
+    });
+
+    it('builds and tags Docker images with SHA and latest on develop, plus v${PACKAGE_VERSION} on main, and pins Pulumi to immutable SHA tag', () => {
+      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+      const doc = YAML.parse(content);
+      const steps: Array<{ name?: string; uses?: string; run?: string; with?: Record<string, unknown> }> =
+        doc.jobs?.deploy?.steps || [];
+
+      // Find Docker build step
+      const buildStep = steps.find((s) => s.run && s.run.includes('docker build'));
+      expect(buildStep).toBeDefined();
+      const buildRun = buildStep!.run!;
+
+      expect(buildRun).toContain('PACKAGE_VERSION=');
+      expect(buildRun).toContain('package.json');
+      expect(buildRun).toContain('IMAGE_SHA_TAG=');
+      expect(buildRun).toContain('IMAGE_LATEST=');
+      expect(buildRun).toContain('IMAGE_VERSION_TAG=');
+      expect(buildRun).toContain('v${PACKAGE_VERSION}');
+      expect(buildRun).toContain('prod');
+
+      // Find Pulumi deploy step
+      const deployStep = steps.find(
+        (s) => typeof s.uses === 'string' && s.uses.startsWith('pulumi/actions') && s.with?.['config-map']
+      );
+      expect(deployStep).toBeDefined();
+      const configMap = String(deployStep!.with?.['config-map'] ?? '');
+      expect(configMap).toContain('IMAGE_SHA_TAG');
+    });
+
+    it('generates Workspace Add-on manifest with dynamic --environment flag', () => {
+      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+      const doc = YAML.parse(content);
+      const steps: Array<{ name?: string; run?: string }> = doc.jobs?.deploy?.steps || [];
+
+      const manifestStep = steps.find(
+        (s) => s.run && s.run.includes('generate:manifest')
+      );
+      expect(manifestStep).toBeDefined();
+      const runScript = manifestStep!.run!;
+      expect(runScript).toContain('npm run generate:manifest --');
+      expect(runScript).toContain('--service-url');
+      expect(runScript).toContain('--environment "$DEPLOY_ENV"');
+    });
+
+    it('deploys Workspace Add-on via create-or-replace based on deployments describe check', () => {
+      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+      const doc = YAML.parse(content);
+      const steps: Array<{ name?: string; run?: string }> = doc.jobs?.deploy?.steps || [];
+
+      const addonDeployStep = steps.find(
+        (s) => s.run && s.run.includes('workspace-add-ons deployments')
+      );
+      expect(addonDeployStep).toBeDefined();
+      const runScript = addonDeployStep!.run!;
+
+      expect(runScript).toContain('gcloud workspace-add-ons deployments describe');
+      expect(runScript).toContain('gcloud workspace-add-ons deployments replace');
+      expect(runScript).toContain('gcloud workspace-add-ons deployments create');
+      expect(runScript).toContain('--deployment-file=infra/deployment.json');
+      expect(runScript).toContain('$REPO_NAME');
+      expect(runScript).toContain('$PROJECT_ID');
+    });
+  });
 });

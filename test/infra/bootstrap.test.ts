@@ -961,10 +961,9 @@ describe('GCP Bootstrap Script (infra/bootstrap.ps1)', { timeout: 15000 }, () =>
   });
 
   describe('Workflow alignment in .github/workflows/deploy.yml', () => {
-    it('declares environment: dev on the build-and-deploy job', () => {
+    it('declares dynamic environment binding on the deploy job', () => {
       const content = fs.readFileSync(DEPLOY_YML_PATH, 'utf8');
-      // Verify job definition includes environment: dev
-      expect(content).toMatch(/jobs:\s+build-and-deploy:[\s\S]*?environment:\s*dev/);
+      expect(content).toMatch(/jobs:\s+[\s\S]*?deploy:[\s\S]*?environment:\s*\${{\s*github\.ref_name == 'main' && 'prod' \|\| 'dev'\s*}}/);
     });
   });
 });
