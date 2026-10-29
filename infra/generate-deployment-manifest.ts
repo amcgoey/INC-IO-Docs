@@ -15,6 +15,8 @@ Options:
   --template <path>        Path to deployment manifest template (default: infra/deployment.template.json)
   --output <path>          Path to write generated deployment manifest (default: infra/deployment.json)
   --addon-name <name>      Optional custom add-on display name override
+  --logo-url <url>         Optional custom logo URL override
+  --logo-version <version> Optional logo version cache buster
 `);
   process.exit(1);
 }
@@ -30,6 +32,8 @@ function main(): void {
         template: { type: 'string' },
         output: { type: 'string' },
         'addon-name': { type: 'string' },
+        'logo-url': { type: 'string' },
+        'logo-version': { type: 'string' },
       },
       allowPositionals: false,
     });
@@ -51,6 +55,8 @@ function main(): void {
   const templatePath = (values['template'] as string | undefined) ?? path.resolve(__dirname, 'deployment.template.json');
   const outputPath = (values['output'] as string | undefined) ?? path.resolve(__dirname, 'deployment.json');
   const addOnName = values['addon-name'] as string | undefined;
+  const logoUrl = values['logo-url'] as string | undefined;
+  const logoVersion = values['logo-version'] as string | undefined;
 
   if (!fs.existsSync(templatePath)) {
     console.error(`Error: Deployment manifest template not found at "${templatePath}"`);
@@ -66,6 +72,8 @@ function main(): void {
       serviceUrl,
       environment,
       ...(addOnName ? { addOnName } : {}),
+      ...(logoUrl ? { logoUrl } : {}),
+      ...(logoVersion ? { logoVersion } : {}),
     });
   } catch (error) {
     console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);

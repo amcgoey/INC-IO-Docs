@@ -1,0 +1,68 @@
+{
+  "visibility": "PRIVATE_DOMAIN_ONLY",
+  "oauthConsentScreen": {
+    "userType": "INTERNAL",
+    "appName": "INC-IO Docs",
+    "userSupportEmailInstruction": "Select the currently logged-in Google Workspace account or owned domain Google Group from the locked Google Cloud Console dropdown. Public git history records the noreply developer contact.",
+    "appDomainAndLogoInstruction": "Leave Application home page, Application privacy policy link, Application terms of service link, Authorized domains, and App logo completely BLANK on the OAuth Consent Screen so Google Cloud Console never triggers Google Search Console domain ownership verification for github.com. All URLs and branding graphics must be entered exclusively under Google Workspace Marketplace SDK > Store Listing.",
+    "developerContactEmails": [
+      "26441681+amcgoey-arch@users.noreply.github.com"
+    ],
+    "oauthScopes": [
+      "https://www.googleapis.com/auth/drive",
+      "https://www.googleapis.com/auth/drive.addons.metadata.readonly",
+      "https://www.googleapis.com/auth/gmail.addons.execute",
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/userinfo.email"
+    ]
+  },
+  "storeListing": {
+    "language": "en",
+    "appName": "INC-IO Docs",
+    "category": "Productivity",
+    "shortDescription": "Schema-driven document filing and workflow automation for Google Drive and Gmail across project and proposal spaces.",
+    "detailedDescription": "INC-IO Docs is a Google Workspace Add-on providing schema-driven document filing and workflow automation directly within Google Drive and Gmail.\n\nSeamless Document Filing:\nOrganize incoming files and correspondence into structured DocumentSpaces (such as Projects and Proposals) without leaving your workspace. When triggered from Google Drive or Gmail, INC-IO Docs dynamically evaluates document context and presents contextual forms tailored to your organization's schema.\n\nSchema-Driven Workflow:\nSelect from defined DocumentTypes like Communication Projects, Proposals, and Transmittals. Dynamic DocumentField inputs guide users to capture essential metadata, target contacts, project numbers, and dates while enforcing validation rules and standardized naming conventions.\n\nDrive and Gmail Integration:\nWhether filing an active email thread and converting messages to PDF in Gmail or selecting assets in Google Drive, INC-IO Docs orchestrates folder resolution, sanitized subfolder creation, and automated file movement into your destination Shared Drive spaces.",
+    "urls": {
+      "homepageUrl": "https://github.com/amcgoey/INC-IO-Docs#readme",
+      "supportUrl": "https://github.com/amcgoey/INC-IO-Docs/issues",
+      "privacyPolicyUrl": "https://github.com/amcgoey/INC-IO-Docs/blob/main/README.md",
+      "termsOfServiceUrl": "https://github.com/amcgoey/INC-IO-Docs/blob/main/README.md"
+    },
+    "assets": {
+      "applicationIcon32": {
+        "path": "assets/branding/icon-32x32.png",
+        "width": 32,
+        "height": 32
+      },
+      "applicationIcon128": {
+        "path": "assets/branding/icon-128x128.png",
+        "width": 128,
+        "height": 128
+      },
+      "cardBanner220x140": {
+        "path": "assets/branding/banner-220x140.png",
+        "width": 220,
+        "height": 140
+      },
+      "screenshots": [
+        {
+          "path": "assets/branding/screenshot-1280x800.png",
+          "width": 1280,
+          "height": 800
+        }
+      ],
+      "companionLogoProd48": {
+        "path": "assets/branding/icon-48x48.png",
+        "url": "https://raw.githubusercontent.com/amcgoey/INC-IO-Docs/main/assets/branding/icon-48x48.png",
+        "width": 48,
+        "height": 48
+      },
+      "companionLogoDev48": {
+        "path": "assets/branding/icon-dev-48x48.png",
+        "url": "https://raw.githubusercontent.com/amcgoey/INC-IO-Docs/develop/assets/branding/icon-dev-48x48.png",
+        "width": 48,
+        "height": 48
+      }
+    }
+  }
+}
