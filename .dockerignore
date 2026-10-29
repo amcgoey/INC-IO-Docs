@@ -3,3 +3,9 @@ node_modules
 infra
 dist
 .env
+test
+scratch
+docs
+lessons
+.agents
+.github
