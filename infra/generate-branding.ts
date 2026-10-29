@@ -238,7 +238,7 @@ export function decodePng(buf: Buffer): DecodedPng {
 /**
  * Builds a PNG chunk buffer given chunk type and chunk data.
  */
-function makeChunk(type: string, data: Buffer): Buffer {
+export function makeChunk(type: string, data: Buffer): Buffer {
   const typeBuf = Buffer.from(type, 'ascii');
   const lenBuf = Buffer.alloc(4);
   lenBuf.writeUInt32BE(data.length, 0);
@@ -724,6 +724,13 @@ export function composeScreenshot1280x800(brandingDir: string, icon48Buf: Buffer
   canvas.drawText('STEP 3: FILE', 625, 554, [30, 142, 62, 255], 1);
   canvas.drawText('Move to Shared', 625, 574, [31, 31, 31, 255], 1);
   canvas.drawText('Drive Subfolder', 625, 591, [31, 31, 31, 255], 1);
+
+  // Blit banner-220x140.png centered on the document canvas below the architecture process flow
+  const bannerPath = path.join(brandingDir, 'banner-220x140.png');
+  if (fs.existsSync(bannerPath)) {
+    const bannerPng = decodePng(fs.readFileSync(bannerPath));
+    canvas.blit(bannerPng, 340, 648);
+  }
 
   // 2. Google Workspace Companion Sidebar (x: 900 to 1223, width 324px)
   // -------------------------------------------------------------
