@@ -261,3 +261,19 @@ jobs:
             console.log("✓ Authenticated Workspace Add-on execution verified (valid Card JSON received)");
           ' "$AUTH_RESP_FILE"
           rm -f "$AUTH_RESP_FILE"
+
+      - name: Publish GitHub Release on Main
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          RELEASE_TAG="v${PACKAGE_VERSION}"
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; skipping release creation."
+            exit 0
+          fi
+
+          gh release create "$RELEASE_TAG" --target "${GITHUB_SHA}" --title "$RELEASE_TAG" --generate-notes
+

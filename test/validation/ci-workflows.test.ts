@@ -384,5 +384,86 @@ describe('CI/CD & Release Workflow Contract Validation', () => {
       expect(run).toContain('Authorization: Bearer');
       expect(run).toContain('200');
     });
+
+    describe('GitHub Release Publishing Contract on Main (#244)', () => {
+      it('executes Publish GitHub Release on Main immediately following Verify Deployment Readiness (Smoke Test)', () => {
+        const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+        const doc = YAML.parse(content);
+        const steps: Array<{ name?: string; run?: string }> = doc.jobs?.deploy?.steps || [];
+
+        const smokeTestIdx = steps.findIndex(
+          (s) => s.name === 'Verify Deployment Readiness (Smoke Test)'
+        );
+        expect(smokeTestIdx).toBeGreaterThanOrEqual(0);
+
+        const releaseIdx = steps.findIndex(
+          (s) => s.name === 'Publish GitHub Release on Main'
+        );
+        expect(releaseIdx).toBe(smokeTestIdx + 1);
+      });
+
+      it('conditions Publish GitHub Release on Main on refs/heads/main', () => {
+        const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+        const doc = YAML.parse(content);
+        const steps: Array<{ name?: string; if?: string }> = doc.jobs?.deploy?.steps || [];
+
+        const releaseStep = steps.find(
+          (s) => s.name === 'Publish GitHub Release on Main'
+        );
+        expect(releaseStep).toBeDefined();
+        expect(releaseStep!.if).toBe("github.ref == 'refs/heads/main'");
+      });
+
+      it('configures GH_TOKEN: secrets.GITHUB_TOKEN in Publish GitHub Release on Main', () => {
+        const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+        const doc = YAML.parse(content);
+        const steps: Array<{ name?: string; env?: Record<string, string> }> =
+          doc.jobs?.deploy?.steps || [];
+
+        const releaseStep = steps.find(
+          (s) => s.name === 'Publish GitHub Release on Main'
+        );
+        expect(releaseStep).toBeDefined();
+        expect(releaseStep!.env?.GH_TOKEN).toBe('${{ secrets.GITHUB_TOKEN }}');
+      });
+
+      it('checks whether the release or tag exists and logs notice before skipping creation', () => {
+        const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+        const doc = YAML.parse(content);
+        const steps: Array<{ name?: string; run?: string }> = doc.jobs?.deploy?.steps || [];
+
+        const releaseStep = steps.find(
+          (s) => s.name === 'Publish GitHub Release on Main'
+        );
+        expect(releaseStep).toBeDefined();
+        const run = releaseStep!.run!;
+
+        expect(run).toContain('gh release view');
+        expect(run).toContain('git ls-remote');
+        expect(run).toContain('Release $RELEASE_TAG already exists; skipping release creation.');
+        expect(run).toContain('exit 0');
+      });
+
+      it('creates GitHub release with target SHA, title, and generated notes without archive attachments', () => {
+        const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+        const doc = YAML.parse(content);
+        const steps: Array<{ name?: string; run?: string }> = doc.jobs?.deploy?.steps || [];
+
+        const releaseStep = steps.find(
+          (s) => s.name === 'Publish GitHub Release on Main'
+        );
+        expect(releaseStep).toBeDefined();
+        const run = releaseStep!.run!;
+
+        expect(run).toContain('gh release create');
+        expect(run).toContain('--target "${GITHUB_SHA}"');
+        expect(run).toContain('--title "$RELEASE_TAG"');
+        expect(run).toContain('--generate-notes');
+
+        // Verify absence of tar.gz or zip archive attachments
+        expect(run).not.toContain('.tar.gz');
+        expect(run).not.toContain('.zip');
+      });
+    });
   });
 });
