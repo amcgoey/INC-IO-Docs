@@ -34,11 +34,18 @@ export const DeploymentManifestSchema = Type.Object({
 
 export type DeploymentManifest = Static<typeof DeploymentManifestSchema>;
 
+export const DEFAULT_DEV_LOGO_URL =
+  'https://raw.githubusercontent.com/amcgoey/INC-IO-Docs/develop/assets/branding/icon-dev-48x48.png';
+export const DEFAULT_PROD_LOGO_URL =
+  'https://raw.githubusercontent.com/amcgoey/INC-IO-Docs/main/assets/branding/icon-48x48.png';
+
 export interface GenerateDeploymentManifestOptions {
   templateContent: string;
   serviceUrl: string;
   environment: 'dev' | 'prod';
   addOnName?: string | undefined;
+  logoUrl?: string | undefined;
+  logoVersion?: string | undefined;
 }
 
 export interface GenerateDeploymentManifestResult {
@@ -75,9 +82,27 @@ export function generateDeploymentManifest(
     }
   }
 
+  let effectiveLogoUrl = options.logoUrl?.trim();
+  if (!effectiveLogoUrl) {
+    if (options.environment === 'dev') {
+      effectiveLogoUrl = DEFAULT_DEV_LOGO_URL;
+    } else if (options.environment === 'prod') {
+      effectiveLogoUrl = DEFAULT_PROD_LOGO_URL;
+    } else {
+      throw new Error(`Invalid environment: "${options.environment}". Must be "dev" or "prod".`);
+    }
+  }
+
+  const effectiveLogoVersion = options.logoVersion?.trim();
+  if (effectiveLogoVersion) {
+    const separator = effectiveLogoUrl.includes('?') ? '&' : '?';
+    effectiveLogoUrl = `${effectiveLogoUrl}${separator}v=${encodeURIComponent(effectiveLogoVersion)}`;
+  }
+
   const rendered = options.templateContent
     .replaceAll('{{ADDON_NAME}}', effectiveAddOnName)
-    .replaceAll('{{BASE_URL}}', normalizedServiceUrl);
+    .replaceAll('{{BASE_URL}}', normalizedServiceUrl)
+    .replaceAll('{{LOGO_URL}}', effectiveLogoUrl);
 
   const unresolvedTokens = rendered.match(/\{\{[^}]+\}\}/g);
   if (unresolvedTokens && unresolvedTokens.length > 0) {
