@@ -288,6 +288,47 @@ describe("AppInfrastructure ComponentResource", () => {
     expect(template?.serviceAccount).toBe("custom-addon-runtime@mock-project.iam.gserviceaccount.com");
   });
 
+  it("binds custom container image when args.image is provided", async () => {
+    const { AppInfrastructure } = await import("./app-infrastructure");
+
+    const infra = new AppInfrastructure("custom-image-infra", {
+      projectId: "inc-io-docs-dev",
+      image: "custom-image:v1",
+    });
+
+    await promiseOf(infra.serviceUrl);
+
+    const runRes = Object.values(resources).find(
+      (r) => r.type.includes("cloudrunv2/service:Service") && r.inputs.name === "custom-image-infra"
+    );
+    expect(runRes).toBeDefined();
+
+    const template = runRes?.inputs.template as {
+      containers?: Array<{ image?: string }>;
+    };
+    expect(template?.containers?.[0]?.image).toBe("custom-image:v1");
+  });
+
+  it("falls back to default hello container image when args.image is omitted or undefined", async () => {
+    const { AppInfrastructure } = await import("./app-infrastructure");
+
+    const infra = new AppInfrastructure("default-image-infra", {
+      projectId: "inc-io-docs-dev",
+    });
+
+    await promiseOf(infra.serviceUrl);
+
+    const runRes = Object.values(resources).find(
+      (r) => r.type.includes("cloudrunv2/service:Service") && r.inputs.name === "default-image-infra"
+    );
+    expect(runRes).toBeDefined();
+
+    const template = runRes?.inputs.template as {
+      containers?: Array<{ image?: string }>;
+    };
+    expect(template?.containers?.[0]?.image).toBe("us-docker.pkg.dev/cloudrun/container/hello");
+  });
+
   it("maintains structural parity between Pulumi.dev.yaml and Pulumi.prod.yaml", () => {
     const devPath = path.resolve(__dirname, "Pulumi.dev.yaml");
     const prodPath = path.resolve(__dirname, "Pulumi.prod.yaml");

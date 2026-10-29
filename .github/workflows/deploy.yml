@@ -41,6 +41,18 @@ jobs:
           npm run typecheck
           npm test
 
+      - name: Build Docker Image (Local)
+        id: build-image
+        run: |
+          IMAGE_PATH="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.REPO_NAME }}"
+          IMAGE_TAG="${IMAGE_PATH}:${{ github.sha }}"
+          IMAGE_LATEST="${IMAGE_PATH}:latest"
+
+          docker build -t "$IMAGE_TAG" -t "$IMAGE_LATEST" .
+
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+          echo "IMAGE_LATEST=$IMAGE_LATEST" >> $GITHUB_ENV
+
       - name: Authenticate to Google Cloud (WIF)
         id: auth
         uses: google-github-actions/auth@v2
@@ -51,6 +63,20 @@ jobs:
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Resolve Bootstrap Image for Base Service
+        id: resolve-bootstrap-image
+        run: |
+          BOOTSTRAP_IMAGE=$(gcloud run services describe "${{ env.SERVICE_NAME }}" \
+            --region="${{ env.REGION }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --format="value(spec.template.spec.containers[0].image)" 2>/dev/null || true)
+
+          if [ -z "$BOOTSTRAP_IMAGE" ]; then
+            BOOTSTRAP_IMAGE="us-docker.pkg.dev/cloudrun/container/hello"
+          fi
+
+          echo "BOOTSTRAP_IMAGE=$BOOTSTRAP_IMAGE" >> $GITHUB_ENV
+
       - name: Provision Infrastructure (Artifact Registry & Base Service)
         uses: pulumi/actions@v6
         with:
@@ -59,6 +85,9 @@ jobs:
           work-dir: ./infra/pulumi
           cloud-url: ${{ env.PULUMI_STATE_BUCKET }}
           upsert: true
+          config-map: |
+            image:
+              value: ${{ env.BOOTSTRAP_IMAGE }}
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE || '' }}
 
@@ -66,18 +95,10 @@ jobs:
         run: |
           gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
-      - name: Build and Push Docker Image
-        id: build-image
+      - name: Push Docker Image
         run: |
-          IMAGE_PATH="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.REPO_NAME }}"
-          IMAGE_TAG="${IMAGE_PATH}:${{ github.sha }}"
-          IMAGE_LATEST="${IMAGE_PATH}:latest"
-
-          docker build -t "$IMAGE_TAG" -t "$IMAGE_LATEST" .
           docker push "$IMAGE_TAG"
           docker push "$IMAGE_LATEST"
-
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
       - name: Deploy App to Cloud Run
         uses: pulumi/actions@v6
