@@ -259,8 +259,3 @@ Runtime behavior is driven by [`assets/manifest.json`](assets/manifest.json) (`M
 | **Distribution & Install** | Unlisted developer CLI deployment (`gcloud workspace-add-ons deployments replace`) | Private Domain-Only (`PRIVATE_DOMAIN_ONLY`) Google Workspace Marketplace listing & Admin Console domain install |
 | **Release Artifact** | Continuous deployment on push to `develop` | Tagged `v0.5.0` GitHub Release archive with auto-generated release notes on `main` |
 
----
-
-## License
-
-This project is licensed under the **ISC License**.
