@@ -840,5 +840,144 @@ ${smokeStep!.run!}
         expect(res.stderr).toContain('not a valid Google Workspace Card response');
       });
     });
+
+    describe('Publish GitHub Release step execution behavior (#244)', () => {
+      interface ReleaseMockConfig {
+        releaseViewExitCode?: number;
+        gitLsRemoteExitCode?: number;
+        githubSha?: string;
+      }
+
+      function runPublishReleaseScript(config: ReleaseMockConfig = {}): {
+        status: number;
+        stdout: string;
+        stderr: string;
+        calls: string[];
+      } {
+        const bashBin = findBash();
+        if (!bashBin) {
+          throw new Error('Bash is not available in the current environment');
+        }
+
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-publish-test-'));
+        const callsLogFile = path.join(tempDir, 'calls.log');
+        fs.writeFileSync(callsLogFile, '', 'utf8');
+
+        const releaseViewExit = config.releaseViewExitCode ?? 1;
+        const gitLsRemoteExit = config.gitLsRemoteExitCode ?? 1;
+
+        // Fake gh script
+        const fakeGh = path.join(tempDir, 'gh');
+        const ghScript = `#!/usr/bin/env bash
+echo "gh $*" >> "${toBashPath(callsLogFile)}"
+if [ "$1" = "release" ] && [ "$2" = "view" ]; then
+  exit ${releaseViewExit}
+fi
+if [ "$1" = "release" ] && [ "$2" = "create" ]; then
+  exit 0
+fi
+exit 0
+`;
+        fs.writeFileSync(fakeGh, ghScript, { mode: 0o755 });
+
+        // Fake git script
+        const fakeGit = path.join(tempDir, 'git');
+        const gitScript = `#!/usr/bin/env bash
+echo "git $*" >> "${toBashPath(callsLogFile)}"
+if [ "$1" = "ls-remote" ]; then
+  exit ${gitLsRemoteExit}
+fi
+exit 0
+`;
+        fs.writeFileSync(fakeGit, gitScript, { mode: 0o755 });
+
+        try {
+          const steps = getDeployWorkflowSteps();
+          const releaseStep = steps.find(
+            (s) => s.name === 'Publish GitHub Release on Main'
+          );
+          expect(releaseStep).toBeDefined();
+
+          const testScript = `
+export PATH="${toBashPath(tempDir)}:$PATH"
+export GITHUB_SHA="${config.githubSha ?? 'testsha987654321'}"
+export GH_TOKEN="mock-github-token"
+
+${releaseStep!.run!}
+`;
+          const res = spawnSync(bashBin, ['-c', testScript], {
+            cwd: ROOT_DIR,
+            encoding: 'utf8',
+          });
+
+          const calls = fs
+            .readFileSync(callsLogFile, 'utf8')
+            .split(/\r?\n/)
+            .filter((l) => l.trim().length > 0);
+
+          return {
+            status: res.status ?? 0,
+            stdout: res.stdout || '',
+            stderr: res.stderr || '',
+            calls,
+          };
+        } finally {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+      }
+
+      it('creates GitHub Release when neither release nor git tag exists', () => {
+        if (!findBash()) return;
+
+        const res = runPublishReleaseScript({
+          releaseViewExitCode: 1,
+          gitLsRemoteExitCode: 1,
+          githubSha: 'commit123456789',
+        });
+
+        expect(res.status).toBe(0);
+        expect(res.calls.some((c) => c.startsWith('gh release view'))).toBe(true);
+        expect(res.calls.some((c) => c.startsWith('git ls-remote'))).toBe(true);
+
+        const createCall = res.calls.find((c) => c.startsWith('gh release create'));
+        expect(createCall).toBeDefined();
+        expect(createCall).toContain('v0.5.0');
+        expect(createCall).toContain('--target commit123456789');
+        expect(createCall).toContain('--title v0.5.0');
+        expect(createCall).toContain('--generate-notes');
+        expect(createCall).not.toContain('.tar.gz');
+        expect(createCall).not.toContain('.zip');
+      });
+
+      it('skips release creation when release already exists in gh release view', () => {
+        if (!findBash()) return;
+
+        const res = runPublishReleaseScript({
+          releaseViewExitCode: 0,
+          gitLsRemoteExitCode: 1,
+        });
+
+        expect(res.status).toBe(0);
+        expect(res.stdout).toContain('Release v0.5.0 already exists; skipping release creation.');
+        expect(res.calls.some((c) => c.startsWith('gh release view'))).toBe(true);
+        expect(res.calls.some((c) => c.startsWith('git ls-remote'))).toBe(false);
+        expect(res.calls.some((c) => c.startsWith('gh release create'))).toBe(false);
+      });
+
+      it('skips release creation when tag already exists in git ls-remote', () => {
+        if (!findBash()) return;
+
+        const res = runPublishReleaseScript({
+          releaseViewExitCode: 1,
+          gitLsRemoteExitCode: 0,
+        });
+
+        expect(res.status).toBe(0);
+        expect(res.stdout).toContain('Release v0.5.0 already exists; skipping release creation.');
+        expect(res.calls.some((c) => c.startsWith('gh release view'))).toBe(true);
+        expect(res.calls.some((c) => c.startsWith('git ls-remote'))).toBe(true);
+        expect(res.calls.some((c) => c.startsWith('gh release create'))).toBe(false);
+      });
+    });
   });
 });
