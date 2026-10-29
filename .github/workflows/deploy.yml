@@ -1,25 +1,37 @@
-name: Deploy to Google Cloud Run (Dev)
+name: Deploy
 
 on:
   push:
     branches:
       - develop
+      - main
 
-env:
-  PROJECT_ID: inc-io-docs-dev
-  REGION: us-east4
-  REPO_NAME: inc-io-docs
-  SERVICE_NAME: inc-io-docs-dev
-  PULUMI_STATE_BUCKET: gs://inc-io-docs-dev-pulumi-state
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
-    name: Build, Push, & Deploy to Dev
+  quality-gates:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: Deploy to ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    needs: [quality-gates]
     runs-on: ubuntu-latest
-    environment: dev
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     permissions:
-      contents: read
+      contents: write
       id-token: write
+
+    env:
+      DEPLOY_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+      PROJECT_ID: ${{ vars.PROJECT_ID }}
+      REGION: ${{ vars.REGION }}
+      REPO_NAME: ${{ vars.REPO_NAME }}
+      SERVICE_NAME: ${{ vars.SERVICE_NAME }}
+      PULUMI_STACK: ${{ vars.PULUMI_STACK }}
+      PULUMI_STATE_BUCKET: ${{ vars.PULUMI_STATE_BUCKET }}
+      PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE || '' }}
 
     steps:
       - name: Checkout Code
@@ -36,23 +48,6 @@ jobs:
           npm ci
           npm --prefix infra/pulumi ci
 
-      - name: Run Tests and Typecheck
-        run: |
-          npm run typecheck
-          npm test
-
-      - name: Build Docker Image (Local)
-        id: build-image
-        run: |
-          IMAGE_PATH="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.REPO_NAME }}"
-          IMAGE_TAG="${IMAGE_PATH}:${{ github.sha }}"
-          IMAGE_LATEST="${IMAGE_PATH}:latest"
-
-          docker build -t "$IMAGE_TAG" -t "$IMAGE_LATEST" .
-
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
-          echo "IMAGE_LATEST=$IMAGE_LATEST" >> $GITHUB_ENV
-
       - name: Authenticate to Google Cloud (WIF)
         id: auth
         uses: google-github-actions/auth@v2
@@ -63,74 +58,87 @@ jobs:
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Resolve Bootstrap Image for Base Service
-        id: resolve-bootstrap-image
+      - name: Conditional First-Run Infrastructure Bootstrap
+        id: conditional-bootstrap
         run: |
-          BOOTSTRAP_IMAGE=$(gcloud run services describe "${{ env.SERVICE_NAME }}" \
-            --region="${{ env.REGION }}" \
-            --project="${{ env.PROJECT_ID }}" \
-            --format="value(spec.template.spec.containers[0].image)" 2>/dev/null || true)
-
-          if [ -z "$BOOTSTRAP_IMAGE" ]; then
-            BOOTSTRAP_IMAGE="us-docker.pkg.dev/cloudrun/container/hello"
+          if ! gcloud artifacts repositories describe "$REPO_NAME" \
+            --location="$REGION" \
+            --project="$PROJECT_ID" >/dev/null 2>&1; then
+            echo "Artifact Registry repository $REPO_NAME not found. Executing initial bootstrap pulumi up..."
+            pulumi login "$PULUMI_STATE_BUCKET"
+            pulumi stack select --create "$PULUMI_STACK" --cwd ./infra/pulumi
+            pulumi up --yes --cwd ./infra/pulumi --stack "$PULUMI_STACK"
+          else
+            echo "Artifact Registry repository $REPO_NAME exists. Skipping pre-Docker bootstrap pass."
           fi
-
-          echo "BOOTSTRAP_IMAGE=$BOOTSTRAP_IMAGE" >> $GITHUB_ENV
-
-      - name: Provision Infrastructure (Artifact Registry & Base Service)
-        uses: pulumi/actions@v6
-        with:
-          command: up
-          stack-name: dev
-          work-dir: ./infra/pulumi
-          cloud-url: ${{ env.PULUMI_STATE_BUCKET }}
-          upsert: true
-          config-map: |
-            image:
-              value: ${{ env.BOOTSTRAP_IMAGE }}
-        env:
-          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE || '' }}
 
       - name: Configure Docker Authentication for Artifact Registry
         run: |
-          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build Docker Image with Version Tags
+        id: build-image
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          IMAGE_PATH="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${REPO_NAME}"
+          IMAGE_SHA_TAG="${IMAGE_PATH}:${GITHUB_SHA}"
+          IMAGE_LATEST="${IMAGE_PATH}:latest"
+
+          TAG_ARGS=("-t" "$IMAGE_SHA_TAG" "-t" "$IMAGE_LATEST")
+          if [ "$DEPLOY_ENV" = "prod" ]; then
+            IMAGE_VERSION_TAG="${IMAGE_PATH}:v${PACKAGE_VERSION}"
+            TAG_ARGS+=("-t" "$IMAGE_VERSION_TAG")
+            echo "IMAGE_VERSION_TAG=$IMAGE_VERSION_TAG" >> $GITHUB_ENV
+          fi
+
+          docker build "${TAG_ARGS[@]}" .
+
+          echo "IMAGE_SHA_TAG=$IMAGE_SHA_TAG" >> $GITHUB_ENV
+          echo "IMAGE_LATEST=$IMAGE_LATEST" >> $GITHUB_ENV
+          echo "PACKAGE_VERSION=$PACKAGE_VERSION" >> $GITHUB_ENV
 
       - name: Push Docker Image
         run: |
-          docker push "$IMAGE_TAG"
+          docker push "$IMAGE_SHA_TAG"
           docker push "$IMAGE_LATEST"
+          if [ "$DEPLOY_ENV" = "prod" ]; then
+            docker push "$IMAGE_VERSION_TAG"
+          fi
 
       - name: Deploy App to Cloud Run
         uses: pulumi/actions@v6
         with:
           command: up
-          stack-name: dev
+          stack-name: ${{ vars.PULUMI_STACK }}
           work-dir: ./infra/pulumi
-          cloud-url: ${{ env.PULUMI_STATE_BUCKET }}
+          cloud-url: ${{ vars.PULUMI_STATE_BUCKET }}
           upsert: true
           config-map: |
             image:
-              value: ${{ env.IMAGE_TAG }}
+              value: ${{ env.IMAGE_SHA_TAG }}
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE || '' }}
 
       - name: Get Cloud Run URL from Pulumi
         id: pulumi-output
         run: |
-          # Fetch the Cloud Run URL that Pulumi just provisioned
-          # We export this from Pulumi so we need to grab it from the stack
-          SERVICE_URL=$(pulumi stack output serviceUrl --cwd ./infra/pulumi -s dev)
+          SERVICE_URL=$(pulumi stack output serviceUrl --cwd ./infra/pulumi -s "$PULUMI_STACK")
           echo "SERVICE_URL=$SERVICE_URL" >> $GITHUB_ENV
-        env:
-          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE || '' }}
 
       - name: Generate Google Workspace Add-on Manifest
         run: |
-          npm run generate:manifest -- --service-url "$SERVICE_URL" --environment dev
+          npm run generate:manifest -- --service-url "$SERVICE_URL" --environment "$DEPLOY_ENV"
 
       - name: Deploy Google Workspace Add-on Manifest
         run: |
-          # The deployment name is the resource identifier in GCP
-          gcloud workspace-add-ons deployments replace ${{ env.REPO_NAME }} \
-            --deployment-file=infra/deployment.json \
-            --project=${{ env.PROJECT_ID }}
+          if gcloud workspace-add-ons deployments describe "$REPO_NAME" --project="$PROJECT_ID" >/dev/null 2>&1; then
+            echo "Workspace Add-on deployment $REPO_NAME exists. Running deployments replace..."
+            gcloud workspace-add-ons deployments replace "$REPO_NAME" \
+              --deployment-file=infra/deployment.json \
+              --project="$PROJECT_ID"
+          else
+            echo "Workspace Add-on deployment $REPO_NAME does not exist. Running deployments create..."
+            gcloud workspace-add-ons deployments create "$REPO_NAME" \
+              --deployment-file=infra/deployment.json \
+              --project="$PROJECT_ID"
+          fi
