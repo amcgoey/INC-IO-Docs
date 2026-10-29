@@ -58,6 +58,9 @@ jobs:
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Set up Pulumi CLI
+        uses: pulumi/actions@v6
+
       - name: Conditional First-Run Infrastructure Bootstrap
         id: conditional-bootstrap
         run: |
@@ -267,7 +270,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          PACKAGE_VERSION="${PACKAGE_VERSION:-$(node -p "require('./package.json').version")}"
           RELEASE_TAG="v${PACKAGE_VERSION}"
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
