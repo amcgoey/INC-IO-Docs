@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -8,18 +8,33 @@ const ROOT_DIR = path.resolve(__dirname, '../..');
 const BOOTSTRAP_PATH = path.join(ROOT_DIR, 'infra', 'bootstrap.ps1');
 const DEPLOY_YML_PATH = path.join(ROOT_DIR, '.github', 'workflows', 'deploy.yml');
 
+let cachedPowerShellCommand: string | undefined;
+
+const PS_OPT_OUT_ENV: Record<string, string> = {
+  POWERSHELL_TELEMETRY_OPTOUT: '1',
+  POWERSHELL_UPDATECHECK: 'Off',
+  DOTNET_NOLOGO: '1',
+};
+
 function getPowerShellCommand(): string {
-  try {
-    const res = spawnSync('pwsh', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()'], { encoding: 'utf8' });
-    if (res.status === 0) return 'pwsh';
-  } catch {
-    // ignore
+  if (cachedPowerShellCommand) {
+    return cachedPowerShellCommand;
   }
-  try {
-    const res = spawnSync('powershell', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()'], { encoding: 'utf8' });
-    if (res.status === 0) return 'powershell';
-  } catch {
-    // ignore
+  const probeArgs = ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()'];
+  const probeEnv = {
+    ...process.env,
+    ...PS_OPT_OUT_ENV,
+  };
+  for (const cmd of ['pwsh', 'powershell']) {
+    try {
+      const res = spawnSync(cmd, probeArgs, { env: probeEnv, encoding: 'utf8' });
+      if (res.status === 0) {
+        cachedPowerShellCommand = cmd;
+        return cmd;
+      }
+    } catch {
+      // ignore
+    }
   }
   throw new Error('Neither pwsh nor powershell is available on this system.');
 }
@@ -270,19 +285,28 @@ function runBootstrap(args: string[], env: Record<string, string | undefined> = 
   const sep = path.delimiter;
   const mergedPath = shimDir ? `${shimDir}${sep}${process.env.PATH || ''}` : process.env.PATH;
 
-  const result = spawnSync(ps, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', BOOTSTRAP_PATH, ...args], {
-    env: {
-      ...process.env,
-      ...env,
-      PATH: mergedPath,
-    },
-    encoding: 'utf8',
-  });
+  const result = spawnSync(
+    ps,
+    ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', BOOTSTRAP_PATH, ...args],
+    {
+      env: {
+        ...process.env,
+        ...PS_OPT_OUT_ENV,
+        ...env,
+        PATH: mergedPath,
+      },
+      encoding: 'utf8',
+    }
+  );
 
   return result;
 }
 
-describe('GCP Bootstrap Script (infra/bootstrap.ps1)', () => {
+describe('GCP Bootstrap Script (infra/bootstrap.ps1)', { timeout: 15000 }, () => {
+  beforeAll(() => {
+    getPowerShellCommand();
+  }, 15000);
+
   it('parses cleanly with zero PowerShell AST syntax errors and defines expected parameters', () => {
     const ps = getPowerShellCommand();
     const normalizedPath = BOOTSTRAP_PATH.replace(/\\/g, '/');
@@ -322,7 +346,17 @@ describe('GCP Bootstrap Script (infra/bootstrap.ps1)', () => {
       } | ConvertTo-Json -Depth 5
     `;
 
-    const res = spawnSync(ps, ['-NoProfile', '-Command', checkScript], { encoding: 'utf8' });
+    const res = spawnSync(
+      ps,
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', checkScript],
+      {
+        env: {
+          ...process.env,
+          ...PS_OPT_OUT_ENV,
+        },
+        encoding: 'utf8',
+      }
+    );
     expect(res.status).toBe(0);
     const parsed = JSON.parse(res.stdout);
     expect(parsed.ErrorCount).toBe(0);
