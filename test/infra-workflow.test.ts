@@ -27,8 +27,8 @@ function findBash(): string | undefined {
   return undefined;
 }
 
-function toBashPath(p: string): string {
-  const normalized = p.replace(/\\/g, '/');
+function toBashPath(targetPath: string): string {
+  const normalized = targetPath.replace(/\\/g, '/');
   return normalized.replace(/^([A-Za-z]):/, (_, drive) => `/${drive.toLowerCase()}`);
 }
 
@@ -282,6 +282,48 @@ describe('Infrastructure and Build Isolation Workflow (#239)', () => {
     });
 
     describe('BOOTSTRAP_IMAGE resolution script behavior', () => {
+      function runBootstrapResolutionScript(mockGcloudBody: string): string {
+        const bashBin = findBash();
+        if (!bashBin) {
+          throw new Error('Bash is not available in the current environment');
+        }
+
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bootstrap-img-test-'));
+        const githubEnvFile = path.join(tempDir, 'github_env');
+        fs.writeFileSync(githubEnvFile, '', 'utf8');
+
+        const fakeGcloud = path.join(tempDir, 'gcloud');
+        const scriptContent = mockGcloudBody.startsWith('#!')
+          ? mockGcloudBody
+          : `#!/usr/bin/env bash\n${mockGcloudBody}\n`;
+        fs.writeFileSync(fakeGcloud, scriptContent, { mode: 0o755 });
+
+        try {
+          const steps = getDeployWorkflowSteps();
+          const resolveBootstrapStep = steps.find(
+            (s) => s.name === 'Resolve Bootstrap Image for Base Service'
+          );
+          expect(resolveBootstrapStep).toBeDefined();
+
+          const interpolatedScript = resolveBootstrapStep!.run!
+            .replace(/\$\{\{\s*env\.SERVICE_NAME\s*\}\}/g, 'test-service')
+            .replace(/\$\{\{\s*env\.REGION\s*\}\}/g, 'us-east4')
+            .replace(/\$\{\{\s*env\.PROJECT_ID\s*\}\}/g, 'test-project');
+
+          const testScript = `
+export PATH="${toBashPath(tempDir)}:$PATH"
+export GITHUB_ENV="${toBashPath(githubEnvFile)}"
+
+${interpolatedScript}
+`;
+          execFileSync(bashBin, ['-c', testScript], { encoding: 'utf8' });
+
+          return fs.readFileSync(githubEnvFile, 'utf8');
+        } finally {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+      }
+
       it('contains robust query syntax with fallback to us-docker.pkg.dev/cloudrun/container/hello', () => {
         const steps = getDeployWorkflowSteps();
         const resolveBootstrapStep = steps.find(
@@ -298,95 +340,27 @@ describe('Infrastructure and Build Isolation Workflow (#239)', () => {
       });
 
       it('resolves active image when gcloud run services describe returns an image', () => {
-        const bashBin = findBash();
-        if (!bashBin) {
+        if (!findBash()) {
           return;
         }
 
-        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bootstrap-img-test-'));
-        const githubEnvFile = path.join(tempDir, 'github_env');
-        fs.writeFileSync(githubEnvFile, '', 'utf8');
-
-        // Create a fake gcloud script that returns an active image
-        const fakeGcloud = path.join(tempDir, 'gcloud');
-        fs.writeFileSync(
-          fakeGcloud,
-          '#!/usr/bin/env bash\necho "us-east4-docker.pkg.dev/inc-io-docs-dev/inc-io-docs/inc-io-docs:active-tag-1234"\n',
-          { mode: 0o755 }
+        const envContent = runBootstrapResolutionScript(
+          'echo "us-east4-docker.pkg.dev/inc-io-docs-dev/inc-io-docs/inc-io-docs:active-tag-1234"'
         );
-
-        try {
-          const steps = getDeployWorkflowSteps();
-          const resolveBootstrapStep = steps.find(
-            (s) => s.name === 'Resolve Bootstrap Image for Base Service'
-          );
-          expect(resolveBootstrapStep).toBeDefined();
-
-          const interpolatedScript = resolveBootstrapStep!.run!
-            .replace(/\$\{\{\s*env\.SERVICE_NAME\s*\}\}/g, 'test-service')
-            .replace(/\$\{\{\s*env\.REGION\s*\}\}/g, 'us-east4')
-            .replace(/\$\{\{\s*env\.PROJECT_ID\s*\}\}/g, 'test-project');
-
-          const testScript = `
-export PATH="${toBashPath(tempDir)}:$PATH"
-export GITHUB_ENV="${toBashPath(githubEnvFile)}"
-
-${interpolatedScript}
-`;
-          execFileSync(bashBin, ['-c', testScript], { encoding: 'utf8' });
-
-          const envContent = fs.readFileSync(githubEnvFile, 'utf8');
-          expect(envContent).toContain(
-            'BOOTSTRAP_IMAGE=us-east4-docker.pkg.dev/inc-io-docs-dev/inc-io-docs/inc-io-docs:active-tag-1234'
-          );
-        } finally {
-          fs.rmSync(tempDir, { recursive: true, force: true });
-        }
+        expect(envContent).toContain(
+          'BOOTSTRAP_IMAGE=us-east4-docker.pkg.dev/inc-io-docs-dev/inc-io-docs/inc-io-docs:active-tag-1234'
+        );
       });
 
       it('falls back to hello container when gcloud run services describe errors or returns empty', () => {
-        const bashBin = findBash();
-        if (!bashBin) {
+        if (!findBash()) {
           return;
         }
 
-        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bootstrap-img-fallback-'));
-        const githubEnvFile = path.join(tempDir, 'github_env');
-        fs.writeFileSync(githubEnvFile, '', 'utf8');
-
-        // Create a fake gcloud script that fails with exit code 1 and writes to stderr
-        const fakeGcloud = path.join(tempDir, 'gcloud');
-        fs.writeFileSync(
-          fakeGcloud,
-          '#!/usr/bin/env bash\necho "ERROR: (gcloud.run.services.describe) Cannot find service" >&2\nexit 1\n',
-          { mode: 0o755 }
+        const envContent = runBootstrapResolutionScript(
+          'echo "ERROR: (gcloud.run.services.describe) Cannot find service" >&2\nexit 1'
         );
-
-        try {
-          const steps = getDeployWorkflowSteps();
-          const resolveBootstrapStep = steps.find(
-            (s) => s.name === 'Resolve Bootstrap Image for Base Service'
-          );
-          expect(resolveBootstrapStep).toBeDefined();
-
-          const interpolatedScript = resolveBootstrapStep!.run!
-            .replace(/\$\{\{\s*env\.SERVICE_NAME\s*\}\}/g, 'test-service')
-            .replace(/\$\{\{\s*env\.REGION\s*\}\}/g, 'us-east4')
-            .replace(/\$\{\{\s*env\.PROJECT_ID\s*\}\}/g, 'test-project');
-
-          const testScript = `
-export PATH="${toBashPath(tempDir)}:$PATH"
-export GITHUB_ENV="${toBashPath(githubEnvFile)}"
-
-${interpolatedScript}
-`;
-          execFileSync(bashBin, ['-c', testScript], { encoding: 'utf8' });
-
-          const envContent = fs.readFileSync(githubEnvFile, 'utf8');
-          expect(envContent).toContain('BOOTSTRAP_IMAGE=us-docker.pkg.dev/cloudrun/container/hello');
-        } finally {
-          fs.rmSync(tempDir, { recursive: true, force: true });
-        }
+        expect(envContent).toContain('BOOTSTRAP_IMAGE=us-docker.pkg.dev/cloudrun/container/hello');
       });
     });
   });
