@@ -9,6 +9,7 @@ import {
   encodePng,
   crc32,
   paethPredictor,
+  makeChunk,
   MarketplaceListingConfigSchema,
   type MarketplaceListingConfig,
 } from '../../infra/generate-branding';
@@ -223,17 +224,6 @@ describe('Branding Assets & Deterministic Generator', () => {
 
       const compressed = zlib.deflateSync(uncompressed, { level: 9 });
 
-      // Build synthetic PNG chunks
-      const makeChunk = (type: string, data: Buffer) => {
-        const typeBuf = Buffer.from(type, 'ascii');
-        const lenBuf = Buffer.alloc(4);
-        lenBuf.writeUInt32BE(data.length, 0);
-        const crcPayload = Buffer.concat([typeBuf, data]);
-        const crcBuf = Buffer.alloc(4);
-        crcBuf.writeUInt32BE(crc32(crcPayload), 0);
-        return Buffer.concat([lenBuf, typeBuf, data, crcBuf]);
-      };
-
       const ihdrData = Buffer.alloc(13);
       ihdrData.writeUInt32BE(w, 0);
       ihdrData.writeUInt32BE(h, 4);
@@ -297,9 +287,13 @@ describe('Branding Assets & Deterministic Generator', () => {
       expect(listing.visibility).toBe('PRIVATE_DOMAIN_ONLY');
       expect(listing.oauthConsentScreen.userType).toBe('INTERNAL');
       expect(listing.oauthConsentScreen.appName).toBe('INC-IO Docs');
+      expect(listing.oauthConsentScreen.appDomainAndLogoInstruction.toLowerCase()).toContain('blank');
+      expect(listing.oauthConsentScreen.appDomainAndLogoInstruction).toContain('github.com');
       expect(listing.storeListing.appName).toBe('INC-IO Docs');
       expect(listing.storeListing.shortDescription.length).toBeLessThanOrEqual(200);
       expect(listing.storeListing.shortDescription.length).toBeGreaterThan(10);
+      expect(listing.storeListing.detailedDescription.length).toBeLessThanOrEqual(16000);
+      expect(listing.storeListing.detailedDescription.length).toBeGreaterThan(50);
     });
 
     it('oauthConsentScreen.oauthScopes deeply equals deployment.template.json oauthScopes', () => {
