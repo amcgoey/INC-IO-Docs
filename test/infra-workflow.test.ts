@@ -84,25 +84,37 @@ describe('Infrastructure and Build Isolation Workflow (#239)', () => {
     it(
       'compiles runtime code and emits server entrypoint without emitting test or infra artifacts',
       () => {
-      const tscBin = require.resolve('typescript/bin/tsc');
+        const tscBin = require.resolve('typescript/bin/tsc');
+        const distDir = path.join(ROOT_DIR, 'dist');
+        if (fs.existsSync(distDir)) {
+          fs.rmSync(distDir, { recursive: true, force: true });
+        }
 
-      // Compile using the production configuration
-      execFileSync(process.execPath, [tscBin, '-p', 'tsconfig.build.json'], {
-        cwd: ROOT_DIR,
-        encoding: 'utf8',
-      });
+        try {
+          // Compile using the production configuration
+          execFileSync(process.execPath, [tscBin, '-p', 'tsconfig.build.json'], {
+            cwd: ROOT_DIR,
+            encoding: 'utf8',
+          });
 
-      const serverJsPath = path.join(ROOT_DIR, 'dist', 'src', 'app', 'server.js');
-      expect(fs.existsSync(serverJsPath)).toBe(true);
+          const serverJsPath = path.join(ROOT_DIR, 'dist', 'src', 'app', 'server.js');
+          expect(fs.existsSync(serverJsPath)).toBe(true);
 
-      // Verify no test files are emitted in dist/
-      const emittedTestFiles = findFilesRecursively(path.join(ROOT_DIR, 'dist'), /\.test\.(js|d\.ts|js\.map)$/);
-      expect(emittedTestFiles).toEqual([]);
+          // Verify no test files are emitted in dist/
+          const emittedTestFiles = findFilesRecursively(path.join(ROOT_DIR, 'dist'), /\.test\.(js|d\.ts|js\.map)$/);
+          expect(emittedTestFiles).toEqual([]);
 
-      // Verify neither test/ nor infra/ are emitted under dist/
-      expect(fs.existsSync(path.join(ROOT_DIR, 'dist', 'test'))).toBe(false);
-      expect(fs.existsSync(path.join(ROOT_DIR, 'dist', 'infra'))).toBe(false);
-    }, 30000);
+          // Verify neither test/ nor infra/ are emitted under dist/
+          expect(fs.existsSync(path.join(ROOT_DIR, 'dist', 'test'))).toBe(false);
+          expect(fs.existsSync(path.join(ROOT_DIR, 'dist', 'infra'))).toBe(false);
+        } finally {
+          if (fs.existsSync(distDir)) {
+            fs.rmSync(distDir, { recursive: true, force: true });
+          }
+        }
+      },
+      30000
+    );
 
     it(
       'successfully compiles in an isolated Docker-like context where infra/ and test/ are absent',
