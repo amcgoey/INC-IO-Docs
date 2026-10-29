@@ -242,6 +242,9 @@ describe('Infrastructure and Build Isolation Workflow (#239)', () => {
       const deployManifestIdx = steps.findIndex(
         (s) => s.name === 'Deploy Google Workspace Add-on Manifest'
       );
+      const smokeTestIdx = steps.findIndex(
+        (s) => s.name === 'Verify Deployment Readiness (Smoke Test)'
+      );
 
       // 1) Auth occurs before conditional bootstrap
       expect(authIdx).toBeGreaterThanOrEqual(0);
@@ -265,10 +268,11 @@ describe('Infrastructure and Build Isolation Workflow (#239)', () => {
       expect(deployConfigMap).toContain('image:');
       expect(deployConfigMap).toContain('${{ env.IMAGE_SHA_TAG }}');
 
-      // 5) Pulumi output, manifest generation, and manifest deployment sequence
+      // 5) Pulumi output, manifest generation, manifest deployment, and smoke verification sequence
       expect(pulumiOutputIdx).toBeGreaterThan(deployAppIdx);
       expect(generateManifestIdx).toBeGreaterThan(pulumiOutputIdx);
       expect(deployManifestIdx).toBeGreaterThan(generateManifestIdx);
+      expect(smokeTestIdx).toBeGreaterThan(deployManifestIdx);
 
       // Verify manifest generation uses dynamic env
       const manifestStep = steps[generateManifestIdx];
@@ -490,6 +494,350 @@ ${buildStep!.run!}
         } finally {
           fs.rmSync(tempDir, { recursive: true, force: true });
         }
+      });
+    });
+
+    describe('Post-deployment smoke verification script execution behavior (#243)', () => {
+      interface SmokeMockConfig {
+        cloudRunJson?: Record<string, unknown>;
+        cloudRunExitCode?: number;
+        addonJson?: Record<string, unknown>;
+        addonExitCode?: number;
+        idToken?: string | null;
+        unauthHttpCode?: string;
+        authHttpCode?: string;
+        authResponseBody?: Record<string, unknown> | string;
+      }
+
+      function runSmokeVerificationScript(config: SmokeMockConfig = {}): {
+        status: number;
+        stdout: string;
+        stderr: string;
+        calls: string[];
+      } {
+        const bashBin = findBash();
+        if (!bashBin) {
+          throw new Error('Bash is not available in the current environment');
+        }
+
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-verify-test-'));
+        const callsLogFile = path.join(tempDir, 'calls.log');
+        fs.writeFileSync(callsLogFile, '', 'utf8');
+
+        // Cloud Run Mock JSON
+        const defaultCloudRun = {
+          uri: 'https://inc-io-docs-dev-example.a.run.app',
+          latestReadyRevisionName: 'inc-io-docs-00001-abc',
+          latestCreatedRevisionName: 'inc-io-docs-00001-abc',
+          status: {
+            url: 'https://inc-io-docs-dev-example.a.run.app',
+            latestReadyRevisionName: 'inc-io-docs-00001-abc',
+            latestCreatedRevisionName: 'inc-io-docs-00001-abc',
+            conditions: [{ type: 'Ready', status: 'True' }],
+          },
+        };
+        const cloudRunData = config.cloudRunJson !== undefined ? config.cloudRunJson : defaultCloudRun;
+        fs.writeFileSync(path.join(tempDir, 'cloudrun.json'), JSON.stringify(cloudRunData), 'utf8');
+
+        // Addon Mock JSON
+        const defaultAddon = {
+          name: 'projects/inc-io-docs-dev/deployments/inc-io-docs',
+          addOns: {
+            common: {
+              homepageTrigger: {
+                runFunction: 'https://inc-io-docs-dev-example.a.run.app/workspace/homepage',
+              },
+            },
+          },
+        };
+        const addonData = config.addonJson !== undefined ? config.addonJson : defaultAddon;
+        fs.writeFileSync(path.join(tempDir, 'addon.json'), JSON.stringify(addonData), 'utf8');
+
+        // ID Token
+        const idToken = config.idToken !== undefined ? config.idToken : 'mock-oidc-identity-token';
+        if (idToken !== null) {
+          fs.writeFileSync(path.join(tempDir, 'id_token.txt'), idToken, 'utf8');
+        }
+
+        // Auth response body
+        const defaultAuthBody = {
+          action: {
+            navigations: [
+              {
+                pushCard: {
+                  header: { title: 'INC-IO Engine' },
+                  sections: [],
+                },
+              },
+            ],
+          },
+        };
+        const authBody =
+          config.authResponseBody !== undefined
+            ? typeof config.authResponseBody === 'string'
+              ? config.authResponseBody
+              : JSON.stringify(config.authResponseBody)
+            : JSON.stringify(defaultAuthBody);
+        fs.writeFileSync(path.join(tempDir, 'auth_response.json'), authBody, 'utf8');
+
+        // Fake gcloud script
+        const fakeGcloud = path.join(tempDir, 'gcloud');
+        const gcloudScript = `#!/usr/bin/env bash
+echo "gcloud $*" >> "${toBashPath(callsLogFile)}"
+if [ "$1" = "run" ] && [ "$2" = "services" ] && [ "$3" = "describe" ]; then
+  if [ "${config.cloudRunExitCode ?? 0}" != "0" ]; then
+    exit ${config.cloudRunExitCode ?? 1}
+  fi
+  cat "${toBashPath(path.join(tempDir, 'cloudrun.json'))}"
+  exit 0
+fi
+
+if [ "$1" = "workspace-add-ons" ] && [ "$2" = "deployments" ] && [ "$3" = "describe" ]; then
+  if [ "${config.addonExitCode ?? 0}" != "0" ]; then
+    exit ${config.addonExitCode ?? 1}
+  fi
+  cat "${toBashPath(path.join(tempDir, 'addon.json'))}"
+  exit 0
+fi
+
+if [ "$1" = "auth" ] && [ "$2" = "print-identity-token" ]; then
+  if [ ! -f "${toBashPath(path.join(tempDir, 'id_token.txt'))}" ]; then
+    exit 1
+  fi
+  cat "${toBashPath(path.join(tempDir, 'id_token.txt'))}"
+  exit 0
+fi
+
+exit 0
+`;
+        fs.writeFileSync(fakeGcloud, gcloudScript, { mode: 0o755 });
+
+        // Fake curl script
+        const fakeCurl = path.join(tempDir, 'curl');
+        const unauthHttpCode = config.unauthHttpCode ?? '401';
+        const authHttpCode = config.authHttpCode ?? '200';
+        const curlScript = `#!/usr/bin/env bash
+echo "curl $*" >> "${toBashPath(callsLogFile)}"
+is_auth=0
+out_file=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -H)
+      shift
+      if [[ "$1" == Authorization:* ]]; then
+        is_auth=1
+      fi
+      shift
+      ;;
+    -o)
+      shift
+      out_file="$1"
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [ "$is_auth" -eq 1 ]; then
+  if [ -n "$out_file" ] && [ "$out_file" != "/dev/null" ]; then
+    cp "${toBashPath(path.join(tempDir, 'auth_response.json'))}" "$out_file"
+  fi
+  printf "%s" "${authHttpCode}"
+else
+  printf "%s" "${unauthHttpCode}"
+fi
+exit 0
+`;
+        fs.writeFileSync(fakeCurl, curlScript, { mode: 0o755 });
+
+        try {
+          const steps = getDeployWorkflowSteps();
+          const smokeStep = steps.find(
+            (s) => s.name === 'Verify Deployment Readiness (Smoke Test)'
+          );
+          expect(smokeStep).toBeDefined();
+
+          const testScript = `
+export PATH="${toBashPath(tempDir)}:$PATH"
+export SERVICE_URL="https://inc-io-docs-dev-example.a.run.app"
+export SERVICE_NAME="inc-io-docs-service"
+export REGION="us-east4"
+export PROJECT_ID="inc-io-docs-dev"
+export REPO_NAME="inc-io-docs"
+
+${smokeStep!.run!}
+`;
+          const res = spawnSync(bashBin, ['-c', testScript], {
+            cwd: ROOT_DIR,
+            encoding: 'utf8',
+          });
+
+          const calls = fs
+            .readFileSync(callsLogFile, 'utf8')
+            .split(/\r?\n/)
+            .filter((l) => l.trim().length > 0);
+
+          return {
+            status: res.status ?? 0,
+            stdout: res.stdout || '',
+            stderr: res.stderr || '',
+            calls,
+          };
+        } finally {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+      }
+
+      it('passes all 4 checks in order with happy-path inputs', () => {
+        if (!findBash()) return;
+
+        const res = runSmokeVerificationScript();
+        expect(res.status).toBe(0);
+        expect(res.stdout).toContain('Cloud Run revision readiness verified');
+        expect(res.stdout).toContain('Workspace Add-on homepageTrigger verified');
+        expect(res.stdout).toContain('IAM privacy verified');
+        expect(res.stdout).toContain('Authenticated Workspace Add-on execution verified');
+
+        // Confirm CLI calls order
+        expect(res.calls.some((c) => c.includes('run services describe'))).toBe(true);
+        expect(res.calls.some((c) => c.includes('workspace-add-ons deployments describe'))).toBe(true);
+        expect(res.calls.some((c) => c.includes('print-identity-token'))).toBe(true);
+      });
+
+      it('fails Check 1 when Cloud Run service URI does not match $SERVICE_URL', () => {
+        if (!findBash()) return;
+
+        const res = runSmokeVerificationScript({
+          cloudRunJson: {
+            uri: 'https://wrong-uri.run.app',
+            latestReadyRevisionName: 'rev-1',
+            latestCreatedRevisionName: 'rev-1',
+            conditions: [{ type: 'Ready', status: 'True' }],
+          },
+        });
+        expect(res.status).not.toBe(0);
+        expect(res.stderr).toContain('URI mismatch');
+      });
+
+      it('fails Check 1 when latestReadyRevisionName != latestCreatedRevisionName', () => {
+        if (!findBash()) return;
+
+        const res = runSmokeVerificationScript({
+          cloudRunJson: {
+            uri: 'https://inc-io-docs-dev-example.a.run.app',
+            latestReadyRevisionName: 'rev-old',
+            latestCreatedRevisionName: 'rev-new',
+            conditions: [{ type: 'Ready', status: 'True' }],
+          },
+        });
+        expect(res.status).not.toBe(0);
+        expect(res.stderr).toContain('revision mismatch');
+      });
+
+      it('fails Check 1 when Ready condition status is not True', () => {
+        if (!findBash()) return;
+
+        const res = runSmokeVerificationScript({
+          cloudRunJson: {
+            uri: 'https://inc-io-docs-dev-example.a.run.app',
+            latestReadyRevisionName: 'rev-1',
+            latestCreatedRevisionName: 'rev-1',
+            conditions: [{ type: 'Ready', status: 'False' }],
+          },
+        });
+        expect(res.status).not.toBe(0);
+        expect(res.stderr).toContain('Ready');
+      });
+
+      it('fails Check 1 when gcloud run services describe command fails', () => {
+        if (!findBash()) return;
+
+        const res = runSmokeVerificationScript({
+          cloudRunExitCode: 1,
+        });
+        expect(res.status).not.toBe(0);
+        expect(res.stderr).toContain('Failed to query Cloud Run service');
+      });
+
+      it('fails Check 2 when Workspace Add-on trigger URL does not match ${SERVICE_URL}/workspace/homepage', () => {
+        if (!findBash()) return;
+
+        const res = runSmokeVerificationScript({
+          addonJson: {
+            addOns: {
+              common: {
+                homepageTrigger: {
+                  runFunction: 'https://inc-io-docs-dev-example.a.run.app/wrong-path',
+                },
+              },
+            },
+          },
+        });
+        expect(res.status).not.toBe(0);
+        expect(res.stderr).toContain('trigger mismatch');
+      });
+
+      it('fails Check 2 when gcloud workspace-add-ons deployments describe command fails', () => {
+        if (!findBash()) return;
+
+        const res = runSmokeVerificationScript({
+          addonExitCode: 1,
+        });
+        expect(res.status).not.toBe(0);
+        expect(res.stderr).toContain('Failed to query Workspace Add-on deployment');
+      });
+
+      it('fails Check 3 when unauthenticated probe returns HTTP 200 instead of 401 or 403', () => {
+        if (!findBash()) return;
+
+        const res = runSmokeVerificationScript({
+          unauthHttpCode: '200',
+        });
+        expect(res.status).not.toBe(0);
+        expect(res.stderr).toContain('IAM privacy check failed');
+      });
+
+      it('passes Check 3 when unauthenticated probe returns HTTP 403', () => {
+        if (!findBash()) return;
+
+        const res = runSmokeVerificationScript({
+          unauthHttpCode: '403',
+        });
+        expect(res.status).toBe(0);
+        expect(res.stdout).toContain('IAM privacy verified: unauthenticated request rejected with HTTP 403');
+      });
+
+      it('fails Check 4 when OIDC token minting fails', () => {
+        if (!findBash()) return;
+
+        const res = runSmokeVerificationScript({
+          idToken: null,
+        });
+        expect(res.status).not.toBe(0);
+        expect(res.stderr).toContain('identity token');
+      });
+
+      it('fails Check 4 when authenticated probe returns HTTP 500', () => {
+        if (!findBash()) return;
+
+        const res = runSmokeVerificationScript({
+          authHttpCode: '500',
+        });
+        expect(res.status).not.toBe(0);
+        expect(res.stderr).toContain('500');
+      });
+
+      it('fails Check 4 when authenticated response body is invalid or not a Workspace Card response', () => {
+        if (!findBash()) return;
+
+        const res = runSmokeVerificationScript({
+          authResponseBody: { invalid: 'response' },
+        });
+        expect(res.status).not.toBe(0);
+        expect(res.stderr).toContain('not a valid Google Workspace Card response');
       });
     });
   });
