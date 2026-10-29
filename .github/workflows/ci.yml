@@ -27,7 +27,7 @@ jobs:
           cache: 'npm'
 
       - name: Set up Pulumi CLI
-        uses: pulumi/actions@v6
+        uses: pulumi/actions@v7
 
       - name: Install Semgrep CLI
         run: |
