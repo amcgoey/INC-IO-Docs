@@ -1,6 +1,6 @@
 {
   "name": "inc-io-docs",
-  "version": "1.0.0",
+  "version": "0.5.0",
   "description": "",
   "scripts": {
     "test": "vitest run && npm --prefix infra/pulumi test",
@@ -27,7 +27,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "UNLICENSED",
   "type": "commonjs",
   "bugs": {
     "url": "https://github.com/amcgoey/INC-IO-Docs/issues"

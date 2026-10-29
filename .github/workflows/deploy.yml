@@ -1,25 +1,37 @@
-name: Deploy to Google Cloud Run (Dev)
+name: Deploy
 
 on:
   push:
     branches:
       - develop
+      - main
 
-env:
-  PROJECT_ID: inc-io-docs-dev
-  REGION: us-east4
-  REPO_NAME: inc-io-docs
-  SERVICE_NAME: inc-io-docs-dev
-  PULUMI_STATE_BUCKET: gs://inc-io-docs-dev-pulumi-state
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
-    name: Build, Push, & Deploy to Dev
+  quality-gates:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: Deploy to ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    needs: [quality-gates]
     runs-on: ubuntu-latest
-    environment: dev
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     permissions:
-      contents: read
+      contents: write
       id-token: write
+
+    env:
+      DEPLOY_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+      PROJECT_ID: ${{ vars.PROJECT_ID }}
+      REGION: ${{ vars.REGION }}
+      REPO_NAME: ${{ vars.REPO_NAME }}
+      SERVICE_NAME: ${{ vars.SERVICE_NAME }}
+      PULUMI_STACK: ${{ vars.PULUMI_STACK }}
+      PULUMI_STATE_BUCKET: ${{ vars.PULUMI_STATE_BUCKET }}
+      PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE || '' }}
 
     steps:
       - name: Checkout Code
@@ -36,23 +48,6 @@ jobs:
           npm ci
           npm --prefix infra/pulumi ci
 
-      - name: Run Tests and Typecheck
-        run: |
-          npm run typecheck
-          npm test
-
-      - name: Build Docker Image (Local)
-        id: build-image
-        run: |
-          IMAGE_PATH="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.REPO_NAME }}"
-          IMAGE_TAG="${IMAGE_PATH}:${{ github.sha }}"
-          IMAGE_LATEST="${IMAGE_PATH}:latest"
-
-          docker build -t "$IMAGE_TAG" -t "$IMAGE_LATEST" .
-
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
-          echo "IMAGE_LATEST=$IMAGE_LATEST" >> $GITHUB_ENV
-
       - name: Authenticate to Google Cloud (WIF)
         id: auth
         uses: google-github-actions/auth@v2
@@ -63,74 +58,225 @@ jobs:
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Resolve Bootstrap Image for Base Service
-        id: resolve-bootstrap-image
-        run: |
-          BOOTSTRAP_IMAGE=$(gcloud run services describe "${{ env.SERVICE_NAME }}" \
-            --region="${{ env.REGION }}" \
-            --project="${{ env.PROJECT_ID }}" \
-            --format="value(spec.template.spec.containers[0].image)" 2>/dev/null || true)
-
-          if [ -z "$BOOTSTRAP_IMAGE" ]; then
-            BOOTSTRAP_IMAGE="us-docker.pkg.dev/cloudrun/container/hello"
-          fi
-
-          echo "BOOTSTRAP_IMAGE=$BOOTSTRAP_IMAGE" >> $GITHUB_ENV
-
-      - name: Provision Infrastructure (Artifact Registry & Base Service)
+      - name: Set up Pulumi CLI
         uses: pulumi/actions@v6
-        with:
-          command: up
-          stack-name: dev
-          work-dir: ./infra/pulumi
-          cloud-url: ${{ env.PULUMI_STATE_BUCKET }}
-          upsert: true
-          config-map: |
-            image:
-              value: ${{ env.BOOTSTRAP_IMAGE }}
-        env:
-          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE || '' }}
+
+      - name: Conditional First-Run Infrastructure Bootstrap
+        id: conditional-bootstrap
+        run: |
+          if ! gcloud artifacts repositories describe "$REPO_NAME" \
+            --location="$REGION" \
+            --project="$PROJECT_ID" >/dev/null 2>&1; then
+            echo "Artifact Registry repository $REPO_NAME not found. Executing initial bootstrap pulumi up..."
+            pulumi login "$PULUMI_STATE_BUCKET"
+            pulumi stack select --create "$PULUMI_STACK" --cwd ./infra/pulumi
+            pulumi up --yes --cwd ./infra/pulumi --stack "$PULUMI_STACK"
+          else
+            echo "Artifact Registry repository $REPO_NAME exists. Skipping pre-Docker bootstrap pass."
+          fi
 
       - name: Configure Docker Authentication for Artifact Registry
         run: |
-          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build Docker Image with Version Tags
+        id: build-image
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          IMAGE_PATH="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${REPO_NAME}"
+          IMAGE_SHA_TAG="${IMAGE_PATH}:${GITHUB_SHA}"
+          IMAGE_LATEST="${IMAGE_PATH}:latest"
+
+          TAG_ARGS=("-t" "$IMAGE_SHA_TAG" "-t" "$IMAGE_LATEST")
+          if [ "$DEPLOY_ENV" = "prod" ]; then
+            IMAGE_VERSION_TAG="${IMAGE_PATH}:v${PACKAGE_VERSION}"
+            TAG_ARGS+=("-t" "$IMAGE_VERSION_TAG")
+            echo "IMAGE_VERSION_TAG=$IMAGE_VERSION_TAG" >> $GITHUB_ENV
+          fi
+
+          docker build "${TAG_ARGS[@]}" .
+
+          echo "IMAGE_SHA_TAG=$IMAGE_SHA_TAG" >> $GITHUB_ENV
+          echo "IMAGE_LATEST=$IMAGE_LATEST" >> $GITHUB_ENV
+          echo "PACKAGE_VERSION=$PACKAGE_VERSION" >> $GITHUB_ENV
 
       - name: Push Docker Image
         run: |
-          docker push "$IMAGE_TAG"
+          docker push "$IMAGE_SHA_TAG"
           docker push "$IMAGE_LATEST"
+          if [ "$DEPLOY_ENV" = "prod" ]; then
+            docker push "$IMAGE_VERSION_TAG"
+          fi
 
       - name: Deploy App to Cloud Run
         uses: pulumi/actions@v6
         with:
           command: up
-          stack-name: dev
+          stack-name: ${{ vars.PULUMI_STACK }}
           work-dir: ./infra/pulumi
-          cloud-url: ${{ env.PULUMI_STATE_BUCKET }}
+          cloud-url: ${{ vars.PULUMI_STATE_BUCKET }}
           upsert: true
           config-map: |
             image:
-              value: ${{ env.IMAGE_TAG }}
+              value: ${{ env.IMAGE_SHA_TAG }}
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE || '' }}
 
       - name: Get Cloud Run URL from Pulumi
         id: pulumi-output
         run: |
-          # Fetch the Cloud Run URL that Pulumi just provisioned
-          # We export this from Pulumi so we need to grab it from the stack
-          SERVICE_URL=$(pulumi stack output serviceUrl --cwd ./infra/pulumi -s dev)
+          SERVICE_URL=$(pulumi stack output serviceUrl --cwd ./infra/pulumi -s "$PULUMI_STACK")
           echo "SERVICE_URL=$SERVICE_URL" >> $GITHUB_ENV
-        env:
-          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE || '' }}
 
       - name: Generate Google Workspace Add-on Manifest
         run: |
-          npm run generate:manifest -- --service-url "$SERVICE_URL" --environment dev
+          npm run generate:manifest -- --service-url "$SERVICE_URL" --environment "$DEPLOY_ENV"
 
       - name: Deploy Google Workspace Add-on Manifest
         run: |
-          # The deployment name is the resource identifier in GCP
-          gcloud workspace-add-ons deployments replace ${{ env.REPO_NAME }} \
-            --deployment-file=infra/deployment.json \
-            --project=${{ env.PROJECT_ID }}
+          if gcloud workspace-add-ons deployments describe "$REPO_NAME" --project="$PROJECT_ID" >/dev/null 2>&1; then
+            echo "Workspace Add-on deployment $REPO_NAME exists. Running deployments replace..."
+            gcloud workspace-add-ons deployments replace "$REPO_NAME" \
+              --deployment-file=infra/deployment.json \
+              --project="$PROJECT_ID"
+          else
+            echo "Workspace Add-on deployment $REPO_NAME does not exist. Running deployments create..."
+            gcloud workspace-add-ons deployments create "$REPO_NAME" \
+              --deployment-file=infra/deployment.json \
+              --project="$PROJECT_ID"
+          fi
+
+      - name: Verify Deployment Readiness (Smoke Test)
+        run: |
+          set -e
+
+          echo "==> Check 1: Cloud Run Revision Readiness"
+          CLOUDRUN_RESP=$(mktemp)
+          if ! gcloud run services describe "$SERVICE_NAME" \
+            --region="$REGION" \
+            --project="$PROJECT_ID" \
+            --format=json > "$CLOUDRUN_RESP"; then
+            echo "Error: Failed to query Cloud Run service $SERVICE_NAME in $REGION" >&2
+            rm -f "$CLOUDRUN_RESP"
+            exit 1
+          fi
+
+          node -e '
+            const fs = require("fs");
+            const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const expectedUrl = process.env.SERVICE_URL;
+
+            const uri = data.uri || data.status?.url || data.status?.address?.url;
+            if (!uri || uri !== expectedUrl) {
+              console.error(`Cloud Run URI mismatch: expected "${expectedUrl}", got "${uri}"`);
+              process.exit(1);
+            }
+
+            const latestReady = data.latestReadyRevisionName || data.status?.latestReadyRevisionName;
+            const latestCreated = data.latestCreatedRevisionName || data.status?.latestCreatedRevisionName;
+            if (!latestReady || latestReady !== latestCreated) {
+              console.error(`Cloud Run revision mismatch: latestReady="${latestReady}", latestCreated="${latestCreated}"`);
+              process.exit(1);
+            }
+
+            const conditions = data.status?.conditions || data.conditions || [];
+            const readyCond = conditions.find((c) => c.type === "Ready");
+            if (!readyCond || readyCond.status !== "True") {
+              console.error(`Cloud Run Ready condition status is not True: ${JSON.stringify(readyCond)}`);
+              process.exit(1);
+            }
+
+            console.log(`✓ Cloud Run revision readiness verified: ${latestReady} (Ready=True, URI=${uri})`);
+          ' "$CLOUDRUN_RESP"
+          rm -f "$CLOUDRUN_RESP"
+
+          echo "==> Check 2: Workspace Add-on Deployment Trigger Alignment"
+          ADDON_RESP=$(mktemp)
+          if ! gcloud workspace-add-ons deployments describe "$REPO_NAME" \
+            --project="$PROJECT_ID" \
+            --format=json > "$ADDON_RESP"; then
+            echo "Error: Failed to query Workspace Add-on deployment $REPO_NAME" >&2
+            rm -f "$ADDON_RESP"
+            exit 1
+          fi
+
+          node -e '
+            const fs = require("fs");
+            const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const expectedTrigger = `${process.env.SERVICE_URL}/workspace/homepage`;
+
+            const runFunction = data.addOns?.common?.homepageTrigger?.runFunction;
+            if (runFunction !== expectedTrigger) {
+              console.error(`Workspace Add-on trigger mismatch: expected "${expectedTrigger}", got "${runFunction}"`);
+              process.exit(1);
+            }
+
+            console.log(`✓ Workspace Add-on homepageTrigger verified: ${runFunction}`);
+          ' "$ADDON_RESP"
+          rm -f "$ADDON_RESP"
+
+          echo "==> Check 3: Cloud Run IAM Privacy Check (Unauthenticated Probe)"
+          HTTP_UNAUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${SERVICE_URL}/workspace/homepage")
+          if [ "$HTTP_UNAUTH_CODE" != "401" ] && [ "$HTTP_UNAUTH_CODE" != "403" ]; then
+            echo "Error: Cloud Run IAM privacy check failed: unauthenticated POST to ${SERVICE_URL}/workspace/homepage returned HTTP $HTTP_UNAUTH_CODE (expected 401 or 403)" >&2
+            exit 1
+          fi
+          echo "✓ IAM privacy verified: unauthenticated request rejected with HTTP $HTTP_UNAUTH_CODE"
+
+          echo "==> Check 4: Live Container & Workspace Addon Execution (Authenticated OIDC Probe)"
+          ID_TOKEN=$(gcloud auth print-identity-token --audiences="$SERVICE_URL" || true)
+          if [ -z "$ID_TOKEN" ]; then
+            echo "Error: Failed to obtain OIDC identity token for audience: $SERVICE_URL" >&2
+            exit 1
+          fi
+
+          AUTH_RESP_FILE=$(mktemp)
+          HTTP_AUTH_CODE=$(curl -s -o "$AUTH_RESP_FILE" -w "%{http_code}" -X POST "${SERVICE_URL}/workspace/homepage" \
+            -H "Authorization: Bearer ${ID_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{}")
+
+          if [ "$HTTP_AUTH_CODE" != "200" ]; then
+            echo "Error: Authenticated probe failed with HTTP $HTTP_AUTH_CODE (expected 200)" >&2
+            echo "Response body: $(cat "$AUTH_RESP_FILE")" >&2
+            rm -f "$AUTH_RESP_FILE"
+            exit 1
+          fi
+
+          node -e '
+            const fs = require("fs");
+            const raw = fs.readFileSync(process.argv[1], "utf8");
+            let body;
+            try {
+              body = JSON.parse(raw);
+            } catch (err) {
+              console.error("Response is not valid JSON:", raw);
+              process.exit(1);
+            }
+
+            const hasNavigations = Array.isArray(body?.action?.navigations) && body.action.navigations.length > 0;
+            const hasRenderActions = Boolean(body?.renderActions);
+            if (!hasNavigations && !hasRenderActions) {
+              console.error("Response is not a valid Google Workspace Card response:", JSON.stringify(body));
+              process.exit(1);
+            }
+
+            console.log("✓ Authenticated Workspace Add-on execution verified (valid Card JSON received)");
+          ' "$AUTH_RESP_FILE"
+          rm -f "$AUTH_RESP_FILE"
+
+      - name: Publish GitHub Release on Main
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PACKAGE_VERSION="${PACKAGE_VERSION:-$(node -p "require('./package.json').version")}"
+          RELEASE_TAG="v${PACKAGE_VERSION}"
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; skipping release creation."
+            exit 0
+          fi
+
+          gh release create "$RELEASE_TAG" --target "${GITHUB_SHA}" --title "$RELEASE_TAG" --generate-notes
+

@@ -1,0 +1,48 @@
+name: CI Quality Gates
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality-gates:
+    name: Quality Gates (Lint, Typecheck, Test)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Set up Pulumi CLI
+        uses: pulumi/actions@v6
+
+      - name: Install Semgrep CLI
+        run: |
+          python3 -m pip install --upgrade pip semgrep
+
+      - name: Install Dependencies
+        run: |
+          npm ci
+          npm --prefix infra/pulumi ci
+
+      - name: Lint (ESLint + Semgrep)
+        run: npm run lint
+
+      - name: Typecheck (App + Infrastructure)
+        run: npm run typecheck
+
+      - name: Test (App + Infrastructure)
+        run: npm run test:all

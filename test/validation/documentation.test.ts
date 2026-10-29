@@ -235,7 +235,6 @@ export const DOCUMENTATION_CONTRACTS: readonly DocumentationContract[] = [
       '## Configuration & Schema Overview',
       '## Getting Started & Local Development',
       '## Deployment & Release Summary',
-      '## License',
     ],
     requiredTerms: [
       ...CANONICAL_GLOSSARY_TERMS,
@@ -277,7 +276,6 @@ export const DOCUMENTATION_CONTRACTS: readonly DocumentationContract[] = [
       'logo-one-line-220x30.png',
       'PRIVATE_DOMAIN_ONLY',
       'v0.5.0',
-      'ISC License',
     ],
     forbiddenTerms: ['ngrok', 'tunnel.ps1', 'APP_SUMMARY'],
     requiredLinks: [
