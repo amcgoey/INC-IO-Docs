@@ -765,6 +765,14 @@ ${buildStep!.run!}
         expect(res.status).not.toBe(0);
         expect(res.stderr).toContain('not a valid Google Workspace Card response');
       });
+
+      it('fails Check 4 when authenticated response body is an empty JSON object', async () => {
+        const res = await runSmokeVerification({
+          authResponseBody: {},
+        });
+        expect(res.status).not.toBe(0);
+        expect(res.stderr).toContain('not a valid Google Workspace Card response');
+      });
     });
 
     describe('Publish GitHub Release step execution behavior (#244)', () => {
@@ -922,6 +930,88 @@ ${releaseStep!.run!}
         expect(createCall).toBeDefined();
         expect(createCall).toContain('v0.5.0-rc1');
       });
+    });
+  });
+
+  describe('infra/verify-deployment.ts CLI entrypoint integration', () => {
+    const tsxCli = require.resolve('tsx/cli');
+    const VERIFY_DEPLOYMENT_CLI_PATH = path.join(ROOT_DIR, 'infra', 'verify-deployment.ts');
+
+    it('exits non-zero and prints usage error when required flags or env vars are missing', () => {
+      const res = spawnSync(process.execPath, [tsxCli, VERIFY_DEPLOYMENT_CLI_PATH], {
+        cwd: ROOT_DIR,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          SERVICE_URL: '',
+          SERVICE_NAME: '',
+          REGION: '',
+          PROJECT_ID: '',
+          REPO_NAME: '',
+          OIDC_ID_TOKEN: '',
+        },
+      });
+
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toContain('Missing required "--service-url"');
+      expect(res.stderr).toContain('--id-token <token>');
+    });
+
+    it('accepts --id-token and all required CLI flags, validating HTTPS before remote calls', () => {
+      const res = spawnSync(
+        process.execPath,
+        [
+          tsxCli,
+          VERIFY_DEPLOYMENT_CLI_PATH,
+          '--service-url',
+          'http://insecure.example.com',
+          '--service-name',
+          'test-service',
+          '--region',
+          'us-east4',
+          '--project-id',
+          'test-project',
+          '--repo-name',
+          'test-repo',
+          '--id-token',
+          'sample-bearer-credential',
+        ],
+        {
+          cwd: ROOT_DIR,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            SERVICE_URL: '',
+            SERVICE_NAME: '',
+            REGION: '',
+            PROJECT_ID: '',
+            REPO_NAME: '',
+            OIDC_ID_TOKEN: '',
+          },
+        }
+      );
+
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toContain('serviceUrl must be a valid HTTPS URL');
+    });
+
+    it('accepts all required inputs via environment variables and validates HTTPS', () => {
+      const res = spawnSync(process.execPath, [tsxCli, VERIFY_DEPLOYMENT_CLI_PATH], {
+        cwd: ROOT_DIR,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          SERVICE_URL: 'http://insecure-env.example.com',
+          SERVICE_NAME: 'test-service',
+          REGION: 'us-east4',
+          PROJECT_ID: 'test-project',
+          REPO_NAME: 'test-repo',
+          OIDC_ID_TOKEN: 'sample-env-bearer-credential',
+        },
+      });
+
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toContain('serviceUrl must be a valid HTTPS URL');
     });
   });
 });

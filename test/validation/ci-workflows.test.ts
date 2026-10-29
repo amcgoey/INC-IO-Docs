@@ -2,6 +2,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import * as YAML from 'yaml';
+import { Value } from '@sinclair/typebox/value';
+import {
+  CloudRunServiceDescriptorSchema,
+  WorkspaceAddonDeploymentDescriptorSchema,
+  WorkspaceCardResponseSchema,
+} from '../../infra/deployment-readiness';
 
 const ROOT_DIR = path.resolve(__dirname, '../..');
 const PACKAGE_JSON_PATH = path.join(ROOT_DIR, 'package.json');
@@ -389,30 +395,47 @@ describe('CI/CD & Release Workflow Contract Validation', () => {
       expect(run).toContain('--repo-name "$REPO_NAME"');
     });
 
-    it('implements all 4 control-plane and HTTP smoke checks with Typebox schemas in infra/deployment-readiness.ts', () => {
-      const readinessPath = path.join(ROOT_DIR, 'infra', 'deployment-readiness.ts');
-      expect(fs.existsSync(readinessPath)).toBe(true);
-      const readinessSource = fs.readFileSync(readinessPath, 'utf8');
+    it('validates post-deploy smoke descriptors and card response against Typebox schemas', () => {
+      // Check 1: Cloud Run descriptor validation
+      const validCloudRun = {
+        uri: 'https://service-abc.a.run.app',
+        latestReadyRevisionName: 'rev-001',
+        latestCreatedRevisionName: 'rev-001',
+        conditions: [{ type: 'Ready', status: 'True' }],
+      };
+      expect(Value.Check(CloudRunServiceDescriptorSchema, validCloudRun)).toBe(true);
+      expect(Value.Check(CloudRunServiceDescriptorSchema, { conditions: [{ type: '' }] })).toBe(false);
 
-      // Check 1: Cloud Run readiness
-      expect(readinessSource).toContain('CloudRunServiceDescriptorSchema');
-      expect(readinessSource).toContain('latestReadyRevisionName');
-      expect(readinessSource).toContain('latestCreatedRevisionName');
-      expect(readinessSource).toContain('Ready');
+      // Check 2: Workspace Add-on deployment descriptor validation
+      const validAddon = {
+        name: 'projects/p/deployments/d',
+        addOns: {
+          common: {
+            homepageTrigger: {
+              runFunction: 'https://service-abc.a.run.app/workspace/homepage',
+            },
+          },
+        },
+      };
+      expect(Value.Check(WorkspaceAddonDeploymentDescriptorSchema, validAddon)).toBe(true);
+      expect(Value.Check(WorkspaceAddonDeploymentDescriptorSchema, 'not-an-object')).toBe(false);
 
-      // Check 2: Workspace Add-on deployment alignment
-      expect(readinessSource).toContain('WorkspaceAddonDeploymentDescriptorSchema');
-      expect(readinessSource).toContain('homepageTrigger');
-      expect(readinessSource).toContain('/workspace/homepage');
+      // Check 4: Workspace Card response validation (action navigation or renderActions)
+      const validNavigationCard = {
+        action: {
+          navigations: [{ pushCard: { header: { title: 'Smoke Test' } } }],
+        },
+      };
+      const validRenderActionCard = {
+        renderActions: { action: {} },
+      };
+      expect(Value.Check(WorkspaceCardResponseSchema, validNavigationCard)).toBe(true);
+      expect(Value.Check(WorkspaceCardResponseSchema, validRenderActionCard)).toBe(true);
 
-      // Check 3: Unauthenticated 401/403 check
-      expect(readinessSource).toContain('401');
-      expect(readinessSource).toContain('403');
-
-      // Check 4: Authenticated 200 + Workspace Card check
-      expect(readinessSource).toContain('WorkspaceCardResponseSchema');
-      expect(readinessSource).toContain('Bearer');
-      expect(readinessSource).toContain('200');
+      // Must reject empty objects, missing navigations, or empty navigations
+      expect(Value.Check(WorkspaceCardResponseSchema, {})).toBe(false);
+      expect(Value.Check(WorkspaceCardResponseSchema, { action: { navigations: [] } })).toBe(false);
+      expect(Value.Check(WorkspaceCardResponseSchema, { unknownField: true })).toBe(false);
     });
 
     describe('GitHub Release Publishing Contract on Main (#244)', () => {

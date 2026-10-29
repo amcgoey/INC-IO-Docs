@@ -52,14 +52,20 @@ export type WorkspaceAddonDeploymentDescriptor = Static<
   typeof WorkspaceAddonDeploymentDescriptorSchema
 >;
 
-export const WorkspaceCardResponseSchema = Type.Object({
-  action: Type.Optional(
-    Type.Object({
-      navigations: Type.Optional(Type.Array(Type.Record(Type.String(), Type.Unknown()))),
-    })
-  ),
-  renderActions: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+export const WorkspaceCardActionNavigationSchema = Type.Object({
+  action: Type.Object({
+    navigations: Type.Array(Type.Record(Type.String(), Type.Unknown()), { minItems: 1 }),
+  }),
 });
+
+export const WorkspaceCardRenderActionsSchema = Type.Object({
+  renderActions: Type.Record(Type.String(), Type.Unknown()),
+});
+
+export const WorkspaceCardResponseSchema = Type.Union([
+  WorkspaceCardActionNavigationSchema,
+  WorkspaceCardRenderActionsSchema,
+]);
 
 export type WorkspaceCardResponse = Static<typeof WorkspaceCardResponseSchema>;
 
@@ -244,15 +250,6 @@ export async function verifyDeploymentReadiness(
   }
 
   if (!Value.Check(WorkspaceCardResponseSchema, parsedBody)) {
-    throw new Error(
-      `Response is not a valid Google Workspace Card response: ${JSON.stringify(parsedBody)}`
-    );
-  }
-
-  const hasNavigations =
-    Array.isArray(parsedBody.action?.navigations) && parsedBody.action.navigations.length > 0;
-  const hasRenderActions = Boolean(parsedBody.renderActions);
-  if (!hasNavigations && !hasRenderActions) {
     throw new Error(
       `Response is not a valid Google Workspace Card response: ${JSON.stringify(parsedBody)}`
     );

@@ -16,8 +16,21 @@ Options:
   --region <region>        GCP region (or env REGION)
   --project-id <id>        GCP project ID (or env PROJECT_ID)
   --repo-name <name>       Workspace Add-on deployment / repository name (or env REPO_NAME)
+  --id-token <token>       OIDC ID token for authorization (or env OIDC_ID_TOKEN)
 `);
   process.exit(1);
+}
+
+function getRequiredOption(
+  values: Record<string, string | boolean | undefined>,
+  flag: string,
+  envVar: string
+): string {
+  const value = ((values[flag] as string | undefined) ?? process.env[envVar])?.trim();
+  if (!value) {
+    printUsageAndExit(`Missing required "--${flag}" (or ${envVar} env var)`);
+  }
+  return value;
 }
 
 async function main(): Promise<void> {
@@ -31,6 +44,7 @@ async function main(): Promise<void> {
         region: { type: 'string' },
         'project-id': { type: 'string' },
         'repo-name': { type: 'string' },
+        'id-token': { type: 'string' },
       },
       allowPositionals: false,
     });
@@ -39,36 +53,13 @@ async function main(): Promise<void> {
     printUsageAndExit(error instanceof Error ? error.message : String(error));
   }
 
-  const serviceUrl =
-    (values['service-url'] as string | undefined) ?? process.env['SERVICE_URL'];
-  if (!serviceUrl) {
-    printUsageAndExit('Missing required "--service-url" (or SERVICE_URL env var)');
-  }
+  const serviceUrl = getRequiredOption(values, 'service-url', 'SERVICE_URL');
+  const serviceName = getRequiredOption(values, 'service-name', 'SERVICE_NAME');
+  const region = getRequiredOption(values, 'region', 'REGION');
+  const projectId = getRequiredOption(values, 'project-id', 'PROJECT_ID');
+  const repoName = getRequiredOption(values, 'repo-name', 'REPO_NAME');
+  const oidcBearerCredential = getRequiredOption(values, 'id-token', 'OIDC_ID_TOKEN');
 
-  const serviceName =
-    (values['service-name'] as string | undefined) ?? process.env['SERVICE_NAME'];
-  if (!serviceName) {
-    printUsageAndExit('Missing required "--service-name" (or SERVICE_NAME env var)');
-  }
-
-  const region = (values['region'] as string | undefined) ?? process.env['REGION'];
-  if (!region) {
-    printUsageAndExit('Missing required "--region" (or REGION env var)');
-  }
-
-  const projectId =
-    (values['project-id'] as string | undefined) ?? process.env['PROJECT_ID'];
-  if (!projectId) {
-    printUsageAndExit('Missing required "--project-id" (or PROJECT_ID env var)');
-  }
-
-  const repoName =
-    (values['repo-name'] as string | undefined) ?? process.env['REPO_NAME'];
-  if (!repoName) {
-    printUsageAndExit('Missing required "--repo-name" (or REPO_NAME env var)');
-  }
-
-  const oidcBearerCredential = process.env['OIDC_ID_TOKEN']?.trim() ?? '';
   const adapter = createCliAndHttpReadinessAdapter();
 
   try {
