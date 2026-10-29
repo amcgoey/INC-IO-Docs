@@ -2,13 +2,20 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as zlib from 'node:zlib';
 import { describe, it, expect } from 'vitest';
+import { Value } from '@sinclair/typebox/value';
 import {
   generateBrandingAssetsInMemory,
   decodePng,
   encodePng,
   crc32,
   paethPredictor,
+  MarketplaceListingConfigSchema,
+  type MarketplaceListingConfig,
 } from '../../infra/generate-branding';
+import {
+  DEFAULT_DEV_LOGO_URL,
+  DEFAULT_PROD_LOGO_URL,
+} from '../../infra/deployment-manifest';
 
 describe('Branding Assets & Deterministic Generator', () => {
   const brandingDir = path.resolve(__dirname, '../../assets/branding');
@@ -22,6 +29,7 @@ describe('Branding Assets & Deterministic Generator', () => {
     'logo-one-line-220x30.png': { width: 220, height: 30 },
     'icon-48x48.png': { width: 48, height: 48 },
     'icon-dev-48x48.png': { width: 48, height: 48 },
+    'screenshot-1280x800.png': { width: 1280, height: 800 },
   };
 
   const PNG_HEADER = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -33,7 +41,7 @@ describe('Branding Assets & Deterministic Generator', () => {
     expect(spaceNamed).toEqual([]);
   });
 
-  it('has all 7 standardized PNG assets with valid PNG signature and correct dimensions', () => {
+  it('has all 8 standardized PNG assets with valid PNG signature and correct dimensions', () => {
     for (const [filename, dims] of Object.entries(EXPECTED_DIMENSIONS)) {
       const filePath = path.join(brandingDir, filename);
       expect(fs.existsSync(filePath), `Expected ${filename} to exist on disk`).toBe(true);
@@ -58,9 +66,12 @@ describe('Branding Assets & Deterministic Generator', () => {
     const inMemory = generateBrandingAssetsInMemory(brandingDir);
     const diskProd48 = fs.readFileSync(path.join(brandingDir, 'icon-48x48.png'));
     const diskDev48 = fs.readFileSync(path.join(brandingDir, 'icon-dev-48x48.png'));
+    const diskScreenshot = fs.readFileSync(path.join(brandingDir, 'screenshot-1280x800.png'));
 
     expect(inMemory.icon48.equals(diskProd48)).toBe(true);
     expect(inMemory.iconDev48.equals(diskDev48)).toBe(true);
+    expect(inMemory.screenshot1280x800.equals(diskScreenshot)).toBe(true);
+    expect(inMemory['screenshot-1280x800.png'].equals(diskScreenshot)).toBe(true);
   });
 
   it('icon-48x48.png has transparent corner (0,0) and pure black RGB for non-transparent pixels', () => {
@@ -262,6 +273,74 @@ describe('Branding Assets & Deterministic Generator', () => {
 
     it('rejects invalid PNG signatures or malformed data', () => {
       expect(() => decodePng(Buffer.from('not a png file'))).toThrow(/Invalid PNG signature/);
+    });
+  });
+
+  describe('Marketplace Store Listing Configuration (#232)', () => {
+    const listingJsonPath = path.join(brandingDir, 'marketplace-listing.json');
+    const deploymentTemplatePath = path.resolve(__dirname, '../../infra/deployment.template.json');
+
+    it('marketplace-listing.json exists and strictly satisfies MarketplaceListingConfigSchema', () => {
+      expect(fs.existsSync(listingJsonPath), 'marketplace-listing.json must exist').toBe(true);
+
+      const rawJson = fs.readFileSync(listingJsonPath, 'utf8');
+      const parsed = JSON.parse(rawJson);
+
+      const isValid = Value.Check(MarketplaceListingConfigSchema, parsed);
+      if (!isValid) {
+        const errors = [...Value.Errors(MarketplaceListingConfigSchema, parsed)];
+        throw new Error(`Schema validation errors: ${JSON.stringify(errors, null, 2)}`);
+      }
+      expect(isValid).toBe(true);
+
+      const listing = parsed as MarketplaceListingConfig;
+      expect(listing.visibility).toBe('PRIVATE_DOMAIN_ONLY');
+      expect(listing.oauthConsentScreen.userType).toBe('INTERNAL');
+      expect(listing.oauthConsentScreen.appName).toBe('INC-IO Docs');
+      expect(listing.storeListing.appName).toBe('INC-IO Docs');
+      expect(listing.storeListing.shortDescription.length).toBeLessThanOrEqual(200);
+      expect(listing.storeListing.shortDescription.length).toBeGreaterThan(10);
+    });
+
+    it('oauthConsentScreen.oauthScopes deeply equals deployment.template.json oauthScopes', () => {
+      const listing = JSON.parse(fs.readFileSync(listingJsonPath, 'utf8')) as MarketplaceListingConfig;
+      const template = JSON.parse(fs.readFileSync(deploymentTemplatePath, 'utf8')) as {
+        oauthScopes: string[];
+      };
+
+      expect(listing.oauthConsentScreen.oauthScopes).toEqual(template.oauthScopes);
+    });
+
+    it('storeListing companion logo URLs match canonical dev and prod URLs', () => {
+      const listing = JSON.parse(fs.readFileSync(listingJsonPath, 'utf8')) as MarketplaceListingConfig;
+      expect(listing.storeListing.assets.companionLogoDev48.url).toBe(DEFAULT_DEV_LOGO_URL);
+      expect(listing.storeListing.assets.companionLogoProd48.url).toBe(DEFAULT_PROD_LOGO_URL);
+    });
+
+    it('every asset descriptor in marketplace-listing.json points to a valid PNG with matching dimensions', () => {
+      const listing = JSON.parse(fs.readFileSync(listingJsonPath, 'utf8')) as MarketplaceListingConfig;
+      const repoRoot = path.resolve(__dirname, '../..');
+
+      const assetDescriptors: Array<{ path: string; width: number; height: number }> = [
+        listing.storeListing.assets.applicationIcon32,
+        listing.storeListing.assets.applicationIcon128,
+        listing.storeListing.assets.cardBanner220x140,
+        ...listing.storeListing.assets.screenshots,
+        listing.storeListing.assets.companionLogoProd48,
+        listing.storeListing.assets.companionLogoDev48,
+      ];
+
+      for (const asset of assetDescriptors) {
+        const absolutePath = path.resolve(repoRoot, asset.path);
+        expect(fs.existsSync(absolutePath), `Asset file must exist at ${asset.path}`).toBe(true);
+
+        const buf = fs.readFileSync(absolutePath);
+        expect(buf.subarray(0, 8)).toEqual(PNG_HEADER);
+
+        const decoded = decodePng(buf);
+        expect(decoded.width, `${asset.path} width`).toBe(asset.width);
+        expect(decoded.height, `${asset.path} height`).toBe(asset.height);
+      }
     });
   });
 });
