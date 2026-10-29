@@ -218,6 +218,12 @@ describe('Infrastructure and Build Isolation Workflow (#239)', () => {
       const authIdx = steps.findIndex(
         (s) => s.name === 'Authenticate to Google Cloud (WIF)'
       );
+      const gcloudSetupIdx = steps.findIndex(
+        (s) => s.name === 'Set up Google Cloud SDK'
+      );
+      const pulumiSetupIdx = steps.findIndex(
+        (s) => s.name === 'Set up Pulumi CLI'
+      );
       const bootstrapIdx = steps.findIndex(
         (s) => s.name === 'Conditional First-Run Infrastructure Bootstrap'
       );
@@ -246,9 +252,12 @@ describe('Infrastructure and Build Isolation Workflow (#239)', () => {
         (s) => s.name === 'Verify Deployment Readiness (Smoke Test)'
       );
 
-      // 1) Auth occurs before conditional bootstrap
+      // 1) Auth and tooling setup occur before conditional bootstrap
       expect(authIdx).toBeGreaterThanOrEqual(0);
-      expect(bootstrapIdx).toBeGreaterThan(authIdx);
+      expect(gcloudSetupIdx).toBeGreaterThan(authIdx);
+      expect(pulumiSetupIdx).toBeGreaterThan(gcloudSetupIdx);
+      expect(bootstrapIdx).toBeGreaterThan(pulumiSetupIdx);
+      expect(steps[pulumiSetupIdx].uses).toBe('pulumi/actions@v6');
 
       // 2) Conditional bootstrap occurs before Docker auth and build
       expect(dockerAuthIdx).toBeGreaterThan(bootstrapIdx);
@@ -846,6 +855,7 @@ ${smokeStep!.run!}
         releaseViewExitCode?: number;
         gitLsRemoteExitCode?: number;
         githubSha?: string;
+        packageVersion?: string;
       }
 
       function runPublishReleaseScript(config: ReleaseMockConfig = {}): {
@@ -902,6 +912,7 @@ exit 0
 export PATH="${toBashPath(tempDir)}:$PATH"
 export GITHUB_SHA="${config.githubSha ?? 'testsha987654321'}"
 export GH_TOKEN="mock-github-token"
+${config.packageVersion ? `export PACKAGE_VERSION="${config.packageVersion}"` : ''}
 
 ${releaseStep!.run!}
 `;
@@ -977,6 +988,22 @@ ${releaseStep!.run!}
         expect(res.calls.some((c) => c.startsWith('gh release view'))).toBe(true);
         expect(res.calls.some((c) => c.startsWith('git ls-remote'))).toBe(true);
         expect(res.calls.some((c) => c.startsWith('gh release create'))).toBe(false);
+      });
+
+      it('creates GitHub Release utilizing PACKAGE_VERSION from environment when provided', () => {
+        if (!findBash()) return;
+
+        const res = runPublishReleaseScript({
+          releaseViewExitCode: 1,
+          gitLsRemoteExitCode: 1,
+          githubSha: 'commit123456789',
+          packageVersion: '0.5.0-rc1',
+        });
+
+        expect(res.status).toBe(0);
+        const createCall = res.calls.find((c) => c.startsWith('gh release create'));
+        expect(createCall).toBeDefined();
+        expect(createCall).toContain('v0.5.0-rc1');
       });
     });
   });

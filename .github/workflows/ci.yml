@@ -26,6 +26,9 @@ jobs:
           node-version: 22
           cache: 'npm'
 
+      - name: Set up Pulumi CLI
+        uses: pulumi/actions@v6
+
       - name: Install Semgrep CLI
         run: |
           python3 -m pip install --upgrade pip semgrep

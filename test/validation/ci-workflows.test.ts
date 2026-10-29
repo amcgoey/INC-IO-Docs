@@ -95,6 +95,19 @@ describe('CI/CD & Release Workflow Contract Validation', () => {
       expect(withConfig.cache).toBe('npm');
     });
 
+    it('installs Pulumi CLI via pulumi/actions@v6 in quality-gates job', () => {
+      const content = fs.readFileSync(CI_WORKFLOW_PATH, 'utf8');
+      const doc = YAML.parse(content);
+      const steps: Array<Record<string, unknown>> = doc.jobs?.['quality-gates']?.steps || [];
+
+      const pulumiStep = steps.find(
+        (s) => typeof s.uses === 'string' && s.uses.startsWith('pulumi/actions')
+      );
+      expect(pulumiStep).toBeDefined();
+      expect(pulumiStep?.uses).toBe('pulumi/actions@v6');
+      expect(pulumiStep?.name).toBe('Set up Pulumi CLI');
+    });
+
     it('installs Semgrep CLI, root and Pulumi dependencies, and executes gates in order', () => {
       const content = fs.readFileSync(CI_WORKFLOW_PATH, 'utf8');
       const doc = YAML.parse(content);
@@ -210,6 +223,29 @@ describe('CI/CD & Release Workflow Contract Validation', () => {
       expect(content).toContain('${{ secrets.WIF_PROVIDER }}');
       expect(content).toContain('${{ secrets.GCP_SERVICE_ACCOUNT }}');
       expect(content).toContain('${{ secrets.PULUMI_CONFIG_PASSPHRASE');
+    });
+
+    it('sets up Pulumi CLI in deploy job tooling setup phase before conditional bootstrap', () => {
+      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
+      const doc = YAML.parse(content);
+      const steps: Array<{ name?: string; uses?: string; run?: string }> = doc.jobs?.deploy?.steps || [];
+
+      const gcloudIdx = steps.findIndex(
+        (s) => typeof s.uses === 'string' && s.uses.startsWith('google-github-actions/setup-gcloud')
+      );
+      const pulumiIdx = steps.findIndex(
+        (s) => typeof s.uses === 'string' && s.uses === 'pulumi/actions@v6' && s.name === 'Set up Pulumi CLI'
+      );
+      const bootstrapIdx = steps.findIndex(
+        (s) => s.name === 'Conditional First-Run Infrastructure Bootstrap'
+      );
+
+      expect(gcloudIdx).toBeGreaterThanOrEqual(0);
+      expect(pulumiIdx).toBeGreaterThanOrEqual(0);
+      expect(bootstrapIdx).toBeGreaterThanOrEqual(0);
+
+      expect(pulumiIdx).toBe(gcloudIdx + 1);
+      expect(bootstrapIdx).toBe(pulumiIdx + 1);
     });
 
     it('guards pre-Docker bootstrap pulumi up with gcloud artifacts repositories describe existence check', () => {
@@ -438,6 +474,8 @@ describe('CI/CD & Release Workflow Contract Validation', () => {
         expect(releaseStep).toBeDefined();
         const run = releaseStep!.run!;
 
+        expect(run).toContain('PACKAGE_VERSION="${PACKAGE_VERSION:-');
+        expect(run).toContain('RELEASE_TAG="v${PACKAGE_VERSION}"');
         expect(run).toContain('gh release view');
         expect(run).toContain('git ls-remote');
         expect(run).toContain('Release $RELEASE_TAG already exists; skipping release creation.');
