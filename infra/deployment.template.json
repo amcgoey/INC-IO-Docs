@@ -9,7 +9,7 @@
   "addOns": {
     "common": {
       "name": "{{ADDON_NAME}}",
-      "logoUrl": "https://www.gstatic.com/images/branding/product/1x/drive_2020q4_48dp.png",
+      "logoUrl": "{{LOGO_URL}}",
       "homepageTrigger": {
         "runFunction": "{{BASE_URL}}/workspace/homepage"
       }

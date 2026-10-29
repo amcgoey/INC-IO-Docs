@@ -6,6 +6,8 @@ import { Value } from '@sinclair/typebox/value';
 import {
   generateDeploymentManifest,
   DeploymentManifestSchema,
+  DEFAULT_DEV_LOGO_URL,
+  DEFAULT_PROD_LOGO_URL,
   type DeploymentManifest,
 } from '../../infra/deployment-manifest';
 
@@ -21,7 +23,7 @@ describe('Google Workspace Add-on Deployment Manifest Generator', () => {
     });
 
     expect(manifest.addOns.common.name).toBe('INC-IO Docs (Dev)');
-    expect(manifest.addOns.common.logoUrl).toMatch(/^https:\/\//);
+    expect(manifest.addOns.common.logoUrl).toBe(DEFAULT_DEV_LOGO_URL);
     expect(manifest.addOns.common.homepageTrigger?.runFunction).toBe(
       'https://service-dev.run.app/workspace/homepage'
     );
@@ -50,10 +52,41 @@ describe('Google Workspace Add-on Deployment Manifest Generator', () => {
     });
 
     expect(manifest.addOns.common.name).toBe('INC-IO Docs');
-    expect(manifest.addOns.common.homepageTrigger?.runFunction).toBe(
-      'https://service-prod.run.app/workspace/homepage'
-    );
+    expect(manifest.addOns.common.logoUrl).toBe(DEFAULT_PROD_LOGO_URL);
     expect(Value.Check(DeploymentManifestSchema, manifest)).toBe(true);
+  });
+
+  it('resolves custom logoUrl override regardless of environment', () => {
+    const customUrl = 'https://custom.cdn.com/assets/logo.png';
+    const { manifest } = generateDeploymentManifest({
+      templateContent,
+      serviceUrl: 'https://service-dev.run.app',
+      environment: 'dev',
+      logoUrl: customUrl,
+    });
+
+    expect(manifest.addOns.common.logoUrl).toBe(customUrl);
+  });
+
+  it('appends logoVersion cache-buster query parameter to logoUrl', () => {
+    const { manifest: devManifest } = generateDeploymentManifest({
+      templateContent,
+      serviceUrl: 'https://service-dev.run.app',
+      environment: 'dev',
+      logoVersion: 'abc1234',
+    });
+    expect(devManifest.addOns.common.logoUrl).toBe(`${DEFAULT_DEV_LOGO_URL}?v=abc1234`);
+
+    const { manifest: queryManifest } = generateDeploymentManifest({
+      templateContent,
+      serviceUrl: 'https://service-dev.run.app',
+      environment: 'dev',
+      logoUrl: 'https://custom.cdn.com/logo.png?token=secret',
+      logoVersion: 'v1.2.3',
+    });
+    expect(queryManifest.addOns.common.logoUrl).toBe(
+      'https://custom.cdn.com/logo.png?token=secret&v=v1.2.3'
+    );
   });
 
   it('contains expected OAuth scopes', () => {
@@ -153,16 +186,12 @@ describe('Google Workspace Add-on Deployment Manifest Generator', () => {
   });
 
   it('fails fast if rendered manifest fails schema validation (non-https logoUrl or triggers)', () => {
-    const nonHttpsLogoTemplate = templateContent.replace(
-      'https://www.gstatic.com',
-      'http://www.gstatic.com'
-    );
-
     expect(() =>
       generateDeploymentManifest({
-        templateContent: nonHttpsLogoTemplate,
+        templateContent,
         serviceUrl: 'https://service.run.app',
         environment: 'dev',
+        logoUrl: 'http://insecure.com/logo.png',
       })
     ).toThrow(/validation failed/i);
   });
@@ -202,9 +231,55 @@ describe('Google Workspace Add-on Deployment Manifest Generator', () => {
 
       const parsed = JSON.parse(buffer.toString('utf8')) as DeploymentManifest;
       expect(parsed.addOns.common.name).toBe('INC-IO Docs (Dev)');
+      expect(parsed.addOns.common.logoUrl).toBe(DEFAULT_DEV_LOGO_URL);
       expect(parsed.addOns.common.homepageTrigger?.runFunction).toBe(
         'https://cli-test.run.app/workspace/homepage'
       );
+      expect(Value.Check(DeploymentManifestSchema, parsed)).toBe(true);
+    } finally {
+      if (fs.existsSync(tmpOutput)) {
+        fs.unlinkSync(tmpOutput);
+      }
+    }
+  });
+
+  it('CLI accepts --logo-url and --logo-version overrides', () => {
+    const tmpDir = path.resolve(__dirname, '../../scratch/test-manifest-output');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const tmpOutput = path.resolve(tmpDir, 'deployment.custom-logo.json');
+
+    try {
+      const tsxCli = require.resolve('tsx/cli');
+      execFileSync(
+        process.execPath,
+        [
+          tsxCli,
+          'infra/generate-deployment-manifest.ts',
+          '--service-url',
+          'https://cli-test.run.app',
+          '--environment',
+          'prod',
+          '--template',
+          templatePath,
+          '--output',
+          tmpOutput,
+          '--logo-url',
+          'https://cdn.example.com/custom.png',
+          '--logo-version',
+          'sha-1234567',
+        ],
+        {
+          cwd: path.resolve(__dirname, '../..'),
+          encoding: 'utf8',
+        }
+      );
+
+      expect(fs.existsSync(tmpOutput)).toBe(true);
+
+      const buffer = fs.readFileSync(tmpOutput);
+      const parsed = JSON.parse(buffer.toString('utf8')) as DeploymentManifest;
+      expect(parsed.addOns.common.name).toBe('INC-IO Docs');
+      expect(parsed.addOns.common.logoUrl).toBe('https://cdn.example.com/custom.png?v=sha-1234567');
       expect(Value.Check(DeploymentManifestSchema, parsed)).toBe(true);
     } finally {
       if (fs.existsSync(tmpOutput)) {
