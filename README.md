@@ -177,6 +177,8 @@ Domain method signatures never accept `ExecutionContext` or OAuth token paramete
 
 ## Configuration & Schema Overview
 
+> **Configuration & Schema Guide (`docs/configuration-and-schemas.md`)**: Read [`docs/configuration-and-schemas.md`](docs/configuration-and-schemas.md) when modifying `Manifest` or `AppConfiguration` defaults, configuring a `DocumentSpaceType`, authoring or editing a `DocumentType` JSON schema (`documentSchema`, `storageContextConfig`, `documentUiSchema`, `documentWorkflowConfig`), writing Handlebars `{{...}}` templates, or working with `Activity` payloads and `ActivityOutput` / `FileLocator` data flow.
+
 Runtime behavior is driven by [`assets/manifest.json`](assets/manifest.json) (`Manifest`), which binds three top-level sections:
 
 1. **`AppConfiguration` (`configuration`)**:
@@ -242,6 +244,8 @@ Runtime behavior is driven by [`assets/manifest.json`](assets/manifest.json) (`M
 ---
 
 ## Deployment & Release Summary
+
+> **Deployment & Release Architecture Guide (`docs/deployment-and-release.md`)**: Read [`docs/deployment-and-release.md`](docs/deployment-and-release.md) when bootstrapping `dev` or `prod` GCP projects and Workload Identity Federation (`infra/bootstrap.ps1`), modifying Pulumi stacks (`infra/pulumi/`), generating the `Workspace Addon` deployment manifest or Marketplace branding assets (`npm run generate:manifest`, `npm run generate:branding`, `assets/branding/marketplace-listing.json`), configuring the Internal OAuth Consent Screen or Private (`PRIVATE_DOMAIN_ONLY`) Google Workspace Marketplace Store Listing, or operating the CI/CD and `v0.5.0` GitHub Release pipeline.
 
 `INC-IO Docs` deploys to isolated Google Cloud Platform projects for development and production via GitHub Actions OIDC Workload Identity Federation and Pulumi Infrastructure as Code:
 
