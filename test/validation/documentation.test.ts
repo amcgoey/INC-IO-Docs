@@ -277,7 +277,6 @@ export const DOCUMENTATION_CONTRACTS: readonly DocumentationContract[] = [
       'logo-one-line-220x30.png',
       'PRIVATE_DOMAIN_ONLY',
       'v0.5.0',
-      'ISC License',
     ],
     forbiddenTerms: ['ngrok', 'tunnel.ps1', 'APP_SUMMARY'],
     requiredLinks: [
@@ -292,6 +291,7 @@ export const DOCUMENTATION_CONTRACTS: readonly DocumentationContract[] = [
       'docs/configuration-and-schemas.md',
       'docs/deployment-and-release.md',
       '.env.example',
+      'LICENSE',
       ...EXPECTED_ADR_FILES,
     ],
   },

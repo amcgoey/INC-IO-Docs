@@ -263,4 +263,4 @@ Runtime behavior is driven by [`assets/manifest.json`](assets/manifest.json) (`M
 
 ## License
 
-This project is licensed under the **ISC License**.
+See [`LICENSE`](LICENSE) for details.
