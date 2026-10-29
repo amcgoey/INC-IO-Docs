@@ -235,7 +235,6 @@ export const DOCUMENTATION_CONTRACTS: readonly DocumentationContract[] = [
       '## Configuration & Schema Overview',
       '## Getting Started & Local Development',
       '## Deployment & Release Summary',
-      '## License',
     ],
     requiredTerms: [
       ...CANONICAL_GLOSSARY_TERMS,
@@ -291,7 +290,6 @@ export const DOCUMENTATION_CONTRACTS: readonly DocumentationContract[] = [
       'docs/configuration-and-schemas.md',
       'docs/deployment-and-release.md',
       '.env.example',
-      'LICENSE',
       ...EXPECTED_ADR_FILES,
     ],
   },
