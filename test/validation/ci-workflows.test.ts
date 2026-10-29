@@ -349,76 +349,70 @@ describe('CI/CD & Release Workflow Contract Validation', () => {
       expect(smokeTestIdx).toBe(addonDeployIdx + 1);
     });
 
-    it('verifies Cloud Run readiness via gcloud run services describe in smoke verification step', () => {
+    it('mints an audience-bound OIDC identity token via WIF and invokes npm run verify:deployment in smoke verification step', () => {
       const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
       const doc = YAML.parse(content);
-      const steps: Array<{ name?: string; run?: string }> = doc.jobs?.deploy?.steps || [];
+      const steps: Array<{
+        name?: string;
+        id?: string;
+        uses?: string;
+        with?: Record<string, unknown>;
+        env?: Record<string, string>;
+        run?: string;
+      }> = doc.jobs?.deploy?.steps || [];
+
+      const mintStep = steps.find(
+        (s) => s.name === 'Mint OIDC Identity Token for Smoke Test'
+      );
+      expect(mintStep).toBeDefined();
+      expect(mintStep?.id).toBe('smoke-id-token');
+      expect(mintStep?.uses).toBe('google-github-actions/auth@v2');
+      expect(mintStep?.with?.['token_format']).toBe('id_token');
+      expect(mintStep?.with?.['id_token_audience']).toBe('${{ env.SERVICE_URL }}');
+      expect(mintStep?.with?.['id_token_include_email']).toBe(true);
+      expect(mintStep?.with?.['create_credentials_file']).toBe(false);
+      expect(mintStep?.with?.['export_environment_variables']).toBe(false);
 
       const smokeStep = steps.find(
         (s) => s.name === 'Verify Deployment Readiness (Smoke Test)'
       );
       expect(smokeStep).toBeDefined();
+      expect(smokeStep?.env?.['OIDC_ID_TOKEN']).toBe(
+        '${{ steps.smoke-id-token.outputs.id_token }}'
+      );
       const run = smokeStep!.run!;
-
-      expect(run).toContain('gcloud run services describe');
-      expect(run).toContain('$SERVICE_NAME');
-      expect(run).toContain('$REGION');
-      expect(run).toContain('$PROJECT_ID');
-      expect(run).toContain('--format=json');
-      expect(run).toContain('latestReadyRevisionName');
-      expect(run).toContain('latestCreatedRevisionName');
-      expect(run).toContain('Ready');
+      expect(run).toContain('npm run verify:deployment');
+      expect(run).toContain('--service-url "$SERVICE_URL"');
+      expect(run).toContain('--service-name "$SERVICE_NAME"');
+      expect(run).toContain('--region "$REGION"');
+      expect(run).toContain('--project-id "$PROJECT_ID"');
+      expect(run).toContain('--repo-name "$REPO_NAME"');
     });
 
-    it('verifies Workspace Add-on trigger alignment via gcloud workspace-add-ons deployments describe', () => {
-      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
-      const doc = YAML.parse(content);
-      const steps: Array<{ name?: string; run?: string }> = doc.jobs?.deploy?.steps || [];
+    it('implements all 4 control-plane and HTTP smoke checks with Typebox schemas in infra/deployment-readiness.ts', () => {
+      const readinessPath = path.join(ROOT_DIR, 'infra', 'deployment-readiness.ts');
+      expect(fs.existsSync(readinessPath)).toBe(true);
+      const readinessSource = fs.readFileSync(readinessPath, 'utf8');
 
-      const smokeStep = steps.find(
-        (s) => s.name === 'Verify Deployment Readiness (Smoke Test)'
-      );
-      expect(smokeStep).toBeDefined();
-      const run = smokeStep!.run!;
+      // Check 1: Cloud Run readiness
+      expect(readinessSource).toContain('CloudRunServiceDescriptorSchema');
+      expect(readinessSource).toContain('latestReadyRevisionName');
+      expect(readinessSource).toContain('latestCreatedRevisionName');
+      expect(readinessSource).toContain('Ready');
 
-      expect(run).toContain('gcloud workspace-add-ons deployments describe');
-      expect(run).toContain('$REPO_NAME');
-      expect(run).toContain('$PROJECT_ID');
-      expect(run).toContain('homepageTrigger');
-      expect(run).toContain('/workspace/homepage');
-    });
+      // Check 2: Workspace Add-on deployment alignment
+      expect(readinessSource).toContain('WorkspaceAddonDeploymentDescriptorSchema');
+      expect(readinessSource).toContain('homepageTrigger');
+      expect(readinessSource).toContain('/workspace/homepage');
 
-    it('sends an unauthenticated POST and asserts HTTP 401 or 403', () => {
-      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
-      const doc = YAML.parse(content);
-      const steps: Array<{ name?: string; run?: string }> = doc.jobs?.deploy?.steps || [];
+      // Check 3: Unauthenticated 401/403 check
+      expect(readinessSource).toContain('401');
+      expect(readinessSource).toContain('403');
 
-      const smokeStep = steps.find(
-        (s) => s.name === 'Verify Deployment Readiness (Smoke Test)'
-      );
-      expect(smokeStep).toBeDefined();
-      const run = smokeStep!.run!;
-
-      expect(run).toContain('POST');
-      expect(run).toContain('/workspace/homepage');
-      expect(run).toContain('401');
-      expect(run).toContain('403');
-    });
-
-    it('mints an OIDC identity token and verifies authenticated POST returns 200 with valid Workspace Card JSON', () => {
-      const content = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8');
-      const doc = YAML.parse(content);
-      const steps: Array<{ name?: string; run?: string }> = doc.jobs?.deploy?.steps || [];
-
-      const smokeStep = steps.find(
-        (s) => s.name === 'Verify Deployment Readiness (Smoke Test)'
-      );
-      expect(smokeStep).toBeDefined();
-      const run = smokeStep!.run!;
-
-      expect(run).toContain('gcloud auth print-identity-token --audiences=');
-      expect(run).toContain('Authorization: Bearer');
-      expect(run).toContain('200');
+      // Check 4: Authenticated 200 + Workspace Card check
+      expect(readinessSource).toContain('WorkspaceCardResponseSchema');
+      expect(readinessSource).toContain('Bearer');
+      expect(readinessSource).toContain('200');
     });
 
     describe('GitHub Release Publishing Contract on Main (#244)', () => {

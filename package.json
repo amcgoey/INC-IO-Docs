@@ -10,6 +10,7 @@
     "dev": "tsx src/app/server.ts",
     "generate:manifest": "tsx infra/generate-deployment-manifest.ts",
     "generate:branding": "tsx infra/generate-branding.ts",
+    "verify:deployment": "tsx infra/verify-deployment.ts",
     "lint": "eslint . && npm run lint:semgrep",
     "lint:eslint": "eslint .",
     "lint:semgrep": "semgrep scan --config semgrep.yml --error",
