@@ -503,7 +503,7 @@ ${buildStep!.run!}
           const prodEnv = fs.readFileSync(githubEnvProd, 'utf8');
           expect(prodEnv).toContain('IMAGE_SHA_TAG=us-east4-docker.pkg.dev/inc-io-docs-prod/inc-io-docs/inc-io-docs:mocksha123456');
           expect(prodEnv).toContain('IMAGE_LATEST=us-east4-docker.pkg.dev/inc-io-docs-prod/inc-io-docs/inc-io-docs:latest');
-          expect(prodEnv).toContain('IMAGE_VERSION_TAG=us-east4-docker.pkg.dev/inc-io-docs-prod/inc-io-docs/inc-io-docs:v0.5.0');
+          expect(prodEnv).toContain('IMAGE_VERSION_TAG=us-east4-docker.pkg.dev/inc-io-docs-prod/inc-io-docs/inc-io-docs:v0.5.1');
         } finally {
           fs.rmSync(tempDir, { recursive: true, force: true });
         }
@@ -877,9 +877,9 @@ ${releaseStep!.run!}
 
         const createCall = res.calls.find((c) => c.startsWith('gh release create'));
         expect(createCall).toBeDefined();
-        expect(createCall).toContain('v0.5.0');
+        expect(createCall).toContain('v0.5.1');
         expect(createCall).toContain('--target commit123456789');
-        expect(createCall).toContain('--title v0.5.0');
+        expect(createCall).toContain('--title v0.5.1');
         expect(createCall).toContain('--generate-notes');
         expect(createCall).not.toContain('.tar.gz');
         expect(createCall).not.toContain('.zip');
@@ -894,7 +894,7 @@ ${releaseStep!.run!}
         });
 
         expect(res.status).toBe(0);
-        expect(res.stdout).toContain('Release v0.5.0 already exists; skipping release creation.');
+        expect(res.stdout).toContain('Release v0.5.1 already exists; skipping release creation.');
         expect(res.calls.some((c) => c.startsWith('gh release view'))).toBe(true);
         expect(res.calls.some((c) => c.startsWith('git ls-remote'))).toBe(false);
         expect(res.calls.some((c) => c.startsWith('gh release create'))).toBe(false);
@@ -909,7 +909,7 @@ ${releaseStep!.run!}
         });
 
         expect(res.status).toBe(0);
-        expect(res.stdout).toContain('Release v0.5.0 already exists; skipping release creation.');
+        expect(res.stdout).toContain('Release v0.5.1 already exists; skipping release creation.');
         expect(res.calls.some((c) => c.startsWith('gh release view'))).toBe(true);
         expect(res.calls.some((c) => c.startsWith('git ls-remote'))).toBe(true);
         expect(res.calls.some((c) => c.startsWith('gh release create'))).toBe(false);

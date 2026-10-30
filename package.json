@@ -1,6 +1,6 @@
 {
   "name": "inc-io-docs",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "",
   "scripts": {
     "test": "vitest run && npm --prefix infra/pulumi test",
@@ -35,11 +35,11 @@
   },
   "homepage": "https://github.com/amcgoey/INC-IO-Docs#readme",
   "dependencies": {
-    "@fastify/type-provider-typebox": "^6.1.0",
+    "@fastify/type-provider-typebox": "^6.3.0",
     "@sinclair/typebox": "^0.34.52",
-    "fastify": "^5.12.0",
+    "fastify": "^5.12.7",
     "google-auth-library": "^11.0.2",
-    "googleapis": "^176.0.0",
+    "googleapis": "^188.0.0",
     "handlebars": "^4.7.9",
     "json-logic-js": "^2.0.5",
     "pdf-lib": "^1.17.1",
@@ -48,11 +48,11 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/json-logic-js": "^2.0.8",
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.6.5",
     "eslint": "^10.8.1",
     "knip": "^6.32.2",
     "nock": "^14.0.17",
-    "tsx": "^4.23.12",
+    "tsx": "^4.23.15",
     "typescript": "^5.6.3",
     "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.10"
