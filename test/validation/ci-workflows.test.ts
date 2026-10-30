@@ -19,15 +19,15 @@ const DEPENDABOT_PATH = path.join(ROOT_DIR, '.github', 'dependabot.yml');
 
 describe('CI/CD & Release Workflow Contract Validation', () => {
   describe('Package Version & Legacy Workflow Retirement', () => {
-    it('declares version 0.5.0 in package.json', () => {
+    it('declares version 0.5.1 in package.json', () => {
       const pkg = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, 'utf8'));
-      expect(pkg.version).toBe('0.5.0');
+      expect(pkg.version).toBe('0.5.1');
     });
 
-    it('declares version 0.5.0 in package-lock.json', () => {
+    it('declares version 0.5.1 in package-lock.json', () => {
       const lock = JSON.parse(fs.readFileSync(PACKAGE_LOCK_JSON_PATH, 'utf8'));
-      expect(lock.version).toBe('0.5.0');
-      expect(lock.packages?.['']?.version).toBe('0.5.0');
+      expect(lock.version).toBe('0.5.1');
+      expect(lock.packages?.['']?.version).toBe('0.5.1');
     });
 
     it('does not have standalone semgrep.yml workflow', () => {
