@@ -15,6 +15,7 @@ const PACKAGE_LOCK_JSON_PATH = path.join(ROOT_DIR, 'package-lock.json');
 const SEMGREP_WORKFLOW_PATH = path.join(ROOT_DIR, '.github', 'workflows', 'semgrep.yml');
 const CI_WORKFLOW_PATH = path.join(ROOT_DIR, '.github', 'workflows', 'ci.yml');
 const DEPLOY_WORKFLOW_PATH = path.join(ROOT_DIR, '.github', 'workflows', 'deploy.yml');
+const DEPENDABOT_PATH = path.join(ROOT_DIR, '.github', 'dependabot.yml');
 
 describe('CI/CD & Release Workflow Contract Validation', () => {
   describe('Package Version & Legacy Workflow Retirement', () => {
@@ -101,7 +102,7 @@ describe('CI/CD & Release Workflow Contract Validation', () => {
       expect(withConfig.cache).toBe('npm');
     });
 
-    it('installs Pulumi CLI via pulumi/actions@v6 in quality-gates job', () => {
+    it('installs Pulumi CLI via pulumi/actions@v7 in quality-gates job', () => {
       const content = fs.readFileSync(CI_WORKFLOW_PATH, 'utf8');
       const doc = YAML.parse(content);
       const steps: Array<Record<string, unknown>> = doc.jobs?.['quality-gates']?.steps || [];
@@ -110,7 +111,7 @@ describe('CI/CD & Release Workflow Contract Validation', () => {
         (s) => typeof s.uses === 'string' && s.uses.startsWith('pulumi/actions')
       );
       expect(pulumiStep).toBeDefined();
-      expect(pulumiStep?.uses).toBe('pulumi/actions@v6');
+      expect(pulumiStep?.uses).toBe('pulumi/actions@v7');
       expect(pulumiStep?.name).toBe('Set up Pulumi CLI');
     });
 
@@ -240,7 +241,7 @@ describe('CI/CD & Release Workflow Contract Validation', () => {
         (s) => typeof s.uses === 'string' && s.uses.startsWith('google-github-actions/setup-gcloud')
       );
       const pulumiIdx = steps.findIndex(
-        (s) => typeof s.uses === 'string' && s.uses === 'pulumi/actions@v6' && s.name === 'Set up Pulumi CLI'
+        (s) => typeof s.uses === 'string' && s.uses === 'pulumi/actions@v7' && s.name === 'Set up Pulumi CLI'
       );
       const bootstrapIdx = steps.findIndex(
         (s) => s.name === 'Conditional First-Run Infrastructure Bootstrap'
@@ -372,7 +373,7 @@ describe('CI/CD & Release Workflow Contract Validation', () => {
       );
       expect(mintStep).toBeDefined();
       expect(mintStep?.id).toBe('smoke-id-token');
-      expect(mintStep?.uses).toBe('google-github-actions/auth@v2');
+      expect(mintStep?.uses).toBe('google-github-actions/auth@v3');
       expect(mintStep?.with?.['token_format']).toBe('id_token');
       expect(mintStep?.with?.['id_token_audience']).toBe('${{ env.SERVICE_URL }}');
       expect(mintStep?.with?.['id_token_include_email']).toBe(true);
@@ -519,6 +520,53 @@ describe('CI/CD & Release Workflow Contract Validation', () => {
         expect(run).not.toContain('.tar.gz');
         expect(run).not.toContain('.zip');
       });
+    });
+  });
+
+  describe('Dependabot Configuration Contract (dependabot.yml)', () => {
+    it('is valid YAML', () => {
+      expect(fs.existsSync(DEPENDABOT_PATH)).toBe(true);
+      const content = fs.readFileSync(DEPENDABOT_PATH, 'utf8');
+      expect(() => YAML.parse(content)).not.toThrow();
+    });
+
+    it('ignores semver-major typescript updates for root and infra/pulumi npm ecosystems', () => {
+      const content = fs.readFileSync(DEPENDABOT_PATH, 'utf8');
+      const doc = YAML.parse(content);
+      const updates: Array<{
+        'package-ecosystem'?: string;
+        directory?: string;
+        ignore?: Array<{
+          'dependency-name'?: string;
+          'update-types'?: string[];
+        }>;
+      }> = doc.updates || [];
+
+      const rootNpm = updates.find(
+        (u) => u['package-ecosystem'] === 'npm' && u.directory === '/'
+      );
+      expect(rootNpm).toBeDefined();
+      expect(rootNpm?.ignore).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            'dependency-name': 'typescript',
+            'update-types': expect.arrayContaining(['version-update:semver-major']),
+          }),
+        ])
+      );
+
+      const infraNpm = updates.find(
+        (u) => u['package-ecosystem'] === 'npm' && u.directory === '/infra/pulumi'
+      );
+      expect(infraNpm).toBeDefined();
+      expect(infraNpm?.ignore).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            'dependency-name': 'typescript',
+            'update-types': expect.arrayContaining(['version-update:semver-major']),
+          }),
+        ])
+      );
     });
   });
 });

@@ -261,7 +261,7 @@ describe('Infrastructure and Build Isolation Workflow (#239)', () => {
       expect(gcloudSetupIdx).toBeGreaterThan(authIdx);
       expect(pulumiSetupIdx).toBeGreaterThan(gcloudSetupIdx);
       expect(bootstrapIdx).toBeGreaterThan(pulumiSetupIdx);
-      expect(steps[pulumiSetupIdx].uses).toBe('pulumi/actions@v6');
+      expect(steps[pulumiSetupIdx].uses).toBe('pulumi/actions@v7');
 
       // 2) Conditional bootstrap occurs before Docker auth and build
       expect(dockerAuthIdx).toBeGreaterThan(bootstrapIdx);
