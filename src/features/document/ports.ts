@@ -9,6 +9,7 @@ import {
   SourceFileType,
   OPTION_NOT_FOUND_MSG,
   VALIDATION_TIMEOUT_MSG,
+  LinkedFieldSchema,
   type Activity,
   type ActivityOutput,
   type FileLocator,
@@ -19,6 +20,7 @@ import {
   type UiEventRule,
   type Document,
   type DocumentModel,
+  type LinkedField,
 } from './domain';
 
 export {
@@ -31,6 +33,8 @@ export {
   type SourceFile,
   OPTION_NOT_FOUND_MSG,
   VALIDATION_TIMEOUT_MSG,
+  LinkedFieldSchema,
+  type LinkedField,
 };
 
 export type SchemaOrKeys =
@@ -59,13 +63,6 @@ export const FormDocumentFieldOptionType = Type.Object({
 }, { additionalProperties: true });
 
 export type FormDocumentFieldOption = Static<typeof FormDocumentFieldOptionType>;
-
-export const LinkedFieldSchema = Type.Object({
-  sourceField: Type.String({ minLength: 1 }),
-  sourceProperty: Type.String({ minLength: 1 }),
-});
-
-export type LinkedField = Static<typeof LinkedFieldSchema>;
 
 export const FormDocumentFieldType = Type.Object({
   key: Type.String(),
