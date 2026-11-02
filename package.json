@@ -38,7 +38,7 @@
     "@fastify/type-provider-typebox": "^6.3.0",
     "@sinclair/typebox": "^0.34.52",
     "fastify": "^5.12.7",
-    "google-auth-library": "^11.0.2",
+    "google-auth-library": "^11.3.2",
     "googleapis": "^188.0.0",
     "handlebars": "^4.7.9",
     "json-logic-js": "^2.0.5",
