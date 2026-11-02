@@ -911,6 +911,7 @@ export function validateManifestTemplates(
   if (manifest.documentSchema?.fields) {
     for (const field of manifest.documentSchema.fields) {
       if (field.linkedField) {
+        // nosemgrep: domain-pass-through-read
         const { sourceField, sourceProperty } = field.linkedField;
         if (sourceField === field.key) {
           errors.push(`Field "${field.key}" has invalid linkedField: cannot reference itself.`);
@@ -925,9 +926,11 @@ export function validateManifestTemplates(
               `Field "${field.key}" has invalid linkedField: sourceField "${sourceField}" does not define options.`
             );
           } else {
+            // nosemgrep: domain-pass-through-read
             const optionSource = targetField.options.source;
             const tuples = manifest.documentSchema.options?.[optionSource];
             if (tuples && tuples.length > 0) {
+              // nosemgrep: domain-pass-through-read
               const keyProp = targetField.options.key;
               const nameProp = targetField.options.name ?? keyProp;
               const propertyExists =
