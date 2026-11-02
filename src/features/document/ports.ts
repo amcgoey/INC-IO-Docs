@@ -60,6 +60,13 @@ export const FormDocumentFieldOptionType = Type.Object({
 
 export type FormDocumentFieldOption = Static<typeof FormDocumentFieldOptionType>;
 
+export const LinkedFieldSchema = Type.Object({
+  sourceField: Type.String({ minLength: 1 }),
+  sourceProperty: Type.String({ minLength: 1 }),
+});
+
+export type LinkedField = Static<typeof LinkedFieldSchema>;
+
 export const FormDocumentFieldType = Type.Object({
   key: Type.String(),
   name: Type.String(),
@@ -69,6 +76,7 @@ export const FormDocumentFieldType = Type.Object({
   defaultValue: Type.Optional(Type.String()),
   format: Type.Optional(Type.String()),
   options: Type.Optional(FormDocumentFieldOptionType),
+  linkedField: Type.Optional(LinkedFieldSchema),
 }, { additionalProperties: true });
 
 export type FormDocumentField = Static<typeof FormDocumentFieldType>;

@@ -4,7 +4,7 @@ import { ManifestUiAdapter, type RawManifestProviderPort } from './manifest.adap
 describe('ManifestUiAdapter', () => {
   const mockManifest: RawManifestProviderPort = {
     getRawManifest: vi.fn().mockResolvedValue({
-      documentTypes: ['./doc-a.json', './doc-b.json'],
+      documentTypes: ['./doc-a.json', './doc-b.json', './doc-linked.json'],
     }),
     readParsedSchema: vi.fn().mockImplementation(async (relPath: string) => {
       if (relPath === './doc-a.json') {
@@ -32,6 +32,32 @@ describe('ManifestUiAdapter', () => {
           documentSchema: { invalid: true },
           // invalid documentUiSchema
           documentUiSchema: { fields: 'not-an-object' },
+        };
+      }
+      if (relPath === './doc-linked.json') {
+        return {
+          key: 'doc-linked',
+          name: 'Doc Linked Name',
+          documentSchema: {
+            fields: [
+              { key: 'specTag', type: 'string', options: { source: 'specs', key: 'key' } },
+              {
+                key: 'specTitle',
+                type: 'string',
+                linkedField: {
+                  sourceField: 'specTag',
+                  sourceProperty: 'name',
+                },
+              },
+            ],
+          },
+          documentUiSchema: {
+            layout: ['specTag', 'specTitle'],
+            fields: {
+              specTag: { widget: 'textInput', label: 'Spec Tag' },
+              specTitle: { widget: 'textInput', label: 'Spec Title' },
+            },
+          },
         };
       }
       return undefined;
@@ -81,6 +107,20 @@ describe('ManifestUiAdapter', () => {
     expect(docSchema).toBeDefined();
     expect(docSchema?.fields).toHaveLength(2);
     expect(docSchema?.fields[0].key).toBe('field1');
+  });
+
+  it('preserves linkedField metadata when hydrating AbstractDataSchema', async () => {
+    const adapter = new ManifestUiAdapter(mockManifest);
+    const docSchema = await adapter.getDocumentSchema('doc-linked');
+
+    expect(docSchema).toBeDefined();
+    expect(docSchema?.fields).toHaveLength(2);
+    const specTitleField = docSchema?.fields.find((f) => f.key === 'specTitle');
+    expect(specTitleField).toBeDefined();
+    expect((specTitleField as { linkedField?: unknown })?.linkedField).toEqual({
+      sourceField: 'specTag',
+      sourceProperty: 'name',
+    });
   });
 
   it('returns undefined when raw documentSchema is invalid', async () => {

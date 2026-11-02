@@ -172,6 +172,42 @@ describe('Document Info Block', () => {
       ]);
     });
 
+    it('renders specTag and relatedTag using tag key and vendor and contact using name', () => {
+      const specTagField: AbstractDataField = {
+        key: 'specTag',
+        type: 'string',
+        options: { source: 'specs', key: 'key', allowUserInput: true },
+      };
+      const vendorField: AbstractDataField = {
+        key: 'vendor',
+        type: 'string',
+        options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true },
+      };
+      const contactField: AbstractDataField = {
+        key: 'contact',
+        type: 'string',
+        options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true },
+      };
+
+      const dataSchema: AbstractDataSchema = {
+        fields: [specTagField, vendorField, contactField],
+        options: {
+          specs: [{ key: 'AC102', name: 'HOOK' }],
+          vendors: [{ key: 'BM', name: 'Berman Falk', type: 'Casegoods' }],
+          contacts: [{ key: 'BW', name: 'Benjamin West', type: 'Procurement' }],
+        },
+      };
+
+      const specItems = extractSelectionItems(specTagField, {}, dataSchema);
+      expect(specItems).toEqual([{ text: 'AC102', value: 'AC102' }]);
+
+      const vendorItems = extractSelectionItems(vendorField, {}, dataSchema);
+      expect(vendorItems).toEqual([{ text: 'Berman Falk', value: 'BM' }]);
+
+      const contactItems = extractSelectionItems(contactField, {}, dataSchema);
+      expect(contactItems).toEqual([{ text: 'Benjamin West', value: 'BW' }]);
+    });
+
     it('resolves options from dataSchema source lookup with text and value tuples', () => {
       const field: AbstractDataField = {
         key: 'role',

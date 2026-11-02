@@ -87,11 +87,18 @@ export interface OptionsFetcherPort {
 
 // --- Data & Presentation DTO Schemas ---
 
+export const LinkedFieldSchema = Type.Object({
+  sourceField: Type.String({ minLength: 1 }),
+  sourceProperty: Type.String({ minLength: 1 }),
+});
+export type LinkedField = Static<typeof LinkedFieldSchema>;
+
 export const AbstractDataFieldSchema = Type.Object({
   key: Type.String(),
   type: Type.Optional(Type.String()),
   options: Type.Optional(Type.Unknown()),
   defaultValue: Type.Optional(Type.Unknown()),
+  linkedField: Type.Optional(LinkedFieldSchema),
 });
 export type AbstractDataField = Static<typeof AbstractDataFieldSchema>;
 

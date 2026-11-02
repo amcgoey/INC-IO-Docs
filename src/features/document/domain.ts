@@ -110,6 +110,13 @@ export const DocumentFieldOptionType = Type.Union([
 
 export type DocumentFieldOption = Static<typeof DocumentFieldOptionType>;
 
+export const LinkedFieldSchema = Type.Object({
+  sourceField: Type.String({ minLength: 1 }),
+  sourceProperty: Type.String({ minLength: 1 }),
+});
+
+export type LinkedField = Static<typeof LinkedFieldSchema>;
+
 export const DocumentFieldType = Type.Object({
   key: Type.String(),
   name: Type.String(),
@@ -121,6 +128,7 @@ export const DocumentFieldType = Type.Object({
   minLength: Type.Optional(Type.Number()),
   pattern: Type.Optional(Type.String()),
   options: Type.Optional(DocumentFieldOptionType),
+  linkedField: Type.Optional(LinkedFieldSchema),
 });
 
 export type DocumentField = Static<typeof DocumentFieldType>;
@@ -544,6 +552,10 @@ export class DocumentService implements DocumentServicePort {
         const nameProp = field.options.name ?? keyProp;
         if (typeof rawValue === 'string') {
           const sanitizedVal = sanitizeFilePath(rawValue);
+          if (!field.required && sanitizedVal === '') {
+            delete enrichedData[field.key];
+            continue;
+          }
           const optionTuples = documentType.documentSchema.options?.[field.options.source] ?? [];
           const matchedTuple = optionTuples.find(
             (tuple) =>
@@ -895,6 +907,44 @@ export function validateManifestTemplates(
 
   const baseVariables = getBaseVariables(manifest);
   const executionVariables = getExecutionVariables(manifest, baseVariables);
+
+  if (manifest.documentSchema?.fields) {
+    for (const field of manifest.documentSchema.fields) {
+      if (field.linkedField) {
+        const { sourceField, sourceProperty } = field.linkedField;
+        if (sourceField === field.key) {
+          errors.push(`Field "${field.key}" has invalid linkedField: cannot reference itself.`);
+        } else {
+          const targetField = manifest.documentSchema.fields.find((f) => f.key === sourceField);
+          if (!targetField) {
+            errors.push(
+              `Field "${field.key}" has invalid linkedField: sourceField "${sourceField}" does not exist.`
+            );
+          } else if (!targetField.options) {
+            errors.push(
+              `Field "${field.key}" has invalid linkedField: sourceField "${sourceField}" does not define options.`
+            );
+          } else {
+            const optionSource = targetField.options.source;
+            const tuples = manifest.documentSchema.options?.[optionSource];
+            if (tuples && tuples.length > 0) {
+              const keyProp = targetField.options.key;
+              const nameProp = targetField.options.name ?? keyProp;
+              const propertyExists =
+                sourceProperty === keyProp ||
+                sourceProperty === nameProp ||
+                tuples.some((t) => typeof t === 'object' && t !== null && sourceProperty in t);
+              if (!propertyExists) {
+                errors.push(
+                  `Field "${field.key}" has invalid linkedField: sourceProperty "${sourceProperty}" does not exist on sourceField "${sourceField}" options.`
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 
   if (manifest.documentSchema.calculatedFields) {
     manifest.documentSchema.calculatedFields.forEach((calcField, index) => {

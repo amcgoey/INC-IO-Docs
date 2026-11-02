@@ -4,7 +4,9 @@ import {
   SelectionItemSchema,
   SelectionStateSchema,
   GenerateViewRequestSchema,
+  AbstractDataFieldSchema,
   AbstractDataSchema,
+  LinkedFieldSchema,
   StandardWidgetCustomPropsSchema,
   DynamicOptionQuerySchema,
   DynamicOptionStatusSchema,
@@ -79,6 +81,32 @@ describe('schema-driven-ui ports', () => {
   });
 
   describe('Data and Widget DTO schemas', () => {
+    it('validates LinkedFieldSchema with valid and invalid values', () => {
+      expect(Value.Check(LinkedFieldSchema, { sourceField: 'specTag', sourceProperty: 'name' })).toBe(true);
+      expect(Value.Check(LinkedFieldSchema, { sourceField: '', sourceProperty: 'name' })).toBe(false);
+      expect(Value.Check(LinkedFieldSchema, { sourceField: 'specTag', sourceProperty: '' })).toBe(false);
+      expect(Value.Check(LinkedFieldSchema, { sourceField: 'specTag' })).toBe(false);
+    });
+
+    it('validates AbstractDataFieldSchema with optional linkedField', () => {
+      const fieldWithoutLinked = { key: 'title', type: 'string' };
+      expect(Value.Check(AbstractDataFieldSchema, fieldWithoutLinked)).toBe(true);
+
+      const fieldWithLinked = {
+        key: 'specTitle',
+        type: 'string',
+        linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+      };
+      expect(Value.Check(AbstractDataFieldSchema, fieldWithLinked)).toBe(true);
+
+      const fieldWithInvalidLinked = {
+        key: 'specTitle',
+        type: 'string',
+        linkedField: { sourceField: '', sourceProperty: 'name' },
+      };
+      expect(Value.Check(AbstractDataFieldSchema, fieldWithInvalidLinked)).toBe(false);
+    });
+
     it('validates AbstractDataSchema', () => {
       const data = {
         fields: [

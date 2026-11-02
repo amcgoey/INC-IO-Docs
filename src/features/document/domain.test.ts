@@ -12,6 +12,7 @@ import {
   DocumentTypeSchema,
   DocumentFieldOptionType,
   DocumentFieldType,
+  LinkedFieldSchema,
   DocumentSchemaType,
   DocumentSchemaOptionTupleType,
   DocumentIdentitySchemaType,
@@ -45,6 +46,7 @@ import {
   AmbiguousFileError,
   FileNotFoundError,
   FormDocumentFieldOptionType,
+  FormDocumentFieldType,
   type ActivityDispatcherPort,
   type DocumentSchemaRegistryPort,
   type CompiledSchemaRegistryPort,
@@ -1024,6 +1026,44 @@ describe('Document domain', () => {
         required: 'yes',
       };
       expect(Value.Check(DocumentFieldType, fieldWithInvalidRequired)).toBe(false);
+    });
+  });
+
+  describe('DocumentFieldType.linkedField and FormDocumentFieldType.linkedField', () => {
+    it('validates LinkedFieldSchema', () => {
+      expect(Value.Check(LinkedFieldSchema, { sourceField: 'specTag', sourceProperty: 'name' })).toBe(true);
+      expect(Value.Check(LinkedFieldSchema, { sourceField: '', sourceProperty: 'name' })).toBe(false);
+      expect(Value.Check(LinkedFieldSchema, { sourceField: 'specTag', sourceProperty: '' })).toBe(false);
+      expect(Value.Check(LinkedFieldSchema, { sourceField: 'specTag' })).toBe(false);
+    });
+
+    it('accepts optional linkedField on DocumentFieldType and FormDocumentFieldType', () => {
+      const field = {
+        key: 'specTitle',
+        name: 'Spec Title',
+        type: 'string',
+        required: true,
+        linkedField: {
+          sourceField: 'specTag',
+          sourceProperty: 'name',
+        },
+      };
+      expect(Value.Check(DocumentFieldType, field)).toBe(true);
+      expect(Value.Check(FormDocumentFieldType, field)).toBe(true);
+    });
+
+    it('rejects invalid linkedField on DocumentFieldType', () => {
+      const field = {
+        key: 'specTitle',
+        name: 'Spec Title',
+        type: 'string',
+        required: true,
+        linkedField: {
+          sourceField: '',
+          sourceProperty: 'name',
+        },
+      };
+      expect(Value.Check(DocumentFieldType, field)).toBe(false);
     });
   });
 
@@ -2061,6 +2101,82 @@ describe('Document domain', () => {
         expect(customResult.activities).toEqual([]);
       }
       expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('omits optional LookupField from Document.data when submitted as empty or whitespace-only string', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'test-optional-lookup',
+          name: 'Test Optional Lookup',
+          documentSchema: {
+            fields: [
+              {
+                key: 'specTag',
+                name: 'Spec Tag',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'specs',
+                  key: 'key',
+                  allowUserInput: true,
+                },
+              },
+              {
+                key: 'relatedTag',
+                name: 'Related Tag',
+                type: 'string',
+                required: false,
+                options: {
+                  source: 'specs',
+                  key: 'key',
+                  allowUserInput: true,
+                },
+              },
+            ],
+            options: {
+              specs: [
+                { key: 'AC102', name: 'HOOK' },
+              ],
+            },
+          },
+        },
+      ];
+      const customRegistry = createCustomRegistry(mockDocumentTypes);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      // Test with empty string ""
+      const docWithEmpty: Document = {
+        type: 'test-optional-lookup',
+        data: {
+          specTag: 'AC102',
+          relatedTag: '',
+        },
+      };
+      const resultEmpty = await service.processDocument(docWithEmpty);
+      expect(resultEmpty.success).toBe(true);
+      if (resultEmpty.success) {
+        expect(resultEmpty.data.data.specTag).toEqual({ key: 'AC102', name: 'HOOK' });
+        expect(resultEmpty.data.data).not.toHaveProperty('relatedTag');
+      }
+
+      // Test with whitespace string "   "
+      const docWithWhitespace: Document = {
+        type: 'test-optional-lookup',
+        data: {
+          specTag: 'AC102',
+          relatedTag: '   ',
+        },
+      };
+      const resultWhitespace = await service.processDocument(docWithWhitespace);
+      expect(resultWhitespace.success).toBe(true);
+      if (resultWhitespace.success) {
+        expect(resultWhitespace.data.data.specTag).toEqual({ key: 'AC102', name: 'HOOK' });
+        expect(resultWhitespace.data.data).not.toHaveProperty('relatedTag');
+      }
     });
 
     it('rejects non-string input when allowUserInput: true', async () => {
@@ -4640,6 +4756,154 @@ describe('Document domain', () => {
         'Invalid template at "documentWorkflowConfig.workflows[0].activitySequence[0].payload.invalidCalculatedUnderData": references unknown fields or is malformed.',
       ]);
     });
+
+    describe('linkedField referential integrity validation', () => {
+      it('rejects self-referencing linkedField (sourceField === field.key)', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'test-doc',
+          name: 'Test Doc',
+          documentSchema: {
+            fields: [
+              {
+                key: 'specTag',
+                name: 'Spec Tag',
+                type: 'string',
+                required: true,
+                options: { source: 'specs', key: 'key' },
+                linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+              },
+            ],
+            options: {
+              specs: [{ key: 'AC102', name: 'HOOK' }],
+            },
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toContain('Field "specTag" has invalid linkedField: cannot reference itself.');
+      });
+
+      it('rejects linkedField pointing to non-existent sourceField', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'test-doc',
+          name: 'Test Doc',
+          documentSchema: {
+            fields: [
+              {
+                key: 'specTitle',
+                name: 'Spec Title',
+                type: 'string',
+                required: true,
+                linkedField: { sourceField: 'nonExistentField', sourceProperty: 'name' },
+              },
+            ],
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toContain(
+          'Field "specTitle" has invalid linkedField: sourceField "nonExistentField" does not exist.'
+        );
+      });
+
+      it('rejects linkedField pointing to sourceField that does not define options', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'test-doc',
+          name: 'Test Doc',
+          documentSchema: {
+            fields: [
+              {
+                key: 'notes',
+                name: 'Notes',
+                type: 'string',
+                required: false,
+              },
+              {
+                key: 'specTitle',
+                name: 'Spec Title',
+                type: 'string',
+                required: true,
+                linkedField: { sourceField: 'notes', sourceProperty: 'name' },
+              },
+            ],
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toContain(
+          'Field "specTitle" has invalid linkedField: sourceField "notes" does not define options.'
+        );
+      });
+
+      it('rejects linkedField when sourceProperty is missing from static option tuples', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'test-doc',
+          name: 'Test Doc',
+          documentSchema: {
+            fields: [
+              {
+                key: 'specTag',
+                name: 'Spec Tag',
+                type: 'string',
+                required: true,
+                options: { source: 'specs', key: 'key' },
+              },
+              {
+                key: 'specTitle',
+                name: 'Spec Title',
+                type: 'string',
+                required: true,
+                linkedField: { sourceField: 'specTag', sourceProperty: 'missingProp' },
+              },
+            ],
+            options: {
+              specs: [{ key: 'AC102', name: 'HOOK' }],
+            },
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toContain(
+          'Field "specTitle" has invalid linkedField: sourceProperty "missingProp" does not exist on sourceField "specTag" options.'
+        );
+      });
+
+      it('accepts valid linkedField referencing static option tuples property or key/name', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'test-doc',
+          name: 'Test Doc',
+          documentSchema: {
+            fields: [
+              {
+                key: 'specTag',
+                name: 'Spec Tag',
+                type: 'string',
+                required: true,
+                options: { source: 'specs', key: 'key' },
+              },
+              {
+                key: 'specTitle',
+                name: 'Spec Title',
+                type: 'string',
+                required: true,
+                linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+              },
+            ],
+            options: {
+              specs: [{ key: 'AC102', name: 'HOOK' }],
+            },
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toEqual([]);
+      });
+    });
   });
 
   describe('Drive Core Exceptions', () => {
@@ -5755,6 +6019,310 @@ describe('Document domain', () => {
           title: 'Waterproofing',
           date: '261102',
           contact: 'PMG',
+          action: 'REC',
+        },
+      };
+      const statusResult = await service.processDocument(invalidStatusDoc, 'onSubmit');
+      expect(statusResult.success).toBe(false);
+      if (!statusResult.success) {
+        expect(statusResult.errors.some((err) => err.includes('/status:'))).toBe(true);
+      }
+    });
+  });
+
+  describe('Submittal FF&E (submittal-ffe) DocumentType filing and validation', () => {
+    const submittalFfePath = path.resolve(__dirname, '../../../assets/document-types/submittal-ffe.json');
+    const submittalFfeSchema: DocumentType = JSON.parse(fs.readFileSync(submittalFfePath, 'utf-8'));
+    const handlebarsEvaluator = new HandlebarsAdapter();
+
+    it('passes DocumentTypeSchema validation and manifest template validation', () => {
+      expect(Value.Check(DocumentTypeSchema, submittalFfeSchema)).toBe(true);
+      const errors = validateManifestTemplates(submittalFfeSchema, handlebarsEvaluator);
+      expect(errors).toEqual([]);
+    });
+
+    it('files Submittal FF&E document successfully with option enrichment, blank relatedTag omission, calculated fields, identity, and MOVE_FILE', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const customRegistry = createCustomRegistry([submittalFfeSchema]);
+      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      await service.initialize();
+
+      const inputDoc: Document = {
+        type: 'submittal-ffe',
+        data: {
+          status: 'Open',
+          specTag: 'AC102',
+          relatedTag: '',
+          revision: 'A',
+          specTitle: 'HOOK',
+          vendor: 'Berman Falk',
+          date: '261102',
+          contact: 'Benjamin West',
+          action: 'Referred',
+          notes: 'FF&E hook sample',
+        },
+        space: {
+          id: 'proj-001',
+          name: '123 Main Street',
+          typeId: 'projects',
+          abstractStorageId: 'drive-folder-root',
+        },
+      };
+
+      const result = await service.processDocument(inputDoc, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Base fields
+      expect(result.data.data.revision).toBe('A');
+      expect(result.data.data.specTitle).toBe('HOOK');
+      expect(result.data.data.date).toBe('261102');
+      expect(result.data.data.notes).toBe('FF&E hook sample');
+
+      // Blank optional lookup field omitted
+      expect(result.data.data).not.toHaveProperty('relatedTag');
+
+      // Lookup fields resolved to full tuples
+      expect(result.data.data.status).toEqual({ key: 'Open' });
+      expect(result.data.data.specTag).toEqual({ key: 'AC102', name: 'HOOK' });
+      expect(result.data.data.vendor).toEqual({
+        key: 'BM',
+        name: 'Berman Falk',
+        type: 'Casegoods',
+      });
+      expect(result.data.data.contact).toEqual({
+        key: 'BW',
+        name: 'Benjamin West',
+        type: 'Procurement',
+      });
+      expect(result.data.data.action).toEqual({
+        key: 'REF',
+        name: 'Referred',
+        suffix: '_REF',
+        order: '2',
+      });
+
+      // Calculated fields strictly under Document.calculated
+      expect(result.data.calculated).toBeDefined();
+      expect(result.data.calculated?.link).toBe('-');
+      expect(result.data.calculated?.fileName).toBe('AC102-A Berman Falk - 261102 BW_REF');
+      expect(result.data.calculated?.name).toBe('AC102-A Berman Falk');
+      expect(result.data.calculated?.number).toBe('AC102-A');
+      expect(result.data.calculated?.contactChain).toBe('BW');
+
+      // Identity properties
+      expect(result.data.idGroup).toBe('AC102');
+      expect(result.data.idDocument).toBe('AC102-A');
+      expect(result.data.id).toBe('AC102-A-261102-2');
+
+      // Dispatched activity with MOVE_FILE payload
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
+      const dispatchedActivity = vi.mocked(mockDispatcher.dispatch).mock.calls[0][0];
+      expect(dispatchedActivity.type).toBe('MOVE_FILE');
+      expect(dispatchedActivity.payload).toEqual({
+        rootStorageId: 'drive-folder-root',
+        parentPath: '3 FFE',
+        folderName: '05 Submittals',
+      });
+    });
+
+    it('files Submittal FF&E with populated relatedTag and default action REC', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const customRegistry = createCustomRegistry([submittalFfeSchema]);
+      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      await service.initialize();
+
+      const inputDoc: Document = {
+        type: 'submittal-ffe',
+        data: {
+          status: 'Open',
+          specTag: 'AC102',
+          relatedTag: 'CG104',
+          revision: '0',
+          specTitle: 'HOOK',
+          vendor: 'BM',
+          date: '261102',
+          contact: 'INC',
+          action: 'REC',
+        },
+        space: {
+          id: 'proj-001',
+          name: '123 Main Street',
+          typeId: 'projects',
+          abstractStorageId: 'drive-folder-root',
+        },
+      };
+
+      const result = await service.processDocument(inputDoc, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.data.data.relatedTag).toEqual({ key: 'CG104', name: 'BED - KING' });
+      expect(result.data.calculated?.fileName).toBe('AC102-0 Berman Falk - 261102 INC');
+      expect(result.data.calculated?.name).toBe('AC102-0 Berman Falk');
+      expect(result.data.id).toBe('AC102-0-261102-1');
+    });
+
+    it('accepts custom user input for specTag, relatedTag, vendor, and contact when allowUserInput is true', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const customRegistry = createCustomRegistry([submittalFfeSchema]);
+      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      await service.initialize();
+
+      const inputDoc: Document = {
+        type: 'submittal-ffe',
+        data: {
+          status: 'Open',
+          specTag: 'CUSTOM-99',
+          relatedTag: 'CUSTOM-RELATED-88',
+          revision: '1',
+          specTitle: 'Custom Hook Design',
+          vendor: 'Custom Fabricator Inc',
+          date: '261102',
+          contact: 'External Consultant',
+          action: 'REC',
+        },
+        space: {
+          id: 'proj-001',
+          name: '123 Main Street',
+          typeId: 'projects',
+          abstractStorageId: 'drive-folder-root',
+        },
+      };
+
+      const result = await service.processDocument(inputDoc, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Custom fallback tuples
+      expect(result.data.data.specTag).toEqual({ key: 'CUSTOM-99' });
+      expect(result.data.data.relatedTag).toEqual({ key: 'CUSTOM-RELATED-88' });
+      expect(result.data.data.vendor).toEqual({
+        key: 'Custom Fabricator Inc',
+        name: 'Custom Fabricator Inc',
+      });
+      expect(result.data.data.contact).toEqual({
+        key: 'External Consultant',
+        name: 'External Consultant',
+      });
+      expect(result.data.calculated?.fileName).toBe(
+        'CUSTOM-99-1 Custom Fabricator Inc - 261102 External Consultant'
+      );
+      expect(result.data.idGroup).toBe('CUSTOM-99');
+      expect(result.data.idDocument).toBe('CUSTOM-99-1');
+      expect(result.data.id).toBe('CUSTOM-99-1-261102-1');
+    });
+
+    it('rejects missing or whitespace-only required fields', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const customRegistry = createCustomRegistry([submittalFfeSchema]);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      // Missing specTag
+      const missingSpecTagDoc: Document = {
+        type: 'submittal-ffe',
+        data: {
+          status: 'Open',
+          specTag: '   ',
+          revision: '1',
+          specTitle: 'HOOK',
+          vendor: 'BM',
+          date: '261102',
+          contact: 'INC',
+          action: 'REC',
+        },
+      };
+      const specTagResult = await service.processDocument(missingSpecTagDoc, 'onSubmit');
+      expect(specTagResult.success).toBe(false);
+      if (!specTagResult.success) {
+        expect(specTagResult.errors.some((err) => err.includes('/specTag:'))).toBe(true);
+      }
+
+      // Whitespace revision
+      const whitespaceRevisionDoc: Document = {
+        type: 'submittal-ffe',
+        data: {
+          status: 'Open',
+          specTag: 'AC102',
+          revision: '   ',
+          specTitle: 'HOOK',
+          vendor: 'BM',
+          date: '261102',
+          contact: 'INC',
+          action: 'REC',
+        },
+      };
+      const revisionResult = await service.processDocument(whitespaceRevisionDoc, 'onSubmit');
+      expect(revisionResult.success).toBe(false);
+      if (!revisionResult.success) {
+        expect(revisionResult.errors.some((err) => err.includes('/revision:'))).toBe(true);
+      }
+
+      // Whitespace specTitle
+      const whitespaceTitleDoc: Document = {
+        type: 'submittal-ffe',
+        data: {
+          status: 'Open',
+          specTag: 'AC102',
+          revision: '1',
+          specTitle: '   ',
+          vendor: 'BM',
+          date: '261102',
+          contact: 'INC',
+          action: 'REC',
+        },
+      };
+      const titleResult = await service.processDocument(whitespaceTitleDoc, 'onSubmit');
+      expect(titleResult.success).toBe(false);
+      if (!titleResult.success) {
+        expect(titleResult.errors.some((err) => err.includes('/specTitle:'))).toBe(true);
+      }
+    });
+
+    it('rejects invalid static action and status choices', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const customRegistry = createCustomRegistry([submittalFfeSchema]);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      // Invalid action
+      const invalidActionDoc: Document = {
+        type: 'submittal-ffe',
+        data: {
+          status: 'Open',
+          specTag: 'AC102',
+          revision: '1',
+          specTitle: 'HOOK',
+          vendor: 'BM',
+          date: '261102',
+          contact: 'INC',
+          action: 'INVALID_ACTION',
+        },
+      };
+      const actionResult = await service.processDocument(invalidActionDoc, 'onSubmit');
+      expect(actionResult.success).toBe(false);
+      if (!actionResult.success) {
+        expect(actionResult.errors.some((err) => err.includes('/action:'))).toBe(true);
+      }
+
+      // Invalid status
+      const invalidStatusDoc: Document = {
+        type: 'submittal-ffe',
+        data: {
+          status: 'InProgress',
+          specTag: 'AC102',
+          revision: '1',
+          specTitle: 'HOOK',
+          vendor: 'BM',
+          date: '261102',
+          contact: 'INC',
           action: 'REC',
         },
       };
