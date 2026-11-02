@@ -1,0 +1,224 @@
+{
+  "key": "submittal-arch",
+  "name": "Submittal Arch",
+  "documentSchema": {
+    "fields": [
+      {
+        "key": "status",
+        "name": "Status",
+        "type": "string",
+        "required": true,
+        "defaultValue": "Open",
+        "options": {
+          "source": "statuses",
+          "key": "key"
+        }
+      },
+      {
+        "key": "section",
+        "name": "Section",
+        "type": "string",
+        "description": "6-digit CSI MasterFormat section number (e.g. 071200)",
+        "required": true,
+        "pattern": "^\\d{6}$"
+      },
+      {
+        "key": "number",
+        "name": "Number",
+        "type": "string",
+        "description": "3-digit submittal sequence number (e.g. 001)",
+        "required": true,
+        "pattern": "^\\d{3}$"
+      },
+      {
+        "key": "revision",
+        "name": "Revision",
+        "type": "string",
+        "required": true,
+        "minLength": 1,
+        "pattern": "^.*\\S+.*$"
+      },
+      {
+        "key": "title",
+        "name": "Title",
+        "type": "string",
+        "required": true,
+        "minLength": 1,
+        "pattern": "^.*\\S+.*$"
+      },
+      {
+        "key": "date",
+        "name": "Date",
+        "type": "string",
+        "description": "Date in yyMMdd format",
+        "required": true
+      },
+      {
+        "key": "contact",
+        "name": "Contact",
+        "type": "string",
+        "required": true,
+        "minLength": 1,
+        "pattern": "^.*\\S+.*$",
+        "options": {
+          "source": "contacts",
+          "key": "key",
+          "name": "name",
+          "allowUserInput": true
+        }
+      },
+      {
+        "key": "action",
+        "name": "Action",
+        "type": "string",
+        "required": true,
+        "defaultValue": "REC",
+        "options": {
+          "source": "actions",
+          "key": "key",
+          "name": "name"
+        }
+      },
+      {
+        "key": "notes",
+        "name": "Notes",
+        "type": "string",
+        "required": false
+      }
+    ],
+    "options": {
+      "statuses": [
+        { "key": "Open" },
+        { "key": "Closed" },
+        { "key": "Waiting" },
+        { "key": "Manager" },
+        { "key": "Billed" }
+      ],
+      "actions": [
+        { "key": "REC", "name": "Received", "suffix": "", "order": "1" },
+        { "key": "REF", "name": "Referred", "suffix": "_REF", "order": "2" },
+        { "key": "NR", "name": "Not Reviewed", "suffix": "_NR", "order": "3" },
+        { "key": "REJ", "name": "Rejected", "suffix": "_REJ", "order": "4" },
+        { "key": "RR", "name": "Revise & Resubmit", "suffix": "_RR", "order": "5" },
+        { "key": "NOC", "name": "No Objection as Corrected", "suffix": "_NOC", "order": "6" },
+        { "key": "NET", "name": "No Exceptions Taken", "suffix": "_NET", "order": "7" }
+      ],
+      "contacts": [
+        { "key": "INC", "name": "INC Architecture and Design", "type": "INC" },
+        { "key": "PMG", "name": "Pavarini McGovern", "type": "Contractor" },
+        { "key": "FXC", "name": "FX Collaborative", "type": "Architect" },
+        { "key": "IE", "name": "Interface Engineering", "type": "MEP" },
+        { "key": "VLD", "name": "Ventresca Lighting Design", "type": "Lighting" },
+        { "key": "TT", "name": "Thorton Tomasetti", "type": "Structural" }
+      ]
+    },
+    "calculatedFields": [
+      {
+        "name": "Link",
+        "key": "link",
+        "template": "-"
+      },
+      {
+        "name": "File Name",
+        "key": "fileName",
+        "template": "{{section}}-{{number}}-{{revision}} {{title}} - {{date}} {{contact.key}}{{action.suffix}}"
+      },
+      {
+        "name": "Name",
+        "key": "name",
+        "template": "{{section}}-{{number}}-{{revision}} {{title}}"
+      },
+      {
+        "name": "Number",
+        "key": "number",
+        "template": "{{section}}-{{number}}-{{revision}}"
+      },
+      {
+        "name": "Contact Chain",
+        "key": "contactChain",
+        "template": "{{contact.key}}"
+      }
+    ],
+    "identity": {
+      "idGroup": "{{section}}-{{number}}",
+      "idDocument": "{{section}}-{{number}}-{{revision}}",
+      "id": "{{section}}-{{number}}-{{revision}}-{{date}}-{{action.order}}"
+    }
+  },
+  "storageContextConfig": {
+    "basePath": "6 Construction"
+  },
+  "documentUiSchema": {
+    "layout": [
+      "status",
+      "section",
+      "number",
+      "revision",
+      "title",
+      "date",
+      "contact",
+      "action",
+      "notes"
+    ],
+    "fields": {
+      "status": {
+        "widget": "selectionInput",
+        "label": "Status"
+      },
+      "section": {
+        "widget": "textInput",
+        "label": "Section"
+      },
+      "number": {
+        "widget": "textInput",
+        "label": "Number"
+      },
+      "revision": {
+        "widget": "textInput",
+        "label": "Revision"
+      },
+      "title": {
+        "widget": "textInput",
+        "label": "Title"
+      },
+      "date": {
+        "widget": "textInput",
+        "label": "Date"
+      },
+      "contact": {
+        "widget": "textInput",
+        "label": "Contact"
+      },
+      "action": {
+        "widget": "selectionInput",
+        "label": "Action"
+      },
+      "notes": {
+        "widget": "textInput",
+        "label": "Notes"
+      }
+    },
+    "events": {
+      "onSubmit": {
+        "catchAllWorkflow": "FileSubmittalArch"
+      }
+    }
+  },
+  "documentWorkflowConfig": {
+    "workflows": [
+      {
+        "name": "FileSubmittalArch",
+        "activitySequence": [
+          {
+            "type": "MOVE_FILE",
+            "payload": {
+              "rootStorageId": "{{Document.space.abstractStorageId}}",
+              "parentPath": "{{StorageContext.basePath}}",
+              "folderName": "Submittals"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

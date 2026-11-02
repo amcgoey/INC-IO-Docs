@@ -53,7 +53,7 @@ export type EvaluationOrderEnsurer = <
 export const FormDocumentFieldOptionType = Type.Object({
   source: Type.String(),
   key: Type.String(),
-  name: Type.String(),
+  name: Type.Optional(Type.String()),
   allowUserInput: Type.Optional(Type.Boolean()),
   dynamicConfig: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 }, { additionalProperties: true });

@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
 import { Type, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import { TypeCompiler } from '@sinclair/typebox/compiler';
@@ -42,6 +44,7 @@ import {
   AmbiguousPathSpecError,
   AmbiguousFileError,
   FileNotFoundError,
+  FormDocumentFieldOptionType,
   type ActivityDispatcherPort,
   type DocumentSchemaRegistryPort,
   type CompiledSchemaRegistryPort,
@@ -717,7 +720,7 @@ describe('Document domain', () => {
   });
 
 
-  it('DocumentFieldOptionType requires source, key, and name', () => {
+  it('DocumentFieldOptionType requires source and key, with optional name', () => {
     const validOption = {
       source: 'direction',
       key: 'key',
@@ -741,7 +744,8 @@ describe('Document domain', () => {
       source: 'direction',
       key: 'key',
     };
-    expect(Value.Check(DocumentFieldOptionType, missingName)).toBe(false);
+    expect(Value.Check(DocumentFieldOptionType, missingName)).toBe(true);
+    expect(Value.Check(FormDocumentFieldOptionType, missingName)).toBe(true);
   });
 
   it('DocumentFieldOptionType accepts optional allowUserInput boolean', () => {
@@ -2266,6 +2270,147 @@ describe('Document domain', () => {
             typeDisplayName: 'Custom Acoustic Consultant',
           },
         });
+      }
+    });
+
+    it('matches LookupField option by display name (nameProp) resolving full tuple', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'submittal-test',
+          name: 'Submittal Test',
+          documentSchema: {
+            fields: [
+              {
+                key: 'action',
+                name: 'Action',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'actions',
+                  key: 'key',
+                  name: 'name',
+                },
+              },
+              {
+                key: 'contact',
+                name: 'Contact',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'contacts',
+                  key: 'key',
+                  name: 'name',
+                  allowUserInput: true,
+                },
+              },
+            ],
+            options: {
+              actions: [
+                { key: 'REC', name: 'Received', suffix: '', order: '1' },
+                { key: 'REF', name: 'Referred', suffix: '_REF', order: '2' },
+              ],
+              contacts: [
+                { key: 'PMG', name: 'Pavarini McGovern', type: 'Contractor' },
+                { key: 'FXC', name: 'FX Collaborative', type: 'Architect' },
+              ],
+            },
+          },
+        },
+      ];
+      const customRegistry = createCustomRegistry(mockDocumentTypes);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      // Passing display name for both action and contact
+      const docWithDisplayNames: Document = {
+        type: 'submittal-test',
+        data: {
+          action: 'Received',
+          contact: 'Pavarini McGovern',
+        },
+      };
+
+      const result = await service.processDocument(docWithDisplayNames);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.data).toEqual({
+          action: { key: 'REC', name: 'Received', suffix: '', order: '1' },
+          contact: { key: 'PMG', name: 'Pavarini McGovern', type: 'Contractor' },
+        });
+      }
+
+      // Also accepts key directly
+      const docWithKeys: Document = {
+        type: 'submittal-test',
+        data: {
+          action: 'REF',
+          contact: 'FXC',
+        },
+      };
+      const resultKeys = await service.processDocument(docWithKeys);
+      expect(resultKeys.success).toBe(true);
+      if (resultKeys.success) {
+        expect(resultKeys.data.data).toEqual({
+          action: { key: 'REF', name: 'Referred', suffix: '_REF', order: '2' },
+          contact: { key: 'FXC', name: 'FX Collaborative', type: 'Architect' },
+        });
+      }
+    });
+
+    it('synthesizes custom user-input fallback tuple omitting name when options.name is not configured', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'status-test',
+          name: 'Status Test',
+          documentSchema: {
+            fields: [
+              {
+                key: 'status',
+                name: 'Status',
+                type: 'string',
+                required: true,
+                options: {
+                  source: 'statuses',
+                  key: 'key',
+                  allowUserInput: true,
+                },
+              },
+            ],
+            options: {
+              statuses: [
+                { key: 'Open' },
+                { key: 'Closed' },
+              ],
+            },
+          },
+        },
+      ];
+      const customRegistry = createCustomRegistry(mockDocumentTypes);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const docWithCustomStatus: Document = {
+        type: 'status-test',
+        data: {
+          status: 'Custom In-Progress Status',
+        },
+      };
+
+      const result = await service.processDocument(docWithCustomStatus);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.data).toEqual({
+          status: {
+            key: 'Custom In-Progress Status',
+          },
+        });
+        expect((result.data.data.status as Record<string, unknown>).name).toBeUndefined();
       }
     });
 
@@ -5329,6 +5474,295 @@ describe('Document domain', () => {
       const result = await service.validateDocument(doc);
       expect(result.success).toBe(false);
       expect(result.errors).toEqual(['Vendor does not exist']);
+    });
+  });
+
+  describe('Submittal Arch (submittal-arch) DocumentType filing and validation', () => {
+    const submittalArchPath = path.resolve(__dirname, '../../../assets/document-types/submittal-arch.json');
+    const submittalArchSchema: DocumentType = JSON.parse(fs.readFileSync(submittalArchPath, 'utf-8'));
+    const handlebarsEvaluator = new HandlebarsAdapter();
+
+    it('passes DocumentTypeSchema validation and manifest template validation', () => {
+      expect(Value.Check(DocumentTypeSchema, submittalArchSchema)).toBe(true);
+      const errors = validateManifestTemplates(submittalArchSchema, handlebarsEvaluator);
+      expect(errors).toEqual([]);
+    });
+
+    it('files Submittal Arch document successfully with display names and preserves leading zeros', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const customRegistry = createCustomRegistry([submittalArchSchema]);
+      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      await service.initialize();
+
+      const inputDoc: Document = {
+        type: 'submittal-arch',
+        data: {
+          status: 'Open',
+          section: '071200',
+          number: '001',
+          revision: '1',
+          title: 'Built-up Bituminous Waterproofing',
+          date: '261102',
+          contact: 'Pavarini McGovern',
+          action: 'Received',
+          notes: 'Initial submittal submission',
+        },
+        space: {
+          id: 'proj-001',
+          name: '123 Main Street',
+          typeId: 'projects',
+          abstractStorageId: 'drive-folder-root',
+        },
+      };
+
+      const result = await service.processDocument(inputDoc, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Base fields preserved and resolved
+      expect(result.data.data.section).toBe('071200');
+      expect(result.data.data.number).toBe('001');
+      expect(result.data.data.revision).toBe('1');
+      expect(result.data.data.title).toBe('Built-up Bituminous Waterproofing');
+      expect(result.data.data.date).toBe('261102');
+      expect(result.data.data.notes).toBe('Initial submittal submission');
+
+      // Lookup fields resolved to full tuples via display name matching
+      expect(result.data.data.status).toEqual({ key: 'Open' });
+      expect(result.data.data.contact).toEqual({
+        key: 'PMG',
+        name: 'Pavarini McGovern',
+        type: 'Contractor',
+      });
+      expect(result.data.data.action).toEqual({
+        key: 'REC',
+        name: 'Received',
+        suffix: '',
+        order: '1',
+      });
+
+      // Calculated fields strictly under Document.calculated
+      expect(result.data.calculated).toBeDefined();
+      expect(result.data.calculated?.link).toBe('-');
+      expect(result.data.calculated?.fileName).toBe(
+        '071200-001-1 Built-up Bituminous Waterproofing - 261102 PMG'
+      );
+      expect(result.data.calculated?.name).toBe('071200-001-1 Built-up Bituminous Waterproofing');
+      // Calculated number differs from base number: '071200-001-1' vs '001'
+      expect(result.data.calculated?.number).toBe('071200-001-1');
+      expect(result.data.data.number).toBe('001');
+      expect(result.data.calculated?.contactChain).toBe('PMG');
+
+      // Identity properties
+      expect(result.data.idGroup).toBe('071200-001');
+      expect(result.data.idDocument).toBe('071200-001-1');
+      expect(result.data.id).toBe('071200-001-1-261102-1');
+
+      // Dispatched activity with MOVE_FILE payload
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
+      const dispatchedActivity = vi.mocked(mockDispatcher.dispatch).mock.calls[0][0];
+      expect(dispatchedActivity.type).toBe('MOVE_FILE');
+      expect(dispatchedActivity.payload).toEqual({
+        rootStorageId: 'drive-folder-root',
+        parentPath: '6 Construction',
+        folderName: 'Submittals',
+      });
+    });
+
+    it('files Submittal Arch matching key directly and action with suffix', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const customRegistry = createCustomRegistry([submittalArchSchema]);
+      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      await service.initialize();
+
+      const inputDoc: Document = {
+        type: 'submittal-arch',
+        data: {
+          status: 'Waiting',
+          section: '071200',
+          number: '002',
+          revision: '0',
+          title: 'Dampproofing',
+          date: '261103',
+          contact: 'FXC',
+          action: 'REF',
+        },
+        space: {
+          id: 'proj-001',
+          name: '123 Main Street',
+          typeId: 'projects',
+          abstractStorageId: 'drive-folder-root',
+        },
+      };
+
+      const result = await service.processDocument(inputDoc, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.data.data.action).toEqual({
+        key: 'REF',
+        name: 'Referred',
+        suffix: '_REF',
+        order: '2',
+      });
+      expect(result.data.data.contact).toEqual({
+        key: 'FXC',
+        name: 'FX Collaborative',
+        type: 'Architect',
+      });
+      expect(result.data.calculated?.fileName).toBe('071200-002-0 Dampproofing - 261103 FXC_REF');
+      expect(result.data.id).toBe('071200-002-0-261103-2');
+    });
+
+    it('accepts custom contact input for Submittal Arch when allowUserInput is true', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const customRegistry = createCustomRegistry([submittalArchSchema]);
+      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      await service.initialize();
+
+      const inputDoc: Document = {
+        type: 'submittal-arch',
+        data: {
+          status: 'Open',
+          section: '081100',
+          number: '010',
+          revision: 'A',
+          title: 'Metal Doors',
+          date: '261104',
+          contact: 'Steel Door Solutions Inc',
+          action: 'REC',
+        },
+        space: {
+          id: 'proj-001',
+          name: '123 Main Street',
+          typeId: 'projects',
+          abstractStorageId: 'drive-folder-root',
+        },
+      };
+
+      const result = await service.processDocument(inputDoc, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.data.data.contact).toEqual({
+        key: 'Steel Door Solutions Inc',
+        name: 'Steel Door Solutions Inc',
+      });
+      expect(result.data.calculated?.contactChain).toBe('Steel Door Solutions Inc');
+      expect(result.data.calculated?.fileName).toBe(
+        '081100-010-A Metal Doors - 261104 Steel Door Solutions Inc'
+      );
+    });
+
+    it('rejects invalid section pattern (non-6-digits)', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const customRegistry = createCustomRegistry([submittalArchSchema]);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const invalidSections = ['71200', '0712001', '07120A', 'abcdef', ''];
+      for (const section of invalidSections) {
+        const inputDoc: Document = {
+          type: 'submittal-arch',
+          data: {
+            status: 'Open',
+            section,
+            number: '001',
+            revision: '1',
+            title: 'Waterproofing',
+            date: '261102',
+            contact: 'PMG',
+            action: 'REC',
+          },
+        };
+        const result = await service.processDocument(inputDoc, 'onSubmit');
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.errors.some((err) => err.includes('/section:'))).toBe(true);
+        }
+      }
+    });
+
+    it('rejects invalid number pattern (non-3-digits)', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const customRegistry = createCustomRegistry([submittalArchSchema]);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      const invalidNumbers = ['1', '01', '0001', '00A', 'abc', ''];
+      for (const number of invalidNumbers) {
+        const inputDoc: Document = {
+          type: 'submittal-arch',
+          data: {
+            status: 'Open',
+            section: '071200',
+            number,
+            revision: '1',
+            title: 'Waterproofing',
+            date: '261102',
+            contact: 'PMG',
+            action: 'REC',
+          },
+        };
+        const result = await service.processDocument(inputDoc, 'onSubmit');
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.errors.some((err) => err.includes('/number:'))).toBe(true);
+        }
+      }
+    });
+
+    it('rejects invalid static action and status choices', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const customRegistry = createCustomRegistry([submittalArchSchema]);
+      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      await service.initialize();
+
+      // Invalid action
+      const invalidActionDoc: Document = {
+        type: 'submittal-arch',
+        data: {
+          status: 'Open',
+          section: '071200',
+          number: '001',
+          revision: '1',
+          title: 'Waterproofing',
+          date: '261102',
+          contact: 'PMG',
+          action: 'INVALID_ACTION',
+        },
+      };
+      const actionResult = await service.processDocument(invalidActionDoc, 'onSubmit');
+      expect(actionResult.success).toBe(false);
+      if (!actionResult.success) {
+        expect(actionResult.errors.some((err) => err.includes('/action:'))).toBe(true);
+      }
+
+      // Invalid status
+      const invalidStatusDoc: Document = {
+        type: 'submittal-arch',
+        data: {
+          status: 'InProgress',
+          section: '071200',
+          number: '001',
+          revision: '1',
+          title: 'Waterproofing',
+          date: '261102',
+          contact: 'PMG',
+          action: 'REC',
+        },
+      };
+      const statusResult = await service.processDocument(invalidStatusDoc, 'onSubmit');
+      expect(statusResult.success).toBe(false);
+      if (!statusResult.success) {
+        expect(statusResult.errors.some((err) => err.includes('/status:'))).toBe(true);
+      }
     });
   });
 });

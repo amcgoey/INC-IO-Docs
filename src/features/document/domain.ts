@@ -90,7 +90,7 @@ export type DynamicOptionsConfig = Static<typeof DynamicOptionsConfigSchema>;
 export const DynamicDocumentFieldOptionType = Type.Object({
   source: Type.String(),
   key: Type.String(),
-  name: Type.String(),
+  name: Type.Optional(Type.String()),
   allowUserInput: Type.Literal(true),
   dynamicConfig: DynamicOptionsConfigSchema,
 });
@@ -98,7 +98,7 @@ export const DynamicDocumentFieldOptionType = Type.Object({
 export const StaticDocumentFieldOptionType = Type.Object({
   source: Type.String(),
   key: Type.String(),
-  name: Type.String(),
+  name: Type.Optional(Type.String()),
   allowUserInput: Type.Optional(Type.Boolean()),
   dynamicConfig: Type.Optional(Type.Never()),
 });
@@ -325,16 +325,17 @@ export function buildFieldSchema(
   if (field.type === 'string') {
     if (field.options && !field.options.allowUserInput) {
       // nosemgrep: domain-pass-through-read
-      const { source, key } = field.options;
-      const optionTuples = documentSchema.options?.[source] ?? [];
-      const uniqueKeys = Array.from(
+      const keyProp = field.options.key;
+      const nameProp = field.options.name ?? keyProp;
+      const optionTuples = documentSchema.options?.[field.options.source] ?? [];
+      const uniqueAllowed = Array.from(
         new Set(
           optionTuples
-            .map((tuple) => tuple[key])
-            .filter((val): val is string => typeof val === 'string')
+            .flatMap((tuple) => [tuple[keyProp], tuple[nameProp]])
+            .filter((val): val is string => typeof val === 'string' && val.length > 0)
         )
       );
-      const literals = uniqueKeys.map((val) => Type.Literal(val));
+      const literals = uniqueAllowed.map((val) => Type.Literal(val));
       if (literals.length === 0) {
         fieldSchema = Type.Never();
       } else if (literals.length === 1) {
@@ -538,34 +539,46 @@ export class DocumentService implements DocumentServicePort {
     for (const field of documentType.documentSchema.fields) {
       if (field.options) {
         const rawValue = rawData[field.key];
+        // nosemgrep: domain-pass-through-read
+        const keyProp = field.options.key;
+        const nameProp = field.options.name ?? keyProp;
         if (typeof rawValue === 'string') {
           const sanitizedVal = sanitizeFilePath(rawValue);
           const optionTuples = documentType.documentSchema.options?.[field.options.source] ?? [];
           const matchedTuple = optionTuples.find(
-            (tuple) => tuple[field.options!.key] === rawValue || tuple[field.options!.key] === sanitizedVal
+            (tuple) =>
+              tuple[keyProp] === rawValue ||
+              tuple[keyProp] === sanitizedVal ||
+              (nameProp && (tuple[nameProp] === rawValue || tuple[nameProp] === sanitizedVal))
           );
           if (matchedTuple) {
             enrichedData[field.key] = { ...matchedTuple };
           } else if (field.options.allowUserInput) {
-            enrichedData[field.key] = {
-              [field.options.key]: sanitizedVal,
-              [field.options.name]: sanitizedVal,
+            const fallback: Record<string, unknown> = {
+              [keyProp]: sanitizedVal,
             };
+            if (field.options.name) {
+              fallback[field.options.name] = sanitizedVal;
+            }
+            enrichedData[field.key] = fallback;
           }
         } else if (rawValue !== null && typeof rawValue === 'object') {
           const tupleObj = rawValue as Record<string, unknown>;
           if (field.options.allowUserInput) {
-            enrichedData[field.key] = {
+            const updatedObj: Record<string, unknown> = {
               ...tupleObj,
-              [field.options.key]:
-                typeof tupleObj[field.options.key] === 'string'
-                  ? sanitizeFilePath(tupleObj[field.options.key] as string)
-                  : tupleObj[field.options.key],
-              [field.options.name]:
+              [keyProp]:
+                typeof tupleObj[keyProp] === 'string'
+                  ? sanitizeFilePath(tupleObj[keyProp] as string)
+                  : tupleObj[keyProp],
+            };
+            if (field.options.name) {
+              updatedObj[field.options.name] =
                 typeof tupleObj[field.options.name] === 'string'
                   ? sanitizeFilePath(tupleObj[field.options.name] as string)
-                  : tupleObj[field.options.name],
-            };
+                  : tupleObj[field.options.name];
+            }
+            enrichedData[field.key] = updatedObj;
           }
         }
       }

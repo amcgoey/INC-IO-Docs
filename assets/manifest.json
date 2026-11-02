@@ -1,7 +1,8 @@
 {
   "documentTypes": [
     "./document-types/communication-project.json",
-    "./document-types/communication-proposal.json"
+    "./document-types/communication-proposal.json",
+    "./document-types/submittal-arch.json"
   ],
   "configuration": {
     "workspace": {
@@ -25,7 +26,8 @@
       "displayName": "Projects",
       "spaceSchema": {
         "allowedDocumentTypes": [
-          "communication-project"
+          "communication-project",
+          "submittal-arch"
         ]
       },
       "storageConfig": {

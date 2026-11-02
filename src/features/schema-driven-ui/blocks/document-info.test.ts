@@ -104,6 +104,74 @@ describe('Document Info Block', () => {
       ]);
     });
 
+    it('resolves options from dataSchema when options.name is omitted, defaulting text to tuple[field.options.key]', () => {
+      const field: AbstractDataField = {
+        key: 'status',
+        type: 'string',
+        options: { source: 'statuses', key: 'key' },
+      };
+      const dataSchema: AbstractDataSchema = {
+        fields: [field],
+        options: {
+          statuses: [
+            { key: 'Open' },
+            { key: 'Closed' },
+            { key: 'Waiting' },
+          ],
+        },
+      };
+      const result = extractSelectionItems(field, {}, dataSchema);
+      expect(result).toEqual([
+        { text: 'Open', value: 'Open' },
+        { text: 'Closed', value: 'Closed' },
+        { text: 'Waiting', value: 'Waiting' },
+      ]);
+    });
+
+    it('resolves options from dataSchema with custom key and name properties', () => {
+      const field: AbstractDataField = {
+        key: 'vendor',
+        type: 'string',
+        options: { source: 'vendors', key: 'vendorCode', name: 'vendorTitle' },
+      };
+      const dataSchema: AbstractDataSchema = {
+        fields: [field],
+        options: {
+          vendors: [
+            { vendorCode: 'V1', vendorTitle: 'Acme Corp' },
+            { vendorCode: 'V2', vendorTitle: 'Beta Industries' },
+          ],
+        },
+      };
+      const result = extractSelectionItems(field, {}, dataSchema);
+      expect(result).toEqual([
+        { text: 'Acme Corp', value: 'V1' },
+        { text: 'Beta Industries', value: 'V2' },
+      ]);
+    });
+
+    it('resolves options from dataSchema with custom key and omitted name property', () => {
+      const field: AbstractDataField = {
+        key: 'code',
+        type: 'string',
+        options: { source: 'codes', key: 'code' },
+      };
+      const dataSchema: AbstractDataSchema = {
+        fields: [field],
+        options: {
+          codes: [
+            { code: 'C100' },
+            { code: 'C200' },
+          ],
+        },
+      };
+      const result = extractSelectionItems(field, {}, dataSchema);
+      expect(result).toEqual([
+        { text: 'C100', value: 'C100' },
+        { text: 'C200', value: 'C200' },
+      ]);
+    });
+
     it('resolves options from dataSchema source lookup with text and value tuples', () => {
       const field: AbstractDataField = {
         key: 'role',

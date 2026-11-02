@@ -106,11 +106,29 @@ export function extractSelectionItems(
     } else if (dataSchema?.options) {
       const rawTuples = dataSchema.options[sourceKey];
       if (Array.isArray(rawTuples)) {
+        const optionsObj = field.options as { source: string; key?: string; name?: string };
+        const keyProp = optionsObj.key;
+        const nameProp = optionsObj.name ?? optionsObj.key;
+
         defaultItems = rawTuples.map((tuple) => {
           if (typeof tuple === 'object' && tuple !== null) {
-            const t = tuple as { key?: unknown; name?: unknown; text?: unknown; value?: unknown };
-            const text = String(t.name ?? t.text ?? t.key ?? t.value);
-            const value = String(t.key ?? t.value ?? t.name ?? t.text);
+            const record = tuple as Record<string, unknown>;
+            const value = String(
+              (keyProp ? record[keyProp] : undefined) ??
+                record.key ??
+                record.value ??
+                record.name ??
+                record.text ??
+                ''
+            );
+            const text = String(
+              (nameProp ? record[nameProp] : undefined) ??
+                record.name ??
+                record.text ??
+                record.key ??
+                record.value ??
+                value
+            );
             return { text, value };
           }
           return { text: String(tuple), value: String(tuple) };
