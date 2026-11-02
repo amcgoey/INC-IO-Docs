@@ -96,6 +96,8 @@ describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schem
           name: 'Outgoing',
         },
         description: 'ASR 06 Design Changes',
+      },
+      calculated: {
         commFolderName: '260826 OT - ASR 06 Design Changes',
       },
     });
@@ -161,6 +163,8 @@ describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schem
           name: 'Incoming',
         },
         description: 'CD Comments',
+      },
+      calculated: {
         commFolderName: '260715 IN - CD Comments',
       },
     });
@@ -229,6 +233,8 @@ describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schem
           name: 'Outgoing',
         },
         description: expectedDescription,
+      },
+      calculated: {
         commFolderName: expectedCommFolder,
       },
     });

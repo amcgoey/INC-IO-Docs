@@ -120,7 +120,7 @@
             "payload": {
               "rootStorageId": "{{Document.space.abstractStorageId}}",
               "parentPath": "{{StorageContext.basePath}}",
-              "folderName": "{{Document.data.contact.key}}/{{Document.data.commFolderName}}"
+              "folderName": "{{Document.data.contact.key}}/{{Document.calculated.commFolderName}}"
             }
           }
         ]

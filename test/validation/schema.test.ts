@@ -140,13 +140,20 @@ describe('DocumentType JSON files schema validation', () => {
       expect(['shared_drives', 'folders']).toContain(retrieved.storageConfig.fetchMethod);
     }
 
-    const projects = spaceTypes.find((s) => s.id === 'projects');
-    expect(projects).toBeDefined();
-    expect(projects?.spaceSchema.allowedDocumentTypes).toEqual(['communication-project']);
+    const docAdapter = new DocumentSchemaRegistryAdapter(
+      manifestProvider,
+      new HandlebarsAdapter()
+    );
+    const documentTypes = await docAdapter.loadAll();
+    const allDocTypeKeys = new Set(documentTypes.map((d) => d.key));
 
-    const proposals = spaceTypes.find((s) => s.id === 'proposals');
-    expect(proposals).toBeDefined();
-    expect(proposals?.spaceSchema.allowedDocumentTypes).toEqual(['communication-proposal']);
+    for (const spaceType of spaceTypes) {
+      expect(Array.isArray(spaceType.spaceSchema.allowedDocumentTypes)).toBe(true);
+      expect(spaceType.spaceSchema.allowedDocumentTypes.length).toBeGreaterThan(0);
+      for (const allowedDocType of spaceType.spaceSchema.allowedDocumentTypes) {
+        expect(allDocTypeKeys.has(allowedDocType)).toBe(true);
+      }
+    }
   });
 
   it('should have defaultValue: IN on direction field for communication schemas', async () => {

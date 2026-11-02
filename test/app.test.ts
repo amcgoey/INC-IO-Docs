@@ -495,8 +495,8 @@ describe('App integration tests', () => {
         id: expectedIdentityValue,
         idDocument: expectedIdentityValue,
         idGroup: expectedGroupId,
-        data: {
-          ...expectedEnrichedData,
+        data: expectedEnrichedData,
+        calculated: {
           commFolderName: '260825 IN - Quarterly review discussion',
         },
       };
@@ -723,7 +723,7 @@ describe('App integration tests', () => {
                       idDocument: '{{Document.idDocument}}',
                       idGroup: '{{Document.idGroup}}',
                       contactName: '{{Document.data.contact}}',
-                      calculatedSummary: '{{Document.data.summary}}',
+                      calculatedSummary: '{{Document.calculated.summary}}',
                       documentTypeName: '{{documentSchema.fields.[0].name}}',
                       nested: {
                         templateString: 'Target: {{Document.data.contact}}',

@@ -141,6 +141,21 @@ describe('Document domain', () => {
     expect(Value.Check(DocumentModel, docWithoutSpace)).toBe(true);
   });
 
+  it('validates DocumentModel with optional calculated dictionary', () => {
+    const docWithCalculated: Document = {
+      type: 'submittal-arch',
+      data: { number: '123' },
+      calculated: { number: '00123', fileName: 'Submittal_00123.pdf' },
+    };
+    expect(Value.Check(DocumentModel, docWithCalculated)).toBe(true);
+
+    const docWithoutCalculated: Document = {
+      type: 'submittal-arch',
+      data: { number: '123' },
+    };
+    expect(Value.Check(DocumentModel, docWithoutCalculated)).toBe(true);
+  });
+
   it('rejects DocumentModel when space property is malformed', () => {
     const invalidSpaceDoc = {
       type: 'invoice',
@@ -1152,6 +1167,8 @@ describe('Document domain', () => {
         expect(result.data.data).toEqual({
           contact: 'Alice',
           date: '260825',
+        });
+        expect(result.data.calculated).toEqual({
           testCalculatedField: '260825-Alice',
         });
         expect(result.activities).toEqual([
@@ -1166,6 +1183,156 @@ describe('Document domain', () => {
         type: 'LOG_DOCUMENT',
         payload: { status: 'calculated' },
       });
+    });
+
+    it('isolates calculatedFields under Document.calculated preventing property collisions when sharing the same key as a base field', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'submittal-arch',
+          name: 'Submittal Arch',
+          documentSchema: {
+            fields: [
+              { key: 'section', name: 'Spec Section', type: 'string', required: true },
+              { key: 'number', name: 'Submittal Number', type: 'string', required: true },
+            ],
+            calculatedFields: [
+              {
+                key: 'number',
+                template: '00{{number}}',
+              },
+            ],
+          },
+        },
+      ];
+
+      const customRegistry: DocumentSchemaRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
+      };
+
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template: string, ctx: { [key: string]: unknown }) => {
+          if (template === '00{{number}}') {
+            return `00${ctx.number}`;
+          }
+          return template;
+        }),
+      };
+
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputDocument: Document = {
+        type: 'submittal-arch',
+        data: {
+          section: '081100',
+          number: '123',
+        },
+      };
+
+      const result = await service.processDocument(inputDocument);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.data).toEqual({
+          section: '081100',
+          number: '123',
+        });
+        expect(result.data.calculated).toEqual({
+          number: '00123',
+        });
+      }
+    });
+
+    it('preserves Document.calculated unchanged when applying ActivityOutput.documentDataPatch', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity) => {
+          if (activity.type === 'PATCH_STEP') {
+            return {
+              documentDataPatch: {
+                number: '999',
+                patchField: 'new-val',
+              },
+            };
+          }
+          return undefined;
+        }),
+      };
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'submittal-arch',
+          name: 'Submittal Arch',
+          documentSchema: {
+            fields: [
+              { key: 'number', name: 'Submittal Number', type: 'string', required: true },
+            ],
+            calculatedFields: [
+              {
+                key: 'number',
+                template: 'CALC-{{number}}',
+              },
+            ],
+          },
+          documentUiSchema: {
+            events: {
+              onSubmit: {
+                catchAllWorkflow: 'PatchWorkflow',
+              },
+            },
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'PatchWorkflow',
+                activitySequence: [
+                  {
+                    type: 'PATCH_STEP',
+                    payload: {},
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const customRegistry: DocumentSchemaRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue(mockDocumentTypes),
+      };
+
+      const mockEvaluator: TemplateEvaluatorPort = {
+        validate: vi.fn().mockReturnValue(true),
+        evaluate: vi.fn().mockImplementation((template: string, ctx: { [key: string]: unknown }) => {
+          if (template === 'CALC-{{number}}') {
+            return `CALC-${ctx.number}`;
+          }
+          return template;
+        }),
+      };
+
+      const service = createDocumentService(mockDispatcher, customRegistry, mockEvaluator);
+      await service.initialize();
+
+      const inputDocument: Document = {
+        type: 'submittal-arch',
+        data: {
+          number: '123',
+        },
+      };
+
+      const result = await service.processDocument(inputDocument, 'onSubmit');
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.data).toEqual({
+          number: '999',
+          patchField: 'new-val',
+        });
+        expect(result.data.calculated).toEqual({
+          number: 'CALC-123',
+        });
+      }
     });
 
     it('evaluates calculatedFields with document space metadata and preserves space on document', async () => {
@@ -1260,6 +1427,8 @@ describe('Document domain', () => {
         });
         expect(result.data.data).toEqual({
           contact: 'Alice',
+        });
+        expect(result.data.calculated).toEqual({
           projectSummary: 'Project Orion - Alice',
         });
         expect(result.activities).toEqual([
@@ -2190,7 +2359,7 @@ describe('Document domain', () => {
         name: expectedContact,
       });
       expect(result.data.data.description).toBe(expectedDescription);
-      expect(result.data.data.commFolderName).toBe(expectedCommFolder);
+      expect(result.data.calculated?.commFolderName).toBe(expectedCommFolder);
       expect(result.data.id).toBe(`${expectedContact}-260920-IN-${expectedDescription}`);
       expect(result.data.idGroup).toBe(expectedContact);
     });
@@ -2310,6 +2479,8 @@ describe('Document domain', () => {
             code: 'Hand Carried Drone',
             title: 'Hand Carried Drone',
           },
+        });
+        expect(result.data.calculated).toEqual({
           fullSummary: 'Incoming from Alice via Hand Carried Drone',
         });
       }
@@ -2734,7 +2905,7 @@ describe('Document domain', () => {
                   payload: {
                     recipient: '{{Document.data.contact}}',
                     documentId: '{{Document.id}}',
-                    subject: '{{Document.data.fullSubject}}',
+                    subject: '{{Document.calculated.fullSubject}}',
                     schemaField: '{{documentSchema.fields.[0].name}}',
                     staticNumber: 42,
                     staticBoolean: true,
@@ -2771,9 +2942,9 @@ describe('Document domain', () => {
             const document = ctx.Document as Document;
             return document.id as string;
           }
-          if (template === '{{Document.data.fullSubject}}') {
+          if (template === '{{Document.calculated.fullSubject}}') {
             const document = ctx.Document as Document;
-            return document.data.fullSubject as string;
+            return document.calculated?.fullSubject as string;
           }
           if (template === '{{documentSchema.fields.[0].name}}') {
             const schema = ctx.documentSchema as DocumentType['documentSchema'];
@@ -2812,6 +2983,8 @@ describe('Document domain', () => {
         data: {
           contact: 'Jane Doe',
           subject: 'Review Meeting',
+        },
+        calculated: {
           fullSubject: 'PROJ-Review Meeting',
         },
       };
@@ -2901,7 +3074,7 @@ describe('Document domain', () => {
                 {
                   type: 'CREATE_FILE',
                   payload: {
-                    targetPath: '{{StorageContext.folder}}/{{Document.data.summary}}',
+                    targetPath: '{{StorageContext.folder}}/{{Document.calculated.summary}}',
                     archivePath: '{{StorageContext.subfolder}}/{{Document.data.date}}',
                   },
                 },
@@ -2929,10 +3102,10 @@ describe('Document domain', () => {
             const document = ctx.Document as Document;
             return `Archive/${document.data.direction}`;
           }
-          if (template === '{{StorageContext.folder}}/{{Document.data.summary}}') {
+          if (template === '{{StorageContext.folder}}/{{Document.calculated.summary}}') {
             const storageContext = ctx.StorageContext as { folder: string; subfolder: string };
             const document = ctx.Document as Document;
-            return `${storageContext.folder}/${document.data.summary}`;
+            return `${storageContext.folder}/${document.calculated?.summary}`;
           }
           if (template === '{{StorageContext.subfolder}}/{{Document.data.date}}') {
             const storageContext = ctx.StorageContext as { folder: string; subfolder: string };
@@ -2967,6 +3140,8 @@ describe('Document domain', () => {
           date: '260826',
           direction: 'OT',
           description: 'ASR 06 Design Changes',
+        },
+        calculated: {
           summary: '260826 OT - ASR 06 Design Changes',
         },
       };
@@ -3003,7 +3178,7 @@ describe('Document domain', () => {
 
       // Verify that activity evaluation context received StorageContext
       expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
-        '{{StorageContext.folder}}/{{Document.data.summary}}',
+        '{{StorageContext.folder}}/{{Document.calculated.summary}}',
         expect.objectContaining({
           Document: expectedEnrichedDocument,
           documentSchema: documentTypeWithStorageContext.documentSchema,
@@ -3887,7 +4062,7 @@ describe('Document domain', () => {
           folder: '1Admin/Communication/{{Document.data.contact}}',
           subfolder: 'Archive/{{Document.data.direction.key}}',
           deep: {
-            nestedFolder: 'Deep/{{Document.data.summary}}',
+            nestedFolder: 'Deep/{{Document.calculated.summary}}',
           },
         },
         documentWorkflowConfig: {
@@ -3898,8 +4073,8 @@ describe('Document domain', () => {
                 {
                   type: 'LOG_DOCUMENT',
                   payload: {
-                    targetPath: '{{StorageContext.folder}}/{{Document.data.summary}}',
-                    archivePath: '{{StorageContext.subfolder}}/{{Document.data.testCalculatedField}}',
+                    targetPath: '{{StorageContext.folder}}/{{Document.calculated.summary}}',
+                    archivePath: '{{StorageContext.subfolder}}/{{Document.calculated.testCalculatedField}}',
                     deepPath: '{{StorageContext.deep.nestedFolder}}',
                     documentId: '{{Document.id}}',
                     documentType: '{{Document.type}}',
@@ -4004,7 +4179,7 @@ describe('Document domain', () => {
                     code: '{{Document.data.category.code}}',
                     label: '{{Document.data.category.label}}',
                     customProp: '{{Document.data.category.customTupleProp}}',
-                    calc: '{{Document.data.fullLabel}}',
+                    calc: '{{Document.calculated.fullLabel}}',
                   },
                 },
               ],
@@ -4277,13 +4452,16 @@ describe('Document domain', () => {
       ]);
     });
 
-    it('strictly enforces Document.id and Document.type in execution variables, rejecting Document.idDocument and Document.idGroup', () => {
+    it('permits Document.id, Document.type, Document.idDocument, Document.idGroup, and Document.calculated.<key> in execution variables, while rejecting Document.data.<calcField>', () => {
       const evaluator = createEvaluator();
-      const manifestWithScopeCreepVars: DocumentType = {
+      const manifestWithExecutionVars: DocumentType = {
         key: 'scope-creep-document',
         name: 'Scope Creep Document',
         documentSchema: {
           fields: [{ key: 'contact', name: 'Contact', type: 'string' }],
+          calculatedFields: [
+            { key: 'summary', template: 'Summary: {{contact}}' },
+          ],
           identity: {
             id: 'ID-{{contact}}',
             idDocument: 'REC-{{contact}}',
@@ -4300,8 +4478,10 @@ describe('Document domain', () => {
                   payload: {
                     validId: '{{Document.id}}',
                     validType: '{{Document.type}}',
-                    invalidIdDocument: '{{Document.idDocument}}',
-                    invalidIdGroup: '{{Document.idGroup}}',
+                    validIdDocument: '{{Document.idDocument}}',
+                    validIdGroup: '{{Document.idGroup}}',
+                    validCalculated: '{{Document.calculated.summary}}',
+                    invalidCalculatedUnderData: '{{Document.data.summary}}',
                   },
                 },
               ],
@@ -4310,10 +4490,9 @@ describe('Document domain', () => {
         },
       };
 
-      const errors = validateManifestTemplates(manifestWithScopeCreepVars, evaluator);
+      const errors = validateManifestTemplates(manifestWithExecutionVars, evaluator);
       expect(errors).toEqual([
-        'Invalid template at "documentWorkflowConfig.workflows[0].activitySequence[0].payload.invalidIdDocument": references unknown fields or is malformed.',
-        'Invalid template at "documentWorkflowConfig.workflows[0].activitySequence[0].payload.invalidIdGroup": references unknown fields or is malformed.',
+        'Invalid template at "documentWorkflowConfig.workflows[0].activitySequence[0].payload.invalidCalculatedUnderData": references unknown fields or is malformed.',
       ]);
     });
   });

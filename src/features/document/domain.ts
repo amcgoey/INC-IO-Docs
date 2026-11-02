@@ -38,6 +38,7 @@ export const DocumentModel = Type.Object({
   idGroup: Type.Optional(Type.String()),
   type: Type.String(),
   data: Type.Record(Type.String(), Type.Unknown()),
+  calculated: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   space: Type.Optional(DocumentSpaceModel),
 });
 
@@ -586,19 +587,14 @@ export class DocumentService implements DocumentServicePort {
         : {}),
     };
 
-    let resolvedData: { [key: string]: unknown } = { ...enrichedData };
+    const calculatedValues: { [key: string]: unknown } = {};
     if (documentType.documentSchema.calculatedFields) {
-      const calculatedValues: { [key: string]: unknown } = {};
       for (const calculatedField of documentType.documentSchema.calculatedFields) {
         calculatedValues[calculatedField.key] = this.templateEvaluator.evaluate(
           calculatedField.template,
           basePayload
         );
       }
-      resolvedData = {
-        ...resolvedData,
-        ...calculatedValues,
-      };
     }
 
     const identityUpdates: Partial<Document> = {};
@@ -617,7 +613,8 @@ export class DocumentService implements DocumentServicePort {
     let enrichedDocument: Document = {
       ...document,
       ...identityUpdates,
-      data: resolvedData,
+      data: enrichedData,
+      ...(Object.keys(calculatedValues).length > 0 ? { calculated: calculatedValues } : {}),
     };
 
     let selectedWorkflowName: string | undefined;
@@ -842,6 +839,8 @@ function getBaseVariables(manifest: DocumentType): string[] {
 function getExecutionVariables(manifest: DocumentType, baseVariables: string[]): string[] {
   const vars: string[] = [
     'Document.id',
+    'Document.idDocument',
+    'Document.idGroup',
     'Document.type',
     ...DOCUMENT_SPACE_EXECUTION_VARIABLES,
   ];
@@ -851,8 +850,9 @@ function getExecutionVariables(manifest: DocumentType, baseVariables: string[]):
   }
 
   if (manifest.documentSchema.calculatedFields) {
+    vars.push('Document.calculated');
     for (const calcField of manifest.documentSchema.calculatedFields) {
-      vars.push(`Document.data.${calcField.key}`);
+      vars.push(`Document.calculated.${calcField.key}`);
     }
   }
 

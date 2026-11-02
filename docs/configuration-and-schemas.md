@@ -206,7 +206,7 @@ Each entry in `documentSchema.fields` is a `DocumentField` validated by `buildDo
 ]
 ```
 
-- **Evaluation Order & Flat Dependency Invariant**: Every `CalculatedField` template is evaluated strictly against `basePayload` (base `DocumentField` values, enriched `LookupField` tuples such as `{{direction.key}}`, and `Document.space`). A `CalculatedField` **cannot** reference other `calculatedFields` or `identity` properties ([ADR-0003](adr/0003-handlebars-for-injection-not-logic.md)). `validateManifestTemplates()` enforces this invariant at startup by validating `calculatedFields` against `getBaseVariables(manifest)`.
+- **Evaluation Order & Flat Dependency Invariant**: Every `CalculatedField` template is evaluated strictly against `basePayload` (base `DocumentField` values, enriched `LookupField` tuples such as `{{direction.key}}`, and `Document.space`). A `CalculatedField` **cannot** reference other `calculatedFields` or `identity` properties ([ADR-0003](adr/0003-handlebars-for-injection-not-logic.md)). Evaluated `CalculatedField` values are stored on `Document.calculated` rather than merged into `Document.data` ([ADR-0016](adr/0016-calculated-fields-isolation-on-document.md)). `validateManifestTemplates()` enforces this invariant at startup by validating `calculatedFields` against `getBaseVariables(manifest)`.
 
 #### `identity` (`Identity`)
 
@@ -301,7 +301,7 @@ Workflow activity payloads reference these properties via `{{StorageContext.base
           "payload": {
             "rootStorageId": "{{Document.space.abstractStorageId}}",
             "parentPath": "{{StorageContext.basePath}}",
-            "folderName": "{{Document.data.contact.key}}/{{Document.data.commFolderName}}"
+            "folderName": "{{Document.data.contact.key}}/{{Document.calculated.commFolderName}}"
           }
         }
       ]
@@ -317,7 +317,7 @@ Handlebars is used strictly as a logic-less variable interpolation engine behind
 | Evaluation Stage | Allowed Handlebars Variable Paths |
 | :--- | :--- |
 | **Stage 1 — `calculatedFields` & `identity`** (`getBaseVariables`) | Base field keys (`{{date}}`, `{{description}}`), `LookupField` tuple properties (`{{contact.key}}`, `{{contact.name}}`, `{{direction.key}}`, `{{direction.name}}`), and selected space variables (`{{space.id}}`, `{{space.typeId}}`, `{{space.name}}`, `{{space.abstractStorageId}}`, `{{Document.space.abstractStorageId}}`). |
-| **Stage 2 — `storageContextConfig` & `documentWorkflowConfig`** (`getExecutionVariables`) | `{{Document.id}}`, `{{Document.type}}`, `{{Document.space.id}}`, `{{Document.space.typeId}}`, `{{Document.space.name}}`, `{{Document.space.abstractStorageId}}`, all base and calculated fields under `{{Document.data.<key>}}` (e.g., `{{Document.data.contact.key}}`, `{{Document.data.commFolderName}}`), `{{StorageContext.<key>}}` (e.g., `{{StorageContext.basePath}}`), `{{documentSchema.*}}`, and runtime `{{Context.*}}` variables emitted by preceding activities. |
+| **Stage 2 — `storageContextConfig` & `documentWorkflowConfig`** (`getExecutionVariables`) | `{{Document.id}}`, `{{Document.idDocument}}`, `{{Document.idGroup}}`, `{{Document.type}}`, `{{Document.space.id}}`, `{{Document.space.typeId}}`, `{{Document.space.name}}`, `{{Document.space.abstractStorageId}}`, all base fields under `{{Document.data.<key>}}` (e.g., `{{Document.data.contact.key}}`), calculated fields under `{{Document.calculated.<key>}}` (e.g., `{{Document.calculated.commFolderName}}`), `{{StorageContext.<key>}}` (e.g., `{{StorageContext.basePath}}`), `{{documentSchema.*}}`, and runtime `{{Context.*}}` variables emitted by preceding activities. |
 
 ---
 
@@ -327,7 +327,7 @@ Handlebars is used strictly as a logic-less variable interpolation engine behind
 
 | `Activity.type` | Primary Adapter / Handler | Input `payload` & `SourceFile` Parameters | Emitted `ActivityOutput` Effect |
 | :--- | :--- | :--- | :--- |
-| **`MOVE_FILE`** | `DriveActivityHandler` (`src/features/document/adapters/drive-activity-handler.ts`) | `rootStorageId` (`"{{Document.space.abstractStorageId}}"`), `parentPath` (`"{{StorageContext.basePath}}"`), `folderName` (`"{{Document.data.contact.key}}/{{Document.data.commFolderName}}"` or fallback `defaultFolderName: "Unfiled"`), plus `SourceFile[]` from execution context or `payload.fileId`. | Resolves `parentPath` from `rootStorageId`, creates missing target folder segments (`findOrCreateFolder`), moves existing Drive `SourceFile`s (`driveService.move`) or uploads binary `SourceFile.content` buffers (`driveService.saveBuffer`), and returns `{ success: true, files: FileLocator[] }`. |
+| **`MOVE_FILE`** | `DriveActivityHandler` (`src/features/document/adapters/drive-activity-handler.ts`) | `rootStorageId` (`"{{Document.space.abstractStorageId}}"`), `parentPath` (`"{{StorageContext.basePath}}"`), `folderName` (`"{{Document.data.contact.key}}/{{Document.calculated.commFolderName}}"` or fallback `defaultFolderName: "Unfiled"`), plus `SourceFile[]` from execution context or `payload.fileId`. | Resolves `parentPath` from `rootStorageId`, creates missing target folder segments (`findOrCreateFolder`), moves existing Drive `SourceFile`s (`driveService.move`) or uploads binary `SourceFile.content` buffers (`driveService.saveBuffer`), and returns `{ success: true, files: FileLocator[] }`. |
 | **`CREATE_DOCUMENT`** | `ActivityEngine` / Document Creation Handler | `rootStorageId`, `parentPath`, `folderName`, `templateId` or document creation metadata, and `Document.data` fields. | Creates or duplicates the target document in storage and returns `{ success: true, files: [FileLocator], documentDataPatch, contextVariables }`. |
 | **`GENERATE_EMAIL_PDF`** | `GmailSourceFileHydratorAdapter` & `PdfProcessor` (`src/features/document/adapters/gmail-source-file-hydrator.adapter.ts`) | Gmail `messageId` (or synthetic `SourceFile` with `id: "email-pdf-<messageId>"`), message headers (`subject`, `from`, `to`, `cc`, `date`), `htmlBody` / `plainTextBody`, `inlineImages`, and `attachmentNames`. | Renders the open Gmail message into an in-memory `Uint8Array` PDF buffer named `"Email - <Sanitized Subject>.pdf"` (`mimeType: "application/pdf"`, [ADR-0008](adr/0008-hybrid-pdf-processor-stack.md)) so `MOVE_FILE` saves it to the target Drive folder and returns its `FileLocator` in `ActivityOutput.files`. |
 | **`APPEND_SHEET_ROW`** | `GoogleSheetsClient` (`src/infrastructure/sheets/google-sheets-client.ts`) | `target` (`spreadsheetId`, `sheetName`, `headerRangeName` defaulting to `"Headers"`, `dataRangeName` defaulting to `"Data"`), `rowData` (`Record<string, CellValue>`), `groupConfig` (`{ columnName, value }`), and `sortConfig` (`{ columnName, value }`). | Acquires a per-spreadsheet async lock, aligns columns against the `"Headers"` named range, inserts the row into the matching group and sort position inside `"Data"` (healing group boundary blank rows), and returns `{ success: true, documentDataPatch, contextVariables }`. |
