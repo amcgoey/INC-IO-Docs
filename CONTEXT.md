@@ -63,6 +63,10 @@ Templates generating unique identifiers (e.g., `id`, `idDocument`, `idGroup`) ba
 A `DocumentField` that links to static or dynamically sourced option tuples (and optionally accepts new user-entered values when `allowUserInput` is enabled), enriched to provide both machine-friendly identifiers and human-friendly display names.
 _Avoid_: ListField
 
+**LinkedField**:
+A `DocumentField` whose default value is derived from a property of a sibling `LookupField` option tuple, automatically locking in the UI when a known option is selected and unlocking for custom user input when a custom lookup value is entered.
+_Avoid_: DependentField, AutoFillField
+
 **StorageContext**:
 A configuration block defining storage identifiers and paths evaluated against the enriched `Document` payload.
 _Avoid_: StorageConfig, StorageMapping, DriveContext
