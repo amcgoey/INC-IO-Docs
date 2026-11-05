@@ -16,6 +16,10 @@ _Avoid_: recordSchema
 A highly condensed, abstract blueprint that maps `DocumentSchema` fields to UI concepts (widgets, labels, reactive behaviors). Separated from the core domain.
 _Avoid_: documentUiConfig, FormSchema
 
+**DocumentParseSchema**:
+The declarative blueprint within a `DocumentType` defining how `Document` data fields are extracted from a `SourceContext`. Separated from the core domain.
+_Avoid_: documentParseConfig, ParseRules, ExtractionSchema
+
 **DocumentSpaceType**:
 The structural definition for a category of storage containers (e.g., Projects or Proposals), specifying which `DocumentType`s are allowed and how `DocumentSpace` instances are fetched from storage.
 _Avoid_: ContainerType, SpaceCategory
@@ -43,6 +47,10 @@ _Avoid_: Execution result, side-channel mutation
 **SourceFile**:
 A descriptor representing an input file or folder to be processed by an `Activity`, independent of its origin (such as a selected Google Drive item, a Google Drive file or folder URL, an email attachment, or a generated email PDF).
 _Avoid_: SelectedItem, Attachment, RawFile
+
+**SourceContext**:
+A normalized representation of a source's metadata and structured content (such as a Gmail message/thread, Google Drive file metadata, PDF form fields, or Google Doc variables) inspected by `SourceParser` to pre-populate UI state before filing.
+_Avoid_: ParseInput, RawEventContext, SourcePayload
 
 **FileLocator**:
 An infrastructure-agnostic output pointer to a stored file produced by an `Activity` and returned in `ActivityOutput.files`.
@@ -97,3 +105,7 @@ _Avoid_: GoogleCard, UiCard, JsonResponse
 
 **UiViewSchema**:
 A declarative layout orchestrating which `UiBlock`s compose a `UiView`. Hard-coded within infrastructure-specific driving adapters inside `SchemaDrivenUi`.
+
+**SourceParser**:
+The domain feature responsible for inspecting a `SourceContext` to infer routing selections (`DocumentSpaceType`, `DocumentSpace`, `DocumentType`) and extract pre-populated `Document` field values according to `DocumentParseSchema`.
+_Avoid_: PrePopulator, ContextExtractor, FieldExtractor
