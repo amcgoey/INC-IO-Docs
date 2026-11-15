@@ -11,8 +11,6 @@ import type {
   CandidateSpaceDescriptor,
 } from './ports';
 
-export * from './ports';
-
 export const CSI_SECTION_REGEX = /(?<=^|[\s_.-])\d{6}-\d{3}(?:-[A-Za-z0-9]+)?(?=[\s_.-]|$)/;
 export const FFE_SPEC_TAG_REGEX = /(?<=^|[\s_.-])[A-Za-z]{2}\d{3}[A-Za-z]?-[A-Za-z0-9]+(?=[\s_.-]|$)/i;
 export const FFE_PROXIMITY_REGEX_1 = /(?<=^|[\s_.-])FF&?E(?=[\s_.-]|$).{0,100}(?<=^|[\s_.-])Submittal(?=[\s_.-]|$)/is;

@@ -819,6 +819,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
     const isGmailEmailPass1Event =
       isGmail &&
+      Boolean(activeMsg) &&
       (effectiveFileSource === 'Email Attachments' || !effectiveFileSource) &&
       (isResetOrInitial ||
        actionName === 'refresh' ||
@@ -859,31 +860,33 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           };
         }
       }
-    } else if (isGmailPass1Event && activeMsg) {
+    } else if (isGmailPass1Event && (Boolean(activeMsg) || isGmailDriveUrlPass1Event)) {
       const candidateItems: UiProcessSourceContextItem[] = isGmailDriveUrlPass1Event
         ? [{ id: parsedCurrentDriveUrl!.id }]
-        : (activeMsg.attachments ?? []).map((att) => ({
+        : (activeMsg?.attachments ?? []).map((att) => ({
             id: resolveAttachmentId(att),
             name: att.title,
             ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
           }));
 
-      const emailContext: UiProcessSourceEmailDescriptor = {
-        id: activeMsg.id,
-        ...(activeMsg.threadId !== undefined ? { threadId: activeMsg.threadId } : {}),
-        ...(activeMsg.subject !== undefined ? { subject: activeMsg.subject } : {}),
-        ...(activeMsg.from !== undefined ? { from: activeMsg.from } : {}),
-        ...(activeMsg.to !== undefined ? { to: activeMsg.to } : {}),
-        ...(activeMsg.cc !== undefined ? { cc: activeMsg.cc } : {}),
-        ...(activeMsg.date !== undefined ? { date: activeMsg.date } : {}),
-        ...(activeMsg.plainTextBody !== undefined ? { plainTextBody: activeMsg.plainTextBody } : {}),
-        ...(activeMsg.htmlBody !== undefined ? { htmlBody: activeMsg.htmlBody } : {}),
-        attachments: (activeMsg.attachments ?? []).map((att) => ({
-          id: resolveAttachmentId(att),
-          name: att.title,
-          ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
-        })),
-      };
+      const emailContext: UiProcessSourceEmailDescriptor | undefined = activeMsg
+        ? {
+            id: activeMsg.id,
+            ...(activeMsg.threadId !== undefined ? { threadId: activeMsg.threadId } : {}),
+            ...(activeMsg.subject !== undefined ? { subject: activeMsg.subject } : {}),
+            ...(activeMsg.from !== undefined ? { from: activeMsg.from } : {}),
+            ...(activeMsg.to !== undefined ? { to: activeMsg.to } : {}),
+            ...(activeMsg.cc !== undefined ? { cc: activeMsg.cc } : {}),
+            ...(activeMsg.date !== undefined ? { date: activeMsg.date } : {}),
+            ...(activeMsg.plainTextBody !== undefined ? { plainTextBody: activeMsg.plainTextBody } : {}),
+            ...(activeMsg.htmlBody !== undefined ? { htmlBody: activeMsg.htmlBody } : {}),
+            attachments: (activeMsg.attachments ?? []).map((att) => ({
+              id: resolveAttachmentId(att),
+              name: att.title,
+              ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
+            })),
+          }
+        : undefined;
 
       const defaultSpaceTypeId = config?.defaultDocumentSpaceType ?? spaceTypes[0]?.id;
       const selectedSpaceTypeId = effectiveContext.formData?.[SELECT_DOCUMENT_SPACE_TYPE_KEY] as string | undefined;
@@ -896,11 +899,13 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         spaceTypesToFetch.add(selectedSpaceTypeId);
       }
 
-      const hasProposalMarkers = hasProposalOpportunityMarkers(
-        activeMsg.subject,
-        activeMsg.plainTextBody,
-        activeMsg.htmlBody
-      );
+      const hasProposalMarkers = activeMsg
+        ? hasProposalOpportunityMarkers(
+            activeMsg.subject,
+            activeMsg.plainTextBody,
+            activeMsg.htmlBody
+          )
+        : false;
 
       if (hasProposalMarkers) {
         for (const st of spaceTypes) {
@@ -935,7 +940,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       try {
         inferred = await sourceParser.inferRouting({
           items: candidateItems,
-          email: emailContext,
+          ...(emailContext ? { email: emailContext } : {}),
           candidateSpaces,
           ...(isGmailDriveUrlPass1Event ? { isDriveUrl: true } : {}),
         });

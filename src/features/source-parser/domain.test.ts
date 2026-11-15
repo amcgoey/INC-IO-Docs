@@ -2,11 +2,13 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   SourceParserService,
   extractTextFromHtml,
-  type DriveSourceContextPort,
-  type SourceParserSpaceConfigPort,
-  type SourceParserSpaceTypeConfig,
-  type DriveItemHierarchy,
 } from './domain';
+import type {
+  DriveSourceContextPort,
+  SourceParserSpaceConfigPort,
+  SourceParserSpaceTypeConfig,
+  DriveItemHierarchy,
+} from './ports';
 
 describe('SourceParserService Pass 1 (inferRouting)', () => {
   const standardSpaceTypes: SourceParserSpaceTypeConfig[] = [

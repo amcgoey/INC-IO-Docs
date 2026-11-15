@@ -3483,6 +3483,11 @@ describe('ui-process-manager domain', () => {
       `;
       expect(extractTextFromHtml(html)).toBe('Project Kickoff Meeting notes attached.');
     });
+
+    it('decodes HTML entities including &nbsp;, &lt;, &gt;, &quot;, &#39;, &#x27;, &apos;, and &amp; without double-decoding &amp;nbsp;', () => {
+      const html = '<p>FF&amp;E &quot;Submittal&quot; &lt;revised&gt; &#39;2026&#39; &#x27;Q1&#x27; &apos;done&apos; &amp;nbsp; RFP&nbsp;Notice</p>';
+      expect(extractTextFromHtml(html)).toBe('FF&E "Submittal" <revised> \'2026\' \'Q1\' \'done\' &nbsp; RFP Notice');
+    });
   });
 
   describe('hasProposalOpportunityMarkers', () => {
@@ -3502,6 +3507,12 @@ describe('ui-process-manager domain', () => {
     it('returns true when htmlBody contains proposal markers in visible content', () => {
       expect(hasProposalOpportunityMarkers(undefined, undefined, '<p>Attached is the <b>proposal</b>.</p>')).toBe(true);
       expect(hasProposalOpportunityMarkers(undefined, '', '<div>We have an opportunity here.</div>')).toBe(true);
+    });
+
+    it('matches entity-delimited keywords like RFP&nbsp;Notice and &quot;Proposal&quot; in htmlBody', () => {
+      expect(hasProposalOpportunityMarkers(undefined, undefined, '<p>RFP&nbsp;Notice</p>')).toBe(true);
+      expect(hasProposalOpportunityMarkers(undefined, undefined, '<p>&quot;Proposal&quot; for Project</p>')).toBe(true);
+      expect(hasProposalOpportunityMarkers(undefined, undefined, '<p>&lt;Opportunity&gt; update</p>')).toBe(true);
     });
 
     it('returns false when proposal markers only exist in <style> or <script> blocks', () => {
