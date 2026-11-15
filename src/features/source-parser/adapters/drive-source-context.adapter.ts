@@ -22,6 +22,31 @@ export function isTerminalRoutingFolder(name: string): boolean {
   return false;
 }
 
+export function isPermissionBoundaryOrNotFound(error: unknown): boolean {
+  if (!error) return false;
+  const status =
+    (error as { statusCode?: number })?.statusCode ??
+    (error as { status?: number })?.status ??
+    (error as { code?: number | string })?.code ??
+    (error as { response?: { status?: number } })?.response?.status;
+  if (status === 403 || status === 404 || status === '403' || status === '404') {
+    return true;
+  }
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    if (
+      msg.includes('403') ||
+      msg.includes('404') ||
+      msg.includes('forbidden') ||
+      msg.includes('not found') ||
+      msg.includes('notfound')
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export class DriveSourceContextAdapter implements DriveSourceContextPort {
   private readonly fileCache = new Map<string, DriveFileMetadata>();
   private sharedDrivesMap?: Map<string, string>;
@@ -29,12 +54,20 @@ export class DriveSourceContextAdapter implements DriveSourceContextPort {
   constructor(private readonly client: DriveSourceContextClientPort) {}
 
   async getItemHierarchy(itemId: string): Promise<DriveItemHierarchy> {
-    const itemMetadata = await this.getCachedFile(itemId);
+    let itemMetadata = await this.getCachedFile(itemId);
+
+    if (
+      itemMetadata.mimeType === 'application/vnd.google-apps.shortcut' &&
+      itemMetadata.shortcutDetails?.targetId
+    ) {
+      itemMetadata = await this.getCachedFile(itemMetadata.shortcutDetails.targetId);
+    }
+
     const driveId = itemMetadata.driveId;
     const driveName = driveId ? await this.resolveDriveName(driveId) : undefined;
 
     const ancestors: DriveHierarchyNode[] = [];
-    const visited = new Set<string>([itemId]);
+    const visited = new Set<string>([itemMetadata.id]);
     let currentParents = itemMetadata.parents;
     let depth = 0;
 
@@ -49,7 +82,16 @@ export class DriveSourceContextAdapter implements DriveSourceContextPort {
       visited.add(parentId);
       depth++;
 
-      const parentMetadata = await this.getCachedFile(parentId);
+      let parentMetadata: DriveFileMetadata;
+      try {
+        parentMetadata = await this.getCachedFile(parentId);
+      } catch (error: unknown) {
+        if (isPermissionBoundaryOrNotFound(error)) {
+          break;
+        }
+        throw error;
+      }
+
       ancestors.push({
         id: parentMetadata.id,
         name: parentMetadata.name,
