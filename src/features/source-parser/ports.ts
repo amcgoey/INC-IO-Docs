@@ -29,9 +29,31 @@ export const CandidateSpaceDescriptorSchema = Type.Object({
 });
 export type CandidateSpaceDescriptor = Static<typeof CandidateSpaceDescriptorSchema>;
 
+export const SourceEmailAttachmentDescriptorSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type SourceEmailAttachmentDescriptor = Static<typeof SourceEmailAttachmentDescriptorSchema>;
+
+export const SourceEmailDescriptorSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  threadId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  subject: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  from: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  to: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  cc: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  date: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  plainTextBody: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  htmlBody: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  attachments: Type.Optional(Type.Union([Type.Array(SourceEmailAttachmentDescriptorSchema), Type.Undefined()])),
+});
+export type SourceEmailDescriptor = Static<typeof SourceEmailDescriptorSchema>;
+
 export const SourceContextSchema = Type.Object({
   items: Type.Optional(Type.Union([Type.Array(SourceItemDescriptorSchema), Type.Undefined()])),
   candidateSpaces: Type.Optional(Type.Union([Type.Array(CandidateSpaceDescriptorSchema), Type.Undefined()])),
+  email: Type.Optional(Type.Union([SourceEmailDescriptorSchema, Type.Undefined()])),
 });
 export type SourceContext = Static<typeof SourceContextSchema>;
 

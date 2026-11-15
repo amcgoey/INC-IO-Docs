@@ -69,8 +69,14 @@ export type UiProcessGmailAttachmentDescriptor = Static<typeof UiProcessGmailAtt
 
 export const UiProcessGmailMessageDescriptorSchema = Type.Object({
   id: Type.String({ minLength: 1 }),
-  from: Type.Optional(Type.String()),
-  date: Type.Optional(Type.String()),
+  threadId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  subject: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  from: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  to: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  cc: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  date: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  plainTextBody: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  htmlBody: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   attachments: Type.Array(UiProcessGmailAttachmentDescriptorSchema),
 });
 export type UiProcessGmailMessageDescriptor = Static<typeof UiProcessGmailMessageDescriptorSchema>;

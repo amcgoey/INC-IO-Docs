@@ -14,6 +14,7 @@ import type {
   UiProcessSourceParserPort,
   UiProcessInferredRoutingResult,
   UiProcessSourceContextItem,
+  UiProcessSourceEmailDescriptor,
 } from '../ports';
 
 import {
@@ -114,6 +115,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
     const isGmail = isGmailContext(context);
     let threadMessages: UiProcessGmailMessageDescriptor[] | undefined;
+    let activeMsg: UiProcessGmailMessageDescriptor | undefined;
 
     const inCardActions = new Set([
       'onSpaceTypeChange',
@@ -177,7 +179,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         const formMsgId = actionName === 'refresh'
           ? undefined
           : (effectiveContext.formData?.[SELECT_EMAIL_MESSAGE_KEY] as string | undefined);
-        const activeMsg =
+        activeMsg =
           threadMessages.find((m) => m.id === (formMsgId ?? context.gmail?.messageId)) ??
           threadMessages[threadMessages.length - 1];
 
@@ -213,7 +215,12 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     let inferred: UiProcessInferredRoutingResult | undefined;
     const sourceParser = this.options.sourceParser;
 
-    if (!isGmail && isResetOrInitial && sourceParser) {
+    const isDrivePass1Event = !isGmail && isResetOrInitial;
+    const isGmailPass1Event =
+      isGmail &&
+      (isResetOrInitial || actionName === 'refresh' || actionName === 'onEmailMessageChange');
+
+    if (isDrivePass1Event && sourceParser) {
       const candidateItems: UiProcessSourceContextItem[] = (effectiveContext.selectedItems ?? [])
         .filter(
           (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
@@ -236,6 +243,34 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
             ],
           };
         }
+      }
+    } else if (isGmailPass1Event && sourceParser && activeMsg) {
+      const candidateItems: UiProcessSourceContextItem[] = (activeMsg.attachments ?? []).map((att) => ({
+        id: resolveAttachmentId(att),
+        name: att.title,
+        ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
+      }));
+
+      const emailContext: UiProcessSourceEmailDescriptor = {
+        id: activeMsg.id,
+        ...(activeMsg.threadId !== undefined ? { threadId: activeMsg.threadId } : {}),
+        ...(activeMsg.subject !== undefined ? { subject: activeMsg.subject } : {}),
+        ...(activeMsg.from !== undefined ? { from: activeMsg.from } : {}),
+        ...(activeMsg.to !== undefined ? { to: activeMsg.to } : {}),
+        ...(activeMsg.cc !== undefined ? { cc: activeMsg.cc } : {}),
+        ...(activeMsg.date !== undefined ? { date: activeMsg.date } : {}),
+        ...(activeMsg.plainTextBody !== undefined ? { plainTextBody: activeMsg.plainTextBody } : {}),
+        ...(activeMsg.htmlBody !== undefined ? { htmlBody: activeMsg.htmlBody } : {}),
+        attachments: candidateItems,
+      };
+
+      try {
+        inferred = await sourceParser.inferRouting({
+          items: candidateItems,
+          email: emailContext,
+        });
+      } catch (e) {
+        console.warn('SourceParser Pass 1 inferRouting error in Gmail:', e);
       }
     }
 
@@ -274,6 +309,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         : (allowedDocTypes[0] ?? config?.defaultDocumentType);
 
     const isSpaceTypeChange = actionName === 'onSpaceTypeChange';
+    const isPass1Reset = isDrivePass1Event || isGmailPass1Event;
 
     const inferredDocType =
       inferred?.documentTypeKey && (allowedDocTypes.length === 0 || allowedDocTypes.includes(inferred.documentTypeKey))
@@ -283,14 +319,16 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     const rawSelectedDocType =
       isSpaceTypeChange
         ? defaultDocTypeForSpace
-        : (inferredDocType ??
-          resolveDocumentType({
-            formData: effectiveContext.formData,
-            config,
-            activeSpaceType: currentSpaceType,
-            parameters: effectiveContext.parameters,
-            spaceTypes,
-          }));
+        : (isPass1Reset
+            ? (inferredDocType ?? defaultDocTypeForSpace)
+            : (inferredDocType ??
+              resolveDocumentType({
+                formData: effectiveContext.formData,
+                config,
+                activeSpaceType: currentSpaceType,
+                parameters: effectiveContext.parameters,
+                spaceTypes,
+              })));
 
     let resolvedDocumentTypeKey = rawSelectedDocType;
     if (rawSelectedDocType && manifestPort) {
@@ -309,6 +347,18 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       (allowedDocTypes.length > 0 && !allowedDocTypes.includes(resolvedDocumentTypeKey))
     ) {
       resolvedDocumentTypeKey = defaultDocTypeForSpace ?? resolvedDocumentTypeKey;
+    }
+
+    const docTypeSelectorKey = currentSpaceType ? getDocTypeSelectorKey(currentSpaceType) : undefined;
+    if (actionName === 'onEmailMessageChange' && resolvedDocumentTypeKey) {
+      effectiveContext = {
+        ...effectiveContext,
+        formData: {
+          ...effectiveContext.formData,
+          [SELECT_DOCUMENT_TYPE_KEY]: resolvedDocumentTypeKey,
+          ...(docTypeSelectorKey ? { [docTypeSelectorKey]: resolvedDocumentTypeKey } : {}),
+        },
+      };
     }
 
     let spaces: UiProcessSpaceItem[] = [];

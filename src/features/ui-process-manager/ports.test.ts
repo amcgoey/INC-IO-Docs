@@ -20,6 +20,8 @@ import {
   extractSelectFilesSet,
   UiProcessGmailAttachmentDescriptorSchema,
   UiProcessGmailMessageDescriptorSchema,
+  type UiProcessGmailAttachmentDescriptor,
+  type UiProcessGmailMessageDescriptor,
   formatThreadEmailOptionLabel,
   type UiProcessDocumentRunnerPort,
 } from './ports';
@@ -226,21 +228,45 @@ describe('UI Process Manager Ports & DTOs', () => {
       expect(typeof extractSelectFilesSet).toBe('function');
     });
 
-    it('validates UiProcessGmailAttachmentDescriptorSchema and UiProcessGmailMessageDescriptorSchema', () => {
-      const validAttachment = {
+    it('validates UiProcessGmailAttachmentDescriptorSchema and UiProcessGmailMessageDescriptorSchema with enriched metadata (Ticket #292)', () => {
+      const validAttachment: UiProcessGmailAttachmentDescriptor = {
         id: 'att-1',
         title: 'Report.pdf',
         mimeType: 'application/pdf',
       };
       expect(Value.Check(UiProcessGmailAttachmentDescriptorSchema, validAttachment)).toBe(true);
 
-      const validMessage = {
+      const validMessage: UiProcessGmailMessageDescriptor = {
         id: 'msg-1',
+        threadId: 'th-1',
+        subject: 'Project Kickoff - 071200-001 Waterproofing',
         from: 'Alice <alice@example.com>',
+        to: 'Bob <bob@example.com>',
+        cc: 'Charlie <charlie@example.com>',
         date: 'Mon, 19 Oct 2026 14:00:00 -0400',
+        plainTextBody: 'Please find submittal attached.',
+        htmlBody: '<p>Please find submittal attached.</p>',
         attachments: [validAttachment],
       };
       expect(Value.Check(UiProcessGmailMessageDescriptorSchema, validMessage)).toBe(true);
+      expect(validMessage.subject).toBe('Project Kickoff - 071200-001 Waterproofing');
+      expect(validMessage.plainTextBody).toBe('Please find submittal attached.');
+      expect(validMessage.htmlBody).toBe('<p>Please find submittal attached.</p>');
+
+      // Undefined optional properties pass ExactOptionalPropertyTypes check
+      const minimalMessage: UiProcessGmailMessageDescriptor = {
+        id: 'msg-2',
+        threadId: undefined,
+        subject: undefined,
+        from: undefined,
+        to: undefined,
+        cc: undefined,
+        date: undefined,
+        plainTextBody: undefined,
+        htmlBody: undefined,
+        attachments: [],
+      };
+      expect(Value.Check(UiProcessGmailMessageDescriptorSchema, minimalMessage)).toBe(true);
 
       expect(typeof formatThreadEmailOptionLabel).toBe('function');
     });

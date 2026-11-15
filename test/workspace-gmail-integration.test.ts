@@ -6,6 +6,7 @@ import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import type { DocumentSpaceStoragePort } from '../src/features/document-space/ports';
 import { GoogleGmailClient } from '../src/infrastructure/gmail/gmail-client';
+import type { GmailThreadDetails } from '../src/infrastructure/gmail/types';
 // nosemgrep: adapter-leakage-warning
 import { google, type gmail_v1 } from 'googleapis';
 import type {
@@ -4111,6 +4112,299 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       } finally {
         gmailSpy.mockRestore();
       }
+    });
+  });
+
+  describe('Gmail Pass 1 DocumentType and DocumentSpaceType routing across threads and attachments (Ticket #292)', () => {
+    it('infers submittal-arch on Gmail initial card open (/workspace/gmail-contextual) when active email has CSI attachment', async () => {
+      vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string): Promise<GmailThreadDetails> => {
+        if (threadId === 'th-arch-e2e') {
+          return {
+            id: 'th-arch-e2e',
+            messages: [
+              {
+                id: 'msg-arch-e2e',
+                threadId: 'th-arch-e2e',
+                subject: 'Submittal Review',
+                from: 'Architect <arch@example.com>',
+                date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+                inlineImages: [],
+                attachments: [
+                  {
+                    partId: 'part-arch-1',
+                    attachmentId: 'att-arch-1',
+                    filename: '071200-001_Waterproofing.pdf',
+                    mimeType: 'application/pdf',
+                    size: 1024,
+                  },
+                ],
+              },
+            ],
+          };
+        }
+        return { id: threadId, messages: [] };
+      });
+
+      const res = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/gmail-contextual',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-arch-e2e',
+            threadId: 'th-arch-e2e',
+            accessToken: 'ya29.live-token',
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const cardResponse = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+      const pushCard = cardResponse.action!.navigations![0].pushCard!;
+      const cardJson = JSON.stringify(pushCard);
+
+      expect(cardJson).toContain('submittal-arch');
+      expect(cardJson).toContain('Active Projects');
+    });
+
+    it('infers submittal-ffe on Gmail initial card open when active email has bounded FF&E keyword in subject', async () => {
+      vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string): Promise<GmailThreadDetails> => {
+        if (threadId === 'th-ffe-e2e') {
+          return {
+            id: 'th-ffe-e2e',
+            messages: [
+              {
+                id: 'msg-ffe-e2e',
+                threadId: 'th-ffe-e2e',
+                subject: 'FF&E Submittal - Ballroom Seating',
+                from: 'Designer <designer@example.com>',
+                date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+                plainTextBody: 'Please review attached specs.',
+                inlineImages: [],
+                attachments: [
+                  {
+                    partId: 'part-ffe-1',
+                    attachmentId: 'att-ffe-1',
+                    filename: 'Notes.pdf',
+                    mimeType: 'application/pdf',
+                    size: 1024,
+                  },
+                ],
+              },
+            ],
+          };
+        }
+        return { id: threadId, messages: [] };
+      });
+
+      const res = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/gmail-contextual',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-ffe-e2e',
+            threadId: 'th-ffe-e2e',
+            accessToken: 'ya29.live-token',
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const cardResponse = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+      const pushCard = cardResponse.action!.navigations![0].pushCard!;
+      const cardJson = JSON.stringify(pushCard);
+
+      expect(cardJson).toContain('submittal-ffe');
+      expect(cardJson).toContain('Active Projects');
+    });
+
+    it('re-runs inferRouting on /workspace/action with action: refresh', async () => {
+      vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string): Promise<GmailThreadDetails> => {
+        if (threadId === 'th-refresh-e2e') {
+          return {
+            id: 'th-refresh-e2e',
+            messages: [
+              {
+                id: 'msg-refresh-e2e',
+                threadId: 'th-refresh-e2e',
+                subject: 'Submittal 071200-001 Waterproofing',
+                from: 'Contractor <gc@example.com>',
+                date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+                inlineImages: [],
+                attachments: [
+                  {
+                    partId: 'part-ref-1',
+                    attachmentId: 'att-ref-1',
+                    filename: 'Drawing.pdf',
+                    mimeType: 'application/pdf',
+                    size: 1024,
+                  },
+                ],
+              },
+            ],
+          };
+        }
+        return { id: threadId, messages: [] };
+      });
+
+      const res = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'refresh',
+            },
+          },
+          gmail: {
+            messageId: 'msg-refresh-e2e',
+            threadId: 'th-refresh-e2e',
+            accessToken: 'ya29.live-token',
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const cardResponse = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+      const cardJson = JSON.stringify(cardResponse);
+
+      expect(cardJson).toContain('submittal-arch');
+    });
+
+    it('re-evaluates Pass 1 on /workspace/action with onEmailMessageChange across messages in a thread', async () => {
+      vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string): Promise<GmailThreadDetails> => {
+        if (threadId === 'th-switch-routing-e2e') {
+          return {
+            id: 'th-switch-routing-e2e',
+            messages: [
+              {
+                id: 'msg-plain-e2e',
+                threadId: 'th-switch-routing-e2e',
+                subject: 'Weekly Team Sync Notes',
+                from: 'Alice <alice@example.com>',
+                date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+                plainTextBody: 'Here are the minutes.',
+                inlineImages: [],
+                attachments: [
+                  {
+                    partId: 'part-notes-1',
+                    attachmentId: 'att-notes-1',
+                    filename: 'Minutes.pdf',
+                    mimeType: 'application/pdf',
+                    size: 1024,
+                  },
+                ],
+              },
+              {
+                id: 'msg-submittal-e2e',
+                threadId: 'th-switch-routing-e2e',
+                subject: 'Submittal Package Sent for Review',
+                from: 'Bob <bob@example.com>',
+                date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+                plainTextBody: 'Please review attached FF&E submittal.',
+                inlineImages: [],
+                attachments: [
+                  {
+                    partId: 'part-sub-1',
+                    attachmentId: 'att-sub-1',
+                    filename: 'CG104-A_Chair.pdf',
+                    mimeType: 'application/pdf',
+                    size: 2048,
+                  },
+                ],
+              },
+            ],
+          };
+        }
+        return { id: threadId, messages: [] };
+      });
+
+      // 1. Initial load on msg-plain-e2e -> defaults to communication-project
+      const resInitial = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/gmail-contextual',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-plain-e2e',
+            threadId: 'th-switch-routing-e2e',
+            accessToken: 'ya29.live-token',
+          },
+        },
+      });
+
+      expect(resInitial.statusCode).toBe(200);
+      const cardResponseInitial = JSON.parse(resInitial.payload) as GoogleWorkspaceActionResponse;
+      const initialJson = JSON.stringify(cardResponseInitial);
+      expect(initialJson).toContain('communication-project');
+
+      // 2. Switch to msg-submittal-e2e via onEmailMessageChange -> infers submittal-ffe
+      const resSwitchToSubmittal = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'onEmailMessageChange',
+              previousMessageId: 'msg-plain-e2e',
+            },
+            formInputs: {
+              SelectEmailMessage: { stringInputs: { value: ['msg-submittal-e2e'] } },
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+            },
+          },
+          gmail: {
+            messageId: 'msg-plain-e2e',
+            threadId: 'th-switch-routing-e2e',
+            accessToken: 'ya29.live-token',
+          },
+        },
+      });
+
+      expect(resSwitchToSubmittal.statusCode).toBe(200);
+      const cardResponseSubmittal = JSON.parse(resSwitchToSubmittal.payload) as GoogleWorkspaceActionResponse;
+      const submittalJson = JSON.stringify(cardResponseSubmittal);
+      expect(submittalJson).toContain('submittal-ffe');
+
+      // 3. Switch back to msg-plain-e2e -> reverts to communication-project
+      const resSwitchBack = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          commonEventObject: {
+            hostApp: 'GMAIL',
+            parameters: {
+              action: 'onEmailMessageChange',
+              previousMessageId: 'msg-submittal-e2e',
+            },
+            formInputs: {
+              SelectEmailMessage: { stringInputs: { value: ['msg-plain-e2e'] } },
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['submittal-ffe'] } },
+            },
+          },
+          gmail: {
+            messageId: 'msg-plain-e2e',
+            threadId: 'th-switch-routing-e2e',
+            accessToken: 'ya29.live-token',
+          },
+        },
+      });
+
+      expect(resSwitchBack.statusCode).toBe(200);
+      const cardResponseBack = JSON.parse(resSwitchBack.payload) as GoogleWorkspaceActionResponse;
+      const backJson = JSON.stringify(cardResponseBack);
+      expect(backJson).toContain('communication-project');
     });
   });
 });

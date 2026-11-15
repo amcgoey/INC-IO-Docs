@@ -12,6 +12,7 @@ import {
   type UiProcessGmailPort,
   type UiProcessGmailMessageDescriptor,
   type UiProcessSourceParserPort,
+  type UiProcessSourceContext,
 } from '../ports';
 
 describe('WorkspaceAddonAdapter in ui-process-manager', () => {
@@ -3682,6 +3683,258 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         expect(renderResult.formData?.SelectDocumentSpaceType).toBe('projects');
         expect(renderResult.formData?.SelectDocumentSpace).toBe('Project Alpha');
         expect(renderResult.formData?.SelectDocumentType).toBe('submittal-arch');
+      });
+
+      describe('Gmail Pass 1 routing triggers and active message resolution (Ticket #292)', () => {
+        const gmailThread: UiProcessGmailMessageDescriptor[] = [
+          {
+            id: 'msg-plain-1',
+            threadId: 'th-gmail-pass1',
+            subject: 'Kickoff notes',
+            from: 'Alice <alice@example.com>',
+            date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+            plainTextBody: 'Attached are notes from kickoff.',
+            attachments: [{ id: 'att-notes', title: 'Notes.pdf', mimeType: 'application/pdf' }],
+          },
+          {
+            id: 'msg-submittal-2',
+            threadId: 'th-gmail-pass1',
+            subject: 'Submittal 071200-001 Waterproofing for Review',
+            from: 'Bob <bob@example.com>',
+            date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+            plainTextBody: 'Please review the waterproofing submittal.',
+            attachments: [{ id: 'att-sub-arch', title: '071200-001_Waterproofing.pdf', mimeType: 'application/pdf' }],
+          },
+        ];
+
+        it('invokes sourceParser.inferRouting on Gmail initial card open, resolving active message and pre-selecting inferred submittal-arch', async () => {
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn().mockResolvedValue({
+              spaceTypeId: 'projects',
+              documentTypeKey: 'submittal-arch',
+            }),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThread),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider: multiSpaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          // User opens thread with trigger messageId pointing to msg-submittal-2
+          const context: UiProcessEventContext = {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-submittal-2',
+              threadId: 'th-gmail-pass1',
+              accessToken: 'ya29.valid-token',
+            },
+          };
+
+          const response = await adapter.processUiEvent(context);
+          expect(response.type).toBe('render');
+          const renderResult = response as UiProcessRenderResult;
+
+          expect(mockSourceParser.inferRouting).toHaveBeenCalledTimes(1);
+          expect(mockSourceParser.inferRouting).toHaveBeenCalledWith({
+            items: [
+              { id: 'att-sub-arch', name: '071200-001_Waterproofing.pdf', mimeType: 'application/pdf' },
+            ],
+            email: {
+              id: 'msg-submittal-2',
+              threadId: 'th-gmail-pass1',
+              subject: 'Submittal 071200-001 Waterproofing for Review',
+              from: 'Bob <bob@example.com>',
+              date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+              plainTextBody: 'Please review the waterproofing submittal.',
+              attachments: [
+                { id: 'att-sub-arch', name: '071200-001_Waterproofing.pdf', mimeType: 'application/pdf' },
+              ],
+            },
+          });
+
+          expect(renderResult.formData?.SelectDocumentSpaceType).toBe('projects');
+          expect(renderResult.formData?.SelectDocumentType).toBe('submittal-arch');
+          expect(renderResult.documentTypeKey).toBe('submittal-arch');
+        });
+
+        it('re-runs sourceParser.inferRouting on Gmail refresh action with skipCache: true', async () => {
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn().mockResolvedValue({
+              spaceTypeId: 'projects',
+              documentTypeKey: 'submittal-arch',
+            }),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThread),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider: multiSpaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          const context: UiProcessEventContext = {
+            actionName: 'refresh',
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-submittal-2',
+              threadId: 'th-gmail-pass1',
+              accessToken: 'ya29.valid-token',
+            },
+          };
+
+          const response = await adapter.processUiEvent(context);
+          expect(response.type).toBe('render');
+          const renderResult = response as UiProcessRenderResult;
+
+          expect(mockGmailPort.getThreadMessages).toHaveBeenCalledWith('th-gmail-pass1', { skipCache: true });
+          expect(mockSourceParser.inferRouting).toHaveBeenCalledTimes(1);
+          expect(renderResult.formData?.SelectDocumentType).toBe('submittal-arch');
+        });
+
+        it('re-runs sourceParser.inferRouting on Gmail onEmailMessageChange for selected message in thread', async () => {
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn().mockImplementation(async (ctx: UiProcessSourceContext) => {
+              if (ctx.email?.id === 'msg-submittal-2') {
+                return {
+                  spaceTypeId: 'projects',
+                  documentTypeKey: 'submittal-arch',
+                };
+              }
+              return {}; // msg-plain-1 has no submittal markers
+            }),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThread),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider: multiSpaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          // Switching to msg-submittal-2
+          const switchContext: UiProcessEventContext = {
+            actionName: 'onEmailMessageChange',
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-plain-1',
+              threadId: 'th-gmail-pass1',
+              accessToken: 'ya29.valid-token',
+            },
+            formData: {
+              SelectEmailMessage: 'msg-submittal-2',
+              SelectDocumentSpaceType: 'projects',
+              SelectDocumentType: 'communication-project',
+              SelectDocumentType_projects: 'communication-project',
+            },
+            parameters: {
+              previousMessageId: 'msg-plain-1',
+            },
+          };
+
+          const response = await adapter.processUiEvent(switchContext);
+          expect(response.type).toBe('render');
+          const renderResult = response as UiProcessRenderResult;
+
+          expect(mockSourceParser.inferRouting).toHaveBeenCalledWith({
+            items: [
+              { id: 'att-sub-arch', name: '071200-001_Waterproofing.pdf', mimeType: 'application/pdf' },
+            ],
+            email: expect.objectContaining({
+              id: 'msg-submittal-2',
+            }),
+          });
+          expect(renderResult.formData?.SelectDocumentType).toBe('submittal-arch');
+
+          // Now switch back to msg-plain-1
+          mockSourceParser.inferRouting = vi.fn().mockResolvedValue({});
+          const switchBackContext: UiProcessEventContext = {
+            actionName: 'onEmailMessageChange',
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-plain-1',
+              threadId: 'th-gmail-pass1',
+              accessToken: 'ya29.valid-token',
+            },
+            formData: {
+              SelectEmailMessage: 'msg-plain-1',
+              SelectDocumentSpaceType: 'projects',
+              SelectDocumentType: 'submittal-arch',
+              SelectDocumentType_projects: 'submittal-arch',
+            },
+            parameters: {
+              previousMessageId: 'msg-submittal-2',
+            },
+          };
+
+          const response2 = await adapter.processUiEvent(switchBackContext);
+          const renderResult2 = response2 as UiProcessRenderResult;
+
+          // Reverts back to Manifest default communication type (communication-project)
+          expect(renderResult2.formData?.SelectDocumentType).toBe('communication-project');
+          expect(renderResult2.documentTypeKey).toBe('communication-project');
+        });
+
+        it('skips inferRouting on in-card interactions in Gmail (onSpaceTypeChange, onDocumentTypeChange, onFormChange)', async () => {
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn(),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThread),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider: multiSpaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          await adapter.processUiEvent({
+            actionName: 'onSpaceTypeChange',
+            hostApp: 'GMAIL',
+            gmail: { messageId: 'msg-plain-1', threadId: 'th-gmail-pass1' },
+            formData: { SelectDocumentSpaceType: 'proposals' },
+          });
+
+          await adapter.processUiEvent({
+            actionName: 'onDocumentTypeChange',
+            hostApp: 'GMAIL',
+            gmail: { messageId: 'msg-plain-1', threadId: 'th-gmail-pass1' },
+            formData: { SelectDocumentType: 'submittal-ffe' },
+          });
+
+          await adapter.processUiEvent({
+            actionName: 'onFormChange',
+            hostApp: 'GMAIL',
+            gmail: { messageId: 'msg-plain-1', threadId: 'th-gmail-pass1' },
+            formData: { contact: 'Acme' },
+          });
+
+          expect(mockSourceParser.inferRouting).not.toHaveBeenCalled();
+        });
       });
     });
   });

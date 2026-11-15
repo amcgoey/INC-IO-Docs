@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   SourceParserService,
+  extractTextFromHtml,
   type DriveSourceContextPort,
   type SourceParserSpaceConfigPort,
   type SourceParserSpaceTypeConfig,
@@ -627,6 +628,266 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
         documentTypeKey: 'submittal-arch',
       });
       expect(result.statusMessages).toBeUndefined();
+    });
+  });
+
+  describe('extractTextFromHtml utility (Ticket #292)', () => {
+    it('returns empty string for null, undefined, or empty input', () => {
+      expect(extractTextFromHtml(undefined)).toBe('');
+      // @ts-expect-error testing invalid runtime null input
+      expect(extractTextFromHtml(null)).toBe('');
+      expect(extractTextFromHtml('')).toBe('');
+    });
+
+    it('strips tags and collapses spaces without concatenating text', () => {
+      const html = '<p>First paragraph</p><p>Second paragraph</p>';
+      expect(extractTextFromHtml(html)).toBe('First paragraph Second paragraph');
+    });
+
+    it('strips <script> and <style> tags and their contents', () => {
+      const html = '<div>Header<script>alert("bad")</script><style>.cls{color:red;}</style> Body</div>';
+      expect(extractTextFromHtml(html)).toBe('Header Body');
+    });
+
+    it('decodes common HTML entities (&amp;, &nbsp;, &lt;, &gt;, &quot;, &#39;)', () => {
+      const html = '<p>FF&amp;E &lt;Submittal&gt; package &#39;2026&#39; &quot;Final&quot;&nbsp;approved</p>';
+      expect(extractTextFromHtml(html)).toBe('FF&E <Submittal> package \'2026\' "Final" approved');
+    });
+  });
+
+  describe('Gmail Pass 1 routing heuristics (Ticket #292)', () => {
+    const mockDrivePort: DriveSourceContextPort = {
+      getItemHierarchy: vi.fn(),
+    };
+
+    it('infers submittal-ffe and projects when attachment filename matches FF&E spec tag', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        email: {
+          id: 'msg-1',
+          attachments: [{ id: 'att-1', name: 'CG104-A_Chair.pdf' }],
+        },
+      });
+
+      expect(result).toEqual({
+        spaceTypeId: 'projects',
+        documentTypeKey: 'submittal-ffe',
+      });
+      expect(mockDrivePort.getItemHierarchy).not.toHaveBeenCalled();
+    });
+
+    it('infers submittal-ffe and projects when attachment filename matches bounded FF&E keyword', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        email: {
+          id: 'msg-1',
+          attachments: [{ id: 'att-1', name: 'FFE Submittal Package.pdf' }],
+        },
+      });
+
+      expect(result).toEqual({
+        spaceTypeId: 'projects',
+        documentTypeKey: 'submittal-ffe',
+      });
+    });
+
+    it('infers submittal-arch and projects when attachment filename matches CSI section number', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        email: {
+          id: 'msg-1',
+          attachments: [{ id: 'att-1', name: '071200-001_Waterproofing.pdf' }],
+        },
+      });
+
+      expect(result).toEqual({
+        spaceTypeId: 'projects',
+        documentTypeKey: 'submittal-arch',
+      });
+    });
+
+    it('evaluates attachments in order and lets the first matching attachment determine document type', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        email: {
+          id: 'msg-1',
+          attachments: [
+            { id: 'att-1', name: 'CG104-A_Chair.pdf' },
+            { id: 'att-2', name: '071200-001_Waterproofing.pdf' },
+          ],
+        },
+      });
+
+      expect(result).toEqual({
+        spaceTypeId: 'projects',
+        documentTypeKey: 'submittal-ffe',
+      });
+    });
+
+    it('inspects context.items attachment filenames in order when email.attachments is omitted', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        items: [{ id: 'att-1', name: '071200-001-A Waterproofing - 260315 PMG.pdf' }],
+        email: {
+          id: 'msg-1',
+          subject: 'General Update',
+        },
+      });
+
+      expect(result).toEqual({
+        spaceTypeId: 'projects',
+        documentTypeKey: 'submittal-arch',
+      });
+    });
+
+    it('inspects email subject when attachment filenames do not match', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const resultFfe = await service.inferRouting({
+        email: {
+          id: 'msg-1',
+          subject: 'Review needed: FF&E Submittal for Ballroom',
+          attachments: [{ id: 'att-1', name: 'Notes.pdf' }],
+        },
+      });
+
+      expect(resultFfe).toEqual({
+        spaceTypeId: 'projects',
+        documentTypeKey: 'submittal-ffe',
+      });
+
+      const resultArchCsi = await service.inferRouting({
+        email: {
+          id: 'msg-2',
+          subject: '071200-001 Waterproofing Specs',
+          attachments: [{ id: 'att-1', name: 'Notes.pdf' }],
+        },
+      });
+
+      expect(resultArchCsi).toEqual({
+        spaceTypeId: 'projects',
+        documentTypeKey: 'submittal-arch',
+      });
+    });
+
+    it('infers submittal-arch from architectural submittal notification marker in subject (Submittal #12)', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        email: {
+          id: 'msg-1',
+          subject: 'Submittal #12: Structural Steel Shop Drawings',
+        },
+      });
+
+      expect(result).toEqual({
+        spaceTypeId: 'projects',
+        documentTypeKey: 'submittal-arch',
+      });
+    });
+
+    it('infers submittal-arch from Procore submittal email header in subject or body', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const resultSubject = await service.inferRouting({
+        email: {
+          id: 'msg-1',
+          subject: 'Procore: Submittal Sent for Review',
+        },
+      });
+
+      expect(resultSubject).toEqual({
+        spaceTypeId: 'projects',
+        documentTypeKey: 'submittal-arch',
+      });
+
+      const resultBody = await service.inferRouting({
+        email: {
+          id: 'msg-2',
+          subject: 'Notification from General Contractor',
+          plainTextBody: 'Procore - Submittal #105 has been assigned to you for review.',
+        },
+      });
+
+      expect(resultBody).toEqual({
+        spaceTypeId: 'projects',
+        documentTypeKey: 'submittal-arch',
+      });
+    });
+
+    it('infers submittal-arch from Autodesk Build submittal email header in subject or body', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const resultSubject = await service.inferRouting({
+        email: {
+          id: 'msg-1',
+          subject: 'Autodesk Build - Submittal Package for Review',
+        },
+      });
+
+      expect(resultSubject).toEqual({
+        spaceTypeId: 'projects',
+        documentTypeKey: 'submittal-arch',
+      });
+    });
+
+    it('inspects plainTextBody when attachments and subject do not match', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        email: {
+          id: 'msg-1',
+          subject: 'Quick question about schedule',
+          plainTextBody: 'Please find attached the FF&E Submittal for the restaurant booths.',
+          attachments: [{ id: 'att-1', name: 'Document.pdf' }],
+        },
+      });
+
+      expect(result).toEqual({
+        spaceTypeId: 'projects',
+        documentTypeKey: 'submittal-ffe',
+      });
+    });
+
+    it('derives searchable text from htmlBody when plainTextBody is empty or absent, stripping tags and decoding entities', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const resultFfe = await service.inferRouting({
+        email: {
+          id: 'msg-1',
+          subject: 'Project Inquiry',
+          plainTextBody: '',
+          htmlBody: '<p>Attached is the <strong>FF&amp;E &nbsp; Submittal</strong> for guestrooms.</p>',
+        },
+      });
+
+      expect(resultFfe).toEqual({
+        spaceTypeId: 'projects',
+        documentTypeKey: 'submittal-ffe',
+      });
+
+      const resultArch = await service.inferRouting({
+        email: {
+          id: 'msg-2',
+          subject: 'Project Inquiry',
+          htmlBody: '<div>Please see <span class="badge">Submittal #45</span> details below.</div>',
+        },
+      });
+
+      expect(resultArch).toEqual({
+        spaceTypeId: 'projects',
+        documentTypeKey: 'submittal-arch',
+      });
+    });
+
+    it('returns empty result (undefined spaceTypeId and documentTypeKey) when email has no submittal signals', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        email: {
+          id: 'msg-1',
+          subject: 'Meeting Minutes Oct 19',
+          plainTextBody: 'Here are the minutes from today\'s kickoff meeting.',
+          attachments: [{ id: 'att-1', name: 'MeetingMinutes.pdf' }],
+        },
+      });
+
+      expect(result).toEqual({});
+      expect(result.spaceTypeId).toBeUndefined();
+      expect(result.documentTypeKey).toBeUndefined();
     });
   });
 });
