@@ -3,7 +3,7 @@ import {
   DriveSourceContextAdapter,
   type DriveSourceContextClientPort,
 } from './drive-source-context.adapter';
-import type { DriveFileMetadata } from '../../../infrastructure/drive/drive-client';
+import { GoogleDriveApiError, type DriveFileMetadata } from '../../../infrastructure/drive/drive-client';
 
 describe('DriveSourceContextAdapter', () => {
   let mockClient: DriveSourceContextClientPort;
@@ -232,5 +232,215 @@ describe('DriveSourceContextAdapter', () => {
     expect(hierarchy2.driveName).toBe('Project 1001 Alpha');
     expect(mockClient.listSharedDrives).toHaveBeenCalledTimes(1);
     expect(mockClient.getFile).not.toHaveBeenCalledWith('drive-proj-1');
+  });
+
+  describe('Google Drive Shortcuts (Ticket #291)', () => {
+    it('resolves shortcut target first and evaluates the target item hierarchy and drive', async () => {
+      // Shortcut item located in My Drive
+      fileStore.set('shortcut-1', {
+        id: 'shortcut-1',
+        name: 'Shortcut to Submittal.pdf',
+        mimeType: 'application/vnd.google-apps.shortcut',
+        shortcutDetails: {
+          targetId: 'target-file-123',
+          targetMimeType: 'application/pdf',
+        },
+        parents: ['root'],
+      });
+
+      // Target item located in a Project Shared Drive under 3 FFE
+      fileStore.set('target-file-123', {
+        id: 'target-file-123',
+        name: '071200-001_Waterproofing.pdf',
+        mimeType: 'application/pdf',
+        parents: ['ffe-folder'],
+        driveId: 'drive-proj-1',
+      });
+      fileStore.set('ffe-folder', {
+        id: 'ffe-folder',
+        name: '3 FFE',
+        parents: ['drive-proj-1'],
+        driveId: 'drive-proj-1',
+      });
+
+      const adapter = new DriveSourceContextAdapter(mockClient);
+      const hierarchy = await adapter.getItemHierarchy('shortcut-1');
+
+      // Evaluates target item's identity, drive, and hierarchy
+      expect(hierarchy.item).toEqual({
+        id: 'target-file-123',
+        name: '071200-001_Waterproofing.pdf',
+        mimeType: 'application/pdf',
+      });
+      expect(hierarchy.driveId).toBe('drive-proj-1');
+      expect(hierarchy.driveName).toBe('Project 1001 Alpha');
+      expect(hierarchy.ancestors).toEqual([
+        { id: 'ffe-folder', name: '3 FFE' },
+      ]);
+      expect(mockClient.getFile).toHaveBeenCalledWith('shortcut-1');
+      expect(mockClient.getFile).toHaveBeenCalledWith('target-file-123');
+    });
+
+    it('resolves shortcut pointing to a folder target', async () => {
+      fileStore.set('shortcut-folder', {
+        id: 'shortcut-folder',
+        name: 'Shortcut to Proposals',
+        mimeType: 'application/vnd.google-apps.shortcut',
+        shortcutDetails: {
+          targetId: 'target-proposal-folder',
+          targetMimeType: 'application/vnd.google-apps.folder',
+        },
+        parents: ['root'],
+      });
+
+      fileStore.set('target-proposal-folder', {
+        id: 'target-proposal-folder',
+        name: 'Acme Proposal',
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: ['opp-folder'],
+        driveId: 'drive-marketing',
+      });
+      fileStore.set('opp-folder', {
+        id: 'opp-folder',
+        name: 'Opportunities',
+        parents: [],
+        driveId: 'drive-marketing',
+      });
+
+      const adapter = new DriveSourceContextAdapter(mockClient);
+      const hierarchy = await adapter.getItemHierarchy('shortcut-folder');
+
+      expect(hierarchy.item).toEqual({
+        id: 'target-proposal-folder',
+        name: 'Acme Proposal',
+        mimeType: 'application/vnd.google-apps.folder',
+      });
+      expect(hierarchy.driveId).toBe('drive-marketing');
+      expect(hierarchy.driveName).toBe('INC Marketing');
+      expect(hierarchy.ancestors).toEqual([
+        { id: 'opp-folder', name: 'Opportunities' },
+      ]);
+    });
+  });
+
+  describe('Parent Permission Boundary vs Systemic Errors (Ticket #291)', () => {
+    it('silently stops upward traversal and retains partial hierarchy when parent folder returns 403 Forbidden', async () => {
+      fileStore.set('file-restricted-parent', {
+        id: 'file-restricted-parent',
+        name: 'Shared_File.pdf',
+        mimeType: 'application/pdf',
+        parents: ['parent-forbidden'],
+        driveId: 'drive-proj-1',
+      });
+
+      // parent-forbidden is NOT in fileStore, so getFile will throw
+      mockClient.getFile = vi.fn().mockImplementation(async (fileId: string) => {
+        if (fileId === 'file-restricted-parent') {
+          return fileStore.get(fileId)!;
+        }
+        if (fileId === 'parent-forbidden') {
+          throw new GoogleDriveApiError('Forbidden', { statusCode: 403 });
+        }
+        throw new Error('Not found');
+      });
+
+      const adapter = new DriveSourceContextAdapter(mockClient);
+      const hierarchy = await adapter.getItemHierarchy('file-restricted-parent');
+
+      expect(hierarchy.item).toEqual({
+        id: 'file-restricted-parent',
+        name: 'Shared_File.pdf',
+        mimeType: 'application/pdf',
+      });
+      expect(hierarchy.driveId).toBe('drive-proj-1');
+      expect(hierarchy.driveName).toBe('Project 1001 Alpha');
+      expect(hierarchy.ancestors).toEqual([]);
+    });
+
+    it('silently stops upward traversal and retains partial hierarchy when higher parent folder returns 404 Not Found', async () => {
+      fileStore.set('file-leaf', {
+        id: 'file-leaf',
+        name: 'Leaf.pdf',
+        parents: ['parent-visible'],
+      });
+      fileStore.set('parent-visible', {
+        id: 'parent-visible',
+        name: 'Accessible Subfolder',
+        parents: ['parent-missing'],
+      });
+
+      mockClient.getFile = vi.fn().mockImplementation(async (fileId: string) => {
+        if (fileStore.has(fileId)) {
+          return fileStore.get(fileId)!;
+        }
+        if (fileId === 'parent-missing') {
+          throw new GoogleDriveApiError('File not found: parent-missing', { statusCode: 404 });
+        }
+        throw new Error(`File not found: ${fileId}`);
+      });
+
+      const adapter = new DriveSourceContextAdapter(mockClient);
+      const hierarchy = await adapter.getItemHierarchy('file-leaf');
+
+      expect(hierarchy.item).toEqual({ id: 'file-leaf', name: 'Leaf.pdf' });
+      // Retains partial hierarchy collected so far
+      expect(hierarchy.ancestors).toEqual([
+        { id: 'parent-visible', name: 'Accessible Subfolder' },
+      ]);
+    });
+
+    it('re-throws systemic Drive API errors (429 rate limits, 5xx server errors) encountered on parent folders', async () => {
+      fileStore.set('file-leaf', {
+        id: 'file-leaf',
+        name: 'Leaf.pdf',
+        parents: ['parent-rate-limited'],
+      });
+
+      mockClient.getFile = vi.fn().mockImplementation(async (fileId: string) => {
+        if (fileId === 'file-leaf') {
+          return fileStore.get(fileId)!;
+        }
+        if (fileId === 'parent-rate-limited') {
+          throw new GoogleDriveApiError('User rate limit exceeded', { statusCode: 429 });
+        }
+        throw new Error(`File not found: ${fileId}`);
+      });
+
+      const adapter = new DriveSourceContextAdapter(mockClient);
+      await expect(adapter.getItemHierarchy('file-leaf')).rejects.toThrow(GoogleDriveApiError);
+    });
+
+    it('re-throws error when selected item itself fails to load', async () => {
+      mockClient.getFile = vi.fn().mockRejectedValue(
+        new GoogleDriveApiError('Not Found', { statusCode: 404 })
+      );
+
+      const adapter = new DriveSourceContextAdapter(mockClient);
+      await expect(adapter.getItemHierarchy('missing-item')).rejects.toThrow(GoogleDriveApiError);
+    });
+
+    it('re-throws error when shortcut target fails to load (broken shortcut)', async () => {
+      fileStore.set('shortcut-broken', {
+        id: 'shortcut-broken',
+        name: 'Broken Shortcut',
+        mimeType: 'application/vnd.google-apps.shortcut',
+        shortcutDetails: {
+          targetId: 'target-deleted',
+        },
+      });
+
+      mockClient.getFile = vi.fn().mockImplementation(async (fileId: string) => {
+        if (fileId === 'shortcut-broken') {
+          return fileStore.get(fileId)!;
+        }
+        if (fileId === 'target-deleted') {
+          throw new GoogleDriveApiError('Target not found', { statusCode: 404 });
+        }
+        throw new Error('Not found');
+      });
+
+      const adapter = new DriveSourceContextAdapter(mockClient);
+      await expect(adapter.getItemHierarchy('shortcut-broken')).rejects.toThrow(GoogleDriveApiError);
+    });
   });
 });

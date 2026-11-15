@@ -3609,6 +3609,80 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
 
         expect(mockSourceParser.inferRouting).not.toHaveBeenCalled();
       });
+
+      it('propagates statusMessages from inferRouting and renders Manifest defaults on systemic Drive error (Ticket #291)', async () => {
+        const mockSourceParser: UiProcessSourceParserPort = {
+          inferRouting: vi.fn().mockResolvedValue({
+            statusMessages: [
+              'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.',
+            ],
+          }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: multiSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          sourceParser: mockSourceParser,
+        });
+
+        const context: UiProcessEventContext = {
+          selectedItems: [{ id: 'file-rate-limited', title: 'File.pdf' }],
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('render');
+        const renderResult = response as UiProcessRenderResult;
+
+        expect(renderResult.statusMessages).toEqual([
+          'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.',
+        ]);
+        // Clean fallback to Manifest defaults
+        expect(
+          renderResult.selectionState?.spaceTypes.find((s) => s.value === 'projects')?.selected
+        ).toBe(true);
+        expect(renderResult.documentTypeKey).toBe('communication-project');
+        expect(renderResult.formData?.SelectDocumentType).toBe('communication-project');
+        expect(renderResult.validationErrors).toBeUndefined();
+      });
+
+      it('forwards all multi-item selectedItems in order to sourceParser.inferRouting (Ticket #291)', async () => {
+        const mockSourceParser: UiProcessSourceParserPort = {
+          inferRouting: vi.fn().mockResolvedValue({
+            spaceTypeId: 'projects',
+            spaceIdOrName: 'drive-alpha-id',
+            documentTypeKey: 'submittal-arch',
+          }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: multiSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          sourceParser: mockSourceParser,
+        });
+
+        const context: UiProcessEventContext = {
+          selectedItems: [
+            { id: 'file-1', title: '071200-001_Waterproofing.pdf', mimeType: 'application/pdf' },
+            { id: 'file-2', title: 'Notes.pdf', mimeType: 'application/pdf' },
+          ],
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('render');
+        const renderResult = response as UiProcessRenderResult;
+
+        expect(mockSourceParser.inferRouting).toHaveBeenCalledWith({
+          items: [
+            { id: 'file-1', name: '071200-001_Waterproofing.pdf', mimeType: 'application/pdf' },
+            { id: 'file-2', name: 'Notes.pdf', mimeType: 'application/pdf' },
+          ],
+        });
+        expect(renderResult.formData?.SelectDocumentSpaceType).toBe('projects');
+        expect(renderResult.formData?.SelectDocumentSpace).toBe('Project Alpha');
+        expect(renderResult.formData?.SelectDocumentType).toBe('submittal-arch');
+      });
     });
   });
 });

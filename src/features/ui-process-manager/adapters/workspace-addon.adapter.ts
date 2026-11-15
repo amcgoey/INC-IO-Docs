@@ -230,6 +230,11 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           inferred = await sourceParser.inferRouting({ items: candidateItems });
         } catch (e) {
           console.warn('SourceParser Pass 1 inferRouting error:', e);
+          inferred = {
+            statusMessages: [
+              'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.',
+            ],
+          };
         }
       }
     }

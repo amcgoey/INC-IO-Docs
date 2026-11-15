@@ -11,7 +11,7 @@ import {
   getDocumentSpaceWidgetName,
 } from '../src/features/schema-driven-ui/blocks/document-type-selection';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
-import { GoogleDriveClient } from '../src/infrastructure/drive/drive-client';
+import { GoogleDriveClient, GoogleDriveApiError } from '../src/infrastructure/drive/drive-client';
 
 describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () => {
   let app: AppInstance;
@@ -297,6 +297,226 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       const cardJson = JSON.stringify(pushCard);
       expect(cardJson).not.toContain('notFoundError');
+      expect(cardJson).toContain('communication-project');
+      expect(cardJson).toContain('Active Projects');
+    });
+
+    it('infers submittal-arch from CSI filename in unmatched folder on drive-items-selected (Ticket #291)', async () => {
+      vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => {
+        if (fileId === 'file-csi-unfiled') {
+          return {
+            id: 'file-csi-unfiled',
+            name: '071200-001_Waterproofing.pdf',
+            parents: ['folder-unfiled'],
+            driveId: 'shared-drive-proj-root',
+            mimeType: 'application/pdf',
+          };
+        }
+        if (fileId === 'folder-unfiled') {
+          return {
+            id: 'folder-unfiled',
+            name: 'Unfiled Documents',
+            parents: ['shared-drive-proj-root'],
+            driveId: 'shared-drive-proj-root',
+            mimeType: 'application/vnd.google-apps.folder',
+          };
+        }
+        return { id: fileId, name: fileId, parents: [] };
+      });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.sample-token' },
+          drive: {
+            selectedItems: [
+              { id: 'file-csi-unfiled', title: '071200-001_Waterproofing.pdf' },
+            ],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const cardResponse = JSON.parse(response.payload);
+      const pushCard = cardResponse.action.navigations[0].pushCard;
+      const cardJson = JSON.stringify(pushCard);
+
+      expect(cardJson).toContain('submittal-arch');
+      expect(cardJson).toContain('Active Projects');
+    });
+
+    it('resolves shortcut target hierarchy and drive on drive-items-selected (Ticket #291)', async () => {
+      vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => {
+        if (fileId === 'shortcut-ffe-1') {
+          return {
+            id: 'shortcut-ffe-1',
+            name: 'Shortcut to Chairs.pdf',
+            mimeType: 'application/vnd.google-apps.shortcut',
+            parents: ['root'],
+            shortcutDetails: {
+              targetId: 'target-chair-doc',
+              targetMimeType: 'application/pdf',
+            },
+          };
+        }
+        if (fileId === 'target-chair-doc') {
+          return {
+            id: 'target-chair-doc',
+            name: 'CG104-A_Chair.pdf',
+            parents: ['folder-ffe-sub'],
+            driveId: 'shared-drive-proj-root',
+            mimeType: 'application/pdf',
+          };
+        }
+        if (fileId === 'folder-ffe-sub') {
+          return {
+            id: 'folder-ffe-sub',
+            name: '3 FFE',
+            parents: ['shared-drive-proj-root'],
+            driveId: 'shared-drive-proj-root',
+            mimeType: 'application/vnd.google-apps.folder',
+          };
+        }
+        return { id: fileId, name: fileId, parents: [] };
+      });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.sample-token' },
+          drive: {
+            selectedItems: [
+              { id: 'shortcut-ffe-1', title: 'Shortcut to Chairs.pdf' },
+            ],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const cardResponse = JSON.parse(response.payload);
+      const pushCard = cardResponse.action.navigations[0].pushCard;
+      const cardJson = JSON.stringify(pushCard);
+
+      expect(cardJson).toContain('submittal-ffe');
+      expect(cardJson).toContain('Active Projects');
+    });
+
+    it('applies multi-item selection precedence on drive-items-selected (Ticket #291)', async () => {
+      vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => {
+        if (fileId === 'item-csi-my-drive') {
+          return {
+            id: 'item-csi-my-drive',
+            name: '071200-001-A Waterproofing.pdf',
+            parents: ['root'],
+            mimeType: 'application/pdf',
+          };
+        }
+        if (fileId === 'item-proj-notes') {
+          return {
+            id: 'item-proj-notes',
+            name: 'Meeting_Notes.docx',
+            parents: ['shared-drive-proj-root'],
+            driveId: 'shared-drive-proj-root',
+            mimeType: 'application/vnd.google-apps.document',
+          };
+        }
+        return { id: fileId, name: fileId, parents: [] };
+      });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.sample-token' },
+          drive: {
+            selectedItems: [
+              { id: 'item-csi-my-drive', title: '071200-001-A Waterproofing.pdf' },
+              { id: 'item-proj-notes', title: 'Meeting_Notes.docx' },
+            ],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const cardResponse = JSON.parse(response.payload);
+      const pushCard = cardResponse.action.navigations[0].pushCard;
+      const cardJson = JSON.stringify(pushCard);
+
+      expect(cardJson).toContain('submittal-arch');
+      expect(cardJson).toContain('Active Projects');
+    });
+
+    it('retains partial hierarchy and falls back to filename without warning on parent folder 403 (Ticket #291)', async () => {
+      vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => {
+        if (fileId === 'file-csi-restricted-parent') {
+          return {
+            id: 'file-csi-restricted-parent',
+            name: '071200-001_Waterproofing.pdf',
+            parents: ['folder-forbidden-403'],
+            driveId: 'shared-drive-proj-root',
+            mimeType: 'application/pdf',
+          };
+        }
+        if (fileId === 'folder-forbidden-403') {
+          throw new GoogleDriveApiError('Forbidden', { statusCode: 403 });
+        }
+        return { id: fileId, name: fileId, parents: [] };
+      });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.sample-token' },
+          drive: {
+            selectedItems: [
+              { id: 'file-csi-restricted-parent', title: '071200-001_Waterproofing.pdf' },
+            ],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const cardResponse = JSON.parse(response.payload);
+      const pushCard = cardResponse.action.navigations[0].pushCard;
+      const cardJson = JSON.stringify(pushCard);
+
+      expect(cardJson).toContain('submittal-arch');
+      expect(cardJson).toContain('Active Projects');
+      expect(cardJson).not.toContain('Could not inspect Google Drive folder hierarchy');
+    });
+
+    it('renders Manifest defaults with non-blocking status notice on systemic Drive API error (Ticket #291)', async () => {
+      vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockRejectedValue(
+        new GoogleDriveApiError('Rate limit exceeded', { statusCode: 429 })
+      );
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.sample-token' },
+          drive: {
+            selectedItems: [
+              { id: 'file-throttled', title: 'File.pdf' },
+            ],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const cardResponse = JSON.parse(response.payload);
+      const pushCard = cardResponse.action.navigations[0].pushCard;
+      const cardJson = JSON.stringify(pushCard);
+
+      expect(cardJson).toContain('Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.');
       expect(cardJson).toContain('communication-project');
       expect(cardJson).toContain('Active Projects');
     });
