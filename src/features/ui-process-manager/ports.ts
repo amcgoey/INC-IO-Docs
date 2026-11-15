@@ -224,8 +224,30 @@ export const UiProcessSourceContextItemSchema = Type.Object({
 });
 export type UiProcessSourceContextItem = Static<typeof UiProcessSourceContextItemSchema>;
 
+export const UiProcessSourceEmailAttachmentDescriptorSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type UiProcessSourceEmailAttachmentDescriptor = Static<typeof UiProcessSourceEmailAttachmentDescriptorSchema>;
+
+export const UiProcessSourceEmailDescriptorSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  threadId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  subject: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  from: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  to: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  cc: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  date: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  plainTextBody: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  htmlBody: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  attachments: Type.Optional(Type.Union([Type.Array(UiProcessSourceEmailAttachmentDescriptorSchema), Type.Undefined()])),
+});
+export type UiProcessSourceEmailDescriptor = Static<typeof UiProcessSourceEmailDescriptorSchema>;
+
 export const UiProcessSourceContextSchema = Type.Object({
   items: Type.Optional(Type.Union([Type.Array(UiProcessSourceContextItemSchema), Type.Undefined()])),
+  email: Type.Optional(Type.Union([UiProcessSourceEmailDescriptorSchema, Type.Undefined()])),
 });
 export type UiProcessSourceContext = Static<typeof UiProcessSourceContextSchema>;
 

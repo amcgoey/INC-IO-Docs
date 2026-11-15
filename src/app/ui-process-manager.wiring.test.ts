@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   createUiProcessManagerWiring,
+  createGmailPortForToken,
   resolveActionRoute,
   createUiProcessRequestWrapper,
 } from './ui-process-manager.wiring';
@@ -1538,6 +1539,90 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       expect(mockGetThread).toHaveBeenCalledWith('th-skip-wiring', {
         auth: 'tok-refresh-wiring',
         skipCache: true,
+      });
+    });
+
+    it('passes through enriched message metadata (threadId, subject, to, cc, plainTextBody, htmlBody) in createGmailPortForToken (Ticket #292)', async () => {
+      const mockGetThread = vi.fn().mockResolvedValue({
+        id: 'th-enriched-test',
+        messages: [
+          {
+            id: 'msg-enriched-1',
+            threadId: 'th-enriched-test',
+            subject: 'Submittal 071200-001 Waterproofing Review',
+            from: 'Alice <alice@example.com>',
+            to: 'Bob <bob@example.com>',
+            cc: 'Carol <carol@example.com>',
+            date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+            plainTextBody: 'Please find submittal attached.',
+            htmlBody: '<p>Please find submittal attached.</p>',
+            attachments: [{ partId: 'part-1', attachmentId: 'att-1', filename: 'Submittal.pdf', mimeType: 'application/pdf', size: 100 }],
+          },
+        ],
+      });
+      const mockGetMessage = vi.fn().mockResolvedValue({
+        id: 'msg-enriched-1',
+        threadId: 'th-enriched-test',
+        subject: 'Submittal 071200-001 Waterproofing Review',
+        from: 'Alice <alice@example.com>',
+        to: 'Bob <bob@example.com>',
+        cc: 'Carol <carol@example.com>',
+        date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+        plainTextBody: 'Please find submittal attached.',
+        htmlBody: '<p>Please find submittal attached.</p>',
+        attachments: [{ partId: 'part-1', attachmentId: 'att-1', filename: 'Submittal.pdf', mimeType: 'application/pdf', size: 100 }],
+      });
+
+      const mockGmailClient = {
+        getThread: mockGetThread,
+        getMessage: mockGetMessage,
+      } as unknown as GoogleGmailClient;
+
+      const port = createGmailPortForToken(mockGmailClient, 'tok-enriched-test');
+      expect(typeof port.getThreadMessages).toBe('function');
+      const threadMsgs = await port.getThreadMessages!('th-enriched-test');
+      expect(threadMsgs).toHaveLength(1);
+      expect(threadMsgs[0]).toEqual({
+        id: 'msg-enriched-1',
+        threadId: 'th-enriched-test',
+        subject: 'Submittal 071200-001 Waterproofing Review',
+        from: 'Alice <alice@example.com>',
+        to: 'Bob <bob@example.com>',
+        cc: 'Carol <carol@example.com>',
+        date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+        plainTextBody: 'Please find submittal attached.',
+        htmlBody: '<p>Please find submittal attached.</p>',
+        attachments: [
+          {
+            id: 'part-1',
+            partId: 'part-1',
+            attachmentId: 'att-1',
+            title: 'Submittal.pdf',
+            mimeType: 'application/pdf',
+          },
+        ],
+      });
+
+      const singleMsg = await port.getMessageDetails!('msg-enriched-1');
+      expect(singleMsg).toEqual({
+        id: 'msg-enriched-1',
+        threadId: 'th-enriched-test',
+        subject: 'Submittal 071200-001 Waterproofing Review',
+        from: 'Alice <alice@example.com>',
+        to: 'Bob <bob@example.com>',
+        cc: 'Carol <carol@example.com>',
+        date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+        plainTextBody: 'Please find submittal attached.',
+        htmlBody: '<p>Please find submittal attached.</p>',
+        attachments: [
+          {
+            id: 'part-1',
+            partId: 'part-1',
+            attachmentId: 'att-1',
+            title: 'Submittal.pdf',
+            mimeType: 'application/pdf',
+          },
+        ],
       });
     });
   });

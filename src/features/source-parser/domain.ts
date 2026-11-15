@@ -17,18 +17,43 @@ export const FFE_SPEC_TAG_REGEX = /(?<=^|[\s_.-])[A-Za-z]{2}\d{3}[A-Za-z]?-[A-Za
 export const FFE_PROXIMITY_REGEX_1 = /(?<=^|[\s_.-])FF&?E(?=[\s_.-]|$).{0,100}(?<=^|[\s_.-])Submittal(?=[\s_.-]|$)/is;
 export const FFE_PROXIMITY_REGEX_2 = /(?<=^|[\s_.-])Submittal(?=[\s_.-]|$).{0,100}(?<=^|[\s_.-])FF&?E(?=[\s_.-]|$)/is;
 
+export const ARCH_SUBMITTAL_NOTIFICATION_REGEX =
+  /(?<=^|[\s_.-])Submittal\s*#?\s*\d+\b/i;
+export const PROCORE_AUTODESK_SUBMITTAL_REGEX =
+  /(?<=^|[\s_.-])(?:Procore|Autodesk\s+(?:Build|Construction\s+Cloud)?)\s*(?:[-:]|\b).{0,50}(?<=^|[\s_.-])Submittal(?=[\s_.-]|$)/is;
+export const PROCORE_AUTODESK_SUBMITTAL_REVERSE_REGEX =
+  /(?<=^|[\s_.-])Submittal(?=[\s_.-]|$).{0,50}(?<=^|[\s_.-])(?:Procore|Autodesk\s+(?:Build|Construction\s+Cloud)?)(?=[\s_.-]|$)/is;
+
 export const DRIVE_HIERARCHY_ERROR_MESSAGE =
   'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.';
 
-export function inferDocumentTypeFromFilename(
-  filename?: string
+export function extractTextFromHtml(html?: string): string {
+  if (!html || typeof html !== 'string') {
+    return '';
+  }
+  let text = html.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ');
+  text = text.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ');
+  text = text.replace(/<[^>]+>/g, ' ');
+  text = text
+    .replace(/&amp;/gi, '&')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&apos;/gi, "'");
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+export function inferSubmittalTypeFromText(
+  text?: string
 ): 'submittal-arch' | 'submittal-ffe' | undefined {
-  if (!filename || typeof filename !== 'string') {
+  if (!text || typeof text !== 'string') {
     return undefined;
   }
-  const clean = filename.trim();
-  if (CSI_SECTION_REGEX.test(clean)) {
-    return 'submittal-arch';
+  const clean = text.trim();
+  if (clean.length === 0) {
+    return undefined;
   }
   if (
     FFE_SPEC_TAG_REGEX.test(clean) ||
@@ -37,7 +62,21 @@ export function inferDocumentTypeFromFilename(
   ) {
     return 'submittal-ffe';
   }
+  if (
+    CSI_SECTION_REGEX.test(clean) ||
+    ARCH_SUBMITTAL_NOTIFICATION_REGEX.test(clean) ||
+    PROCORE_AUTODESK_SUBMITTAL_REGEX.test(clean) ||
+    PROCORE_AUTODESK_SUBMITTAL_REVERSE_REGEX.test(clean)
+  ) {
+    return 'submittal-arch';
+  }
   return undefined;
+}
+
+export function inferDocumentTypeFromFilename(
+  filename?: string
+): 'submittal-arch' | 'submittal-ffe' | undefined {
+  return inferSubmittalTypeFromText(filename);
 }
 
 export function findSpaceTypeForDocumentType(
@@ -59,6 +98,13 @@ export class SourceParserService implements SourceParserPort {
   }
 
   async inferRouting(context: SourceContext): Promise<InferredRoutingResult> {
+    const rawSpaceTypes = await this.spaceConfigPort.getDocumentSpaceTypes();
+    const spaceTypes = rawSpaceTypes ?? [];
+
+    if (context.email) {
+      return this.inferFromEmail(context, spaceTypes);
+    }
+
     const rawItems = context.items ?? [];
     const validItems = rawItems.filter(
       (item) => typeof item?.id === 'string' && item.id.trim().length > 0
@@ -66,9 +112,6 @@ export class SourceParserService implements SourceParserPort {
     if (validItems.length === 0) {
       return {};
     }
-
-    const rawSpaceTypes = await this.spaceConfigPort.getDocumentSpaceTypes();
-    const spaceTypes = rawSpaceTypes ?? [];
 
     let winningSpaceTypeId: string | undefined;
     let winningSpaceIdOrName: string | undefined;
@@ -131,6 +174,80 @@ export class SourceParserService implements SourceParserPort {
       ...(winningSpaceIdOrName !== undefined ? { spaceIdOrName: winningSpaceIdOrName } : {}),
       ...(winningDocumentTypeKey !== undefined ? { documentTypeKey: winningDocumentTypeKey } : {}),
     };
+  }
+
+  private inferFromEmail(
+    context: SourceContext,
+    spaceTypes: SourceParserSpaceTypeConfig[]
+  ): InferredRoutingResult {
+    const email = context.email!;
+    const attachmentFilenames: string[] = [];
+
+    if (context.items) {
+      for (const item of context.items) {
+        if (item?.name && typeof item.name === 'string' && item.name.trim().length > 0) {
+          attachmentFilenames.push(item.name.trim());
+        }
+      }
+    }
+
+    if (email.attachments) {
+      for (const att of email.attachments) {
+        // nosemgrep: domain-pass-through-read
+        const name = att.name;
+        if (name && typeof name === 'string' && name.trim().length > 0) {
+          const trimmed = name.trim();
+          if (!attachmentFilenames.includes(trimmed)) {
+            attachmentFilenames.push(trimmed);
+          }
+        }
+      }
+    }
+
+    // 1. Inspect candidate/selected attachment filenames in order
+    for (const filename of attachmentFilenames) {
+      const match = inferSubmittalTypeFromText(filename);
+      if (match) {
+        const spaceTypeId = findSpaceTypeForDocumentType(spaceTypes, match);
+        return {
+          ...(spaceTypeId !== undefined ? { spaceTypeId } : {}),
+          documentTypeKey: match,
+        };
+      }
+    }
+
+    // 2. Inspect subject
+    if (email.subject && typeof email.subject === 'string' && email.subject.trim().length > 0) {
+      const match = inferSubmittalTypeFromText(email.subject);
+      if (match) {
+        const spaceTypeId = findSpaceTypeForDocumentType(spaceTypes, match);
+        return {
+          ...(spaceTypeId !== undefined ? { spaceTypeId } : {}),
+          documentTypeKey: match,
+        };
+      }
+    }
+
+    // 3. Inspect body text (plainTextBody or derived from htmlBody)
+    // nosemgrep: domain-pass-through-read
+    const rawPlain = email.plainTextBody;
+    const hasPlain = typeof rawPlain === 'string' && rawPlain.trim().length > 0;
+    const bodyText = hasPlain
+      ? rawPlain.trim()
+      : extractTextFromHtml(email.htmlBody);
+
+    if (bodyText.length > 0) {
+      const match = inferSubmittalTypeFromText(bodyText);
+      if (match) {
+        const spaceTypeId = findSpaceTypeForDocumentType(spaceTypes, match);
+        return {
+          ...(spaceTypeId !== undefined ? { spaceTypeId } : {}),
+          documentTypeKey: match,
+        };
+      }
+    }
+
+    return {};
   }
 
   private inferFromDriveHierarchy(

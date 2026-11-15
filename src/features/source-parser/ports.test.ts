@@ -67,11 +67,40 @@ describe('SourceParser ports and schemas', () => {
     ).toBe(true);
   });
 
-  it('validates SourceContextSchema', () => {
+  it('validates SourceContextSchema including email metadata (Ticket #292)', () => {
     expect(
       Value.Check(SourceContextSchema, {
         items: [{ id: 'file-1', name: 'Doc.pdf' }],
         candidateSpaces: [{ id: 'sp-1', name: 'Space 1' }],
+        email: {
+          id: 'msg-1',
+          threadId: 'th-1',
+          subject: 'Submittal Review',
+          from: 'Sender <sender@example.com>',
+          to: 'Recipient <recipient@example.com>',
+          cc: 'CC <cc@example.com>',
+          date: 'Mon, 19 Oct 2026 14:00:00 -0400',
+          plainTextBody: 'Body text',
+          htmlBody: '<p>Body text</p>',
+          attachments: [{ id: 'att-1', name: 'Plan.pdf', mimeType: 'application/pdf' }],
+        },
+      })
+    ).toBe(true);
+
+    expect(
+      Value.Check(SourceContextSchema, {
+        email: {
+          id: 'msg-2',
+          threadId: undefined,
+          subject: undefined,
+          from: undefined,
+          to: undefined,
+          cc: undefined,
+          date: undefined,
+          plainTextBody: undefined,
+          htmlBody: undefined,
+          attachments: undefined,
+        },
       })
     ).toBe(true);
 
