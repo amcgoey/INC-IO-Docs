@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { WorkspaceAddonAdapter, normalizeFormData } from './workspace-addon.adapter';
+import { DRIVE_ROUTING_FALLBACK_NOTICE } from '../domain';
 import {
   UiProcessResultSchema,
-  DRIVE_ROUTING_FALLBACK_NOTICE,
   type UiProcessSpaceProviderPort,
   type UiProcessConfigProviderPort,
   type UiProcessManifestPort,
@@ -4714,6 +4714,58 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
             expect.any(Error)
           );
           consoleWarnSpy.mockRestore();
+        });
+
+        it('executes Pass 1 Drive URL inference and populates routing when activeMsg is undefined', async () => {
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn().mockResolvedValue({
+              spaceTypeId: 'projects',
+              spaceIdOrName: 'proj-skyline',
+              documentTypeKey: 'submittal-arch',
+            }),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue([]),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider: testSpaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          const driveUrl = 'https://drive.google.com/file/d/drive-file-xyz/view';
+          const response = await adapter.processUiEvent({
+            actionName: 'onFormChange',
+            hostApp: 'GMAIL',
+            formData: {
+              SelectFileSource: 'Google Drive URL',
+              InputDriveURL: driveUrl,
+            },
+            parameters: {
+              previousDriveUrl: '',
+            },
+          });
+
+          expect(mockSourceParser.inferRouting).toHaveBeenCalledTimes(1);
+          expect(mockSourceParser.inferRouting).toHaveBeenCalledWith(
+            expect.objectContaining({
+              items: [{ id: 'drive-file-xyz' }],
+              isDriveUrl: true,
+            })
+          );
+          const callArg = (mockSourceParser.inferRouting as ReturnType<typeof vi.fn>).mock.calls[0][0];
+          expect(callArg.email).toBeUndefined();
+
+          expect(response.type).toBe('render');
+          const renderResult = response as UiProcessRenderResult;
+          expect(renderResult.documentTypeKey).toBe('submittal-arch');
+          expect(renderResult.formData?.SelectDocumentSpace).toBe('Skyline Tower');
+          expect(renderResult.spaceId).toBe('proj-skyline');
         });
       });
     });
