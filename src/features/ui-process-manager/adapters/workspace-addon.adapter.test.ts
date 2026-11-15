@@ -3743,22 +3743,24 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           const renderResult = response as UiProcessRenderResult;
 
           expect(mockSourceParser.inferRouting).toHaveBeenCalledTimes(1);
-          expect(mockSourceParser.inferRouting).toHaveBeenCalledWith({
-            items: [
-              { id: 'att-sub-arch', name: '071200-001_Waterproofing.pdf', mimeType: 'application/pdf' },
-            ],
-            email: {
-              id: 'msg-submittal-2',
-              threadId: 'th-gmail-pass1',
-              subject: 'Submittal 071200-001 Waterproofing for Review',
-              from: 'Bob <bob@example.com>',
-              date: 'Mon, 19 Oct 2026 11:00:00 +0000',
-              plainTextBody: 'Please review the waterproofing submittal.',
-              attachments: [
+          expect(mockSourceParser.inferRouting).toHaveBeenCalledWith(
+            expect.objectContaining({
+              items: [
                 { id: 'att-sub-arch', name: '071200-001_Waterproofing.pdf', mimeType: 'application/pdf' },
               ],
-            },
-          });
+              email: expect.objectContaining({
+                id: 'msg-submittal-2',
+                threadId: 'th-gmail-pass1',
+                subject: 'Submittal 071200-001 Waterproofing for Review',
+                from: 'Bob <bob@example.com>',
+                date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+                plainTextBody: 'Please review the waterproofing submittal.',
+                attachments: [
+                  { id: 'att-sub-arch', name: '071200-001_Waterproofing.pdf', mimeType: 'application/pdf' },
+                ],
+              }),
+            })
+          );
 
           expect(renderResult.formData?.SelectDocumentSpaceType).toBe('projects');
           expect(renderResult.formData?.SelectDocumentType).toBe('submittal-arch');
@@ -3855,14 +3857,16 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           expect(response.type).toBe('render');
           const renderResult = response as UiProcessRenderResult;
 
-          expect(mockSourceParser.inferRouting).toHaveBeenCalledWith({
-            items: [
-              { id: 'att-sub-arch', name: '071200-001_Waterproofing.pdf', mimeType: 'application/pdf' },
-            ],
-            email: expect.objectContaining({
-              id: 'msg-submittal-2',
-            }),
-          });
+          expect(mockSourceParser.inferRouting).toHaveBeenCalledWith(
+            expect.objectContaining({
+              items: [
+                { id: 'att-sub-arch', name: '071200-001_Waterproofing.pdf', mimeType: 'application/pdf' },
+              ],
+              email: expect.objectContaining({
+                id: 'msg-submittal-2',
+              }),
+            })
+          );
           expect(renderResult.formData?.SelectDocumentType).toBe('submittal-arch');
 
           // Now switch back to msg-plain-1
@@ -3934,6 +3938,330 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           });
 
           expect(mockSourceParser.inferRouting).not.toHaveBeenCalled();
+        });
+      });
+
+      describe('Gmail Pass 1 DocumentSpace inference via latency-bounded candidateSpaces (Ticket #293)', () => {
+        const gmailThreadWithSpaces: UiProcessGmailMessageDescriptor[] = [
+          {
+            id: 'msg-project-1',
+            threadId: 'th-spaces-1',
+            subject: 'Skyline Tower - Weekly update',
+            from: 'Alice <alice@example.com>',
+            date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+            plainTextBody: 'Status update on Skyline Tower progress.',
+            attachments: [{ id: 'att-1', title: 'Schedule.pdf', mimeType: 'application/pdf' }],
+          },
+          {
+            id: 'msg-proposal-2',
+            threadId: 'th-spaces-1',
+            subject: 'RFP for Proposal Alpha',
+            from: 'Bob <bob@example.com>',
+            date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+            plainTextBody: 'Please review the proposal figures.',
+            attachments: [{ id: 'att-2', title: 'Proposal.pdf', mimeType: 'application/pdf' }],
+          },
+          {
+            id: 'msg-unmatched-3',
+            threadId: 'th-spaces-1',
+            subject: 'General discussion',
+            from: 'Carol <carol@example.com>',
+            date: 'Mon, 19 Oct 2026 12:00:00 +0000',
+            plainTextBody: 'No project mentioned here.',
+            attachments: [],
+          },
+        ];
+
+        it('hydrates candidateSpaces for active/default space type only when email has no proposal markers, with no duplicate getCollection calls', async () => {
+          const getCollectionSpy = vi.fn().mockImplementation(async (typeId: string) => {
+            if (typeId === 'proposals') {
+              return { spaces: [{ id: 'prop-1', name: 'Proposal Alpha', abstractStorageId: 'opp-folder-alpha' }] };
+            }
+            return { spaces: [{ id: 'proj-1', name: 'Skyline Tower', abstractStorageId: 'drive-skyline-id' }] };
+          });
+
+          const spaceProvider: UiProcessSpaceProviderPort = {
+            getAllTypes: vi.fn().mockReturnValue(mockSpaceTypesWithProposals),
+            getCollection: getCollectionSpy,
+          };
+
+          let capturedContext: UiProcessSourceContext | undefined;
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn().mockImplementation(async (ctx: UiProcessSourceContext) => {
+              capturedContext = ctx;
+              return {
+                spaceTypeId: 'projects',
+                spaceIdOrName: 'proj-1',
+              };
+            }),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThreadWithSpaces),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          const response = await adapter.processUiEvent({
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-project-1',
+              threadId: 'th-spaces-1',
+            },
+          });
+
+          expect(response.type).toBe('render');
+          const renderResult = response as UiProcessRenderResult;
+
+          // Candidate spaces contains only project spaces
+          expect(capturedContext?.candidateSpaces).toEqual([
+            { id: 'proj-1', name: 'Skyline Tower', typeId: 'projects' },
+          ]);
+
+          // proposals collection was NOT fetched
+          expect(getCollectionSpy).toHaveBeenCalledWith('projects');
+          expect(getCollectionSpy).not.toHaveBeenCalledWith('proposals');
+
+          // Exactly 1 call to getCollection total (reused for card render)
+          expect(getCollectionSpy).toHaveBeenCalledTimes(1);
+
+          // Populates space input with matched space name
+          expect(renderResult.formData?.SelectDocumentSpace).toBe('Skyline Tower');
+          expect(renderResult.validationErrors).toBeUndefined();
+        });
+
+        it('queries secondary proposals collection when proposal/opportunity marker appears in email subject or body', async () => {
+          const getCollectionSpy = vi.fn().mockImplementation(async (typeId: string) => {
+            if (typeId === 'proposals') {
+              return { spaces: [{ id: 'prop-1', name: 'Proposal Alpha', abstractStorageId: 'opp-folder-alpha' }] };
+            }
+            return { spaces: [{ id: 'proj-1', name: 'Skyline Tower', abstractStorageId: 'drive-skyline-id' }] };
+          });
+
+          const spaceProvider: UiProcessSpaceProviderPort = {
+            getAllTypes: vi.fn().mockReturnValue(mockSpaceTypesWithProposals),
+            getCollection: getCollectionSpy,
+          };
+
+          let capturedContext: UiProcessSourceContext | undefined;
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn().mockImplementation(async (ctx: UiProcessSourceContext) => {
+              capturedContext = ctx;
+              return {
+                spaceTypeId: 'proposals',
+                spaceIdOrName: 'prop-1',
+              };
+            }),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThreadWithSpaces),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          const response = await adapter.processUiEvent({
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-proposal-2', // Subject contains 'RFP'
+              threadId: 'th-spaces-1',
+            },
+          });
+
+          expect(response.type).toBe('render');
+          const renderResult = response as UiProcessRenderResult;
+
+          // Candidate spaces contains both projects and proposals
+          expect(capturedContext?.candidateSpaces).toEqual([
+            { id: 'proj-1', name: 'Skyline Tower', typeId: 'projects' },
+            { id: 'prop-1', name: 'Proposal Alpha', typeId: 'proposals' },
+          ]);
+
+          // Both fetched once each, no duplicate calls
+          expect(getCollectionSpy).toHaveBeenCalledWith('projects');
+          expect(getCollectionSpy).toHaveBeenCalledWith('proposals');
+          expect(getCollectionSpy).toHaveBeenCalledTimes(2);
+
+          // Card renders with proposals selected
+          expect(renderResult.formData?.SelectDocumentSpaceType).toBe('proposals');
+          expect(renderResult.formData?.SelectDocumentSpace).toBe('Proposal Alpha');
+          expect(renderResult.formData?.SelectDocumentType).toBe('communication-proposal');
+          expect(renderResult.validationErrors).toBeUndefined();
+        });
+
+        it('queries proposals collection when SelectDocumentSpaceType is already proposals even without email markers', async () => {
+          const getCollectionSpy = vi.fn().mockImplementation(async (typeId: string) => {
+            if (typeId === 'proposals') {
+              return { spaces: [{ id: 'prop-1', name: 'Proposal Alpha', abstractStorageId: 'opp-folder-alpha' }] };
+            }
+            return { spaces: [{ id: 'proj-1', name: 'Skyline Tower', abstractStorageId: 'drive-skyline-id' }] };
+          });
+
+          const spaceProvider: UiProcessSpaceProviderPort = {
+            getAllTypes: vi.fn().mockReturnValue(mockSpaceTypesWithProposals),
+            getCollection: getCollectionSpy,
+          };
+
+          let capturedContext: UiProcessSourceContext | undefined;
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn().mockImplementation(async (ctx: UiProcessSourceContext) => {
+              capturedContext = ctx;
+              return {
+                spaceTypeId: 'proposals',
+                spaceIdOrName: 'prop-1',
+              };
+            }),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThreadWithSpaces),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          // Refresh on msg-unmatched-3 with proposals already in formData
+          const response = await adapter.processUiEvent({
+            actionName: 'refresh',
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-unmatched-3',
+              threadId: 'th-spaces-1',
+            },
+            formData: {
+              SelectDocumentSpaceType: 'proposals',
+            },
+          });
+
+          expect(response.type).toBe('render');
+          expect(capturedContext?.candidateSpaces).toEqual([
+            { id: 'proj-1', name: 'Skyline Tower', typeId: 'projects' },
+            { id: 'prop-1', name: 'Proposal Alpha', typeId: 'proposals' },
+          ]);
+        });
+
+        it('leaves DocumentSpace blank without notFoundError when zero spaces match or collision occurs', async () => {
+          const getCollectionSpy = vi.fn().mockImplementation(async () => ({
+            spaces: [{ id: 'proj-1', name: 'Skyline Tower', abstractStorageId: 'drive-skyline-id' }],
+          }));
+
+          const spaceProvider: UiProcessSpaceProviderPort = {
+            getAllTypes: vi.fn().mockReturnValue(mockSpaceTypesWithProposals),
+            getCollection: getCollectionSpy,
+          };
+
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn().mockResolvedValue({
+              // Zero spaces match or collision -> spaceIdOrName is undefined
+              spaceTypeId: 'projects',
+            }),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThreadWithSpaces),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          const response = await adapter.processUiEvent({
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-unmatched-3',
+              threadId: 'th-spaces-1',
+            },
+          });
+
+          expect(response.type).toBe('render');
+          const renderResult = response as UiProcessRenderResult;
+
+          expect(renderResult.formData?.SelectDocumentSpace_projects).toBeUndefined();
+          expect(renderResult.formData?.SelectDocumentSpace).toBeUndefined();
+          expect(renderResult.formData?.spaceId).toBeUndefined();
+          expect(renderResult.validationErrors).toBeUndefined();
+        });
+
+        it('clears space input without notFoundError when switching to an email with no matching space on onEmailMessageChange', async () => {
+          const getCollectionSpy = vi.fn().mockImplementation(async () => ({
+            spaces: [{ id: 'proj-1', name: 'Skyline Tower', abstractStorageId: 'drive-skyline-id' }],
+          }));
+
+          const spaceProvider: UiProcessSpaceProviderPort = {
+            getAllTypes: vi.fn().mockReturnValue(mockSpaceTypesWithProposals),
+            getCollection: getCollectionSpy,
+          };
+
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn().mockResolvedValue({
+              spaceTypeId: 'projects',
+              // No spaceIdOrName on msg-unmatched-3
+            }),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThreadWithSpaces),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          // User was on msg-project-1 (Skyline Tower) and switches to msg-unmatched-3
+          const response = await adapter.processUiEvent({
+            actionName: 'onEmailMessageChange',
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-project-1',
+              threadId: 'th-spaces-1',
+            },
+            formData: {
+              SelectEmailMessage: 'msg-unmatched-3',
+              SelectDocumentSpaceType: 'projects',
+              SelectDocumentSpace_projects: 'Skyline Tower',
+              SelectDocumentSpace: 'Skyline Tower',
+            },
+            parameters: {
+              previousMessageId: 'msg-project-1',
+            },
+          });
+
+          expect(response.type).toBe('render');
+          const renderResult = response as UiProcessRenderResult;
+
+          expect(renderResult.formData?.SelectDocumentSpace_projects).toBeUndefined();
+          expect(renderResult.formData?.SelectDocumentSpace).toBeUndefined();
+          expect(renderResult.validationErrors).toBeUndefined();
         });
       });
     });

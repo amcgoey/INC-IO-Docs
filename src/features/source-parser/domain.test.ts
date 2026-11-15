@@ -890,4 +890,239 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
       expect(result.documentTypeKey).toBeUndefined();
     });
   });
+
+  describe('Gmail candidateSpaces DocumentSpace inference (Ticket #293)', () => {
+    const mockDrivePort: DriveSourceContextPort = {
+      getItemHierarchy: vi.fn(),
+    };
+
+    const candidateSpaces = [
+      { id: 'proj-skyline', name: 'Skyline Tower', typeId: 'projects' },
+      { id: 'proj-phase1', name: 'Phase 1 (Shell)', typeId: 'projects' },
+      { id: 'proj-hq', name: 'HQ', typeId: 'projects' },
+      { id: 'proj-single', name: 'A', typeId: 'projects' },
+      { id: 'prop-grand-hotel', name: 'Grand Hotel', typeId: 'proposals' },
+      { id: 'prop-grand-renov', name: 'Grand Hotel Renovation', typeId: 'proposals' },
+      { id: 'proj-ocean', name: 'Ocean Breeze', typeId: 'projects' },
+    ];
+
+    it('matches candidate space in subject on token boundaries and adopts spaceIdOrName and typeId', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'Re: Skyline Tower - Weekly Progress Update',
+          plainTextBody: 'All trades on schedule.',
+        },
+      });
+
+      expect(result.spaceTypeId).toBe('projects');
+      expect(result.spaceIdOrName).toBe('proj-skyline');
+      expect(result.documentTypeKey).toBeUndefined();
+    });
+
+    it('matches candidate space with punctuation and parentheses in name', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: '[Phase 1 (Shell)] Inspection Checklist',
+          plainTextBody: 'Please review.',
+        },
+      });
+
+      expect(result.spaceTypeId).toBe('projects');
+      expect(result.spaceIdOrName).toBe('proj-phase1');
+    });
+
+    it('does not false-positive match when space name is a prefix/suffix of a longer token', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'Update on Skyline Towers and TheSkyline Tower',
+          plainTextBody: 'Nothing to report.',
+        },
+      });
+
+      expect(result.spaceIdOrName).toBeUndefined();
+      expect(result.spaceTypeId).toBeUndefined();
+    });
+
+    it('enforces length guards: ignores 1-character space names', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'A great update for building A',
+        },
+      });
+
+      expect(result.spaceIdOrName).toBeUndefined();
+    });
+
+    it('enforces length guards: requires exact case-sensitive match in subject for 2-3 character names', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+
+      // Exact case in subject -> matches
+      const matchExact = await service.inferRouting({
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'Meeting at HQ today',
+        },
+      });
+      expect(matchExact.spaceIdOrName).toBe('proj-hq');
+
+      // Lowercase in subject -> ignored
+      const matchLower = await service.inferRouting({
+        candidateSpaces,
+        email: {
+          id: 'msg-2',
+          subject: 'Meeting at hq today',
+        },
+      });
+      expect(matchLower.spaceIdOrName).toBeUndefined();
+    });
+
+    it('enforces length guards: ignores 2-3 character space names in body text', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'Meeting notes',
+          plainTextBody: 'We will meet at HQ next Tuesday.',
+        },
+      });
+
+      expect(result.spaceIdOrName).toBeUndefined();
+    });
+
+    it('evaluates subject first; does not evaluate body when subject matches', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'Re: Skyline Tower status',
+          plainTextBody: 'Also mentions Ocean Breeze in body.',
+        },
+      });
+
+      expect(result.spaceIdOrName).toBe('proj-skyline');
+      expect(result.spaceTypeId).toBe('projects');
+    });
+
+    it('evaluates body text when subject yields zero matches', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'General status report',
+          plainTextBody: 'Please review progress on Skyline Tower.',
+        },
+      });
+
+      expect(result.spaceIdOrName).toBe('proj-skyline');
+      expect(result.spaceTypeId).toBe('projects');
+    });
+
+    it('evaluates body text from stripped htmlBody when plainTextBody is empty and subject yields zero matches', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'General status report',
+          htmlBody: '<div>Please see update on <b>Skyline Tower</b>.</div>',
+        },
+      });
+
+      expect(result.spaceIdOrName).toBe('proj-skyline');
+      expect(result.spaceTypeId).toBe('projects');
+    });
+
+    it('tie-breaking: longest match wins when every other matched space name is a strict substring', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'Grand Hotel Renovation Proposal Update',
+        },
+      });
+
+      // Both "Grand Hotel" and "Grand Hotel Renovation" match, but "Grand Hotel" is a strict substring
+      expect(result.spaceIdOrName).toBe('prop-grand-renov');
+      expect(result.spaceTypeId).toBe('proposals');
+    });
+
+    it('tie-breaking: collision returns undefined spaceIdOrName when distinct non-overlapping spaces match in subject', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'Joint review: Skyline Tower and Ocean Breeze',
+          plainTextBody: 'Only Skyline Tower mentioned here.',
+        },
+      });
+
+      // Collision in subject leaves spaceIdOrName undefined and does not fall back to body
+      expect(result.spaceIdOrName).toBeUndefined();
+    });
+
+    it('tie-breaking: collision returns undefined spaceIdOrName when distinct non-overlapping spaces match in body', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'Weekly coordination call',
+          plainTextBody: 'We will coordinate work between Skyline Tower and Ocean Breeze.',
+        },
+      });
+
+      expect(result.spaceIdOrName).toBeUndefined();
+    });
+
+    it('combines submittal documentTypeKey and candidate spaceIdOrName when spaceTypeId is compatible', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'Submittal 071200-001 Waterproofing for Skyline Tower',
+          attachments: [{ id: 'att-1', name: '071200-001_Waterproofing.pdf' }],
+        },
+      });
+
+      expect(result.documentTypeKey).toBe('submittal-arch');
+      expect(result.spaceTypeId).toBe('projects');
+      expect(result.spaceIdOrName).toBe('proj-skyline');
+    });
+
+    it('does not attach spaceIdOrName when winning candidate space is incompatible with submittal spaceTypeId', async () => {
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'Submittal 071200-001 Waterproofing for Grand Hotel',
+          attachments: [{ id: 'att-1', name: '071200-001_Waterproofing.pdf' }],
+        },
+      });
+
+      // submittal-arch requires 'projects', but Grand Hotel is 'proposals'
+      expect(result.documentTypeKey).toBe('submittal-arch');
+      expect(result.spaceTypeId).toBe('projects');
+      expect(result.spaceIdOrName).toBeUndefined();
+    });
+  });
 });

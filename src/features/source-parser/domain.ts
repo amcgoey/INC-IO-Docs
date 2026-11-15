@@ -8,6 +8,7 @@ import type {
   DriveSourceContextPort,
   SourceParserSpaceConfigPort,
   SourceParserPort,
+  CandidateSpaceDescriptor,
 } from './ports';
 
 export * from './ports';
@@ -84,6 +85,107 @@ export function findSpaceTypeForDocumentType(
   documentTypeKey: string
 ): string | undefined {
   return spaceTypes.find((st) => st.spaceSchema?.allowedDocumentTypes?.includes(documentTypeKey))?.id;
+}
+
+export function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export function findMatchingCandidatesInText(
+  text: string,
+  candidateSpaces: CandidateSpaceDescriptor[],
+  isSubject: boolean
+): CandidateSpaceDescriptor[] {
+  const matches: CandidateSpaceDescriptor[] = [];
+
+  for (const candidate of candidateSpaces) {
+    const name = typeof candidate?.name === 'string' ? candidate.name.trim() : '';
+    if (name.length <= 1) {
+      continue;
+    }
+
+    if (name.length >= 2 && name.length <= 3) {
+      if (!isSubject) {
+        continue;
+      }
+      const pattern = new RegExp(
+        `(?<=^|[\\s_.,;:()[\\]/\\\\\\-"'])${escapeRegExp(name)}(?=[\\s_.,;:()[\\]/\\\\\\-"']|$)`
+      );
+      if (pattern.test(text)) {
+        matches.push(candidate);
+      }
+    } else if (name.length >= 4) {
+      const pattern = new RegExp(
+        `(?<=^|[\\s_.,;:()[\\]/\\\\\\-"'])${escapeRegExp(name)}(?=[\\s_.,;:()[\\]/\\\\\\-"']|$)`,
+        'i'
+      );
+      if (pattern.test(text)) {
+        matches.push(candidate);
+      }
+    }
+  }
+
+  return matches;
+}
+
+export function resolveCandidateTieBreaking(
+  matches: CandidateSpaceDescriptor[]
+): CandidateSpaceDescriptor | undefined {
+  if (matches.length === 0) {
+    return undefined;
+  }
+  if (matches.length === 1) {
+    return matches[0];
+  }
+
+  const sorted = [...matches].sort((a, b) => b.name.trim().length - a.name.trim().length);
+  const longest = sorted[0];
+  const longestName = longest.name.trim().toLowerCase();
+
+  if (sorted[1].name.trim().length === longest.name.trim().length) {
+    if (sorted[1].id !== longest.id || sorted[1].name.trim().toLowerCase() !== longestName) {
+      return undefined;
+    }
+  }
+
+  for (let i = 1; i < sorted.length; i++) {
+    const other = sorted[i];
+    if (other.id === longest.id) {
+      continue;
+    }
+    const otherName = other.name.trim().toLowerCase();
+    if (longestName.length <= otherName.length || !longestName.includes(otherName)) {
+      return undefined;
+    }
+  }
+
+  return longest;
+}
+
+export function matchCandidateSpaces(
+  candidateSpaces?: CandidateSpaceDescriptor[],
+  subject?: string,
+  body?: string
+): CandidateSpaceDescriptor | undefined {
+  if (!candidateSpaces || candidateSpaces.length === 0) {
+    return undefined;
+  }
+
+  if (subject && typeof subject === 'string' && subject.trim().length > 0) {
+    const subjectMatches = findMatchingCandidatesInText(subject, candidateSpaces, true);
+    if (subjectMatches.length > 0) {
+      return resolveCandidateTieBreaking(subjectMatches);
+    }
+  }
+
+  if (body && typeof body === 'string' && body.trim().length > 0) {
+    const bodyMatches = findMatchingCandidatesInText(body, candidateSpaces, false);
+    if (bodyMatches.length > 0) {
+      return resolveCandidateTieBreaking(bodyMatches);
+    }
+  }
+
+  return undefined;
 }
 
 export class SourceParserService implements SourceParserPort {
@@ -204,27 +306,25 @@ export class SourceParserService implements SourceParserPort {
       }
     }
 
+    let inferredDocType: string | undefined;
+    let inferredDocTypeSpaceTypeId: string | undefined;
+
     // 1. Inspect candidate/selected attachment filenames in order
     for (const filename of attachmentFilenames) {
       const match = inferSubmittalTypeFromText(filename);
       if (match) {
-        const spaceTypeId = findSpaceTypeForDocumentType(spaceTypes, match);
-        return {
-          ...(spaceTypeId !== undefined ? { spaceTypeId } : {}),
-          documentTypeKey: match,
-        };
+        inferredDocType = match;
+        inferredDocTypeSpaceTypeId = findSpaceTypeForDocumentType(spaceTypes, match);
+        break;
       }
     }
 
     // 2. Inspect subject
-    if (email.subject && typeof email.subject === 'string' && email.subject.trim().length > 0) {
+    if (!inferredDocType && email.subject && typeof email.subject === 'string' && email.subject.trim().length > 0) {
       const match = inferSubmittalTypeFromText(email.subject);
       if (match) {
-        const spaceTypeId = findSpaceTypeForDocumentType(spaceTypes, match);
-        return {
-          ...(spaceTypeId !== undefined ? { spaceTypeId } : {}),
-          documentTypeKey: match,
-        };
+        inferredDocType = match;
+        inferredDocTypeSpaceTypeId = findSpaceTypeForDocumentType(spaceTypes, match);
       }
     }
 
@@ -236,18 +336,49 @@ export class SourceParserService implements SourceParserPort {
       ? rawPlain.trim()
       : extractTextFromHtml(email.htmlBody);
 
-    if (bodyText.length > 0) {
+    if (!inferredDocType && bodyText.length > 0) {
       const match = inferSubmittalTypeFromText(bodyText);
       if (match) {
-        const spaceTypeId = findSpaceTypeForDocumentType(spaceTypes, match);
-        return {
-          ...(spaceTypeId !== undefined ? { spaceTypeId } : {}),
-          documentTypeKey: match,
-        };
+        inferredDocType = match;
+        inferredDocTypeSpaceTypeId = findSpaceTypeForDocumentType(spaceTypes, match);
       }
     }
 
-    return {};
+    // 4. Candidate spaces matching in subject first, body text second
+    const winningCandidate = matchCandidateSpaces(
+      context.candidateSpaces,
+      email.subject,
+      bodyText
+    );
+
+    let winningSpaceTypeId: string | undefined;
+    let winningSpaceIdOrName: string | undefined;
+
+    if (inferredDocTypeSpaceTypeId !== undefined) {
+      winningSpaceTypeId = inferredDocTypeSpaceTypeId;
+      if (winningCandidate) {
+        // nosemgrep: domain-pass-through-read
+        const candidateType = winningCandidate.typeId;
+        const isCompatible = candidateType === undefined || candidateType === inferredDocTypeSpaceTypeId;
+        if (isCompatible) {
+          // nosemgrep: domain-pass-through-read
+          winningSpaceIdOrName = winningCandidate.id;
+        }
+      }
+    } else if (winningCandidate) {
+      // nosemgrep: domain-pass-through-read
+      winningSpaceIdOrName = winningCandidate.id;
+      if (winningCandidate.typeId !== undefined) {
+        // nosemgrep: domain-pass-through-read
+        winningSpaceTypeId = winningCandidate.typeId;
+      }
+    }
+
+    return {
+      ...(winningSpaceTypeId !== undefined ? { spaceTypeId: winningSpaceTypeId } : {}),
+      ...(winningSpaceIdOrName !== undefined ? { spaceIdOrName: winningSpaceIdOrName } : {}),
+      ...(inferredDocType !== undefined ? { documentTypeKey: inferredDocType } : {}),
+    };
   }
 
   private inferFromDriveHierarchy(

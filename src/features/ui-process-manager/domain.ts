@@ -133,6 +133,9 @@ export type ProcessUiStateOutput = Static<typeof ProcessUiStateOutputSchema>;
 export const DRIVE_WORKSPACE_ADDON_VIEW_ID = 'drive-document-process-card';
 export const GMAIL_WORKSPACE_ADDON_VIEW_ID = 'gmail-document-process-card';
 
+export const PROPOSAL_OPPORTUNITY_MARKERS_REGEX =
+  /\b(?:proposal|proposals|opportunity|opportunities|rfp|rfps)\b/i;
+
 export const SELECT_FILES_KEY = 'SelectFiles';
 export const SELECT_FILE_SOURCE_KEY = 'SelectFileSource';
 export const SELECT_ATTACHMENTS_KEY = 'SelectAttachments';
