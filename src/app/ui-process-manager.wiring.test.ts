@@ -258,6 +258,130 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
     expect(spaceWidget).toBeDefined();
   });
 
+  describe('Declarative defaultDocumentType and defaultDocumentSpaceType across Workspace Add-on HTTP card seam (Ticket #289)', () => {
+    const multiTypeSpaceService = {
+      getAllTypes: vi.fn().mockReturnValue([
+        {
+          id: 'projects',
+          displayName: 'Projects',
+          spaceSchema: {
+            // Note: communication-proposal is at index 0, communication-project is at index 1!
+            allowedDocumentTypes: ['communication-proposal', 'communication-project'],
+            defaultDocumentType: 'communication-project',
+          },
+          storageConfig: {},
+        },
+        {
+          id: 'proposals',
+          displayName: 'Proposals',
+          spaceSchema: {
+            allowedDocumentTypes: ['communication-project', 'communication-proposal'],
+            defaultDocumentType: 'communication-proposal',
+          },
+          storageConfig: {},
+        },
+      ]),
+      getCollection: vi.fn().mockImplementation(async (typeId: string) => {
+        if (typeId === 'proposals') {
+          return {
+            type: {
+              id: 'proposals',
+              displayName: 'Proposals',
+              spaceSchema: {
+                allowedDocumentTypes: ['communication-project', 'communication-proposal'],
+                defaultDocumentType: 'communication-proposal',
+              },
+            },
+            spaces: [{ id: 'prop-1', name: 'Proposal Space' }],
+          };
+        }
+        return {
+          type: {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: {
+              allowedDocumentTypes: ['communication-proposal', 'communication-project'],
+              defaultDocumentType: 'communication-project',
+            },
+          },
+          spaces: [{ id: 'proj-1', name: 'Project Space' }],
+        };
+      }),
+    } as unknown as DocumentSpaceService;
+
+    it('resolves fallback DocumentType on initial card load using spaceSchema.defaultDocumentType when not at index 0', async () => {
+      const wiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: multiTypeSpaceService,
+        manifestProvider: mockManifestProvider,
+      });
+
+      const response = (await wiring.requestScopedWrapper.processUiEvent({})) as GoogleWorkspaceActionResponse;
+      expect(response.action?.navigations?.[0]?.pushCard).toBeDefined();
+      const pushCard = response.action!.navigations![0].pushCard!;
+
+      const selectionSection = pushCard.sections?.find((s: GoogleWorkspaceSection) => s.header === 'Document Type');
+      expect(selectionSection).toBeDefined();
+
+      const docTypeDropdown = selectionSection?.widgets?.find(
+        (w: GoogleWorkspaceWidget) => w.selectionInput?.name === getDocumentTypeWidgetName('projects')
+      )?.selectionInput;
+      expect(docTypeDropdown).toBeDefined();
+
+      // Verify communication-project (at index 1) was selected because it is defaultDocumentType
+      const selectedItem = docTypeDropdown?.items?.find((i) => i.selected === true);
+      expect(selectedItem?.value).toBe('communication-project');
+
+      // Verify Document Data section renders fields for communication-project (contact, date)
+      const dataSection = pushCard.sections?.find((s: GoogleWorkspaceSection) => s.header === 'Document Data');
+      expect(dataSection).toBeDefined();
+      const contactWidget = dataSection?.widgets?.find(
+        (w: GoogleWorkspaceWidget) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-project')
+      );
+      expect(contactWidget).toBeDefined();
+    });
+
+    it('resolves fallback DocumentType on onSpaceTypeChange using target spaceSchema.defaultDocumentType when not at index 0', async () => {
+      const wiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: multiTypeSpaceService,
+        manifestProvider: mockManifestProvider,
+      });
+
+      const simulatedContext: WorkspaceExecutionContext = {
+        actionName: 'onSpaceTypeChange',
+        formData: {
+          SelectDocumentSpaceType: 'proposals',
+          SelectDocumentType: 'communication-project',
+        },
+      };
+
+      const response = (await wiring.requestScopedWrapper.processUiEvent(simulatedContext)) as GoogleWorkspaceActionResponse;
+      expect(response.action?.navigations?.[0]?.updateCard).toBeDefined();
+      const updateCard = response.action!.navigations![0].updateCard!;
+
+      const selectionSection = updateCard.sections?.find((s: GoogleWorkspaceSection) => s.header === 'Document Type');
+      expect(selectionSection).toBeDefined();
+
+      const docTypeDropdown = selectionSection?.widgets?.find(
+        (w: GoogleWorkspaceWidget) => w.selectionInput?.name === getDocumentTypeWidgetName('proposals')
+      )?.selectionInput;
+      expect(docTypeDropdown).toBeDefined();
+
+      // For proposals, communication-proposal is at index 1 and defaultDocumentType is communication-proposal
+      const selectedItem = docTypeDropdown?.items?.find((i) => i.selected === true);
+      expect(selectedItem?.value).toBe('communication-proposal');
+
+      // Verify Document Data section renders proposalId for communication-proposal
+      const dataSection = updateCard.sections?.find((s: GoogleWorkspaceSection) => s.header === 'Document Data');
+      expect(dataSection).toBeDefined();
+      const proposalIdWidget = dataSection?.widgets?.find(
+        (w: GoogleWorkspaceWidget) => w.textInput?.name === getDocumentInfoWidgetName('proposalId', 'communication-proposal')
+      );
+      expect(proposalIdWidget).toBeDefined();
+    });
+  });
+
   it('handles processDocument through wired documentService returning notification on success', async () => {
     const mockDocService = {
       processDocument: vi.fn().mockResolvedValue({

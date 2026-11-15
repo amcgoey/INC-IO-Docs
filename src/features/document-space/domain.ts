@@ -7,6 +7,7 @@ import type {
 
 export const SpaceSchemaConfigSchema = Type.Object({
   allowedDocumentTypes: Type.Array(Type.String()),
+  defaultDocumentType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
 });
 
 export type SpaceSchemaConfig = Static<typeof SpaceSchemaConfigSchema>;

@@ -201,21 +201,31 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     }
 
     const config = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
-    const currentSpaceType = resolveSpaceType({ formData: effectiveContext.formData, config });
+    const spaceTypes = spaceProvider.getAllTypes();
+    const currentSpaceType = resolveSpaceType({
+      formData: effectiveContext.formData,
+      config,
+      spaceTypes,
+    });
     const isSpaceTypeChange = actionName === 'onSpaceTypeChange';
 
-    const spaceTypes = spaceProvider.getAllTypes();
     const activeSpaceObj = spaceTypes.find((t) => t.id === currentSpaceType);
     const allowedDocTypes = activeSpaceObj?.spaceSchema.allowedDocumentTypes ?? [];
+    const defaultDocTypeForSpace =
+      (activeSpaceObj?.spaceSchema.defaultDocumentType &&
+        (allowedDocTypes.length === 0 || allowedDocTypes.includes(activeSpaceObj.spaceSchema.defaultDocumentType)))
+        ? activeSpaceObj.spaceSchema.defaultDocumentType
+        : (allowedDocTypes[0] ?? config?.defaultDocumentType);
 
     const rawSelectedDocType =
-      isSpaceTypeChange && allowedDocTypes.length > 0
-        ? allowedDocTypes[0]
+      isSpaceTypeChange
+        ? defaultDocTypeForSpace
         : resolveDocumentType({
             formData: effectiveContext.formData,
             config,
             activeSpaceType: currentSpaceType,
             parameters: effectiveContext.parameters,
+            spaceTypes,
           });
 
     let resolvedDocumentTypeKey = rawSelectedDocType;
@@ -234,7 +244,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       !resolvedDocumentTypeKey ||
       (allowedDocTypes.length > 0 && !allowedDocTypes.includes(resolvedDocumentTypeKey))
     ) {
-      resolvedDocumentTypeKey = allowedDocTypes[0] ?? resolvedDocumentTypeKey;
+      resolvedDocumentTypeKey = defaultDocTypeForSpace ?? resolvedDocumentTypeKey;
     }
 
     const normalizedFormData = normalizeFormData(
@@ -242,6 +252,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         formData: effectiveContext.formData,
         activeSpaceType: currentSpaceType,
         config,
+        spaceTypes,
       },
       resolvedDocumentTypeKey
     );
