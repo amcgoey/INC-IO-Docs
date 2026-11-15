@@ -30,7 +30,10 @@ import type {
   DocumentSchemaRegistryPort,
   TemplateEvaluatorPort,
   AppConfigurationProviderPort,
+  DriveServicePort,
 } from '../features/document/ports';
+import { createSourceParserWiring } from './source-parser.wiring';
+import type { SourceParserPort } from '../features/source-parser';
 import type { DocumentSpaceManifestRegistryAdapter } from '../features/document-space/adapters/document-space-manifest-registry';
 import type { DocumentSpaceStoragePort } from '../features/document-space/ports';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
@@ -61,6 +64,9 @@ export interface WorkspaceAddonWiringOptions {
   documentSpaceRegistry?: DocumentSpaceManifestRegistryAdapter | undefined;
   storageAdapter?: DocumentSpaceStoragePort | undefined;
   pdfProcessor?: PdfProcessor | undefined;
+  sourceParser?: SourceParserPort | undefined;
+  createSourceParser?: ((context: WorkspaceExecutionContext) => SourceParserPort | Promise<SourceParserPort>) | undefined;
+  driveService?: DriveServicePort | undefined;
 }
 
 export function wireWorkspaceAddonRoutes(
@@ -141,6 +147,24 @@ export function wireWorkspaceAddonRoutes(
       };
     }
 
+    let sourceParser = options.sourceParser;
+    let createSourceParser = options.createSourceParser;
+    if (!sourceParser && !createSourceParser) {
+      const spaceTypesProvider =
+        options.documentSpaceService ??
+        options.documentSpaceRegistry ?? {
+          getAllTypes: () => [],
+        };
+      const sourceParserWiring = createSourceParserWiring({
+        spaceTypesProvider,
+        driveClient: options.driveClient,
+        driveService: options.driveService,
+        configProvider: appConfigProvider,
+      });
+      sourceParser = sourceParserWiring.sourceParser;
+      createSourceParser = sourceParserWiring.createSourceParser;
+    }
+
     const uiProcessWiring = createUiProcessManagerWiring({
       configProvider: options.configProvider,
       documentSpaceService,
@@ -155,6 +179,8 @@ export function wireWorkspaceAddonRoutes(
       gmailClient,
       ...(options.gmailPort !== undefined ? { gmailPort: options.gmailPort } : {}),
       ...(options.pdfProcessor !== undefined ? { pdfProcessor: options.pdfProcessor } : {}),
+      ...(sourceParser !== undefined ? { sourceParser } : {}),
+      ...(createSourceParser !== undefined ? { createSourceParser } : {}),
       evaluateFormChange,
     });
     uiOrchestrator = uiProcessWiring.requestScopedWrapper;

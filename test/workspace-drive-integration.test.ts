@@ -11,6 +11,7 @@ import {
   getDocumentSpaceWidgetName,
 } from '../src/features/schema-driven-ui/blocks/document-type-selection';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
+import { GoogleDriveClient } from '../src/infrastructure/drive/drive-client';
 
 describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () => {
   let app: AppInstance;
@@ -145,6 +146,15 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
   describe('Driving Adapter: POST /workspace/drive-items-selected', () => {
     it('returns a DriveDocumentProcessCard when authorized and items are selected', async () => {
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/file-123')
+        .query(true)
+        .reply(200, {
+          id: 'file-123',
+          name: 'Contract_Agreement.pdf',
+          parents: ['root'],
+        });
+
       const response = await app.server.inject({
         method: 'POST',
         url: '/workspace/drive-items-selected',
@@ -190,6 +200,15 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     });
 
     it('returns drive document process card even when userOAuthToken is missing', async () => {
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/file-123')
+        .query(true)
+        .reply(200, {
+          id: 'file-123',
+          name: 'Contract_Agreement.pdf',
+          parents: ['root'],
+        });
+
       const response = await app.server.inject({
         method: 'POST',
         url: '/workspace/drive-items-selected',
@@ -212,6 +231,74 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       const body = JSON.parse(response.payload);
       expect(body.action?.navigations).toBeDefined();
       expect(body.action.navigations[0].pushCard.header.title).toBe('INC-IO Engine');
+    });
+
+    it('infers Space and DocumentType from folder hierarchy on drive-items-selected', async () => {
+      vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => {
+        if (fileId === 'file-proj-doc') {
+          return {
+            id: 'file-proj-doc',
+            name: 'Meeting_Notes.docx',
+            parents: ['folder-comm-1'],
+            driveId: 'shared-drive-proj-root',
+            mimeType: 'application/vnd.google-apps.document',
+          };
+        }
+        if (fileId === 'folder-comm-1') {
+          return {
+            id: 'folder-comm-1',
+            name: 'Communication',
+            parents: ['folder-admin-1'],
+            driveId: 'shared-drive-proj-root',
+            mimeType: 'application/vnd.google-apps.folder',
+          };
+        }
+        if (fileId === 'folder-admin-1') {
+          return {
+            id: 'folder-admin-1',
+            name: '1 Admin',
+            parents: ['shared-drive-proj-root'],
+            driveId: 'shared-drive-proj-root',
+            mimeType: 'application/vnd.google-apps.folder',
+          };
+        }
+        return {
+          id: fileId,
+          name: fileId,
+          parents: [],
+        };
+      });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: {
+          authorization: 'Bearer valid-jwt-token',
+        },
+        payload: {
+          authorizationEventObject: {
+            userOAuthToken: 'ya29.sample-token',
+          },
+          drive: {
+            selectedItems: [
+              {
+                id: 'file-proj-doc',
+                title: 'Meeting_Notes.docx',
+              },
+            ],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const cardResponse = JSON.parse(response.payload);
+      expect(cardResponse.action).toBeDefined();
+      const pushCard = cardResponse.action.navigations[0].pushCard;
+
+      const cardJson = JSON.stringify(pushCard);
+      expect(cardJson).not.toContain('notFoundError');
+      expect(cardJson).toContain('communication-project');
+      expect(cardJson).toContain('Active Projects');
     });
   });
 

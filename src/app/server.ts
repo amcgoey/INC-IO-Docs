@@ -162,6 +162,7 @@ export function createApp(options?: AppOptions): AppInstance {
     documentSpaceRegistry: documentSpaceWiring.documentSpaceRegistry,
     storageAdapter,
     pdfProcessor: options?.pdfProcessor,
+    driveService: options?.driveService,
   });
 
   const initialize = async () => {

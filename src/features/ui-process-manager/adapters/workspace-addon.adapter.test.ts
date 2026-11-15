@@ -11,6 +11,7 @@ import {
   type UiProcessFormEvaluatorPort,
   type UiProcessGmailPort,
   type UiProcessGmailMessageDescriptor,
+  type UiProcessSourceParserPort,
 } from '../ports';
 
 describe('WorkspaceAddonAdapter in ui-process-manager', () => {
@@ -3443,6 +3444,170 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           },
           'onSubmit'
         );
+      });
+    });
+
+    describe('SourceParser Pass 1 Integration (Ticket #290)', () => {
+      const mockSpaceTypesWithProposals = [
+        {
+          id: 'projects',
+          displayName: 'Projects',
+          spaceSchema: {
+            allowedDocumentTypes: ['communication-project', 'submittal-ffe', 'submittal-arch'],
+            defaultDocumentType: 'communication-project',
+          },
+        },
+        {
+          id: 'proposals',
+          displayName: 'Proposals',
+          spaceSchema: {
+            allowedDocumentTypes: ['communication-proposal'],
+            defaultDocumentType: 'communication-proposal',
+          },
+        },
+      ];
+
+      const multiSpaceProvider: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue(mockSpaceTypesWithProposals),
+        getCollection: vi.fn().mockImplementation(async (typeId: string) => {
+          if (typeId === 'proposals') {
+            return {
+              spaces: [
+                { id: 'prop-1', name: 'Proposal Alpha', abstractStorageId: 'opp-folder-alpha' },
+              ],
+            };
+          }
+          return {
+            spaces: [
+              { id: 'proj-1', name: 'Project Alpha', abstractStorageId: 'drive-alpha-id' },
+            ],
+          };
+        }),
+      };
+
+      it('invokes sourceParser.inferRouting on initial card open and populates inferred space and documentType', async () => {
+        const mockSourceParser: UiProcessSourceParserPort = {
+          inferRouting: vi.fn().mockResolvedValue({
+            spaceTypeId: 'proposals',
+            spaceIdOrName: 'opp-folder-alpha',
+            documentTypeKey: 'communication-proposal',
+          }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: multiSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          sourceParser: mockSourceParser,
+        });
+
+        const context: UiProcessEventContext = {
+          selectedItems: [
+            { id: 'file-prop-1', title: 'Proposal.pdf', mimeType: 'application/pdf' },
+          ],
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('render');
+        const renderResult = response as UiProcessRenderResult;
+
+        expect(mockSourceParser.inferRouting).toHaveBeenCalledWith({
+          items: [{ id: 'file-prop-1', name: 'Proposal.pdf', mimeType: 'application/pdf' }],
+        });
+
+        expect(renderResult.formData?.SelectDocumentSpaceType).toBe('proposals');
+        expect(renderResult.formData?.SelectDocumentSpace).toBe('Proposal Alpha');
+        expect(renderResult.formData?.SelectDocumentType).toBe('communication-proposal');
+        expect(renderResult.validationErrors).toBeUndefined();
+      });
+
+      it('leaves space selector blank and suppresses notFoundError when inferred space is unknown', async () => {
+        const mockSourceParser: UiProcessSourceParserPort = {
+          inferRouting: vi.fn().mockResolvedValue({
+            spaceTypeId: 'projects',
+            spaceIdOrName: 'unknown-drive-id',
+          }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: multiSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          sourceParser: mockSourceParser,
+        });
+
+        const context: UiProcessEventContext = {
+          selectedItems: [{ id: 'file-unknown', title: 'Doc.pdf' }],
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('render');
+        const renderResult = response as UiProcessRenderResult;
+
+        expect(renderResult.formData?.SelectDocumentSpaceType).toBe('projects');
+        expect(renderResult.formData?.SelectDocumentSpace_projects).toBeUndefined();
+        expect(renderResult.validationErrors).toBeUndefined();
+      });
+
+      it('re-runs inferRouting on refresh action', async () => {
+        const mockSourceParser: UiProcessSourceParserPort = {
+          inferRouting: vi.fn().mockResolvedValue({
+            spaceTypeId: 'projects',
+            spaceIdOrName: 'drive-alpha-id',
+            documentTypeKey: 'submittal-ffe',
+          }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: multiSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          sourceParser: mockSourceParser,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'refresh',
+          selectedItems: [{ id: 'file-ffe-1', title: 'Chair.pdf' }],
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('render');
+        const renderResult = response as UiProcessRenderResult;
+
+        expect(mockSourceParser.inferRouting).toHaveBeenCalledTimes(1);
+        expect(renderResult.formData?.SelectDocumentSpaceType).toBe('projects');
+        expect(renderResult.formData?.SelectDocumentSpace).toBe('Project Alpha');
+        expect(renderResult.formData?.SelectDocumentType).toBe('submittal-ffe');
+      });
+
+      it('skips inferRouting on in-card interactions (onSpaceTypeChange, onDocumentTypeChange, onFormChange)', async () => {
+        const mockSourceParser: UiProcessSourceParserPort = {
+          inferRouting: vi.fn(),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: multiSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          sourceParser: mockSourceParser,
+        });
+
+        await adapter.processUiEvent({
+          actionName: 'onSpaceTypeChange',
+          formData: { SelectDocumentSpaceType: 'proposals' },
+        });
+
+        await adapter.processUiEvent({
+          actionName: 'onDocumentTypeChange',
+          formData: { SelectDocumentType: 'submittal-arch' },
+        });
+
+        await adapter.processUiEvent({
+          actionName: 'onFormChange',
+          formData: { contact: 'New Contact' },
+        });
+
+        expect(mockSourceParser.inferRouting).not.toHaveBeenCalled();
       });
     });
   });
