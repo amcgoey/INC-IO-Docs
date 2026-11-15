@@ -154,6 +154,12 @@ describe('DocumentType JSON files schema validation', () => {
         expect(allDocTypeKeys.has(allowedDocType)).toBe(true);
       }
     }
+
+    const projectsSpace = spaceTypes.find((s) => s.id === 'projects');
+    expect(projectsSpace?.spaceSchema.defaultDocumentType).toBe('communication-project');
+
+    const proposalsSpace = spaceTypes.find((s) => s.id === 'proposals');
+    expect(proposalsSpace?.spaceSchema.defaultDocumentType).toBe('communication-proposal');
   });
 
   it('should have defaultValue: IN on direction field for communication schemas', async () => {

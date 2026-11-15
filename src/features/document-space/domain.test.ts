@@ -29,6 +29,25 @@ describe('DocumentSpace Domain Schemas', () => {
       expect(Value.Check(SpaceSchemaConfigSchema, validConfig)).toBe(true);
     });
 
+    it('validates when defaultDocumentType is present as a string', () => {
+      const validConfig = {
+        allowedDocumentTypes: ['project-doc', 'proposal-doc'],
+        defaultDocumentType: 'project-doc',
+      };
+
+      expect(Value.Check(SpaceSchemaConfigSchema, validConfig)).toBe(true);
+      expect(formatValidationErrors(SpaceSchemaConfigSchema, validConfig)).toEqual([]);
+    });
+
+    it('validates when defaultDocumentType is explicitly undefined', () => {
+      const validConfig = {
+        allowedDocumentTypes: ['project-doc'],
+        defaultDocumentType: undefined,
+      };
+
+      expect(Value.Check(SpaceSchemaConfigSchema, validConfig)).toBe(true);
+    });
+
     it('rejects a schema configuration without allowedDocumentTypes', () => {
       expect(Value.Check(SpaceSchemaConfigSchema, {})).toBe(false);
     });
@@ -37,6 +56,22 @@ describe('DocumentSpace Domain Schemas', () => {
       expect(
         Value.Check(SpaceSchemaConfigSchema, {
           allowedDocumentTypes: [123],
+        })
+      ).toBe(false);
+    });
+
+    it('rejects a schema configuration with non-string defaultDocumentType', () => {
+      expect(
+        Value.Check(SpaceSchemaConfigSchema, {
+          allowedDocumentTypes: ['project-doc'],
+          defaultDocumentType: 123,
+        })
+      ).toBe(false);
+
+      expect(
+        Value.Check(SpaceSchemaConfigSchema, {
+          allowedDocumentTypes: ['project-doc'],
+          defaultDocumentType: { invalid: true },
         })
       ).toBe(false);
     });
@@ -282,6 +317,52 @@ describe('DocumentSpaceService', () => {
     expect(() => service.getType('non_existent')).toThrow(
       /DocumentSpaceType "non_existent" not found/i
     );
+  });
+
+  it('initializes and preserves spaceSchema.defaultDocumentType when present', async () => {
+    const spaceTypeWithDefault: DocumentSpaceType = {
+      id: 'custom-type',
+      displayName: 'Custom Type',
+      spaceSchema: {
+        allowedDocumentTypes: ['doc-a', 'doc-b'],
+        defaultDocumentType: 'doc-b',
+      },
+      storageConfig: {
+        provider: 'google_drive',
+      },
+    };
+
+    const registry: DocumentSpaceManifestRegistryPort = {
+      getDocumentSpaceTypes: async () => [spaceTypeWithDefault],
+    };
+
+    const service = new DocumentSpaceService(registry, mockStoragePort);
+    await service.initialize();
+
+    const retrieved = service.getType('custom-type');
+    expect(retrieved.spaceSchema.defaultDocumentType).toBe('doc-b');
+    expect(service.getAllTypes()[0].spaceSchema.defaultDocumentType).toBe('doc-b');
+  });
+
+  it('rejects during initialize if spaceSchema.defaultDocumentType is not a string', async () => {
+    const invalidManifestRegistry: DocumentSpaceManifestRegistryPort = {
+      getDocumentSpaceTypes: async () => [
+        {
+          id: 'invalid-default-type',
+          displayName: 'Invalid Default Type',
+          spaceSchema: {
+            allowedDocumentTypes: ['doc-a'],
+            defaultDocumentType: 12345 as unknown as string,
+          },
+          storageConfig: {
+            provider: 'google_drive',
+          },
+        },
+      ],
+    };
+
+    const service = new DocumentSpaceService(invalidManifestRegistry, mockStoragePort);
+    await expect(service.initialize()).rejects.toThrow(/invalid documentspacetype/i);
   });
 
   it('throws during initialize if manifest registry provides invalid space types', async () => {

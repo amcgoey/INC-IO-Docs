@@ -30,7 +30,8 @@
           "communication-project",
           "submittal-arch",
           "submittal-ffe"
-        ]
+        ],
+        "defaultDocumentType": "communication-project"
       },
       "storageConfig": {
         "provider": "google_drive",
@@ -44,7 +45,8 @@
       "spaceSchema": {
         "allowedDocumentTypes": [
           "communication-proposal"
-        ]
+        ],
+        "defaultDocumentType": "communication-proposal"
       },
       "storageConfig": {
         "provider": "google_drive",

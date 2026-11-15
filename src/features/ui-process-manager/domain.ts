@@ -30,6 +30,7 @@ export const UiProcessSpaceTypeSchema = Type.Object({
   displayName: Type.String(),
   spaceSchema: Type.Object({
     allowedDocumentTypes: Type.Array(Type.String()),
+    defaultDocumentType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   }),
 });
 export type UiProcessSpaceType = Static<typeof UiProcessSpaceTypeSchema>;
@@ -46,6 +47,7 @@ export const UiStateResolutionContextSchema = Type.Object({
   activeSpaceType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   parameters: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
   spaces: Type.Optional(Type.Union([Type.Array(UiProcessSpaceItemSchema), Type.Undefined()])),
+  spaceTypes: Type.Optional(Type.Union([Type.Array(UiProcessSpaceTypeSchema), Type.Undefined()])),
 });
 export type UiStateResolutionContext = Static<typeof UiStateResolutionContextSchema>;
 
@@ -451,7 +453,8 @@ export function resolveSpaceType(context?: UiStateResolutionContext): string {
   return (
     (context?.formData?.[SELECT_DOCUMENT_SPACE_TYPE_KEY] as string | undefined) ??
     context?.config?.defaultDocumentSpaceType ??
-    'projects'
+    context?.spaceTypes?.[0]?.id ??
+    ''
   );
 }
 
@@ -481,7 +484,15 @@ export function resolveDocumentType(context?: UiStateResolutionContext): string 
     return context.parameters.documentTypeKey;
   }
 
-  return context?.config?.defaultDocumentType;
+  const activeSpaceTypeObj = spaceType
+    ? context?.spaceTypes?.find((t) => t.id === spaceType)
+    : undefined;
+
+  return (
+    activeSpaceTypeObj?.spaceSchema.defaultDocumentType ??
+    activeSpaceTypeObj?.spaceSchema.allowedDocumentTypes[0] ??
+    context?.config?.defaultDocumentType
+  );
 }
 
 function cleanTrimmedString(value: unknown): string | undefined {
@@ -605,7 +616,8 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const isEmailMessageChange = action === 'onEmailMessageChange';
 
   const currentSpaceType =
-    input.resolvedSpaceType ?? resolveSpaceType({ formData: context.formData, config: input.config });
+    input.resolvedSpaceType ??
+    resolveSpaceType({ formData: context.formData, config: input.config, spaceTypes: input.spaceTypes });
 
   const selectedSpaceTypeObj = input.spaceTypes.find((t) => t.id === currentSpaceType);
   const allowedDocumentTypes = selectedSpaceTypeObj?.spaceSchema.allowedDocumentTypes ?? [];
@@ -622,21 +634,30 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
       config: input.config,
       activeSpaceType: currentSpaceType,
       parameters: context.parameters,
+      spaceTypes: input.spaceTypes,
     });
 
   let currentDocTypeKey = input.resolvedDocumentTypeKey ?? rawSelectedDocType;
 
-  if (isSpaceTypeChange && allowedDocumentTypes.length > 0) {
-    currentDocTypeKey = allowedDocumentTypes[0];
+  if (isSpaceTypeChange) {
+    currentDocTypeKey =
+      selectedSpaceTypeObj?.spaceSchema.defaultDocumentType ??
+      allowedDocumentTypes[0] ??
+      input.config?.defaultDocumentType;
   }
 
   if (isSpaceTypeChange || isDocTypeChange) {
     effectiveFormData[SELECT_DOCUMENT_SPACE_TYPE_KEY] = currentSpaceType;
   }
 
-  // If still unassigned or invalid, fallback to first allowed or default
+  // If still unassigned or invalid, fallback to space default, first allowed or default
   if (!currentDocTypeKey || (allowedDocumentTypes.length > 0 && !allowedDocumentTypes.includes(currentDocTypeKey))) {
-    currentDocTypeKey = allowedDocumentTypes[0] ?? input.config?.defaultDocumentType ?? '';
+    // nosemgrep: domain-pass-through-read
+    const spaceDefault = selectedSpaceTypeObj?.spaceSchema.defaultDocumentType;
+    currentDocTypeKey =
+      (spaceDefault && allowedDocumentTypes.includes(spaceDefault))
+        ? spaceDefault
+        : (allowedDocumentTypes[0] ?? input.config?.defaultDocumentType ?? '');
   }
 
   if (currentDocTypeKey) {

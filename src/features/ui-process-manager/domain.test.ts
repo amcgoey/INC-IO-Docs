@@ -25,6 +25,8 @@ import {
   resolveAttachmentId,
   ResolveSpaceResultSchema,
   UiProcessSpaceItemSchema,
+  UiProcessSpaceTypeSchema,
+  UiStateResolutionContextSchema,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
   type ProcessUiStateInput,
@@ -475,6 +477,70 @@ describe('ui-process-manager domain', () => {
     });
   });
 
+  describe('UiProcessSpaceTypeSchema and UiStateResolutionContextSchema', () => {
+    it('validates UiProcessSpaceType with optional defaultDocumentType', () => {
+      const spaceTypeWithDefault = {
+        id: 'projects',
+        displayName: 'Projects',
+        spaceSchema: {
+          allowedDocumentTypes: ['submittal-arch', 'communication-project'],
+          defaultDocumentType: 'communication-project',
+        },
+      };
+      expect(Value.Check(UiProcessSpaceTypeSchema, spaceTypeWithDefault)).toBe(true);
+
+      const spaceTypeWithoutDefault = {
+        id: 'proposals',
+        displayName: 'Proposals',
+        spaceSchema: {
+          allowedDocumentTypes: ['communication-proposal'],
+        },
+      };
+      expect(Value.Check(UiProcessSpaceTypeSchema, spaceTypeWithoutDefault)).toBe(true);
+
+      const spaceTypeWithUndefinedDefault = {
+        id: 'proposals',
+        displayName: 'Proposals',
+        spaceSchema: {
+          allowedDocumentTypes: ['communication-proposal'],
+          defaultDocumentType: undefined,
+        },
+      };
+      expect(Value.Check(UiProcessSpaceTypeSchema, spaceTypeWithUndefinedDefault)).toBe(true);
+
+      const invalidSpaceType = {
+        id: 'projects',
+        displayName: 'Projects',
+        spaceSchema: {
+          allowedDocumentTypes: ['communication-project'],
+          defaultDocumentType: 12345,
+        },
+      };
+      expect(Value.Check(UiProcessSpaceTypeSchema, invalidSpaceType)).toBe(false);
+    });
+
+    it('validates UiStateResolutionContext with optional spaceTypes', () => {
+      const contextWithSpaceTypes = {
+        spaceTypes: [
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: {
+              allowedDocumentTypes: ['communication-project'],
+              defaultDocumentType: 'communication-project',
+            },
+          },
+        ],
+      };
+      expect(Value.Check(UiStateResolutionContextSchema, contextWithSpaceTypes)).toBe(true);
+
+      const contextWithUndefinedSpaceTypes = {
+        spaceTypes: undefined,
+      };
+      expect(Value.Check(UiStateResolutionContextSchema, contextWithUndefinedSpaceTypes)).toBe(true);
+    });
+  });
+
   describe('resolveSpaceType', () => {
     it('returns space type from formData when present', () => {
       const result = resolveSpaceType({
@@ -492,13 +558,47 @@ describe('ui-process-manager domain', () => {
       expect(result).toBe('invoices');
     });
 
-    it('falls back to projects when neither formData nor config provides it', () => {
-      expect(resolveSpaceType()).toBe('projects');
-      expect(resolveSpaceType({ formData: {}, config: {} })).toBe('projects');
+    it('falls back to spaceTypes[0]?.id when neither formData nor config provides it', () => {
+      const result = resolveSpaceType({
+        formData: {},
+        config: {},
+        spaceTypes: [
+          {
+            id: 'custom-first-space',
+            displayName: 'Custom First',
+            spaceSchema: { allowedDocumentTypes: ['doc-1'] },
+          },
+        ],
+      });
+      expect(result).toBe('custom-first-space');
+    });
+
+    it('falls back to empty string when neither formData, config, nor spaceTypes provides it', () => {
+      expect(resolveSpaceType()).toBe('');
+      expect(resolveSpaceType({ formData: {}, config: {} })).toBe('');
+      expect(resolveSpaceType({ formData: {}, config: {}, spaceTypes: [] })).toBe('');
     });
   });
 
   describe('resolveDocumentType', () => {
+    const mockSpaceTypes = [
+      {
+        id: 'projects',
+        displayName: 'Projects',
+        spaceSchema: {
+          allowedDocumentTypes: ['doc-first', 'communication-project', 'doc-last'],
+          defaultDocumentType: 'communication-project',
+        },
+      },
+      {
+        id: 'proposals',
+        displayName: 'Proposals',
+        spaceSchema: {
+          allowedDocumentTypes: ['proposal-first', 'proposal-second'],
+        },
+      },
+    ];
+
     it('returns document type from formData.SelectDocumentType when present', () => {
       const result = resolveDocumentType({
         formData: { SelectDocumentType: 'invoice-project' },
@@ -571,7 +671,25 @@ describe('ui-process-manager domain', () => {
       expect(result).toBe('param-doc-type');
     });
 
-    it('falls back to config defaultDocumentType when not in formData or parameters', () => {
+    it('resolves activeSpaceObj.spaceSchema.defaultDocumentType when not in formData or parameters even if not at allowedDocumentTypes[0]', () => {
+      const result = resolveDocumentType({
+        activeSpaceType: 'projects',
+        spaceTypes: mockSpaceTypes,
+        config: { defaultDocumentType: 'global-config-doc' },
+      });
+      expect(result).toBe('communication-project');
+    });
+
+    it('falls back to activeSpaceObj.spaceSchema.allowedDocumentTypes[0] when defaultDocumentType is not set', () => {
+      const result = resolveDocumentType({
+        activeSpaceType: 'proposals',
+        spaceTypes: mockSpaceTypes,
+        config: { defaultDocumentType: 'global-config-doc' },
+      });
+      expect(result).toBe('proposal-first');
+    });
+
+    it('falls back to config defaultDocumentType when not in formData or parameters and spaceTypes is omitted', () => {
       const result = resolveDocumentType({
         formData: {},
         config: { defaultDocumentType: 'default-doc' },
@@ -579,7 +697,7 @@ describe('ui-process-manager domain', () => {
       expect(result).toBe('default-doc');
     });
 
-    it('returns undefined when neither formData, parameters, nor config provides document type', () => {
+    it('returns undefined when neither formData, parameters, spaceTypes, nor config provides document type', () => {
       expect(resolveDocumentType()).toBeUndefined();
       expect(resolveDocumentType({ formData: {}, config: {} })).toBeUndefined();
     });
@@ -1023,6 +1141,100 @@ describe('ui-process-manager domain', () => {
         contact: 'Jane',
       });
       expect(state.formData.contact).toBe('Jane');
+    });
+
+    it('defaults document type to spaceSchema.defaultDocumentType on initial load when not at allowedDocumentTypes[0]', () => {
+      const spaceTypesWithNonFirstDefault = [
+        {
+          id: 'projects',
+          displayName: 'Projects',
+          spaceSchema: {
+            allowedDocumentTypes: ['submittal-arch', 'communication-project', 'submittal-ffe'],
+            defaultDocumentType: 'communication-project',
+          },
+        },
+      ];
+
+      const input: ProcessUiStateInput = {
+        context: {},
+        config: {
+          defaultDocumentSpaceType: 'projects',
+          defaultDocumentType: 'fallback-global-doc',
+        },
+        spaceTypes: spaceTypesWithNonFirstDefault,
+        spaces: [],
+      };
+
+      const state = evaluateProcessUiState(input);
+      expect(state.documentTypeKey).toBe('communication-project');
+      expect(state.formData.SelectDocumentType).toBe('communication-project');
+    });
+
+    it('defaults document type to spaceSchema.defaultDocumentType on onSpaceTypeChange when not at allowedDocumentTypes[0]', () => {
+      const spaceTypesWithNonFirstDefault = [
+        {
+          id: 'projects',
+          displayName: 'Projects',
+          spaceSchema: {
+            allowedDocumentTypes: ['submittal-arch', 'communication-project'],
+            defaultDocumentType: 'communication-project',
+          },
+        },
+        {
+          id: 'proposals',
+          displayName: 'Proposals',
+          spaceSchema: {
+            allowedDocumentTypes: ['submittal-ffe', 'communication-proposal'],
+            defaultDocumentType: 'communication-proposal',
+          },
+        },
+      ];
+
+      const input: ProcessUiStateInput = {
+        context: {
+          actionName: 'onSpaceTypeChange',
+          formData: {
+            SelectDocumentSpaceType: 'proposals',
+            SelectDocumentType: 'communication-project',
+          },
+        },
+        config: {
+          defaultDocumentSpaceType: 'projects',
+          defaultDocumentType: 'communication-project',
+        },
+        spaceTypes: spaceTypesWithNonFirstDefault,
+        spaces: [],
+      };
+
+      const state = evaluateProcessUiState(input);
+      expect(state.isUpdateCard).toBe(true);
+      expect(state.documentTypeKey).toBe('communication-proposal');
+      expect(state.formData.SelectDocumentType).toBe('communication-proposal');
+    });
+
+    it('resolves spaceType from spaceTypes[0]?.id when resolvedSpaceType, formData, and config default are absent', () => {
+      const customSpaceTypes = [
+        {
+          id: 'dynamic-first-space',
+          displayName: 'Dynamic First',
+          spaceSchema: {
+            allowedDocumentTypes: ['type-a', 'type-b'],
+            defaultDocumentType: 'type-b',
+          },
+        },
+      ];
+
+      const input: ProcessUiStateInput = {
+        context: {},
+        spaceTypes: customSpaceTypes,
+        spaces: [],
+      };
+
+      const state = evaluateProcessUiState(input);
+      expect(state.documentTypeKey).toBe('type-b');
+      expect(state.formData.SelectDocumentSpaceType).toBeUndefined(); // context.formData had no SelectDocumentSpaceType and action wasn't space switch
+      expect(state.selectionState.spaceTypes[0].selected).toBe(true);
+      expect(state.selectionState.spaceTypes[0].value).toBe('dynamic-first-space');
     });
 
     it('retains form data and triggers isUpdateCard when Document Type changes', () => {

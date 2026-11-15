@@ -100,6 +100,117 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
     expect(renderResult.formData?.contact).toBe('Alice');
   });
 
+  describe('Declarative default DocumentType and DocumentSpaceType resolution (Ticket #289)', () => {
+    const customSpaceTypes = [
+      {
+        id: 'special-projects',
+        displayName: 'Special Projects',
+        spaceSchema: {
+          allowedDocumentTypes: ['submittal-arch', 'communication-project', 'submittal-ffe'],
+          defaultDocumentType: 'communication-project',
+        },
+      },
+      {
+        id: 'special-proposals',
+        displayName: 'Special Proposals',
+        spaceSchema: {
+          allowedDocumentTypes: ['submittal-ffe', 'communication-proposal'],
+          defaultDocumentType: 'communication-proposal',
+        },
+      },
+    ];
+
+    it('resolves fallback DocumentType on initial card load from spaceSchema.defaultDocumentType when not at index 0', async () => {
+      const customProvider: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue(customSpaceTypes),
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [{ id: 'sp-1', name: 'Special Project One' }],
+        }),
+      };
+
+      const customConfig: UiProcessConfigProviderPort = {
+        getWorkspaceConfig: vi.fn().mockResolvedValue({
+          defaultDocumentSpaceType: 'special-projects',
+          defaultDocumentType: 'global-fallback-type',
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: customProvider,
+        configProvider: customConfig,
+        manifestPort: mockManifestPort,
+      });
+
+      const result = await adapter.processUiEvent({});
+      expect(result.type).toBe('render');
+      const renderResult = result as UiProcessRenderResult;
+      expect(renderResult.documentTypeKey).toBe('communication-project');
+      expect(renderResult.formData?.SelectDocumentType).toBe('communication-project');
+    });
+
+    it('resolves fallback DocumentType on onSpaceTypeChange from target spaceSchema.defaultDocumentType when not at index 0', async () => {
+      const customProvider: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue(customSpaceTypes),
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [{ id: 'prop-1', name: 'Proposal One' }],
+        }),
+      };
+
+      const customConfig: UiProcessConfigProviderPort = {
+        getWorkspaceConfig: vi.fn().mockResolvedValue({
+          defaultDocumentSpaceType: 'special-projects',
+          defaultDocumentType: 'global-fallback-type',
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: customProvider,
+        configProvider: customConfig,
+        manifestPort: mockManifestPort,
+      });
+
+      const result = await adapter.processUiEvent({
+        actionName: 'onSpaceTypeChange',
+        formData: {
+          SelectDocumentSpaceType: 'special-proposals',
+          SelectDocumentType: 'communication-project',
+        },
+      });
+
+      expect(result.type).toBe('render');
+      const renderResult = result as UiProcessRenderResult;
+      expect(renderResult.isUpdateCard).toBe(true);
+      expect(renderResult.documentTypeKey).toBe('communication-proposal');
+      expect(renderResult.formData?.SelectDocumentType).toBe('communication-proposal');
+    });
+
+    it('resolves active DocumentSpaceType from spaceTypes[0]?.id when formData and config default are empty', async () => {
+      const customProvider: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue(customSpaceTypes),
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [{ id: 'sp-1', name: 'Special Project One' }],
+        }),
+      };
+
+      const emptyConfig: UiProcessConfigProviderPort = {
+        getWorkspaceConfig: vi.fn().mockResolvedValue({}),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: customProvider,
+        configProvider: emptyConfig,
+        manifestPort: mockManifestPort,
+      });
+
+      const result = await adapter.processUiEvent({});
+      expect(result.type).toBe('render');
+      expect(customProvider.getCollection).toHaveBeenCalledWith('special-projects');
+      const renderResult = result as UiProcessRenderResult;
+      expect(renderResult.selectionState?.spaceTypes.find((s) => s.value === 'special-projects')?.selected).toBe(true);
+      expect(renderResult.documentTypeKey).toBe('communication-project');
+    });
+  });
+
   it('retains DocumentInfo segment of formData when Document Type changes', async () => {
     const adapter = new WorkspaceAddonAdapter({
       spaceProvider: mockSpaceProvider,
