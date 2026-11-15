@@ -34,13 +34,14 @@ export function extractTextFromHtml(html?: string): string {
   text = text.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ');
   text = text.replace(/<[^>]+>/g, ' ');
   text = text
-    .replace(/&amp;/gi, '&')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'")
-    .replace(/&apos;/gi, "'");
+    .replace(/&#x27;/gi, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&amp;/gi, '&');
   return text.replace(/\s+/g, ' ').trim();
 }
 
