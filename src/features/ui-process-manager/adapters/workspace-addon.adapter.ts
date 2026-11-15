@@ -17,6 +17,8 @@ import type {
   UiProcessSourceEmailDescriptor,
   UiProcessCandidateSpaceDescriptor,
   UiProcessSpaceCollection,
+  ProcessUiStateConfig,
+  UiProcessSpaceType,
 } from '../ports';
 
 import {
@@ -37,7 +39,8 @@ import {
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
   SELECT_EMAIL_MESSAGE_KEY,
-  PROPOSAL_OPPORTUNITY_MARKERS_REGEX,
+  DRIVE_ROUTING_FALLBACK_NOTICE,
+  hasProposalOpportunityMarkers,
   extractSelectFilesSet,
   resolveAttachmentId,
   parseGoogleDriveUrl,
@@ -129,86 +132,16 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     ]);
     const isInCardAction = actionName !== undefined && inCardActions.has(actionName);
 
-    const needsGmailFetch =
-      !effectiveContext.selectedItems ||
-      effectiveContext.selectedItems.length === 0 ||
-      actionName === 'refresh' ||
-      isInCardAction;
-
-    if (isGmail && this.gmailPort && needsGmailFetch) {
-      const token = context.userOAuthToken ?? context.gmail?.accessToken;
-      const skipCache = actionName === 'refresh';
-
-      if (context.gmail?.threadId && typeof this.gmailPort.getThreadMessages === 'function') {
-        try {
-          const msgs = await this.gmailPort.getThreadMessages(context.gmail.threadId, { skipCache });
-          if (msgs && msgs.length > 0) {
-            threadMessages = msgs;
-          }
-        } catch (e) {
-          console.warn(`Could not fetch thread messages for thread: ${context.gmail.threadId}`, e);
-        }
-      }
-
-      if (!threadMessages && context.gmail?.messageId) {
-        if (typeof this.gmailPort.getMessageDetails === 'function') {
-          try {
-            const msg = await this.gmailPort.getMessageDetails(context.gmail.messageId, { skipCache });
-            if (msg) {
-              threadMessages = [msg];
-            }
-          } catch (e) {
-            console.warn(`Could not fetch message details for message: ${context.gmail.messageId}`, e);
-          }
-        } else if (typeof this.gmailPort.getMessageAttachments === 'function') {
-          try {
-            const attachments = await this.gmailPort.getMessageAttachments(
-              context.gmail.messageId,
-              token
-            );
-            threadMessages = [
-              {
-                id: context.gmail.messageId,
-                attachments,
-              },
-            ];
-          } catch (e) {
-            console.warn(`Could not fetch attachments for message: ${context.gmail.messageId}`, e);
-          }
-        }
-      }
-
-      if (threadMessages && threadMessages.length > 0) {
-        const formMsgId = actionName === 'refresh'
-          ? undefined
-          : (effectiveContext.formData?.[SELECT_EMAIL_MESSAGE_KEY] as string | undefined);
-        activeMsg =
-          threadMessages.find((m) => m.id === (formMsgId ?? context.gmail?.messageId)) ??
-          threadMessages[threadMessages.length - 1];
-
-        const isEmailSwitch =
-          actionName === 'onEmailMessageChange' ||
-          Boolean(
-            effectiveContext.parameters?.previousMessageId &&
-              effectiveContext.parameters.previousMessageId !== activeMsg?.id
-          );
-
-        if (
-          !effectiveContext.selectedItems ||
-          effectiveContext.selectedItems.length === 0 ||
-          actionName === 'refresh' ||
-          isEmailSwitch
-        ) {
-          effectiveContext = {
-            ...effectiveContext,
-            selectedItems: (activeMsg?.attachments ?? []).map((att) => ({
-              id: resolveAttachmentId(att),
-              title: att.title,
-              mimeType: att.mimeType,
-            })),
-          };
-        }
-      }
+    if (isGmail && this.gmailPort) {
+      const gmailResolution = await this.resolveActiveGmailMessage({
+        context,
+        effectiveContext,
+        actionName,
+        isInCardAction,
+      });
+      threadMessages = gmailResolution.threadMessages;
+      activeMsg = gmailResolution.activeMsg;
+      effectiveContext = gmailResolution.effectiveContext;
     }
 
     const config = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
@@ -225,154 +158,23 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     };
 
     const isResetOrInitial = isResetOrInitialLoad(effectiveContext);
-    let inferred: UiProcessInferredRoutingResult | undefined;
-    const sourceParser = this.options.sourceParser;
 
-    const isDrivePass1Event = !isGmail && isResetOrInitial;
-
-    const effectiveFileSource = isGmail
-      ? (isResetOrInitial
-          ? 'Email Attachments'
-          : ((effectiveContext.formData?.[SELECT_FILE_SOURCE_KEY] as string | undefined) ?? 'Email Attachments'))
-      : undefined;
-
-    const currentDriveUrl = isGmail
-      ? ((effectiveContext.formData?.[INPUT_DRIVE_URL_KEY] as string | undefined)?.trim() ??
-         (effectiveContext.parameters?.previousDriveUrl?.trim() ?? ''))
-      : '';
-
-    const previousDriveUrl = isGmail
-      ? (effectiveContext.parameters?.previousDriveUrl?.trim() ?? '')
-      : '';
-
-    const parsedCurrentDriveUrl = isGmail && currentDriveUrl.length > 0
-      ? parseGoogleDriveUrl(currentDriveUrl)
-      : undefined;
-
-    const isGmailDriveUrlPass1Event =
-      isGmail &&
-      Boolean(parsedCurrentDriveUrl) &&
-      effectiveFileSource === 'Google Drive URL' &&
-      (actionName === 'refresh' ||
-       (actionName === 'onFormChange' && currentDriveUrl !== previousDriveUrl) ||
-       actionName === 'onFileSourceChange');
-
-    const isGmailEmailPass1Event =
-      isGmail &&
-      (effectiveFileSource === 'Email Attachments' || !effectiveFileSource) &&
-      (isResetOrInitial ||
-       actionName === 'refresh' ||
-       actionName === 'onEmailMessageChange' ||
-       actionName === 'onFileSourceChange');
-
-    const isGmailPass1Event = isGmailDriveUrlPass1Event || isGmailEmailPass1Event;
-
-    if (isDrivePass1Event && sourceParser) {
-      const candidateItems: UiProcessSourceContextItem[] = (effectiveContext.selectedItems ?? [])
-        .filter(
-          (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
-            typeof item?.id === 'string' && item.id.trim().length > 0
-        )
-        .map((item) => ({
-          id: item.id.trim(),
-          ...(item.title !== undefined ? { name: item.title } : {}),
-          ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
-        }));
-
-      if (candidateItems.length > 0) {
-        try {
-          inferred = await sourceParser.inferRouting({ items: candidateItems });
-        } catch (e) {
-          console.warn('SourceParser Pass 1 inferRouting error:', e);
-          inferred = {
-            statusMessages: [
-              'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.',
-            ],
-          };
-        }
-      }
-    } else if (isGmailPass1Event && sourceParser && activeMsg) {
-      const candidateItems: UiProcessSourceContextItem[] = isGmailDriveUrlPass1Event
-        ? [{ id: parsedCurrentDriveUrl!.id }]
-        : (activeMsg.attachments ?? []).map((att) => ({
-            id: resolveAttachmentId(att),
-            name: att.title,
-            ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
-          }));
-
-      const emailContext: UiProcessSourceEmailDescriptor = {
-        id: activeMsg.id,
-        ...(activeMsg.threadId !== undefined ? { threadId: activeMsg.threadId } : {}),
-        ...(activeMsg.subject !== undefined ? { subject: activeMsg.subject } : {}),
-        ...(activeMsg.from !== undefined ? { from: activeMsg.from } : {}),
-        ...(activeMsg.to !== undefined ? { to: activeMsg.to } : {}),
-        ...(activeMsg.cc !== undefined ? { cc: activeMsg.cc } : {}),
-        ...(activeMsg.date !== undefined ? { date: activeMsg.date } : {}),
-        ...(activeMsg.plainTextBody !== undefined ? { plainTextBody: activeMsg.plainTextBody } : {}),
-        ...(activeMsg.htmlBody !== undefined ? { htmlBody: activeMsg.htmlBody } : {}),
-        attachments: (activeMsg.attachments ?? []).map((att) => ({
-          id: resolveAttachmentId(att),
-          name: att.title,
-          ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
-        })),
-      };
-
-      const defaultSpaceTypeId = config?.defaultDocumentSpaceType ?? spaceTypes[0]?.id ?? 'projects';
-      const selectedSpaceTypeId = effectiveContext.formData?.[SELECT_DOCUMENT_SPACE_TYPE_KEY] as string | undefined;
-
-      const spaceTypesToFetch = new Set<string>();
-      if (defaultSpaceTypeId) {
-        spaceTypesToFetch.add(defaultSpaceTypeId);
-      }
-      if (selectedSpaceTypeId && spaceTypes.some((st) => st.id === selectedSpaceTypeId)) {
-        spaceTypesToFetch.add(selectedSpaceTypeId);
-      }
-
-      const emailSubject = activeMsg.subject ?? '';
-      const rawPlain = activeMsg.plainTextBody;
-      const emailBody = (typeof rawPlain === 'string' && rawPlain.trim().length > 0)
-        ? rawPlain.trim()
-        : (activeMsg.htmlBody ? activeMsg.htmlBody.replace(/<[^>]+>/g, ' ') : '');
-
-      const hasProposalMarkers =
-        PROPOSAL_OPPORTUNITY_MARKERS_REGEX.test(emailSubject) ||
-        PROPOSAL_OPPORTUNITY_MARKERS_REGEX.test(emailBody);
-
-      if (hasProposalMarkers) {
-        for (const st of spaceTypes) {
-          if (st.id === 'proposals' || st.id !== defaultSpaceTypeId) {
-            spaceTypesToFetch.add(st.id);
-          }
-        }
-      }
-
-      const candidateSpaces: UiProcessCandidateSpaceDescriptor[] = [];
-      for (const typeId of spaceTypesToFetch) {
-        try {
-          const col = await getCachedCollection(typeId);
-          for (const s of col.spaces) {
-            candidateSpaces.push({
-              id: s.id,
-              name: s.name,
-              typeId: s.typeId ?? typeId,
-            });
-          }
-        } catch (e) {
-          console.warn(`Could not fetch candidate spaces for space type: ${typeId}`, e);
-        }
-      }
-
-      try {
-        inferred = await sourceParser.inferRouting({
-          items: candidateItems,
-          email: emailContext,
-          candidateSpaces,
-          ...(isGmailDriveUrlPass1Event ? { isDriveUrl: true } : {}),
-        });
-      } catch (e) {
-        console.warn('SourceParser Pass 1 inferRouting error in Gmail:', e);
-      }
-    }
+    const {
+      inferred,
+      isDrivePass1Event,
+      isGmailPass1Event,
+      isGmailDriveUrlPass1Event,
+      isGmailEmailPass1Event,
+    } = await this.inferPass1Routing({
+      isGmail,
+      isResetOrInitial,
+      actionName,
+      effectiveContext,
+      activeMsg,
+      config,
+      spaceTypes,
+      getCachedCollection,
+    });
 
     const inferredSpaceType =
       inferred?.spaceTypeId && spaceTypes.some((t) => t.id === inferred.spaceTypeId)
@@ -463,19 +265,21 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
     let spaces: UiProcessSpaceItem[] = [];
     const collectionErrors: string[] = [];
-    try {
-      const collection = await getCachedCollection(currentSpaceType);
-      spaces = collection.spaces.map((s) => ({
-        id: s.id,
-        name: s.name,
-        ...(s.typeId !== undefined ? { typeId: s.typeId } : {}),
-        ...(s.abstractStorageId !== undefined ? { abstractStorageId: s.abstractStorageId } : {}),
-      }));
-    } catch (e) {
-      console.warn(`Could not fetch collection for space type: ${currentSpaceType}`, e);
-      if (activeSpaceObj) {
-        const errMsg = e instanceof Error ? e.message : `Could not fetch collection for space type: ${currentSpaceType}`;
-        collectionErrors.push(errMsg);
+    if (currentSpaceType) {
+      try {
+        const collection = await getCachedCollection(currentSpaceType);
+        spaces = collection.spaces.map((s) => ({
+          id: s.id,
+          name: s.name,
+          ...(s.typeId !== undefined ? { typeId: s.typeId } : {}),
+          ...(s.abstractStorageId !== undefined ? { abstractStorageId: s.abstractStorageId } : {}),
+        }));
+      } catch (e) {
+        console.warn(`Could not fetch collection for space type: ${currentSpaceType}`, e);
+        if (activeSpaceObj) {
+          const errMsg = e instanceof Error ? e.message : `Could not fetch collection for space type: ${currentSpaceType}`;
+          collectionErrors.push(errMsg);
+        }
       }
     }
 
@@ -848,6 +652,310 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       hiddenFields,
       isUpdateCard: actionName === 'onFormChange',
     });
+  }
+
+  private async resolveActiveGmailMessage(params: {
+    context: UiProcessEventContext;
+    effectiveContext: UiProcessEventContext;
+    actionName: string | undefined;
+    isInCardAction: boolean;
+  }): Promise<{
+    threadMessages?: UiProcessGmailMessageDescriptor[] | undefined;
+    activeMsg?: UiProcessGmailMessageDescriptor | undefined;
+    effectiveContext: UiProcessEventContext;
+  }> {
+    const { context, actionName, isInCardAction } = params;
+    let { effectiveContext } = params;
+    if (!this.gmailPort) {
+      return { effectiveContext };
+    }
+
+    let threadMessages: UiProcessGmailMessageDescriptor[] | undefined;
+    let activeMsg: UiProcessGmailMessageDescriptor | undefined;
+
+    const needsGmailFetch =
+      !effectiveContext.selectedItems ||
+      effectiveContext.selectedItems.length === 0 ||
+      actionName === 'refresh' ||
+      isInCardAction;
+
+    if (needsGmailFetch) {
+      const token = context.userOAuthToken ?? context.gmail?.accessToken;
+      const skipCache = actionName === 'refresh';
+
+      if (context.gmail?.threadId && typeof this.gmailPort.getThreadMessages === 'function') {
+        try {
+          const msgs = await this.gmailPort.getThreadMessages(context.gmail.threadId, { skipCache });
+          if (msgs && msgs.length > 0) {
+            threadMessages = msgs;
+          }
+        } catch (e) {
+          console.warn(`Could not fetch thread messages for thread: ${context.gmail.threadId}`, e);
+        }
+      }
+
+      if (!threadMessages && context.gmail?.messageId) {
+        if (typeof this.gmailPort.getMessageDetails === 'function') {
+          try {
+            const msg = await this.gmailPort.getMessageDetails(context.gmail.messageId, { skipCache });
+            if (msg) {
+              threadMessages = [msg];
+            }
+          } catch (e) {
+            console.warn(`Could not fetch message details for message: ${context.gmail.messageId}`, e);
+          }
+        } else if (typeof this.gmailPort.getMessageAttachments === 'function') {
+          try {
+            const attachments = await this.gmailPort.getMessageAttachments(
+              context.gmail.messageId,
+              token
+            );
+            threadMessages = [
+              {
+                id: context.gmail.messageId,
+                attachments,
+              },
+            ];
+          } catch (e) {
+            console.warn(`Could not fetch attachments for message: ${context.gmail.messageId}`, e);
+          }
+        }
+      }
+
+      if (threadMessages && threadMessages.length > 0) {
+        const formMsgId = actionName === 'refresh'
+          ? undefined
+          : (effectiveContext.formData?.[SELECT_EMAIL_MESSAGE_KEY] as string | undefined);
+        activeMsg =
+          threadMessages.find((m) => m.id === (formMsgId ?? context.gmail?.messageId)) ??
+          threadMessages[threadMessages.length - 1];
+
+        const isEmailSwitch =
+          actionName === 'onEmailMessageChange' ||
+          Boolean(
+            effectiveContext.parameters?.previousMessageId &&
+              effectiveContext.parameters.previousMessageId !== activeMsg?.id
+          );
+
+        if (
+          !effectiveContext.selectedItems ||
+          effectiveContext.selectedItems.length === 0 ||
+          actionName === 'refresh' ||
+          isEmailSwitch
+        ) {
+          effectiveContext = {
+            ...effectiveContext,
+            selectedItems: (activeMsg?.attachments ?? []).map((att) => ({
+              id: resolveAttachmentId(att),
+              title: att.title,
+              mimeType: att.mimeType,
+            })),
+          };
+        }
+      }
+    }
+
+    return { threadMessages, activeMsg, effectiveContext };
+  }
+
+  private async inferPass1Routing(params: {
+    isGmail: boolean;
+    isResetOrInitial: boolean;
+    actionName: string | undefined;
+    effectiveContext: UiProcessEventContext;
+    activeMsg: UiProcessGmailMessageDescriptor | undefined;
+    config: ProcessUiStateConfig | undefined;
+    spaceTypes: UiProcessSpaceType[];
+    getCachedCollection: (typeId: string) => Promise<UiProcessSpaceCollection>;
+  }): Promise<{
+    inferred: UiProcessInferredRoutingResult | undefined;
+    isDrivePass1Event: boolean;
+    isGmailPass1Event: boolean;
+    isGmailDriveUrlPass1Event: boolean;
+    isGmailEmailPass1Event: boolean;
+  }> {
+    const {
+      isGmail,
+      isResetOrInitial,
+      actionName,
+      effectiveContext,
+      activeMsg,
+      config,
+      spaceTypes,
+      getCachedCollection,
+    } = params;
+
+    let inferred: UiProcessInferredRoutingResult | undefined;
+    const sourceParser = this.options.sourceParser;
+
+    const isDrivePass1Event = !isGmail && isResetOrInitial;
+
+    const effectiveFileSource = isGmail
+      ? (isResetOrInitial
+          ? 'Email Attachments'
+          : ((effectiveContext.formData?.[SELECT_FILE_SOURCE_KEY] as string | undefined) ?? 'Email Attachments'))
+      : undefined;
+
+    const currentDriveUrl = isGmail
+      ? ((effectiveContext.formData?.[INPUT_DRIVE_URL_KEY] as string | undefined)?.trim() ??
+         (effectiveContext.parameters?.previousDriveUrl?.trim() ?? ''))
+      : '';
+
+    const previousDriveUrl = isGmail
+      ? (effectiveContext.parameters?.previousDriveUrl?.trim() ?? '')
+      : '';
+
+    const parsedCurrentDriveUrl = isGmail && currentDriveUrl.length > 0
+      ? parseGoogleDriveUrl(currentDriveUrl)
+      : undefined;
+
+    const isGmailDriveUrlPass1Event =
+      isGmail &&
+      Boolean(parsedCurrentDriveUrl) &&
+      effectiveFileSource === 'Google Drive URL' &&
+      (actionName === 'refresh' ||
+       (actionName === 'onFormChange' && currentDriveUrl !== previousDriveUrl) ||
+       actionName === 'onFileSourceChange');
+
+    const isGmailEmailPass1Event =
+      isGmail &&
+      (effectiveFileSource === 'Email Attachments' || !effectiveFileSource) &&
+      (isResetOrInitial ||
+       actionName === 'refresh' ||
+       actionName === 'onEmailMessageChange' ||
+       actionName === 'onFileSourceChange');
+
+    const isGmailPass1Event = isGmailDriveUrlPass1Event || isGmailEmailPass1Event;
+
+    if (!sourceParser) {
+      return {
+        inferred,
+        isDrivePass1Event,
+        isGmailPass1Event,
+        isGmailDriveUrlPass1Event,
+        isGmailEmailPass1Event,
+      };
+    }
+
+    if (isDrivePass1Event) {
+      const candidateItems: UiProcessSourceContextItem[] = (effectiveContext.selectedItems ?? [])
+        .filter(
+          (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
+            typeof item?.id === 'string' && item.id.trim().length > 0
+        )
+        .map((item) => ({
+          id: item.id.trim(),
+          ...(item.title !== undefined ? { name: item.title } : {}),
+          ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
+        }));
+
+      if (candidateItems.length > 0) {
+        try {
+          inferred = await sourceParser.inferRouting({ items: candidateItems });
+        } catch (e) {
+          console.warn('SourceParser Pass 1 inferRouting error:', e);
+          inferred = {
+            statusMessages: [DRIVE_ROUTING_FALLBACK_NOTICE],
+          };
+        }
+      }
+    } else if (isGmailPass1Event && activeMsg) {
+      const candidateItems: UiProcessSourceContextItem[] = isGmailDriveUrlPass1Event
+        ? [{ id: parsedCurrentDriveUrl!.id }]
+        : (activeMsg.attachments ?? []).map((att) => ({
+            id: resolveAttachmentId(att),
+            name: att.title,
+            ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
+          }));
+
+      const emailContext: UiProcessSourceEmailDescriptor = {
+        id: activeMsg.id,
+        ...(activeMsg.threadId !== undefined ? { threadId: activeMsg.threadId } : {}),
+        ...(activeMsg.subject !== undefined ? { subject: activeMsg.subject } : {}),
+        ...(activeMsg.from !== undefined ? { from: activeMsg.from } : {}),
+        ...(activeMsg.to !== undefined ? { to: activeMsg.to } : {}),
+        ...(activeMsg.cc !== undefined ? { cc: activeMsg.cc } : {}),
+        ...(activeMsg.date !== undefined ? { date: activeMsg.date } : {}),
+        ...(activeMsg.plainTextBody !== undefined ? { plainTextBody: activeMsg.plainTextBody } : {}),
+        ...(activeMsg.htmlBody !== undefined ? { htmlBody: activeMsg.htmlBody } : {}),
+        attachments: (activeMsg.attachments ?? []).map((att) => ({
+          id: resolveAttachmentId(att),
+          name: att.title,
+          ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
+        })),
+      };
+
+      const defaultSpaceTypeId = config?.defaultDocumentSpaceType ?? spaceTypes[0]?.id;
+      const selectedSpaceTypeId = effectiveContext.formData?.[SELECT_DOCUMENT_SPACE_TYPE_KEY] as string | undefined;
+
+      const spaceTypesToFetch = new Set<string>();
+      if (defaultSpaceTypeId) {
+        spaceTypesToFetch.add(defaultSpaceTypeId);
+      }
+      if (selectedSpaceTypeId && spaceTypes.some((st) => st.id === selectedSpaceTypeId)) {
+        spaceTypesToFetch.add(selectedSpaceTypeId);
+      }
+
+      const hasProposalMarkers = hasProposalOpportunityMarkers(
+        activeMsg.subject,
+        activeMsg.plainTextBody,
+        activeMsg.htmlBody
+      );
+
+      if (hasProposalMarkers) {
+        for (const st of spaceTypes) {
+          if (
+            st.id !== defaultSpaceTypeId &&
+            (st.id === 'proposals' ||
+              st.spaceSchema.allowedDocumentTypes.some((d) =>
+                d.toLowerCase().includes('proposal')
+              ))
+          ) {
+            spaceTypesToFetch.add(st.id);
+          }
+        }
+      }
+
+      const candidateSpaces: UiProcessCandidateSpaceDescriptor[] = [];
+      for (const typeId of spaceTypesToFetch) {
+        try {
+          const col = await getCachedCollection(typeId);
+          for (const s of col.spaces) {
+            candidateSpaces.push({
+              id: s.id,
+              name: s.name,
+              typeId: s.typeId ?? typeId,
+            });
+          }
+        } catch (e) {
+          console.warn(`Could not fetch candidate spaces for space type: ${typeId}`, e);
+        }
+      }
+
+      try {
+        inferred = await sourceParser.inferRouting({
+          items: candidateItems,
+          email: emailContext,
+          candidateSpaces,
+          ...(isGmailDriveUrlPass1Event ? { isDriveUrl: true } : {}),
+        });
+      } catch (e) {
+        console.warn('SourceParser Pass 1 inferRouting error in Gmail:', e);
+        if (isGmailDriveUrlPass1Event) {
+          inferred = {
+            statusMessages: [DRIVE_ROUTING_FALLBACK_NOTICE],
+          };
+        }
+      }
+    }
+
+    return {
+      inferred,
+      isDrivePass1Event,
+      isGmailPass1Event,
+      isGmailDriveUrlPass1Event,
+      isGmailEmailPass1Event,
+    };
   }
 }
 

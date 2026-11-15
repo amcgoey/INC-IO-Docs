@@ -29,6 +29,9 @@ import {
   UiStateResolutionContextSchema,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
+  DRIVE_ROUTING_FALLBACK_NOTICE,
+  extractTextFromHtml,
+  hasProposalOpportunityMarkers,
   type ProcessUiStateInput,
 } from './domain';
 import {
@@ -3438,6 +3441,80 @@ describe('ui-process-manager domain', () => {
           { text: 'Diagram.png', value: 'att-2b', selected: true },
         ]);
       });
+    });
+  });
+
+  describe('DRIVE_ROUTING_FALLBACK_NOTICE', () => {
+    it('defines the canonical fallback notice message for Drive hierarchy failure', () => {
+      expect(DRIVE_ROUTING_FALLBACK_NOTICE).toBe(
+        'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.'
+      );
+    });
+  });
+
+  describe('extractTextFromHtml', () => {
+    it('returns empty string for null, undefined, or empty string', () => {
+      expect(extractTextFromHtml(undefined)).toBe('');
+      expect(extractTextFromHtml('')).toBe('');
+      expect(extractTextFromHtml(null as unknown as string)).toBe('');
+    });
+
+    it('strips <style> and <script> tags and contents', () => {
+      const html = '<style>.proposal { color: red; }</style><p>Hello</p><script>console.log("rfp");</script>';
+      expect(extractTextFromHtml(html)).toBe('Hello');
+    });
+
+    it('strips nested and multiline style/script blocks', () => {
+      const html = `
+        <head>
+          <style type="text/css">
+            .opportunity-banner {
+              display: none;
+            }
+          </style>
+          <script>
+            window.isProposal = true;
+          </script>
+        </head>
+        <body>
+          <h1>Project Kickoff</h1>
+          <p>Meeting notes attached.</p>
+        </body>
+      `;
+      expect(extractTextFromHtml(html)).toBe('Project Kickoff Meeting notes attached.');
+    });
+  });
+
+  describe('hasProposalOpportunityMarkers', () => {
+    it('returns true when subject contains proposal/opportunity markers', () => {
+      expect(hasProposalOpportunityMarkers('New RFP Received')).toBe(true);
+      expect(hasProposalOpportunityMarkers('Opportunity: Acme Corp Expansion')).toBe(true);
+      expect(hasProposalOpportunityMarkers('Submitted Proposal for Review')).toBe(true);
+      expect(hasProposalOpportunityMarkers('Upcoming Opportunities')).toBe(true);
+    });
+
+    it('returns true when plainTextBody contains proposal/opportunity markers', () => {
+      expect(hasProposalOpportunityMarkers('General Title', 'Please see our proposal attached.')).toBe(true);
+      expect(hasProposalOpportunityMarkers(undefined, 'This is a high-value opportunity.')).toBe(true);
+      expect(hasProposalOpportunityMarkers('', 'Response to RFP 2026-001')).toBe(true);
+    });
+
+    it('returns true when htmlBody contains proposal markers in visible content', () => {
+      expect(hasProposalOpportunityMarkers(undefined, undefined, '<p>Attached is the <b>proposal</b>.</p>')).toBe(true);
+      expect(hasProposalOpportunityMarkers(undefined, '', '<div>We have an opportunity here.</div>')).toBe(true);
+    });
+
+    it('returns false when proposal markers only exist in <style> or <script> blocks', () => {
+      const htmlWithStyle = '<style>.proposal-header { color: blue; } #opportunity { display: block; }</style><p>General meeting notes</p>';
+      expect(hasProposalOpportunityMarkers(undefined, undefined, htmlWithStyle)).toBe(false);
+
+      const htmlWithScript = '<script>const rfps = ["doc1", "doc2"];</script><p>Regular update</p>';
+      expect(hasProposalOpportunityMarkers('Meeting Notes', undefined, htmlWithScript)).toBe(false);
+    });
+
+    it('returns false when no proposal markers exist in subject, plainTextBody, or htmlBody', () => {
+      expect(hasProposalOpportunityMarkers('Submittal 071200-001 Waterproofing', 'Attached is submittal for review.', '<p>Submittal review</p>')).toBe(false);
+      expect(hasProposalOpportunityMarkers(undefined, undefined, undefined)).toBe(false);
     });
   });
 });

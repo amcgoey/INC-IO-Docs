@@ -15,6 +15,7 @@ import {
   type UiProcessSpaceItem,
   type UiProcessDocumentSpaceDto,
   type UiProcessGmailPort,
+  type UiProcessGmailMessageDescriptor,
   type UiProcessSourceParserPort,
 } from '../features/ui-process-manager';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
@@ -320,6 +321,34 @@ export interface UiProcessManagerWiring {
   requestScopedWrapper: RequestScopedUiWrapper;
 }
 
+function mapGmailMessageToDescriptor(
+  msg: GmailMessageDetails,
+  fallbackId: string
+): UiProcessGmailMessageDescriptor {
+  return {
+    id: (msg.id && typeof msg.id === 'string' && msg.id.trim().length > 0)
+      ? msg.id
+      : (typeof msg.messageId === 'string' ? msg.messageId : fallbackId),
+    ...(msg.threadId !== undefined ? { threadId: msg.threadId } : {}),
+    ...(msg.subject !== undefined ? { subject: msg.subject } : {}),
+    ...(msg.from !== undefined ? { from: msg.from } : {}),
+    ...(msg.to !== undefined ? { to: msg.to } : {}),
+    ...(msg.cc !== undefined ? { cc: msg.cc } : {}),
+    ...(msg.date !== undefined ? { date: msg.date } : {}),
+    ...(msg.plainTextBody !== undefined ? { plainTextBody: msg.plainTextBody } : {}),
+    ...(msg.htmlBody !== undefined ? { htmlBody: msg.htmlBody } : {}),
+    attachments: (msg.attachments ?? []).map((att) => ({
+      id: (att.partId && att.partId.trim().length > 0)
+        ? att.partId.trim()
+        : att.attachmentId,
+      ...(att.partId !== undefined ? { partId: att.partId } : {}),
+      ...(att.attachmentId !== undefined ? { attachmentId: att.attachmentId } : {}),
+      title: att.filename,
+      mimeType: att.mimeType,
+    })),
+  };
+}
+
 export function createGmailPortForToken(
   gmailClient: GoogleGmailClient,
   token?: string
@@ -348,28 +377,9 @@ export function createGmailPortForToken(
             ...(token !== undefined ? { auth: token } : {}),
             ...(opts?.skipCache !== undefined ? { skipCache: opts.skipCache } : {}),
           });
-          return (details?.messages ?? []).map((msg: GmailMessageDetails) => ({
-            id: (msg.id && typeof msg.id === 'string' && msg.id.trim().length > 0)
-              ? msg.id
-              : (typeof msg.messageId === 'string' ? msg.messageId : threadId),
-            ...(msg.threadId !== undefined ? { threadId: msg.threadId } : {}),
-            ...(msg.subject !== undefined ? { subject: msg.subject } : {}),
-            ...(msg.from !== undefined ? { from: msg.from } : {}),
-            ...(msg.to !== undefined ? { to: msg.to } : {}),
-            ...(msg.cc !== undefined ? { cc: msg.cc } : {}),
-            ...(msg.date !== undefined ? { date: msg.date } : {}),
-            ...(msg.plainTextBody !== undefined ? { plainTextBody: msg.plainTextBody } : {}),
-            ...(msg.htmlBody !== undefined ? { htmlBody: msg.htmlBody } : {}),
-            attachments: (msg.attachments ?? []).map((att) => ({
-              id: (att.partId && att.partId.trim().length > 0)
-                ? att.partId.trim()
-                : att.attachmentId,
-              ...(att.partId !== undefined ? { partId: att.partId } : {}),
-              ...(att.attachmentId !== undefined ? { attachmentId: att.attachmentId } : {}),
-              title: att.filename,
-              mimeType: att.mimeType,
-            })),
-          }));
+          return (details?.messages ?? []).map((msg: GmailMessageDetails) =>
+            mapGmailMessageToDescriptor(msg, threadId)
+          );
         } catch {
           return [];
         }
@@ -381,28 +391,7 @@ export function createGmailPortForToken(
         auth: token,
         skipCache: opts?.skipCache,
       });
-      return {
-        id: (msg.id && typeof msg.id === 'string' && msg.id.trim().length > 0)
-          ? msg.id
-          : (typeof msg.messageId === 'string' ? msg.messageId : messageId),
-        ...(msg.threadId !== undefined ? { threadId: msg.threadId } : {}),
-        ...(msg.subject !== undefined ? { subject: msg.subject } : {}),
-        ...(msg.from !== undefined ? { from: msg.from } : {}),
-        ...(msg.to !== undefined ? { to: msg.to } : {}),
-        ...(msg.cc !== undefined ? { cc: msg.cc } : {}),
-        ...(msg.date !== undefined ? { date: msg.date } : {}),
-        ...(msg.plainTextBody !== undefined ? { plainTextBody: msg.plainTextBody } : {}),
-        ...(msg.htmlBody !== undefined ? { htmlBody: msg.htmlBody } : {}),
-        attachments: (msg.attachments ?? []).map((att) => ({
-          id: (att.partId && att.partId.trim().length > 0)
-            ? att.partId.trim()
-            : att.attachmentId,
-          ...(att.partId !== undefined ? { partId: att.partId } : {}),
-          ...(att.attachmentId !== undefined ? { attachmentId: att.attachmentId } : {}),
-          title: att.filename,
-          mimeType: att.mimeType,
-        })),
-      };
+      return mapGmailMessageToDescriptor(msg, messageId);
     },
   };
 }

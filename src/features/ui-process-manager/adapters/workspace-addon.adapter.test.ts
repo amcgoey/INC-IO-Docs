@@ -3,6 +3,7 @@ import { Value } from '@sinclair/typebox/value';
 import { WorkspaceAddonAdapter, normalizeFormData } from './workspace-addon.adapter';
 import {
   UiProcessResultSchema,
+  DRIVE_ROUTING_FALLBACK_NOTICE,
   type UiProcessSpaceProviderPort,
   type UiProcessConfigProviderPort,
   type UiProcessManifestPort,
@@ -4263,6 +4264,123 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           expect(renderResult.formData?.SelectDocumentSpace).toBeUndefined();
           expect(renderResult.validationErrors).toBeUndefined();
         });
+
+        it('does not query projects collection when spaceTypes is empty and no default space type configured', async () => {
+          const getCollectionSpy = vi.fn();
+          const emptySpaceProvider: UiProcessSpaceProviderPort = {
+            getAllTypes: vi.fn().mockReturnValue([]),
+            getCollection: getCollectionSpy,
+          };
+          const emptyConfigProvider: UiProcessConfigProviderPort = {
+            getWorkspaceConfig: vi.fn().mockResolvedValue({}),
+          };
+
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn().mockResolvedValue({}),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThreadWithSpaces),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider: emptySpaceProvider,
+            configProvider: emptyConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          await adapter.processUiEvent({
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-project-1',
+              threadId: 'th-spaces-1',
+            },
+          });
+
+          expect(getCollectionSpy).not.toHaveBeenCalledWith('projects');
+          expect(getCollectionSpy).not.toHaveBeenCalled();
+        });
+
+        it('does not overfetch non-proposal secondary space types when proposal markers are present in email', async () => {
+          const getCollectionSpy = vi.fn().mockImplementation(async (typeId: string) => {
+            if (typeId === 'proposals') {
+              return { spaces: [{ id: 'prop-1', name: 'Proposal Alpha' }] };
+            }
+            if (typeId === 'projects') {
+              return { spaces: [{ id: 'proj-1', name: 'Skyline Tower' }] };
+            }
+            return { spaces: [{ id: 'fin-1', name: 'Finance Q4' }] };
+          });
+
+          const multiSpaceTypesWithFinance = [
+            {
+              id: 'projects',
+              displayName: 'Projects',
+              spaceSchema: { allowedDocumentTypes: ['communication-project', 'submittal-arch'] },
+            },
+            {
+              id: 'finance',
+              displayName: 'Finance',
+              spaceSchema: { allowedDocumentTypes: ['invoice-project'] },
+            },
+            {
+              id: 'proposals',
+              displayName: 'Proposals',
+              spaceSchema: { allowedDocumentTypes: ['communication-proposal'] },
+            },
+          ];
+
+          const spaceProvider: UiProcessSpaceProviderPort = {
+            getAllTypes: vi.fn().mockReturnValue(multiSpaceTypesWithFinance),
+            getCollection: getCollectionSpy,
+          };
+
+          let capturedContext: UiProcessSourceContext | undefined;
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn().mockImplementation(async (ctx: UiProcessSourceContext) => {
+              capturedContext = ctx;
+              return {
+                spaceTypeId: 'proposals',
+                spaceIdOrName: 'prop-1',
+              };
+            }),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThreadWithSpaces),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          const response = await adapter.processUiEvent({
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-proposal-2', // Contains 'RFP'
+              threadId: 'th-spaces-1',
+            },
+          });
+
+          expect(response.type).toBe('render');
+          // Candidate spaces contains only projects and proposals, NOT finance
+          expect(capturedContext?.candidateSpaces).toEqual([
+            { id: 'proj-1', name: 'Skyline Tower', typeId: 'projects' },
+            { id: 'prop-1', name: 'Proposal Alpha', typeId: 'proposals' },
+          ]);
+
+          expect(getCollectionSpy).toHaveBeenCalledWith('projects');
+          expect(getCollectionSpy).toHaveBeenCalledWith('proposals');
+          expect(getCollectionSpy).not.toHaveBeenCalledWith('finance');
+        });
       });
 
       describe('Gmail interactive Google Drive URL routing delegation and file-source switching (Ticket #294)', () => {
@@ -4552,6 +4670,50 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
             },
           });
           expect(mockSourceParser.inferRouting).not.toHaveBeenCalled();
+        });
+
+        it('propagates fallback statusMessages when inferRouting fails unexpectedly during Gmail Drive URL Pass 1', async () => {
+          const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn().mockRejectedValue(new Error('Network or permission error during Drive inspection')),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThread),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider: testSpaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          const driveUrl = 'https://drive.google.com/file/d/drive-file-xyz/view';
+          const response = await adapter.processUiEvent({
+            actionName: 'onFormChange',
+            hostApp: 'GMAIL',
+            gmail: { messageId: 'msg-drive-1', threadId: 'th-drive-1' },
+            formData: {
+              SelectFileSource: 'Google Drive URL',
+              InputDriveURL: driveUrl,
+            },
+            parameters: {
+              previousDriveUrl: '',
+            },
+          });
+
+          expect(mockSourceParser.inferRouting).toHaveBeenCalledTimes(1);
+          expect(response.type).toBe('render');
+          const renderResult = response as UiProcessRenderResult;
+          expect(renderResult.statusMessages).toContain(DRIVE_ROUTING_FALLBACK_NOTICE);
+          expect(consoleWarnSpy).toHaveBeenCalledWith(
+            'SourceParser Pass 1 inferRouting error in Gmail:',
+            expect.any(Error)
+          );
+          consoleWarnSpy.mockRestore();
         });
       });
     });
