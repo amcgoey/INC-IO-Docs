@@ -540,18 +540,6 @@ export class SourceParserService implements SourceParserPort {
 
     const ancestorNames = hierarchy.ancestors.map((a) => a.name.trim().toLowerCase());
 
-    if (
-      ancestorNames.some(
-        (name) =>
-          name === 'communications' ||
-          (name.includes('communication') && !name.includes('1 admin'))
-      )
-    ) {
-      if (spaceTypeId === 'proposals') {
-        return 'communication-proposal';
-      }
-    }
-
     const has6Construction = ancestorNames.some(
       (name) =>
         name === '6 construction' ||

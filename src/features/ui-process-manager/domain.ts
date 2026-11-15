@@ -133,8 +133,42 @@ export type ProcessUiStateOutput = Static<typeof ProcessUiStateOutputSchema>;
 export const DRIVE_WORKSPACE_ADDON_VIEW_ID = 'drive-document-process-card';
 export const GMAIL_WORKSPACE_ADDON_VIEW_ID = 'gmail-document-process-card';
 
+export const DRIVE_ROUTING_FALLBACK_NOTICE =
+  'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.';
+
 export const PROPOSAL_OPPORTUNITY_MARKERS_REGEX =
   /\b(?:proposal|proposals|opportunity|opportunities|rfp|rfps)\b/i;
+
+export function extractTextFromHtml(html?: string): string {
+  if (!html || typeof html !== 'string') {
+    return '';
+  }
+  let text = html.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ');
+  text = text.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ');
+  text = text.replace(/<[^>]+>/g, ' ');
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+export function hasProposalOpportunityMarkers(
+  subject?: string,
+  plainTextBody?: string,
+  htmlBody?: string
+): boolean {
+  if (subject && PROPOSAL_OPPORTUNITY_MARKERS_REGEX.test(subject)) {
+    return true;
+  }
+  const cleanPlain = typeof plainTextBody === 'string' ? plainTextBody.trim() : '';
+  if (cleanPlain.length > 0 && PROPOSAL_OPPORTUNITY_MARKERS_REGEX.test(cleanPlain)) {
+    return true;
+  }
+  if (htmlBody && typeof htmlBody === 'string') {
+    const sanitizedHtml = extractTextFromHtml(htmlBody);
+    if (PROPOSAL_OPPORTUNITY_MARKERS_REGEX.test(sanitizedHtml)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 export const SELECT_FILES_KEY = 'SelectFiles';
 export const SELECT_FILE_SOURCE_KEY = 'SelectFileSource';
