@@ -258,6 +258,7 @@ export const UiProcessSourceContextSchema = Type.Object({
   items: Type.Optional(Type.Union([Type.Array(UiProcessSourceContextItemSchema), Type.Undefined()])),
   candidateSpaces: Type.Optional(Type.Union([Type.Array(UiProcessCandidateSpaceDescriptorSchema), Type.Undefined()])),
   email: Type.Optional(Type.Union([UiProcessSourceEmailDescriptorSchema, Type.Undefined()])),
+  isDriveUrl: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
 });
 export type UiProcessSourceContext = Static<typeof UiProcessSourceContextSchema>;
 

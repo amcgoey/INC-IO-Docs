@@ -203,7 +203,11 @@ export class SourceParserService implements SourceParserPort {
     const rawSpaceTypes = await this.spaceConfigPort.getDocumentSpaceTypes();
     const spaceTypes = rawSpaceTypes ?? [];
 
-    if (context.email) {
+    const isDriveUrl =
+      context.isDriveUrl === true ||
+      (context.isDriveUrl === undefined && !context.email);
+
+    if (context.email && !isDriveUrl) {
       return this.inferFromEmail(context, spaceTypes);
     }
 
@@ -211,70 +215,116 @@ export class SourceParserService implements SourceParserPort {
     const validItems = rawItems.filter(
       (item) => typeof item?.id === 'string' && item.id.trim().length > 0
     );
-    if (validItems.length === 0) {
-      return {};
-    }
 
     let winningSpaceTypeId: string | undefined;
     let winningSpaceIdOrName: string | undefined;
     let winningDocumentTypeKey: string | undefined;
+    const statusMessages: string[] = [];
 
-    try {
-      for (const item of validItems) {
-        const hierarchy = await this.driveContextPort.getItemHierarchy(item.id.trim());
-        const itemResult = this.inferFromDriveHierarchy(hierarchy, spaceTypes);
+    if (validItems.length > 0) {
+      try {
+        for (const item of validItems) {
+          const hierarchy = await this.driveContextPort.getItemHierarchy(item.id.trim());
+          const itemResult = this.inferFromDriveHierarchy(hierarchy, spaceTypes);
 
-        if (!winningSpaceTypeId) {
-          if (itemResult.spaceTypeId) {
-            // nosemgrep: domain-pass-through-read
-            winningSpaceTypeId = itemResult.spaceTypeId;
-            if (winningSpaceIdOrName === undefined && itemResult.spaceIdOrName !== undefined) {
+          if (!winningSpaceTypeId) {
+            if (itemResult.spaceTypeId) {
               // nosemgrep: domain-pass-through-read
-              winningSpaceIdOrName = itemResult.spaceIdOrName;
-            }
-            if (winningDocumentTypeKey === undefined && itemResult.documentTypeKey !== undefined) {
-              // nosemgrep: domain-pass-through-read
-              winningDocumentTypeKey = itemResult.documentTypeKey;
-            }
-          }
-        } else {
-          const isCompatible =
-            itemResult.spaceTypeId === undefined || itemResult.spaceTypeId === winningSpaceTypeId;
-
-          if (isCompatible) {
-            if (winningSpaceIdOrName === undefined && itemResult.spaceIdOrName !== undefined) {
-              // nosemgrep: domain-pass-through-read
-              winningSpaceIdOrName = itemResult.spaceIdOrName;
-            }
-            if (winningDocumentTypeKey === undefined && itemResult.documentTypeKey !== undefined) {
-              const spaceConfig = spaceTypes.find((st) => st.id === winningSpaceTypeId);
-              const allowed = spaceConfig?.spaceSchema?.allowedDocumentTypes ?? [];
-              if (allowed.length === 0 || allowed.includes(itemResult.documentTypeKey)) {
+              winningSpaceTypeId = itemResult.spaceTypeId;
+              if (winningSpaceIdOrName === undefined && itemResult.spaceIdOrName !== undefined) {
+                // nosemgrep: domain-pass-through-read
+                winningSpaceIdOrName = itemResult.spaceIdOrName;
+              }
+              if (winningDocumentTypeKey === undefined && itemResult.documentTypeKey !== undefined) {
                 // nosemgrep: domain-pass-through-read
                 winningDocumentTypeKey = itemResult.documentTypeKey;
               }
             }
+          } else {
+            const isCompatible =
+              itemResult.spaceTypeId === undefined || itemResult.spaceTypeId === winningSpaceTypeId;
+
+            if (isCompatible) {
+              if (winningSpaceIdOrName === undefined && itemResult.spaceIdOrName !== undefined) {
+                // nosemgrep: domain-pass-through-read
+                winningSpaceIdOrName = itemResult.spaceIdOrName;
+              }
+              if (winningDocumentTypeKey === undefined && itemResult.documentTypeKey !== undefined) {
+                const spaceConfig = spaceTypes.find((st) => st.id === winningSpaceTypeId);
+                const allowed = spaceConfig?.spaceSchema?.allowedDocumentTypes ?? [];
+                if (allowed.length === 0 || allowed.includes(itemResult.documentTypeKey)) {
+                  // nosemgrep: domain-pass-through-read
+                  winningDocumentTypeKey = itemResult.documentTypeKey;
+                }
+              }
+            }
+          }
+
+          if (
+            winningSpaceTypeId !== undefined &&
+            winningSpaceIdOrName !== undefined &&
+            winningDocumentTypeKey !== undefined
+          ) {
+            break;
           }
         }
+      } catch {
+        statusMessages.push(DRIVE_HIERARCHY_ERROR_MESSAGE);
+      }
+    }
 
-        if (
-          winningSpaceTypeId !== undefined &&
-          winningSpaceIdOrName !== undefined &&
-          winningDocumentTypeKey !== undefined
-        ) {
-          break;
+    if (context.email) {
+      const emailResult = this.inferFromEmail(context, spaceTypes);
+
+      if (emailResult.statusMessages) {
+        statusMessages.push(...emailResult.statusMessages);
+      }
+
+      if (!winningSpaceTypeId && emailResult.spaceTypeId) {
+        // nosemgrep: domain-pass-through-read
+        winningSpaceTypeId = emailResult.spaceTypeId;
+      }
+
+      if (winningSpaceIdOrName === undefined && emailResult.spaceIdOrName !== undefined) {
+        const matchedCandidate = context.candidateSpaces?.find((c) => c.id === emailResult.spaceIdOrName);
+        const isCompatible =
+          winningSpaceTypeId === undefined ||
+          matchedCandidate?.typeId === undefined ||
+          matchedCandidate.typeId === winningSpaceTypeId;
+        if (isCompatible) {
+          // nosemgrep: domain-pass-through-read
+          winningSpaceIdOrName = emailResult.spaceIdOrName;
+          if (!winningSpaceTypeId && matchedCandidate?.typeId) {
+            // nosemgrep: domain-pass-through-read
+            winningSpaceTypeId = matchedCandidate.typeId;
+          }
         }
       }
-    } catch {
-      return {
-        statusMessages: [DRIVE_HIERARCHY_ERROR_MESSAGE],
-      };
+
+      if (winningDocumentTypeKey === undefined && emailResult.documentTypeKey !== undefined) {
+        if (winningSpaceTypeId) {
+          const spaceConfig = spaceTypes.find((st) => st.id === winningSpaceTypeId);
+          const allowed = spaceConfig?.spaceSchema?.allowedDocumentTypes ?? [];
+          if (allowed.length === 0 || allowed.includes(emailResult.documentTypeKey)) {
+            // nosemgrep: domain-pass-through-read
+            winningDocumentTypeKey = emailResult.documentTypeKey;
+          }
+        } else {
+          // nosemgrep: domain-pass-through-read
+          winningDocumentTypeKey = emailResult.documentTypeKey;
+          winningSpaceTypeId = findSpaceTypeForDocumentType(spaceTypes, emailResult.documentTypeKey);
+        }
+      }
     }
+
+    const deduplicatedStatus =
+      statusMessages.length > 0 ? Array.from(new Set(statusMessages)) : undefined;
 
     return {
       ...(winningSpaceTypeId !== undefined ? { spaceTypeId: winningSpaceTypeId } : {}),
       ...(winningSpaceIdOrName !== undefined ? { spaceIdOrName: winningSpaceIdOrName } : {}),
       ...(winningDocumentTypeKey !== undefined ? { documentTypeKey: winningDocumentTypeKey } : {}),
+      ...(deduplicatedStatus ? { statusMessages: deduplicatedStatus } : {}),
     };
   }
 

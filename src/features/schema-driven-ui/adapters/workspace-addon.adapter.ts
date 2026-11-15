@@ -275,6 +275,10 @@ export class GmailWorkspaceAddonAdapter implements UiViewSchemaAdapterPort {
             label: 'Google Drive URL',
             hintText: 'Enter Google Drive file or folder URL',
             activeOnSourceValue: 'Google Drive URL',
+            onChangeAction: {
+              action: 'onFormChange',
+              parameters: actionParams,
+            },
           },
           toggleInput: {
             name: 'SaveEmailToPdf',

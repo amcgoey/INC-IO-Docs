@@ -1125,4 +1125,128 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
       expect(result.spaceIdOrName).toBeUndefined();
     });
   });
+
+  describe('Google Drive URL delegation and email fallback (Ticket #294)', () => {
+    const candidateSpaces = [
+      { id: 'proj-skyline', name: 'Skyline Tower', typeId: 'projects' },
+      { id: 'prop-grand-hotel', name: 'Grand Hotel', typeId: 'proposals' },
+    ];
+
+    it('delegates to Google Drive hierarchy first when items are present and resolves all fields from Drive', async () => {
+      const mockDrivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockResolvedValue({
+          item: { id: 'file-prop-comm', name: 'Proposal_Cover.pdf' },
+          driveName: 'INC Marketing',
+          ancestors: [
+            { id: 'inc-mkt', name: 'INC Marketing' },
+            { id: 'opp', name: 'Opportunities' },
+            { id: 'prop-acme', name: 'Acme Proposal' },
+            { id: 'comm', name: 'Communications' },
+          ],
+        }),
+      };
+
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        items: [{ id: 'file-prop-comm' }],
+        isDriveUrl: true,
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'Weekly update for Skyline Tower',
+        },
+      });
+
+      expect(mockDrivePort.getItemHierarchy).toHaveBeenCalledWith('file-prop-comm');
+      expect(result).toEqual({
+        spaceTypeId: 'proposals',
+        spaceIdOrName: 'prop-acme',
+        documentTypeKey: 'communication-proposal',
+      });
+    });
+
+    it('falls back to email candidateSpaces when Drive item leaves spaceIdOrName undefined (e.g. in My Drive)', async () => {
+      const mockDrivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockResolvedValue({
+          item: { id: 'file-csi-my-drive', name: '071200-001_Waterproofing.pdf' },
+          ancestors: [],
+          driveId: undefined,
+        }),
+      };
+
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        items: [{ id: 'file-csi-my-drive' }],
+        isDriveUrl: true,
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'Review attached submittal for Skyline Tower',
+        },
+      });
+
+      expect(mockDrivePort.getItemHierarchy).toHaveBeenCalledWith('file-csi-my-drive');
+      expect(result).toEqual({
+        spaceTypeId: 'projects',
+        spaceIdOrName: 'proj-skyline',
+        documentTypeKey: 'submittal-arch',
+      });
+    });
+
+    it('falls back to email heuristics for documentTypeKey when Drive hierarchy/filename leaves documentTypeKey undefined', async () => {
+      const mockDrivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockResolvedValue({
+          item: { id: 'file-generic', name: 'General_Report.pdf' },
+          ancestors: [],
+          driveId: 'proj-skyline',
+          driveName: 'Skyline Project Drive',
+        }),
+      };
+
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        items: [{ id: 'file-generic' }],
+        isDriveUrl: true,
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'FF&E Submittal Package for Review',
+        },
+      });
+
+      expect(mockDrivePort.getItemHierarchy).toHaveBeenCalledWith('file-generic');
+      expect(result).toEqual({
+        spaceTypeId: 'projects',
+        spaceIdOrName: 'proj-skyline',
+        documentTypeKey: 'submittal-ffe',
+      });
+    });
+
+    it('surfaces DRIVE_HIERARCHY_ERROR_MESSAGE and falls back to email heuristics on systemic Drive error', async () => {
+      const mockDrivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockRejectedValue(new Error('500 Internal Server Error')),
+      };
+
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+      const result = await service.inferRouting({
+        items: [{ id: 'file-throttled' }],
+        isDriveUrl: true,
+        candidateSpaces,
+        email: {
+          id: 'msg-1',
+          subject: 'Submittal 071200-001 Waterproofing for Skyline Tower',
+        },
+      });
+
+      expect(mockDrivePort.getItemHierarchy).toHaveBeenCalledWith('file-throttled');
+      expect(result).toEqual({
+        spaceTypeId: 'projects',
+        spaceIdOrName: 'proj-skyline',
+        documentTypeKey: 'submittal-arch',
+        statusMessages: [
+          'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.',
+        ],
+      });
+    });
+  });
 });

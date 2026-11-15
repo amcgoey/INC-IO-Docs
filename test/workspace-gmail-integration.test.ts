@@ -4600,6 +4600,240 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(switchJson).not.toContain('was not found');
       });
     });
+
+    describe('Gmail interactive Google Drive URL routing delegation and file-source switching (Ticket #294)', () => {
+      beforeEach(() => {
+        vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string): Promise<GmailThreadDetails> => {
+          if (threadId === 'th-spaces-e2e') {
+            return {
+              id: 'th-spaces-e2e',
+              messages: [
+                {
+                  id: 'msg-proj-space-e2e',
+                  threadId: 'th-spaces-e2e',
+                  subject: 'Active Projects - Foundation Progress',
+                  from: 'Alice <alice@example.com>',
+                  date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+                  plainTextBody: 'Here is the progress report for Active Projects.',
+                  inlineImages: [],
+                  attachments: [],
+                },
+                {
+                  id: 'msg-prop-space-e2e',
+                  threadId: 'th-spaces-e2e',
+                  subject: 'RFP Submission for Client Proposals',
+                  from: 'Bob <bob@example.com>',
+                  date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+                  plainTextBody: 'Attached is our revised cost proposal.',
+                  inlineImages: [],
+                  attachments: [],
+                },
+              ],
+            };
+          }
+          return { id: threadId, messages: [] };
+        });
+      });
+
+      it('configures onChangeAction with action onFormChange and previousDriveUrl on InputDriveURL widget', async () => {
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: {
+                action: 'onFileSourceChange',
+                previousDriveUrl: 'https://drive.google.com/file/d/drive-url-existing/view',
+              },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: { stringInputs: { value: ['https://drive.google.com/file/d/drive-url-existing/view'] } },
+              },
+            },
+            gmail: {
+              messageId: 'msg-proj-space-e2e',
+              threadId: 'th-spaces-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const fileSec = body.action?.navigations?.[0]?.updateCard?.sections.find((s) => s.header === 'File Selection');
+        const driveUrlWidget = fileSec?.widgets.find((w) => w.textInput?.name === 'InputDriveURL')?.textInput;
+        expect(driveUrlWidget).toBeDefined();
+        expect(driveUrlWidget?.onChangeAction?.function).toContain('/workspace/on-form-change');
+        expect(
+          driveUrlWidget?.onChangeAction?.parameters?.find((p: { key: string }) => p.key === 'action')?.value
+        ).toBe('onFormChange');
+        expect(
+          driveUrlWidget?.onChangeAction?.parameters?.find((p: { key: string }) => p.key === 'previousDriveUrl')?.value
+        ).toBe('https://drive.google.com/file/d/drive-url-existing/view');
+      });
+
+      it('preserves existing space and document type selections when switching SelectFileSource to Google Drive URL with empty InputDriveURL', async () => {
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: {
+                action: 'onFileSourceChange',
+                previousDriveUrl: '',
+              },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: { stringInputs: { value: [''] } },
+                SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+                [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+                [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              },
+            },
+            gmail: {
+              messageId: 'msg-proj-space-e2e',
+              threadId: 'th-spaces-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const cardJson = JSON.stringify(body);
+        // Space and Document Type selections are preserved (Pass 1 skipped)
+        expect(cardJson).toContain('Active Projects');
+        expect(cardJson).toContain('communication-project');
+      });
+
+      it('runs Pass 1 inferRouting when InputDriveURL receives a valid Drive URL on onFormChange, resolving document type from Drive and space from email fallback', async () => {
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files/drive-submittal-url-123')
+          .query(true)
+          .reply(200, {
+            id: 'drive-submittal-url-123',
+            name: '071200-001_Waterproofing.pdf',
+            parents: [],
+          });
+
+        const driveUrl = 'https://drive.google.com/file/d/drive-submittal-url-123/view';
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: {
+                action: 'onFormChange',
+                previousDriveUrl: '',
+              },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: { stringInputs: { value: [driveUrl] } },
+              },
+            },
+            gmail: {
+              messageId: 'msg-proj-space-e2e',
+              threadId: 'th-spaces-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const cardJson = JSON.stringify(body);
+
+        // Document type inferred from Drive filename regex
+        expect(cardJson).toContain('submittal-arch');
+        // Space inferred from active email subject fallback ("Active Projects - Foundation Progress")
+        expect(cardJson).toContain('Active Projects');
+      });
+
+      it('re-runs Pass 1 against active email message when switching SelectFileSource back to Email Attachments', async () => {
+        const driveUrl = 'https://drive.google.com/file/d/drive-submittal-url-123/view';
+
+        // When switching back to Email Attachments, active email is msg-prop-space-e2e (RFP Submission for Client Proposals)
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: {
+                action: 'onFileSourceChange',
+                previousDriveUrl: driveUrl,
+              },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+                InputDriveURL: { stringInputs: { value: [driveUrl] } },
+                // Stale selections from Drive mode
+                SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+                [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+                [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['submittal-arch'] } },
+              },
+            },
+            gmail: {
+              messageId: 'msg-prop-space-e2e',
+              threadId: 'th-spaces-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const cardJson = JSON.stringify(body);
+
+        // Pass 1 re-ran against msg-prop-space-e2e -> inferred Client Proposals
+        expect(cardJson).toContain('Client Proposals');
+      });
+
+      it('skips Pass 1 on regular onFormChange field edits', async () => {
+        const driveUrl = 'https://drive.google.com/file/d/drive-submittal-url-123/view';
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: {
+                action: 'onFormChange',
+                // previousDriveUrl matches current InputDriveURL (no URL transition)
+                previousDriveUrl: driveUrl,
+              },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: { stringInputs: { value: [driveUrl] } },
+                SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
+                [getDocumentSpaceWidgetName('proposals')]: { stringInputs: { value: ['Client Proposals'] } },
+                notes: { stringInputs: { value: ['User manually edited notes'] } },
+              },
+            },
+            gmail: {
+              messageId: 'msg-proj-space-e2e',
+              threadId: 'th-spaces-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const cardJson = JSON.stringify(body);
+
+        // Did not re-run Pass 1 against msg-proj-space-e2e (which would have forced Active Projects)
+        expect(cardJson).toContain('Client Proposals');
+      });
+    });
   });
 });
 
