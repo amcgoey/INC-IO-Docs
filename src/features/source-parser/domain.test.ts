@@ -651,9 +651,10 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
       expect(extractTextFromHtml(html)).toBe('Header Body');
     });
 
-    it('decodes common HTML entities (&amp;, &nbsp;, &lt;, &gt;, &quot;, &#39;)', () => {
-      const html = '<p>FF&amp;E &lt;Submittal&gt; package &#39;2026&#39; &quot;Final&quot;&nbsp;approved</p>';
-      expect(extractTextFromHtml(html)).toBe('FF&E <Submittal> package \'2026\' "Final" approved');
+    it('decodes common HTML entities (&amp;, &nbsp;, &lt;, &gt;, &quot;, &#39;, &#x27;)', () => {
+      const html =
+        '<p>FF&amp;E &lt;Submittal&gt; package &#39;2026&#39; &#x27;A&#x27; &quot;Final&quot;&nbsp;approved &amp;nbsp;</p>';
+      expect(extractTextFromHtml(html)).toBe('FF&E <Submittal> package \'2026\' \'A\' "Final" approved &nbsp;');
     });
   });
 
