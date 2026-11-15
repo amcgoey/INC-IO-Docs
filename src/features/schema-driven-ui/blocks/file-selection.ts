@@ -29,6 +29,7 @@ export interface FileSelectionOptions {
     label: string;
     hintText: string;
     activeOnSourceValue: string;
+    onChangeAction?: UiViewAction | undefined;
   } | undefined;
 }
 
@@ -96,6 +97,9 @@ export function buildFileSelectionSection(
         label: options!.urlInput!.label,
         hintText: options!.urlInput!.hintText,
         value: (options?.formData?.[options!.urlInput!.name] as string) ?? '',
+        ...(options!.urlInput!.onChangeAction
+          ? { onChangeAction: options!.urlInput!.onChangeAction }
+          : {}),
       },
     });
   } else {

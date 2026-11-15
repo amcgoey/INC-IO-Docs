@@ -1148,6 +1148,38 @@ describe('WorkspaceAddonAdapter', () => {
       assertValidUiView(view);
     });
 
+    it('configures InputDriveURL with onChangeAction: onFormChange with previousDriveUrl (Ticket #294)', async () => {
+      const view = await gmailAdapter.composeView({
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        formData: {
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: 'https://drive.google.com/file/d/test-drive-url/view',
+        },
+        selectionState: {
+          spaceTypes: [{ text: 'Default', value: 'default', selected: true }],
+          spaces: [],
+          documentTypes: [{ text: 'Invoice', value: 'invoice', selected: true }],
+          fileSources: [
+            { text: 'Email Attachments', value: 'Email Attachments', selected: false },
+            { text: 'Google Drive URL', value: 'Google Drive URL', selected: true },
+          ],
+          files: [],
+        },
+      });
+
+      const fileSection = view.sections.find((s) => s.header === 'File Selection');
+      const driveUrlWidget = fileSection?.widgets.find((w) => w.textInput?.name === 'InputDriveURL')?.textInput;
+      expect(driveUrlWidget).toBeDefined();
+      expect(driveUrlWidget?.onChangeAction).toEqual({
+        action: 'onFormChange',
+        parameters: {
+          previousAttachments: '[]',
+          previousDriveUrl: 'https://drive.google.com/file/d/test-drive-url/view',
+        },
+      });
+      assertValidUiView(view);
+    });
+
     it('ensures standard Drive WorkspaceAddonAdapter does NOT attach previousAttachments or previousDriveUrl', async () => {
       const driveAdapter = new WorkspaceAddonAdapter();
       const view = await driveAdapter.composeView({

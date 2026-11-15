@@ -54,6 +54,7 @@ export const SourceContextSchema = Type.Object({
   items: Type.Optional(Type.Union([Type.Array(SourceItemDescriptorSchema), Type.Undefined()])),
   candidateSpaces: Type.Optional(Type.Union([Type.Array(CandidateSpaceDescriptorSchema), Type.Undefined()])),
   email: Type.Optional(Type.Union([SourceEmailDescriptorSchema, Type.Undefined()])),
+  isDriveUrl: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
 });
 export type SourceContext = Static<typeof SourceContextSchema>;
 

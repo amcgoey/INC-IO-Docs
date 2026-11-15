@@ -229,9 +229,43 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     const sourceParser = this.options.sourceParser;
 
     const isDrivePass1Event = !isGmail && isResetOrInitial;
-    const isGmailPass1Event =
+
+    const effectiveFileSource = isGmail
+      ? (isResetOrInitial
+          ? 'Email Attachments'
+          : ((effectiveContext.formData?.[SELECT_FILE_SOURCE_KEY] as string | undefined) ?? 'Email Attachments'))
+      : undefined;
+
+    const currentDriveUrl = isGmail
+      ? ((effectiveContext.formData?.[INPUT_DRIVE_URL_KEY] as string | undefined)?.trim() ??
+         (effectiveContext.parameters?.previousDriveUrl?.trim() ?? ''))
+      : '';
+
+    const previousDriveUrl = isGmail
+      ? (effectiveContext.parameters?.previousDriveUrl?.trim() ?? '')
+      : '';
+
+    const parsedCurrentDriveUrl = isGmail && currentDriveUrl.length > 0
+      ? parseGoogleDriveUrl(currentDriveUrl)
+      : undefined;
+
+    const isGmailDriveUrlPass1Event =
       isGmail &&
-      (isResetOrInitial || actionName === 'refresh' || actionName === 'onEmailMessageChange');
+      Boolean(parsedCurrentDriveUrl) &&
+      effectiveFileSource === 'Google Drive URL' &&
+      (actionName === 'refresh' ||
+       (actionName === 'onFormChange' && currentDriveUrl !== previousDriveUrl) ||
+       actionName === 'onFileSourceChange');
+
+    const isGmailEmailPass1Event =
+      isGmail &&
+      (effectiveFileSource === 'Email Attachments' || !effectiveFileSource) &&
+      (isResetOrInitial ||
+       actionName === 'refresh' ||
+       actionName === 'onEmailMessageChange' ||
+       actionName === 'onFileSourceChange');
+
+    const isGmailPass1Event = isGmailDriveUrlPass1Event || isGmailEmailPass1Event;
 
     if (isDrivePass1Event && sourceParser) {
       const candidateItems: UiProcessSourceContextItem[] = (effectiveContext.selectedItems ?? [])
@@ -258,11 +292,13 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         }
       }
     } else if (isGmailPass1Event && sourceParser && activeMsg) {
-      const candidateItems: UiProcessSourceContextItem[] = (activeMsg.attachments ?? []).map((att) => ({
-        id: resolveAttachmentId(att),
-        name: att.title,
-        ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
-      }));
+      const candidateItems: UiProcessSourceContextItem[] = isGmailDriveUrlPass1Event
+        ? [{ id: parsedCurrentDriveUrl!.id }]
+        : (activeMsg.attachments ?? []).map((att) => ({
+            id: resolveAttachmentId(att),
+            name: att.title,
+            ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
+          }));
 
       const emailContext: UiProcessSourceEmailDescriptor = {
         id: activeMsg.id,
@@ -274,7 +310,11 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         ...(activeMsg.date !== undefined ? { date: activeMsg.date } : {}),
         ...(activeMsg.plainTextBody !== undefined ? { plainTextBody: activeMsg.plainTextBody } : {}),
         ...(activeMsg.htmlBody !== undefined ? { htmlBody: activeMsg.htmlBody } : {}),
-        attachments: candidateItems,
+        attachments: (activeMsg.attachments ?? []).map((att) => ({
+          id: resolveAttachmentId(att),
+          name: att.title,
+          ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
+        })),
       };
 
       const defaultSpaceTypeId = config?.defaultDocumentSpaceType ?? spaceTypes[0]?.id ?? 'projects';
@@ -327,6 +367,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           items: candidateItems,
           email: emailContext,
           candidateSpaces,
+          ...(isGmailDriveUrlPass1Event ? { isDriveUrl: true } : {}),
         });
       } catch (e) {
         console.warn('SourceParser Pass 1 inferRouting error in Gmail:', e);
@@ -409,7 +450,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     }
 
     const docTypeSelectorKey = currentSpaceType ? getDocTypeSelectorKey(currentSpaceType) : undefined;
-    if (actionName === 'onEmailMessageChange' && resolvedDocumentTypeKey) {
+    if (!isResetOrInitial && isPass1Reset && resolvedDocumentTypeKey) {
       effectiveContext = {
         ...effectiveContext,
         formData: {
@@ -468,7 +509,12 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
             effectiveContext = { ...effectiveContext, formData: nextFormData };
           }
         }
-      } else if (actionName === 'onEmailMessageChange' || actionName === 'refresh') {
+      } else if (
+        actionName === 'onEmailMessageChange' ||
+        actionName === 'refresh' ||
+        isGmailDriveUrlPass1Event ||
+        (isGmailEmailPass1Event && actionName === 'onFileSourceChange')
+      ) {
         if (effectiveContext.formData) {
           const nextFormData = { ...effectiveContext.formData };
           if (spaceSelectorKey) {

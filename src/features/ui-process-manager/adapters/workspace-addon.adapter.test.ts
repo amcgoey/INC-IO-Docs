@@ -4264,6 +4264,296 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           expect(renderResult.validationErrors).toBeUndefined();
         });
       });
+
+      describe('Gmail interactive Google Drive URL routing delegation and file-source switching (Ticket #294)', () => {
+        const gmailThread: UiProcessGmailMessageDescriptor[] = [
+          {
+            id: 'msg-drive-1',
+            threadId: 'th-drive-1',
+            subject: 'Review attached files for Skyline Tower',
+            from: 'Alice <alice@example.com>',
+            date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+            plainTextBody: 'Please see Google Drive link and attached details.',
+            attachments: [
+              { id: 'att-1', title: 'Details.pdf', mimeType: 'application/pdf' },
+            ],
+          },
+        ];
+
+        const testSpaceProvider: UiProcessSpaceProviderPort = {
+          getAllTypes: vi.fn().mockReturnValue(mockSpaceTypesWithProposals),
+          getCollection: vi.fn().mockImplementation(async (typeId: string) => {
+            if (typeId === 'proposals') {
+              return {
+                spaces: [
+                  { id: 'prop-1', name: 'Proposal Alpha', abstractStorageId: 'opp-folder-alpha' },
+                ],
+              };
+            }
+            return {
+              spaces: [
+                { id: 'proj-skyline', name: 'Skyline Tower', abstractStorageId: 'drive-skyline-id' },
+              ],
+            };
+          }),
+        };
+
+        it('skips inferRouting and preserves current spaceType, space, and docType when switching SelectFileSource to Google Drive URL while InputDriveURL is blank (Criterion 2)', async () => {
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn(),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThread),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider: testSpaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          const response = await adapter.processUiEvent({
+            actionName: 'onFileSourceChange',
+            hostApp: 'GMAIL',
+            gmail: { messageId: 'msg-drive-1', threadId: 'th-drive-1' },
+            formData: {
+              SelectFileSource: 'Google Drive URL',
+              InputDriveURL: '   ',
+              SelectDocumentSpaceType: 'proposals',
+              SelectDocumentSpace_proposals: 'Proposal Alpha',
+              SelectDocumentSpace: 'Proposal Alpha',
+              SelectDocumentType_proposals: 'communication-proposal',
+              SelectDocumentType: 'communication-proposal',
+            },
+          });
+
+          expect(mockSourceParser.inferRouting).not.toHaveBeenCalled();
+          expect(response.type).toBe('render');
+          const renderResult = response as UiProcessRenderResult;
+          expect(renderResult.documentTypeKey).toBe('communication-proposal');
+          expect(renderResult.formData?.SelectDocumentSpaceType).toBe('proposals');
+          expect(renderResult.formData?.SelectDocumentSpace).toBe('Proposal Alpha');
+          expect(renderResult.spaceId).toBe('prop-1');
+        });
+
+        it('runs inferRouting on onFormChange when SelectFileSource is Google Drive URL and InputDriveURL transitions to a valid Drive URL (Criterion 3)', async () => {
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn().mockResolvedValue({
+              spaceTypeId: 'projects',
+              spaceIdOrName: 'proj-skyline',
+              documentTypeKey: 'submittal-arch',
+            }),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThread),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider: testSpaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          const driveUrl = 'https://drive.google.com/file/d/drive-file-xyz/view';
+          const response = await adapter.processUiEvent({
+            actionName: 'onFormChange',
+            hostApp: 'GMAIL',
+            gmail: { messageId: 'msg-drive-1', threadId: 'th-drive-1' },
+            formData: {
+              SelectFileSource: 'Google Drive URL',
+              InputDriveURL: driveUrl,
+            },
+            parameters: {
+              previousDriveUrl: '',
+            },
+          });
+
+          expect(mockSourceParser.inferRouting).toHaveBeenCalledTimes(1);
+          expect(mockSourceParser.inferRouting).toHaveBeenCalledWith(
+            expect.objectContaining({
+              items: [{ id: 'drive-file-xyz' }],
+              isDriveUrl: true,
+              email: expect.objectContaining({ id: 'msg-drive-1' }),
+            })
+          );
+
+          expect(response.type).toBe('render');
+          const renderResult = response as UiProcessRenderResult;
+          expect(renderResult.formData?.SelectDocumentSpaceType).toBe('projects');
+          expect(renderResult.formData?.SelectDocumentSpace).toBe('Skyline Tower');
+          expect(renderResult.spaceId).toBe('proj-skyline');
+          expect(renderResult.documentTypeKey).toBe('submittal-arch');
+        });
+
+        it('runs inferRouting on onFileSourceChange when switching to Google Drive URL if InputDriveURL already holds a valid Drive URL (Criterion 3)', async () => {
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn().mockResolvedValue({
+              spaceTypeId: 'projects',
+              spaceIdOrName: 'proj-skyline',
+              documentTypeKey: 'submittal-arch',
+            }),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThread),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider: testSpaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          const driveUrl = 'https://drive.google.com/file/d/drive-file-xyz/view';
+          const response = await adapter.processUiEvent({
+            actionName: 'onFileSourceChange',
+            hostApp: 'GMAIL',
+            gmail: { messageId: 'msg-drive-1', threadId: 'th-drive-1' },
+            formData: {
+              SelectFileSource: 'Google Drive URL',
+              InputDriveURL: driveUrl,
+            },
+            parameters: {
+              previousDriveUrl: '',
+            },
+          });
+
+          expect(mockSourceParser.inferRouting).toHaveBeenCalledTimes(1);
+          expect(mockSourceParser.inferRouting).toHaveBeenCalledWith(
+            expect.objectContaining({
+              items: [{ id: 'drive-file-xyz' }],
+              isDriveUrl: true,
+              email: expect.objectContaining({ id: 'msg-drive-1' }),
+            })
+          );
+
+          expect(response.type).toBe('render');
+          const renderResult = response as UiProcessRenderResult;
+          expect(renderResult.documentTypeKey).toBe('submittal-arch');
+          expect(renderResult.formData?.SelectDocumentSpace).toBe('Skyline Tower');
+          expect(renderResult.spaceId).toBe('proj-skyline');
+        });
+
+        it('re-runs inferRouting against active email message on onFileSourceChange when switching SelectFileSource back to Email Attachments (Criterion 4)', async () => {
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn().mockResolvedValue({
+              spaceTypeId: 'projects',
+              spaceIdOrName: 'proj-skyline',
+              documentTypeKey: 'communication-project',
+            }),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThread),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider: testSpaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          await adapter.processUiEvent({
+            actionName: 'onFileSourceChange',
+            hostApp: 'GMAIL',
+            gmail: { messageId: 'msg-drive-1', threadId: 'th-drive-1' },
+            formData: {
+              SelectFileSource: 'Email Attachments',
+              SelectDocumentSpaceType: 'proposals',
+            },
+            parameters: {
+              previousDriveUrl: 'https://drive.google.com/file/d/drive-file-xyz/view',
+            },
+          });
+
+          expect(mockSourceParser.inferRouting).toHaveBeenCalledTimes(1);
+          expect(mockSourceParser.inferRouting).toHaveBeenCalledWith(
+            expect.objectContaining({
+              items: [
+                { id: 'att-1', name: 'Details.pdf', mimeType: 'application/pdf' },
+              ],
+              email: expect.objectContaining({ id: 'msg-drive-1' }),
+            })
+          );
+        });
+
+        it('skips inferRouting on regular onFormChange edits and non-DriveURL transitions (Criterion 5)', async () => {
+          const mockSourceParser: UiProcessSourceParserPort = {
+            inferRouting: vi.fn(),
+          };
+
+          const mockGmailPort: UiProcessGmailPort = {
+            getMessageAttachments: vi.fn(),
+            getThreadMessages: vi.fn().mockResolvedValue(gmailThread),
+          };
+
+          const adapter = new WorkspaceAddonAdapter({
+            spaceProvider: testSpaceProvider,
+            configProvider: mockConfigProvider,
+            manifestPort: mockManifestPort,
+            gmailPort: mockGmailPort,
+            sourceParser: mockSourceParser,
+          });
+
+          // 5a: onFormChange in Email Attachments mode
+          await adapter.processUiEvent({
+            actionName: 'onFormChange',
+            hostApp: 'GMAIL',
+            gmail: { messageId: 'msg-drive-1', threadId: 'th-drive-1' },
+            formData: {
+              SelectFileSource: 'Email Attachments',
+              notes: 'Editing notes in attachment mode',
+            },
+          });
+          expect(mockSourceParser.inferRouting).not.toHaveBeenCalled();
+
+          // 5b: onFormChange in Google Drive URL mode when URL did not transition
+          const driveUrl = 'https://drive.google.com/file/d/drive-file-xyz/view';
+          await adapter.processUiEvent({
+            actionName: 'onFormChange',
+            hostApp: 'GMAIL',
+            gmail: { messageId: 'msg-drive-1', threadId: 'th-drive-1' },
+            formData: {
+              SelectFileSource: 'Google Drive URL',
+              InputDriveURL: driveUrl,
+              notes: 'Editing notes after URL was already set',
+            },
+            parameters: {
+              previousDriveUrl: driveUrl,
+            },
+          });
+          expect(mockSourceParser.inferRouting).not.toHaveBeenCalled();
+
+          // 5c: onFormChange in Google Drive URL mode when URL is invalid
+          await adapter.processUiEvent({
+            actionName: 'onFormChange',
+            hostApp: 'GMAIL',
+            gmail: { messageId: 'msg-drive-1', threadId: 'th-drive-1' },
+            formData: {
+              SelectFileSource: 'Google Drive URL',
+              InputDriveURL: 'https://not-drive.com/invalid',
+            },
+            parameters: {
+              previousDriveUrl: '',
+            },
+          });
+          expect(mockSourceParser.inferRouting).not.toHaveBeenCalled();
+        });
+      });
     });
   });
 });

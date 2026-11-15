@@ -504,6 +504,49 @@ describe('File Selection Block', () => {
       expect(driveSection.widgets[3].selectionInput?.name).toBe('SaveEmailToPdf');
     });
 
+    it('attaches onChangeAction to textInput when urlInput.onChangeAction is provided (Ticket #294)', () => {
+      const section = buildFileSelectionSection(
+        {
+          spaceTypes: [],
+          spaces: [],
+          documentTypes: [],
+          files: sampleFiles,
+          fileSources: sampleSources,
+        },
+        {
+          formData: {
+            SelectFileSource: 'Google Drive URL',
+            InputDriveURL: 'https://drive.google.com/open?id=xyz',
+          },
+          fileSourceDropdown: {
+            name: 'SelectFileSource',
+            label: 'File Source',
+          },
+          urlInput: {
+            name: 'InputDriveURL',
+            label: 'Google Drive URL',
+            hintText: 'Enter URL',
+            activeOnSourceValue: 'Google Drive URL',
+            onChangeAction: {
+              action: 'onFormChange',
+              parameters: {
+                previousDriveUrl: 'https://drive.google.com/open?id=xyz',
+              },
+            },
+          },
+        }
+      );
+
+      expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+      const textInput = section.widgets[1].textInput;
+      expect(textInput?.onChangeAction).toEqual({
+        action: 'onFormChange',
+        parameters: {
+          previousDriveUrl: 'https://drive.google.com/open?id=xyz',
+        },
+      });
+    });
+
     it('omits itemDropdown when itemDropdown option is not provided or items are empty', () => {
       const section = buildFileSelectionSection(
         {
