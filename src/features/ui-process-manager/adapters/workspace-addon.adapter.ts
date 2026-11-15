@@ -15,6 +15,8 @@ import type {
   UiProcessInferredRoutingResult,
   UiProcessSourceContextItem,
   UiProcessSourceEmailDescriptor,
+  UiProcessCandidateSpaceDescriptor,
+  UiProcessSpaceCollection,
 } from '../ports';
 
 import {
@@ -35,6 +37,7 @@ import {
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
   SELECT_EMAIL_MESSAGE_KEY,
+  PROPOSAL_OPPORTUNITY_MARKERS_REGEX,
   extractSelectFilesSet,
   resolveAttachmentId,
   parseGoogleDriveUrl,
@@ -211,6 +214,16 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     const config = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
     const spaceTypes = spaceProvider.getAllTypes();
 
+    const fetchedCollections = new Map<string, UiProcessSpaceCollection>();
+    const getCachedCollection = async (typeId: string): Promise<UiProcessSpaceCollection> => {
+      let col = fetchedCollections.get(typeId);
+      if (!col) {
+        col = await spaceProvider.getCollection(typeId);
+        fetchedCollections.set(typeId, col);
+      }
+      return col;
+    };
+
     const isResetOrInitial = isResetOrInitialLoad(effectiveContext);
     let inferred: UiProcessInferredRoutingResult | undefined;
     const sourceParser = this.options.sourceParser;
@@ -264,10 +277,56 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         attachments: candidateItems,
       };
 
+      const defaultSpaceTypeId = config?.defaultDocumentSpaceType ?? spaceTypes[0]?.id ?? 'projects';
+      const selectedSpaceTypeId = effectiveContext.formData?.[SELECT_DOCUMENT_SPACE_TYPE_KEY] as string | undefined;
+
+      const spaceTypesToFetch = new Set<string>();
+      if (defaultSpaceTypeId) {
+        spaceTypesToFetch.add(defaultSpaceTypeId);
+      }
+      if (selectedSpaceTypeId && spaceTypes.some((st) => st.id === selectedSpaceTypeId)) {
+        spaceTypesToFetch.add(selectedSpaceTypeId);
+      }
+
+      const emailSubject = activeMsg.subject ?? '';
+      const rawPlain = activeMsg.plainTextBody;
+      const emailBody = (typeof rawPlain === 'string' && rawPlain.trim().length > 0)
+        ? rawPlain.trim()
+        : (activeMsg.htmlBody ? activeMsg.htmlBody.replace(/<[^>]+>/g, ' ') : '');
+
+      const hasProposalMarkers =
+        PROPOSAL_OPPORTUNITY_MARKERS_REGEX.test(emailSubject) ||
+        PROPOSAL_OPPORTUNITY_MARKERS_REGEX.test(emailBody);
+
+      if (hasProposalMarkers) {
+        for (const st of spaceTypes) {
+          if (st.id === 'proposals' || st.id !== defaultSpaceTypeId) {
+            spaceTypesToFetch.add(st.id);
+          }
+        }
+      }
+
+      const candidateSpaces: UiProcessCandidateSpaceDescriptor[] = [];
+      for (const typeId of spaceTypesToFetch) {
+        try {
+          const col = await getCachedCollection(typeId);
+          for (const s of col.spaces) {
+            candidateSpaces.push({
+              id: s.id,
+              name: s.name,
+              typeId: s.typeId ?? typeId,
+            });
+          }
+        } catch (e) {
+          console.warn(`Could not fetch candidate spaces for space type: ${typeId}`, e);
+        }
+      }
+
       try {
         inferred = await sourceParser.inferRouting({
           items: candidateItems,
           email: emailContext,
+          candidateSpaces,
         });
       } catch (e) {
         console.warn('SourceParser Pass 1 inferRouting error in Gmail:', e);
@@ -364,7 +423,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     let spaces: UiProcessSpaceItem[] = [];
     const collectionErrors: string[] = [];
     try {
-      const collection = await spaceProvider.getCollection(currentSpaceType);
+      const collection = await getCachedCollection(currentSpaceType);
       spaces = collection.spaces.map((s) => ({
         id: s.id,
         name: s.name,
@@ -380,25 +439,45 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     }
 
     const spaceSelectorKey = currentSpaceType ? getSpaceSelectorKey(currentSpaceType) : undefined;
-    if (inferred?.spaceIdOrName && spaceSelectorKey) {
-      const inferredSpaceRes = resolveSpace(
-        {
-          formData: { spaceId: inferred.spaceIdOrName },
-          activeSpaceType: currentSpaceType,
-          config,
-        },
-        spaces
-      );
-
-      if (inferredSpaceRes.matchedSpace) {
-        effectiveContext = {
-          ...effectiveContext,
-          formData: {
-            ...effectiveContext.formData,
-            [spaceSelectorKey]: inferredSpaceRes.matchedSpace.name,
-            [SELECT_DOCUMENT_SPACE_KEY]: inferredSpaceRes.matchedSpace.name,
+    if (isPass1Reset) {
+      if (inferred?.spaceIdOrName && spaceSelectorKey) {
+        const inferredSpaceRes = resolveSpace(
+          {
+            formData: { spaceId: inferred.spaceIdOrName },
+            activeSpaceType: currentSpaceType,
+            config,
           },
-        };
+          spaces
+        );
+
+        if (inferredSpaceRes.matchedSpace) {
+          effectiveContext = {
+            ...effectiveContext,
+            formData: {
+              ...effectiveContext.formData,
+              [spaceSelectorKey]: inferredSpaceRes.matchedSpace.name,
+              [SELECT_DOCUMENT_SPACE_KEY]: inferredSpaceRes.matchedSpace.name,
+            },
+          };
+        } else {
+          if (effectiveContext.formData) {
+            const nextFormData = { ...effectiveContext.formData };
+            delete nextFormData[spaceSelectorKey];
+            delete nextFormData[SELECT_DOCUMENT_SPACE_KEY];
+            delete nextFormData.spaceId;
+            effectiveContext = { ...effectiveContext, formData: nextFormData };
+          }
+        }
+      } else if (actionName === 'onEmailMessageChange' || actionName === 'refresh') {
+        if (effectiveContext.formData) {
+          const nextFormData = { ...effectiveContext.formData };
+          if (spaceSelectorKey) {
+            delete nextFormData[spaceSelectorKey];
+          }
+          delete nextFormData[SELECT_DOCUMENT_SPACE_KEY];
+          delete nextFormData.spaceId;
+          effectiveContext = { ...effectiveContext, formData: nextFormData };
+        }
       }
     }
 

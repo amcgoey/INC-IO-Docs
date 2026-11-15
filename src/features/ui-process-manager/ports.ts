@@ -33,6 +33,7 @@ import {
   isResetOrInitialLoad,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
+  PROPOSAL_OPPORTUNITY_MARKERS_REGEX,
   UiProcessGmailEventContextSchema,
   type UiProcessGmailEventContext,
   UiProcessGmailAttachmentDescriptorSchema,
@@ -75,6 +76,7 @@ export {
   isResetOrInitialLoad,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
+  PROPOSAL_OPPORTUNITY_MARKERS_REGEX,
   UiProcessGmailEventContextSchema,
   type UiProcessGmailEventContext,
   UiProcessGmailAttachmentDescriptorSchema,
@@ -245,8 +247,16 @@ export const UiProcessSourceEmailDescriptorSchema = Type.Object({
 });
 export type UiProcessSourceEmailDescriptor = Static<typeof UiProcessSourceEmailDescriptorSchema>;
 
+export const UiProcessCandidateSpaceDescriptorSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  name: Type.String({ minLength: 1 }),
+  typeId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type UiProcessCandidateSpaceDescriptor = Static<typeof UiProcessCandidateSpaceDescriptorSchema>;
+
 export const UiProcessSourceContextSchema = Type.Object({
   items: Type.Optional(Type.Union([Type.Array(UiProcessSourceContextItemSchema), Type.Undefined()])),
+  candidateSpaces: Type.Optional(Type.Union([Type.Array(UiProcessCandidateSpaceDescriptorSchema), Type.Undefined()])),
   email: Type.Optional(Type.Union([UiProcessSourceEmailDescriptorSchema, Type.Undefined()])),
 });
 export type UiProcessSourceContext = Static<typeof UiProcessSourceContextSchema>;

@@ -4406,6 +4406,200 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       const backJson = JSON.stringify(cardResponseBack);
       expect(backJson).toContain('communication-project');
     });
+
+    describe('Gmail Pass 1 DocumentSpace candidateSpaces inference (Ticket #293)', () => {
+      beforeEach(() => {
+        vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string): Promise<GmailThreadDetails> => {
+          if (threadId === 'th-spaces-e2e') {
+            return {
+              id: 'th-spaces-e2e',
+              messages: [
+                {
+                  id: 'msg-proj-space-e2e',
+                  threadId: 'th-spaces-e2e',
+                  subject: 'Active Projects - Foundation Progress',
+                  from: 'Alice <alice@example.com>',
+                  date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+                  plainTextBody: 'Here is the progress report for Active Projects.',
+                  inlineImages: [],
+                  attachments: [],
+                },
+                {
+                  id: 'msg-prop-space-e2e',
+                  threadId: 'th-spaces-e2e',
+                  subject: 'RFP Submission for Client Proposals',
+                  from: 'Bob <bob@example.com>',
+                  date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+                  plainTextBody: 'Attached is our revised cost proposal.',
+                  inlineImages: [],
+                  attachments: [],
+                },
+                {
+                  id: 'msg-collision-e2e',
+                  threadId: 'th-spaces-e2e',
+                  subject: 'Coordination between Active Projects and Client Proposals',
+                  from: 'Carol <carol@example.com>',
+                  date: 'Mon, 19 Oct 2026 12:00:00 +0000',
+                  plainTextBody: 'We need to coordinate both accounts.',
+                  inlineImages: [],
+                  attachments: [],
+                },
+                {
+                  id: 'msg-unmatched-e2e',
+                  threadId: 'th-spaces-e2e',
+                  subject: 'General Team Discussion',
+                  from: 'Dave <dave@example.com>',
+                  date: 'Mon, 19 Oct 2026 13:00:00 +0000',
+                  plainTextBody: 'No specific project or proposal.',
+                  inlineImages: [],
+                  attachments: [],
+                },
+              ],
+            };
+          }
+          return { id: threadId, messages: [] };
+        });
+      });
+
+      it('infers projects DocumentSpace on initial card open with latency-bounded fetch (no proposals query)', async () => {
+        const fetchSpacesSpy = vi.spyOn(mockStorageAdapter, 'fetchSpaces');
+        fetchSpacesSpy.mockClear();
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-proj-space-e2e',
+              threadId: 'th-spaces-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const cardResponse = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const json = JSON.stringify(cardResponse);
+
+        // Pre-populates Active Projects and communication-project
+        expect(json).toContain('Active Projects');
+        expect(json).toContain('communication-project');
+
+        // Bounded fetch: only projects was queried; proposals was NOT queried
+        expect(fetchSpacesSpy).toHaveBeenCalledWith(expect.anything(), 'projects');
+        expect(fetchSpacesSpy).not.toHaveBeenCalledWith(expect.anything(), 'proposals');
+      });
+
+      it('infers proposals DocumentSpace when proposal/opportunity marker (RFP) appears in email', async () => {
+        const fetchSpacesSpy = vi.spyOn(mockStorageAdapter, 'fetchSpaces');
+        fetchSpacesSpy.mockClear();
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-prop-space-e2e',
+              threadId: 'th-spaces-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const cardResponse = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const json = JSON.stringify(cardResponse);
+
+        // Pre-populates Client Proposals, selects proposals spaceType and communication-proposal
+        expect(json).toContain('Client Proposals');
+        expect(json).toContain('communication-proposal');
+
+        // Both collections fetched
+        expect(fetchSpacesSpy).toHaveBeenCalledWith(expect.anything(), 'projects');
+        expect(fetchSpacesSpy).toHaveBeenCalledWith(expect.anything(), 'proposals');
+      });
+
+      it('leaves DocumentSpace blank without notFoundError when distinct spaces collide', async () => {
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-collision-e2e',
+              threadId: 'th-spaces-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const cardResponse = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const json = JSON.stringify(cardResponse);
+
+        // Collision leaves space blank with no validation errors
+        expect(json).not.toContain('was not found');
+        expect(json).not.toContain('Multiple spaces match');
+      });
+
+      it('clears space input without notFoundError when switching from matched message to unmatched message', async () => {
+        // 1. Initial open on msg-proj-space-e2e -> Active Projects
+        const resInitial = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-proj-space-e2e',
+              threadId: 'th-spaces-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+        expect(resInitial.statusCode).toBe(200);
+        expect(resInitial.payload).toContain('"value":"Active Projects"');
+
+        // 2. Switch to msg-unmatched-e2e via onEmailMessageChange
+        const resSwitch = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/action',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: {
+                action: 'onEmailMessageChange',
+                previousMessageId: 'msg-proj-space-e2e',
+              },
+              formInputs: {
+                SelectEmailMessage: { stringInputs: { value: ['msg-unmatched-e2e'] } },
+                SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+                [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+                [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+              },
+            },
+            gmail: {
+              messageId: 'msg-proj-space-e2e',
+              threadId: 'th-spaces-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(resSwitch.statusCode).toBe(200);
+        const switchJson = resSwitch.payload;
+
+        // Space input value is cleared and no notFoundError is emitted
+        expect(switchJson).not.toContain('"value":"Active Projects"');
+        expect(switchJson).not.toContain('was not found');
+      });
+    });
   });
 });
 
