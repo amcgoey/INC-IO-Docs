@@ -247,6 +247,35 @@ export function isGmailContext(context?: {
   return context.hostApp?.toUpperCase() === 'GMAIL' || Boolean(context.gmail?.messageId);
 }
 
+const IN_CARD_ACTIONS = new Set([
+  'onSpaceTypeChange',
+  'onDocumentTypeChange',
+  'onFormChange',
+  'onFileSourceChange',
+  'onEmailMessageChange',
+  'processDocument',
+  'viewJson',
+]);
+
+/**
+ * Determines whether an event represents an initial card open or a refresh event
+ * (which re-evaluates automatic Pass 1 routing heuristics).
+ */
+export function isResetOrInitialLoad(context?: ProcessUiStateEvent): boolean {
+  if (!context) {
+    return true;
+  }
+  const action = context.actionName ?? context.parameters?.action;
+  const isRefresh = action === 'refresh';
+  const hasInCardAction = action !== undefined && IN_CARD_ACTIONS.has(action);
+  const hasSelectionKeysInFormData = Boolean(
+    context.formData &&
+    Object.keys(context.formData).some((k) => isSelectionKey(k))
+  );
+
+  return isRefresh || (!hasInCardAction && !hasSelectionKeysInFormData);
+}
+
 /**
  * Normalizes formData[keyName] (string | string[] | undefined) into a Set of non-empty trimmed strings.
  */
@@ -552,8 +581,10 @@ export function resolveSpace(
     return {};
   }
 
-  // 1. Exact ID match
-  const idMatch = spaceList.find((s) => s.id === rawInput);
+  // 1. Exact ID match or abstractStorageId match
+  const idMatch = spaceList.find(
+    (s) => s.id === rawInput || (s.abstractStorageId !== undefined && s.abstractStorageId === rawInput)
+  );
   if (idMatch) {
     return {
       spaceId: idMatch.id,
@@ -676,24 +707,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     selected: typeKey === currentDocTypeKey,
   }));
 
-  const inCardActions = new Set([
-    'onSpaceTypeChange',
-    'onDocumentTypeChange',
-    'onFormChange',
-    'onFileSourceChange',
-    'onEmailMessageChange',
-    'processDocument',
-    'viewJson',
-  ]);
-  const hasInCardAction = action !== undefined && inCardActions.has(action);
-
-  const hasSelectionKeysInFormData = Boolean(
-    context.formData &&
-    Object.keys(context.formData).some((k) => isSelectionKey(k))
-  );
-
-  const isResetOrInitialLoad =
-    isRefresh || (!hasInCardAction && !hasSelectionKeysInFormData);
+  const resetOrInitialLoad = isResetOrInitialLoad(context);
 
   const isGmail = isGmailContext(context);
 
@@ -704,7 +718,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   let matchedThreadMessage: UiProcessGmailMessageDescriptor | undefined;
 
   if (isGmail && threadMessages && threadMessages.length > 0) {
-    if (isResetOrInitialLoad) {
+    if (resetOrInitialLoad) {
       // nosemgrep: domain-pass-through-read
       const initialTarget = context.gmail?.messageId;
       matchedThreadMessage = initialTarget
@@ -763,7 +777,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   let fileSources: UiSelectionItem[] | undefined;
   let effectiveFileSource: string | undefined;
   if (isGmail) {
-    if (isResetOrInitialLoad) {
+    if (resetOrInitialLoad) {
       effectiveFileSource = 'Email Attachments';
       effectiveFormData[SELECT_FILE_SOURCE_KEY] = 'Email Attachments';
       effectiveFormData[INPUT_DRIVE_URL_KEY] = '';
@@ -798,7 +812,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   let files: UiSelectionItem[];
   if (isGmail) {
     const isEmailSwitch =
-      !isResetOrInitialLoad &&
+      !resetOrInitialLoad &&
       (action === 'onEmailMessageChange' ||
         Boolean(
           context.parameters?.previousMessageId &&
@@ -828,7 +842,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
       let parsedParamSet: Set<string> | undefined;
       if (
         !hasAttachmentFormKey &&
-        !isResetOrInitialLoad &&
+        !resetOrInitialLoad &&
         shouldRestoreFromPrevious &&
         context.parameters?.previousAttachments
       ) {
@@ -850,11 +864,11 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
           selected = true;
         } else if (hasAttachmentFormKey) {
           selected = selectedSet!.has(fileId) || selectedSet!.has(item.id);
-        } else if (!isResetOrInitialLoad && parsedParamSet !== undefined) {
+        } else if (!resetOrInitialLoad && parsedParamSet !== undefined) {
           selected = parsedParamSet.has(fileId) || parsedParamSet.has(item.id);
-        } else if (isResetOrInitialLoad) {
+        } else if (resetOrInitialLoad) {
           selected = true;
-        } else if (!isResetOrInitialLoad && effectiveFileSource === 'Email Attachments') {
+        } else if (!resetOrInitialLoad && effectiveFileSource === 'Email Attachments') {
           // When submitting in-card action from 'Email Attachments' mode, Google Workspace omits checkbox name when 0 checkboxes are checked
           selected = false;
         } else {
@@ -878,7 +892,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
       return {
         text: trimmedTitle.length > 0 ? trimmedTitle : fileId,
         value: item.id,
-        selected: isResetOrInitialLoad ? true : selectedFilesSet.has(fileId),
+        selected: resetOrInitialLoad ? true : selectedFilesSet.has(fileId),
       };
     });
   }
@@ -908,7 +922,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   }
 
   if (spaceResolution.isIdMatch && spaceResolution.matchedSpace) {
-    if (spaceSelectorKey && effectiveFormData[spaceSelectorKey] !== undefined) {
+    if (spaceSelectorKey) {
       // nosemgrep: domain-pass-through-read
       effectiveFormData[spaceSelectorKey] = spaceResolution.matchedSpace.name;
     }
@@ -939,7 +953,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     : DRIVE_WORKSPACE_ADDON_VIEW_ID;
 
   if (isGmail) {
-    if (isResetOrInitialLoad) {
+    if (resetOrInitialLoad) {
       effectiveFormData[SAVE_EMAIL_TO_PDF_KEY] = false;
     } else {
       const rawSave = context.formData?.[SAVE_EMAIL_TO_PDF_KEY];

@@ -11,6 +11,9 @@ import type {
   UiProcessSourceFileDto,
   UiProcessGmailPort,
   UiProcessGmailMessageDescriptor,
+  UiProcessSourceParserPort,
+  UiProcessInferredRoutingResult,
+  UiProcessSourceContextItem,
 } from '../ports';
 
 import {
@@ -23,6 +26,7 @@ import {
   getDocTypeSelectorKey,
   SELECT_DOCUMENT_SPACE_KEY,
   SELECT_DOCUMENT_TYPE_KEY,
+  SELECT_DOCUMENT_SPACE_TYPE_KEY,
   SELECT_DOCUMENT_SPACE_PREFIX,
   SELECT_DOCUMENT_TYPE_PREFIX,
   SELECT_FILE_SOURCE_KEY,
@@ -34,6 +38,7 @@ import {
   resolveAttachmentId,
   parseGoogleDriveUrl,
   isGmailContext,
+  isResetOrInitialLoad,
   type UiStateResolutionContext,
   type UiProcessSpaceItem,
 } from '../domain';
@@ -45,6 +50,7 @@ export interface WorkspaceAddonAdapterOptions {
   documentRunner?: UiProcessDocumentRunnerPort | undefined;
   formEvaluator?: UiProcessFormEvaluatorPort | undefined;
   gmailPort?: UiProcessGmailPort | undefined;
+  sourceParser?: UiProcessSourceParserPort | undefined;
 }
 
 
@@ -104,7 +110,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       this.options;
 
     const actionName = context.actionName ?? context.parameters?.action;
-    let effectiveContext = context;
+    let effectiveContext = context.actionName === actionName ? context : { ...context, actionName };
 
     const isGmail = isGmailContext(context);
     let threadMessages: UiProcessGmailMessageDescriptor[] | undefined;
@@ -202,12 +208,57 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
     const config = configProvider ? await configProvider.getWorkspaceConfig() : undefined;
     const spaceTypes = spaceProvider.getAllTypes();
-    const currentSpaceType = resolveSpaceType({
-      formData: effectiveContext.formData,
-      config,
-      spaceTypes,
-    });
-    const isSpaceTypeChange = actionName === 'onSpaceTypeChange';
+
+    const isResetOrInitial = isResetOrInitialLoad(effectiveContext);
+    let inferred: UiProcessInferredRoutingResult | undefined;
+    const sourceParser = this.options.sourceParser;
+
+    if (!isGmail && isResetOrInitial && sourceParser) {
+      const candidateItems: UiProcessSourceContextItem[] = (effectiveContext.selectedItems ?? [])
+        .filter(
+          (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
+            typeof item?.id === 'string' && item.id.trim().length > 0
+        )
+        .map((item) => ({
+          id: item.id.trim(),
+          ...(item.title !== undefined ? { name: item.title } : {}),
+          ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
+        }));
+
+      if (candidateItems.length > 0) {
+        try {
+          inferred = await sourceParser.inferRouting({ items: candidateItems });
+        } catch (e) {
+          console.warn('SourceParser Pass 1 inferRouting error:', e);
+        }
+      }
+    }
+
+    const inferredSpaceType =
+      inferred?.spaceTypeId && spaceTypes.some((t) => t.id === inferred.spaceTypeId)
+        ? inferred.spaceTypeId
+        : undefined;
+
+    const currentSpaceType =
+      inferredSpaceType ??
+      resolveSpaceType({
+        formData: effectiveContext.formData,
+        config,
+        spaceTypes,
+      });
+
+    if (
+      inferredSpaceType &&
+      effectiveContext.formData?.[SELECT_DOCUMENT_SPACE_TYPE_KEY] !== inferredSpaceType
+    ) {
+      effectiveContext = {
+        ...effectiveContext,
+        formData: {
+          ...effectiveContext.formData,
+          [SELECT_DOCUMENT_SPACE_TYPE_KEY]: inferredSpaceType,
+        },
+      };
+    }
 
     const activeSpaceObj = spaceTypes.find((t) => t.id === currentSpaceType);
     const allowedDocTypes = activeSpaceObj?.spaceSchema.allowedDocumentTypes ?? [];
@@ -217,16 +268,24 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         ? activeSpaceObj.spaceSchema.defaultDocumentType
         : (allowedDocTypes[0] ?? config?.defaultDocumentType);
 
+    const isSpaceTypeChange = actionName === 'onSpaceTypeChange';
+
+    const inferredDocType =
+      inferred?.documentTypeKey && (allowedDocTypes.length === 0 || allowedDocTypes.includes(inferred.documentTypeKey))
+        ? inferred.documentTypeKey
+        : undefined;
+
     const rawSelectedDocType =
       isSpaceTypeChange
         ? defaultDocTypeForSpace
-        : resolveDocumentType({
+        : (inferredDocType ??
+          resolveDocumentType({
             formData: effectiveContext.formData,
             config,
             activeSpaceType: currentSpaceType,
             parameters: effectiveContext.parameters,
             spaceTypes,
-          });
+          }));
 
     let resolvedDocumentTypeKey = rawSelectedDocType;
     if (rawSelectedDocType && manifestPort) {
@@ -247,20 +306,6 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       resolvedDocumentTypeKey = defaultDocTypeForSpace ?? resolvedDocumentTypeKey;
     }
 
-    const normalizedFormData = normalizeFormData(
-      {
-        formData: effectiveContext.formData,
-        activeSpaceType: currentSpaceType,
-        config,
-        spaceTypes,
-      },
-      resolvedDocumentTypeKey
-    );
-    const normalizedContext: UiProcessEventContext =
-      normalizedFormData !== effectiveContext.formData
-        ? { ...effectiveContext, formData: normalizedFormData }
-        : effectiveContext;
-
     let spaces: UiProcessSpaceItem[] = [];
     const collectionErrors: string[] = [];
     try {
@@ -278,6 +323,53 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         collectionErrors.push(errMsg);
       }
     }
+
+    const spaceSelectorKey = currentSpaceType ? getSpaceSelectorKey(currentSpaceType) : undefined;
+    if (inferred?.spaceIdOrName && spaceSelectorKey) {
+      const inferredSpaceRes = resolveSpace(
+        {
+          formData: { spaceId: inferred.spaceIdOrName },
+          activeSpaceType: currentSpaceType,
+          config,
+        },
+        spaces
+      );
+
+      if (inferredSpaceRes.matchedSpace) {
+        effectiveContext = {
+          ...effectiveContext,
+          formData: {
+            ...effectiveContext.formData,
+            [spaceSelectorKey]: inferredSpaceRes.matchedSpace.name,
+            [SELECT_DOCUMENT_SPACE_KEY]: inferredSpaceRes.matchedSpace.name,
+          },
+        };
+      }
+    }
+
+    if (inferred?.statusMessages && inferred.statusMessages.length > 0) {
+      effectiveContext = {
+        ...effectiveContext,
+        statusMessages: [
+          ...(effectiveContext.statusMessages ?? []),
+          ...inferred.statusMessages,
+        ],
+      };
+    }
+
+    const normalizedFormData = normalizeFormData(
+      {
+        formData: effectiveContext.formData,
+        activeSpaceType: currentSpaceType,
+        config,
+        spaceTypes,
+      },
+      resolvedDocumentTypeKey
+    );
+    const normalizedContext: UiProcessEventContext =
+      normalizedFormData !== effectiveContext.formData
+        ? { ...effectiveContext, formData: normalizedFormData }
+        : effectiveContext;
 
     const createRenderResult = (options: {
       formData?: Record<string, unknown> | undefined;

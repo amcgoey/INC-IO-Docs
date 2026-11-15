@@ -38,6 +38,13 @@ describe('GoogleDriveClient', () => {
           parents: ['parent-folder-abc'],
           mimeType: 'application/pdf',
           webViewLink: 'https://drive.google.com/file/d/file-123/view',
+          driveId: 'drive-001',
+          createdTime: '2026-01-01T00:00:00.000Z',
+          modifiedTime: '2026-01-02T00:00:00.000Z',
+          shortcutDetails: {
+            targetId: 'target-file-456',
+            targetMimeType: 'application/pdf',
+          },
         },
       });
 
@@ -49,10 +56,18 @@ describe('GoogleDriveClient', () => {
         parents: ['parent-folder-abc'],
         mimeType: 'application/pdf',
         webViewLink: 'https://drive.google.com/file/d/file-123/view',
+        driveId: 'drive-001',
+        createdTime: '2026-01-01T00:00:00.000Z',
+        modifiedTime: '2026-01-02T00:00:00.000Z',
+        shortcutDetails: {
+          targetId: 'target-file-456',
+          targetMimeType: 'application/pdf',
+        },
       });
       expect(mockDrive.files.get).toHaveBeenCalledWith({
         fileId: 'file-123',
-        fields: 'id, name, parents, mimeType, webViewLink',
+        fields:
+          'id, name, parents, mimeType, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
         supportsAllDrives: true,
       });
     });
@@ -257,7 +272,8 @@ describe('GoogleDriveClient', () => {
 
       expect(mockDrive.files.get).toHaveBeenCalledWith({
         fileId: 'file-123',
-        fields: 'id, name, parents, mimeType, webViewLink',
+        fields:
+          'id, name, parents, mimeType, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
         supportsAllDrives: true,
       });
 
@@ -364,7 +380,8 @@ describe('GoogleDriveClient', () => {
       });
       expect(mockDrive.files.get).toHaveBeenCalledWith({
         fileId: 'file-123',
-        fields: 'id, name, parents, mimeType, webViewLink',
+        fields:
+          'id, name, parents, mimeType, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
         supportsAllDrives: true,
       });
       expect(mockDrive.files.update).not.toHaveBeenCalled();
@@ -431,7 +448,8 @@ describe('GoogleDriveClient', () => {
       });
       expect(mockDrive.files.get).toHaveBeenCalledWith({
         fileId: 'root-id',
-        fields: 'id, name, parents, mimeType, webViewLink',
+        fields:
+          'id, name, parents, mimeType, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
         supportsAllDrives: true,
       });
     });
@@ -665,7 +683,8 @@ describe('GoogleDriveClient', () => {
 
       expect(mockDrive.files.get).toHaveBeenCalledWith({
         fileId: 'file-123',
-        fields: 'id, name, parents, mimeType, webViewLink',
+        fields:
+          'id, name, parents, mimeType, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
         supportsAllDrives: true,
       });
 
@@ -1723,7 +1742,8 @@ describe('GoogleDriveClient', () => {
 
       expect(mockDrive.files.get).toHaveBeenNthCalledWith(1, {
         fileId: 'file-pdf-1',
-        fields: 'id, name, parents, mimeType, webViewLink',
+        fields:
+          'id, name, parents, mimeType, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
         supportsAllDrives: true,
       });
       expect(mockDrive.files.get).toHaveBeenNthCalledWith(

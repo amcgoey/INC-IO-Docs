@@ -30,6 +30,7 @@ import {
   extractSelectFilesSet,
   resolveAttachmentId,
   formatThreadEmailOptionLabel,
+  isResetOrInitialLoad,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
   UiProcessGmailEventContextSchema,
@@ -71,6 +72,7 @@ export {
   extractSelectFilesSet,
   resolveAttachmentId,
   formatThreadEmailOptionLabel,
+  isResetOrInitialLoad,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
   UiProcessGmailEventContextSchema,
@@ -205,6 +207,30 @@ export interface UiProcessGmailPort {
     messageId: string,
     options?: { skipCache?: boolean }
   ): Promise<UiProcessGmailMessageDescriptor>;
+}
+
+export const UiProcessInferredRoutingResultSchema = Type.Object({
+  spaceTypeId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  spaceIdOrName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  documentTypeKey: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  statusMessages: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+});
+export type UiProcessInferredRoutingResult = Static<typeof UiProcessInferredRoutingResultSchema>;
+
+export const UiProcessSourceContextItemSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type UiProcessSourceContextItem = Static<typeof UiProcessSourceContextItemSchema>;
+
+export const UiProcessSourceContextSchema = Type.Object({
+  items: Type.Optional(Type.Union([Type.Array(UiProcessSourceContextItemSchema), Type.Undefined()])),
+});
+export type UiProcessSourceContext = Static<typeof UiProcessSourceContextSchema>;
+
+export interface UiProcessSourceParserPort {
+  inferRouting(context: UiProcessSourceContext): Promise<UiProcessInferredRoutingResult>;
 }
 
 // --- Driving Port ---

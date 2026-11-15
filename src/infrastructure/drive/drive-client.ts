@@ -3,12 +3,26 @@ import { google, type drive_v3 } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import { Type } from '@sinclair/typebox';
 
+export interface DriveShortcutDetails {
+  targetId?: string | undefined;
+  targetMimeType?: string | undefined;
+}
+
+export const DriveShortcutDetailsSchema = Type.Object({
+  targetId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  targetMimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+
 export interface DriveFileMetadata {
   id: string;
   name: string;
   parents?: string[] | undefined;
   mimeType?: string | undefined;
   webViewLink?: string | undefined;
+  driveId?: string | undefined;
+  createdTime?: string | undefined;
+  modifiedTime?: string | undefined;
+  shortcutDetails?: DriveShortcutDetails | undefined;
 }
 
 export const DriveFileMetadataSchema = Type.Object({
@@ -17,6 +31,10 @@ export const DriveFileMetadataSchema = Type.Object({
   parents: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   webViewLink: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  driveId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  createdTime: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  modifiedTime: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  shortcutDetails: Type.Optional(Type.Union([DriveShortcutDetailsSchema, Type.Undefined()])),
 });
 
 export interface DriveSearchParams {
@@ -303,7 +321,8 @@ export class GoogleDriveClient {
       const res = await this.executeWithRetry(() =>
         drive.files.get({
           fileId,
-          fields: 'id, name, parents, mimeType, webViewLink',
+          fields:
+            'id, name, parents, mimeType, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
           supportsAllDrives: true,
         })
       );
@@ -313,12 +332,23 @@ export class GoogleDriveClient {
         `Failed to retrieve file metadata for fileId '${fileId}'`
       );
 
+      const shortcutDetails = res.data.shortcutDetails
+        ? {
+            targetId: res.data.shortcutDetails.targetId ?? undefined,
+            targetMimeType: res.data.shortcutDetails.targetMimeType ?? undefined,
+          }
+        : undefined;
+
       return {
         id,
         name,
         parents: res.data.parents ?? [],
         mimeType: res.data.mimeType ?? undefined,
         webViewLink: res.data.webViewLink ?? undefined,
+        driveId: res.data.driveId ?? undefined,
+        createdTime: res.data.createdTime ?? undefined,
+        modifiedTime: res.data.modifiedTime ?? undefined,
+        shortcutDetails,
       };
     } catch (error) {
       this.wrapApiError('getFile', error);

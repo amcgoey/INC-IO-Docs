@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
+import { GoogleDriveClient } from '../src/infrastructure/drive/drive-client';
 import {
   createSchemaDrivenUiWiring,
   type RawManifestProviderPort,
@@ -45,6 +46,18 @@ describe('Anti-Corruption Wiring Integration', () => {
       return undefined;
     }),
   };
+
+  beforeEach(() => {
+    vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
+      id: 'drive-123',
+      name: 'Contract Document',
+      parents: ['root'],
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it('wires SchemaDrivenUiService with driven Manifest adapter and workspace addon adapter', async () => {
     const wiring = createSchemaDrivenUiWiring({

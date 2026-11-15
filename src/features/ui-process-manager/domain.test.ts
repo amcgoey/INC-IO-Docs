@@ -942,6 +942,26 @@ describe('ui-process-manager domain', () => {
       expect(result.collisionError).toBeUndefined();
     });
 
+    it('resolves space by abstractStorageId when input matches abstractStorageId', () => {
+      const storageSpaces = [
+        { id: 'space-proj-1', name: 'Project Alpha', abstractStorageId: 'shared-drive-alpha' },
+        { id: 'space-proj-2', name: 'Project Beta', abstractStorageId: 'shared-drive-beta' },
+      ];
+      const result = resolveSpace(
+        { formData: { SelectDocumentSpace: 'shared-drive-alpha' } },
+        storageSpaces
+      );
+      expect(result.spaceId).toBe('space-proj-1');
+      expect(result.matchedSpace).toEqual({
+        id: 'space-proj-1',
+        name: 'Project Alpha',
+        abstractStorageId: 'shared-drive-alpha',
+      });
+      expect(result.isIdMatch).toBe(true);
+      expect(result.collisionError).toBeUndefined();
+      expect(result.notFoundError).toBeUndefined();
+    });
+
     it('resolves single unique space by case-insensitive and trimmed name match', () => {
       const result = resolveSpace(
         { formData: { SelectDocumentSpace: '  PROJECT BETA  ' } },

@@ -15,6 +15,7 @@ import {
   type UiProcessSpaceItem,
   type UiProcessDocumentSpaceDto,
   type UiProcessGmailPort,
+  type UiProcessSourceParserPort,
 } from '../features/ui-process-manager';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import {
@@ -218,6 +219,8 @@ export interface UiProcessManagerWiringOptions {
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
   validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
   pdfProcessor?: PdfProcessor | undefined;
+  sourceParser?: UiProcessSourceParserPort | undefined;
+  createSourceParser?: ((context: WorkspaceExecutionContext) => UiProcessSourceParserPort | Promise<UiProcessSourceParserPort>) | undefined;
 }
 
 export type UiProcessOrchestratorResolver = (
@@ -498,6 +501,7 @@ export function createUiProcessManagerWiring(
     documentRunner: fallbackDocumentRunner,
     formEvaluator,
     gmailPort,
+    ...(options.sourceParser !== undefined ? { sourceParser: options.sourceParser } : {}),
   });
 
   const orchestratorResolver: UiProcessOrchestratorResolver = async (
@@ -510,9 +514,13 @@ export function createUiProcessManagerWiring(
     const token = context.userOAuthToken ?? context.gmail?.accessToken;
     const reqGmailPort: UiProcessGmailPort = options.gmailPort ?? createGmailPortForToken(token);
 
-    if (!options.createDocumentSpaceService && !options.createDocumentService && !token) {
+    if (!options.createDocumentSpaceService && !options.createDocumentService && !options.createSourceParser && !token) {
       return orchestrator;
     }
+
+    const reqSourceParser: UiProcessSourceParserPort | undefined = options.createSourceParser
+      ? await options.createSourceParser(context)
+      : options.sourceParser;
 
     const docSpaceService = options.createDocumentSpaceService
       ? await options.createDocumentSpaceService(context)
@@ -583,6 +591,7 @@ export function createUiProcessManagerWiring(
       documentRunner: reqDocumentRunner,
       formEvaluator,
       gmailPort: reqGmailPort,
+      ...(reqSourceParser !== undefined ? { sourceParser: reqSourceParser } : {}),
     });
   };
 
