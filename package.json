@@ -37,10 +37,10 @@
   "dependencies": {
     "@fastify/type-provider-typebox": "^6.3.0",
     "@sinclair/typebox": "^0.34.52",
-    "fastify": "^5.12.7",
+    "fastify": "^5.12.8",
     "google-auth-library": "^11.3.2",
     "googleapis": "^188.0.0",
-    "handlebars": "^4.7.9",
+    "handlebars": "^4.7.10",
     "json-logic-js": "^2.0.5",
     "pdf-lib": "^1.17.1",
     "unpdf": "^1.8.1"
@@ -53,8 +53,8 @@
     "knip": "^6.44.0",
     "nock": "^14.0.17",
     "tsx": "^4.23.15",
-    "typescript": "^5.6.3",
+    "typescript": "^5.9.3",
     "typescript-eslint": "^8.72.1",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.0"
   }
 }
