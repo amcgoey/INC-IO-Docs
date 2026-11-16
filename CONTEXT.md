@@ -109,3 +109,7 @@ A declarative layout orchestrating which `UiBlock`s compose a `UiView`. Hard-cod
 **SourceParser**:
 The domain feature responsible for inspecting a `SourceContext` to infer routing selections (`DocumentSpaceType`, `DocumentSpace`, `DocumentType`) and extract pre-populated `Document` field values according to `DocumentParseSchema`.
 _Avoid_: PrePopulator, ContextExtractor, FieldExtractor
+
+**AliasDictionary**:
+A shared, option-source-scoped mapping of canonical `LookupField` option keys to alternate recognition phrases and email domains, referenced from the `Manifest` to resolve external entities across `DocumentType`s without polluting `DocumentSchema`.
+_Avoid_: MatchList, SynonymMap, LookupMap
