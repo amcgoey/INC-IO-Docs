@@ -46,6 +46,7 @@ import {
   parseGoogleDriveUrl,
   isGmailContext,
   isResetOrInitialLoad,
+  isSelectionKey,
   type UiStateResolutionContext,
   type UiProcessSpaceItem,
 } from '../domain';
@@ -58,6 +59,32 @@ export interface WorkspaceAddonAdapterOptions {
   formEvaluator?: UiProcessFormEvaluatorPort | undefined;
   gmailPort?: UiProcessGmailPort | undefined;
   sourceParser?: UiProcessSourceParserPort | undefined;
+}
+
+function extractFieldKeysFromDocSchema(docSchema: unknown): Set<string> | undefined {
+  if (!docSchema || typeof docSchema !== 'object') {
+    return undefined;
+  }
+  const fields = (docSchema as { fields?: unknown }).fields;
+  if (!fields) {
+    return undefined;
+  }
+  const keys = new Set<string>();
+  if (Array.isArray(fields)) {
+    for (const f of fields) {
+      if (f && typeof f === 'object' && typeof (f as { key?: unknown }).key === 'string') {
+        keys.add((f as { key: string }).key);
+      }
+    }
+    return keys;
+  }
+  if (typeof fields === 'object') {
+    for (const k of Object.keys(fields)) {
+      keys.add(k);
+    }
+    return keys;
+  }
+  return undefined;
 }
 
 
@@ -158,6 +185,52 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     };
 
     const isResetOrInitial = isResetOrInitialLoad(effectiveContext);
+
+    const effectiveFileSource = isGmail
+      ? (isResetOrInitial
+          ? 'Email Attachments'
+          : ((effectiveContext.formData?.[SELECT_FILE_SOURCE_KEY] as string | undefined) ?? 'Email Attachments'))
+      : undefined;
+
+    const currentDriveUrl = isGmail
+      ? ((effectiveContext.formData?.[INPUT_DRIVE_URL_KEY] as string | undefined)?.trim() ??
+         (effectiveContext.parameters?.previousDriveUrl?.trim() ?? ''))
+      : '';
+
+    const previousDriveUrl = isGmail
+      ? (effectiveContext.parameters?.previousDriveUrl?.trim() ?? '')
+      : '';
+
+    const parsedCurrentDriveUrl = isGmail && currentDriveUrl.length > 0
+      ? parseGoogleDriveUrl(currentDriveUrl)
+      : undefined;
+
+    const isSourceReset =
+      isResetOrInitial ||
+      actionName === 'refresh' ||
+      (isGmail && (
+        actionName === 'onEmailMessageChange' ||
+        (actionName === 'onFileSourceChange' && (
+          effectiveFileSource !== 'Google Drive URL' || Boolean(parsedCurrentDriveUrl)
+        )) ||
+        (actionName === 'onFormChange' &&
+          effectiveFileSource === 'Google Drive URL' &&
+          Boolean(parsedCurrentDriveUrl) &&
+          currentDriveUrl !== previousDriveUrl)
+      ));
+
+    if (isSourceReset && effectiveContext.formData) {
+      const sanitizedFormData: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(effectiveContext.formData)) {
+        if (isSelectionKey(key) || key === 'spaceId') {
+          sanitizedFormData[key] = value;
+        }
+      }
+      effectiveContext = {
+        ...effectiveContext,
+        formData: sanitizedFormData,
+      };
+    }
 
     const {
       inferred,
@@ -341,7 +414,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       };
     }
 
-    const normalizedFormData = normalizeFormData(
+    let normalizedFormData = normalizeFormData(
       {
         formData: effectiveContext.formData,
         activeSpaceType: currentSpaceType,
@@ -350,6 +423,67 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       },
       resolvedDocumentTypeKey
     );
+
+    const isDocTypeChange = actionName === 'onDocumentTypeChange';
+    const isManualTypeSwitch = isSpaceTypeChange || isDocTypeChange;
+
+    if (isManualTypeSwitch && normalizedFormData) {
+      const allKnownDocTypes = new Set<string>();
+      for (const st of spaceTypes) {
+        for (const dt of st.spaceSchema.allowedDocumentTypes) {
+          allKnownDocTypes.add(dt);
+        }
+      }
+      if (manifestPort) {
+        try {
+          const allDocDefs = await manifestPort.getAllDocumentTypes();
+          for (const def of allDocDefs) {
+            if (def?.key) {
+              allKnownDocTypes.add(def.key);
+            }
+          }
+        } catch (e) {
+          console.warn('Could not fetch all document types from manifestPort', e);
+        }
+      }
+
+      let docSchemaFields: Set<string> | undefined;
+      if (resolvedDocumentTypeKey && manifestPort) {
+        try {
+          const schemas = await manifestPort.getDocumentTypeSchemas(resolvedDocumentTypeKey);
+          docSchemaFields = extractFieldKeysFromDocSchema(schemas?.docSchema);
+        } catch (e) {
+          console.warn(`Could not fetch schemas for: ${resolvedDocumentTypeKey}`, e);
+        }
+      }
+
+      const prunedFormData: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(normalizedFormData)) {
+        if (isSelectionKey(key) || key === 'spaceId') {
+          prunedFormData[key] = value;
+          continue;
+        }
+
+        const isInactiveSuffix = Array.from(allKnownDocTypes).some(
+          (dt) => dt !== resolvedDocumentTypeKey && key.endsWith(`_${dt}`)
+        );
+
+        if (isInactiveSuffix) {
+          prunedFormData[key] = value;
+          continue;
+        }
+
+        if (docSchemaFields !== undefined) {
+          if (docSchemaFields.has(key)) {
+            prunedFormData[key] = value;
+          }
+        } else {
+          prunedFormData[key] = value;
+        }
+      }
+      normalizedFormData = prunedFormData;
+    }
+
     const normalizedContext: UiProcessEventContext =
       normalizedFormData !== effectiveContext.formData
         ? { ...effectiveContext, formData: normalizedFormData }
@@ -631,7 +765,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
     let evaluatedFormData = normalizedContext.formData;
     let hiddenFields: string[] | undefined;
-    if (actionName === 'onFormChange' && formEvaluator) {
+    if (formEvaluator) {
       try {
         const evaluation = await formEvaluator.evaluate(
           normalizedContext.formData ?? {},
@@ -640,9 +774,9 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         evaluatedFormData = evaluation.computedData;
         hiddenFields = evaluation.hiddenFields;
       } catch (e) {
-        console.warn('Form change evaluation failed:', e);
+        console.warn('Form evaluation failed:', e);
         return createErrorRenderResult([
-          e instanceof Error ? e.message : 'Form change evaluation failed',
+          e instanceof Error ? e.message : 'Form evaluation failed',
         ]);
       }
     }

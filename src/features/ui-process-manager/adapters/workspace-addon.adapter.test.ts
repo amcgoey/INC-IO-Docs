@@ -4770,5 +4770,466 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       });
     });
   });
+
+  describe('Ticket #301: Card-state cleansing and universal formEvaluator reactive evaluation', () => {
+    describe('Source-reset events card-state cleansing', () => {
+      it('purges all prior data keys (!isSelectionKey && key !== "spaceId") on initial load', async () => {
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+        });
+
+        const context: UiProcessEventContext = {
+          formData: {
+            subject: 'Old Subject',
+            'subject_communication-project': 'Old Suffixed Subject',
+            contact: 'Old Contact',
+          },
+        };
+
+        const result = await adapter.processUiEvent(context);
+        expect(result.type).toBe('render');
+        const renderResult = result as UiProcessRenderResult;
+        expect(renderResult.formData?.subject).toBeUndefined();
+        expect(renderResult.formData?.['subject_communication-project']).toBeUndefined();
+        expect(renderResult.formData?.contact).toBeUndefined();
+      });
+
+      it('purges all prior data keys on refresh action', async () => {
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'refresh',
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            spaceId: 'proj1',
+            subject: 'Stale Subject',
+            'subject_communication-project': 'Stale Subject',
+            date: '261019',
+          },
+        };
+
+        const result = await adapter.processUiEvent(context);
+        expect(result.type).toBe('render');
+        const renderResult = result as UiProcessRenderResult;
+        expect(renderResult.formData?.subject).toBeUndefined();
+        expect(renderResult.formData?.['subject_communication-project']).toBeUndefined();
+        expect(renderResult.formData?.date).toBeUndefined();
+      });
+
+      it('purges all prior data keys on onEmailMessageChange in Gmail', async () => {
+        const mockGmailPort: UiProcessGmailPort = {
+          getMessageAttachments: vi.fn().mockResolvedValue([]),
+          getThreadMessages: vi.fn().mockResolvedValue([
+            { id: 'msg-1', attachments: [] },
+            { id: 'msg-2', attachments: [] },
+          ]),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          gmailPort: mockGmailPort,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'onEmailMessageChange',
+          hostApp: 'GMAIL',
+          gmail: { messageId: 'msg-1', threadId: 'th-1' },
+          formData: {
+            SelectEmailMessage: 'msg-2',
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            spaceId: 'proj1',
+            subject: 'Email 1 Subject',
+            'subject_communication-project': 'Email 1 Subject',
+            contact: 'Email 1 Contact',
+          },
+          parameters: {
+            previousMessageId: 'msg-1',
+          },
+        };
+
+        const result = await adapter.processUiEvent(context);
+        expect(result.type).toBe('render');
+        const renderResult = result as UiProcessRenderResult;
+        expect(renderResult.formData?.subject).toBeUndefined();
+        expect(renderResult.formData?.['subject_communication-project']).toBeUndefined();
+        expect(renderResult.formData?.contact).toBeUndefined();
+      });
+
+      it('purges all prior data keys on onFileSourceChange switching back to Email Attachments', async () => {
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'onFileSourceChange',
+          hostApp: 'GMAIL',
+          formData: {
+            SelectFileSource: 'Email Attachments',
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            spaceId: 'proj1',
+            subject: 'Drive Stale Subject',
+            'subject_communication-project': 'Drive Stale Subject',
+          },
+        };
+
+        const result = await adapter.processUiEvent(context);
+        expect(result.type).toBe('render');
+        const renderResult = result as UiProcessRenderResult;
+        expect(renderResult.formData?.subject).toBeUndefined();
+        expect(renderResult.formData?.['subject_communication-project']).toBeUndefined();
+      });
+
+      it('purges all prior data keys on onFileSourceChange when switching to Google Drive URL with valid link', async () => {
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'onFileSourceChange',
+          hostApp: 'GMAIL',
+          formData: {
+            SelectFileSource: 'Google Drive URL',
+            InputDriveURL: 'https://drive.google.com/file/d/drive-valid-123/view',
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            spaceId: 'proj1',
+            subject: 'Prior Attachment Subject',
+            'subject_communication-project': 'Prior Attachment Subject',
+          },
+        };
+
+        const result = await adapter.processUiEvent(context);
+        expect(result.type).toBe('render');
+        const renderResult = result as UiProcessRenderResult;
+        expect(renderResult.formData?.subject).toBeUndefined();
+        expect(renderResult.formData?.['subject_communication-project']).toBeUndefined();
+      });
+
+      it('preserves all current DocumentField values when onFileSourceChange switches to Google Drive URL with blank InputDriveURL', async () => {
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'onFileSourceChange',
+          hostApp: 'GMAIL',
+          formData: {
+            SelectFileSource: 'Google Drive URL',
+            InputDriveURL: '',
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            spaceId: 'proj1',
+            subject: 'Preserved Subject',
+            'contact_communication-project': 'Alice',
+          },
+        };
+
+        const result = await adapter.processUiEvent(context);
+        expect(result.type).toBe('render');
+        const renderResult = result as UiProcessRenderResult;
+        expect(renderResult.formData?.subject).toBe('Preserved Subject');
+        expect(renderResult.formData?.contact).toBe('Alice');
+      });
+
+      it('purges prior data keys on onFormChange when SelectFileSource is Google Drive URL and InputDriveURL transitions to valid link', async () => {
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'onFormChange',
+          hostApp: 'GMAIL',
+          formData: {
+            SelectFileSource: 'Google Drive URL',
+            InputDriveURL: 'https://drive.google.com/file/d/new-valid-link/view',
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            spaceId: 'proj1',
+            subject: 'Old Form Subject',
+            contact: 'Old Form Contact',
+          },
+          parameters: {
+            previousDriveUrl: 'https://drive.google.com/file/d/old-link/view',
+          },
+        };
+
+        const result = await adapter.processUiEvent(context);
+        expect(result.type).toBe('render');
+        const renderResult = result as UiProcessRenderResult;
+        expect(renderResult.formData?.subject).toBeUndefined();
+        expect(renderResult.formData?.contact).toBeUndefined();
+      });
+
+      it('preserves data keys on onFormChange when InputDriveURL does not transition', async () => {
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'onFormChange',
+          hostApp: 'GMAIL',
+          formData: {
+            SelectFileSource: 'Google Drive URL',
+            InputDriveURL: 'https://drive.google.com/file/d/same-link/view',
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            spaceId: 'proj1',
+            subject: 'User Editing Subject',
+          },
+          parameters: {
+            previousDriveUrl: 'https://drive.google.com/file/d/same-link/view',
+          },
+        };
+
+        const result = await adapter.processUiEvent(context);
+        expect(result.type).toBe('render');
+        const renderResult = result as UiProcessRenderResult;
+        expect(renderResult.formData?.subject).toBe('User Editing Subject');
+      });
+    });
+
+    describe('Manual type-switch events card-state hygiene', () => {
+      const typeSwitchManifestPort: UiProcessManifestPort = {
+        resolveDocumentTypeKey: vi.fn().mockImplementation(async (key: string) => key),
+        getAllDocumentTypes: vi.fn().mockResolvedValue([
+          { key: 'communication-project', name: 'Communication Project' },
+          { key: 'submittal-arch', name: 'Submittal Arch' },
+        ]),
+        getDocumentTypeSchemas: vi.fn().mockImplementation(async (key: string) => {
+          if (key === 'submittal-arch') {
+            return {
+              docSchema: {
+                fields: [
+                  { key: 'status' },
+                  { key: 'section' },
+                  { key: 'number' },
+                  { key: 'contact' },
+                ],
+              },
+            };
+          }
+          if (key === 'communication-project') {
+            return {
+              docSchema: {
+                fields: [
+                  { key: 'subject' },
+                  { key: 'contact' },
+                  { key: 'date' },
+                ],
+              },
+            };
+          }
+          return {};
+        }),
+      };
+
+      it('retains inactive _${otherDocType} suffixed entries while pruning unsuffixed data keys absent from new DocumentSchema', async () => {
+        const customSpaceProvider: UiProcessSpaceProviderPort = {
+          getAllTypes: () => [
+            {
+              id: 'projects',
+              displayName: 'Projects',
+              spaceSchema: { allowedDocumentTypes: ['communication-project', 'submittal-arch'] },
+            },
+          ],
+          getCollection: async () => ({ spaces: [{ id: 'p1', name: 'Project Main' }] }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: customSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: typeSwitchManifestPort,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'onDocumentTypeChange',
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            SelectDocumentType_projects: 'submittal-arch',
+            'subject_communication-project': 'Comm Subject',
+            'section_submittal-arch': '071200',
+            subject: 'Comm Subject',
+            contact: 'Alice',
+          },
+        };
+
+        const result = await adapter.processUiEvent(context);
+        expect(result.type).toBe('render');
+        const renderResult = result as UiProcessRenderResult;
+        expect(renderResult.isUpdateCard).toBe(true);
+        expect(renderResult.documentTypeKey).toBe('submittal-arch');
+
+        // Retains inactive otherDocType suffixed entry:
+        expect(renderResult.formData?.['subject_communication-project']).toBe('Comm Subject');
+
+        // Normalizes and retains submittal-arch field:
+        expect(renderResult.formData?.section).toBe('071200');
+
+        // Retains common contact field present in submittal-arch schema:
+        expect(renderResult.formData?.contact).toBe('Alice');
+
+        // Prunes unsuffixed subject which is not in submittal-arch schema:
+        expect(renderResult.formData?.subject).toBeUndefined();
+      });
+
+      it('preserves unsuffixed keys without pruning when docSchema.fields is not returned by manifestPort', async () => {
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+        });
+
+        const context: UiProcessEventContext = {
+          actionName: 'onDocumentTypeChange',
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project Main',
+            SelectDocumentType_projects: 'invoice-project',
+            contact: 'Alice',
+            unlistedField: 'KeepMe',
+          },
+        };
+
+        const result = await adapter.processUiEvent(context);
+        expect(result.type).toBe('render');
+        const renderResult = result as UiProcessRenderResult;
+        expect(renderResult.formData?.contact).toBe('Alice');
+        expect(renderResult.formData?.unlistedField).toBe('KeepMe');
+      });
+    });
+
+    describe('Universal formEvaluator reactive evaluation', () => {
+      it('executes formEvaluator across initial load, seeding defaultValue and applying hiddenFields', async () => {
+        const mockFormEvaluator: UiProcessFormEvaluatorPort = {
+          evaluate: vi.fn().mockResolvedValue({
+            computedData: {
+              status: 'Open',
+              computedField: 'computed-val',
+            },
+            hiddenFields: ['internalNotes'],
+            disabledFields: [],
+          }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          formEvaluator: mockFormEvaluator,
+        });
+
+        const result = await adapter.processUiEvent({});
+        expect(result.type).toBe('render');
+        const renderResult = result as UiProcessRenderResult;
+        expect(mockFormEvaluator.evaluate).toHaveBeenCalledTimes(1);
+        expect(mockFormEvaluator.evaluate).toHaveBeenCalledWith(
+          expect.anything(),
+          'communication-project'
+        );
+        expect(renderResult.isUpdateCard).toBe(false);
+        expect(renderResult.formData?.status).toBe('Open');
+        expect(renderResult.formData?.computedField).toBe('computed-val');
+        expect(renderResult.hiddenFields).toEqual(['internalNotes']);
+      });
+
+      it('executes formEvaluator on onSpaceTypeChange and retains isUpdateCard: true', async () => {
+        const mockFormEvaluator: UiProcessFormEvaluatorPort = {
+          evaluate: vi.fn().mockImplementation(async (formData: Record<string, unknown>) => ({
+            computedData: {
+              ...formData,
+              direction: 'IN',
+            },
+            hiddenFields: [],
+            disabledFields: [],
+          })),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          formEvaluator: mockFormEvaluator,
+        });
+
+        const result = await adapter.processUiEvent({
+          actionName: 'onSpaceTypeChange',
+          formData: {
+            SelectDocumentSpaceType: 'proposals',
+            SelectDocumentType_proposals: 'communication-proposal',
+          },
+        });
+
+        expect(result.type).toBe('render');
+        const renderResult = result as UiProcessRenderResult;
+        expect(mockFormEvaluator.evaluate).toHaveBeenCalledTimes(1);
+        expect(renderResult.isUpdateCard).toBe(true);
+        expect(renderResult.formData?.direction).toBe('IN');
+      });
+
+      it('executes formEvaluator on onEmailMessageChange', async () => {
+        const mockGmailPort: UiProcessGmailPort = {
+          getMessageAttachments: vi.fn().mockResolvedValue([]),
+          getThreadMessages: vi.fn().mockResolvedValue([
+            { id: 'm1', attachments: [] },
+          ]),
+        };
+
+        const mockFormEvaluator: UiProcessFormEvaluatorPort = {
+          evaluate: vi.fn().mockResolvedValue({
+            computedData: { evaluatedOnEmailSwitch: true },
+            hiddenFields: ['notes'],
+            disabledFields: [],
+          }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: mockSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          gmailPort: mockGmailPort,
+          formEvaluator: mockFormEvaluator,
+        });
+
+        const result = await adapter.processUiEvent({
+          actionName: 'onEmailMessageChange',
+          hostApp: 'GMAIL',
+          gmail: { messageId: 'm1' },
+          formData: {
+            SelectEmailMessage: 'm1',
+          },
+        });
+
+        expect(result.type).toBe('render');
+        const renderResult = result as UiProcessRenderResult;
+        expect(mockFormEvaluator.evaluate).toHaveBeenCalledTimes(1);
+        expect(renderResult.formData?.evaluatedOnEmailSwitch).toBe(true);
+        expect(renderResult.hiddenFields).toEqual(['notes']);
+        expect(renderResult.isUpdateCard).toBe(true);
+      });
+    });
+  });
 });
+
 
