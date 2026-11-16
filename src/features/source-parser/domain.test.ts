@@ -2,6 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   SourceParserService,
   extractTextFromHtml,
+  matchCandidateSpaces,
+  FFE_PROXIMITY_REGEX_1,
+  FFE_PROXIMITY_REGEX_2,
 } from './domain';
 import type {
   DriveSourceContextPort,
@@ -1249,6 +1252,189 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
         statusMessages: [
           'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.',
         ],
+      });
+    });
+  });
+
+  describe('Gmail labels hydration & label-aware Pass 1 routing (Ticket #302)', () => {
+    const mockDrivePort: DriveSourceContextPort = {
+      getItemHierarchy: vi.fn(),
+    };
+
+    const candidateSpaces = [
+      { id: 'proj-123', name: '123 Main St', typeId: 'projects' },
+      { id: 'proj-skyline', name: 'Skyline Tower', typeId: 'projects' },
+    ];
+
+    describe('FFE Proximity Regular Expressions with hierarchical delimiters and plural forms', () => {
+      it('matches hierarchical label with slash delimiter and plural Submittals', () => {
+        expect(FFE_PROXIMITY_REGEX_1.test('Projects/FF&E/Submittals')).toBe(true);
+        expect(FFE_PROXIMITY_REGEX_1.test('FF&E Submittals')).toBe(true);
+        expect(FFE_PROXIMITY_REGEX_1.test('FFE Submittal')).toBe(true);
+        expect(FFE_PROXIMITY_REGEX_2.test('Submittals/FF&E')).toBe(true);
+        expect(FFE_PROXIMITY_REGEX_2.test('Submittals / FF&E')).toBe(true);
+        expect(FFE_PROXIMITY_REGEX_2.test('Submittal - FF&E')).toBe(true);
+      });
+    });
+
+    describe('matchCandidateSpaces with labels', () => {
+      it('matches candidate space from non-system label across full string and hierarchical segments', () => {
+        const matchFull = matchCandidateSpaces(
+          candidateSpaces,
+          undefined,
+          undefined,
+          ['Projects/123 Main St/Submittals']
+        );
+        expect(matchFull?.id).toBe('proj-123');
+
+        const matchSegment = matchCandidateSpaces(
+          candidateSpaces,
+          undefined,
+          undefined,
+          ['123 Main St']
+        );
+        expect(matchSegment?.id).toBe('proj-123');
+      });
+
+      it('inspects non-system labels ahead of subject and body text', () => {
+        const match = matchCandidateSpaces(
+          candidateSpaces,
+          'Update regarding Skyline Tower',
+          'We are discussing Skyline Tower project',
+          ['Projects/123 Main St/Submittals']
+        );
+        expect(match?.id).toBe('proj-123');
+      });
+
+      it('ignores system labels and falls back to subject/body', () => {
+        const match = matchCandidateSpaces(
+          candidateSpaces,
+          'Skyline Tower Kickoff',
+          undefined,
+          ['INBOX', 'SENT', 'UNREAD', 'STARRED', 'IMPORTANT', 'CATEGORY_PROMOTIONS']
+        );
+        expect(match?.id).toBe('proj-skyline');
+      });
+    });
+
+    describe('SourceParserService Pass 1 inferRouting with Gmail labels', () => {
+      it('lets explicit FF&E code-bearing attachment win over generic Submittals Gmail label', async () => {
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+        const result = await service.inferRouting({
+          candidateSpaces,
+          email: {
+            id: 'msg-1',
+            attachments: [{ id: 'att-1', name: 'CG104-A_Chair.pdf' }],
+            labels: ['Projects/123 Main St/Submittals'],
+          },
+        });
+
+        expect(result).toEqual({
+          spaceTypeId: 'projects',
+          spaceIdOrName: 'proj-123',
+          documentTypeKey: 'submittal-ffe',
+        });
+      });
+
+      it('lets explicit CSI code-bearing attachment win over specific FF&E Gmail label', async () => {
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+        const result = await service.inferRouting({
+          candidateSpaces,
+          email: {
+            id: 'msg-1',
+            attachments: [{ id: 'att-1', name: '071200-001_Waterproofing.pdf' }],
+            labels: ['Projects/FF&E/Submittals'],
+          },
+        });
+
+        expect(result).toEqual({
+          spaceTypeId: 'projects',
+          documentTypeKey: 'submittal-arch',
+        });
+      });
+
+      it('infers submittal-ffe when label contains FF&E + Submittals proximity and attachments have no code', async () => {
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+        const result = await service.inferRouting({
+          candidateSpaces,
+          email: {
+            id: 'msg-1',
+            attachments: [{ id: 'att-1', name: 'cutsheet.pdf' }],
+            labels: ['Projects/FF&E/Submittals', '123 Main St'],
+          },
+        });
+
+        expect(result).toEqual({
+          spaceTypeId: 'projects',
+          spaceIdOrName: 'proj-123',
+          documentTypeKey: 'submittal-ffe',
+        });
+      });
+
+      it('infers submittal-arch and candidate space from generic Submittals Gmail label when no specific codes match', async () => {
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+        const result = await service.inferRouting({
+          candidateSpaces,
+          email: {
+            id: 'msg-1',
+            attachments: [{ id: 'att-1', name: 'general-cutsheet.pdf' }],
+            labels: ['Projects/123 Main St/Submittals'],
+          },
+        });
+
+        expect(result).toEqual({
+          spaceTypeId: 'projects',
+          spaceIdOrName: 'proj-123',
+          documentTypeKey: 'submittal-arch',
+        });
+      });
+
+      it('infers submittal-arch from standalone Submittal / Submittals label', async () => {
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+        const result = await service.inferRouting({
+          candidateSpaces,
+          email: {
+            id: 'msg-1',
+            labels: ['Submittals'],
+          },
+        });
+
+        expect(result).toEqual({
+          spaceTypeId: 'projects',
+          documentTypeKey: 'submittal-arch',
+        });
+      });
+
+      it('lets specific FF&E proximity in subject win over generic Submittals label', async () => {
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+        const result = await service.inferRouting({
+          candidateSpaces,
+          email: {
+            id: 'msg-1',
+            subject: 'FF&E Submittals for 123 Main St',
+            labels: ['Submittals'],
+          },
+        });
+
+        expect(result).toEqual({
+          spaceTypeId: 'projects',
+          spaceIdOrName: 'proj-123',
+          documentTypeKey: 'submittal-ffe',
+        });
+      });
+
+      it('does NOT infer submittal-arch when labels contain only system labels', async () => {
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+        const result = await service.inferRouting({
+          candidateSpaces,
+          email: {
+            id: 'msg-1',
+            subject: 'General check-in',
+            labels: ['INBOX', 'SENT', 'UNREAD', 'STARRED', 'IMPORTANT'],
+          },
+        });
+
+        expect(result.documentTypeKey).toBeUndefined();
       });
     });
   });

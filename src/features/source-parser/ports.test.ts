@@ -82,6 +82,7 @@ describe('SourceParser ports and schemas', () => {
           date: 'Mon, 19 Oct 2026 14:00:00 -0400',
           plainTextBody: 'Body text',
           htmlBody: '<p>Body text</p>',
+          labels: ['Projects/123 Main St', 'INBOX'],
           attachments: [{ id: 'att-1', name: 'Plan.pdf', mimeType: 'application/pdf' }],
         },
       })
@@ -99,6 +100,7 @@ describe('SourceParser ports and schemas', () => {
           date: undefined,
           plainTextBody: undefined,
           htmlBody: undefined,
+          labels: undefined,
           attachments: undefined,
         },
       })

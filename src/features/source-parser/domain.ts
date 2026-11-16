@@ -13,8 +13,9 @@ import type {
 
 export const CSI_SECTION_REGEX = /(?<=^|[\s_.-])\d{6}-\d{3}(?:-[A-Za-z0-9]+)?(?=[\s_.-]|$)/;
 export const FFE_SPEC_TAG_REGEX = /(?<=^|[\s_.-])[A-Za-z]{2}\d{3}[A-Za-z]?-[A-Za-z0-9]+(?=[\s_.-]|$)/i;
-export const FFE_PROXIMITY_REGEX_1 = /(?<=^|[\s_.-])FF&?E(?=[\s_.-]|$).{0,100}(?<=^|[\s_.-])Submittal(?=[\s_.-]|$)/is;
-export const FFE_PROXIMITY_REGEX_2 = /(?<=^|[\s_.-])Submittal(?=[\s_.-]|$).{0,100}(?<=^|[\s_.-])FF&?E(?=[\s_.-]|$)/is;
+export const FFE_PROXIMITY_REGEX_1 = /(?<=^|[\s_./-])FF&?E(?=[\s_./-]|$).{0,100}(?<=^|[\s_./-])Submittals?(?=[\s_./-]|$)/is;
+export const FFE_PROXIMITY_REGEX_2 = /(?<=^|[\s_./-])Submittals?(?=[\s_./-]|$).{0,100}(?<=^|[\s_./-])FF&?E(?=[\s_./-]|$)/is;
+export const GENERIC_SUBMITTAL_REGEX = /(?<=^|[\s_./-])Submittals?(?=[\s_./-]|$)/i;
 
 export const ARCH_SUBMITTAL_NOTIFICATION_REGEX =
   /(?<=^|[\s_.-])Submittal\s*#?\s*\d+\b/i;
@@ -161,13 +162,64 @@ export function resolveCandidateTieBreaking(
   return longest;
 }
 
+export function isSystemLabel(label: string): boolean {
+  const upper = label.toUpperCase();
+  return (
+    upper === 'INBOX' ||
+    upper === 'SENT' ||
+    upper === 'DRAFT' ||
+    upper === 'TRASH' ||
+    upper === 'SPAM' ||
+    upper === 'UNREAD' ||
+    upper === 'STARRED' ||
+    upper === 'IMPORTANT' ||
+    upper === 'CHAT' ||
+    upper.startsWith('CATEGORY_')
+  );
+}
+
+export function extractNonSystemLabelTokens(labels?: string[]): string[] {
+  if (!labels || labels.length === 0) {
+    return [];
+  }
+  const result: string[] = [];
+  for (const label of labels) {
+    if (typeof label !== 'string') continue;
+    const trimmed = label.trim();
+    if (!trimmed || isSystemLabel(trimmed)) continue;
+    result.push(trimmed);
+    const segments = trimmed.split('/');
+    for (const seg of segments) {
+      const segTrimmed = seg.trim();
+      if (segTrimmed && segTrimmed !== trimmed) {
+        result.push(segTrimmed);
+      }
+    }
+  }
+  return result;
+}
+
 export function matchCandidateSpaces(
   candidateSpaces?: CandidateSpaceDescriptor[],
   subject?: string,
-  body?: string
+  body?: string,
+  labels?: string[]
 ): CandidateSpaceDescriptor | undefined {
   if (!candidateSpaces || candidateSpaces.length === 0) {
     return undefined;
+  }
+
+  if (labels && labels.length > 0) {
+    const labelTokens = extractNonSystemLabelTokens(labels);
+    for (const token of labelTokens) {
+      const labelMatches = findMatchingCandidatesInText(token, candidateSpaces, true);
+      if (labelMatches.length > 0) {
+        const resolved = resolveCandidateTieBreaking(labelMatches);
+        if (resolved) {
+          return resolved;
+        }
+      }
+    }
   }
 
   if (subject && typeof subject === 'string' && subject.trim().length > 0) {
@@ -368,7 +420,21 @@ export class SourceParserService implements SourceParserPort {
       }
     }
 
-    // 2. Inspect subject
+    const nonSystemLabelTokens = extractNonSystemLabelTokens(email.labels);
+
+    // 2. Inspect non-system labels for specific submittal codes
+    if (!inferredDocType && nonSystemLabelTokens.length > 0) {
+      for (const token of nonSystemLabelTokens) {
+        const match = inferSubmittalTypeFromText(token);
+        if (match) {
+          inferredDocType = match;
+          inferredDocTypeSpaceTypeId = findSpaceTypeForDocumentType(spaceTypes, match);
+          break;
+        }
+      }
+    }
+
+    // 3. Inspect subject for specific submittal codes
     if (!inferredDocType && email.subject && typeof email.subject === 'string' && email.subject.trim().length > 0) {
       const match = inferSubmittalTypeFromText(email.subject);
       if (match) {
@@ -377,7 +443,7 @@ export class SourceParserService implements SourceParserPort {
       }
     }
 
-    // 3. Inspect body text (plainTextBody or derived from htmlBody)
+    // 4. Inspect body text for specific submittal codes (plainTextBody or derived from htmlBody)
     // nosemgrep: domain-pass-through-read
     const rawPlain = email.plainTextBody;
     const hasPlain = typeof rawPlain === 'string' && rawPlain.trim().length > 0;
@@ -393,11 +459,23 @@ export class SourceParserService implements SourceParserPort {
       }
     }
 
-    // 4. Candidate spaces matching in subject first, body text second
+    // 5. If none matched specific codes, check for generic Submittal / Submittals token in non-system labels -> submittal-arch
+    if (!inferredDocType && nonSystemLabelTokens.length > 0) {
+      for (const token of nonSystemLabelTokens) {
+        if (GENERIC_SUBMITTAL_REGEX.test(token)) {
+          inferredDocType = 'submittal-arch';
+          inferredDocTypeSpaceTypeId = findSpaceTypeForDocumentType(spaceTypes, 'submittal-arch');
+          break;
+        }
+      }
+    }
+
+    // 6. Candidate spaces matching in labels first, subject second, body text third
     const winningCandidate = matchCandidateSpaces(
       context.candidateSpaces,
       email.subject,
-      bodyText
+      bodyText,
+      email.labels
     );
 
     let winningSpaceTypeId: string | undefined;

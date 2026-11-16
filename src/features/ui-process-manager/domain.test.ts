@@ -3527,6 +3527,23 @@ describe('ui-process-manager domain', () => {
       expect(hasProposalOpportunityMarkers('Submittal 071200-001 Waterproofing', 'Attached is submittal for review.', '<p>Submittal review</p>')).toBe(false);
       expect(hasProposalOpportunityMarkers(undefined, undefined, undefined)).toBe(false);
     });
+
+    it('returns true when non-system labels or hierarchical label segments contain proposal/opportunity markers', () => {
+      // Direct user label
+      expect(hasProposalOpportunityMarkers(undefined, undefined, undefined, ['Proposals'])).toBe(true);
+      expect(hasProposalOpportunityMarkers('Meeting Notes', undefined, undefined, ['RFP Responses'])).toBe(true);
+
+      // Hierarchical label segment
+      expect(hasProposalOpportunityMarkers(undefined, undefined, undefined, ['Clients/Acme/Proposals'])).toBe(true);
+      expect(hasProposalOpportunityMarkers(undefined, undefined, undefined, ['Pipeline/2026 Opportunities/Active'])).toBe(true);
+
+      // Ignores system labels and non-matching labels
+      expect(hasProposalOpportunityMarkers(undefined, undefined, undefined, ['INBOX', 'SENT', 'UNREAD', 'STARRED', 'CATEGORY_PROMOTIONS'])).toBe(false);
+      expect(hasProposalOpportunityMarkers(undefined, undefined, undefined, ['INBOX', 'Projects/123 Main St/Submittals'])).toBe(false);
+
+      // System labels alongside proposal label
+      expect(hasProposalOpportunityMarkers(undefined, undefined, undefined, ['INBOX', 'Proposals'])).toBe(true);
+    });
   });
 });
 

@@ -880,6 +880,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
             ...(activeMsg.date !== undefined ? { date: activeMsg.date } : {}),
             ...(activeMsg.plainTextBody !== undefined ? { plainTextBody: activeMsg.plainTextBody } : {}),
             ...(activeMsg.htmlBody !== undefined ? { htmlBody: activeMsg.htmlBody } : {}),
+            ...(activeMsg.labels !== undefined ? { labels: activeMsg.labels } : {}),
             attachments: (activeMsg.attachments ?? []).map((att) => ({
               id: resolveAttachmentId(att),
               name: att.title,
@@ -903,7 +904,8 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         ? hasProposalOpportunityMarkers(
             activeMsg.subject,
             activeMsg.plainTextBody,
-            activeMsg.htmlBody
+            activeMsg.htmlBody,
+            activeMsg.labels
           )
         : false;
 

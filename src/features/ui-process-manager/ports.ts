@@ -241,6 +241,7 @@ export const UiProcessSourceEmailDescriptorSchema = Type.Object({
   date: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   plainTextBody: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   htmlBody: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  labels: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   attachments: Type.Optional(Type.Union([Type.Array(UiProcessSourceEmailAttachmentDescriptorSchema), Type.Undefined()])),
 });
 export type UiProcessSourceEmailDescriptor = Static<typeof UiProcessSourceEmailDescriptorSchema>;

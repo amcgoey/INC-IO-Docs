@@ -67,6 +67,7 @@ export const GmailMessageDetailsSchema = Type.Object({
   htmlBody: Type.Optional(Type.String()),
   inlineImages: Type.Array(GmailInlineImageDescriptorSchema),
   attachments: Type.Array(GmailAttachmentDescriptorSchema),
+  labels: Type.Optional(Type.Array(Type.String())),
 });
 
 export type GmailMessageDetails = Static<typeof GmailMessageDetailsSchema> & {
