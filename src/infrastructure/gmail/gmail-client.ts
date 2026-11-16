@@ -116,9 +116,26 @@ function isCidReferencedInHtml(html: string | undefined, normalizedCid: string):
   return false;
 }
 
+function isSystemLabel(labelId: string): boolean {
+  const upper = labelId.toUpperCase();
+  return (
+    upper === 'INBOX' ||
+    upper === 'SENT' ||
+    upper === 'DRAFT' ||
+    upper === 'TRASH' ||
+    upper === 'SPAM' ||
+    upper === 'UNREAD' ||
+    upper === 'STARRED' ||
+    upper === 'IMPORTANT' ||
+    upper === 'CHAT' ||
+    upper.startsWith('CATEGORY_')
+  );
+}
+
 export function parseMessageDetails(
   message: gmail_v1.Schema$Message,
-  fallbackId?: string
+  fallbackId?: string,
+  labelMap?: Map<string, string> | Record<string, string>
 ): GmailMessageDetails {
   const payload = message.payload;
   const headers = payload?.headers;
@@ -270,6 +287,17 @@ export function parseMessageDetails(
     ...(date !== undefined ? { date } : {}),
     ...(plainTextBody !== undefined ? { plainTextBody } : {}),
     ...(htmlBody !== undefined ? { htmlBody } : {}),
+    ...(Array.isArray(message.labelIds)
+      ? {
+          labels: message.labelIds.map((id) => {
+            if (!labelMap) return id;
+            if (labelMap instanceof Map) {
+              return labelMap.get(id) ?? id;
+            }
+            return (labelMap as Record<string, string>)[id] ?? id;
+          }),
+        }
+      : {}),
   };
 
   return details;
@@ -285,6 +313,10 @@ export class GoogleGmailClient {
   private readonly cache = new Map<
     string,
     { promise: Promise<GmailMessageDetails>; expiresAt: number }
+  >();
+  private readonly labelMapCache = new Map<
+    string,
+    { promise: Promise<Map<string, string>>; expiresAt: number }
   >();
 
   constructor(options: GoogleGmailClientOptions = {}) {
@@ -311,6 +343,7 @@ export class GoogleGmailClient {
 
   clearCache(): void {
     this.cache.clear();
+    this.labelMapCache.clear();
   }
 
   getCacheSize(): number {
@@ -462,6 +495,56 @@ export class GoogleGmailClient {
     }
   }
 
+  private async resolveLabelMap(
+    labelIds?: string[] | null | undefined,
+    options?: GmailOperationOptions
+  ): Promise<Map<string, string> | undefined> {
+    if (!labelIds || labelIds.length === 0 || labelIds.every(isSystemLabel)) {
+      return undefined;
+    }
+
+    const authKey = this.getAuthCacheKey(options);
+    const now = this.clock();
+
+    if (!options?.skipCache) {
+      const existing = this.labelMapCache.get(authKey);
+      if (existing) {
+        if (now <= existing.expiresAt) {
+          return existing.promise;
+        }
+        this.labelMapCache.delete(authKey);
+      }
+    } else {
+      this.labelMapCache.delete(authKey);
+    }
+
+    const expiresAt = now + this.cacheTtlMs;
+    const fetchPromise = (async (): Promise<Map<string, string>> => {
+      const map = new Map<string, string>();
+      const gmail = this.getGmail(options);
+      if (!gmail?.users?.labels?.list) {
+        return map;
+      }
+      try {
+        const res = await this.executeWithRetry(() =>
+          gmail.users.labels.list({ userId: 'me' })
+        );
+        const labels = res.data.labels ?? [];
+        for (const l of labels) {
+          if (l.id && l.name) {
+            map.set(l.id, l.name);
+          }
+        }
+      } catch (error) {
+        console.warn('GoogleGmailClient labels.list lookup failed non-fatally:', error);
+      }
+      return map;
+    })();
+
+    this.labelMapCache.set(authKey, { promise: fetchPromise, expiresAt });
+    return fetchPromise;
+  }
+
   async getThread(
     threadId: string,
     options?: GmailOperationOptions
@@ -490,8 +573,18 @@ export class GoogleGmailClient {
       this.wrapApiError('getThread', error);
     }
 
-    const messages = (res.data.messages ?? []).map((msg) =>
-      parseMessageDetails(msg, msg.id ?? undefined)
+    const rawMessages = res.data.messages ?? [];
+    const allLabelIds: string[] = [];
+    for (const msg of rawMessages) {
+      if (Array.isArray(msg.labelIds)) {
+        allLabelIds.push(...msg.labelIds);
+      }
+    }
+
+    const labelMap = await this.resolveLabelMap(allLabelIds, options);
+
+    const messages = rawMessages.map((msg) =>
+      parseMessageDetails(msg, msg.id ?? undefined, labelMap)
     );
 
     // Warm per-message cache with bounded LRU eviction
@@ -526,7 +619,8 @@ export class GoogleGmailClient {
       this.wrapApiError('getMessage', error);
     }
 
-    return parseMessageDetails(res.data, messageId);
+    const labelMap = await this.resolveLabelMap(res.data.labelIds, options);
+    return parseMessageDetails(res.data, messageId, labelMap);
   }
 
   async getAttachment(

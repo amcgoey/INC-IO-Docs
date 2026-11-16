@@ -4835,6 +4835,176 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
     });
 
+    describe('Gmail Pass 1 label-aware DocumentSpace and DocumentType routing across card-open seams (Ticket #302)', () => {
+      beforeEach(() => {
+        vi.spyOn(mockStorageAdapter, 'fetchSpaces').mockImplementation(async (_config, typeId: string) => {
+          if (typeId === 'projects') {
+            return [
+              {
+                id: 'space-proj-123',
+                typeId: 'projects',
+                name: '123 Main St',
+                abstractStorageId: 'drive-123',
+              },
+              {
+                id: 'space-projects-1',
+                typeId: 'projects',
+                name: 'Active Projects',
+                abstractStorageId: 'shared-drive-proj-root',
+              },
+            ];
+          }
+          if (typeId === 'proposals') {
+            return [
+              {
+                id: 'space-proposals-1',
+                typeId: 'proposals',
+                name: 'Client Proposals',
+                abstractStorageId: 'folder-opp-root',
+              },
+            ];
+          }
+          return [];
+        });
+
+        vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string): Promise<GmailThreadDetails> => {
+          if (threadId === 'th-labels-e2e') {
+            return {
+              id: 'th-labels-e2e',
+              messages: [
+                {
+                  id: 'msg-labeled-submittal',
+                  threadId: 'th-labels-e2e',
+                  subject: 'Weekly Review',
+                  from: 'Alice <alice@example.com>',
+                  date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+                  plainTextBody: 'Please find files attached.',
+                  inlineImages: [],
+                  attachments: [
+                    {
+                      partId: 'part-1',
+                      attachmentId: 'att-1',
+                      filename: 'GeneralNotes.pdf',
+                      mimeType: 'application/pdf',
+                      size: 1024,
+                    },
+                  ],
+                  labels: ['Projects/123 Main St/Submittals', 'INBOX'],
+                },
+                {
+                  id: 'msg-labeled-ffe-attachment',
+                  threadId: 'th-labels-e2e',
+                  subject: 'General Update',
+                  from: 'Bob <bob@example.com>',
+                  date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+                  plainTextBody: 'Please find chair cutsheet attached.',
+                  inlineImages: [],
+                  attachments: [
+                    {
+                      partId: 'part-2',
+                      attachmentId: 'att-2',
+                      filename: 'CG104-A_Chair.pdf',
+                      mimeType: 'application/pdf',
+                      size: 2048,
+                    },
+                  ],
+                  labels: ['Projects/123 Main St/Submittals', 'INBOX'],
+                },
+                {
+                  id: 'msg-labeled-proposals',
+                  threadId: 'th-labels-e2e',
+                  subject: 'Discussion Notes',
+                  from: 'Carol <carol@example.com>',
+                  date: 'Mon, 19 Oct 2026 12:00:00 +0000',
+                  plainTextBody: 'Review our opportunity pipeline.',
+                  inlineImages: [],
+                  attachments: [],
+                  labels: ['Clients/Client Proposals/Opportunities', 'INBOX'],
+                },
+              ],
+            };
+          }
+          return { id: threadId, messages: [] };
+        });
+      });
+
+      it('infers projects DocumentSpace 123 Main St and submittal-arch from hierarchical Gmail label on card open', async () => {
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-labeled-submittal',
+              threadId: 'th-labels-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const cardResponse = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const json = JSON.stringify(cardResponse);
+
+        // Pre-populates 123 Main St and submittal-arch from label
+        expect(json).toContain('123 Main St');
+        expect(json).toContain('submittal-arch');
+      });
+
+      it('lets explicit FF&E code-bearing attachment win over generic Submittals label, selecting submittal-ffe', async () => {
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-labeled-ffe-attachment',
+              threadId: 'th-labels-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const cardResponse = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const json = JSON.stringify(cardResponse);
+
+        // Pre-populates 123 Main St (from label) and submittal-ffe (from attachment)
+        expect(json).toContain('123 Main St');
+        expect(json).toContain('submittal-ffe');
+      });
+
+      it('infers proposals DocumentSpace when proposal marker appears in Gmail label', async () => {
+        const fetchSpacesSpy = vi.spyOn(mockStorageAdapter, 'fetchSpaces');
+        fetchSpacesSpy.mockClear();
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-labeled-proposals',
+              threadId: 'th-labels-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const cardResponse = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const json = JSON.stringify(cardResponse);
+
+        // Pre-populates proposals space and communication-proposal
+        expect(json).toContain('Client Proposals');
+        expect(json).toContain('communication-proposal');
+        expect(fetchSpacesSpy).toHaveBeenCalledWith(expect.anything(), 'proposals');
+      });
+    });
+
     describe('Gmail card-state cleansing and universal formEvaluator reactive evaluation (Ticket #301)', () => {
       beforeEach(() => {
         vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string): Promise<GmailThreadDetails> => {
@@ -5011,6 +5181,8 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
         const cardJson = JSON.stringify(body);
         expect(cardJson).not.toContain('User In Progress Notes');
+      });
+    });
       });
     });
   });
