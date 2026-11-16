@@ -5183,8 +5183,6 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(cardJson).not.toContain('User In Progress Notes');
       });
     });
-      });
-    });
   });
 });
 
