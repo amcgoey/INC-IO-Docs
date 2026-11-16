@@ -337,6 +337,7 @@ function mapGmailMessageToDescriptor(
     ...(msg.date !== undefined ? { date: msg.date } : {}),
     ...(msg.plainTextBody !== undefined ? { plainTextBody: msg.plainTextBody } : {}),
     ...(msg.htmlBody !== undefined ? { htmlBody: msg.htmlBody } : {}),
+    ...(msg.labels !== undefined ? { labels: msg.labels } : {}),
     attachments: (msg.attachments ?? []).map((att) => ({
       id: (att.partId && att.partId.trim().length > 0)
         ? att.partId.trim()
