@@ -4834,6 +4834,185 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(cardJson).toContain('Client Proposals');
       });
     });
+
+    describe('Gmail card-state cleansing and universal formEvaluator reactive evaluation (Ticket #301)', () => {
+      beforeEach(() => {
+        vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string): Promise<GmailThreadDetails> => {
+          if (threadId === 'th-cleansing-e2e') {
+            return {
+              id: 'th-cleansing-e2e',
+              messages: [
+                {
+                  id: 'msg-1-cleansing',
+                  threadId: 'th-cleansing-e2e',
+                  subject: 'Message 1 Subject',
+                  from: 'Alice <alice@example.com>',
+                  date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+                  plainTextBody: 'Body 1',
+                  inlineImages: [],
+                  attachments: [],
+                },
+                {
+                  id: 'msg-2-cleansing',
+                  threadId: 'th-cleansing-e2e',
+                  subject: 'Message 2 Subject',
+                  from: 'Bob <bob@example.com>',
+                  date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+                  plainTextBody: 'Body 2',
+                  inlineImages: [],
+                  attachments: [],
+                },
+              ],
+            };
+          }
+          return { id: threadId, messages: [] };
+        });
+      });
+
+      it('seeds default values (direction: "IN") on initial card render via universal formEvaluator', async () => {
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-1-cleansing',
+              threadId: 'th-cleansing-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const card = body.action?.navigations?.[0]?.pushCard;
+        const docInfoSec = card?.sections.find((s) => s.header === 'Document Data');
+        const directionWidget = docInfoSec?.widgets.find(
+          (w) => w.selectionInput?.name === getDocumentInfoWidgetName('direction', 'communication-project')
+        )?.selectionInput;
+
+        expect(directionWidget).toBeDefined();
+        const selectedItem = directionWidget?.items?.find((item) => item.selected);
+        expect(selectedItem?.value).toBe('IN');
+      });
+
+      it('purges prior document fields on onEmailMessageChange switching messages in a thread', async () => {
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: {
+                action: 'onEmailMessageChange',
+                previousMessageId: 'msg-1-cleansing',
+              },
+              formInputs: {
+                SelectEmailMessage: { stringInputs: { value: ['msg-2-cleansing'] } },
+                SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+                SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+                [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+                [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+                [getDocumentInfoWidgetName('description', 'communication-project')]: {
+                  stringInputs: { value: ['Prior Message Description'] },
+                },
+                description: { stringInputs: { value: ['Prior Message Description'] } },
+              },
+            },
+            gmail: {
+              messageId: 'msg-1-cleansing',
+              threadId: 'th-cleansing-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const cardJson = JSON.stringify(body);
+        expect(cardJson).not.toContain('Prior Message Description');
+      });
+
+      it('preserves user document fields when switching SelectFileSource to Google Drive URL with blank InputDriveURL', async () => {
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: {
+                action: 'onFileSourceChange',
+                previousDriveUrl: '',
+              },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: { stringInputs: { value: [''] } },
+                SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+                [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+                [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+                [getDocumentInfoWidgetName('description', 'communication-project')]: {
+                  stringInputs: { value: ['User In Progress Notes'] },
+                },
+              },
+            },
+            gmail: {
+              messageId: 'msg-1-cleansing',
+              threadId: 'th-cleansing-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const docInfoSec = body.action?.navigations?.[0]?.updateCard?.sections.find((s) => s.header === 'Document Data');
+        const descWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('description', 'communication-project')
+        )?.textInput;
+        expect(descWidget?.value).toBe('User In Progress Notes');
+      });
+
+      it('purges prior document fields when InputDriveURL transitions to a valid Google Drive URL', async () => {
+        const driveUrl = 'https://drive.google.com/file/d/drive-cleansing-file/view';
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: {
+                action: 'onFormChange',
+                previousDriveUrl: '',
+              },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: { stringInputs: { value: [driveUrl] } },
+                SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+                [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+                [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['communication-project'] } },
+                [getDocumentInfoWidgetName('description', 'communication-project')]: {
+                  stringInputs: { value: ['User In Progress Notes'] },
+                },
+              },
+            },
+            gmail: {
+              messageId: 'msg-1-cleansing',
+              threadId: 'th-cleansing-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const cardJson = JSON.stringify(body);
+        expect(cardJson).not.toContain('User In Progress Notes');
+      });
+    });
   });
 });
 
