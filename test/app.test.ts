@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createApp, type AppInstance } from '../src/app/server';
+import { createApp, type AppInstance, type CompositeManifestProvider } from '../src/app/server';
 import type {
   DocumentSchemaRegistryPort,
   ActivityDispatcherPort,
@@ -1046,6 +1046,44 @@ describe('App integration tests', () => {
       });
 
       expect(appInstance).toBeDefined();
+    });
+  });
+
+  describe('DocumentParseSchema fail-fast startup validation', () => {
+    it('fails fast on createApp().initialize() if a documentParseSchema targets an unknown field', async () => {
+      const mockManifestProvider = {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: ['./types/bad-parse.json'],
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'bad-parse',
+          documentSchema: {
+            fields: [{ key: 'date', type: 'string' }],
+          },
+          documentParseSchema: {
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  unknownField: { from: 'email.date' },
+                },
+              },
+            ],
+          },
+        }),
+        getDriveConfig: vi.fn().mockResolvedValue(undefined),
+        getWorkspaceConfig: vi.fn().mockResolvedValue(undefined),
+        getSheetsConfig: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const appInstance = createApp({
+        manifestProvider: mockManifestProvider as unknown as CompositeManifestProvider,
+        skipSpaceValidation: true,
+      });
+
+      await expect(appInstance.initialize()).rejects.toThrow(
+        'targets unknown field "unknownField"'
+      );
     });
   });
 });

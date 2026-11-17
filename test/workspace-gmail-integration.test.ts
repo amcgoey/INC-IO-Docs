@@ -5183,6 +5183,163 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(cardJson).not.toContain('User In Progress Notes');
       });
     });
+
+    describe('Ticket #303: Pass 2 Gmail field pre-population (communication-project & communication-proposal)', () => {
+      beforeEach(() => {
+        vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string): Promise<GmailThreadDetails> => {
+          if (threadId === 'th-pass2-e2e') {
+            return {
+              id: 'th-pass2-e2e',
+              messages: [
+                {
+                  id: 'msg-pass2-incoming',
+                  threadId: 'th-pass2-e2e',
+                  subject: 'Re: Fwd: Site Logistics Update',
+                  from: 'Vendor Partner <vendor@partner.com>',
+                  date: 'Mon, 19 Oct 2026 14:30:00 +0000',
+                  labels: ['INBOX'],
+                  plainTextBody: 'Please find attached site notes.',
+                  inlineImages: [],
+                  attachments: [],
+                },
+                {
+                  id: 'msg-pass2-outgoing',
+                  threadId: 'th-pass2-e2e',
+                  subject: 'Fwd: Project Proposal Overview',
+                  from: 'Project Manager <pm@inc.nyc>',
+                  date: 'Tue, 20 Oct 2026 09:15:00 -04:00',
+                  labels: ['SENT', 'INBOX'],
+                  plainTextBody: 'Here is the proposal details.',
+                  inlineImages: [],
+                  attachments: [],
+                },
+              ],
+            };
+          }
+          return { id: threadId, messages: [] };
+        });
+      });
+
+      it('pre-populates date, direction ("IN"), and description (prefix stripped) on incoming communication-project card', async () => {
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-pass2-incoming',
+              threadId: 'th-pass2-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const card = body.action?.navigations?.[0]?.pushCard;
+        const docInfoSec = card?.sections.find((s) => s.header === 'Document Data');
+
+        const dateWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-project')
+        )?.textInput;
+        expect(dateWidget?.value).toBe('261019');
+
+        const descWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('description', 'communication-project')
+        )?.textInput;
+        expect(descWidget?.value).toBe('Site Logistics Update');
+
+        const directionWidget = docInfoSec?.widgets.find(
+          (w) => w.selectionInput?.name === getDocumentInfoWidgetName('direction', 'communication-project')
+        )?.selectionInput;
+        const selectedDir = directionWidget?.items?.find((item) => item.selected);
+        expect(selectedDir?.value).toBe('IN');
+      });
+
+      it('pre-populates direction as "OT" for outgoing email (SENT label / inc.nyc sender) and strips prefixes', async () => {
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-pass2-outgoing',
+              threadId: 'th-pass2-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const card = body.action?.navigations?.[0]?.pushCard;
+        const docInfoSec = card?.sections.find((s) => s.header === 'Document Data');
+
+        const dateWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-project')
+        )?.textInput;
+        expect(dateWidget?.value).toBe('261020');
+
+        const descWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('description', 'communication-project')
+        )?.textInput;
+        expect(descWidget?.value).toBe('Project Proposal Overview');
+
+        const directionWidget = docInfoSec?.widgets.find(
+          (w) => w.selectionInput?.name === getDocumentInfoWidgetName('direction', 'communication-project')
+        )?.selectionInput;
+        const selectedDir = directionWidget?.items?.find((item) => item.selected);
+        expect(selectedDir?.value).toBe('OT');
+      });
+
+      it('pre-populates date, direction, and description when switching to communication-proposal', async () => {
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: {
+                action: 'onSpaceTypeChange',
+              },
+              formInputs: {
+                SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
+                SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+              },
+            },
+            gmail: {
+              messageId: 'msg-pass2-incoming',
+              threadId: 'th-pass2-e2e',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const card = body.action?.navigations?.[0]?.updateCard;
+        const docInfoSec = card?.sections.find((s) => s.header === 'Document Data');
+
+        const dateWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-proposal')
+        )?.textInput;
+        expect(dateWidget?.value).toBe('261019');
+
+        const descWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('description', 'communication-proposal')
+        )?.textInput;
+        expect(descWidget?.value).toBe('Site Logistics Update');
+
+        const directionWidget = docInfoSec?.widgets.find(
+          (w) => w.selectionInput?.name === getDocumentInfoWidgetName('direction', 'communication-proposal')
+        )?.selectionInput;
+        const selectedDir = directionWidget?.items?.find((item) => item.selected);
+        expect(selectedDir?.value).toBe('IN');
+      });
+    });
   });
 });
 

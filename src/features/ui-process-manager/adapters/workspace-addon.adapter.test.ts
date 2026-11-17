@@ -5230,6 +5230,217 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       });
     });
   });
+
+  describe('Ticket #303: UiProcessManager Pass 2 extractFields lifecycle and integration', () => {
+    it('invokes sourceParser.extractFields on initial card load with no existingData and merges extracted fields', async () => {
+      const mockSourceParser: UiProcessSourceParserPort = {
+        inferRouting: vi.fn().mockResolvedValue({
+          spaceTypeId: 'projects',
+          spaceIdOrName: 'proj1',
+          documentTypeKey: 'communication-project',
+        }),
+        extractFields: vi.fn().mockResolvedValue({
+          fields: {
+            date: '261019',
+            direction: 'IN',
+            description: 'Extracted Description',
+          },
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        sourceParser: mockSourceParser,
+      });
+
+      const result = await adapter.processUiEvent({});
+      expect(result.type).toBe('render');
+      const renderResult = result as UiProcessRenderResult;
+
+      expect(mockSourceParser.extractFields).toHaveBeenCalledTimes(1);
+      const callArg = (mockSourceParser.extractFields as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(callArg.documentTypeKey).toBe('communication-project');
+      expect(callArg.existingData).toBeUndefined();
+      expect(renderResult.formData?.date).toBe('261019');
+      expect(renderResult.formData?.direction).toBe('IN');
+      expect(renderResult.formData?.description).toBe('Extracted Description');
+    });
+
+    it('invokes sourceParser.extractFields on refresh and onEmailMessageChange with no existingData', async () => {
+      const mockSourceParser: UiProcessSourceParserPort = {
+        inferRouting: vi.fn().mockResolvedValue({
+          spaceTypeId: 'projects',
+          spaceIdOrName: 'proj1',
+          documentTypeKey: 'communication-project',
+        }),
+        extractFields: vi.fn().mockResolvedValue({
+          fields: {
+            date: '261020',
+            description: 'Refreshed Description',
+          },
+        }),
+      };
+
+      const mockGmailPort: UiProcessGmailPort = {
+        getMessageAttachments: vi.fn().mockResolvedValue([]),
+        getThreadMessages: vi.fn().mockResolvedValue([
+          { id: 'msg-1', attachments: [] },
+          { id: 'msg-2', attachments: [] },
+        ]),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        gmailPort: mockGmailPort,
+        sourceParser: mockSourceParser,
+      });
+
+      // 1. Refresh action
+      const refreshResult = await adapter.processUiEvent({
+        actionName: 'refresh',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          spaceId: 'proj1',
+          description: 'Old Description',
+        },
+      });
+
+      expect(mockSourceParser.extractFields).toHaveBeenCalledTimes(1);
+      const refreshArg = (mockSourceParser.extractFields as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(refreshArg.existingData).toBeUndefined();
+      expect((refreshResult as UiProcessRenderResult).formData?.description).toBe('Refreshed Description');
+
+      // 2. onEmailMessageChange action
+      const emailChangeResult = await adapter.processUiEvent({
+        actionName: 'onEmailMessageChange',
+        hostApp: 'GMAIL',
+        gmail: { messageId: 'msg-1', threadId: 'th-1' },
+        formData: {
+          SelectEmailMessage: 'msg-2',
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          spaceId: 'proj1',
+          description: 'Old Description',
+        },
+      });
+
+      expect(mockSourceParser.extractFields).toHaveBeenCalledTimes(2);
+      const emailChangeArg = (mockSourceParser.extractFields as ReturnType<typeof vi.fn>).mock.calls[1][0];
+      expect(emailChangeArg.existingData).toBeUndefined();
+      expect((emailChangeResult as UiProcessRenderResult).formData?.description).toBe('Refreshed Description');
+    });
+
+    it('invokes sourceParser.extractFields on manual type-switch events preserving non-empty user edits', async () => {
+      const mockSourceParser: UiProcessSourceParserPort = {
+        inferRouting: vi.fn().mockResolvedValue({}),
+        extractFields: vi.fn().mockResolvedValue({
+          fields: {
+            date: '261021',
+            direction: 'IN',
+            description: 'Extracted Description',
+          },
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        sourceParser: mockSourceParser,
+      });
+
+      const result = await adapter.processUiEvent({
+        actionName: 'onDocumentTypeChange',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'communication-project',
+          spaceId: 'proj1',
+          description: 'User Edited Description', // active-type edit!
+        },
+      });
+
+      expect(mockSourceParser.extractFields).toHaveBeenCalledTimes(1);
+      const callArg = (mockSourceParser.extractFields as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(callArg.existingData).toEqual({
+        description: 'User Edited Description',
+      });
+      const renderResult = result as UiProcessRenderResult;
+      // User edit was preserved and not overwritten:
+      expect(renderResult.formData?.description).toBe('User Edited Description');
+      // Blank fields were populated from Pass 2:
+      expect(renderResult.formData?.date).toBe('261021');
+      expect(renderResult.formData?.direction).toBe('IN');
+    });
+
+    it('skips sourceParser.extractFields on regular onFormChange, processDocument, and when InputDriveURL is blank', async () => {
+      const mockSourceParser: UiProcessSourceParserPort = {
+        inferRouting: vi.fn().mockResolvedValue({}),
+        extractFields: vi.fn().mockResolvedValue({ fields: {} }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        sourceParser: mockSourceParser,
+      });
+
+      // 1. Regular onFormChange without drive URL update
+      await adapter.processUiEvent({
+        actionName: 'onFormChange',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          description: 'Editing...',
+        },
+      });
+      expect(mockSourceParser.extractFields).not.toHaveBeenCalled();
+
+      // 2. onFileSourceChange to Google Drive URL with blank InputDriveURL
+      await adapter.processUiEvent({
+        actionName: 'onFileSourceChange',
+        hostApp: 'GMAIL',
+        formData: {
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: '',
+          SelectDocumentSpaceType: 'projects',
+        },
+      });
+      expect(mockSourceParser.extractFields).not.toHaveBeenCalled();
+    });
+
+    it('deduplicates combined Pass 1 and Pass 2 statusMessages', async () => {
+      const mockSourceParser: UiProcessSourceParserPort = {
+        inferRouting: vi.fn().mockResolvedValue({
+          spaceTypeId: 'projects',
+          statusMessages: ['Notice A', 'Notice B'],
+        }),
+        extractFields: vi.fn().mockResolvedValue({
+          fields: {},
+          statusMessages: ['Notice B', 'Notice C'],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        sourceParser: mockSourceParser,
+      });
+
+      const result = await adapter.processUiEvent({
+        selectedItems: [{ id: 'item-1' }],
+      });
+      const renderResult = result as UiProcessRenderResult;
+      expect(renderResult.statusMessages).toEqual(['Notice A', 'Notice B', 'Notice C']);
+    });
+  });
 });
 
 
