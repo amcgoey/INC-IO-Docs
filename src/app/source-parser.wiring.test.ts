@@ -41,6 +41,20 @@ describe('source-parser.wiring', () => {
     expect(reqParser).toBeInstanceOf(SourceParserService);
   });
 
+  it('passes canonicalOptionsProvider to per-request SourceParserService', () => {
+    const mockCanonicalProvider = {
+      getCanonicalOptions: vi.fn(),
+    };
+    const wiring = createSourceParserWiring({
+      spaceTypesProvider: mockSpaceTypesProvider,
+      driveClient: mockDriveClient,
+      getCanonicalOptionsProvider: () => mockCanonicalProvider,
+    });
+
+    const parser = wiring.createSourceParser({});
+    expect(parser).toBeInstanceOf(SourceParserService);
+  });
+
   it('adapts driveService.getFile when driveService is provided', async () => {
     const mockDriveService = {
       getFile: vi.fn().mockResolvedValue({

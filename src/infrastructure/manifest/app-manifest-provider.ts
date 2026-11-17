@@ -39,6 +39,7 @@ export const ManifestSchema = Type.Object({
   documentTypes: Type.Array(Type.String()),
   configuration: Type.Optional(AppConfigurationSchema),
   DocumentSpaceTypes: Type.Optional(Type.Array(Type.Record(Type.String(), Type.Unknown()))),
+  aliases: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
 });
 
 export type Manifest = Static<typeof ManifestSchema>;

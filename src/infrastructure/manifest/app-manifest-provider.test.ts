@@ -275,6 +275,28 @@ describe('AppManifestProvider', () => {
 
       await expect(provider.getDriveConfig()).rejects.toThrow(/invalid manifest/i);
     });
+
+    it('loads manifest with optional aliases mapping', async () => {
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({
+          documentTypes: [],
+          aliases: {
+            contacts: 'assets/aliases/contacts.json',
+            vendors: 'assets/aliases/vendors.json',
+          },
+        }),
+        'utf-8'
+      );
+
+      const provider = new AppManifestProvider({ manifestPath });
+      const rawManifest = await provider.getRawManifest() as { aliases?: Record<string, string> };
+      expect(rawManifest.aliases).toEqual({
+        contacts: 'assets/aliases/contacts.json',
+        vendors: 'assets/aliases/vendors.json',
+      });
+    });
   });
 });
 

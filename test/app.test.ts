@@ -187,7 +187,6 @@ describe('App integration tests', () => {
       });
       expect(mockActivityEngine.dispatch).not.toHaveBeenCalled();
     });
-
   });
 
   describe('Fail-fast startup behavior', () => {
@@ -511,6 +510,7 @@ describe('App integration tests', () => {
       const body = JSON.parse(response.payload);
       expect(body.success).toBe(true);
       expect(body.data).toEqual(expectedDocument);
+      expect('aliases' in (body.data.data.direction as Record<string, unknown>)).toBe(false);
       expect(body.activities).toEqual([
         {
           type: 'MOVE_FILE',
@@ -1084,6 +1084,145 @@ describe('App integration tests', () => {
       await expect(appInstance.initialize()).rejects.toThrow(
         'targets unknown field "unknownField"'
       );
+    });
+
+    it('fails fast on createApp().initialize() if lookup: true targets a field without options', async () => {
+      const mockManifestProvider = {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: ['./types/bad-lookup.json'],
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'bad-lookup',
+          documentSchema: {
+            fields: [{ key: 'date', type: 'string' }],
+          },
+          documentParseSchema: {
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  date: { from: 'email.date', lookup: true },
+                },
+              },
+            ],
+          },
+        }),
+        getDriveConfig: vi.fn().mockResolvedValue(undefined),
+        getWorkspaceConfig: vi.fn().mockResolvedValue(undefined),
+        getSheetsConfig: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const appInstance = createApp({
+        manifestProvider: mockManifestProvider as unknown as CompositeManifestProvider,
+        skipSpaceValidation: true,
+      });
+
+      await expect(appInstance.initialize()).rejects.toThrow(
+        'specifies lookup: true for field "date" which does not have options'
+      );
+    });
+
+    it('fails fast on createApp().initialize() if excludePattern contains invalid regex', async () => {
+      const mockManifestProvider = {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: ['./types/bad-regex.json'],
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'bad-regex',
+          documentSchema: {
+            fields: [
+              {
+                key: 'contact',
+                type: 'string',
+                options: { source: 'contacts', key: 'key', name: 'name' },
+              },
+            ],
+          },
+          documentParseSchema: {
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  contact: { from: 'email.to', excludePattern: '(?+invalid', lookup: true },
+                },
+              },
+            ],
+          },
+        }),
+        getDriveConfig: vi.fn().mockResolvedValue(undefined),
+        getWorkspaceConfig: vi.fn().mockResolvedValue(undefined),
+        getSheetsConfig: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const appInstance = createApp({
+        manifestProvider: mockManifestProvider as unknown as CompositeManifestProvider,
+        skipSpaceValidation: true,
+      });
+
+      await expect(appInstance.initialize()).rejects.toThrow(/invalid excludePattern/i);
+    });
+
+    it('fails fast on createApp().initialize() if Tier 1 aliases contain duplicate normalized alias across keys', async () => {
+      const mockManifestProvider = {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: ['./types/dup-alias.json'],
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'dup-alias',
+          documentSchema: {
+            fields: [
+              {
+                key: 'direction',
+                type: 'string',
+                options: { source: 'direction', key: 'key', name: 'name' },
+              },
+            ],
+            options: {
+              direction: [
+                { key: 'IN', name: 'Incoming', aliases: ['inbound'] },
+                { key: 'OT', name: 'Outgoing', aliases: ['INBOUND'] },
+              ],
+            },
+          },
+        }),
+        getDriveConfig: vi.fn().mockResolvedValue(undefined),
+        getWorkspaceConfig: vi.fn().mockResolvedValue(undefined),
+        getSheetsConfig: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const appInstance = createApp({
+        manifestProvider: mockManifestProvider as unknown as CompositeManifestProvider,
+        skipSpaceValidation: true,
+      });
+
+      await expect(appInstance.initialize()).rejects.toThrow(/Duplicate alias "INBOUND"/i);
+    });
+
+    it('fails fast on createApp().initialize() if Tier 3 shared AliasDictionary contains empty/whitespace alias', async () => {
+      const mockManifestProvider = {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: [],
+          aliases: {
+            contacts: './aliases/contacts.json',
+          },
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          source: 'contacts',
+          mappings: {
+            c1: ['   '],
+          },
+        }),
+        getDriveConfig: vi.fn().mockResolvedValue(undefined),
+        getWorkspaceConfig: vi.fn().mockResolvedValue(undefined),
+        getSheetsConfig: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const appInstance = createApp({
+        manifestProvider: mockManifestProvider as unknown as CompositeManifestProvider,
+        skipSpaceValidation: true,
+      });
+
+      await expect(appInstance.initialize()).rejects.toThrow(/Empty or whitespace-only alias/i);
     });
   });
 });

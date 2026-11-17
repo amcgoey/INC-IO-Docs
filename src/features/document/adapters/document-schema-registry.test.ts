@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { DocumentSchemaRegistryAdapter } from './document-schema-registry';
+import { DocumentSchemaRegistryAdapter, stripOptionAliases } from './document-schema-registry';
 import { type RawManifestProviderPort, type TemplateEvaluatorPort } from '../ports';
 
 describe('DocumentSchemaRegistryAdapter', () => {
@@ -622,6 +622,60 @@ describe('DocumentSchemaRegistryAdapter', () => {
       await expect(adapter.loadAll()).rejects.toThrow(
         /Invalid DocumentType.*schema.*invalid-ui-doc/i
       );
+    });
+
+    it('strips aliases from option tuples during loadAll via stripOptionAliases', async () => {
+      const rawSchema = {
+        key: 'comm-project',
+        name: 'Communication Project',
+        documentSchema: {
+          fields: [
+            {
+              key: 'direction',
+              name: 'Direction',
+              type: 'string',
+              options: { source: 'direction', key: 'key', name: 'name' },
+            },
+          ],
+          options: {
+            direction: [
+              { key: 'IN', name: 'Incoming', aliases: ['inbound', 'received'] },
+              { key: 'OT', name: 'Outgoing', aliases: ['outbound', 'sent'] },
+            ],
+          },
+        },
+      };
+      const mockProvider = createMockManifestProvider({
+        './schemas/comm.json': rawSchema,
+      });
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
+      const result = await adapter.loadAll();
+      expect(result).toHaveLength(1);
+      expect(result[0].documentSchema.options?.direction).toEqual([
+        { key: 'IN', name: 'Incoming' },
+        { key: 'OT', name: 'Outgoing' },
+      ]);
+      expect('aliases' in (result[0].documentSchema.options!.direction[0] as Record<string, unknown>)).toBe(false);
+      expect('aliases' in (result[0].documentSchema.options!.direction[1] as Record<string, unknown>)).toBe(false);
+    });
+
+    it('stripOptionAliases removes aliases from option tuples while preserving other properties', () => {
+      const docType = {
+        key: 'test',
+        name: 'Test',
+        documentSchema: {
+          fields: [],
+          options: {
+            vendors: [
+              { key: 'v1', name: 'Vendor 1', aliases: ['v-one'], customProp: 'hello' } as Record<string, unknown>,
+            ],
+          },
+        },
+      };
+      const stripped = stripOptionAliases(docType as unknown as import('../../domain').DocumentType);
+      expect(stripped.documentSchema.options?.vendors).toEqual([
+        { key: 'v1', name: 'Vendor 1', customProp: 'hello' },
+      ]);
     });
   });
 });

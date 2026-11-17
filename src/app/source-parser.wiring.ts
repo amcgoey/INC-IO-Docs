@@ -10,6 +10,7 @@ import {
   type ParseSchemaRegistryPort,
   type RawManifestProviderPort,
   type PredicateEvaluatorPort,
+  type CanonicalOptionsProviderPort,
 } from '../features/source-parser';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
@@ -20,7 +21,10 @@ export interface SpaceTypesProvider {
   getDocumentSpaceTypes?(): Promise<SourceParserSpaceTypeConfig[]> | SourceParserSpaceTypeConfig[];
 }
 
-export type SourceParserFactory = (context: WorkspaceExecutionContext) => SourceParserPort;
+export type SourceParserFactory = (
+  context: WorkspaceExecutionContext,
+  overrides?: { canonicalOptionsProvider?: CanonicalOptionsProviderPort | undefined }
+) => SourceParserPort;
 
 export interface SourceParserWiringOptions {
   spaceTypesProvider: SpaceTypesProvider;
@@ -29,6 +33,8 @@ export interface SourceParserWiringOptions {
   driveService?: DriveServicePort | undefined;
   configProvider?: AppConfigurationProviderPort | undefined;
   predicateEvaluator?: PredicateEvaluatorPort | undefined;
+  canonicalOptionsProvider?: CanonicalOptionsProviderPort | undefined;
+  getCanonicalOptionsProvider?: ((context: WorkspaceExecutionContext) => CanonicalOptionsProviderPort | undefined) | undefined;
 }
 
 export interface SourceParserWiring {
@@ -96,17 +102,23 @@ export function createSourceParserWiring(
   const sourceParser = new SourceParserService(defaultContextAdapter, spaceConfigPort, {
     parseSchemaRegistry,
     predicateEvaluator,
+    ...(options.canonicalOptionsProvider !== undefined ? { canonicalOptionsProvider: options.canonicalOptionsProvider } : {}),
   });
 
   const createSourceParser: SourceParserFactory = (
-    context: WorkspaceExecutionContext
+    context: WorkspaceExecutionContext,
+    overrides?: { canonicalOptionsProvider?: CanonicalOptionsProviderPort | undefined }
   ): SourceParserPort => {
     const token = context.userOAuthToken;
     const client = createDriveContextClient(options, token);
     const contextAdapter = new DriveSourceContextAdapter(client);
+    const canonicalOptionsProvider =
+      overrides?.canonicalOptionsProvider ??
+      (options.getCanonicalOptionsProvider ? options.getCanonicalOptionsProvider(context) : options.canonicalOptionsProvider);
     return new SourceParserService(contextAdapter, spaceConfigPort, {
       parseSchemaRegistry,
       predicateEvaluator,
+      ...(canonicalOptionsProvider !== undefined ? { canonicalOptionsProvider } : {}),
     });
   };
 
