@@ -672,7 +672,7 @@ describe('DocumentSchemaRegistryAdapter', () => {
           },
         },
       };
-      const stripped = stripOptionAliases(docType as unknown as import('../../domain').DocumentType);
+      const stripped = stripOptionAliases(docType as unknown as import('../domain').DocumentType);
       expect(stripped.documentSchema.options?.vendors).toEqual([
         { key: 'v1', name: 'Vendor 1', customProp: 'hello' },
       ]);
