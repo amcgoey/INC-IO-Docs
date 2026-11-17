@@ -3,12 +3,14 @@ import { Value } from '@sinclair/typebox/value';
 import jsonLogic from 'json-logic-js';
 import {
   DocumentParseSchemaSchema,
+  AliasDictionarySchema,
   type DocumentParseSchema,
   type ParseTargetDocumentSchema,
   type ParseTargetDocumentField,
   type ParseTargetDocumentOptionTuple,
   type ParseSchemaRegistryPort,
   type RawManifestProviderPort,
+  type AliasDictionary,
 } from '../ports';
 
 export function validateJsonLogicAst(rule: unknown): void {
@@ -45,6 +47,7 @@ export function validateJsonLogicAst(rule: unknown): void {
 export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
   private readonly parseSchemas = new Map<string, DocumentParseSchema>();
   private readonly targetSchemas = new Map<string, ParseTargetDocumentSchema>();
+  private readonly aliasDictionaries = new Map<string, AliasDictionary>();
   private initialized = false;
 
   constructor(private readonly manifestProvider?: RawManifestProviderPort | undefined) {}
@@ -120,6 +123,7 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
               key?: unknown;
               name?: unknown;
               allowUserInput?: unknown;
+              dynamicConfig?: unknown;
             };
             linkedField?: {
               sourceField?: unknown;
@@ -149,6 +153,9 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
                     ...(typeof fieldObj.options.allowUserInput === 'boolean'
                       ? { allowUserInput: fieldObj.options.allowUserInput }
                       : {}),
+                    ...(fieldObj.options.dynamicConfig && typeof fieldObj.options.dynamicConfig === 'object'
+                      ? { dynamicConfig: fieldObj.options.dynamicConfig as Record<string, unknown> }
+                      : {}),
                   },
                 }
               : {}),
@@ -161,6 +168,41 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
                 }
               : {}),
           });
+        }
+      }
+
+      if (rawOptions && typeof rawOptions === 'object') {
+        for (const [sourceKey, tuples] of Object.entries(rawOptions)) {
+          if (Array.isArray(tuples)) {
+            const seenTier1Aliases = new Map<string, string>();
+            for (const tuple of tuples) {
+              if (tuple && typeof tuple === 'object') {
+                const canonicalKey = String(tuple.key ?? '');
+                if ('aliases' in tuple && tuple.aliases !== undefined) {
+                  if (!Array.isArray(tuple.aliases)) {
+                    throw new Error(
+                      `Invalid aliases in option tuple for key "${canonicalKey}" in DocumentType "${documentTypeKey}": must be an array`
+                    );
+                  }
+                  for (const alias of tuple.aliases) {
+                    if (typeof alias !== 'string' || alias.trim().length === 0) {
+                      throw new Error(
+                        `Empty or whitespace-only alias found in DocumentType "${documentTypeKey}" options "${sourceKey}" for key "${canonicalKey}"`
+                      );
+                    }
+                    const norm = alias.trim().toLowerCase();
+                    const existingKey = seenTier1Aliases.get(norm);
+                    if (existingKey !== undefined && existingKey !== canonicalKey) {
+                      throw new Error(
+                        `Duplicate alias "${alias}" (normalized "${norm}") in DocumentType "${documentTypeKey}" options "${sourceKey}" between keys "${existingKey}" and "${canonicalKey}"`
+                      );
+                    }
+                    seenTier1Aliases.set(norm, canonicalKey);
+                  }
+                }
+              }
+            }
+          }
         }
       }
 
@@ -225,7 +267,13 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
           const rules = Array.isArray(ruleOrRules) ? ruleOrRules : [ruleOrRules];
           for (const rule of rules) {
             if (rule && typeof rule === 'object') {
-              const typedRule = rule as { when?: unknown; pattern?: unknown; flags?: unknown };
+              const typedRule = rule as {
+                when?: unknown;
+                pattern?: unknown;
+                flags?: unknown;
+                lookup?: unknown;
+                excludePattern?: unknown;
+              };
               if (typedRule.when !== undefined) {
                 validateJsonLogicAst(typedRule.when);
               }
@@ -237,6 +285,24 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
                     `DocumentParseSchema in "${relPath}" contains invalid RegExp pattern "${typedRule.pattern}": ${err instanceof Error ? err.message : String(err)}`,
                     { cause: err }
                   );
+                }
+              }
+              if (typedRule.lookup === true) {
+                const targetFld = targetFields.find((f) => f.key === fieldKey);
+                if (!targetFld?.options) {
+                  throw new Error(
+                    `DocumentParseSchema in "${relPath}" specifies lookup: true for field "${fieldKey}" which does not have options`
+                  );
+                }
+                if (typeof typedRule.excludePattern === 'string') {
+                  try {
+                    new RegExp(typedRule.excludePattern, 'i');
+                  } catch (err) {
+                    throw new Error(
+                      `DocumentParseSchema in "${relPath}" contains invalid excludePattern "${typedRule.excludePattern}": ${err instanceof Error ? err.message : String(err)}`,
+                      { cause: err }
+                    );
+                  }
                 }
               }
             }
@@ -267,6 +333,51 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
       this.parseSchemas.set(documentTypeKey, parseSchema);
     }
 
+    const rawAliases = (manifest as { aliases?: unknown }).aliases;
+    if (rawAliases && typeof rawAliases === 'object') {
+      for (const [sourceKey, relPath] of Object.entries(rawAliases as Record<string, unknown>)) {
+        if (typeof relPath !== 'string') {
+          continue;
+        }
+        const rawDict = await this.manifestProvider.readParsedSchema(relPath);
+        if (!rawDict || typeof rawDict !== 'object') {
+          throw new Error(`Failed to load AliasDictionary at "${relPath}"`);
+        }
+        const cleaned = Value.Clean(AliasDictionarySchema, structuredClone(rawDict));
+        if (!Value.Check(AliasDictionarySchema, cleaned)) {
+          const errors = [...Value.Errors(AliasDictionarySchema, cleaned)]
+            .map((e) => `${e.path}: ${e.message}`)
+            .join(', ');
+          throw new Error(`Invalid AliasDictionary in "${relPath}": ${errors}`);
+        }
+        const aliasDict = cleaned as AliasDictionary;
+        if (aliasDict.source !== sourceKey) {
+          throw new Error(
+            `AliasDictionary file "${relPath}" specifies source "${aliasDict.source}" but manifest expects "${sourceKey}"`
+          );
+        }
+        const seenTier3Aliases = new Map<string, string>();
+        for (const [canonicalKey, aliases] of Object.entries(aliasDict.mappings)) {
+          for (const alias of aliases) {
+            if (typeof alias !== 'string' || alias.trim().length === 0) {
+              throw new Error(
+                `Empty or whitespace-only alias in AliasDictionary "${relPath}" for key "${canonicalKey}"`
+              );
+            }
+            const norm = alias.trim().toLowerCase();
+            const existingKey = seenTier3Aliases.get(norm);
+            if (existingKey !== undefined && existingKey !== canonicalKey) {
+              throw new Error(
+                `Duplicate alias "${alias}" (normalized "${norm}") in AliasDictionary "${relPath}" between keys "${existingKey}" and "${canonicalKey}"`
+              );
+            }
+            seenTier3Aliases.set(norm, canonicalKey);
+          }
+        }
+        this.aliasDictionaries.set(sourceKey, aliasDict);
+      }
+    }
+
     this.initialized = true;
   }
 
@@ -276,5 +387,9 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
 
   getTargetSchema(documentTypeKey: string): ParseTargetDocumentSchema | undefined {
     return this.targetSchemas.get(documentTypeKey);
+  }
+
+  getAliasDictionary(sourceKey: string): AliasDictionary | undefined {
+    return this.aliasDictionaries.get(sourceKey);
   }
 }

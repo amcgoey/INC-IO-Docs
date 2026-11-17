@@ -5340,6 +5340,151 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(selectedDir?.value).toBe('IN');
       });
     });
+
+    describe('Ticket #304: 3-tier LookupField resolution, single listFolders execution, and counterparty contact pre-population', () => {
+      beforeEach(() => {
+        vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string): Promise<GmailThreadDetails> => {
+          if (threadId === 'th-pass2-ticket-304') {
+            return {
+              id: 'th-pass2-ticket-304',
+              messages: [
+                {
+                  id: 'msg-304-outgoing-matched',
+                  threadId: 'th-pass2-ticket-304',
+                  subject: 'Project Logistics & Schedule Update',
+                  from: 'Project Manager <pm@inc.nyc>',
+                  to: 'colleague@inc.nyc, "McGovern, James (Pavarini)" <jmcgovern@pavarini.com>',
+                  date: 'Tue, 20 Oct 2026 14:00:00 -04:00',
+                  labels: ['SENT', 'INBOX', 'Active Projects'],
+                  plainTextBody: 'Please find the schedule attached.',
+                  inlineImages: [],
+                  attachments: [],
+                },
+                {
+                  id: 'msg-304-outgoing-unmatched',
+                  threadId: 'th-pass2-ticket-304',
+                  subject: 'Unregistered Vendor Email',
+                  from: 'Project Manager <pm@inc.nyc>',
+                  to: 'colleague@inc.nyc, Unregistered Person <unregistered@somewhere.com>',
+                  date: 'Tue, 20 Oct 2026 15:00:00 -04:00',
+                  labels: ['SENT', 'INBOX', 'Active Projects'],
+                  plainTextBody: 'Hello world.',
+                  inlineImages: [],
+                  attachments: [],
+                },
+              ],
+            };
+          }
+          return { id: threadId, messages: [] };
+        });
+      });
+
+      it('filters internal colleagues from email.to, resolves external counterparty contact, executes listFolders at most once per (spaceId, sourceKey), and emits zero duplicate status banners', async () => {
+        // Step 1: list folders in space root
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes(`'space-projects-1' in parents`))
+          .reply(200, { files: [{ id: 'admin-id', name: '1 Admin' }] });
+
+        // Step 2: list folders in 1 Admin
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes(`'admin-id' in parents`))
+          .reply(200, { files: [{ id: 'comm-id', name: 'Communication' }] });
+
+        // Step 3: list folders in Communication
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes(`'comm-id' in parents`))
+          .reply(200, { files: [{ id: 'pavarini-id', name: 'Pavarini' }] });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-304-outgoing-matched',
+              threadId: 'th-pass2-ticket-304',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const card = body.action?.navigations?.[0]?.pushCard;
+        const docInfoSec = card?.sections.find((s) => s.header === 'Document Data');
+
+        const contactWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-project')
+        )?.textInput;
+        expect(contactWidget?.value).toBe('Pavarini');
+
+        const directionWidget = docInfoSec?.widgets.find(
+          (w) => w.selectionInput?.name === getDocumentInfoWidgetName('direction', 'communication-project')
+        )?.selectionInput;
+        const selectedDir = directionWidget?.items?.find((item) => item.selected);
+        expect(selectedDir?.value).toBe('OT');
+
+        // Verify single-execution: each nock interceptor was called exactly ONCE across SourceParser and SchemaDrivenUi
+        expect(nock.isDone()).toBe(true);
+
+        // Verify zero duplicate status banners
+        const allTextParagraphs = card?.sections.flatMap((s) =>
+          s.widgets.map((w) => w.textParagraph?.text).filter(Boolean)
+        ) ?? [];
+        const statusBanners = allTextParagraphs.filter((t) => t?.includes('Status:'));
+        const uniqueStatusBanners = new Set(statusBanners);
+        expect(statusBanners.length).toBe(uniqueStatusBanners.size);
+      });
+
+      it('leaves allowUserInput LookupField blank when no canonical option or alias matches', async () => {
+        // Step 1: list folders in space root
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes(`'space-projects-1' in parents`))
+          .reply(200, { files: [{ id: 'admin-id', name: '1 Admin' }] });
+
+        // Step 2: list folders in 1 Admin
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes(`'admin-id' in parents`))
+          .reply(200, { files: [{ id: 'comm-id', name: 'Communication' }] });
+
+        // Step 3: list folders in Communication
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes(`'comm-id' in parents`))
+          .reply(200, { files: [{ id: 'pavarini-id', name: 'Pavarini' }] });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-304-outgoing-unmatched',
+              threadId: 'th-pass2-ticket-304',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const card = body.action?.navigations?.[0]?.pushCard;
+        const docInfoSec = card?.sections.find((s) => s.header === 'Document Data');
+
+        const contactWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-project')
+        )?.textInput;
+        expect(contactWidget?.value ?? '').toBe('');
+        expect(nock.isDone()).toBe(true);
+      });
+    });
   });
 });
 

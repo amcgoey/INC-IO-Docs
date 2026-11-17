@@ -16,6 +16,10 @@ import type {
   ParseTargetDocumentSchema,
   ParseTargetDocumentField,
   GmailFieldRule,
+  GmailLookupFieldRule,
+  GmailExtractSource,
+  CanonicalOptionsProviderPort,
+  ParseTargetDocumentOptionTuple,
 } from './ports';
 
 export const CSI_SECTION_REGEX = /(?<=^|[\s_.-])\d{6}-\d{3}(?:-[A-Za-z0-9]+)?(?=[\s_.-]|$)/;
@@ -582,10 +586,534 @@ function extractCandidateFromRule(
   return validateCandidate(rawCandidate, targetField, targetSchema);
 }
 
+export function splitRfc5322Recipients(input: string): string[] {
+  if (!input || input.trim().length === 0) {
+    return [];
+  }
+  const recipients: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  let isEscaped = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i];
+    if (isEscaped) {
+      current += char;
+      isEscaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      current += char;
+      isEscaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      current += char;
+      continue;
+    }
+    if (char === ',' && !inQuotes) {
+      const trimmed = current.trim();
+      if (trimmed.length > 0) {
+        recipients.push(trimmed);
+      }
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  const trimmed = current.trim();
+  if (trimmed.length > 0) {
+    recipients.push(trimmed);
+  }
+  return recipients;
+}
+
+export interface ParsedRecipient {
+  raw: string;
+  displayName?: string | undefined;
+  email?: string | undefined;
+  domain?: string | undefined;
+}
+
+export function parseRecipient(recipient: string): ParsedRecipient {
+  const trimmed = recipient.trim();
+  if (!trimmed) {
+    return { raw: '' };
+  }
+
+  const angleMatch = trimmed.match(/^(?:["']?([^"']*)["']?\s*)?<([^>]+)>$/);
+  if (angleMatch) {
+    const rawName = angleMatch[1]?.trim();
+    const email = angleMatch[2]?.trim();
+    const domain = email && email.includes('@') ? email.split('@')[1]?.toLowerCase() : undefined;
+    const displayName = rawName && rawName.length > 0 ? rawName : undefined;
+    return {
+      raw: trimmed,
+      displayName,
+      email,
+      domain,
+    };
+  }
+
+  if (trimmed.includes('@')) {
+    const email = trimmed;
+    const domain = email.split('@')[1]?.toLowerCase();
+    return {
+      raw: trimmed,
+      email,
+      domain,
+    };
+  }
+
+  return {
+    raw: trimmed,
+    displayName: trimmed,
+  };
+}
+
+function getSourceText(fromSource: GmailExtractSource, sourceContext: SourceContext): string {
+  const { email } = sourceContext;
+  switch (fromSource) {
+    case 'email.date':
+      return email?.date ?? '';
+    case 'email.subjectClean':
+      return cleanSubject(email?.subject);
+    case 'email.subject':
+      return email?.subject ?? '';
+    case 'email.plainTextBody':
+      return email?.plainTextBody ?? '';
+    case 'email.htmlBody':
+      return email?.htmlBody ?? '';
+    case 'email.body': {
+      const { plainTextBody: rawPlain } = email ?? {};
+      if (typeof rawPlain === 'string' && rawPlain.trim().length > 0) {
+        return rawPlain.trim();
+      }
+      return normalizeHtmlBodyForPass2(email?.htmlBody);
+    }
+    case 'email.from':
+      return email?.from ?? '';
+    case 'email.to':
+      return email?.to ?? '';
+    case 'email.cc':
+      return email?.cc ?? '';
+    case 'email.labels':
+      return (email?.labels ?? []).join(', ');
+    default:
+      return '';
+  }
+}
+
+interface TierOption {
+  tuple: ParseTargetDocumentOptionTuple;
+  aliases: string[];
+}
+
+function getTupleKey(tuple: ParseTargetDocumentOptionTuple, keyProp: string): string {
+  if (tuple[keyProp] !== undefined && tuple[keyProp] !== null) {
+    return String(tuple[keyProp]);
+  }
+  if (tuple.key !== undefined && tuple.key !== null) {
+    return String(tuple.key);
+  }
+  return '';
+}
+
+function matchTier(
+  candidate: string,
+  parsed: ParsedRecipient,
+  options: TierOption[],
+  keyProp: string = 'key'
+): ParseTargetDocumentOptionTuple | undefined {
+  if (options.length === 0) {
+    return undefined;
+  }
+
+  // 1. @domain / full-email alias match first
+  const step1Matches = new Map<string, ParseTargetDocumentOptionTuple>();
+  const candidateLower = candidate.trim().toLowerCase();
+
+  for (const opt of options) {
+    const tupleKey = getTupleKey(opt.tuple, keyProp);
+    for (const alias of opt.aliases) {
+      const aliasTrimmed = alias.trim();
+      const aliasLower = aliasTrimmed.toLowerCase();
+
+      // Full email match
+      if (parsed.email && parsed.email.toLowerCase() === aliasLower) {
+        step1Matches.set(tupleKey, opt.tuple);
+        break;
+      }
+      // @domain match
+      if (aliasLower.startsWith('@')) {
+        const aliasDomain = aliasLower.slice(1);
+        if (parsed.domain && parsed.domain.toLowerCase() === aliasDomain) {
+          step1Matches.set(tupleKey, opt.tuple);
+          break;
+        }
+        if (parsed.email && parsed.email.toLowerCase().endsWith(aliasLower)) {
+          step1Matches.set(tupleKey, opt.tuple);
+          break;
+        }
+      }
+      // Candidate exact match with @domain
+      if (candidateLower.startsWith('@') && candidateLower === aliasLower) {
+        step1Matches.set(tupleKey, opt.tuple);
+        break;
+      }
+    }
+  }
+
+  if (step1Matches.size === 1) {
+    return [...step1Matches.values()][0];
+  }
+  if (step1Matches.size > 1) {
+    return undefined;
+  }
+
+  // 2. Case-insensitive exact match of candidate or parsed display name against key, name, or aliases
+  const step2Matches = new Map<string, ParseTargetDocumentOptionTuple>();
+  const displayNameLower = parsed.displayName ? parsed.displayName.trim().toLowerCase() : undefined;
+
+  for (const opt of options) {
+    const tupleKey = getTupleKey(opt.tuple, keyProp);
+    const keyLower = tupleKey.trim().toLowerCase();
+    const nameLower = opt.tuple.name ? String(opt.tuple.name).trim().toLowerCase() : undefined;
+    const aliasLowers = opt.aliases.map((a) => a.trim().toLowerCase());
+
+    let isMatch = false;
+
+    if (
+      (keyLower.length > 0 && candidateLower === keyLower) ||
+      (nameLower && candidateLower === nameLower) ||
+      aliasLowers.includes(candidateLower)
+    ) {
+      isMatch = true;
+    }
+
+    if (!isMatch && displayNameLower) {
+      if (
+        (keyLower.length > 0 && displayNameLower === keyLower) ||
+        (nameLower && displayNameLower === nameLower) ||
+        aliasLowers.includes(displayNameLower)
+      ) {
+        isMatch = true;
+      }
+    }
+
+    if (isMatch) {
+      step2Matches.set(tupleKey, opt.tuple);
+    }
+  }
+
+  if (step2Matches.size === 1) {
+    return [...step2Matches.values()][0];
+  }
+  if (step2Matches.size > 1) {
+    return undefined;
+  }
+
+  // 3. escapeRegExp-sanitized delimiter-lookaround (?<=^|[\s<(\[_,;:"'-]) / (?=[\s>)\]_,;:."'-]|$) phrase containment third
+  const step3Matches = new Map<string, { tuple: ParseTargetDocumentOptionTuple; longestNeedle: string }>();
+  const haystack = candidate;
+
+  for (const opt of options) {
+    const tupleKey = getTupleKey(opt.tuple, keyProp);
+    let longestMatchedNeedle: string | undefined;
+
+    // 1. tuple.name (if length >= 4)
+    if (opt.tuple.name && typeof opt.tuple.name === 'string') {
+      const nameTrimmed = opt.tuple.name.trim();
+      if (nameTrimmed.length >= 4) {
+        const regex = new RegExp(
+          `(?<=^|[\\s<(\\[_,;:"'-])${escapeRegExp(nameTrimmed)}(?=[\\s>)\\]_,;:."'-]|$)`,
+          'i'
+        );
+        if (regex.test(haystack)) {
+          longestMatchedNeedle = nameTrimmed;
+        }
+      }
+    }
+
+    // 2. tuple.aliases
+    for (const alias of opt.aliases) {
+      const aliasTrimmed = alias.trim();
+      if (aliasTrimmed.length >= 4) {
+        const regex = new RegExp(
+          `(?<=^|[\\s<(\\[_,;:"'-])${escapeRegExp(aliasTrimmed)}(?=[\\s>)\\]_,;:."'-]|$)`,
+          'i'
+        );
+        if (regex.test(haystack)) {
+          if (!longestMatchedNeedle || aliasTrimmed.length > longestMatchedNeedle.length) {
+            longestMatchedNeedle = aliasTrimmed;
+          }
+        }
+      } else if (aliasTrimmed.length === 2 || aliasTrimmed.length === 3) {
+        const regex = new RegExp(
+          `(?<=^|[\\s<(\\[_,;:"'-])${escapeRegExp(aliasTrimmed)}(?=[\\s>)\\]_,;:."'-]|$)`
+        );
+        if (regex.test(haystack)) {
+          if (!longestMatchedNeedle || aliasTrimmed.length > longestMatchedNeedle.length) {
+            longestMatchedNeedle = aliasTrimmed;
+          }
+        }
+      }
+    }
+
+    if (longestMatchedNeedle) {
+      step3Matches.set(tupleKey, {
+        tuple: opt.tuple,
+        longestNeedle: longestMatchedNeedle,
+      });
+    }
+  }
+
+  if (step3Matches.size === 1) {
+    return [...step3Matches.values()][0].tuple;
+  }
+
+  if (step3Matches.size > 1) {
+    const matches = [...step3Matches.values()].sort(
+      (a, b) => b.longestNeedle.length - a.longestNeedle.length
+    );
+    const best = matches[0];
+    const second = matches[1];
+
+    if (best.longestNeedle.length === second.longestNeedle.length) {
+      return undefined;
+    }
+
+    const bestLower = best.longestNeedle.toLowerCase();
+    for (let i = 1; i < matches.length; i++) {
+      const other = matches[i];
+      if (other.longestNeedle.length >= best.longestNeedle.length) {
+        return undefined;
+      }
+      if (!bestLower.includes(other.longestNeedle.toLowerCase())) {
+        return undefined;
+      }
+    }
+
+    return best.tuple;
+  }
+
+  return undefined;
+}
+
+async function resolveCanonicalOptionFromCandidate(
+  candidate: string,
+  targetField: ParseTargetDocumentField,
+  spaceId: string | undefined,
+  targetSchema: ParseTargetDocumentSchema | undefined,
+  deps: SourceParserServiceDeps | undefined
+): Promise<{ value: string; linkedFields?: Record<string, string>; matchedTuple: ParseTargetDocumentOptionTuple } | undefined> {
+  const trimmed = candidate.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  const parsed = parseRecipient(trimmed);
+
+  let canonicalTuples: ParseTargetDocumentOptionTuple[] = [];
+
+  if (targetField.options?.dynamicConfig) {
+    const cleanSpace = spaceId ? spaceId.trim() : '';
+    if (!cleanSpace || !deps?.canonicalOptionsProvider) {
+      return undefined;
+    }
+    canonicalTuples = await deps.canonicalOptionsProvider.getCanonicalOptions(cleanSpace, targetField);
+  } else if (targetField.options?.source) {
+    canonicalTuples = targetSchema?.options?.[targetField.options.source] ?? [];
+  }
+
+  if (!canonicalTuples || canonicalTuples.length === 0) {
+    return undefined;
+  }
+
+  const keyProp = targetField.options?.key ?? 'key';
+  const sourceKey = targetField.options?.source ?? '';
+  const localTuples = targetSchema?.options?.[sourceKey] ?? [];
+  const localTuplesMap = new Map<string, ParseTargetDocumentOptionTuple>();
+  for (const t of localTuples) {
+    localTuplesMap.set(getTupleKey(t, keyProp), t);
+  }
+  const sharedDict = deps?.parseSchemaRegistry?.getAliasDictionary?.(sourceKey);
+
+  const seenNormalizedAliases = new Set<string>();
+
+  // Tier 1: Local option aliases
+  const tier1: TierOption[] = [];
+  for (const tuple of canonicalTuples) {
+    const tupleKey = getTupleKey(tuple, keyProp);
+    const localTuple = localTuplesMap.get(tupleKey);
+    const rawAliases = (localTuple?.aliases ?? []).filter((a) => typeof a === 'string' && a.trim().length > 0);
+    for (const a of rawAliases) {
+      seenNormalizedAliases.add(a.trim().toLowerCase());
+    }
+    tier1.push({ tuple, aliases: rawAliases });
+  }
+
+  // Tier 2: Dynamic option aliases (from tuple.aliases)
+  const tier2: TierOption[] = [];
+  for (const tuple of canonicalTuples) {
+    const rawAliases = (tuple.aliases ?? []).filter((a) => typeof a === 'string' && a.trim().length > 0);
+    const filtered = rawAliases.filter((a) => !seenNormalizedAliases.has(a.trim().toLowerCase()));
+    for (const a of filtered) {
+      seenNormalizedAliases.add(a.trim().toLowerCase());
+    }
+    tier2.push({ tuple, aliases: filtered });
+  }
+
+  // Tier 3: Shared Manifest AliasDictionary
+  const tier3: TierOption[] = [];
+  for (const tuple of canonicalTuples) {
+    const tupleKey = getTupleKey(tuple, keyProp);
+    const rawAliases = (sharedDict?.mappings?.[tupleKey] ?? []).filter(
+      (a) => typeof a === 'string' && a.trim().length > 0
+    );
+    const filtered = rawAliases.filter((a) => !seenNormalizedAliases.has(a.trim().toLowerCase()));
+    tier3.push({ tuple, aliases: filtered });
+  }
+
+  let matchedTuple: ParseTargetDocumentOptionTuple | undefined;
+  for (const tierOptions of [tier1, tier2, tier3]) {
+    const match = matchTier(trimmed, parsed, tierOptions, keyProp);
+    if (match) {
+      matchedTuple = match;
+      break;
+    }
+  }
+
+  if (!matchedTuple) {
+    return undefined;
+  }
+
+  const emittedValue = String(matchedTuple[keyProp] ?? matchedTuple.key);
+
+  if (targetField.minLength !== undefined && emittedValue.length < targetField.minLength) {
+    return undefined;
+  }
+  if (targetField.pattern !== undefined) {
+    const regex = new RegExp(targetField.pattern);
+    if (!regex.test(emittedValue)) {
+      return undefined;
+    }
+  }
+
+  const linkedFields: Record<string, string> = {};
+  if (targetSchema?.fields) {
+    for (const sibling of targetSchema.fields) {
+      if (sibling.linkedField && sibling.linkedField.sourceField === targetField.key) {
+        const propVal = matchedTuple[sibling.linkedField.sourceProperty];
+        if (
+          propVal !== undefined &&
+          propVal !== null &&
+          (typeof propVal === 'string' ? propVal.trim().length > 0 : true)
+        ) {
+          linkedFields[sibling.key] = String(propVal);
+        }
+      }
+    }
+  }
+
+  return {
+    value: emittedValue,
+    ...(Object.keys(linkedFields).length > 0 ? { linkedFields } : {}),
+    matchedTuple,
+  };
+}
+
+async function extractLookupCandidate(
+  rule: GmailLookupFieldRule,
+  request: ExtractFieldsRequest,
+  targetField: ParseTargetDocumentField,
+  targetSchema: ParseTargetDocumentSchema | undefined,
+  deps: SourceParserServiceDeps | undefined
+): Promise<{ value: string; linkedFields?: Record<string, string> } | undefined> {
+  const { from: fromSource } = rule;
+
+  if (fromSource === 'email.to' || fromSource === 'email.cc') {
+    const rawRecipientsText =
+      fromSource === 'email.to'
+        ? (request.context.email?.to ?? '')
+        : (request.context.email?.cc ?? '');
+    const recipients = splitRfc5322Recipients(rawRecipientsText);
+    const excludeRegex = rule.excludePattern ? new RegExp(rule.excludePattern, 'i') : undefined;
+
+    const filteredRecipients = excludeRegex
+      ? recipients.filter((r) => !excludeRegex.test(r))
+      : recipients;
+
+    for (const recipient of filteredRecipients) {
+      const match = await resolveCanonicalOptionFromCandidate(
+        recipient,
+        targetField,
+        request.spaceId,
+        targetSchema,
+        deps
+      );
+      if (match) {
+        return {
+          value: match.value,
+          ...(match.linkedFields ? { linkedFields: match.linkedFields } : {}),
+        };
+      }
+    }
+    return undefined;
+  }
+
+  const sourceText = getSourceText(fromSource, request.context);
+  if (!sourceText || sourceText.trim().length === 0) {
+    return undefined;
+  }
+
+  if (rule.excludePattern && new RegExp(rule.excludePattern, 'i').test(sourceText)) {
+    return undefined;
+  }
+
+  let candidateText = sourceText;
+  if (rule.pattern) {
+    const regex = new RegExp(rule.pattern, rule.flags ?? 'i');
+    const match = sourceText.match(regex);
+    if (!match) {
+      return undefined;
+    }
+    const { group: groupIndex } = rule;
+    candidateText =
+      groupIndex !== undefined && match[groupIndex] !== undefined
+        ? match[groupIndex]
+        : match[1] !== undefined
+          ? match[1]
+          : match[0];
+  }
+
+  if (!candidateText || candidateText.trim().length === 0) {
+    return undefined;
+  }
+
+  const match = await resolveCanonicalOptionFromCandidate(
+    candidateText,
+    targetField,
+    request.spaceId,
+    targetSchema,
+    deps
+  );
+  if (match) {
+    return {
+      value: match.value,
+      ...(match.linkedFields ? { linkedFields: match.linkedFields } : {}),
+    };
+  }
+
+  return undefined;
+}
+
 export interface SourceParserServiceDeps {
   parseSchemaRegistry?: ParseSchemaRegistryPort | undefined;
   predicateEvaluator?: PredicateEvaluatorPort | undefined;
   fallbackExtractor?: FallbackFieldExtractorPort | undefined;
+  canonicalOptionsProvider?: CanonicalOptionsProviderPort | undefined;
 }
 
 export class SourceParserService implements SourceParserPort {
@@ -684,16 +1212,63 @@ export class SourceParserService implements SourceParserPort {
               }
             }
 
-            const candidate = extractCandidateFromRule(
-              rule as GmailFieldRule,
-              request.context,
-              targetField,
-              targetSchema
-            );
+            if ('lookup' in rule && rule.lookup === true) {
+              const lookupResult = await extractLookupCandidate(
+                rule,
+                request,
+                targetField,
+                targetSchema,
+                this.deps
+              );
+              if (lookupResult !== undefined) {
+                const { value: lookupVal, linkedFields: lookupLinked } = lookupResult;
+                populatedFields[fieldKey] = lookupVal;
+                if (lookupLinked) {
+                  for (const [siblingKey, siblingVal] of Object.entries(lookupLinked)) {
+                    if (!(siblingKey in populatedFields)) {
+                      populatedFields[siblingKey] = siblingVal;
+                    }
+                  }
+                }
+                break;
+              }
+            } else {
+              const candidate = extractCandidateFromRule(
+                rule as GmailFieldRule,
+                request.context,
+                targetField,
+                targetSchema
+              );
 
-            if (candidate !== undefined) {
-              populatedFields[fieldKey] = candidate;
-              break;
+              if (candidate !== undefined) {
+                populatedFields[fieldKey] = candidate;
+                if (targetField.options && targetSchema?.fields) {
+                  const sourceKey = targetField.options.source as string;
+                  const optionTuples = targetSchema.options?.[sourceKey] ?? [];
+                  const matchedTuple = optionTuples.find(
+                    (tuple) =>
+                      String(tuple.key) === candidate ||
+                      (tuple.name && String(tuple.name).toLowerCase() === candidate.toLowerCase())
+                  );
+                  if (matchedTuple) {
+                    for (const sibling of targetSchema.fields) {
+                      if (sibling.linkedField && sibling.linkedField.sourceField === fieldKey) {
+                        if (!(sibling.key in populatedFields)) {
+                          const propVal = matchedTuple[sibling.linkedField.sourceProperty];
+                          if (
+                            propVal !== undefined &&
+                            propVal !== null &&
+                            (typeof propVal === 'string' ? propVal.trim().length > 0 : true)
+                          ) {
+                            populatedFields[sibling.key] = String(propVal);
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                break;
+              }
             }
           }
         }

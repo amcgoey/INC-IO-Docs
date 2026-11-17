@@ -6,6 +6,8 @@ import {
   cleanSubject,
   parseDateToYymmdd,
   normalizeHtmlBodyForPass2,
+  splitRfc5322Recipients,
+  parseRecipient,
   FFE_PROXIMITY_REGEX_1,
   FFE_PROXIMITY_REGEX_2,
 } from './domain';
@@ -1806,6 +1808,385 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
       expect(result.statusMessages).toBeDefined();
       expect(result.statusMessages?.[0]).toContain('Could not extract fields from Broken Extractor');
       expect(result.fields.description).toBe('Clean Subject');
+    });
+
+    describe('RFC 5322 Recipient Splitting and Parsing', () => {
+      it('splits recipients preserving commas inside quoted display names', () => {
+        const input = '"McGovern, James" <jmcgovern@pavarini.com>, "Smith, Bob" <bsmith@inc.nyc>, Jane Doe <jane@example.com>';
+        const split = splitRfc5322Recipients(input);
+        expect(split).toEqual([
+          '"McGovern, James" <jmcgovern@pavarini.com>',
+          '"Smith, Bob" <bsmith@inc.nyc>',
+          'Jane Doe <jane@example.com>',
+        ]);
+      });
+
+      it('handles escaped quotes and returns empty array on empty input', () => {
+        expect(splitRfc5322Recipients('')).toEqual([]);
+        expect(splitRfc5322Recipients('   ')).toEqual([]);
+        const input = '"Escaped \\"Quote\\", Test" <test@example.com>';
+        expect(splitRfc5322Recipients(input)).toEqual(['"Escaped \\"Quote\\", Test" <test@example.com>']);
+      });
+
+      it('parses recipient into displayName, email, and domain', () => {
+        expect(parseRecipient('"McGovern, James" <jmcgovern@pavarini.com>')).toEqual({
+          raw: '"McGovern, James" <jmcgovern@pavarini.com>',
+          displayName: 'McGovern, James',
+          email: 'jmcgovern@pavarini.com',
+          domain: 'pavarini.com',
+        });
+        expect(parseRecipient('<contact@domain.org>')).toEqual({
+          raw: '<contact@domain.org>',
+          email: 'contact@domain.org',
+          domain: 'domain.org',
+        });
+        expect(parseRecipient('user@inc.nyc')).toEqual({
+          raw: 'user@inc.nyc',
+          email: 'user@inc.nyc',
+          domain: 'inc.nyc',
+        });
+        expect(parseRecipient('Bare Name')).toEqual({
+          raw: 'Bare Name',
+          displayName: 'Bare Name',
+        });
+      });
+    });
+
+    describe('LookupField 3-Tier Entity Resolution & LinkedField Derivation', () => {
+      const targetDocSchema = {
+        fields: [
+          {
+            key: 'contact',
+            name: 'Contact',
+            type: 'string',
+            options: {
+              source: 'contactFolders',
+              key: 'key',
+              name: 'name',
+              allowUserInput: true,
+              dynamicConfig: { provider: 'google_drive', relativePath: 'Contacts' },
+            },
+          },
+          {
+            key: 'specTag',
+            name: 'Spec Tag',
+            type: 'string',
+            options: {
+              source: 'specItems',
+              key: 'code',
+              name: 'title',
+            },
+          },
+          {
+            key: 'specTitle',
+            name: 'Spec Title',
+            type: 'string',
+            linkedField: {
+              sourceField: 'specTag',
+              sourceProperty: 'title',
+            },
+          },
+        ],
+        options: {
+          specItems: [
+            { code: '071200', title: 'Waterproofing', aliases: ['WP', 'dampproofing'] },
+            { code: '092200', title: 'Drywall', aliases: ['gypsum', 'GWB'] },
+          ],
+        },
+      };
+
+      it('resolves Tier 1 local option aliases first and derives sibling LinkedField', async () => {
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockReturnValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  specTag: { from: 'email.subjectClean', lookup: true },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockReturnValue(targetDocSchema),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        const result = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-1',
+              subject: 'Re: Dampproofing Submittal for review',
+            },
+          },
+        });
+
+        expect(result.fields.specTag).toBe('071200');
+        expect(result.fields.specTitle).toBe('Waterproofing');
+      });
+
+      it('filters out entries matching excludePattern on email.to and matches external counterparty', async () => {
+        const mockCanonicalProvider = {
+          getCanonicalOptions: vi.fn().mockResolvedValue([
+            { key: 'Pavarini Construction', name: 'Pavarini Construction' },
+            { key: 'Structure Tone', name: 'Structure Tone' },
+          ]),
+        };
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockReturnValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  contact: {
+                    from: 'email.to',
+                    excludePattern: '@inc\\.nyc\\b',
+                    lookup: true,
+                  },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockReturnValue(targetDocSchema),
+          getAliasDictionary: vi.fn().mockReturnValue({
+            source: 'contactFolders',
+            mappings: {
+              'Pavarini Construction': ['@pavarini.com', 'PCNE'],
+            },
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+          canonicalOptionsProvider: mockCanonicalProvider,
+        });
+
+        const result = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          spaceId: 'space-999',
+          context: {
+            email: {
+              id: 'msg-1',
+              to: 'colleague@inc.nyc, "McGovern, James" <jmcgovern@pavarini.com>',
+            },
+          },
+        });
+
+        expect(result.fields.contact).toBe('Pavarini Construction');
+        expect(mockCanonicalProvider.getCanonicalOptions).toHaveBeenCalledWith(
+          'space-999',
+          expect.objectContaining({ key: 'contact' })
+        );
+      });
+
+      it('shadowing: higher tiers shadow lower tiers and collision in winning tier returns undefined', async () => {
+        // Tier 1 has static options with local alias 'shared-alias' mapping to key '071200'
+        // Tier 3 shared dictionary attempts to map 'shared-alias' to key '092200' -> shadowed by Tier 1!
+        const schemaWithLocalAlias = {
+          ...targetDocSchema,
+          options: {
+            specItems: [
+              { code: '071200', title: 'Waterproofing', aliases: ['wp-tier1'] },
+              { code: '092200', title: 'Drywall', aliases: ['dw-tier1'] },
+            ],
+          },
+        };
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockReturnValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  specTag: { from: 'email.subjectClean', lookup: true },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockReturnValue(schemaWithLocalAlias),
+          getAliasDictionary: vi.fn().mockReturnValue({
+            source: 'specItems',
+            mappings: {
+              '092200': ['wp-tier1'], // attempted conflict in Tier 3
+            },
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        // 'wp-tier1' is in Tier 1 for 071200, so it matches 071200 and ignores Tier 3 mapping to 092200
+        const result = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-1',
+              subject: 'Checking wp-tier1 notes',
+            },
+          },
+        });
+
+        expect(result.fields.specTag).toBe('071200');
+      });
+
+      it('longest strict-substring tie-breaking picks the longer entity, but multi-entity collision returns undefined', async () => {
+        const schemaWithSubstrings = {
+          ...targetDocSchema,
+          options: {
+            specItems: [
+              { code: '071200', title: 'Pavarini Construction', aliases: ['Pavarini Construction'] },
+              { code: '092200', title: 'Pavarini', aliases: ['Pavarini'] },
+            ],
+          },
+        };
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockReturnValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  specTag: { from: 'email.subjectClean', lookup: true },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockReturnValue(schemaWithSubstrings),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        // 1. Text has "Pavarini Construction" - "Pavarini" is a strict substring, so "Pavarini Construction" (071200) wins
+        const result1 = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-1',
+              subject: 'Meeting with Pavarini Construction team',
+            },
+          },
+        });
+        expect(result1.fields.specTag).toBe('071200');
+
+        // 2. Text has two non-substring entities: "Pavarini" and "Drywall" -> collision returns undefined
+        const schemaWithIndependent = {
+          ...targetDocSchema,
+          options: {
+            specItems: [
+              { code: '071200', title: 'Pavarini', aliases: ['Pavarini'] },
+              { code: '092200', title: 'Drywall', aliases: ['Drywall'] },
+            ],
+          },
+        };
+        mockParseRegistry.getTargetSchema.mockReturnValue(schemaWithIndependent);
+
+        const result2 = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-2',
+              subject: 'Pavarini and Drywall meeting',
+            },
+          },
+        });
+        expect(result2.fields.specTag).toBeUndefined();
+      });
+
+      it('canonical-only guard: never pre-populates unverified strings even when allowUserInput is true', async () => {
+        const mockCanonicalProvider = {
+          getCanonicalOptions: vi.fn().mockResolvedValue([
+            { key: 'Known Contact', name: 'Known Contact' },
+          ]),
+        };
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockReturnValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  contact: { from: 'email.from', lookup: true },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockReturnValue(targetDocSchema),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+          canonicalOptionsProvider: mockCanonicalProvider,
+        });
+
+        // Unknown email from an unregistered sender
+        const result = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          spaceId: 'space-123',
+          context: {
+            email: {
+              id: 'msg-1',
+              from: 'stranger@unknown-vendor.com',
+            },
+          },
+        });
+
+        // Contact must remain blank (not populated with 'stranger@unknown-vendor.com')
+        expect(result.fields.contact).toBeUndefined();
+      });
+
+      it('discards candidate when spaceId is missing for dynamic options', async () => {
+        const mockCanonicalProvider = {
+          getCanonicalOptions: vi.fn().mockResolvedValue([
+            { key: 'Known Contact', name: 'Known Contact' },
+          ]),
+        };
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockReturnValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  contact: { from: 'email.from', lookup: true },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockReturnValue(targetDocSchema),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+          canonicalOptionsProvider: mockCanonicalProvider,
+        });
+
+        const result = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          // spaceId omitted
+          context: {
+            email: {
+              id: 'msg-1',
+              from: 'Known Contact <contact@example.com>',
+            },
+          },
+        });
+
+        expect(result.fields.contact).toBeUndefined();
+        expect(mockCanonicalProvider.getCanonicalOptions).not.toHaveBeenCalled();
+      });
     });
   });
 });

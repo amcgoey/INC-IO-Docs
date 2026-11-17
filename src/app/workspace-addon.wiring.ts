@@ -130,16 +130,27 @@ export function wireWorkspaceAddonRoutes(
           } as unknown as DocumentSpaceService)
         : undefined);
 
-    let createSchemaDrivenUiService = options.createSchemaDrivenUiService;
-    if (!createSchemaDrivenUiService && options.driveClient) {
-      createSchemaDrivenUiService = (context: WorkspaceExecutionContext) => {
+    const dynamicOptionsAdapters = new WeakMap<WorkspaceExecutionContext, DynamicOptionsAdapter>();
+
+    const getDynamicOptionsAdapter = (context: WorkspaceExecutionContext): DynamicOptionsAdapter => {
+      let adapter = dynamicOptionsAdapters.get(context);
+      if (!adapter) {
         const driveClient = context.userOAuthToken
           ? new GoogleDriveClient({
               auth: context.userOAuthToken,
               configProvider: appConfigProvider,
             })
-          : options.driveClient!;
-        const optionsFetcher = new DynamicOptionsAdapter(driveClient);
+          : (options.driveClient ?? new GoogleDriveClient({ configProvider: appConfigProvider }));
+        adapter = new DynamicOptionsAdapter(driveClient);
+        dynamicOptionsAdapters.set(context, adapter);
+      }
+      return adapter;
+    };
+
+    let createSchemaDrivenUiService = options.createSchemaDrivenUiService;
+    if (!createSchemaDrivenUiService) {
+      createSchemaDrivenUiService = (context: WorkspaceExecutionContext) => {
+        const optionsFetcher = getDynamicOptionsAdapter(context);
         return createSchemaDrivenUiWiring({
           manifestProvider,
           optionsFetcher,
@@ -148,8 +159,12 @@ export function wireWorkspaceAddonRoutes(
     }
 
     let sourceParser = options.sourceParser;
-    let createSourceParser = options.createSourceParser;
-    if (!sourceParser && !createSourceParser) {
+    const rawCreateSourceParser = options.createSourceParser;
+    let createSourceParser:
+      | ((context: WorkspaceExecutionContext) => SourceParserPort | Promise<SourceParserPort>)
+      | undefined;
+
+    if (!sourceParser && !rawCreateSourceParser) {
       const spaceTypesProvider =
         options.documentSpaceService ??
         options.documentSpaceRegistry ?? {
@@ -161,9 +176,21 @@ export function wireWorkspaceAddonRoutes(
         driveClient: options.driveClient,
         driveService: options.driveService,
         configProvider: appConfigProvider,
+        getCanonicalOptionsProvider: (ctx) => getDynamicOptionsAdapter(ctx),
       });
       sourceParser = sourceParserWiring.sourceParser;
-      createSourceParser = sourceParserWiring.createSourceParser;
+      createSourceParser = (context: WorkspaceExecutionContext) => {
+        const adapter = getDynamicOptionsAdapter(context);
+        return sourceParserWiring.createSourceParser(context, { canonicalOptionsProvider: adapter });
+      };
+    } else if (rawCreateSourceParser) {
+      createSourceParser = (context: WorkspaceExecutionContext) => {
+        const adapter = getDynamicOptionsAdapter(context);
+        return (rawCreateSourceParser as (ctx: WorkspaceExecutionContext, overrides?: { canonicalOptionsProvider?: DynamicOptionsAdapter }) => SourceParserPort | Promise<SourceParserPort>)(
+          context,
+          { canonicalOptionsProvider: adapter }
+        );
+      };
     }
 
     const uiProcessWiring = createUiProcessManagerWiring({

@@ -7,6 +7,7 @@ import {
   type DynamicOptionsDriveClient,
 } from './dynamic-options.adapter';
 import type { DynamicOptionQuery } from '../features/schema-driven-ui/ports';
+import type { ParseTargetDocumentField } from '../features/source-parser/ports';
 
 describe('DynamicOptionsAdapter', () => {
   const createMockDriveClient = (
@@ -1374,6 +1375,143 @@ describe('DynamicOptionsAdapter', () => {
         },
       });
       expect(driveClient.listFolders).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('CanonicalOptionsProviderPort & Request Memoization', () => {
+    it('memoizes query resolution so listFolders runs at most once per (spaceId, sourceKey) across fetchOptions and getCanonicalOptions', async () => {
+      const driveClient = createMockDriveClient({
+        listFolders: vi.fn().mockImplementation(async ({ parentFolderId }) => {
+          if (parentFolderId === 'space-123') {
+            return {
+              folders: [{ id: 'comm-folder-id', name: '1 Admin' }],
+              nextPageToken: undefined,
+            };
+          }
+          if (parentFolderId === 'comm-folder-id') {
+            return {
+              folders: [
+                { id: 'f-1', name: 'Pavarini' },
+                { id: 'f-2', name: 'Structure Tone' },
+              ],
+              nextPageToken: undefined,
+            };
+          }
+          return { folders: [], nextPageToken: undefined };
+        }),
+      });
+
+      const adapter = new DynamicOptionsAdapter(driveClient);
+
+      const field = {
+        key: 'contact',
+        name: 'Contact',
+        options: {
+          source: 'contactFolders',
+          key: 'key',
+          name: 'name',
+          allowUserInput: true,
+          dynamicConfig: {
+            provider: 'google_drive',
+            method: 'list_folders',
+            relativePath: '1 Admin',
+          },
+        },
+      };
+
+      // 1. Call getCanonicalOptions (e.g. from SourceParser)
+      const canonicalOptions = await adapter.getCanonicalOptions(
+        'space-123',
+        field as unknown as ParseTargetDocumentField
+      );
+      expect(canonicalOptions).toEqual([
+        { key: 'Pavarini', name: 'Pavarini' },
+        { key: 'Structure Tone', name: 'Structure Tone' },
+      ]);
+      const initialCallCount = vi.mocked(driveClient.listFolders).mock.calls.length;
+      expect(initialCallCount).toBeGreaterThan(0);
+
+      // 2. Call fetchOptions (e.g. from SchemaDrivenUi) for the same spaceId and query
+      const uiResult = await adapter.fetchOptions(
+        [
+          {
+            sourceKey: 'contactFolders',
+            config: field.options.dynamicConfig,
+          },
+        ],
+        { spaceId: 'space-123' }
+      );
+
+      expect(uiResult.contactFolders.status).toBe('ready');
+      expect(uiResult.contactFolders.items).toEqual([
+        { text: 'Pavarini', value: 'Pavarini' },
+        { text: 'Structure Tone', value: 'Structure Tone' },
+      ]);
+
+      // Assert zero additional listFolders calls!
+      expect(vi.mocked(driveClient.listFolders).mock.calls.length).toBe(initialCallCount);
+
+      // 3. Sequential getCanonicalOptions also hits the cache
+      const canonicalOptions2 = await adapter.getCanonicalOptions(
+        'space-123',
+        field as unknown as ParseTargetDocumentField
+      );
+      expect(canonicalOptions2).toEqual(canonicalOptions);
+      expect(vi.mocked(driveClient.listFolders).mock.calls.length).toBe(initialCallCount);
+    });
+
+    it('returns empty array when spaceId is missing or empty in getCanonicalOptions', async () => {
+      const driveClient = createMockDriveClient();
+      const adapter = new DynamicOptionsAdapter(driveClient);
+
+      const field = {
+        key: 'contact',
+        options: {
+          source: 'contactFolders',
+          key: 'key',
+          dynamicConfig: { provider: 'google_drive', method: 'list_folders' },
+        },
+      };
+
+      const result = await adapter.getCanonicalOptions(
+        undefined,
+        field as unknown as ParseTargetDocumentField
+      );
+      expect(result).toEqual([]);
+      expect(driveClient.listFolders).not.toHaveBeenCalled();
+
+      const resultEmpty = await adapter.getCanonicalOptions(
+        '   ',
+        field as unknown as ParseTargetDocumentField
+      );
+      expect(resultEmpty).toEqual([]);
+      expect(driveClient.listFolders).not.toHaveBeenCalled();
+    });
+
+    it('returns empty array on non-ready statuses (e.g. path_not_found) without throwing', async () => {
+      const driveClient = createMockDriveClient({
+        listFolders: vi.fn().mockResolvedValue({ folders: [] }),
+      });
+      const adapter = new DynamicOptionsAdapter(driveClient);
+
+      const field = {
+        key: 'contact',
+        options: {
+          source: 'contactFolders',
+          key: 'key',
+          dynamicConfig: {
+            provider: 'google_drive',
+            method: 'list_folders',
+            relativePath: 'NonExistentPath',
+          },
+        },
+      };
+
+      const result = await adapter.getCanonicalOptions(
+        'space-123',
+        field as unknown as ParseTargetDocumentField
+      );
+      expect(result).toEqual([]);
     });
   });
 });

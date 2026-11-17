@@ -128,9 +128,33 @@ export const GmailExtractFieldRuleSchema = Type.Object(
 );
 export type GmailExtractFieldRule = Static<typeof GmailExtractFieldRuleSchema>;
 
+export const GmailLookupFieldRuleSchema = Type.Object(
+  {
+    when: Type.Optional(Type.Union([ParseJsonLogicRuleSchema, Type.Undefined()])),
+    from: GmailExtractSourceSchema,
+    pattern: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+    flags: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    group: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Undefined()])),
+    excludePattern: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+    lookup: Type.Literal(true),
+  },
+  { additionalProperties: false }
+);
+export type GmailLookupFieldRule = Static<typeof GmailLookupFieldRuleSchema>;
+
+export const AliasDictionarySchema = Type.Object(
+  {
+    source: Type.String({ minLength: 1 }),
+    mappings: Type.Record(Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }))),
+  },
+  { additionalProperties: false }
+);
+export type AliasDictionary = Static<typeof AliasDictionarySchema>;
+
 export const GmailFieldRuleSchema = Type.Union([
   GmailSetFieldRuleSchema,
   GmailExtractFieldRuleSchema,
+  GmailLookupFieldRuleSchema,
 ]);
 export type GmailFieldRule = Static<typeof GmailFieldRuleSchema>;
 
@@ -198,6 +222,7 @@ export interface ParseTargetDocumentField {
     key: string;
     name?: string | undefined;
     allowUserInput?: boolean | undefined;
+    dynamicConfig?: Record<string, unknown> | undefined;
   } | undefined;
   linkedField?: {
     sourceField: string;
@@ -242,6 +267,14 @@ export interface ParseSchemaRegistryPort {
   initialize(): Promise<void>;
   getParseSchema(documentTypeKey: string): Promise<DocumentParseSchema | undefined> | DocumentParseSchema | undefined;
   getTargetSchema(documentTypeKey: string): Promise<ParseTargetDocumentSchema | undefined> | ParseTargetDocumentSchema | undefined;
+  getAliasDictionary?(sourceKey: string): AliasDictionary | undefined;
+}
+
+export interface CanonicalOptionsProviderPort {
+  getCanonicalOptions(
+    spaceId: string | undefined,
+    field: ParseTargetDocumentField
+  ): Promise<ParseTargetDocumentOptionTuple[]>;
 }
 
 export interface PredicateEvaluatorPort {

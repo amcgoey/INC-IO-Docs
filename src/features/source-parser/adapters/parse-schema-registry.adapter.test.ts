@@ -276,6 +276,279 @@ describe('ParseSchemaRegistryAdapter', () => {
     );
   });
 
+  it('fails fast if lookup: true targets a field without options', async () => {
+    const mockManifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./types/test-doc.json'],
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        key: 'test-doc',
+        name: 'Test Doc',
+        documentSchema: {
+          fields: [{ key: 'date', type: 'string' }],
+        },
+        documentParseSchema: {
+          extractors: [
+            {
+              source: 'gmail',
+              fields: {
+                date: { from: 'email.date', lookup: true },
+              },
+            },
+          ],
+        },
+      }),
+    };
+
+    const adapter = new ParseSchemaRegistryAdapter(mockManifestProvider);
+    await expect(adapter.initialize()).rejects.toThrow(
+      'DocumentParseSchema in "./types/test-doc.json" specifies lookup: true for field "date" which does not have options'
+    );
+  });
+
+  it('fails fast if lookup rule contains invalid excludePattern', async () => {
+    const mockManifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./types/test-doc.json'],
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        key: 'test-doc',
+        name: 'Test Doc',
+        documentSchema: {
+          fields: [
+            {
+              key: 'contact',
+              type: 'string',
+              options: { source: 'contacts', key: 'key', name: 'name' },
+            },
+          ],
+        },
+        documentParseSchema: {
+          extractors: [
+            {
+              source: 'gmail',
+              fields: {
+                contact: { from: 'email.to', excludePattern: '(?+invalid[regex', lookup: true },
+              },
+            },
+          ],
+        },
+      }),
+    };
+
+    const adapter = new ParseSchemaRegistryAdapter(mockManifestProvider);
+    await expect(adapter.initialize()).rejects.toThrow(/contains invalid excludePattern/i);
+  });
+
+  it('fails fast if Tier 1 static options tuple contains empty or whitespace-only alias', async () => {
+    const mockManifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./types/test-doc.json'],
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        key: 'test-doc',
+        name: 'Test Doc',
+        documentSchema: {
+          fields: [
+            {
+              key: 'direction',
+              type: 'string',
+              options: { source: 'direction', key: 'key', name: 'name' },
+            },
+          ],
+          options: {
+            direction: [
+              { key: 'IN', name: 'Incoming', aliases: ['  '] },
+            ],
+          },
+        },
+      }),
+    };
+
+    const adapter = new ParseSchemaRegistryAdapter(mockManifestProvider);
+    await expect(adapter.initialize()).rejects.toThrow(
+      'Empty or whitespace-only alias found in DocumentType "test-doc" options "direction" for key "IN"'
+    );
+  });
+
+  it('fails fast if Tier 1 static options tuple contains duplicate case-insensitively normalized alias across two keys', async () => {
+    const mockManifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./types/test-doc.json'],
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        key: 'test-doc',
+        name: 'Test Doc',
+        documentSchema: {
+          fields: [
+            {
+              key: 'direction',
+              type: 'string',
+              options: { source: 'direction', key: 'key', name: 'name' },
+            },
+          ],
+          options: {
+            direction: [
+              { key: 'IN', name: 'Incoming', aliases: ['inbound', 'direct'] },
+              { key: 'OT', name: 'Outgoing', aliases: ['outbound', 'INBOUND'] },
+            ],
+          },
+        },
+      }),
+    };
+
+    const adapter = new ParseSchemaRegistryAdapter(mockManifestProvider);
+    await expect(adapter.initialize()).rejects.toThrow(
+      'Duplicate alias "INBOUND" (normalized "inbound") in DocumentType "test-doc" options "direction" between keys "IN" and "OT"'
+    );
+  });
+
+  it('fails fast if Tier 3 shared AliasDictionary source does not match manifest sourceKey', async () => {
+    const mockManifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: [],
+        aliases: {
+          contacts: './aliases/contacts.json',
+        },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        source: 'mismatched-source',
+        mappings: {
+          c1: ['alias1'],
+        },
+      }),
+    };
+
+    const adapter = new ParseSchemaRegistryAdapter(mockManifestProvider);
+    await expect(adapter.initialize()).rejects.toThrow(
+      'AliasDictionary file "./aliases/contacts.json" specifies source "mismatched-source" but manifest expects "contacts"'
+    );
+  });
+
+  it('fails fast if Tier 3 shared AliasDictionary contains empty or whitespace alias', async () => {
+    const mockManifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: [],
+        aliases: {
+          contacts: './aliases/contacts.json',
+        },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        source: 'contacts',
+        mappings: {
+          c1: ['   '],
+        },
+      }),
+    };
+
+    const adapter = new ParseSchemaRegistryAdapter(mockManifestProvider);
+    await expect(adapter.initialize()).rejects.toThrow(
+      'Empty or whitespace-only alias in AliasDictionary "./aliases/contacts.json" for key "c1"'
+    );
+  });
+
+  it('fails fast if Tier 3 shared AliasDictionary contains duplicate case-insensitively normalized alias across two keys', async () => {
+    const mockManifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: [],
+        aliases: {
+          contacts: './aliases/contacts.json',
+        },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        source: 'contacts',
+        mappings: {
+          c1: ['@acme.com', 'Acme Corp'],
+          c2: ['@ACME.COM', 'Beta Corp'],
+        },
+      }),
+    };
+
+    const adapter = new ParseSchemaRegistryAdapter(mockManifestProvider);
+    await expect(adapter.initialize()).rejects.toThrow(
+      'Duplicate alias "@ACME.COM" (normalized "@acme.com") in AliasDictionary "./aliases/contacts.json" between keys "c1" and "c2"'
+    );
+  });
+
+  it('hydrates Tier 1 static options aliases and Tier 3 shared AliasDictionary successfully', async () => {
+    const mockManifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./types/test-doc.json'],
+        aliases: {
+          contacts: './aliases/contacts.json',
+        },
+      }),
+      readParsedSchema: vi.fn().mockImplementation(async (relPath: string) => {
+        if (relPath === './types/test-doc.json') {
+          return {
+            key: 'test-doc',
+            name: 'Test Doc',
+            documentSchema: {
+              fields: [
+                {
+                  key: 'direction',
+                  type: 'string',
+                  options: { source: 'direction', key: 'key', name: 'name' },
+                },
+                {
+                  key: 'contact',
+                  type: 'string',
+                  options: {
+                    source: 'contacts',
+                    key: 'key',
+                    name: 'name',
+                    dynamicConfig: { provider: 'google_drive', relativePath: 'Contacts' },
+                  },
+                },
+              ],
+              options: {
+                direction: [
+                  { key: 'IN', name: 'Incoming', aliases: ['inbound'] },
+                  { key: 'OT', name: 'Outgoing', aliases: ['outbound'] },
+                ],
+              },
+            },
+            documentParseSchema: {
+              extractors: [
+                {
+                  source: 'gmail',
+                  fields: {
+                    contact: { from: 'email.to', excludePattern: '@inc\\.nyc', lookup: true },
+                  },
+                },
+              ],
+            },
+          };
+        }
+        if (relPath === './aliases/contacts.json') {
+          return {
+            source: 'contacts',
+            mappings: {
+              pavarini: ['@pavarini.com', 'PCNE'],
+              structureTone: ['@structuretone.com', 'STO'],
+            },
+          };
+        }
+        return undefined;
+      }),
+    };
+
+    const adapter = new ParseSchemaRegistryAdapter(mockManifestProvider);
+    await adapter.initialize();
+
+    const targetSchema = adapter.getTargetSchema('test-doc');
+    expect(targetSchema?.options?.direction[0].aliases).toEqual(['inbound']);
+    expect(targetSchema?.fields.find((f) => f.key === 'contact')?.options?.dynamicConfig).toEqual({
+      provider: 'google_drive',
+      relativePath: 'Contacts',
+    });
+
+    const contactAliases = adapter.getAliasDictionary('contacts');
+    expect(contactAliases).toBeDefined();
+    expect(contactAliases?.source).toBe('contacts');
+    expect(contactAliases?.mappings.pavarini).toEqual(['@pavarini.com', 'PCNE']);
+  });
+
   describe('validateJsonLogicAst', () => {
     it('accepts valid JsonLogic operations', () => {
       expect(() =>

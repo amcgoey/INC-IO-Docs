@@ -132,6 +132,37 @@
       {
         "source": "gmail",
         "fields": {
+          "contact": [
+            {
+              "when": {
+                "or": [
+                  {
+                    "in": [
+                      "SENT",
+                      {
+                        "var": "email.labels"
+                      }
+                    ]
+                  },
+                  {
+                    "==": [
+                      {
+                        "var": "email.fromDomain"
+                      },
+                      "inc.nyc"
+                    ]
+                  }
+                ]
+              },
+              "from": "email.to",
+              "excludePattern": "@inc\\.nyc\\b",
+              "lookup": true
+            },
+            {
+              "from": "email.from",
+              "lookup": true
+            }
+          ],
           "date": {
             "from": "email.date"
           },
