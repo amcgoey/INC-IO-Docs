@@ -34,6 +34,8 @@ describe('source-parser.wiring', () => {
 
     expect(wiring.sourceParser).toBeInstanceOf(SourceParserService);
     expect(typeof wiring.createSourceParser).toBe('function');
+    expect(wiring.parseSchemaRegistry).toBeDefined();
+    expect(typeof wiring.parseSchemaRegistry.initialize).toBe('function');
 
     const reqParser = wiring.createSourceParser({});
     expect(reqParser).toBeInstanceOf(SourceParserService);

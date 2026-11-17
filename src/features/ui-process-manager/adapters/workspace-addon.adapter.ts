@@ -13,6 +13,7 @@ import type {
   UiProcessGmailMessageDescriptor,
   UiProcessSourceParserPort,
   UiProcessInferredRoutingResult,
+  UiProcessSourceContext,
   UiProcessSourceContextItem,
   UiProcessSourceEmailDescriptor,
   UiProcessCandidateSpaceDescriptor,
@@ -482,6 +483,128 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         }
       }
       normalizedFormData = prunedFormData;
+    }
+
+    const isPass2Event =
+      actionName !== 'processDocument' &&
+      actionName !== 'viewJson' &&
+      !(isGmail && effectiveFileSource === 'Google Drive URL' && !parsedCurrentDriveUrl) &&
+      (isSourceReset || isManualTypeSwitch);
+
+    if (
+      isPass2Event &&
+      resolvedDocumentTypeKey &&
+      typeof this.options.sourceParser?.extractFields === 'function'
+    ) {
+      const activeTypeExistingData: Record<string, unknown> = {};
+      if (isManualTypeSwitch && normalizedFormData) {
+        for (const [key, value] of Object.entries(normalizedFormData)) {
+          if (isSelectionKey(key) || key === 'spaceId') {
+            continue;
+          }
+          if (
+            typeof value === 'string'
+              ? value.trim().length > 0
+              : value !== undefined && value !== null
+          ) {
+            activeTypeExistingData[key] = value;
+          }
+        }
+      }
+
+      const spaceResolution = resolveSpace(
+        {
+          formData: normalizedFormData,
+          activeSpaceType: currentSpaceType,
+          config,
+        },
+        spaces
+      );
+      const pass2SpaceId = spaceResolution.matchedSpace?.id;
+
+      const pass2CandidateItems: UiProcessSourceContextItem[] = isGmailDriveUrlPass1Event
+        ? [{ id: parsedCurrentDriveUrl!.id }]
+        : isGmail
+          ? (activeMsg?.attachments ?? []).map((att) => ({
+              id: resolveAttachmentId(att),
+              name: att.title,
+              ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
+            }))
+          : (effectiveContext.selectedItems ?? [])
+              .filter(
+                (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
+                  typeof item?.id === 'string' && item.id.trim().length > 0
+              )
+              .map((item) => ({
+                id: item.id.trim(),
+                ...(item.title !== undefined ? { name: item.title } : {}),
+                ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
+              }));
+
+      const pass2EmailContext: UiProcessSourceEmailDescriptor | undefined = activeMsg
+        ? {
+            id: activeMsg.id,
+            ...(activeMsg.threadId !== undefined ? { threadId: activeMsg.threadId } : {}),
+            ...(activeMsg.subject !== undefined ? { subject: activeMsg.subject } : {}),
+            ...(activeMsg.from !== undefined ? { from: activeMsg.from } : {}),
+            ...(activeMsg.to !== undefined ? { to: activeMsg.to } : {}),
+            ...(activeMsg.cc !== undefined ? { cc: activeMsg.cc } : {}),
+            ...(activeMsg.date !== undefined ? { date: activeMsg.date } : {}),
+            ...(activeMsg.plainTextBody !== undefined ? { plainTextBody: activeMsg.plainTextBody } : {}),
+            ...(activeMsg.htmlBody !== undefined ? { htmlBody: activeMsg.htmlBody } : {}),
+            ...(activeMsg.labels !== undefined ? { labels: activeMsg.labels } : {}),
+            attachments: (activeMsg.attachments ?? []).map((att) => ({
+              id: resolveAttachmentId(att),
+              name: att.title,
+              ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
+            })),
+          }
+        : undefined;
+
+      const pass2Context: UiProcessSourceContext = {
+        items: pass2CandidateItems,
+        ...(pass2EmailContext ? { email: pass2EmailContext } : {}),
+        ...(isGmailDriveUrlPass1Event ? { isDriveUrl: true } : {}),
+      };
+
+      try {
+        const extractedResult = await this.options.sourceParser.extractFields({
+          documentTypeKey: resolvedDocumentTypeKey,
+          ...(pass2SpaceId !== undefined ? { spaceId: pass2SpaceId } : {}),
+          context: pass2Context,
+          ...(isManualTypeSwitch ? { existingData: activeTypeExistingData } : {}),
+        });
+
+        if (extractedResult?.fields) {
+          const updatedFormData = { ...(normalizedFormData ?? {}) };
+          for (const [key, value] of Object.entries(extractedResult.fields)) {
+            const currentVal = updatedFormData[key];
+            const isBlank =
+              currentVal === undefined ||
+              currentVal === null ||
+              (typeof currentVal === 'string' && currentVal.trim().length === 0);
+
+            if (isBlank && value !== undefined && value !== null) {
+              updatedFormData[key] = value;
+            }
+          }
+          normalizedFormData = updatedFormData;
+        }
+
+        if (extractedResult?.statusMessages && extractedResult.statusMessages.length > 0) {
+          effectiveContext = {
+            ...effectiveContext,
+            statusMessages: Array.from(
+              new Set([
+                ...(effectiveContext.statusMessages ?? []),
+                ...extractedResult.statusMessages,
+              ])
+            ),
+          };
+        }
+      } catch (e) {
+        console.warn('SourceParser Pass 2 extractFields error in UiProcessManager:', e);
+      }
     }
 
     const normalizedContext: UiProcessEventContext =

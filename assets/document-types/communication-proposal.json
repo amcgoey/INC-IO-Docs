@@ -127,5 +127,48 @@
       }
     ]
   },
+  "documentParseSchema": {
+    "extractors": [
+      {
+        "source": "gmail",
+        "fields": {
+          "date": {
+            "from": "email.date"
+          },
+          "direction": [
+            {
+              "when": {
+                "or": [
+                  {
+                    "in": [
+                      "SENT",
+                      {
+                        "var": "email.labels"
+                      }
+                    ]
+                  },
+                  {
+                    "==": [
+                      {
+                        "var": "email.fromDomain"
+                      },
+                      "inc.nyc"
+                    ]
+                  }
+                ]
+              },
+              "set": "OT"
+            },
+            {
+              "set": "IN"
+            }
+          ],
+          "description": {
+            "from": "email.subjectClean"
+          }
+        }
+      }
+    ]
+  },
   "allowEmptySourceFiles": true
 }

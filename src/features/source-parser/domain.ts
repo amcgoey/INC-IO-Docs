@@ -9,6 +9,13 @@ import type {
   SourceParserSpaceConfigPort,
   SourceParserPort,
   CandidateSpaceDescriptor,
+  ParseSchemaRegistryPort,
+  PredicateEvaluatorPort,
+  FallbackFieldExtractorPort,
+  DocumentParseSchema,
+  ParseTargetDocumentSchema,
+  ParseTargetDocumentField,
+  GmailFieldRule,
 } from './ports';
 
 export const CSI_SECTION_REGEX = /(?<=^|[\s_.-])\d{6}-\d{3}(?:-[A-Za-z0-9]+)?(?=[\s_.-]|$)/;
@@ -239,15 +246,486 @@ export function matchCandidateSpaces(
   return undefined;
 }
 
+export function cleanSubject(subject?: string): string {
+  if (!subject || typeof subject !== 'string') {
+    return '';
+  }
+  const stripped = subject.replace(/^(?:(?:re|fwd?|aw)\s*:\s*)+/i, '');
+  return stripped.trim();
+}
+
+const NAMED_TIMEZONE_OFFSETS: Record<string, number> = {
+  EDT: -240,
+  EST: -300,
+  CDT: -300,
+  CST: -360,
+  MDT: -360,
+  MST: -420,
+  PDT: -420,
+  PST: -480,
+  GMT: 0,
+  UT: 0,
+  UTC: 0,
+};
+
+export function parseDateToYymmdd(dateString?: string): string | undefined {
+  if (!dateString || typeof dateString !== 'string') {
+    return undefined;
+  }
+  const trimmed = dateString.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  let offsetMinutes: number | undefined;
+  const numericMatch = trimmed.match(/([+-])(\d{2}):?(\d{2})\b/);
+  if (numericMatch) {
+    const sign = numericMatch[1] === '-' ? -1 : 1;
+    const hours = parseInt(numericMatch[2], 10);
+    const minutes = parseInt(numericMatch[3], 10);
+    offsetMinutes = sign * (hours * 60 + minutes);
+  } else {
+    const namedMatch = trimmed.match(/\b(EDT|EST|CDT|CST|MDT|MST|PDT|PST|GMT|UT|UTC)\b/);
+    if (namedMatch && NAMED_TIMEZONE_OFFSETS[namedMatch[1]] !== undefined) {
+      offsetMinutes = NAMED_TIMEZONE_OFFSETS[namedMatch[1]];
+    }
+  }
+
+  let parsed: Date;
+  if (offsetMinutes === undefined) {
+    if (trimmed.includes('T')) {
+      parsed = new Date(trimmed.endsWith('Z') || trimmed.endsWith('z') ? trimmed : `${trimmed}Z`);
+    } else {
+      parsed = new Date(`${trimmed} UTC`);
+    }
+    if (isNaN(parsed.getTime())) {
+      parsed = new Date(trimmed);
+    }
+  } else {
+    parsed = new Date(trimmed);
+    if (isNaN(parsed.getTime())) {
+      const namedMatch = trimmed.match(/\b(EDT|EST|CDT|CST|MDT|MST|PDT|PST|GMT|UT|UTC)\b/);
+      if (namedMatch && NAMED_TIMEZONE_OFFSETS[namedMatch[1]] !== undefined) {
+        const offsetMin = NAMED_TIMEZONE_OFFSETS[namedMatch[1]];
+        const sign = offsetMin < 0 ? '-' : '+';
+        const absMin = Math.abs(offsetMin);
+        const h = String(Math.floor(absMin / 60)).padStart(2, '0');
+        const m = String(absMin % 60).padStart(2, '0');
+        const replaced = trimmed.replace(namedMatch[1], `${sign}${h}${m}`);
+        parsed = new Date(replaced);
+      }
+    }
+  }
+
+  if (isNaN(parsed.getTime())) {
+    return undefined;
+  }
+
+  const effectiveOffset = offsetMinutes ?? 0;
+  const targetMs = parsed.getTime() + effectiveOffset * 60_000;
+  const targetDate = new Date(targetMs);
+
+  const yy = String(targetDate.getUTCFullYear()).slice(-2);
+  const mm = String(targetDate.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(targetDate.getUTCDate()).padStart(2, '0');
+
+  return `${yy}${mm}${dd}`;
+}
+
+export function normalizeHtmlBodyForPass2(html?: string): string {
+  if (!html || typeof html !== 'string') {
+    return '';
+  }
+  let text = html.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ');
+  text = text.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ');
+  text = text.replace(/<\/(td|th)>/gi, ' ');
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  text = text.replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n');
+  text = text.replace(/<[^>]+>/g, ' ');
+  text = text
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&ndash;/gi, '\u2013')
+    .replace(/&#8211;/gi, '\u2013')
+    .replace(/&#x2013;/gi, '\u2013')
+    .replace(/&mdash;/gi, '\u2014')
+    .replace(/&#8212;/gi, '\u2014')
+    .replace(/&#x2014;/gi, '\u2014')
+    .replace(/&amp;/gi, '&');
+
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/[^\S\r\n]+/g, ' ').trim())
+    .join('\n')
+    .trim();
+}
+
+export function extractEmailAddress(raw?: string): string {
+  if (!raw || typeof raw !== 'string') {
+    return '';
+  }
+  const match = raw.match(/<([^>]+)>/);
+  const addr = match ? match[1].trim() : raw.trim();
+  return addr.toLowerCase();
+}
+
+export function extractEmailDomain(fromAddress: string): string {
+  const atIndex = fromAddress.lastIndexOf('@');
+  return atIndex !== -1 ? fromAddress.slice(atIndex + 1).toLowerCase() : '';
+}
+
+export function buildJsonLogicContext(context: SourceContext): Record<string, unknown> {
+  const { email } = context;
+  let emailContext: Record<string, unknown> | null = null;
+
+  if (email) {
+    const rawSubject = typeof email.subject === 'string' ? email.subject : '';
+    const subjectClean = cleanSubject(rawSubject);
+    const rawFrom = typeof email.from === 'string' ? email.from : '';
+    const fromAddress = extractEmailAddress(rawFrom);
+    const fromDomain = extractEmailDomain(fromAddress);
+
+    const attachmentNames: string[] = [];
+    if (context.items) {
+      for (const item of context.items) {
+        if (item?.name && typeof item.name === 'string' && item.name.trim().length > 0) {
+          attachmentNames.push(item.name.trim());
+        }
+      }
+    }
+    if (email.attachments) {
+      for (const att of email.attachments) {
+        if (att?.name && typeof att.name === 'string' && att.name.trim().length > 0) {
+          const trimmed = att.name.trim();
+          if (!attachmentNames.includes(trimmed)) {
+            attachmentNames.push(trimmed);
+          }
+        }
+      }
+    }
+
+    emailContext = {
+      id: email.id,
+      subject: rawSubject,
+      subjectClean,
+      from: rawFrom,
+      fromAddress,
+      fromDomain,
+      to: typeof email.to === 'string' ? email.to : '',
+      cc: typeof email.cc === 'string' ? email.cc : '',
+      date: typeof email.date === 'string' ? email.date : '',
+      labels: Array.isArray(email.labels) ? email.labels : [],
+      attachmentNames,
+      hasAttachments: attachmentNames.length > 0,
+    };
+  }
+
+  return {
+    isDriveUrl: Boolean(context.isDriveUrl),
+    items: context.items ?? [],
+    email: emailContext,
+  };
+}
+
+function validateCandidate(
+  candidate: string | undefined,
+  targetField: ParseTargetDocumentField,
+  targetSchema?: ParseTargetDocumentSchema
+): string | undefined {
+  if (candidate === undefined || candidate === null) {
+    return undefined;
+  }
+  const trimmed = String(candidate).trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  if (targetField.minLength !== undefined && trimmed.length < targetField.minLength) {
+    return undefined;
+  }
+  if (targetField.pattern !== undefined) {
+    const regex = new RegExp(targetField.pattern);
+    if (!regex.test(trimmed)) {
+      return undefined;
+    }
+  }
+  if (targetField.options !== undefined) {
+    const sourceKey = targetField.options.source as string;
+    const optionTuples = targetSchema?.options?.[sourceKey] ?? [];
+    const matched = optionTuples.find(
+      (tuple) =>
+        tuple.key === trimmed ||
+        (tuple.name && tuple.name.toLowerCase() === trimmed.toLowerCase())
+    );
+    if (!matched) {
+      return undefined;
+    }
+    const keyProp = targetField.options.key ?? 'key';
+    return String(matched[keyProp] ?? matched.key);
+  }
+  return trimmed;
+}
+
+function extractCandidateFromRule(
+  rule: GmailFieldRule,
+  sourceContext: SourceContext,
+  targetField: ParseTargetDocumentField,
+  targetSchema?: ParseTargetDocumentSchema
+): string | undefined {
+  let rawCandidate: string | undefined;
+
+  if ('set' in rule) {
+    rawCandidate = rule.set;
+  } else if ('from' in rule) {
+    const { from: fromSource } = rule;
+    const { email } = sourceContext;
+
+    if (fromSource === 'email.labels') {
+      const tokens = extractNonSystemLabelTokens(email?.labels);
+      for (const token of tokens) {
+        let candidateForToken: string | undefined = token;
+        if (rule.pattern) {
+          const flags = typeof rule.flags === 'string' ? rule.flags : 'i';
+          const regex = new RegExp(rule.pattern, flags);
+          const match = token.match(regex);
+          if (!match) {
+            candidateForToken = undefined;
+          } else {
+            const { group: groupIndex } = rule;
+            if (groupIndex !== undefined && match[groupIndex] !== undefined) {
+              candidateForToken = match[groupIndex];
+            } else if (match[1] !== undefined) {
+              candidateForToken = match[1];
+            } else {
+              candidateForToken = match[0];
+            }
+          }
+        }
+        if (candidateForToken !== undefined) {
+          const validated = validateCandidate(candidateForToken, targetField, targetSchema);
+          if (validated !== undefined) {
+            return validated;
+          }
+        }
+      }
+      return undefined;
+    }
+
+    let sourceText = '';
+    switch (fromSource) {
+      case 'email.date':
+        sourceText = email?.date ?? '';
+        break;
+      case 'email.subjectClean':
+        sourceText = cleanSubject(email?.subject);
+        break;
+      case 'email.subject':
+        sourceText = email?.subject ?? '';
+        break;
+      case 'email.plainTextBody':
+        sourceText = email?.plainTextBody ?? '';
+        break;
+      case 'email.htmlBody':
+        sourceText = email?.htmlBody ?? '';
+        break;
+      case 'email.body': {
+        const { plainTextBody: rawPlain } = email ?? {};
+        if (typeof rawPlain === 'string' && rawPlain.trim().length > 0) {
+          sourceText = rawPlain.trim();
+        } else {
+          sourceText = normalizeHtmlBodyForPass2(email?.htmlBody);
+        }
+        break;
+      }
+      case 'email.from':
+        sourceText = email?.from ?? '';
+        break;
+      case 'email.to':
+        sourceText = email?.to ?? '';
+        break;
+      case 'email.cc':
+        sourceText = email?.cc ?? '';
+        break;
+      default:
+        break;
+    }
+
+    if (fromSource === 'email.date' && !rule.pattern) {
+      rawCandidate = parseDateToYymmdd(sourceText);
+    } else {
+      if (rule.pattern) {
+        const flags = typeof rule.flags === 'string' ? rule.flags : 'i';
+        const regex = new RegExp(rule.pattern, flags);
+        const match = sourceText.match(regex);
+        if (!match) {
+          rawCandidate = undefined;
+        } else {
+          const { group: groupIndex } = rule;
+          if (groupIndex !== undefined && match[groupIndex] !== undefined) {
+            rawCandidate = match[groupIndex];
+          } else if (match[1] !== undefined) {
+            rawCandidate = match[1];
+          } else {
+            rawCandidate = match[0];
+          }
+        }
+      } else {
+        rawCandidate = sourceText;
+      }
+    }
+  }
+
+  return validateCandidate(rawCandidate, targetField, targetSchema);
+}
+
+export interface SourceParserServiceDeps {
+  parseSchemaRegistry?: ParseSchemaRegistryPort | undefined;
+  predicateEvaluator?: PredicateEvaluatorPort | undefined;
+  fallbackExtractor?: FallbackFieldExtractorPort | undefined;
+}
+
 export class SourceParserService implements SourceParserPort {
   constructor(
     private readonly driveContextPort: DriveSourceContextPort,
-    private readonly spaceConfigPort: SourceParserSpaceConfigPort
+    private readonly spaceConfigPort: SourceParserSpaceConfigPort,
+    private readonly deps?: SourceParserServiceDeps | undefined
   ) {}
 
   async extractFields(request: ExtractFieldsRequest): Promise<ExtractedFieldsResult> {
-    void request;
-    return { fields: {} };
+    const populatedFields: Record<string, unknown> = {};
+
+    if (request.existingData) {
+      for (const [key, value] of Object.entries(request.existingData)) {
+        if (
+          typeof value === 'string'
+            ? value.trim().length > 0
+            : value !== undefined && value !== null
+        ) {
+          populatedFields[key] = value;
+        }
+      }
+    }
+
+    if (!this.deps?.parseSchemaRegistry) {
+      return { fields: populatedFields };
+    }
+
+    let parseSchema: DocumentParseSchema | undefined;
+    let targetSchema: ParseTargetDocumentSchema | undefined;
+
+    try {
+      parseSchema = await this.deps.parseSchemaRegistry.getParseSchema(request.documentTypeKey);
+      targetSchema = await this.deps.parseSchemaRegistry.getTargetSchema(request.documentTypeKey);
+    } catch (err) {
+      console.warn(`Could not load parse schema for ${request.documentTypeKey}:`, err);
+      return {
+        fields: populatedFields,
+        statusMessages: [`Could not load parse schema for ${request.documentTypeKey}`],
+      };
+    }
+
+    if (!parseSchema || !parseSchema.extractors || parseSchema.extractors.length === 0) {
+      return { fields: populatedFields };
+    }
+
+    const statusMessages: string[] = [];
+    const jsonLogicContext = buildJsonLogicContext(request.context);
+
+    for (const extractor of parseSchema.extractors) {
+      try {
+        if (extractor.source !== 'gmail') {
+          // Structural placeholders (drive, pdfForm, googleDoc) are skipped in Pass 2 deterministic Gmail pipeline
+          continue;
+        }
+
+        if (!request.context.email) {
+          continue;
+        }
+
+        if (extractor.match !== undefined && this.deps.predicateEvaluator) {
+          const matchResult = this.deps.predicateEvaluator.evaluate(
+            extractor.match,
+            jsonLogicContext
+          );
+          if (!matchResult) {
+            continue;
+          }
+        }
+
+        const extractorTargetKeys = Object.keys(extractor.fields);
+        const allAlreadyPopulated = extractorTargetKeys.every((k) => k in populatedFields);
+        if (allAlreadyPopulated) {
+          continue;
+        }
+
+        for (const [fieldKey, ruleOrRules] of Object.entries(extractor.fields)) {
+          if (fieldKey in populatedFields) {
+            continue;
+          }
+
+          const targetField = targetSchema?.fields.find((f) => f.key === fieldKey);
+          if (!targetField) {
+            continue;
+          }
+
+          const rules = Array.isArray(ruleOrRules) ? ruleOrRules : [ruleOrRules];
+          for (const rule of rules) {
+            if (rule.when !== undefined && this.deps.predicateEvaluator) {
+              const whenResult = this.deps.predicateEvaluator.evaluate(
+                rule.when,
+                jsonLogicContext
+              );
+              if (!whenResult) {
+                continue;
+              }
+            }
+
+            const candidate = extractCandidateFromRule(
+              rule as GmailFieldRule,
+              request.context,
+              targetField,
+              targetSchema
+            );
+
+            if (candidate !== undefined) {
+              populatedFields[fieldKey] = candidate;
+              break;
+            }
+          }
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        statusMessages.push(
+          `Could not extract fields from ${extractor.name ?? extractor.source}: ${errorMsg}`
+        );
+      }
+    }
+
+    if (parseSchema.fallback && this.deps.fallbackExtractor) {
+      try {
+        const fallbackResult = await this.deps.fallbackExtractor.extractFields(request);
+        for (const [key, value] of Object.entries(fallbackResult)) {
+          if (!(key in populatedFields) && value !== undefined && value !== null) {
+            populatedFields[key] = value;
+          }
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        statusMessages.push(`Fallback extraction failed: ${errorMsg}`);
+      }
+    }
+
+    const deduplicatedStatus =
+      statusMessages.length > 0 ? Array.from(new Set(statusMessages)) : undefined;
+
+    return {
+      fields: populatedFields,
+      ...(deduplicatedStatus ? { statusMessages: deduplicatedStatus } : {}),
+    };
   }
 
   async inferRouting(context: SourceContext): Promise<InferredRoutingResult> {

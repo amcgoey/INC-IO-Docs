@@ -3,6 +3,9 @@ import {
   SourceParserService,
   extractTextFromHtml,
   matchCandidateSpaces,
+  cleanSubject,
+  parseDateToYymmdd,
+  normalizeHtmlBodyForPass2,
   FFE_PROXIMITY_REGEX_1,
   FFE_PROXIMITY_REGEX_2,
 } from './domain';
@@ -1436,6 +1439,373 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
 
         expect(result.documentTypeKey).toBeUndefined();
       });
+    });
+  });
+
+  describe('SourceParser Pass 2 helper functions', () => {
+    describe('cleanSubject', () => {
+      it('strips leading Re:, Fwd:, FW:, and aw: prefixes case-insensitively', () => {
+        expect(cleanSubject('Re: Project Update')).toBe('Project Update');
+        expect(cleanSubject('FWD: Re: aw: Hello World')).toBe('Hello World');
+        expect(cleanSubject('fw: meeting notes')).toBe('meeting notes');
+        expect(cleanSubject('Clean Subject')).toBe('Clean Subject');
+        expect(cleanSubject('')).toBe('');
+      });
+    });
+
+    describe('parseDateToYymmdd', () => {
+      it('parses RFC 2822 dates with named timezone offsets', () => {
+        expect(parseDateToYymmdd('Mon, 18 Oct 2026 12:00:00 GMT')).toBe('261018');
+        expect(parseDateToYymmdd('Sun, 20 Sep 2026 10:00:00 EDT')).toBe('260920');
+      });
+
+      it('parses ISO dates with numeric timezone offsets', () => {
+        expect(parseDateToYymmdd('2026-09-20T10:00:00-04:00')).toBe('260920');
+        expect(parseDateToYymmdd('2026-10-18T12:00:00Z')).toBe('261018');
+      });
+
+      it('returns undefined for unparseable dates', () => {
+        expect(parseDateToYymmdd('invalid-date')).toBeUndefined();
+        expect(parseDateToYymmdd('')).toBeUndefined();
+        expect(parseDateToYymmdd(undefined)).toBeUndefined();
+      });
+    });
+
+    describe('normalizeHtmlBodyForPass2', () => {
+      it('converts line-breaking tags to newlines and table cells to spaces', () => {
+        const html = '<p>Paragraph 1</p><p>Paragraph 2</p><table><tr><td>Cell 1</td><td>Cell 2</td></tr></table>';
+        const text = normalizeHtmlBodyForPass2(html);
+        expect(text).toContain('Paragraph 1\nParagraph 2');
+        expect(text).toContain('Cell 1 Cell 2');
+      });
+
+      it('decodes HTML entities including en-dash and em-dash', () => {
+        const html = '<div>A &ndash; B &#8211; C &mdash; D &#8212; E &amp; F &quot;G&quot; &#39;H&#39;</div>';
+        const text = normalizeHtmlBodyForPass2(html);
+        expect(text).toBe('A \u2013 B \u2013 C \u2014 D \u2014 E & F "G" \'H\'');
+      });
+
+      it('preserves newline line boundaries while collapsing horizontal whitespace', () => {
+        const html = 'Line 1    extra spaces<br>Line 2   more spaces';
+        const text = normalizeHtmlBodyForPass2(html);
+        expect(text).toBe('Line 1 extra spaces\nLine 2 more spaces');
+      });
+    });
+  });
+
+  describe('SourceParserService Pass 2 (extractFields)', () => {
+    const mockDrivePort: DriveSourceContextPort = {
+      getItemHierarchy: vi.fn(),
+    };
+
+    it('seeds populatedFields from non-empty existingData without overwriting it', async () => {
+      const mockParseRegistry = {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockResolvedValue({
+          extractors: [
+            {
+              source: 'gmail',
+              fields: {
+                description: { from: 'email.subjectClean' },
+                date: { from: 'email.date' },
+              },
+            },
+          ],
+        }),
+        getTargetSchema: vi.fn().mockResolvedValue({
+          fields: [
+            { key: 'description', type: 'string' },
+            { key: 'date', type: 'string' },
+          ],
+        }),
+      };
+
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: mockParseRegistry,
+      });
+
+      const result = await service.extractFields({
+        documentTypeKey: 'communication-project',
+        existingData: {
+          description: 'User Existing Description',
+        },
+        context: {
+          email: {
+            id: 'msg-1',
+            subject: 'New Subject in Email',
+            date: 'Sun, 20 Sep 2026 10:00:00 EDT',
+          },
+        },
+      });
+
+      expect(result.fields.description).toBe('User Existing Description');
+      expect(result.fields.date).toBe('260920');
+    });
+
+    it('evaluates extractor.match and FieldRule.when using predicateEvaluator', async () => {
+      const mockParseRegistry = {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockResolvedValue({
+          extractors: [
+            {
+              source: 'gmail',
+              match: { '==': [{ var: 'email.fromDomain' }, 'inc.nyc'] },
+              fields: {
+                direction: [
+                  {
+                    when: { in: ['SENT', { var: 'email.labels' }] },
+                    set: 'OT',
+                  },
+                  { set: 'IN' },
+                ],
+              },
+            },
+          ],
+        }),
+        getTargetSchema: vi.fn().mockResolvedValue({
+          fields: [
+            {
+              key: 'direction',
+              type: 'string',
+              options: { source: 'direction', key: 'key', name: 'name' },
+            },
+          ],
+          options: {
+            direction: [
+              { key: 'IN', name: 'Incoming' },
+              { key: 'OT', name: 'Outgoing' },
+            ],
+          },
+        }),
+      };
+
+      const mockPredicateEvaluator = {
+        evaluate: vi.fn((rule: unknown, data: Record<string, unknown>) => {
+          const typedRule = rule as Record<string, unknown> | undefined;
+          const typedData = data as { email?: { fromDomain?: string; labels?: string[] } };
+          if (typedRule && typedRule['==']) {
+            return typedData.email?.fromDomain === 'inc.nyc';
+          }
+          if (typedRule && typedRule.in) {
+            return (typedData.email?.labels ?? []).includes('SENT');
+          }
+          return false;
+        }),
+      };
+
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: mockParseRegistry,
+        predicateEvaluator: mockPredicateEvaluator,
+      });
+
+      const resultSent = await service.extractFields({
+        documentTypeKey: 'communication-project',
+        context: {
+          email: {
+            id: 'msg-1',
+            from: 'Alice <alice@inc.nyc>',
+            labels: ['SENT', 'INBOX'],
+          },
+        },
+      });
+      expect(resultSent.fields.direction).toBe('OT');
+
+      const resultNotSent = await service.extractFields({
+        documentTypeKey: 'communication-project',
+        context: {
+          email: {
+            id: 'msg-2',
+            from: 'Alice <alice@inc.nyc>',
+            labels: ['INBOX'],
+          },
+        },
+      });
+      expect(resultNotSent.fields.direction).toBe('IN');
+
+      const resultMismatchedDomain = await service.extractFields({
+        documentTypeKey: 'communication-project',
+        context: {
+          email: {
+            id: 'msg-3',
+            from: 'Bob <bob@other.com>',
+            labels: ['SENT'],
+          },
+        },
+      });
+      expect(resultMismatchedDomain.fields.direction).toBeUndefined();
+    });
+
+    it('extracts date, clean subject, body, and labels with regex patterns', async () => {
+      const mockParseRegistry = {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockResolvedValue({
+          extractors: [
+            {
+              source: 'gmail',
+              fields: {
+                date: { from: 'email.date' },
+                description: { from: 'email.subjectClean' },
+                sectionCode: {
+                  from: 'email.labels',
+                  pattern: '^(\\d{6})$',
+                  group: 1,
+                },
+                bodySnippet: {
+                  from: 'email.body',
+                  pattern: '^Submittal\\s*#?\\s*(\\d+)',
+                  flags: 'im',
+                  group: 1,
+                },
+              },
+            },
+          ],
+        }),
+        getTargetSchema: vi.fn().mockResolvedValue({
+          fields: [
+            { key: 'date', type: 'string' },
+            { key: 'description', type: 'string' },
+            { key: 'sectionCode', type: 'string' },
+            { key: 'bodySnippet', type: 'string' },
+          ],
+        }),
+      };
+
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: mockParseRegistry,
+      });
+
+      const result = await service.extractFields({
+        documentTypeKey: 'communication-project',
+        context: {
+          email: {
+            id: 'msg-1',
+            subject: 'Re: Fwd: Important Update',
+            date: 'Mon, 18 Oct 2026 12:00:00 GMT',
+            labels: ['Projects/123 Main St', '071200'],
+            htmlBody: '<p>Line 1</p><p>Submittal #1234 details</p>',
+          },
+        },
+      });
+
+      expect(result.fields.date).toBe('261018');
+      expect(result.fields.description).toBe('Important Update');
+      expect(result.fields.sectionCode).toBe('071200');
+      expect(result.fields.bodySnippet).toBe('1234');
+    });
+
+    it('validates candidate against minLength, pattern, and canonical LookupField options', async () => {
+      const mockParseRegistry = {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockResolvedValue({
+          extractors: [
+            {
+              source: 'gmail',
+              fields: {
+                shortField: [
+                  { from: 'email.subject', pattern: '^(a)$' }, // minLength 3 -> rejected
+                  { set: 'Valid Long' }, // passes
+                ],
+                patternField: [
+                  { set: 'not-matching' }, // fails pattern ^\\d+$
+                  { set: '12345' }, // passes
+                ],
+                direction: [
+                  { set: 'INVALID_DIR' }, // not in options -> rejected
+                  { set: 'Incoming' }, // matches name -> normalizes to key 'IN'
+                ],
+              },
+            },
+          ],
+        }),
+        getTargetSchema: vi.fn().mockResolvedValue({
+          fields: [
+            { key: 'shortField', type: 'string', minLength: 3 },
+            { key: 'patternField', type: 'string', pattern: '^\\d+$' },
+            {
+              key: 'direction',
+              type: 'string',
+              options: { source: 'direction', key: 'key', name: 'name' },
+            },
+          ],
+          options: {
+            direction: [
+              { key: 'IN', name: 'Incoming' },
+              { key: 'OT', name: 'Outgoing' },
+            ],
+          },
+        }),
+      };
+
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: mockParseRegistry,
+      });
+
+      const result = await service.extractFields({
+        documentTypeKey: 'test-doc',
+        context: {
+          email: {
+            id: 'msg-1',
+            subject: 'a',
+          },
+        },
+      });
+
+      expect(result.fields.shortField).toBe('Valid Long');
+      expect(result.fields.patternField).toBe('12345');
+      expect(result.fields.direction).toBe('IN');
+    });
+
+    it('catches extractor errors non-blockingly and appends statusMessages', async () => {
+      const mockParseRegistry = {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockResolvedValue({
+          extractors: [
+            {
+              source: 'gmail',
+              name: 'Broken Extractor',
+              fields: {
+                date: { from: 'email.date' },
+              },
+            },
+            {
+              source: 'gmail',
+              name: 'Healthy Extractor',
+              fields: {
+                description: { from: 'email.subjectClean' },
+              },
+            },
+          ],
+        }),
+        getTargetSchema: vi.fn().mockResolvedValue({
+          fields: [
+            Object.defineProperty({ key: 'date', type: 'string' }, 'minLength', {
+              get() {
+                throw new Error('Broken field getter');
+              },
+            }),
+            { key: 'description', type: 'string' },
+          ],
+        }),
+      };
+
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: mockParseRegistry,
+      });
+
+      const result = await service.extractFields({
+        documentTypeKey: 'test-doc',
+        context: {
+          email: {
+            id: 'msg-1',
+            date: 'Mon, 18 Oct 2026 12:00:00 GMT',
+            subject: 'Clean Subject',
+          },
+        },
+      });
+
+      expect(result.statusMessages).toBeDefined();
+      expect(result.statusMessages?.[0]).toContain('Could not extract fields from Broken Extractor');
+      expect(result.fields.description).toBe('Clean Subject');
     });
   });
 });

@@ -157,6 +157,7 @@ export function wireWorkspaceAddonRoutes(
         };
       const sourceParserWiring = createSourceParserWiring({
         spaceTypesProvider,
+        manifestProvider,
         driveClient: options.driveClient,
         driveService: options.driveService,
         configProvider: appConfigProvider,
