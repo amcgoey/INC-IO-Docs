@@ -474,98 +474,226 @@ function validateCandidate(
   return trimmed;
 }
 
+export function getCandidateAttachmentNames(context: SourceContext): string[] {
+  if (context.isDriveUrl) {
+    return [];
+  }
+  const names: string[] = [];
+  if (context.items && context.items.length > 0) {
+    for (const item of context.items) {
+      if (typeof item?.name === 'string' && item.name.trim().length > 0) {
+        names.push(item.name.trim());
+      }
+    }
+  }
+  if (names.length === 0 && context.email?.attachments && context.email.attachments.length > 0) {
+    for (const att of context.email.attachments) {
+      if (typeof att?.name === 'string' && att.name.trim().length > 0) {
+        names.push(att.name.trim());
+      }
+    }
+  }
+  return names;
+}
+
+export function matchesCorrelatedCode(
+  match: RegExpMatchArray,
+  groupIndex: number | undefined,
+  populatedFields: Record<string, unknown>
+): boolean {
+  if (groupIndex === undefined || groupIndex <= 1) {
+    return true;
+  }
+
+  // Check section + number correlation (CSI codes: group 1 = 6 digits, group 2 = 3 digits)
+  if (groupIndex >= 3 && match[1] !== undefined && match[2] !== undefined) {
+    if (/^\d{6}$/.test(match[1]) && /^\d{3}$/.test(match[2])) {
+      if (
+        populatedFields.section !== undefined &&
+        match[1] !== String(populatedFields.section)
+      ) {
+        return false;
+      }
+      if (
+        populatedFields.number !== undefined &&
+        match[2] !== String(populatedFields.number)
+      ) {
+        return false;
+      }
+    }
+  }
+
+  // Check specTag correlation (FF&E spec tag codes: group 1 = 2 letters + 3 digits + optional letter)
+  if (groupIndex >= 2 && match[1] !== undefined) {
+    if (/^[A-Za-z]{2}\d{3}[A-Za-z]?$/i.test(match[1])) {
+      if (
+        populatedFields.specTag !== undefined &&
+        match[1].toLowerCase() !== String(populatedFields.specTag).toLowerCase()
+      ) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+export interface RuleExtractionContext {
+  sourceContext: SourceContext;
+  candidateAttachmentNames: string[];
+  boundAttachmentName?: string | undefined;
+  populatedFields: Record<string, unknown>;
+}
+
+export interface ExtractedCandidateResult {
+  value: string;
+  matchedAttachmentName?: string | undefined;
+}
+
 function extractCandidateFromRule(
   rule: GmailFieldRule,
-  sourceContext: SourceContext,
   targetField: ParseTargetDocumentField,
-  targetSchema?: ParseTargetDocumentSchema
-): string | undefined {
-  let rawCandidate: string | undefined;
-
+  targetSchema: ParseTargetDocumentSchema | undefined,
+  extractionContext: RuleExtractionContext
+): ExtractedCandidateResult | undefined {
   if ('set' in rule) {
-    rawCandidate = rule.set;
-  } else if ('from' in rule) {
-    const { from: fromSource } = rule;
-    const { email } = sourceContext;
+    const validated = validateCandidate(rule.set, targetField, targetSchema);
+    return validated !== undefined ? { value: validated } : undefined;
+  }
 
-    if (fromSource === 'email.labels') {
-      const tokens = extractNonSystemLabelTokens(email?.labels);
-      for (const token of tokens) {
-        let candidateForToken: string | undefined = token;
-        if (rule.pattern) {
-          const flags = typeof rule.flags === 'string' ? rule.flags : 'i';
-          const regex = new RegExp(rule.pattern, flags);
-          const match = token.match(regex);
-          if (!match) {
-            candidateForToken = undefined;
-          } else {
-            const { group: groupIndex } = rule;
-            if (groupIndex !== undefined && match[groupIndex] !== undefined) {
-              candidateForToken = match[groupIndex];
-            } else if (match[1] !== undefined) {
-              candidateForToken = match[1];
-            } else {
-              candidateForToken = match[0];
-            }
-          }
-        }
-        if (candidateForToken !== undefined) {
-          const validated = validateCandidate(candidateForToken, targetField, targetSchema);
-          if (validated !== undefined) {
-            return validated;
-          }
-        }
-      }
-      return undefined;
-    }
+  if (!('from' in rule)) {
+    return undefined;
+  }
 
-    let sourceText = '';
-    switch (fromSource) {
-      case 'email.date':
-        sourceText = email?.date ?? '';
-        break;
-      case 'email.subjectClean':
-        sourceText = cleanSubject(email?.subject);
-        break;
-      case 'email.subject':
-        sourceText = email?.subject ?? '';
-        break;
-      case 'email.plainTextBody':
-        sourceText = email?.plainTextBody ?? '';
-        break;
-      case 'email.htmlBody':
-        sourceText = email?.htmlBody ?? '';
-        break;
-      case 'email.body': {
-        const { plainTextBody: rawPlain } = email ?? {};
-        if (typeof rawPlain === 'string' && rawPlain.trim().length > 0) {
-          sourceText = rawPlain.trim();
-        } else {
-          sourceText = normalizeHtmlBodyForPass2(email?.htmlBody);
-        }
-        break;
-      }
-      case 'email.from':
-        sourceText = email?.from ?? '';
-        break;
-      case 'email.to':
-        sourceText = email?.to ?? '';
-        break;
-      case 'email.cc':
-        sourceText = email?.cc ?? '';
-        break;
-      default:
-        break;
-    }
+  const { from: fromSource } = rule;
+  const { sourceContext } = extractionContext;
+  const { email } = sourceContext;
 
-    if (fromSource === 'email.date' && !rule.pattern) {
-      rawCandidate = parseDateToYymmdd(sourceText);
-    } else {
+  if (fromSource === 'attachmentName') {
+    const candidateNamesToTest =
+      extractionContext.boundAttachmentName !== undefined
+        ? [extractionContext.boundAttachmentName]
+        : extractionContext.candidateAttachmentNames;
+
+    for (const attName of candidateNamesToTest) {
+      let rawCandidate: string | undefined;
       if (rule.pattern) {
         const flags = typeof rule.flags === 'string' ? rule.flags : 'i';
         const regex = new RegExp(rule.pattern, flags);
-        const match = sourceText.match(regex);
+        const match = attName.match(regex);
         if (!match) {
+          continue;
+        }
+        if (!matchesCorrelatedCode(match, rule.group, extractionContext.populatedFields)) {
+          continue;
+        }
+        const { group: groupIndex } = rule;
+        if (groupIndex !== undefined && match[groupIndex] !== undefined) {
+          rawCandidate = match[groupIndex];
+        } else if (match[1] !== undefined) {
+          rawCandidate = match[1];
+        } else {
+          rawCandidate = match[0];
+        }
+      } else {
+        rawCandidate = attName;
+      }
+
+      const validated = validateCandidate(rawCandidate, targetField, targetSchema);
+      if (validated !== undefined) {
+        return {
+          value: validated,
+          matchedAttachmentName: attName,
+        };
+      }
+    }
+    return undefined;
+  }
+
+  if (fromSource === 'email.labels') {
+    const tokens = extractNonSystemLabelTokens(email?.labels);
+    for (const token of tokens) {
+      let candidateForToken: string | undefined = token;
+      if (rule.pattern) {
+        const flags = typeof rule.flags === 'string' ? rule.flags : 'i';
+        const regex = new RegExp(rule.pattern, flags);
+        const match = token.match(regex);
+        if (!match) {
+          continue;
+        }
+        if (!matchesCorrelatedCode(match, rule.group, extractionContext.populatedFields)) {
+          continue;
+        }
+        const { group: groupIndex } = rule;
+        if (groupIndex !== undefined && match[groupIndex] !== undefined) {
+          candidateForToken = match[groupIndex];
+        } else if (match[1] !== undefined) {
+          candidateForToken = match[1];
+        } else {
+          candidateForToken = match[0];
+        }
+      }
+      if (candidateForToken !== undefined) {
+        const validated = validateCandidate(candidateForToken, targetField, targetSchema);
+        if (validated !== undefined) {
+          return { value: validated };
+        }
+      }
+    }
+    return undefined;
+  }
+
+  let sourceText = '';
+  switch (fromSource) {
+    case 'email.date':
+      sourceText = email?.date ?? '';
+      break;
+    case 'email.subjectClean':
+      sourceText = cleanSubject(email?.subject);
+      break;
+    case 'email.subject':
+      sourceText = email?.subject ?? '';
+      break;
+    case 'email.plainTextBody':
+      sourceText = email?.plainTextBody ?? '';
+      break;
+    case 'email.htmlBody':
+      sourceText = email?.htmlBody ?? '';
+      break;
+    case 'email.body': {
+      const { plainTextBody: rawPlain } = email ?? {};
+      if (typeof rawPlain === 'string' && rawPlain.trim().length > 0) {
+        sourceText = rawPlain.trim();
+      } else {
+        sourceText = normalizeHtmlBodyForPass2(email?.htmlBody);
+      }
+      break;
+    }
+    case 'email.from':
+      sourceText = email?.from ?? '';
+      break;
+    case 'email.to':
+      sourceText = email?.to ?? '';
+      break;
+    case 'email.cc':
+      sourceText = email?.cc ?? '';
+      break;
+    default:
+      break;
+  }
+
+  let rawCandidate: string | undefined;
+  if (fromSource === 'email.date' && !rule.pattern) {
+    rawCandidate = parseDateToYymmdd(sourceText);
+  } else {
+    if (rule.pattern) {
+      const flags = typeof rule.flags === 'string' ? rule.flags : 'i';
+      const regex = new RegExp(rule.pattern, flags);
+      const match = sourceText.match(regex);
+      if (!match) {
+        rawCandidate = undefined;
+      } else {
+        if (!matchesCorrelatedCode(match, rule.group, extractionContext.populatedFields)) {
           rawCandidate = undefined;
         } else {
           const { group: groupIndex } = rule;
@@ -577,13 +705,14 @@ function extractCandidateFromRule(
             rawCandidate = match[0];
           }
         }
-      } else {
-        rawCandidate = sourceText;
       }
+    } else {
+      rawCandidate = sourceText;
     }
   }
 
-  return validateCandidate(rawCandidate, targetField, targetSchema);
+  const validated = validateCandidate(rawCandidate, targetField, targetSchema);
+  return validated !== undefined ? { value: validated } : undefined;
 }
 
 export function splitRfc5322Recipients(input: string): string[] {
@@ -1029,8 +1158,9 @@ async function extractLookupCandidate(
   request: ExtractFieldsRequest,
   targetField: ParseTargetDocumentField,
   targetSchema: ParseTargetDocumentSchema | undefined,
-  deps: SourceParserServiceDeps | undefined
-): Promise<{ value: string; linkedFields?: Record<string, string> } | undefined> {
+  deps: SourceParserServiceDeps | undefined,
+  extractionContext: RuleExtractionContext
+): Promise<{ value: string; linkedFields?: Record<string, string>; matchedAttachmentName?: string } | undefined> {
   const { from: fromSource } = rule;
 
   if (fromSource === 'email.to' || fromSource === 'email.cc') {
@@ -1063,6 +1193,107 @@ async function extractLookupCandidate(
     return undefined;
   }
 
+  if (fromSource === 'attachmentName') {
+    const candidateNamesToTest =
+      extractionContext.boundAttachmentName !== undefined
+        ? [extractionContext.boundAttachmentName]
+        : extractionContext.candidateAttachmentNames;
+
+    const excludeRegex = rule.excludePattern ? new RegExp(rule.excludePattern, 'i') : undefined;
+
+    for (const attName of candidateNamesToTest) {
+      if (excludeRegex && excludeRegex.test(attName)) {
+        continue;
+      }
+      let candidateText = attName;
+      if (rule.pattern) {
+        const regex = new RegExp(rule.pattern, rule.flags ?? 'i');
+        const match = attName.match(regex);
+        if (!match) {
+          continue;
+        }
+        if (!matchesCorrelatedCode(match, rule.group, extractionContext.populatedFields)) {
+          continue;
+        }
+        const { group: groupIndex } = rule;
+        candidateText =
+          groupIndex !== undefined && match[groupIndex] !== undefined
+            ? match[groupIndex]
+            : match[1] !== undefined
+              ? match[1]
+              : match[0];
+      }
+
+      if (!candidateText || candidateText.trim().length === 0) {
+        continue;
+      }
+
+      const match = await resolveCanonicalOptionFromCandidate(
+        candidateText,
+        targetField,
+        request.spaceId,
+        targetSchema,
+        deps
+      );
+      if (match) {
+        return {
+          value: match.value,
+          ...(match.linkedFields ? { linkedFields: match.linkedFields } : {}),
+          matchedAttachmentName: attName,
+        };
+      }
+    }
+    return undefined;
+  }
+
+  if (fromSource === 'email.labels') {
+    const tokens = extractNonSystemLabelTokens(request.context.email?.labels);
+    const excludeRegex = rule.excludePattern ? new RegExp(rule.excludePattern, 'i') : undefined;
+
+    for (const token of tokens) {
+      if (excludeRegex && excludeRegex.test(token)) {
+        continue;
+      }
+      let candidateText = token;
+      if (rule.pattern) {
+        const regex = new RegExp(rule.pattern, rule.flags ?? 'i');
+        const match = token.match(regex);
+        if (!match) {
+          continue;
+        }
+        if (!matchesCorrelatedCode(match, rule.group, extractionContext.populatedFields)) {
+          continue;
+        }
+        const { group: groupIndex } = rule;
+        candidateText =
+          groupIndex !== undefined && match[groupIndex] !== undefined
+            ? match[groupIndex]
+            : match[1] !== undefined
+              ? match[1]
+              : match[0];
+      }
+
+      if (!candidateText || candidateText.trim().length === 0) {
+        continue;
+      }
+
+      const match = await resolveCanonicalOptionFromCandidate(
+        candidateText,
+        targetField,
+        request.spaceId,
+        targetSchema,
+        deps
+      );
+      if (match) {
+        return {
+          value: match.value,
+          ...(match.linkedFields ? { linkedFields: match.linkedFields } : {}),
+        };
+      }
+    }
+    return undefined;
+  }
+
   const sourceText = getSourceText(fromSource, request.context);
   if (!sourceText || sourceText.trim().length === 0) {
     return undefined;
@@ -1077,6 +1308,9 @@ async function extractLookupCandidate(
     const regex = new RegExp(rule.pattern, rule.flags ?? 'i');
     const match = sourceText.match(regex);
     if (!match) {
+      return undefined;
+    }
+    if (!matchesCorrelatedCode(match, rule.group, extractionContext.populatedFields)) {
       return undefined;
     }
     const { group: groupIndex } = rule;
@@ -1162,6 +1396,7 @@ export class SourceParserService implements SourceParserPort {
 
     const statusMessages: string[] = [];
     const jsonLogicContext = buildJsonLogicContext(request.context);
+    const candidateAttachmentNames = getCandidateAttachmentNames(request.context);
 
     for (const extractor of parseSchema.extractors) {
       try {
@@ -1190,6 +1425,8 @@ export class SourceParserService implements SourceParserPort {
           continue;
         }
 
+        let boundAttachmentName: string | undefined = undefined;
+
         for (const [fieldKey, ruleOrRules] of Object.entries(extractor.fields)) {
           if (fieldKey in populatedFields) {
             continue;
@@ -1212,15 +1449,27 @@ export class SourceParserService implements SourceParserPort {
               }
             }
 
+            const extractionContext: RuleExtractionContext = {
+              sourceContext: request.context,
+              candidateAttachmentNames,
+              boundAttachmentName,
+              populatedFields,
+            };
+
             if ('lookup' in rule && rule.lookup === true) {
               const lookupResult = await extractLookupCandidate(
                 rule,
                 request,
                 targetField,
                 targetSchema,
-                this.deps
+                this.deps,
+                extractionContext
               );
               if (lookupResult !== undefined) {
+                if (boundAttachmentName === undefined && lookupResult.matchedAttachmentName !== undefined) {
+                  // nosemgrep: domain-pass-through-read
+                  boundAttachmentName = lookupResult.matchedAttachmentName;
+                }
                 const { value: lookupVal, linkedFields: lookupLinked } = lookupResult;
                 populatedFields[fieldKey] = lookupVal;
                 if (lookupLinked) {
@@ -1233,14 +1482,20 @@ export class SourceParserService implements SourceParserPort {
                 break;
               }
             } else {
-              const candidate = extractCandidateFromRule(
+              const candidateResult = extractCandidateFromRule(
                 rule as GmailFieldRule,
-                request.context,
                 targetField,
-                targetSchema
+                targetSchema,
+                extractionContext
               );
 
-              if (candidate !== undefined) {
+              if (candidateResult !== undefined) {
+                if (boundAttachmentName === undefined && candidateResult.matchedAttachmentName !== undefined) {
+                  // nosemgrep: domain-pass-through-read
+                  boundAttachmentName = candidateResult.matchedAttachmentName;
+                }
+                // nosemgrep: domain-pass-through-read
+                const candidate = candidateResult.value;
                 populatedFields[fieldKey] = candidate;
                 if (targetField.options && targetSchema?.fields) {
                   const sourceKey = targetField.options.source as string;

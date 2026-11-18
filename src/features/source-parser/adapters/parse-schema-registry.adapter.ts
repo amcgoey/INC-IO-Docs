@@ -248,7 +248,7 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
         }
 
         for (const [fieldKey, ruleOrRules] of Object.entries(extractor.fields)) {
-          if (calcFieldKeys.has(fieldKey)) {
+          if (calcFieldKeys.has(fieldKey) && !knownFieldKeys.has(fieldKey)) {
             throw new Error(
               `DocumentParseSchema in "${relPath}" targets CalculatedField "${fieldKey}"`
             );
@@ -312,7 +312,7 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
 
       if (parseSchema.fallback?.fields) {
         for (const fieldKey of parseSchema.fallback.fields) {
-          if (calcFieldKeys.has(fieldKey)) {
+          if (calcFieldKeys.has(fieldKey) && !knownFieldKeys.has(fieldKey)) {
             throw new Error(
               `DocumentParseSchema fallback in "${relPath}" targets CalculatedField "${fieldKey}"`
             );

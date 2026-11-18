@@ -5485,6 +5485,351 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(nock.isDone()).toBe(true);
       });
     });
+
+    describe('Ticket #305: End-to-end Gmail Workspace Add-on pre-population and Document submission for Submittal Arch & FF&E', () => {
+      beforeEach(() => {
+        vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string): Promise<GmailThreadDetails> => {
+          if (threadId === 'th-pass2-ticket-305-arch') {
+            return {
+              id: 'th-pass2-ticket-305-arch',
+              messages: [
+                {
+                  id: 'msg-305-arch-1',
+                  threadId: 'th-pass2-ticket-305-arch',
+                  subject: 'Submittal 071200-001-A Waterproofing Specs',
+                  from: 'James McGovern <jmcgovern@pavarini.com>',
+                  to: 'Architect <pm@inc.nyc>',
+                  date: 'Tue, 20 Oct 2026 14:00:00 -04:00',
+                  labels: ['INBOX', 'Active Projects'],
+                  plainTextBody: 'Please find the waterproofing submittal attached for review.',
+                  inlineImages: [],
+                  attachments: [
+                    {
+                      partId: 'part-arch-1',
+                      attachmentId: 'att-arch-1',
+                      filename: '071200-001-A Waterproofing Specs.pdf',
+                      mimeType: 'application/pdf',
+                      size: 2048,
+                    },
+                  ],
+                },
+              ],
+            };
+          }
+          if (threadId === 'th-pass2-ticket-305-ffe') {
+            return {
+              id: 'th-pass2-ticket-305-ffe',
+              messages: [
+                {
+                  id: 'msg-305-ffe-1',
+                  threadId: 'th-pass2-ticket-305-ffe',
+                  subject: 'CG104-A Berman Falk King Bed Submittal',
+                  from: 'Berman Rep <rep@bermanfalk.com>',
+                  to: 'Designer <designer@inc.nyc>, Benjamin West <procurement@benjaminwest.com>',
+                  date: 'Wed, 21 Oct 2026 10:00:00 -04:00',
+                  labels: ['INBOX', 'Active Projects'],
+                  plainTextBody: 'Attached is the CG104 King Bed submittal cut sheet.',
+                  inlineImages: [],
+                  attachments: [
+                    {
+                      partId: 'part-ffe-1',
+                      attachmentId: 'att-ffe-1',
+                      filename: 'CG104-A Berman Falk Cut Sheet.pdf',
+                      mimeType: 'application/pdf',
+                      size: 1024,
+                    },
+                  ],
+                },
+              ],
+            };
+          }
+          return { id: threadId, messages: [] };
+        });
+
+        vi.spyOn(mockGmailClient, 'getMessage').mockImplementation(async (messageId: string) => {
+          if (messageId === 'msg-305-arch-1') {
+            return {
+              id: 'msg-305-arch-1',
+              messageId: 'msg-305-arch-1',
+              inlineImages: [],
+              attachments: [
+                {
+                  partId: 'part-arch-1',
+                  attachmentId: 'att-arch-1',
+                  filename: '071200-001-A Waterproofing Specs.pdf',
+                  mimeType: 'application/pdf',
+                  size: 2048,
+                },
+              ],
+            };
+          }
+          if (messageId === 'msg-305-ffe-1') {
+            return {
+              id: 'msg-305-ffe-1',
+              messageId: 'msg-305-ffe-1',
+              inlineImages: [],
+              attachments: [
+                {
+                  partId: 'part-ffe-1',
+                  attachmentId: 'att-ffe-1',
+                  filename: 'CG104-A Berman Falk Cut Sheet.pdf',
+                  mimeType: 'application/pdf',
+                  size: 1024,
+                },
+              ],
+            };
+          }
+          return { id: messageId, messageId, inlineImages: [], attachments: [] };
+        });
+      });
+
+      it('renders Submittal Arch card with pre-populated compound attachment fields, contact alias, action: REC, and submits document successfully', async () => {
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-305-arch-1',
+              threadId: 'th-pass2-ticket-305-arch',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const card = body.action?.navigations?.[0]?.pushCard;
+        const docInfoSec = card?.sections.find((s) => s.header === 'Document Data');
+
+        const sectionWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch')
+        )?.textInput;
+        expect(sectionWidget?.value).toBe('071200');
+
+        const numberWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('number', 'submittal-arch')
+        )?.textInput;
+        expect(numberWidget?.value).toBe('001');
+
+        const revisionWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-arch')
+        )?.textInput;
+        expect(revisionWidget?.value).toBe('A');
+
+        const titleWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('title', 'submittal-arch')
+        )?.textInput;
+        expect(titleWidget?.value).toBe('Waterproofing Specs');
+
+        const dateWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('date', 'submittal-arch')
+        )?.textInput;
+        expect(dateWidget?.value).toBe('261020');
+
+        const contactWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'submittal-arch')
+        )?.textInput;
+        expect(contactWidget?.value).toBe('PMG');
+
+        const actionWidget = docInfoSec?.widgets.find(
+          (w) => w.selectionInput?.name === getDocumentInfoWidgetName('action', 'submittal-arch')
+        )?.selectionInput;
+        const selectedAction = actionWidget?.items?.find((i) => i.selected);
+        expect(selectedAction?.value).toBe('REC');
+
+        // Now submit processDocument
+        const attachmentBytes = new Uint8Array([1, 2, 3, 4]);
+        mockGmailClient.getAttachment = vi.fn().mockResolvedValue(attachmentBytes);
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes('shared-drive-proj-root') && q.q.includes("name = '6 Construction'"))
+          .reply(200, {
+            files: [{ id: 'const-folder-id', name: '6 Construction', mimeType: 'application/vnd.google-apps.folder' }],
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes('const-folder-id') && q.q.includes("name = 'Submittals'"))
+          .reply(200, {
+            files: [{ id: 'submittals-folder-id', name: 'Submittals', mimeType: 'application/vnd.google-apps.folder' }],
+          });
+
+        nock('https://www.googleapis.com')
+          .post('/upload/drive/v3/files')
+          .query(true)
+          .reply(200, {
+            id: 'drive-saved-submittal-arch',
+            name: '071200-001-A Waterproofing Specs - 261020 PMG.pdf',
+            mimeType: 'application/pdf',
+            parents: ['submittals-folder-id'],
+            webViewLink: 'https://drive.google.com/file/d/drive-saved-submittal-arch/view',
+          });
+
+        const submitRes = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/action',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-305-arch-1',
+              threadId: 'th-pass2-ticket-305-arch',
+              accessToken: 'ya29.live-token',
+            },
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: { action: 'processDocument' },
+              formInputs: {
+                SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+                [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+                [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['submittal-arch'] } },
+                SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+                SelectAttachments: { stringInputs: { value: ['part-arch-1'] } },
+                SaveEmailToPdf: { stringInputs: { value: ['false'] } },
+                [getDocumentInfoWidgetName('section', 'submittal-arch')]: { stringInputs: { value: ['071200'] } },
+                [getDocumentInfoWidgetName('number', 'submittal-arch')]: { stringInputs: { value: ['001'] } },
+                [getDocumentInfoWidgetName('revision', 'submittal-arch')]: { stringInputs: { value: ['A'] } },
+                [getDocumentInfoWidgetName('title', 'submittal-arch')]: { stringInputs: { value: ['Waterproofing Specs'] } },
+                [getDocumentInfoWidgetName('date', 'submittal-arch')]: { stringInputs: { value: ['261020'] } },
+                [getDocumentInfoWidgetName('contact', 'submittal-arch')]: { stringInputs: { value: ['PMG'] } },
+                [getDocumentInfoWidgetName('action', 'submittal-arch')]: { stringInputs: { value: ['REC'] } },
+                [getDocumentInfoWidgetName('status', 'submittal-arch')]: { stringInputs: { value: ['Open'] } },
+              },
+            },
+          },
+        });
+
+        expect(submitRes.statusCode).toBe(200);
+        const submitBody = JSON.parse(submitRes.payload) as GoogleWorkspaceActionResponse;
+        expect(submitBody.action?.notification?.text).toBe('Document processed successfully');
+        expect(nock.isDone()).toBe(true);
+      });
+
+      it('renders Submittal FF&E card with pre-populated specTag, auto-derived specTitle, vendor alias, action: REC, and submits document successfully', async () => {
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-305-ffe-1',
+              threadId: 'th-pass2-ticket-305-ffe',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const card = body.action?.navigations?.[0]?.pushCard;
+        const docInfoSec = card?.sections.find((s) => s.header === 'Document Data');
+
+        const specTagWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('specTag', 'submittal-ffe')
+        )?.textInput;
+        expect(specTagWidget?.value).toBe('CG104');
+
+        const specTitleWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe')
+        )?.textInput;
+        expect(specTitleWidget?.value).toBe('BED - KING'); // auto-derived LinkedField!
+
+        const revisionWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-ffe')
+        )?.textInput;
+        expect(revisionWidget?.value).toBe('A');
+
+        const vendorWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('vendor', 'submittal-ffe')
+        )?.textInput;
+        expect(vendorWidget?.value).toBe('BM');
+
+        const dateWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('date', 'submittal-ffe')
+        )?.textInput;
+        expect(dateWidget?.value).toBe('261021');
+
+        const actionWidget = docInfoSec?.widgets.find(
+          (w) => w.selectionInput?.name === getDocumentInfoWidgetName('action', 'submittal-ffe')
+        )?.selectionInput;
+        const selectedAction = actionWidget?.items?.find((i) => i.selected);
+        expect(selectedAction?.value).toBe('REC');
+
+        // Now submit processDocument for submittal-ffe
+        const attachmentBytes = new Uint8Array([5, 6, 7, 8]);
+        mockGmailClient.getAttachment = vi.fn().mockResolvedValue(attachmentBytes);
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes('shared-drive-proj-root') && q.q.includes("name = '3 FFE'"))
+          .reply(200, {
+            files: [{ id: 'ffe-folder-id', name: '3 FFE', mimeType: 'application/vnd.google-apps.folder' }],
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes('ffe-folder-id') && q.q.includes("name = '05 Submittals'"))
+          .reply(200, {
+            files: [{ id: 'ffe-submittals-id', name: '05 Submittals', mimeType: 'application/vnd.google-apps.folder' }],
+          });
+
+        nock('https://www.googleapis.com')
+          .post('/upload/drive/v3/files')
+          .query(true)
+          .reply(200, {
+            id: 'drive-saved-submittal-ffe',
+            name: 'CG104-A Berman Falk - 261021 INC.pdf',
+            mimeType: 'application/pdf',
+            parents: ['ffe-submittals-id'],
+            webViewLink: 'https://drive.google.com/file/d/drive-saved-submittal-ffe/view',
+          });
+
+        const submitRes = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/action',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-305-ffe-1',
+              threadId: 'th-pass2-ticket-305-ffe',
+              accessToken: 'ya29.live-token',
+            },
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: { action: 'processDocument' },
+              formInputs: {
+                SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+                [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Active Projects'] } },
+                [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['submittal-ffe'] } },
+                SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+                SelectAttachments: { stringInputs: { value: ['part-ffe-1'] } },
+                SaveEmailToPdf: { stringInputs: { value: ['false'] } },
+                [getDocumentInfoWidgetName('specTag', 'submittal-ffe')]: { stringInputs: { value: ['CG104'] } },
+                [getDocumentInfoWidgetName('specTitle', 'submittal-ffe')]: { stringInputs: { value: ['BED - KING'] } },
+                [getDocumentInfoWidgetName('revision', 'submittal-ffe')]: { stringInputs: { value: ['A'] } },
+                [getDocumentInfoWidgetName('vendor', 'submittal-ffe')]: { stringInputs: { value: ['BM'] } },
+                [getDocumentInfoWidgetName('date', 'submittal-ffe')]: { stringInputs: { value: ['261021'] } },
+                [getDocumentInfoWidgetName('contact', 'submittal-ffe')]: { stringInputs: { value: ['INC'] } },
+                [getDocumentInfoWidgetName('action', 'submittal-ffe')]: { stringInputs: { value: ['REC'] } },
+                [getDocumentInfoWidgetName('status', 'submittal-ffe')]: { stringInputs: { value: ['Open'] } },
+              },
+            },
+          },
+        });
+
+        expect(submitRes.statusCode).toBe(200);
+        const submitBody = JSON.parse(submitRes.payload) as GoogleWorkspaceActionResponse;
+        expect(submitBody.action?.notification?.text).toBe('Document processed successfully');
+        expect(nock.isDone()).toBe(true);
+      });
+    });
   });
 });
 

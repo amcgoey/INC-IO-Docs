@@ -56,5 +56,9 @@
         "paginationLimit": 500
       }
     }
-  ]
+  ],
+  "aliases": {
+    "contacts": "./aliases/contacts.json",
+    "vendors": "./aliases/vendors.json"
+  }
 }

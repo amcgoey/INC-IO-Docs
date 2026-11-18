@@ -104,6 +104,7 @@ export const GmailExtractSourceSchema = Type.Union([
   Type.Literal('email.to'),
   Type.Literal('email.cc'),
   Type.Literal('email.labels'),
+  Type.Literal('attachmentName'),
 ]);
 export type GmailExtractSource = Static<typeof GmailExtractSourceSchema>;
 

@@ -293,5 +293,116 @@
         ]
       }
     ]
+  },
+  "documentParseSchema": {
+    "extractors": [
+      {
+        "source": "gmail",
+        "fields": {
+          "action": [
+            {
+              "when": {
+                "!=": [
+                  { "var": "email.fromDomain" },
+                  "inc.nyc"
+                ]
+              },
+              "set": "REC"
+            }
+          ],
+          "date": {
+            "from": "email.date"
+          },
+          "contact": [
+            {
+              "when": {
+                "or": [
+                  {
+                    "in": [
+                      "SENT",
+                      { "var": "email.labels" }
+                    ]
+                  },
+                  {
+                    "==": [
+                      { "var": "email.fromDomain" },
+                      "inc.nyc"
+                    ]
+                  }
+                ]
+              },
+              "from": "email.to",
+              "excludePattern": "@inc\\.nyc\\b",
+              "lookup": true
+            },
+            {
+              "from": "email.from",
+              "lookup": true
+            }
+          ],
+          "vendor": [
+            {
+              "from": "attachmentName",
+              "lookup": true
+            },
+            {
+              "from": "email.labels",
+              "lookup": true
+            },
+            {
+              "from": "email.subjectClean",
+              "lookup": true
+            },
+            {
+              "when": {
+                "!=": [
+                  { "var": "email.fromDomain" },
+                  "inc.nyc"
+                ]
+              },
+              "from": "email.from",
+              "lookup": true
+            }
+          ],
+          "specTag": [
+            {
+              "from": "attachmentName",
+              "pattern": "([A-Za-z]{2}\\d{3}[A-Za-z]?)(?:-([A-Za-z0-9]+))?",
+              "group": 1,
+              "lookup": true
+            },
+            {
+              "from": "email.labels",
+              "pattern": "([A-Za-z]{2}\\d{3}[A-Za-z]?)(?:-([A-Za-z0-9]+))?",
+              "group": 1,
+              "lookup": true
+            },
+            {
+              "from": "email.subjectClean",
+              "pattern": "([A-Za-z]{2}\\d{3}[A-Za-z]?)(?:-([A-Za-z0-9]+))?",
+              "group": 1,
+              "lookup": true
+            }
+          ],
+          "revision": [
+            {
+              "from": "attachmentName",
+              "pattern": "([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)",
+              "group": 2
+            },
+            {
+              "from": "email.labels",
+              "pattern": "([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)",
+              "group": 2
+            },
+            {
+              "from": "email.subjectClean",
+              "pattern": "([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)",
+              "group": 2
+            }
+          ]
+        }
+      }
+    ]
   }
 }
