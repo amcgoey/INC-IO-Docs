@@ -92,6 +92,59 @@ function resolveGmailDriveSelection(
   };
 }
 
+function buildSourceContextItems(params: {
+  isGmail: boolean;
+  driveUrlId?: string | undefined;
+  activeMsg?: UiProcessGmailMessageDescriptor | undefined;
+  selectedItems?: UiProcessEventContext['selectedItems'];
+}): UiProcessSourceContextItem[] {
+  if (params.driveUrlId !== undefined) {
+    return [{ id: params.driveUrlId }];
+  }
+  if (params.isGmail) {
+    return (params.activeMsg?.attachments ?? []).map((att) => ({
+      id: resolveAttachmentId(att),
+      name: att.title,
+      ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
+    }));
+  }
+  return (params.selectedItems ?? [])
+    .filter(
+      (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
+        typeof item?.id === 'string' && item.id.trim().length > 0
+    )
+    .map((item) => ({
+      id: item.id.trim(),
+      ...(item.title !== undefined ? { name: item.title } : {}),
+      ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
+    }));
+}
+
+function buildSourceEmailDescriptor(
+  activeMsg: UiProcessGmailMessageDescriptor | undefined
+): UiProcessSourceEmailDescriptor | undefined {
+  if (!activeMsg) {
+    return undefined;
+  }
+  return {
+    id: activeMsg.id,
+    ...(activeMsg.threadId !== undefined ? { threadId: activeMsg.threadId } : {}),
+    ...(activeMsg.subject !== undefined ? { subject: activeMsg.subject } : {}),
+    ...(activeMsg.from !== undefined ? { from: activeMsg.from } : {}),
+    ...(activeMsg.to !== undefined ? { to: activeMsg.to } : {}),
+    ...(activeMsg.cc !== undefined ? { cc: activeMsg.cc } : {}),
+    ...(activeMsg.date !== undefined ? { date: activeMsg.date } : {}),
+    ...(activeMsg.plainTextBody !== undefined ? { plainTextBody: activeMsg.plainTextBody } : {}),
+    ...(activeMsg.htmlBody !== undefined ? { htmlBody: activeMsg.htmlBody } : {}),
+    ...(activeMsg.labels !== undefined ? { labels: activeMsg.labels } : {}),
+    attachments: (activeMsg.attachments ?? []).map((att) => ({
+      id: resolveAttachmentId(att),
+      name: att.title,
+      ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
+    })),
+  };
+}
+
 export interface WorkspaceAddonAdapterOptions {
   spaceProvider: UiProcessSpaceProviderPort;
   configProvider?: UiProcessConfigProviderPort | undefined;
@@ -528,44 +581,14 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         gmailDriveSelection.effectiveFileSource === 'Google Drive URL' &&
         Boolean(gmailDriveSelection.parsedCurrentDriveUrl);
 
-      const pass2CandidateItems: UiProcessSourceContextItem[] = isGmailDriveUrlMode
-        ? [{ id: gmailDriveSelection.parsedCurrentDriveUrl!.id }]
-        : isGmail
-          ? (activeMsg?.attachments ?? []).map((att) => ({
-              id: resolveAttachmentId(att),
-              name: att.title,
-              ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
-            }))
-          : (effectiveContext.selectedItems ?? [])
-              .filter(
-                (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
-                  typeof item?.id === 'string' && item.id.trim().length > 0
-              )
-              .map((item) => ({
-                id: item.id.trim(),
-                ...(item.title !== undefined ? { name: item.title } : {}),
-                ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
-              }));
+      const pass2CandidateItems = buildSourceContextItems({
+        isGmail,
+        driveUrlId: isGmailDriveUrlMode ? gmailDriveSelection.parsedCurrentDriveUrl!.id : undefined,
+        activeMsg,
+        selectedItems: effectiveContext.selectedItems,
+      });
 
-      const pass2EmailContext: UiProcessSourceEmailDescriptor | undefined = activeMsg
-        ? {
-            id: activeMsg.id,
-            ...(activeMsg.threadId !== undefined ? { threadId: activeMsg.threadId } : {}),
-            ...(activeMsg.subject !== undefined ? { subject: activeMsg.subject } : {}),
-            ...(activeMsg.from !== undefined ? { from: activeMsg.from } : {}),
-            ...(activeMsg.to !== undefined ? { to: activeMsg.to } : {}),
-            ...(activeMsg.cc !== undefined ? { cc: activeMsg.cc } : {}),
-            ...(activeMsg.date !== undefined ? { date: activeMsg.date } : {}),
-            ...(activeMsg.plainTextBody !== undefined ? { plainTextBody: activeMsg.plainTextBody } : {}),
-            ...(activeMsg.htmlBody !== undefined ? { htmlBody: activeMsg.htmlBody } : {}),
-            ...(activeMsg.labels !== undefined ? { labels: activeMsg.labels } : {}),
-            attachments: (activeMsg.attachments ?? []).map((att) => ({
-              id: resolveAttachmentId(att),
-              name: att.title,
-              ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
-            })),
-          }
-        : undefined;
+      const pass2EmailContext = buildSourceEmailDescriptor(activeMsg);
 
       const pass2Context: UiProcessSourceContext = {
         items: pass2CandidateItems,
@@ -1092,16 +1115,10 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     }
 
     if (isDrivePass1Event) {
-      const candidateItems: UiProcessSourceContextItem[] = (effectiveContext.selectedItems ?? [])
-        .filter(
-          (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
-            typeof item?.id === 'string' && item.id.trim().length > 0
-        )
-        .map((item) => ({
-          id: item.id.trim(),
-          ...(item.title !== undefined ? { name: item.title } : {}),
-          ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
-        }));
+      const candidateItems = buildSourceContextItems({
+        isGmail: false,
+        selectedItems: effectiveContext.selectedItems,
+      });
 
       if (candidateItems.length > 0) {
         try {
@@ -1114,33 +1131,13 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         }
       }
     } else if (isGmailPass1Event && (Boolean(activeMsg) || isGmailDriveUrlPass1Event)) {
-      const candidateItems: UiProcessSourceContextItem[] = isGmailDriveUrlPass1Event
-        ? [{ id: parsedCurrentDriveUrl!.id }]
-        : (activeMsg?.attachments ?? []).map((att) => ({
-            id: resolveAttachmentId(att),
-            name: att.title,
-            ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
-          }));
+      const candidateItems = buildSourceContextItems({
+        isGmail: true,
+        driveUrlId: isGmailDriveUrlPass1Event ? parsedCurrentDriveUrl!.id : undefined,
+        activeMsg,
+      });
 
-      const emailContext: UiProcessSourceEmailDescriptor | undefined = activeMsg
-        ? {
-            id: activeMsg.id,
-            ...(activeMsg.threadId !== undefined ? { threadId: activeMsg.threadId } : {}),
-            ...(activeMsg.subject !== undefined ? { subject: activeMsg.subject } : {}),
-            ...(activeMsg.from !== undefined ? { from: activeMsg.from } : {}),
-            ...(activeMsg.to !== undefined ? { to: activeMsg.to } : {}),
-            ...(activeMsg.cc !== undefined ? { cc: activeMsg.cc } : {}),
-            ...(activeMsg.date !== undefined ? { date: activeMsg.date } : {}),
-            ...(activeMsg.plainTextBody !== undefined ? { plainTextBody: activeMsg.plainTextBody } : {}),
-            ...(activeMsg.htmlBody !== undefined ? { htmlBody: activeMsg.htmlBody } : {}),
-            ...(activeMsg.labels !== undefined ? { labels: activeMsg.labels } : {}),
-            attachments: (activeMsg.attachments ?? []).map((att) => ({
-              id: resolveAttachmentId(att),
-              name: att.title,
-              ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
-            })),
-          }
-        : undefined;
+      const emailContext = buildSourceEmailDescriptor(activeMsg);
 
       const defaultSpaceTypeId = config?.defaultDocumentSpaceType ?? spaceTypes[0]?.id;
       const selectedSpaceTypeId = effectiveContext.formData?.[SELECT_DOCUMENT_SPACE_TYPE_KEY] as string | undefined;

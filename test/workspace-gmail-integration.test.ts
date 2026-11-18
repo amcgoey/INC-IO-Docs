@@ -5879,6 +5879,122 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         )?.textInput;
         expect(contactWidget?.value ?? '').toBe('');
       });
+
+      it('binds specTag and revision to CG104-A_CutSheet.pdf across [Berman_Cover.pdf, CG104-A_CutSheet.pdf] and resolves vendor BM via real submittal-ffe.json', async () => {
+        vi.spyOn(mockGmailClient, 'getThread').mockResolvedValueOnce({
+          id: 'th-iter2-ffe-multi-att',
+          messages: [
+            {
+              id: 'msg-iter2-ffe-1',
+              threadId: 'th-iter2-ffe-multi-att',
+              subject: 'Submittal Package',
+              from: 'Berman Rep <rep@bermanfalk.com>',
+              to: 'Designer <designer@inc.nyc>',
+              date: 'Wed, 21 Oct 2026 10:00:00 -04:00',
+              labels: ['INBOX', 'Active Projects'],
+              plainTextBody: 'Please find the cut sheet attached.',
+              inlineImages: [],
+              attachments: [
+                {
+                  partId: 'part-cover',
+                  attachmentId: 'att-cover',
+                  filename: 'Berman_Cover.pdf',
+                  mimeType: 'application/pdf',
+                  size: 1024,
+                },
+                {
+                  partId: 'part-cutsheet',
+                  attachmentId: 'att-cutsheet',
+                  filename: 'CG104-A_CutSheet.pdf',
+                  mimeType: 'application/pdf',
+                  size: 2048,
+                },
+              ],
+            },
+          ],
+        });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-iter2-ffe-1',
+              threadId: 'th-iter2-ffe-multi-att',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const card = body.action?.navigations?.[0]?.pushCard;
+        const docInfoSec = card?.sections.find((s) => s.header === 'Document Data');
+
+        expect(
+          docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTag', 'submittal-ffe'))?.textInput?.value
+        ).toBe('CG104');
+        expect(
+          docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))?.textInput?.value
+        ).toBe('BED - KING');
+        expect(
+          docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-ffe'))?.textInput?.value
+        ).toBe('A');
+        expect(
+          docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('vendor', 'submittal-ffe'))?.textInput?.value
+        ).toBe('BM');
+      });
+
+      it('ignores PO12345 prefix and extracts CG104-A from subject "PO12345 - CG104-A" against real submittal-ffe.json', async () => {
+        vi.spyOn(mockGmailClient, 'getThread').mockResolvedValueOnce({
+          id: 'th-iter2-ffe-po',
+          messages: [
+            {
+              id: 'msg-iter2-ffe-po',
+              threadId: 'th-iter2-ffe-po',
+              subject: 'PO12345 - CG104-A',
+              from: 'Berman Rep <rep@bermanfalk.com>',
+              to: 'Designer <designer@inc.nyc>',
+              date: 'Wed, 21 Oct 2026 10:00:00 -04:00',
+              labels: ['INBOX', 'Active Projects'],
+              plainTextBody: 'Attached.',
+              inlineImages: [],
+              attachments: [],
+            },
+          ],
+        });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-iter2-ffe-po',
+              threadId: 'th-iter2-ffe-po',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const card = body.action?.navigations?.[0]?.pushCard;
+        const docInfoSec = card?.sections.find((s) => s.header === 'Document Data');
+
+        expect(
+          docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTag', 'submittal-ffe'))?.textInput?.value
+        ).toBe('CG104');
+        expect(
+          docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))?.textInput?.value
+        ).toBe('BED - KING');
+        expect(
+          docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-ffe'))?.textInput?.value
+        ).toBe('A');
+      });
     });
   });
 });

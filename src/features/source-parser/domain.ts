@@ -544,31 +544,33 @@ function populateLinkedFields(
   }
 }
 
-function extractRegexMatchValue(
+function extractRegexMatchValues(
   text: string,
   rule: { pattern?: string | undefined; flags?: string | undefined; group?: number | undefined },
   populatedFields: Record<string, unknown>
-): string | undefined {
+): string[] {
   if (!rule.pattern) {
-    return text;
+    return [text];
   }
-  const flags = typeof rule.flags === 'string' ? rule.flags : 'i';
-  const regex = new RegExp(rule.pattern, flags);
-  const match = text.match(regex);
-  if (!match) {
-    return undefined;
+  const baseFlags = typeof rule.flags === 'string' ? rule.flags : 'i';
+  const iterFlags = baseFlags.includes('g') ? baseFlags : `${baseFlags}g`;
+  const regex = new RegExp(rule.pattern, iterFlags);
+  const results: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    if (match[0].length === 0) {
+      regex.lastIndex++;
+    }
+    if (!matchesCorrelatedCode(match, rule.group, populatedFields)) {
+      continue;
+    }
+    const { group: groupIndex } = rule;
+    const val = groupIndex !== undefined ? match[groupIndex] : (match[1] ?? match[0]);
+    if (val !== undefined) {
+      results.push(val);
+    }
   }
-  if (!matchesCorrelatedCode(match, rule.group, populatedFields)) {
-    return undefined;
-  }
-  const { group: groupIndex } = rule;
-  if (groupIndex !== undefined && match[groupIndex] !== undefined) {
-    return match[groupIndex];
-  }
-  if (match[1] !== undefined) {
-    return match[1];
-  }
-  return match[0];
+  return results;
 }
 
 export function getCandidateAttachmentNames(context: SourceContext): string[] {
@@ -648,6 +650,62 @@ export interface ExtractedCandidateResult {
   matchedAttachmentName?: string | undefined;
 }
 
+interface RuleSourceItem {
+  text: string;
+  attachmentName?: string;
+}
+
+function resolveRuleSourceItems(
+  fromSource: GmailExtractSource,
+  sourceContext: SourceContext,
+  extractionContext: RuleExtractionContext,
+  isLookup: boolean
+): RuleSourceItem[] {
+  if (fromSource === 'attachmentName') {
+    const candidateNamesToTest =
+      extractionContext.boundAttachmentName !== undefined
+        ? [extractionContext.boundAttachmentName]
+        : extractionContext.candidateAttachmentNames;
+    return candidateNamesToTest.map((attName) => ({
+      text: attName,
+      attachmentName: attName,
+    }));
+  }
+
+  if (fromSource === 'email.labels') {
+    return extractNonSystemLabelTokens(sourceContext.email?.labels).map((token) => ({
+      text: token,
+    }));
+  }
+
+  if (isLookup && (fromSource === 'email.to' || fromSource === 'email.cc')) {
+    const rawRecipientsText =
+      fromSource === 'email.to'
+        ? (sourceContext.email?.to ?? '')
+        : (sourceContext.email?.cc ?? '');
+    return splitRfc5322Recipients(rawRecipientsText).map((recipient) => ({
+      text: recipient,
+    }));
+  }
+
+  const sourceText = getSourceText(fromSource, sourceContext);
+  return sourceText.trim().length > 0 ? [{ text: sourceText }] : [];
+}
+
+function extractRuleCandidatesForText(
+  text: string,
+  fromSource: GmailExtractSource,
+  rule: { pattern?: string | undefined; flags?: string | undefined; group?: number | undefined },
+  populatedFields: Record<string, unknown>,
+  applyDateFormatting: boolean
+): string[] {
+  if (applyDateFormatting && fromSource === 'email.date' && !rule.pattern) {
+    const formatted = parseDateToYymmdd(text);
+    return formatted !== undefined ? [formatted] : [];
+  }
+  return extractRegexMatchValues(text, rule, populatedFields);
+}
+
 function extractCandidateFromRule(
   rule: GmailFieldRule,
   targetField: ParseTargetDocumentField,
@@ -665,55 +723,34 @@ function extractCandidateFromRule(
     return undefined;
   }
 
-  const { from: fromSource } = rule;
-  const { sourceContext } = extractionContext;
-  const { email } = sourceContext;
+  const sourceItems = resolveRuleSourceItems(
+    rule.from,
+    extractionContext.sourceContext,
+    extractionContext,
+    false
+  );
 
-  if (fromSource === 'attachmentName') {
-    const candidateNamesToTest =
-      extractionContext.boundAttachmentName !== undefined
-        ? [extractionContext.boundAttachmentName]
-        : extractionContext.candidateAttachmentNames;
-
-    for (const attName of candidateNamesToTest) {
-      const rawCandidate = extractRegexMatchValue(attName, rule, extractionContext.populatedFields);
+  for (const item of sourceItems) {
+    const candidates = extractRuleCandidatesForText(
+      item.text,
+      rule.from,
+      rule,
+      extractionContext.populatedFields,
+      true
+    );
+    for (const rawCandidate of candidates) {
       const validated = validateCandidateWithTuple(rawCandidate, targetField, targetSchema);
       if (validated !== undefined) {
         return {
           value: validated.value,
           ...(validated.matchedTuple ? { matchedTuple: validated.matchedTuple } : {}),
-          matchedAttachmentName: attName,
+          ...(item.attachmentName !== undefined ? { matchedAttachmentName: item.attachmentName } : {}),
         };
       }
     }
-    return undefined;
   }
 
-  if (fromSource === 'email.labels') {
-    const tokens = extractNonSystemLabelTokens(email?.labels);
-    for (const token of tokens) {
-      const candidateForToken = extractRegexMatchValue(token, rule, extractionContext.populatedFields);
-      const validated = validateCandidateWithTuple(candidateForToken, targetField, targetSchema);
-      if (validated !== undefined) {
-        return {
-          value: validated.value,
-          ...(validated.matchedTuple ? { matchedTuple: validated.matchedTuple } : {}),
-        };
-      }
-    }
-    return undefined;
-  }
-
-  const sourceText = getSourceText(fromSource, sourceContext);
-  const rawCandidate =
-    fromSource === 'email.date' && !rule.pattern
-      ? parseDateToYymmdd(sourceText)
-      : extractRegexMatchValue(sourceText, rule, extractionContext.populatedFields);
-
-  const validated = validateCandidateWithTuple(rawCandidate, targetField, targetSchema);
-  return validated !== undefined
-    ? { value: validated.value, ...(validated.matchedTuple ? { matchedTuple: validated.matchedTuple } : {}) }
-    : undefined;
+  return undefined;
 }
 
 export function splitRfc5322Recipients(input: string): string[] {
@@ -951,6 +988,18 @@ function matchExactInTier(
   return { kind: 'none' };
 }
 
+function matchesDelimitedPhrase(
+  haystack: string,
+  phrase: string,
+  caseInsensitive: boolean
+): boolean {
+  const regex = new RegExp(
+    `(?<=^|[\\s<(\\[_,;:"'-])${escapeRegExp(phrase)}(?=[\\s>)\\]_,;:."'-]|$)`,
+    caseInsensitive ? 'i' : ''
+  );
+  return regex.test(haystack);
+}
+
 function matchBoundedPhraseInTier(
   candidate: string,
   options: TierOption[],
@@ -969,14 +1018,8 @@ function matchBoundedPhraseInTier(
       const tupleName = getTupleName(opt.tuple, nameProp);
       if (tupleName) {
         const nameTrimmed = tupleName.trim();
-        if (nameTrimmed.length >= 4) {
-          const regex = new RegExp(
-            `(?<=^|[\\s<(\\[_,;:"'-])${escapeRegExp(nameTrimmed)}(?=[\\s>)\\]_,;:."'-]|$)`,
-            'i'
-          );
-          if (regex.test(haystack)) {
-            longestMatchedNeedle = nameTrimmed;
-          }
+        if (nameTrimmed.length >= 4 && matchesDelimitedPhrase(haystack, nameTrimmed, true)) {
+          longestMatchedNeedle = nameTrimmed;
         }
       }
     }
@@ -984,23 +1027,18 @@ function matchBoundedPhraseInTier(
     for (const alias of opt.aliases) {
       const aliasTrimmed = alias.trim();
       if (aliasTrimmed.length >= 4) {
-        const regex = new RegExp(
-          `(?<=^|[\\s<(\\[_,;:"'-])${escapeRegExp(aliasTrimmed)}(?=[\\s>)\\]_,;:."'-]|$)`,
-          'i'
-        );
-        if (regex.test(haystack)) {
-          if (!longestMatchedNeedle || aliasTrimmed.length > longestMatchedNeedle.length) {
-            longestMatchedNeedle = aliasTrimmed;
-          }
+        if (
+          matchesDelimitedPhrase(haystack, aliasTrimmed, true) &&
+          (!longestMatchedNeedle || aliasTrimmed.length > longestMatchedNeedle.length)
+        ) {
+          longestMatchedNeedle = aliasTrimmed;
         }
       } else if (aliasTrimmed.length === 2 || aliasTrimmed.length === 3) {
-        const regex = new RegExp(
-          `(?<=^|[\\s<(\\[_,;:"'-])${escapeRegExp(aliasTrimmed)}(?=[\\s>)\\]_,;:."'-]|$)`
-        );
-        if (regex.test(haystack)) {
-          if (!longestMatchedNeedle || aliasTrimmed.length > longestMatchedNeedle.length) {
-            longestMatchedNeedle = aliasTrimmed;
-          }
+        if (
+          matchesDelimitedPhrase(haystack, aliasTrimmed, false) &&
+          (!longestMatchedNeedle || aliasTrimmed.length > longestMatchedNeedle.length)
+        ) {
+          longestMatchedNeedle = aliasTrimmed;
         }
       }
     }
@@ -1171,49 +1209,29 @@ async function extractLookupCandidate(
   deps: SourceParserServiceDeps | undefined,
   extractionContext: RuleExtractionContext
 ): Promise<{ value: string; matchedTuple: ParseTargetDocumentOptionTuple; matchedAttachmentName?: string } | undefined> {
-  const { from: fromSource } = rule;
+  const sourceItems = resolveRuleSourceItems(
+    rule.from,
+    request.context,
+    extractionContext,
+    true
+  );
+  const excludeRegex = rule.excludePattern ? new RegExp(rule.excludePattern, 'i') : undefined;
 
-  if (fromSource === 'email.to' || fromSource === 'email.cc') {
-    const rawRecipientsText =
-      fromSource === 'email.to'
-        ? (request.context.email?.to ?? '')
-        : (request.context.email?.cc ?? '');
-    const recipients = splitRfc5322Recipients(rawRecipientsText);
-    const excludeRegex = rule.excludePattern ? new RegExp(rule.excludePattern, 'i') : undefined;
-
-    const filteredRecipients = excludeRegex
-      ? recipients.filter((r) => !excludeRegex.test(r))
-      : recipients;
-
-    for (const recipient of filteredRecipients) {
-      const match = await resolveCanonicalOptionFromCandidate(
-        recipient,
-        targetField,
-        request.spaceId,
-        targetSchema,
-        deps
-      );
-      if (match) {
-        return match;
-      }
+  for (const item of sourceItems) {
+    if (excludeRegex && excludeRegex.test(item.text)) {
+      continue;
     }
-    return undefined;
-  }
 
-  if (fromSource === 'attachmentName') {
-    const candidateNamesToTest =
-      extractionContext.boundAttachmentName !== undefined
-        ? [extractionContext.boundAttachmentName]
-        : extractionContext.candidateAttachmentNames;
+    const candidates = extractRuleCandidatesForText(
+      item.text,
+      rule.from,
+      rule,
+      extractionContext.populatedFields,
+      false
+    );
 
-    const excludeRegex = rule.excludePattern ? new RegExp(rule.excludePattern, 'i') : undefined;
-
-    for (const attName of candidateNamesToTest) {
-      if (excludeRegex && excludeRegex.test(attName)) {
-        continue;
-      }
-      const candidateText = extractRegexMatchValue(attName, rule, extractionContext.populatedFields);
-      if (!candidateText || candidateText.trim().length === 0) {
+    for (const candidateText of candidates) {
+      if (candidateText.trim().length === 0) {
         continue;
       }
 
@@ -1227,61 +1245,27 @@ async function extractLookupCandidate(
       if (match) {
         return {
           ...match,
-          matchedAttachmentName: attName,
+          ...(item.attachmentName !== undefined ? { matchedAttachmentName: item.attachmentName } : {}),
         };
       }
     }
-    return undefined;
   }
 
-  if (fromSource === 'email.labels') {
-    const tokens = extractNonSystemLabelTokens(request.context.email?.labels);
-    const excludeRegex = rule.excludePattern ? new RegExp(rule.excludePattern, 'i') : undefined;
+  return undefined;
+}
 
-    for (const token of tokens) {
-      if (excludeRegex && excludeRegex.test(token)) {
-        continue;
-      }
-      const candidateText = extractRegexMatchValue(token, rule, extractionContext.populatedFields);
-      if (!candidateText || candidateText.trim().length === 0) {
-        continue;
-      }
-
-      const match = await resolveCanonicalOptionFromCandidate(
-        candidateText,
-        targetField,
-        request.spaceId,
-        targetSchema,
-        deps
-      );
-      if (match) {
-        return match;
-      }
-    }
-    return undefined;
+function evaluateCondition(
+  predicate: unknown,
+  data: Record<string, unknown>,
+  evaluator: PredicateEvaluatorPort | undefined
+): boolean {
+  if (predicate === undefined) {
+    return true;
   }
-
-  const sourceText = getSourceText(fromSource, request.context);
-  if (!sourceText || sourceText.trim().length === 0) {
-    return undefined;
+  if (!evaluator) {
+    return false;
   }
-
-  if (rule.excludePattern && new RegExp(rule.excludePattern, 'i').test(sourceText)) {
-    return undefined;
-  }
-
-  const candidateText = extractRegexMatchValue(sourceText, rule, extractionContext.populatedFields);
-  if (!candidateText || candidateText.trim().length === 0) {
-    return undefined;
-  }
-
-  return resolveCanonicalOptionFromCandidate(
-    candidateText,
-    targetField,
-    request.spaceId,
-    targetSchema,
-    deps
-  );
+  return evaluator.evaluate(predicate, data);
 }
 
 export interface SourceParserServiceDeps {
@@ -1350,14 +1334,8 @@ export class SourceParserService implements SourceParserPort {
           continue;
         }
 
-        if (extractor.match !== undefined && this.deps.predicateEvaluator) {
-          const matchResult = this.deps.predicateEvaluator.evaluate(
-            extractor.match,
-            jsonLogicContext
-          );
-          if (!matchResult) {
-            continue;
-          }
+        if (!evaluateCondition(extractor.match, jsonLogicContext, this.deps.predicateEvaluator)) {
+          continue;
         }
 
         const extractorTargetKeys = Object.keys(extractor.fields);
@@ -1380,14 +1358,8 @@ export class SourceParserService implements SourceParserPort {
 
           const rules = Array.isArray(ruleOrRules) ? ruleOrRules : [ruleOrRules];
           for (const rule of rules) {
-            if (rule.when !== undefined && this.deps.predicateEvaluator) {
-              const whenResult = this.deps.predicateEvaluator.evaluate(
-                rule.when,
-                jsonLogicContext
-              );
-              if (!whenResult) {
-                continue;
-              }
+            if (!evaluateCondition(rule.when, jsonLogicContext, this.deps.predicateEvaluator)) {
+              continue;
             }
 
             const extractionContext: RuleExtractionContext = {
@@ -1397,43 +1369,32 @@ export class SourceParserService implements SourceParserPort {
               populatedFields,
             };
 
-            if ('lookup' in rule && rule.lookup === true) {
-              const lookupResult = await extractLookupCandidate(
-                rule,
-                request,
-                targetField,
-                targetSchema,
-                this.deps,
-                extractionContext
-              );
-              if (lookupResult !== undefined) {
-                if (boundAttachmentName === undefined && lookupResult.matchedAttachmentName !== undefined) {
-                  // nosemgrep: domain-pass-through-read
-                  boundAttachmentName = lookupResult.matchedAttachmentName;
-                }
-                const { value: lookupVal, matchedTuple: lookupTuple } = lookupResult;
-                populatedFields[fieldKey] = lookupVal;
-                populateLinkedFields(fieldKey, lookupTuple, targetSchema, populatedFields);
-                break;
-              }
-            } else {
-              const candidateResult = extractCandidateFromRule(
-                rule as GmailFieldRule,
-                targetField,
-                targetSchema,
-                extractionContext
-              );
+            const result: ExtractedCandidateResult | undefined =
+              'lookup' in rule && rule.lookup === true
+                ? await extractLookupCandidate(
+                    rule,
+                    request,
+                    targetField,
+                    targetSchema,
+                    this.deps,
+                    extractionContext
+                  )
+                : extractCandidateFromRule(
+                    rule as GmailFieldRule,
+                    targetField,
+                    targetSchema,
+                    extractionContext
+                  );
 
-              if (candidateResult !== undefined) {
-                if (boundAttachmentName === undefined && candidateResult.matchedAttachmentName !== undefined) {
-                  // nosemgrep: domain-pass-through-read
-                  boundAttachmentName = candidateResult.matchedAttachmentName;
-                }
-                const { value: candidateVal, matchedTuple: candidateTuple } = candidateResult;
-                populatedFields[fieldKey] = candidateVal;
-                populateLinkedFields(fieldKey, candidateTuple, targetSchema, populatedFields);
-                break;
+            if (result !== undefined) {
+              if (boundAttachmentName === undefined && result.matchedAttachmentName !== undefined) {
+                // nosemgrep: domain-pass-through-read
+                boundAttachmentName = result.matchedAttachmentName;
               }
+              const { value: candidateValue, matchedTuple } = result;
+              populatedFields[fieldKey] = candidateValue;
+              populateLinkedFields(fieldKey, matchedTuple, targetSchema, populatedFields);
+              break;
             }
           }
         }

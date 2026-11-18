@@ -669,6 +669,29 @@ describe('ParseSchemaRegistryAdapter', () => {
     });
   });
 
+  it('fails fast if AliasDictionary contains unknown properties (strict validation without Value.Clean)', async () => {
+    const mockManifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: [],
+        aliases: {
+          contacts: './aliases/contacts.json',
+        },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        source: 'contacts',
+        mappings: {
+          c1: ['@acme.com'],
+        },
+        extraKey: true,
+      }),
+    };
+
+    const adapter = new ParseSchemaRegistryAdapter(mockManifestProvider);
+    await expect(adapter.initialize()).rejects.toThrow(
+      'Invalid AliasDictionary in "./aliases/contacts.json"'
+    );
+  });
+
   describe('validateJsonLogicAst', () => {
     it('accepts valid JsonLogic operations', () => {
       expect(() =>

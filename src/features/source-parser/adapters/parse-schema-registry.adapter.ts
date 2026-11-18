@@ -345,14 +345,13 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
         if (!rawDict || typeof rawDict !== 'object') {
           throw new Error(`Failed to load AliasDictionary at "${relPath}"`);
         }
-        const cleaned = Value.Clean(AliasDictionarySchema, structuredClone(rawDict));
-        if (!Value.Check(AliasDictionarySchema, cleaned)) {
-          const errors = [...Value.Errors(AliasDictionarySchema, cleaned)]
+        if (!Value.Check(AliasDictionarySchema, rawDict)) {
+          const errors = [...Value.Errors(AliasDictionarySchema, rawDict)]
             .map((e) => `${e.path}: ${e.message}`)
             .join(', ');
           throw new Error(`Invalid AliasDictionary in "${relPath}": ${errors}`);
         }
-        const aliasDict = cleaned as AliasDictionary;
+        const aliasDict = rawDict as AliasDictionary;
         if (aliasDict.source !== sourceKey) {
           throw new Error(
             `AliasDictionary file "${relPath}" specifies source "${aliasDict.source}" but manifest expects "${sourceKey}"`
