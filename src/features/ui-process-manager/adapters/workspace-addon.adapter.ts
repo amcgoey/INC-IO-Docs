@@ -94,12 +94,16 @@ function resolveGmailDriveSelection(
 
 function buildSourceContextItems(params: {
   isGmail: boolean;
+  isDriveUrlMode?: boolean | undefined;
   driveUrlId?: string | undefined;
   activeMsg?: UiProcessGmailMessageDescriptor | undefined;
   selectedItems?: UiProcessEventContext['selectedItems'];
 }): UiProcessSourceContextItem[] {
   if (params.driveUrlId !== undefined) {
     return [{ id: params.driveUrlId }];
+  }
+  if (params.isDriveUrlMode) {
+    return [];
   }
   if (params.isGmail) {
     return (params.activeMsg?.attachments ?? []).map((att) => ({
@@ -550,7 +554,6 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     const isPass2Event =
       actionName !== 'processDocument' &&
       actionName !== 'viewJson' &&
-      !(isGmail && effectiveFileSource === 'Google Drive URL' && !parsedCurrentDriveUrl) &&
       (isSourceReset || isManualTypeSwitch);
 
     if (
@@ -577,13 +580,12 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       const pass2SpaceId = spaceResolution.matchedSpace?.id;
 
       const isGmailDriveUrlMode =
-        isGmail &&
-        gmailDriveSelection.effectiveFileSource === 'Google Drive URL' &&
-        Boolean(gmailDriveSelection.parsedCurrentDriveUrl);
+        isGmail && gmailDriveSelection.effectiveFileSource === 'Google Drive URL';
 
       const pass2CandidateItems = buildSourceContextItems({
         isGmail,
-        driveUrlId: isGmailDriveUrlMode ? gmailDriveSelection.parsedCurrentDriveUrl!.id : undefined,
+        isDriveUrlMode: isGmailDriveUrlMode,
+        driveUrlId: isGmailDriveUrlMode ? gmailDriveSelection.parsedCurrentDriveUrl?.id : undefined,
         activeMsg,
         selectedItems: effectiveContext.selectedItems,
       });

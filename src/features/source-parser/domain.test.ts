@@ -3315,5 +3315,82 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
         expect(result.fields.vendor).toBe('BM');
       });
     });
+
+    describe('Iteration 3 Review Fixes', () => {
+      it('parses apostrophes inside double-quoted and unquoted display names in parseRecipient and extractFields lookup', async () => {
+        expect(parseRecipient('"O\'Brien, James" <jobrien@example.com>')).toEqual({
+          raw: '"O\'Brien, James" <jobrien@example.com>',
+          displayName: "O'Brien, James",
+          email: 'jobrien@example.com',
+          domain: 'example.com',
+        });
+
+        expect(parseRecipient("O'Brien <jobrien@example.com>")).toEqual({
+          raw: "O'Brien <jobrien@example.com>",
+          displayName: "O'Brien",
+          email: 'jobrien@example.com',
+          domain: 'example.com',
+        });
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  contact: [
+                    {
+                      from: 'email.from',
+                      lookup: true,
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              {
+                key: 'contact',
+                type: 'string',
+                options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true },
+              },
+            ],
+            options: {
+              contacts: [
+                { key: 'OBR', name: "O'Brien, James", aliases: ["O'Brien"] },
+              ],
+            },
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        const quotedRes = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-obrien-quoted',
+              from: '"O\'Brien, James" <jobrien@example.com>',
+            },
+          },
+        });
+        expect(quotedRes.fields.contact).toBe('OBR');
+
+        const unquotedRes = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-obrien-unquoted',
+              from: "O'Brien <jobrien@example.com>",
+            },
+          },
+        });
+        expect(unquotedRes.fields.contact).toBe('OBR');
+      });
+    });
   });
 });

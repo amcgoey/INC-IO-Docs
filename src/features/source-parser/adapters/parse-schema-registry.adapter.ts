@@ -114,12 +114,9 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
     }
 
     const manifest = rawManifest as { documentTypes?: unknown[] };
-    if (!Array.isArray(manifest.documentTypes)) {
-      this.initialized = true;
-      return;
-    }
+    const documentTypes = Array.isArray(manifest.documentTypes) ? manifest.documentTypes : [];
 
-    for (const item of manifest.documentTypes) {
+    for (const item of documentTypes) {
       const relPath =
         typeof item === 'string'
           ? item

@@ -5532,6 +5532,97 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(callArg.context.items).toEqual([{ id: 'drive-file-999' }]);
       expect(callArg.context.isDriveUrl).toBe(true);
     });
+
+    it('runs Pass 2 with isDriveUrl: true and items: [] on manual type-switch when SelectFileSource is Google Drive URL with blank InputDriveURL, while onFileSourceChange skips Pass 2', async () => {
+      const mockSourceParser: UiProcessSourceParserPort = {
+        inferRouting: vi.fn().mockResolvedValue({}),
+        extractFields: vi.fn().mockResolvedValue({
+          fields: {
+            date: '261118',
+            direction: 'IN',
+            description: 'From Email Subject',
+          },
+        }),
+      };
+
+      const mockGmailPort: UiProcessGmailPort = {
+        getMessageAttachments: vi.fn().mockResolvedValue([
+          { attachmentId: 'att-1', title: 'ShouldNotLeak.pdf', mimeType: 'application/pdf' },
+        ]),
+        getThreadMessages: vi.fn().mockResolvedValue([
+          {
+            id: 'msg-1',
+            subject: 'Project Update',
+            attachments: [
+              { attachmentId: 'att-1', title: 'ShouldNotLeak.pdf', mimeType: 'application/pdf' },
+            ],
+          },
+        ]),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        gmailPort: mockGmailPort,
+        sourceParser: mockSourceParser,
+      });
+
+      // 1. onFileSourceChange to Google Drive URL with blank InputDriveURL -> skips Pass 2 and preserves fields
+      const fileSourceSwitchResult = (await adapter.processUiEvent({
+        actionName: 'onFileSourceChange',
+        hostApp: 'GMAIL',
+        gmail: { messageId: 'msg-1', threadId: 'th-1' },
+        formData: {
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: '',
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'communication-project',
+          description: 'Existing User Value',
+        },
+      })) as UiProcessRenderResult;
+      expect(mockSourceParser.extractFields).not.toHaveBeenCalled();
+      expect(fileSourceSwitchResult.formData?.description).toBe('Existing User Value');
+
+      // 2. onDocumentTypeChange with blank InputDriveURL -> runs Pass 2 with isDriveUrl: true, items: []
+      const docTypeSwitchResult = (await adapter.processUiEvent({
+        actionName: 'onDocumentTypeChange',
+        hostApp: 'GMAIL',
+        gmail: { messageId: 'msg-1', threadId: 'th-1' },
+        formData: {
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: '',
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'communication-project',
+        },
+      })) as UiProcessRenderResult;
+
+      expect(mockSourceParser.extractFields).toHaveBeenCalledTimes(1);
+      const docCallArg = (mockSourceParser.extractFields as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(docCallArg.context.items).toEqual([]);
+      expect(docCallArg.context.isDriveUrl).toBe(true);
+      expect(docCallArg.context.email?.subject).toBe('Project Update');
+      expect(docTypeSwitchResult.formData?.description).toBe('From Email Subject');
+
+      // 3. onSpaceTypeChange with blank InputDriveURL -> runs Pass 2 with isDriveUrl: true, items: []
+      await adapter.processUiEvent({
+        actionName: 'onSpaceTypeChange',
+        hostApp: 'GMAIL',
+        gmail: { messageId: 'msg-1', threadId: 'th-1' },
+        formData: {
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: '',
+          SelectDocumentSpaceType: 'projects',
+        },
+      });
+
+      expect(mockSourceParser.extractFields).toHaveBeenCalledTimes(2);
+      const spaceCallArg = (mockSourceParser.extractFields as ReturnType<typeof vi.fn>).mock.calls[1][0];
+      expect(spaceCallArg.context.items).toEqual([]);
+      expect(spaceCallArg.context.isDriveUrl).toBe(true);
+    });
   });
 });
 

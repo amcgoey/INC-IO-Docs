@@ -692,6 +692,51 @@ describe('ParseSchemaRegistryAdapter', () => {
     );
   });
 
+  it('hydrates and validates AliasDictionary even when documentTypes is omitted or non-array', async () => {
+    const validProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        aliases: {
+          contacts: './aliases/contacts.json',
+        },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        source: 'contacts',
+        mappings: {
+          c1: ['@acme.com', 'ACME'],
+        },
+      }),
+    };
+
+    const validAdapter = new ParseSchemaRegistryAdapter(validProvider);
+    await validAdapter.initialize();
+    expect(validAdapter.getAliasDictionary('contacts')).toEqual({
+      source: 'contacts',
+      mappings: {
+        c1: ['@acme.com', 'ACME'],
+      },
+    });
+
+    const invalidProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: null,
+        aliases: {
+          contacts: './aliases/contacts.json',
+        },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        source: 'wrong-source',
+        mappings: {
+          c1: ['@acme.com'],
+        },
+      }),
+    };
+
+    const invalidAdapter = new ParseSchemaRegistryAdapter(invalidProvider);
+    await expect(invalidAdapter.initialize()).rejects.toThrow(
+      'AliasDictionary file "./aliases/contacts.json" specifies source "wrong-source" but manifest expects "contacts"'
+    );
+  });
+
   describe('validateJsonLogicAst', () => {
     it('accepts valid JsonLogic operations', () => {
       expect(() =>

@@ -5995,6 +5995,52 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-ffe'))?.textInput?.value
         ).toBe('A');
       });
+
+      it('ignores prefixed token "XCG104-Z" and resolves specTag "CG104" and revision "A" from "XCG104-Z - CG104-A" against real submittal-ffe.json', async () => {
+        vi.spyOn(mockGmailClient, 'getThread').mockResolvedValueOnce({
+          id: 'th-iter3-ffe-xcg',
+          messages: [
+            {
+              id: 'msg-iter3-ffe-xcg',
+              threadId: 'th-iter3-ffe-xcg',
+              subject: 'XCG104-Z - CG104-A',
+              from: 'Berman Rep <rep@bermanfalk.com>',
+              to: 'Designer <designer@inc.nyc>',
+              date: 'Wed, 21 Oct 2026 10:00:00 -04:00',
+              labels: ['INBOX', 'Active Projects'],
+              plainTextBody: 'Attached.',
+              inlineImages: [],
+              attachments: [],
+            },
+          ],
+        });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-iter3-ffe-xcg',
+              threadId: 'th-iter3-ffe-xcg',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const card = body.action?.navigations?.[0]?.pushCard;
+        const docInfoSec = card?.sections.find((s) => s.header === 'Document Data');
+
+        expect(
+          docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTag', 'submittal-ffe'))?.textInput?.value
+        ).toBe('CG104');
+        expect(
+          docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-ffe'))?.textInput?.value
+        ).toBe('A');
+      });
     });
   });
 });

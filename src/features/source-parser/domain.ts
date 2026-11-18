@@ -809,16 +809,24 @@ export function parseRecipient(recipient: string): ParsedRecipient {
     return { raw: '' };
   }
 
-  const angleMatch = trimmed.match(/^(?:["']?([^"']*)["']?\s*)?<([^>]+)>$/);
+  const angleMatch = trimmed.match(/^(.*)<([^<>]+)>$/);
   if (angleMatch) {
-    const rawName = angleMatch[1]?.trim();
-    const email = angleMatch[2]?.trim();
-    const domain = email && email.includes('@') ? email.split('@')[1]?.toLowerCase() : undefined;
-    const displayName = rawName && rawName.length > 0 ? rawName : undefined;
+    let rawName = (angleMatch[1] ?? '').trim();
+    if (
+      (rawName.startsWith('"') && rawName.endsWith('"') && rawName.length >= 2) ||
+      (rawName.startsWith("'") && rawName.endsWith("'") && rawName.length >= 2)
+    ) {
+      rawName = rawName.slice(1, -1).trim();
+    }
+    const displayName = rawName.length > 0 ? rawName : undefined;
+    const email = (angleMatch[2] ?? '').trim().toLowerCase();
+    const atIdx = email.lastIndexOf('@');
+    const rawDomain = atIdx !== -1 ? email.slice(atIdx + 1) : '';
+    const domain = rawDomain.length > 0 ? rawDomain : undefined;
     return {
       raw: trimmed,
       displayName,
-      email,
+      email: email.length > 0 ? email : undefined,
       domain,
     };
   }

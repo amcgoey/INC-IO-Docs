@@ -381,17 +381,17 @@
           "revision": [
             {
               "from": "attachmentName",
-              "pattern": "([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)",
+              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)",
               "group": 2
             },
             {
               "from": "email.labels",
-              "pattern": "([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)",
+              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)",
               "group": 2
             },
             {
               "from": "email.subjectClean",
-              "pattern": "([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)",
+              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)",
               "group": 2
             }
           ],
