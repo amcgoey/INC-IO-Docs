@@ -159,6 +159,12 @@ export const GmailFieldRuleSchema = Type.Union([
 ]);
 export type GmailFieldRule = Static<typeof GmailFieldRuleSchema>;
 
+export const GmailFieldRuleOrListSchema = Type.Union([
+  GmailFieldRuleSchema,
+  Type.Array(GmailFieldRuleSchema, { minItems: 1 }),
+]);
+export type GmailFieldRuleOrList = Static<typeof GmailFieldRuleOrListSchema>;
+
 export const GmailExtractorRuleSchema = Type.Object(
   {
     source: Type.Literal('gmail'),
@@ -166,7 +172,7 @@ export const GmailExtractorRuleSchema = Type.Object(
     match: Type.Optional(Type.Union([ParseJsonLogicRuleSchema, Type.Undefined()])),
     fields: Type.Record(
       Type.String({ minLength: 1 }),
-      Type.Union([GmailFieldRuleSchema, Type.Array(GmailFieldRuleSchema)])
+      GmailFieldRuleOrListSchema
     ),
   },
   { additionalProperties: false }
@@ -212,37 +218,74 @@ export const DocumentParseSchemaSchema = Type.Object(
 );
 export type DocumentParseSchema = Static<typeof DocumentParseSchemaSchema>;
 
-export interface ParseTargetDocumentField {
-  key: string;
-  name?: string | undefined;
-  type?: string | undefined;
-  minLength?: number | undefined;
-  pattern?: string | undefined;
-  options?: {
-    source: string;
-    key: string;
-    name?: string | undefined;
-    allowUserInput?: boolean | undefined;
-    dynamicConfig?: Record<string, unknown> | undefined;
-  } | undefined;
-  linkedField?: {
-    sourceField: string;
-    sourceProperty: string;
-  } | undefined;
-}
+export const ParseTargetDocumentFieldOptionsSchema = Type.Object(
+  {
+    source: Type.String(),
+    key: Type.String(),
+    name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    allowUserInput: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+    dynamicConfig: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+export type ParseTargetDocumentFieldOptions = Static<typeof ParseTargetDocumentFieldOptionsSchema>;
 
-export interface ParseTargetDocumentOptionTuple {
-  key: string;
-  name?: string | undefined;
-  aliases?: string[] | undefined;
-  [k: string]: unknown;
-}
+export const ParseTargetLinkedFieldSchema = Type.Object(
+  {
+    sourceField: Type.String(),
+    sourceProperty: Type.String(),
+  },
+  { additionalProperties: false }
+);
+export type ParseTargetLinkedField = Static<typeof ParseTargetLinkedFieldSchema>;
 
-export interface ParseTargetDocumentSchema {
-  fields: ParseTargetDocumentField[];
-  calculatedFields?: Array<{ key: string; name?: string }> | undefined;
-  options?: Record<string, ParseTargetDocumentOptionTuple[]> | undefined;
-}
+export const ParseTargetDocumentFieldSchema = Type.Object(
+  {
+    key: Type.String({ minLength: 1 }),
+    name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    type: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    minLength: Type.Optional(Type.Union([Type.Number(), Type.Undefined()])),
+    pattern: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    options: Type.Optional(Type.Union([ParseTargetDocumentFieldOptionsSchema, Type.Undefined()])),
+    linkedField: Type.Optional(Type.Union([ParseTargetLinkedFieldSchema, Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+export type ParseTargetDocumentField = Static<typeof ParseTargetDocumentFieldSchema>;
+
+export const ParseTargetCalculatedFieldSchema = Type.Object(
+  {
+    key: Type.String({ minLength: 1 }),
+    name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+export type ParseTargetCalculatedField = Static<typeof ParseTargetCalculatedFieldSchema>;
+
+export const ParseTargetDocumentOptionTupleSchema = Type.Intersect([
+  Type.Object({
+    key: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    aliases: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  }),
+  Type.Record(Type.String(), Type.Unknown()),
+]);
+export type ParseTargetDocumentOptionTuple = Static<typeof ParseTargetDocumentOptionTupleSchema>;
+
+export const ParseTargetDocumentSchemaSchema = Type.Object(
+  {
+    fields: Type.Array(ParseTargetDocumentFieldSchema),
+    calculatedFields: Type.Optional(Type.Union([Type.Array(ParseTargetCalculatedFieldSchema), Type.Undefined()])),
+    options: Type.Optional(
+      Type.Union([
+        Type.Record(Type.String(), Type.Array(ParseTargetDocumentOptionTupleSchema)),
+        Type.Undefined(),
+      ])
+    ),
+  },
+  { additionalProperties: false }
+);
+export type ParseTargetDocumentSchema = Static<typeof ParseTargetDocumentSchemaSchema>;
 
 export const SourceParserSpaceTypeConfigSchema = Type.Object({
   id: Type.String({ minLength: 1 }),

@@ -159,6 +159,28 @@
               "lookup": true
             },
             {
+              "when": {
+                "!": {
+                  "or": [
+                    {
+                      "in": [
+                        "SENT",
+                        {
+                          "var": "email.labels"
+                        }
+                      ]
+                    },
+                    {
+                      "==": [
+                        {
+                          "var": "email.fromDomain"
+                        },
+                        "inc.nyc"
+                      ]
+                    }
+                  ]
+                }
+              },
               "from": "email.from",
               "lookup": true
             }

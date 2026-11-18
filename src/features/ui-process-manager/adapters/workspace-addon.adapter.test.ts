@@ -5440,6 +5440,98 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       const renderResult = result as UiProcessRenderResult;
       expect(renderResult.statusMessages).toEqual(['Notice A', 'Notice B', 'Notice C']);
     });
+
+    it('excludes inactive docType-suffixed keys from existingData on manual type-switch (Spec #2)', async () => {
+      const mockSourceParser: UiProcessSourceParserPort = {
+        inferRouting: vi.fn().mockResolvedValue({}),
+        extractFields: vi.fn().mockResolvedValue({
+          fields: {
+            section: '071200',
+          },
+        }),
+      };
+
+      const manifestWithTypes: UiProcessManifestPort = {
+        ...mockManifestPort,
+        getDocumentTypeSchemas: vi.fn().mockImplementation(async (key: string) => {
+          if (key === 'invoice-project') {
+            return {
+              docSchema: {
+                fields: [
+                  { key: 'section' },
+                  { key: 'date' },
+                ],
+              },
+            };
+          }
+          return undefined;
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: manifestWithTypes,
+        sourceParser: mockSourceParser,
+      });
+
+      const result = await adapter.processUiEvent({
+        actionName: 'onDocumentTypeChange',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'invoice-project',
+          spaceId: 'proj1',
+          date: '261021',
+          'description_communication-project': 'Prior Comm Edit',
+        },
+      });
+
+      expect(mockSourceParser.extractFields).toHaveBeenCalledTimes(1);
+      const callArg = (mockSourceParser.extractFields as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(callArg.existingData).toEqual({ date: '261021' });
+      expect(callArg.existingData).not.toHaveProperty('description_communication-project');
+
+      const renderResult = result as UiProcessRenderResult;
+      expect(renderResult.formData?.['description_communication-project']).toBe('Prior Comm Edit');
+      expect(renderResult.formData?.section).toBe('071200');
+    });
+
+    it('passes Drive URL item and isDriveUrl: true in pass2Context on manual type-switch in Google Drive URL mode (Spec #7)', async () => {
+      const mockSourceParser: UiProcessSourceParserPort = {
+        inferRouting: vi.fn().mockResolvedValue({}),
+        extractFields: vi.fn().mockResolvedValue({
+          fields: {
+            description: 'From Drive File',
+          },
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        sourceParser: mockSourceParser,
+      });
+
+      await adapter.processUiEvent({
+        actionName: 'onDocumentTypeChange',
+        hostApp: 'GMAIL',
+        gmail: { messageId: 'msg-1' },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'communication-project',
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: 'https://drive.google.com/file/d/drive-file-999/view',
+        },
+      });
+
+      expect(mockSourceParser.extractFields).toHaveBeenCalledTimes(1);
+      const callArg = (mockSourceParser.extractFields as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(callArg.context.items).toEqual([{ id: 'drive-file-999' }]);
+      expect(callArg.context.isDriveUrl).toBe(true);
+    });
   });
 });
 

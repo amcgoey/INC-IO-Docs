@@ -4,9 +4,14 @@ import jsonLogic from 'json-logic-js';
 import {
   DocumentParseSchemaSchema,
   AliasDictionarySchema,
+  ParseTargetDocumentFieldSchema,
+  ParseTargetCalculatedFieldSchema,
+  ParseTargetDocumentOptionTupleSchema,
+  ParseTargetDocumentSchemaSchema,
   type DocumentParseSchema,
   type ParseTargetDocumentSchema,
   type ParseTargetDocumentField,
+  type ParseTargetCalculatedField,
   type ParseTargetDocumentOptionTuple,
   type ParseSchemaRegistryPort,
   type RawManifestProviderPort,
@@ -42,6 +47,47 @@ export function validateJsonLogicAst(rule: unknown): void {
   }
   const operand = (rule as Record<string, unknown>)[op];
   validateJsonLogicAst(operand);
+}
+
+function assertTargetableFieldKey(
+  fieldKey: string,
+  knownFieldKeys: Set<string>,
+  calcFieldKeys: Set<string>,
+  linkedFieldKeys: Set<string>,
+  prefix: string
+): void {
+  if (calcFieldKeys.has(fieldKey) && !knownFieldKeys.has(fieldKey)) {
+    throw new Error(`${prefix} targets CalculatedField "${fieldKey}"`);
+  }
+  if (!knownFieldKeys.has(fieldKey)) {
+    throw new Error(`${prefix} targets unknown field "${fieldKey}"`);
+  }
+  if (linkedFieldKeys.has(fieldKey)) {
+    throw new Error(`${prefix} targets direct LinkedField "${fieldKey}"`);
+  }
+}
+
+function validateUniqueNormalizedAliases(
+  entries: Iterable<[string, unknown[]]>,
+  messages: {
+    emptyAlias: (canonicalKey: string) => string;
+    duplicateAlias: (alias: string, norm: string, existingKey: string, canonicalKey: string) => string;
+  }
+): void {
+  const seenAliases = new Map<string, string>();
+  for (const [canonicalKey, aliases] of entries) {
+    for (const alias of aliases) {
+      if (typeof alias !== 'string' || alias.trim().length === 0) {
+        throw new Error(messages.emptyAlias(canonicalKey));
+      }
+      const norm = alias.trim().toLowerCase();
+      const existingKey = seenAliases.get(norm);
+      if (existingKey !== undefined && existingKey !== canonicalKey) {
+        throw new Error(messages.duplicateAlias(alias, norm, existingKey, canonicalKey));
+      }
+      seenAliases.set(norm, canonicalKey);
+    }
+  }
 }
 
 export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
@@ -96,14 +142,17 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
           ? docDef.key.trim()
           : path.basename(relPath, '.json');
 
-      const rawDocSchema = docDef.documentSchema as Record<string, unknown> | undefined;
+      const rawDocSchema =
+        docDef.documentSchema && typeof docDef.documentSchema === 'object'
+          ? (docDef.documentSchema as Record<string, unknown>)
+          : undefined;
       const rawFields = Array.isArray(rawDocSchema?.fields) ? rawDocSchema.fields : [];
       const rawCalcFields = Array.isArray(rawDocSchema?.calculatedFields)
         ? rawDocSchema.calculatedFields
         : [];
       const rawOptions =
         rawDocSchema?.options && typeof rawDocSchema.options === 'object'
-          ? (rawDocSchema.options as Record<string, ParseTargetDocumentOptionTuple[]>)
+          ? (rawDocSchema.options as Record<string, unknown>)
           : undefined;
 
       const targetFields: ParseTargetDocumentField[] = [];
@@ -111,121 +160,90 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
       const linkedFieldKeys = new Set<string>();
 
       for (const f of rawFields) {
-        if (f && typeof f === 'object' && typeof (f as { key?: unknown }).key === 'string') {
-          const fieldObj = f as {
-            key: string;
-            name?: unknown;
-            type?: unknown;
-            minLength?: unknown;
-            pattern?: unknown;
-            options?: {
-              source?: unknown;
-              key?: unknown;
-              name?: unknown;
-              allowUserInput?: unknown;
-              dynamicConfig?: unknown;
-            };
-            linkedField?: {
-              sourceField?: unknown;
-              sourceProperty?: unknown;
-            };
-          };
-
-          knownFieldKeys.add(fieldObj.key);
-          if (fieldObj.linkedField) {
-            linkedFieldKeys.add(fieldObj.key);
+        if (!f || typeof f !== 'object') {
+          continue;
+        }
+        const cleanedField = Value.Clean(ParseTargetDocumentFieldSchema, structuredClone(f));
+        if (Value.Check(ParseTargetDocumentFieldSchema, cleanedField)) {
+          knownFieldKeys.add(cleanedField.key);
+          if (cleanedField.linkedField) {
+            linkedFieldKeys.add(cleanedField.key);
           }
-
-          targetFields.push({
-            key: fieldObj.key,
-            ...(typeof fieldObj.name === 'string' ? { name: fieldObj.name } : {}),
-            ...(typeof fieldObj.type === 'string' ? { type: fieldObj.type } : {}),
-            ...(typeof fieldObj.minLength === 'number' ? { minLength: fieldObj.minLength } : {}),
-            ...(typeof fieldObj.pattern === 'string' ? { pattern: fieldObj.pattern } : {}),
-            ...(fieldObj.options && typeof fieldObj.options === 'object'
-              ? {
-                  options: {
-                    source: String(fieldObj.options.source ?? ''),
-                    key: String(fieldObj.options.key ?? 'key'),
-                    ...(typeof fieldObj.options.name === 'string'
-                      ? { name: fieldObj.options.name }
-                      : {}),
-                    ...(typeof fieldObj.options.allowUserInput === 'boolean'
-                      ? { allowUserInput: fieldObj.options.allowUserInput }
-                      : {}),
-                    ...(fieldObj.options.dynamicConfig && typeof fieldObj.options.dynamicConfig === 'object'
-                      ? { dynamicConfig: fieldObj.options.dynamicConfig as Record<string, unknown> }
-                      : {}),
-                  },
-                }
-              : {}),
-            ...(fieldObj.linkedField && typeof fieldObj.linkedField === 'object'
-              ? {
-                  linkedField: {
-                    sourceField: String(fieldObj.linkedField.sourceField ?? ''),
-                    sourceProperty: String(fieldObj.linkedField.sourceProperty ?? ''),
-                  },
-                }
-              : {}),
-          });
+          targetFields.push(cleanedField);
         }
       }
 
-      if (rawOptions && typeof rawOptions === 'object') {
-        for (const [sourceKey, tuples] of Object.entries(rawOptions)) {
-          if (Array.isArray(tuples)) {
-            const seenTier1Aliases = new Map<string, string>();
-            for (const tuple of tuples) {
-              if (tuple && typeof tuple === 'object') {
-                const canonicalKey = String(tuple.key ?? '');
-                if ('aliases' in tuple && tuple.aliases !== undefined) {
-                  if (!Array.isArray(tuple.aliases)) {
-                    throw new Error(
-                      `Invalid aliases in option tuple for key "${canonicalKey}" in DocumentType "${documentTypeKey}": must be an array`
-                    );
-                  }
-                  for (const alias of tuple.aliases) {
-                    if (typeof alias !== 'string' || alias.trim().length === 0) {
-                      throw new Error(
-                        `Empty or whitespace-only alias found in DocumentType "${documentTypeKey}" options "${sourceKey}" for key "${canonicalKey}"`
-                      );
-                    }
-                    const norm = alias.trim().toLowerCase();
-                    const existingKey = seenTier1Aliases.get(norm);
-                    if (existingKey !== undefined && existingKey !== canonicalKey) {
-                      throw new Error(
-                        `Duplicate alias "${alias}" (normalized "${norm}") in DocumentType "${documentTypeKey}" options "${sourceKey}" between keys "${existingKey}" and "${canonicalKey}"`
-                      );
-                    }
-                    seenTier1Aliases.set(norm, canonicalKey);
-                  }
-                }
+      let cleanedOptions: Record<string, ParseTargetDocumentOptionTuple[]> | undefined;
+      if (rawOptions) {
+        cleanedOptions = {};
+        for (const [sourceKey, rawTuples] of Object.entries(rawOptions)) {
+          if (!Array.isArray(rawTuples)) {
+            continue;
+          }
+          const keyProp =
+            targetFields.find((f) => f.options?.source === sourceKey)?.options?.key ?? 'key';
+          const aliasEntries: Array<[string, unknown[]]> = [];
+          const validTuples: ParseTargetDocumentOptionTuple[] = [];
+
+          for (const rawTuple of rawTuples) {
+            if (!rawTuple || typeof rawTuple !== 'object') {
+              continue;
+            }
+            const tupleRec = rawTuple as Record<string, unknown>;
+            const canonicalKey = String(tupleRec[keyProp] ?? tupleRec.key ?? '');
+            if ('aliases' in tupleRec && tupleRec.aliases !== undefined) {
+              if (!Array.isArray(tupleRec.aliases)) {
+                throw new Error(
+                  `Invalid aliases in option tuple for key "${canonicalKey}" in DocumentType "${documentTypeKey}": must be an array`
+                );
               }
+              aliasEntries.push([canonicalKey, tupleRec.aliases]);
+            }
+            const cleanedTuple = Value.Clean(
+              ParseTargetDocumentOptionTupleSchema,
+              structuredClone(tupleRec)
+            );
+            if (Value.Check(ParseTargetDocumentOptionTupleSchema, cleanedTuple)) {
+              validTuples.push(cleanedTuple);
             }
           }
+
+          validateUniqueNormalizedAliases(aliasEntries, {
+            emptyAlias: (canonicalKey) =>
+              `Empty or whitespace-only alias found in DocumentType "${documentTypeKey}" options "${sourceKey}" for key "${canonicalKey}"`,
+            duplicateAlias: (alias, norm, existingKey, canonicalKey) =>
+              `Duplicate alias "${alias}" (normalized "${norm}") in DocumentType "${documentTypeKey}" options "${sourceKey}" between keys "${existingKey}" and "${canonicalKey}"`,
+          });
+
+          cleanedOptions[sourceKey] = validTuples;
         }
       }
 
       const calcFieldKeys = new Set<string>();
-      const targetCalcFields: Array<{ key: string; name?: string }> = [];
+      const targetCalcFields: ParseTargetCalculatedField[] = [];
       for (const cf of rawCalcFields) {
-        if (cf && typeof cf === 'object' && typeof (cf as { key?: unknown }).key === 'string') {
-          const key = (cf as { key: string }).key;
-          calcFieldKeys.add(key);
-          targetCalcFields.push({
-            key,
-            ...(typeof (cf as { name?: unknown }).name === 'string'
-              ? { name: (cf as { name: string }).name }
-              : {}),
-          });
+        if (!cf || typeof cf !== 'object') {
+          continue;
+        }
+        const cleanedCalc = Value.Clean(ParseTargetCalculatedFieldSchema, structuredClone(cf));
+        if (Value.Check(ParseTargetCalculatedFieldSchema, cleanedCalc)) {
+          calcFieldKeys.add(cleanedCalc.key);
+          targetCalcFields.push(cleanedCalc);
         }
       }
 
-      this.targetSchemas.set(documentTypeKey, {
+      const candidateTargetSchema = Value.Clean(ParseTargetDocumentSchemaSchema, {
         fields: targetFields,
         calculatedFields: targetCalcFields,
-        ...(rawOptions !== undefined ? { options: rawOptions } : {}),
+        ...(cleanedOptions !== undefined ? { options: cleanedOptions } : {}),
       });
+      if (!Value.Check(ParseTargetDocumentSchemaSchema, candidateTargetSchema)) {
+        const errors = [...Value.Errors(ParseTargetDocumentSchemaSchema, candidateTargetSchema)]
+          .map((e) => `${e.path}: ${e.message}`)
+          .join(', ');
+        throw new Error(`Invalid ParseTargetDocumentSchema in "${relPath}": ${errors}`);
+      }
+      this.targetSchemas.set(documentTypeKey, candidateTargetSchema);
 
       if (!docDef.documentParseSchema) {
         continue;
@@ -248,21 +266,13 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
         }
 
         for (const [fieldKey, ruleOrRules] of Object.entries(extractor.fields)) {
-          if (calcFieldKeys.has(fieldKey) && !knownFieldKeys.has(fieldKey)) {
-            throw new Error(
-              `DocumentParseSchema in "${relPath}" targets CalculatedField "${fieldKey}"`
-            );
-          }
-          if (!knownFieldKeys.has(fieldKey)) {
-            throw new Error(
-              `DocumentParseSchema in "${relPath}" targets unknown field "${fieldKey}"`
-            );
-          }
-          if (linkedFieldKeys.has(fieldKey)) {
-            throw new Error(
-              `DocumentParseSchema in "${relPath}" targets direct LinkedField "${fieldKey}"`
-            );
-          }
+          assertTargetableFieldKey(
+            fieldKey,
+            knownFieldKeys,
+            calcFieldKeys,
+            linkedFieldKeys,
+            `DocumentParseSchema in "${relPath}"`
+          );
 
           const rules = Array.isArray(ruleOrRules) ? ruleOrRules : [ruleOrRules];
           for (const rule of rules) {
@@ -312,21 +322,13 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
 
       if (parseSchema.fallback?.fields) {
         for (const fieldKey of parseSchema.fallback.fields) {
-          if (calcFieldKeys.has(fieldKey) && !knownFieldKeys.has(fieldKey)) {
-            throw new Error(
-              `DocumentParseSchema fallback in "${relPath}" targets CalculatedField "${fieldKey}"`
-            );
-          }
-          if (!knownFieldKeys.has(fieldKey)) {
-            throw new Error(
-              `DocumentParseSchema fallback in "${relPath}" targets unknown field "${fieldKey}"`
-            );
-          }
-          if (linkedFieldKeys.has(fieldKey)) {
-            throw new Error(
-              `DocumentParseSchema fallback in "${relPath}" targets direct LinkedField "${fieldKey}"`
-            );
-          }
+          assertTargetableFieldKey(
+            fieldKey,
+            knownFieldKeys,
+            calcFieldKeys,
+            linkedFieldKeys,
+            `DocumentParseSchema fallback in "${relPath}"`
+          );
         }
       }
 
@@ -356,24 +358,12 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
             `AliasDictionary file "${relPath}" specifies source "${aliasDict.source}" but manifest expects "${sourceKey}"`
           );
         }
-        const seenTier3Aliases = new Map<string, string>();
-        for (const [canonicalKey, aliases] of Object.entries(aliasDict.mappings)) {
-          for (const alias of aliases) {
-            if (typeof alias !== 'string' || alias.trim().length === 0) {
-              throw new Error(
-                `Empty or whitespace-only alias in AliasDictionary "${relPath}" for key "${canonicalKey}"`
-              );
-            }
-            const norm = alias.trim().toLowerCase();
-            const existingKey = seenTier3Aliases.get(norm);
-            if (existingKey !== undefined && existingKey !== canonicalKey) {
-              throw new Error(
-                `Duplicate alias "${alias}" (normalized "${norm}") in AliasDictionary "${relPath}" between keys "${existingKey}" and "${canonicalKey}"`
-              );
-            }
-            seenTier3Aliases.set(norm, canonicalKey);
-          }
-        }
+        validateUniqueNormalizedAliases(Object.entries(aliasDict.mappings), {
+          emptyAlias: (canonicalKey) =>
+            `Empty or whitespace-only alias in AliasDictionary "${relPath}" for key "${canonicalKey}"`,
+          duplicateAlias: (alias, norm, existingKey, canonicalKey) =>
+            `Duplicate alias "${alias}" (normalized "${norm}") in AliasDictionary "${relPath}" between keys "${existingKey}" and "${canonicalKey}"`,
+        });
         this.aliasDictionaries.set(sourceKey, aliasDict);
       }
     }

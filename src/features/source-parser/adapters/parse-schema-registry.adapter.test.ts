@@ -549,6 +549,126 @@ describe('ParseSchemaRegistryAdapter', () => {
     expect(contactAliases?.mappings.pavarini).toEqual(['@pavarini.com', 'PCNE']);
   });
 
+  it('fails fast if extractor.fields contains an empty rule array []', async () => {
+    const mockManifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./types/test-doc.json'],
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        key: 'test-doc',
+        documentSchema: {
+          fields: [{ key: 'date', type: 'string' }],
+        },
+        documentParseSchema: {
+          extractors: [
+            {
+              source: 'gmail',
+              fields: {
+                date: [],
+              },
+            },
+          ],
+        },
+      }),
+    };
+
+    const adapter = new ParseSchemaRegistryAdapter(mockManifestProvider);
+    await expect(adapter.initialize()).rejects.toThrow(
+      /Invalid DocumentParseSchema structure/
+    );
+  });
+
+  it('resolves configured options.key for Tier 1 duplicate-alias validation when options.key !== "key"', async () => {
+    const mockManifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./types/test-doc.json'],
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        key: 'test-doc',
+        documentSchema: {
+          fields: [
+            {
+              key: 'specTag',
+              type: 'string',
+              options: { source: 'specItems', key: 'code', name: 'title' },
+            },
+          ],
+          options: {
+            specItems: [
+              { code: '071200', title: 'Waterproofing', aliases: ['wp'] },
+              { code: '092200', title: 'Drywall', aliases: ['WP'] },
+            ],
+          },
+        },
+      }),
+    };
+
+    const adapter = new ParseSchemaRegistryAdapter(mockManifestProvider);
+    await expect(adapter.initialize()).rejects.toThrow(
+      'Duplicate alias "WP" (normalized "wp") in DocumentType "test-doc" options "specItems" between keys "071200" and "092200"'
+    );
+  });
+
+  it('preserves custom error message for non-array tuple.aliases and strips extra field properties via TypeBox cleaning', async () => {
+    const nonArrayProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./types/test-doc.json'],
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        key: 'test-doc',
+        documentSchema: {
+          fields: [{ key: 'contact', type: 'string', options: { source: 'contacts', key: 'key' } }],
+          options: {
+            contacts: [{ key: 'PMG', name: 'Pavarini', aliases: 'not-an-array' }],
+          },
+        },
+      }),
+    };
+    const badAdapter = new ParseSchemaRegistryAdapter(nonArrayProvider);
+    await expect(badAdapter.initialize()).rejects.toThrow(
+      'Invalid aliases in option tuple for key "PMG" in DocumentType "test-doc": must be an array'
+    );
+
+    const extraPropsProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./types/test-doc.json'],
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        key: 'test-doc',
+        documentSchema: {
+          fields: [
+            {
+              key: 'date',
+              name: 'Date',
+              type: 'string',
+              description: 'Should be stripped',
+              required: true,
+              minLength: 6,
+              pattern: '^\\d{6}$',
+            },
+          ],
+          calculatedFields: [
+            { key: 'calc', name: 'Calc', template: '{{date}}' },
+          ],
+        },
+      }),
+    };
+    const cleanAdapter = new ParseSchemaRegistryAdapter(extraPropsProvider);
+    await cleanAdapter.initialize();
+    const targetSchema = cleanAdapter.getTargetSchema('test-doc');
+    expect(targetSchema?.fields[0]).toEqual({
+      key: 'date',
+      name: 'Date',
+      type: 'string',
+      minLength: 6,
+      pattern: '^\\d{6}$',
+    });
+    expect(targetSchema?.calculatedFields?.[0]).toEqual({
+      key: 'calc',
+      name: 'Calc',
+    });
+  });
+
   describe('validateJsonLogicAst', () => {
     it('accepts valid JsonLogic operations', () => {
       expect(() =>

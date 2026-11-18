@@ -2686,5 +2686,271 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
         expect(result.fields.revision).toBeUndefined();
       });
     });
+
+    describe('Iteration 1 Review Fixes (S2, Spec #1, Spec #5, S10)', () => {
+      it('honors configured options.key and options.name for non-lookup and lookup options and derives LinkedFields', async () => {
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  action: { set: 'Received' },
+                  specTag: { from: 'email.subjectClean', lookup: true },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              {
+                key: 'action',
+                type: 'string',
+                options: { source: 'actions', key: 'code', name: 'label' },
+              },
+              {
+                key: 'specTag',
+                type: 'string',
+                options: { source: 'specs', key: 'code', name: 'label', allowUserInput: true },
+              },
+              {
+                key: 'specTitle',
+                type: 'string',
+                linkedField: { sourceField: 'specTag', sourceProperty: 'label' },
+              },
+            ],
+            options: {
+              actions: [{ code: 'REC', label: 'Received' }],
+              specs: [{ code: '071200', label: 'Waterproofing' }],
+            },
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        const result = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-1',
+              subject: 'Submittal: Waterproofing Review',
+            },
+          },
+        });
+
+        expect(result.fields.action).toBe('REC');
+        expect(result.fields.specTag).toBe('071200');
+        expect(result.fields.specTitle).toBe('Waterproofing');
+      });
+
+      it('evaluates Step 1 (@domain) across Tiers 1 -> 2 -> 3 before Step 2 (exact displayName), supports subdomain boundaries and embedded emails, and halts on ambiguity', async () => {
+        const targetSchemaWithOptions = {
+          fields: [
+            {
+              key: 'contact',
+              type: 'string',
+              options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true },
+            },
+          ],
+          options: {
+            contacts: [
+              { key: 'PMG', name: 'Pavarini McGovern' },
+              { key: 'OTHER', name: 'Other Company' },
+            ],
+          },
+        };
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  contact: { from: 'email.from', lookup: true },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue(targetSchemaWithOptions),
+          getAliasDictionary: vi.fn().mockReturnValue({
+            source: 'contacts',
+            mappings: {
+              PMG: ['@pavarini.com'],
+            },
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        // 1. Step 1 (Tier 3 @pavarini.com) beats Step 2 (Tier 1 canonical name "Other Company" in displayName)
+        const step1PriorityRes = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-1',
+              from: 'Other Company <jmcgovern@pavarini.com>',
+            },
+          },
+        });
+        expect(step1PriorityRes.fields.contact).toBe('PMG');
+
+        // 2. Subdomain boundary: @pavarini.com matches mail.pavarini.com, not notpavarini.com
+        const subdomainRes = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-2',
+              from: 'Forwarded from user@mail.pavarini.com',
+            },
+          },
+        });
+        expect(subdomainRes.fields.contact).toBe('PMG');
+
+        const lookalikeRes = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-3',
+              from: 'User <user@notpavarini.com>',
+            },
+          },
+        });
+        expect(lookalikeRes.fields.contact).toBeUndefined();
+
+        // 3. Ambiguity collision in Tier 1 Step 3 halts immediately without falling through to Tier 3
+        mockParseRegistry.getTargetSchema.mockResolvedValue({
+          fields: [
+            {
+              key: 'contact',
+              type: 'string',
+              options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true },
+            },
+          ],
+          options: {
+            contacts: [
+              { key: 'PMG', name: 'Pavarini McGovern', aliases: ['Alpha'] },
+              { key: 'OTHER', name: 'Other Company', aliases: ['Beta'] },
+            ],
+          },
+        });
+        mockParseRegistry.getAliasDictionary.mockReturnValue({
+          source: 'contacts',
+          mappings: {
+            PMG: ['Gamma'],
+          },
+        });
+
+        const ambiguousRes = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-4',
+              from: 'Alpha and Beta with Gamma',
+            },
+          },
+        });
+        expect(ambiguousRes.fields.contact).toBeUndefined();
+      });
+
+      it('gates FallbackFieldExtractorPort, validates fallback candidates, rejects unverified lookup strings, and derives LinkedFields', async () => {
+        const targetSchema = {
+          fields: [
+            { key: 'date', type: 'string', pattern: '^\\d{6}$' },
+            { key: 'description', type: 'string', minLength: 3 },
+            {
+              key: 'specTag',
+              type: 'string',
+              options: { source: 'specs', key: 'key', name: 'name', allowUserInput: true },
+            },
+            {
+              key: 'specTitle',
+              type: 'string',
+              linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+            },
+            {
+              key: 'action',
+              type: 'string',
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+          ],
+          options: {
+            specs: [{ key: 'CG104', name: 'BED - KING' }],
+            actions: [{ key: 'REC', name: 'Received' }],
+          },
+        };
+
+        const fallbackExtractor = {
+          extractFields: vi.fn().mockResolvedValue({
+            date: 'bad-date', // fails pattern ^\\d{6}$ -> rejected
+            description: 'Valid AI Description',
+            specTag: 'CG104', // valid canonical option -> populates specTag & derives specTitle
+            specTitle: 'SHOULD NOT BE ACCEPTED DIRECTLY',
+            action: 'Received', // normalizes name -> key 'REC'
+            unknownField: 'ignored',
+          }),
+        };
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [], // empty extractors, fallback still runs!
+            fallback: {
+              strategy: 'ai',
+              fields: ['date', 'description', 'specTag', 'action'],
+            },
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue(targetSchema),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+          fallbackExtractor,
+        });
+
+        const res1 = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: { email: { id: 'msg-1', subject: 'Hello' } },
+        });
+
+        expect(fallbackExtractor.extractFields).toHaveBeenCalledTimes(1);
+        expect(res1.fields).toEqual({
+          description: 'Valid AI Description',
+          specTag: 'CG104',
+          specTitle: 'BED - KING',
+          action: 'REC',
+        });
+
+        // Rejects unverified allowUserInput lookup candidate from fallback
+        fallbackExtractor.extractFields.mockResolvedValueOnce({
+          specTag: 'UNVERIFIED-TAG',
+        });
+        const resUnverified = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: { email: { id: 'msg-2', subject: 'Hello' } },
+        });
+        expect(resUnverified.fields.specTag).toBeUndefined();
+
+        // Skips fallbackExtractor entirely when all targetable fields are already populated
+        fallbackExtractor.extractFields.mockClear();
+        const resAllPopulated = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: { email: { id: 'msg-3', subject: 'Hello' } },
+          existingData: {
+            date: '261020',
+            description: 'Already Set',
+            specTag: 'CG104',
+            action: 'REC',
+          },
+        });
+        expect(fallbackExtractor.extractFields).not.toHaveBeenCalled();
+        expect(resAllPopulated.fields.description).toBe('Already Set');
+      });
+    });
   });
 });

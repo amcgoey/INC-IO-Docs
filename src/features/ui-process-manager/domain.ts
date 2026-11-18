@@ -549,6 +549,76 @@ export function extractDocumentData(
   return filterFormData(formData, (key) => !isSelectionKey(key));
 }
 
+export function sanitizeFormDataForSourceReset(
+  formData?: Record<string, unknown>
+): Record<string, unknown> {
+  return filterFormData(formData, (key) => isSelectionKey(key) || key === 'spaceId');
+}
+
+export function isInactiveDocTypeFieldKey(
+  key: string,
+  activeDocTypeKey: string | undefined,
+  allKnownDocTypes: Iterable<string>
+): boolean {
+  for (const dt of allKnownDocTypes) {
+    if (dt !== activeDocTypeKey && key.endsWith(`_${dt}`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function pruneFormDataForTypeSwitch(
+  formData: Record<string, unknown>,
+  activeDocTypeKey: string | undefined,
+  allKnownDocTypes: Iterable<string>,
+  activeDocSchemaFields?: Set<string>
+): Record<string, unknown> {
+  const pruned: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(formData)) {
+    if (isSelectionKey(key) || key === 'spaceId') {
+      pruned[key] = value;
+      continue;
+    }
+    if (isInactiveDocTypeFieldKey(key, activeDocTypeKey, allKnownDocTypes)) {
+      pruned[key] = value;
+      continue;
+    }
+    if (activeDocSchemaFields === undefined || activeDocSchemaFields.has(key)) {
+      pruned[key] = value;
+    }
+  }
+  return pruned;
+}
+
+export function extractActiveTypeExistingData(
+  formData: Record<string, unknown> | undefined,
+  activeDocTypeKey: string | undefined,
+  allKnownDocTypes: Iterable<string>
+): Record<string, unknown> {
+  if (!formData) {
+    return {};
+  }
+  const existingData: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(formData)) {
+    if (
+      isSelectionKey(key) ||
+      key === 'spaceId' ||
+      isInactiveDocTypeFieldKey(key, activeDocTypeKey, allKnownDocTypes)
+    ) {
+      continue;
+    }
+    if (
+      typeof value === 'string'
+        ? value.trim().length > 0
+        : value !== undefined && value !== null
+    ) {
+      existingData[key] = value;
+    }
+  }
+  return existingData;
+}
+
 /**
  * Translates a human-readable document type display name into its canonical backend key.
  * If the input is already a backend key or no mapping is found, returns it unchanged.

@@ -5829,6 +5829,56 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(submitBody.action?.notification?.text).toBe('Document processed successfully');
         expect(nock.isDone()).toBe(true);
       });
+
+      it('does not fall back to email.from ("INC") for contact on outgoing submittal-arch emails to unregistered external recipients (Spec #6)', async () => {
+        vi.spyOn(mockGmailClient, 'getThread').mockResolvedValueOnce({
+          id: 'th-spec6-outgoing',
+          messages: [
+            {
+              id: 'msg-spec6-1',
+              threadId: 'th-spec6-outgoing',
+              subject: '071200-001 Waterproofing Submittal',
+              from: 'INC PM <pm@inc.nyc>',
+              to: 'colleague@inc.nyc, Stranger <stranger@unknown-vendor.com>',
+              date: 'Wed, 21 Oct 2026 10:00:00 GMT',
+              labels: ['SENT'],
+              inlineImages: [],
+              attachments: [
+                {
+                  partId: 'part-arch-1',
+                  attachmentId: 'att-arch-1',
+                  filename: '071200-001-A_Waterproofing.pdf',
+                  mimeType: 'application/pdf',
+                  size: 1024,
+                },
+              ],
+            },
+          ],
+        });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-spec6-1',
+              threadId: 'th-spec6-outgoing',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const card = body.action?.navigations?.[0]?.pushCard;
+        const docInfoSec = card?.sections.find((s) => s.header === 'Document Data');
+        const contactWidget = docInfoSec?.widgets.find(
+          (w) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'submittal-arch')
+        )?.textInput;
+        expect(contactWidget?.value ?? '').toBe('');
+      });
     });
   });
 });

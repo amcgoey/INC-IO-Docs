@@ -33,7 +33,10 @@ import type {
   DriveServicePort,
 } from '../features/document/ports';
 import { createSourceParserWiring } from './source-parser.wiring';
-import type { SourceParserPort } from '../features/source-parser';
+import type {
+  SourceParserPort,
+  CanonicalOptionsProviderPort,
+} from '../features/source-parser';
 import type { DocumentSpaceManifestRegistryAdapter } from '../features/document-space/adapters/document-space-manifest-registry';
 import type { DocumentSpaceStoragePort } from '../features/document-space/ports';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
@@ -65,7 +68,12 @@ export interface WorkspaceAddonWiringOptions {
   storageAdapter?: DocumentSpaceStoragePort | undefined;
   pdfProcessor?: PdfProcessor | undefined;
   sourceParser?: SourceParserPort | undefined;
-  createSourceParser?: ((context: WorkspaceExecutionContext) => SourceParserPort | Promise<SourceParserPort>) | undefined;
+  createSourceParser?:
+    | ((
+        context: WorkspaceExecutionContext,
+        overrides?: { canonicalOptionsProvider?: CanonicalOptionsProviderPort | undefined }
+      ) => SourceParserPort | Promise<SourceParserPort>)
+    | undefined;
   driveService?: DriveServicePort | undefined;
 }
 
@@ -179,17 +187,27 @@ export function wireWorkspaceAddonRoutes(
         getCanonicalOptionsProvider: (ctx) => getDynamicOptionsAdapter(ctx),
       });
       sourceParser = sourceParserWiring.sourceParser;
-      createSourceParser = (context: WorkspaceExecutionContext) => {
+      let parseRegistryInitPromise: Promise<void> | undefined;
+      const ensureParseRegistryInitialized = async (): Promise<void> => {
+        if (!parseRegistryInitPromise) {
+          parseRegistryInitPromise = sourceParserWiring.parseSchemaRegistry
+            .initialize()
+            .catch((err) => {
+              parseRegistryInitPromise = undefined;
+              throw err;
+            });
+        }
+        await parseRegistryInitPromise;
+      };
+      createSourceParser = async (context: WorkspaceExecutionContext) => {
+        await ensureParseRegistryInitialized();
         const adapter = getDynamicOptionsAdapter(context);
         return sourceParserWiring.createSourceParser(context, { canonicalOptionsProvider: adapter });
       };
     } else if (rawCreateSourceParser) {
       createSourceParser = (context: WorkspaceExecutionContext) => {
         const adapter = getDynamicOptionsAdapter(context);
-        return (rawCreateSourceParser as (ctx: WorkspaceExecutionContext, overrides?: { canonicalOptionsProvider?: DynamicOptionsAdapter }) => SourceParserPort | Promise<SourceParserPort>)(
-          context,
-          { canonicalOptionsProvider: adapter }
-        );
+        return rawCreateSourceParser(context, { canonicalOptionsProvider: adapter });
       };
     }
 

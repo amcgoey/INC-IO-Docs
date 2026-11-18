@@ -47,10 +47,50 @@ import {
   parseGoogleDriveUrl,
   isGmailContext,
   isResetOrInitialLoad,
-  isSelectionKey,
+  sanitizeFormDataForSourceReset,
+  pruneFormDataForTypeSwitch,
+  extractActiveTypeExistingData,
   type UiStateResolutionContext,
   type UiProcessSpaceItem,
 } from '../domain';
+
+interface GmailDriveSelection {
+  effectiveFileSource: string | undefined;
+  currentDriveUrl: string;
+  previousDriveUrl: string;
+  parsedCurrentDriveUrl: { id: string; resourceType: 'file' | 'folder' } | undefined;
+}
+
+function resolveGmailDriveSelection(
+  isGmail: boolean,
+  isResetOrInitial: boolean,
+  effectiveContext: UiProcessEventContext
+): GmailDriveSelection {
+  const effectiveFileSource = isGmail
+    ? (isResetOrInitial
+        ? 'Email Attachments'
+        : ((effectiveContext.formData?.[SELECT_FILE_SOURCE_KEY] as string | undefined) ?? 'Email Attachments'))
+    : undefined;
+
+  const currentDriveUrl = isGmail
+    ? ((effectiveContext.formData?.[INPUT_DRIVE_URL_KEY] as string | undefined)?.trim() ??
+       (effectiveContext.parameters?.previousDriveUrl?.trim() ?? ''))
+    : '';
+
+  const previousDriveUrl = isGmail
+    ? (effectiveContext.parameters?.previousDriveUrl?.trim() ?? '')
+    : '';
+
+  const parsedCurrentDriveUrl =
+    isGmail && currentDriveUrl.length > 0 ? parseGoogleDriveUrl(currentDriveUrl) : undefined;
+
+  return {
+    effectiveFileSource,
+    currentDriveUrl,
+    previousDriveUrl,
+    parsedCurrentDriveUrl,
+  };
+}
 
 export interface WorkspaceAddonAdapterOptions {
   spaceProvider: UiProcessSpaceProviderPort;
@@ -186,25 +226,17 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     };
 
     const isResetOrInitial = isResetOrInitialLoad(effectiveContext);
-
-    const effectiveFileSource = isGmail
-      ? (isResetOrInitial
-          ? 'Email Attachments'
-          : ((effectiveContext.formData?.[SELECT_FILE_SOURCE_KEY] as string | undefined) ?? 'Email Attachments'))
-      : undefined;
-
-    const currentDriveUrl = isGmail
-      ? ((effectiveContext.formData?.[INPUT_DRIVE_URL_KEY] as string | undefined)?.trim() ??
-         (effectiveContext.parameters?.previousDriveUrl?.trim() ?? ''))
-      : '';
-
-    const previousDriveUrl = isGmail
-      ? (effectiveContext.parameters?.previousDriveUrl?.trim() ?? '')
-      : '';
-
-    const parsedCurrentDriveUrl = isGmail && currentDriveUrl.length > 0
-      ? parseGoogleDriveUrl(currentDriveUrl)
-      : undefined;
+    const gmailDriveSelection = resolveGmailDriveSelection(
+      isGmail,
+      isResetOrInitial,
+      effectiveContext
+    );
+    const {
+      effectiveFileSource,
+      currentDriveUrl,
+      previousDriveUrl,
+      parsedCurrentDriveUrl,
+    } = gmailDriveSelection;
 
     const isSourceReset =
       isResetOrInitial ||
@@ -221,15 +253,9 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       ));
 
     if (isSourceReset && effectiveContext.formData) {
-      const sanitizedFormData: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(effectiveContext.formData)) {
-        if (isSelectionKey(key) || key === 'spaceId') {
-          sanitizedFormData[key] = value;
-        }
-      }
       effectiveContext = {
         ...effectiveContext,
-        formData: sanitizedFormData,
+        formData: sanitizeFormDataForSourceReset(effectiveContext.formData),
       };
     }
 
@@ -244,6 +270,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       isResetOrInitial,
       actionName,
       effectiveContext,
+      gmailDriveSelection,
       activeMsg,
       config,
       spaceTypes,
@@ -428,8 +455,8 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     const isDocTypeChange = actionName === 'onDocumentTypeChange';
     const isManualTypeSwitch = isSpaceTypeChange || isDocTypeChange;
 
-    if (isManualTypeSwitch && normalizedFormData) {
-      const allKnownDocTypes = new Set<string>();
+    const allKnownDocTypes = new Set<string>();
+    if (isManualTypeSwitch) {
       for (const st of spaceTypes) {
         for (const dt of st.spaceSchema.allowedDocumentTypes) {
           allKnownDocTypes.add(dt);
@@ -448,41 +475,23 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         }
       }
 
-      let docSchemaFields: Set<string> | undefined;
-      if (resolvedDocumentTypeKey && manifestPort) {
-        try {
-          const schemas = await manifestPort.getDocumentTypeSchemas(resolvedDocumentTypeKey);
-          docSchemaFields = extractFieldKeysFromDocSchema(schemas?.docSchema);
-        } catch (e) {
-          console.warn(`Could not fetch schemas for: ${resolvedDocumentTypeKey}`, e);
-        }
-      }
-
-      const prunedFormData: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(normalizedFormData)) {
-        if (isSelectionKey(key) || key === 'spaceId') {
-          prunedFormData[key] = value;
-          continue;
-        }
-
-        const isInactiveSuffix = Array.from(allKnownDocTypes).some(
-          (dt) => dt !== resolvedDocumentTypeKey && key.endsWith(`_${dt}`)
-        );
-
-        if (isInactiveSuffix) {
-          prunedFormData[key] = value;
-          continue;
-        }
-
-        if (docSchemaFields !== undefined) {
-          if (docSchemaFields.has(key)) {
-            prunedFormData[key] = value;
+      if (normalizedFormData) {
+        let docSchemaFields: Set<string> | undefined;
+        if (resolvedDocumentTypeKey && manifestPort) {
+          try {
+            const schemas = await manifestPort.getDocumentTypeSchemas(resolvedDocumentTypeKey);
+            docSchemaFields = extractFieldKeysFromDocSchema(schemas?.docSchema);
+          } catch (e) {
+            console.warn(`Could not fetch schemas for: ${resolvedDocumentTypeKey}`, e);
           }
-        } else {
-          prunedFormData[key] = value;
         }
+        normalizedFormData = pruneFormDataForTypeSwitch(
+          normalizedFormData,
+          resolvedDocumentTypeKey,
+          allKnownDocTypes,
+          docSchemaFields
+        );
       }
-      normalizedFormData = prunedFormData;
     }
 
     const isPass2Event =
@@ -496,21 +505,13 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       resolvedDocumentTypeKey &&
       typeof this.options.sourceParser?.extractFields === 'function'
     ) {
-      const activeTypeExistingData: Record<string, unknown> = {};
-      if (isManualTypeSwitch && normalizedFormData) {
-        for (const [key, value] of Object.entries(normalizedFormData)) {
-          if (isSelectionKey(key) || key === 'spaceId') {
-            continue;
-          }
-          if (
-            typeof value === 'string'
-              ? value.trim().length > 0
-              : value !== undefined && value !== null
-          ) {
-            activeTypeExistingData[key] = value;
-          }
-        }
-      }
+      const activeTypeExistingData = isManualTypeSwitch
+        ? extractActiveTypeExistingData(
+            normalizedFormData,
+            resolvedDocumentTypeKey,
+            allKnownDocTypes
+          )
+        : {};
 
       const spaceResolution = resolveSpace(
         {
@@ -522,8 +523,13 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       );
       const pass2SpaceId = spaceResolution.matchedSpace?.id;
 
-      const pass2CandidateItems: UiProcessSourceContextItem[] = isGmailDriveUrlPass1Event
-        ? [{ id: parsedCurrentDriveUrl!.id }]
+      const isGmailDriveUrlMode =
+        isGmail &&
+        gmailDriveSelection.effectiveFileSource === 'Google Drive URL' &&
+        Boolean(gmailDriveSelection.parsedCurrentDriveUrl);
+
+      const pass2CandidateItems: UiProcessSourceContextItem[] = isGmailDriveUrlMode
+        ? [{ id: gmailDriveSelection.parsedCurrentDriveUrl!.id }]
         : isGmail
           ? (activeMsg?.attachments ?? []).map((att) => ({
               id: resolveAttachmentId(att),
@@ -564,7 +570,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       const pass2Context: UiProcessSourceContext = {
         items: pass2CandidateItems,
         ...(pass2EmailContext ? { email: pass2EmailContext } : {}),
-        ...(isGmailDriveUrlPass1Event ? { isDriveUrl: true } : {}),
+        ...(isGmailDriveUrlMode ? { isDriveUrl: true } : {}),
       };
 
       try {
@@ -1020,6 +1026,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     isResetOrInitial: boolean;
     actionName: string | undefined;
     effectiveContext: UiProcessEventContext;
+    gmailDriveSelection: GmailDriveSelection;
     activeMsg: UiProcessGmailMessageDescriptor | undefined;
     config: ProcessUiStateConfig | undefined;
     spaceTypes: UiProcessSpaceType[];
@@ -1036,6 +1043,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       isResetOrInitial,
       actionName,
       effectiveContext,
+      gmailDriveSelection,
       activeMsg,
       config,
       spaceTypes,
@@ -1047,24 +1055,12 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
     const isDrivePass1Event = !isGmail && isResetOrInitial;
 
-    const effectiveFileSource = isGmail
-      ? (isResetOrInitial
-          ? 'Email Attachments'
-          : ((effectiveContext.formData?.[SELECT_FILE_SOURCE_KEY] as string | undefined) ?? 'Email Attachments'))
-      : undefined;
-
-    const currentDriveUrl = isGmail
-      ? ((effectiveContext.formData?.[INPUT_DRIVE_URL_KEY] as string | undefined)?.trim() ??
-         (effectiveContext.parameters?.previousDriveUrl?.trim() ?? ''))
-      : '';
-
-    const previousDriveUrl = isGmail
-      ? (effectiveContext.parameters?.previousDriveUrl?.trim() ?? '')
-      : '';
-
-    const parsedCurrentDriveUrl = isGmail && currentDriveUrl.length > 0
-      ? parseGoogleDriveUrl(currentDriveUrl)
-      : undefined;
+    const {
+      effectiveFileSource,
+      currentDriveUrl,
+      previousDriveUrl,
+      parsedCurrentDriveUrl,
+    } = gmailDriveSelection;
 
     const isGmailDriveUrlPass1Event =
       isGmail &&

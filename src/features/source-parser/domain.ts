@@ -436,11 +436,51 @@ export function buildJsonLogicContext(context: SourceContext): Record<string, un
   };
 }
 
-function validateCandidate(
+function getTupleKey(tuple: ParseTargetDocumentOptionTuple, keyProp: string): string {
+  if (tuple[keyProp] !== undefined && tuple[keyProp] !== null) {
+    return String(tuple[keyProp]);
+  }
+  if (tuple.key !== undefined && tuple.key !== null) {
+    return String(tuple.key);
+  }
+  return '';
+}
+
+function getTupleName(tuple: ParseTargetDocumentOptionTuple, nameProp: string): string | undefined {
+  const raw = tuple[nameProp] ?? tuple.name;
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  const str = String(raw);
+  return str.length > 0 ? str : undefined;
+}
+
+function passesFieldConstraints(
+  value: string,
+  targetField: ParseTargetDocumentField
+): boolean {
+  if (targetField.minLength !== undefined && value.length < targetField.minLength) {
+    return false;
+  }
+  if (targetField.pattern !== undefined) {
+    const regex = new RegExp(targetField.pattern);
+    if (!regex.test(value)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+interface ValidatedCandidate {
+  value: string;
+  matchedTuple?: ParseTargetDocumentOptionTuple | undefined;
+}
+
+function validateCandidateWithTuple(
   candidate: string | undefined,
   targetField: ParseTargetDocumentField,
   targetSchema?: ParseTargetDocumentSchema
-): string | undefined {
+): ValidatedCandidate | undefined {
   if (candidate === undefined || candidate === null) {
     return undefined;
   }
@@ -448,30 +488,87 @@ function validateCandidate(
   if (trimmed.length === 0) {
     return undefined;
   }
-  if (targetField.minLength !== undefined && trimmed.length < targetField.minLength) {
-    return undefined;
-  }
-  if (targetField.pattern !== undefined) {
-    const regex = new RegExp(targetField.pattern);
-    if (!regex.test(trimmed)) {
-      return undefined;
-    }
-  }
   if (targetField.options !== undefined) {
-    const sourceKey = targetField.options.source as string;
+    // nosemgrep: domain-pass-through-read
+    const { source: sourceKey, key: optKey, name: optName } = targetField.options;
+    const keyProp = optKey ?? 'key';
+    const nameProp = optName ?? 'name';
     const optionTuples = targetSchema?.options?.[sourceKey] ?? [];
-    const matched = optionTuples.find(
-      (tuple) =>
-        tuple.key === trimmed ||
-        (tuple.name && tuple.name.toLowerCase() === trimmed.toLowerCase())
-    );
+    const matched = optionTuples.find((tuple) => {
+      const tupleKey = getTupleKey(tuple, keyProp);
+      const tupleName = getTupleName(tuple, nameProp);
+      return (
+        tupleKey === trimmed ||
+        (tupleName !== undefined && tupleName.toLowerCase() === trimmed.toLowerCase())
+      );
+    });
     if (!matched) {
       return undefined;
     }
-    const keyProp = targetField.options.key ?? 'key';
-    return String(matched[keyProp] ?? matched.key);
+    const emittedValue = getTupleKey(matched, keyProp);
+    if (!passesFieldConstraints(emittedValue, targetField)) {
+      return undefined;
+    }
+    return { value: emittedValue, matchedTuple: matched };
   }
-  return trimmed;
+  if (!passesFieldConstraints(trimmed, targetField)) {
+    return undefined;
+  }
+  return { value: trimmed };
+}
+
+function populateLinkedFields(
+  fieldKey: string,
+  matchedTuple: ParseTargetDocumentOptionTuple | undefined,
+  targetSchema: ParseTargetDocumentSchema | undefined,
+  populatedFields: Record<string, unknown>
+): void {
+  if (!matchedTuple || !targetSchema?.fields) {
+    return;
+  }
+  for (const sibling of targetSchema.fields) {
+    if (
+      sibling.linkedField &&
+      sibling.linkedField.sourceField === fieldKey &&
+      !(sibling.key in populatedFields)
+    ) {
+      const propVal = matchedTuple[sibling.linkedField.sourceProperty];
+      if (
+        propVal !== undefined &&
+        propVal !== null &&
+        (typeof propVal === 'string' ? propVal.trim().length > 0 : true)
+      ) {
+        populatedFields[sibling.key] = String(propVal);
+      }
+    }
+  }
+}
+
+function extractRegexMatchValue(
+  text: string,
+  rule: { pattern?: string | undefined; flags?: string | undefined; group?: number | undefined },
+  populatedFields: Record<string, unknown>
+): string | undefined {
+  if (!rule.pattern) {
+    return text;
+  }
+  const flags = typeof rule.flags === 'string' ? rule.flags : 'i';
+  const regex = new RegExp(rule.pattern, flags);
+  const match = text.match(regex);
+  if (!match) {
+    return undefined;
+  }
+  if (!matchesCorrelatedCode(match, rule.group, populatedFields)) {
+    return undefined;
+  }
+  const { group: groupIndex } = rule;
+  if (groupIndex !== undefined && match[groupIndex] !== undefined) {
+    return match[groupIndex];
+  }
+  if (match[1] !== undefined) {
+    return match[1];
+  }
+  return match[0];
 }
 
 export function getCandidateAttachmentNames(context: SourceContext): string[] {
@@ -547,6 +644,7 @@ export interface RuleExtractionContext {
 
 export interface ExtractedCandidateResult {
   value: string;
+  matchedTuple?: ParseTargetDocumentOptionTuple | undefined;
   matchedAttachmentName?: string | undefined;
 }
 
@@ -557,8 +655,10 @@ function extractCandidateFromRule(
   extractionContext: RuleExtractionContext
 ): ExtractedCandidateResult | undefined {
   if ('set' in rule) {
-    const validated = validateCandidate(rule.set, targetField, targetSchema);
-    return validated !== undefined ? { value: validated } : undefined;
+    const validated = validateCandidateWithTuple(rule.set, targetField, targetSchema);
+    return validated !== undefined
+      ? { value: validated.value, ...(validated.matchedTuple ? { matchedTuple: validated.matchedTuple } : {}) }
+      : undefined;
   }
 
   if (!('from' in rule)) {
@@ -576,33 +676,12 @@ function extractCandidateFromRule(
         : extractionContext.candidateAttachmentNames;
 
     for (const attName of candidateNamesToTest) {
-      let rawCandidate: string | undefined;
-      if (rule.pattern) {
-        const flags = typeof rule.flags === 'string' ? rule.flags : 'i';
-        const regex = new RegExp(rule.pattern, flags);
-        const match = attName.match(regex);
-        if (!match) {
-          continue;
-        }
-        if (!matchesCorrelatedCode(match, rule.group, extractionContext.populatedFields)) {
-          continue;
-        }
-        const { group: groupIndex } = rule;
-        if (groupIndex !== undefined && match[groupIndex] !== undefined) {
-          rawCandidate = match[groupIndex];
-        } else if (match[1] !== undefined) {
-          rawCandidate = match[1];
-        } else {
-          rawCandidate = match[0];
-        }
-      } else {
-        rawCandidate = attName;
-      }
-
-      const validated = validateCandidate(rawCandidate, targetField, targetSchema);
+      const rawCandidate = extractRegexMatchValue(attName, rule, extractionContext.populatedFields);
+      const validated = validateCandidateWithTuple(rawCandidate, targetField, targetSchema);
       if (validated !== undefined) {
         return {
-          value: validated,
+          value: validated.value,
+          ...(validated.matchedTuple ? { matchedTuple: validated.matchedTuple } : {}),
           matchedAttachmentName: attName,
         };
       }
@@ -613,106 +692,28 @@ function extractCandidateFromRule(
   if (fromSource === 'email.labels') {
     const tokens = extractNonSystemLabelTokens(email?.labels);
     for (const token of tokens) {
-      let candidateForToken: string | undefined = token;
-      if (rule.pattern) {
-        const flags = typeof rule.flags === 'string' ? rule.flags : 'i';
-        const regex = new RegExp(rule.pattern, flags);
-        const match = token.match(regex);
-        if (!match) {
-          continue;
-        }
-        if (!matchesCorrelatedCode(match, rule.group, extractionContext.populatedFields)) {
-          continue;
-        }
-        const { group: groupIndex } = rule;
-        if (groupIndex !== undefined && match[groupIndex] !== undefined) {
-          candidateForToken = match[groupIndex];
-        } else if (match[1] !== undefined) {
-          candidateForToken = match[1];
-        } else {
-          candidateForToken = match[0];
-        }
-      }
-      if (candidateForToken !== undefined) {
-        const validated = validateCandidate(candidateForToken, targetField, targetSchema);
-        if (validated !== undefined) {
-          return { value: validated };
-        }
+      const candidateForToken = extractRegexMatchValue(token, rule, extractionContext.populatedFields);
+      const validated = validateCandidateWithTuple(candidateForToken, targetField, targetSchema);
+      if (validated !== undefined) {
+        return {
+          value: validated.value,
+          ...(validated.matchedTuple ? { matchedTuple: validated.matchedTuple } : {}),
+        };
       }
     }
     return undefined;
   }
 
-  let sourceText = '';
-  switch (fromSource) {
-    case 'email.date':
-      sourceText = email?.date ?? '';
-      break;
-    case 'email.subjectClean':
-      sourceText = cleanSubject(email?.subject);
-      break;
-    case 'email.subject':
-      sourceText = email?.subject ?? '';
-      break;
-    case 'email.plainTextBody':
-      sourceText = email?.plainTextBody ?? '';
-      break;
-    case 'email.htmlBody':
-      sourceText = email?.htmlBody ?? '';
-      break;
-    case 'email.body': {
-      const { plainTextBody: rawPlain } = email ?? {};
-      if (typeof rawPlain === 'string' && rawPlain.trim().length > 0) {
-        sourceText = rawPlain.trim();
-      } else {
-        sourceText = normalizeHtmlBodyForPass2(email?.htmlBody);
-      }
-      break;
-    }
-    case 'email.from':
-      sourceText = email?.from ?? '';
-      break;
-    case 'email.to':
-      sourceText = email?.to ?? '';
-      break;
-    case 'email.cc':
-      sourceText = email?.cc ?? '';
-      break;
-    default:
-      break;
-  }
+  const sourceText = getSourceText(fromSource, sourceContext);
+  const rawCandidate =
+    fromSource === 'email.date' && !rule.pattern
+      ? parseDateToYymmdd(sourceText)
+      : extractRegexMatchValue(sourceText, rule, extractionContext.populatedFields);
 
-  let rawCandidate: string | undefined;
-  if (fromSource === 'email.date' && !rule.pattern) {
-    rawCandidate = parseDateToYymmdd(sourceText);
-  } else {
-    if (rule.pattern) {
-      const flags = typeof rule.flags === 'string' ? rule.flags : 'i';
-      const regex = new RegExp(rule.pattern, flags);
-      const match = sourceText.match(regex);
-      if (!match) {
-        rawCandidate = undefined;
-      } else {
-        if (!matchesCorrelatedCode(match, rule.group, extractionContext.populatedFields)) {
-          rawCandidate = undefined;
-        } else {
-          const { group: groupIndex } = rule;
-          if (groupIndex !== undefined && match[groupIndex] !== undefined) {
-            rawCandidate = match[groupIndex];
-          } else if (match[1] !== undefined) {
-            rawCandidate = match[1];
-          } else {
-            rawCandidate = match[0];
-          }
-        }
-      }
-    } else {
-      rawCandidate = sourceText;
-    }
-  }
-
-  const validated = validateCandidate(rawCandidate, targetField, targetSchema);
-  return validated !== undefined ? { value: validated } : undefined;
+  const validated = validateCandidateWithTuple(rawCandidate, targetField, targetSchema);
+  return validated !== undefined
+    ? { value: validated.value, ...(validated.matchedTuple ? { matchedTuple: validated.matchedTuple } : {}) }
+    : undefined;
 }
 
 export function splitRfc5322Recipients(input: string): string[] {
@@ -839,111 +840,124 @@ interface TierOption {
   aliases: string[];
 }
 
-function getTupleKey(tuple: ParseTargetDocumentOptionTuple, keyProp: string): string {
-  if (tuple[keyProp] !== undefined && tuple[keyProp] !== null) {
-    return String(tuple[keyProp]);
+type TierMatchOutcome =
+  | { kind: 'matched'; tuple: ParseTargetDocumentOptionTuple }
+  | { kind: 'ambiguous' }
+  | { kind: 'none' };
+
+function extractEmailTokens(candidate: string, parsed: ParsedRecipient): string[] {
+  const tokens = new Set<string>();
+  if (parsed.email && !/\s/.test(parsed.email)) {
+    tokens.add(parsed.email.toLowerCase());
   }
-  if (tuple.key !== undefined && tuple.key !== null) {
-    return String(tuple.key);
+  const matches = candidate.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g);
+  if (matches) {
+    for (const m of matches) {
+      tokens.add(m.toLowerCase());
+    }
   }
-  return '';
+  return [...tokens];
 }
 
-function matchTier(
+function matchEmailOrDomainInTier(
   candidate: string,
-  parsed: ParsedRecipient,
+  emailTokens: string[],
   options: TierOption[],
-  keyProp: string = 'key'
-): ParseTargetDocumentOptionTuple | undefined {
-  if (options.length === 0) {
-    return undefined;
-  }
-
-  // 1. @domain / full-email alias match first
-  const step1Matches = new Map<string, ParseTargetDocumentOptionTuple>();
+  keyProp: string
+): TierMatchOutcome {
+  const matches = new Map<string, ParseTargetDocumentOptionTuple>();
   const candidateLower = candidate.trim().toLowerCase();
+  const bareAtDomain =
+    candidateLower.startsWith('@') && !/\s/.test(candidateLower)
+      ? candidateLower.slice(1)
+      : undefined;
 
   for (const opt of options) {
     const tupleKey = getTupleKey(opt.tuple, keyProp);
     for (const alias of opt.aliases) {
-      const aliasTrimmed = alias.trim();
-      const aliasLower = aliasTrimmed.toLowerCase();
-
-      // Full email match
-      if (parsed.email && parsed.email.toLowerCase() === aliasLower) {
-        step1Matches.set(tupleKey, opt.tuple);
-        break;
+      const aliasLower = alias.trim().toLowerCase();
+      if (aliasLower.length === 0) {
+        continue;
       }
-      // @domain match
+
       if (aliasLower.startsWith('@')) {
         const aliasDomain = aliasLower.slice(1);
-        if (parsed.domain && parsed.domain.toLowerCase() === aliasDomain) {
-          step1Matches.set(tupleKey, opt.tuple);
+        if (aliasDomain.length === 0) {
+          continue;
+        }
+        const matchesTokenDomain = emailTokens.some((token) => {
+          const domain = extractEmailDomain(token);
+          return domain === aliasDomain || domain.endsWith(`.${aliasDomain}`);
+        });
+        const matchesBareDomain =
+          bareAtDomain !== undefined &&
+          (bareAtDomain === aliasDomain || bareAtDomain.endsWith(`.${aliasDomain}`));
+        if (matchesTokenDomain || matchesBareDomain) {
+          matches.set(tupleKey, opt.tuple);
           break;
         }
-        if (parsed.email && parsed.email.toLowerCase().endsWith(aliasLower)) {
-          step1Matches.set(tupleKey, opt.tuple);
-          break;
-        }
-      }
-      // Candidate exact match with @domain
-      if (candidateLower.startsWith('@') && candidateLower === aliasLower) {
-        step1Matches.set(tupleKey, opt.tuple);
+      } else if (aliasLower.includes('@') && emailTokens.includes(aliasLower)) {
+        matches.set(tupleKey, opt.tuple);
         break;
       }
     }
   }
 
-  if (step1Matches.size === 1) {
-    return [...step1Matches.values()][0];
+  if (matches.size === 1) {
+    return { kind: 'matched', tuple: [...matches.values()][0] };
   }
-  if (step1Matches.size > 1) {
-    return undefined;
+  if (matches.size > 1) {
+    return { kind: 'ambiguous' };
   }
+  return { kind: 'none' };
+}
 
-  // 2. Case-insensitive exact match of candidate or parsed display name against key, name, or aliases
-  const step2Matches = new Map<string, ParseTargetDocumentOptionTuple>();
+function matchExactInTier(
+  candidate: string,
+  parsed: ParsedRecipient,
+  options: TierOption[],
+  keyProp: string,
+  nameProp: string,
+  includeCanonical: boolean
+): TierMatchOutcome {
+  const matches = new Map<string, ParseTargetDocumentOptionTuple>();
+  const candidateLower = candidate.trim().toLowerCase();
   const displayNameLower = parsed.displayName ? parsed.displayName.trim().toLowerCase() : undefined;
 
   for (const opt of options) {
     const tupleKey = getTupleKey(opt.tuple, keyProp);
     const keyLower = tupleKey.trim().toLowerCase();
-    const nameLower = opt.tuple.name ? String(opt.tuple.name).trim().toLowerCase() : undefined;
+    const tupleName = getTupleName(opt.tuple, nameProp);
+    const nameLower = tupleName ? tupleName.trim().toLowerCase() : undefined;
     const aliasLowers = opt.aliases.map((a) => a.trim().toLowerCase());
 
-    let isMatch = false;
+    const matchesTarget = (valLower: string): boolean =>
+      aliasLowers.includes(valLower) ||
+      (includeCanonical &&
+        ((keyLower.length > 0 && valLower === keyLower) ||
+          (nameLower !== undefined && valLower === nameLower)));
 
-    if (
-      (keyLower.length > 0 && candidateLower === keyLower) ||
-      (nameLower && candidateLower === nameLower) ||
-      aliasLowers.includes(candidateLower)
-    ) {
-      isMatch = true;
-    }
-
-    if (!isMatch && displayNameLower) {
-      if (
-        (keyLower.length > 0 && displayNameLower === keyLower) ||
-        (nameLower && displayNameLower === nameLower) ||
-        aliasLowers.includes(displayNameLower)
-      ) {
-        isMatch = true;
-      }
-    }
-
-    if (isMatch) {
-      step2Matches.set(tupleKey, opt.tuple);
+    if (matchesTarget(candidateLower) || (displayNameLower !== undefined && matchesTarget(displayNameLower))) {
+      matches.set(tupleKey, opt.tuple);
     }
   }
 
-  if (step2Matches.size === 1) {
-    return [...step2Matches.values()][0];
+  if (matches.size === 1) {
+    return { kind: 'matched', tuple: [...matches.values()][0] };
   }
-  if (step2Matches.size > 1) {
-    return undefined;
+  if (matches.size > 1) {
+    return { kind: 'ambiguous' };
   }
+  return { kind: 'none' };
+}
 
-  // 3. escapeRegExp-sanitized delimiter-lookaround (?<=^|[\s<(\[_,;:"'-]) / (?=[\s>)\]_,;:."'-]|$) phrase containment third
+function matchBoundedPhraseInTier(
+  candidate: string,
+  options: TierOption[],
+  keyProp: string,
+  nameProp: string,
+  includeCanonical: boolean
+): TierMatchOutcome {
   const step3Matches = new Map<string, { tuple: ParseTargetDocumentOptionTuple; longestNeedle: string }>();
   const haystack = candidate;
 
@@ -951,21 +965,22 @@ function matchTier(
     const tupleKey = getTupleKey(opt.tuple, keyProp);
     let longestMatchedNeedle: string | undefined;
 
-    // 1. tuple.name (if length >= 4)
-    if (opt.tuple.name && typeof opt.tuple.name === 'string') {
-      const nameTrimmed = opt.tuple.name.trim();
-      if (nameTrimmed.length >= 4) {
-        const regex = new RegExp(
-          `(?<=^|[\\s<(\\[_,;:"'-])${escapeRegExp(nameTrimmed)}(?=[\\s>)\\]_,;:."'-]|$)`,
-          'i'
-        );
-        if (regex.test(haystack)) {
-          longestMatchedNeedle = nameTrimmed;
+    if (includeCanonical) {
+      const tupleName = getTupleName(opt.tuple, nameProp);
+      if (tupleName) {
+        const nameTrimmed = tupleName.trim();
+        if (nameTrimmed.length >= 4) {
+          const regex = new RegExp(
+            `(?<=^|[\\s<(\\[_,;:"'-])${escapeRegExp(nameTrimmed)}(?=[\\s>)\\]_,;:."'-]|$)`,
+            'i'
+          );
+          if (regex.test(haystack)) {
+            longestMatchedNeedle = nameTrimmed;
+          }
         }
       }
     }
 
-    // 2. tuple.aliases
     for (const alias of opt.aliases) {
       const aliasTrimmed = alias.trim();
       if (aliasTrimmed.length >= 4) {
@@ -998,36 +1013,35 @@ function matchTier(
     }
   }
 
+  if (step3Matches.size === 0) {
+    return { kind: 'none' };
+  }
   if (step3Matches.size === 1) {
-    return [...step3Matches.values()][0].tuple;
+    return { kind: 'matched', tuple: [...step3Matches.values()][0].tuple };
   }
 
-  if (step3Matches.size > 1) {
-    const matches = [...step3Matches.values()].sort(
-      (a, b) => b.longestNeedle.length - a.longestNeedle.length
-    );
-    const best = matches[0];
-    const second = matches[1];
+  const matches = [...step3Matches.values()].sort(
+    (a, b) => b.longestNeedle.length - a.longestNeedle.length
+  );
+  const best = matches[0];
+  const second = matches[1];
 
-    if (best.longestNeedle.length === second.longestNeedle.length) {
-      return undefined;
-    }
-
-    const bestLower = best.longestNeedle.toLowerCase();
-    for (let i = 1; i < matches.length; i++) {
-      const other = matches[i];
-      if (other.longestNeedle.length >= best.longestNeedle.length) {
-        return undefined;
-      }
-      if (!bestLower.includes(other.longestNeedle.toLowerCase())) {
-        return undefined;
-      }
-    }
-
-    return best.tuple;
+  if (best.longestNeedle.length === second.longestNeedle.length) {
+    return { kind: 'ambiguous' };
   }
 
-  return undefined;
+  const bestLower = best.longestNeedle.toLowerCase();
+  for (let i = 1; i < matches.length; i++) {
+    const other = matches[i];
+    if (other.longestNeedle.length >= best.longestNeedle.length) {
+      return { kind: 'ambiguous' };
+    }
+    if (!bestLower.includes(other.longestNeedle.toLowerCase())) {
+      return { kind: 'ambiguous' };
+    }
+  }
+
+  return { kind: 'matched', tuple: best.tuple };
 }
 
 async function resolveCanonicalOptionFromCandidate(
@@ -1036,13 +1050,14 @@ async function resolveCanonicalOptionFromCandidate(
   spaceId: string | undefined,
   targetSchema: ParseTargetDocumentSchema | undefined,
   deps: SourceParserServiceDeps | undefined
-): Promise<{ value: string; linkedFields?: Record<string, string>; matchedTuple: ParseTargetDocumentOptionTuple } | undefined> {
+): Promise<{ value: string; matchedTuple: ParseTargetDocumentOptionTuple } | undefined> {
   const trimmed = candidate.trim();
   if (trimmed.length === 0) {
     return undefined;
   }
 
   const parsed = parseRecipient(trimmed);
+  const emailTokens = extractEmailTokens(trimmed, parsed);
 
   let canonicalTuples: ParseTargetDocumentOptionTuple[] = [];
 
@@ -1061,6 +1076,7 @@ async function resolveCanonicalOptionFromCandidate(
   }
 
   const keyProp = targetField.options?.key ?? 'key';
+  const nameProp = targetField.options?.name ?? 'name';
   const sourceKey = targetField.options?.source ?? '';
   const localTuples = targetSchema?.options?.[sourceKey] ?? [];
   const localTuplesMap = new Map<string, ParseTargetDocumentOptionTuple>();
@@ -1105,11 +1121,29 @@ async function resolveCanonicalOptionFromCandidate(
     tier3.push({ tuple, aliases: filtered });
   }
 
+  const tiers = [tier1, tier2, tier3];
+  const stepEvaluators: Array<(tierOptions: TierOption[], tierIndex: number) => TierMatchOutcome> = [
+    (tierOptions) => matchEmailOrDomainInTier(trimmed, emailTokens, tierOptions, keyProp),
+    (tierOptions, tierIndex) =>
+      matchExactInTier(trimmed, parsed, tierOptions, keyProp, nameProp, tierIndex === 0),
+    (tierOptions, tierIndex) =>
+      matchBoundedPhraseInTier(trimmed, tierOptions, keyProp, nameProp, tierIndex === 0),
+  ];
+
   let matchedTuple: ParseTargetDocumentOptionTuple | undefined;
-  for (const tierOptions of [tier1, tier2, tier3]) {
-    const match = matchTier(trimmed, parsed, tierOptions, keyProp);
-    if (match) {
-      matchedTuple = match;
+  for (const evaluateStep of stepEvaluators) {
+    for (let tierIndex = 0; tierIndex < tiers.length; tierIndex++) {
+      const outcome = evaluateStep(tiers[tierIndex], tierIndex);
+      if (outcome.kind === 'ambiguous') {
+        return undefined;
+      }
+      if (outcome.kind === 'matched') {
+        const { tuple: outcomeTuple } = outcome;
+        matchedTuple = outcomeTuple;
+        break;
+      }
+    }
+    if (matchedTuple) {
       break;
     }
   }
@@ -1118,37 +1152,13 @@ async function resolveCanonicalOptionFromCandidate(
     return undefined;
   }
 
-  const emittedValue = String(matchedTuple[keyProp] ?? matchedTuple.key);
-
-  if (targetField.minLength !== undefined && emittedValue.length < targetField.minLength) {
+  const emittedValue = getTupleKey(matchedTuple, keyProp);
+  if (!passesFieldConstraints(emittedValue, targetField)) {
     return undefined;
-  }
-  if (targetField.pattern !== undefined) {
-    const regex = new RegExp(targetField.pattern);
-    if (!regex.test(emittedValue)) {
-      return undefined;
-    }
-  }
-
-  const linkedFields: Record<string, string> = {};
-  if (targetSchema?.fields) {
-    for (const sibling of targetSchema.fields) {
-      if (sibling.linkedField && sibling.linkedField.sourceField === targetField.key) {
-        const propVal = matchedTuple[sibling.linkedField.sourceProperty];
-        if (
-          propVal !== undefined &&
-          propVal !== null &&
-          (typeof propVal === 'string' ? propVal.trim().length > 0 : true)
-        ) {
-          linkedFields[sibling.key] = String(propVal);
-        }
-      }
-    }
   }
 
   return {
     value: emittedValue,
-    ...(Object.keys(linkedFields).length > 0 ? { linkedFields } : {}),
     matchedTuple,
   };
 }
@@ -1160,7 +1170,7 @@ async function extractLookupCandidate(
   targetSchema: ParseTargetDocumentSchema | undefined,
   deps: SourceParserServiceDeps | undefined,
   extractionContext: RuleExtractionContext
-): Promise<{ value: string; linkedFields?: Record<string, string>; matchedAttachmentName?: string } | undefined> {
+): Promise<{ value: string; matchedTuple: ParseTargetDocumentOptionTuple; matchedAttachmentName?: string } | undefined> {
   const { from: fromSource } = rule;
 
   if (fromSource === 'email.to' || fromSource === 'email.cc') {
@@ -1184,10 +1194,7 @@ async function extractLookupCandidate(
         deps
       );
       if (match) {
-        return {
-          value: match.value,
-          ...(match.linkedFields ? { linkedFields: match.linkedFields } : {}),
-        };
+        return match;
       }
     }
     return undefined;
@@ -1205,25 +1212,7 @@ async function extractLookupCandidate(
       if (excludeRegex && excludeRegex.test(attName)) {
         continue;
       }
-      let candidateText = attName;
-      if (rule.pattern) {
-        const regex = new RegExp(rule.pattern, rule.flags ?? 'i');
-        const match = attName.match(regex);
-        if (!match) {
-          continue;
-        }
-        if (!matchesCorrelatedCode(match, rule.group, extractionContext.populatedFields)) {
-          continue;
-        }
-        const { group: groupIndex } = rule;
-        candidateText =
-          groupIndex !== undefined && match[groupIndex] !== undefined
-            ? match[groupIndex]
-            : match[1] !== undefined
-              ? match[1]
-              : match[0];
-      }
-
+      const candidateText = extractRegexMatchValue(attName, rule, extractionContext.populatedFields);
       if (!candidateText || candidateText.trim().length === 0) {
         continue;
       }
@@ -1237,8 +1226,7 @@ async function extractLookupCandidate(
       );
       if (match) {
         return {
-          value: match.value,
-          ...(match.linkedFields ? { linkedFields: match.linkedFields } : {}),
+          ...match,
           matchedAttachmentName: attName,
         };
       }
@@ -1254,25 +1242,7 @@ async function extractLookupCandidate(
       if (excludeRegex && excludeRegex.test(token)) {
         continue;
       }
-      let candidateText = token;
-      if (rule.pattern) {
-        const regex = new RegExp(rule.pattern, rule.flags ?? 'i');
-        const match = token.match(regex);
-        if (!match) {
-          continue;
-        }
-        if (!matchesCorrelatedCode(match, rule.group, extractionContext.populatedFields)) {
-          continue;
-        }
-        const { group: groupIndex } = rule;
-        candidateText =
-          groupIndex !== undefined && match[groupIndex] !== undefined
-            ? match[groupIndex]
-            : match[1] !== undefined
-              ? match[1]
-              : match[0];
-      }
-
+      const candidateText = extractRegexMatchValue(token, rule, extractionContext.populatedFields);
       if (!candidateText || candidateText.trim().length === 0) {
         continue;
       }
@@ -1285,10 +1255,7 @@ async function extractLookupCandidate(
         deps
       );
       if (match) {
-        return {
-          value: match.value,
-          ...(match.linkedFields ? { linkedFields: match.linkedFields } : {}),
-        };
+        return match;
       }
     }
     return undefined;
@@ -1303,44 +1270,18 @@ async function extractLookupCandidate(
     return undefined;
   }
 
-  let candidateText = sourceText;
-  if (rule.pattern) {
-    const regex = new RegExp(rule.pattern, rule.flags ?? 'i');
-    const match = sourceText.match(regex);
-    if (!match) {
-      return undefined;
-    }
-    if (!matchesCorrelatedCode(match, rule.group, extractionContext.populatedFields)) {
-      return undefined;
-    }
-    const { group: groupIndex } = rule;
-    candidateText =
-      groupIndex !== undefined && match[groupIndex] !== undefined
-        ? match[groupIndex]
-        : match[1] !== undefined
-          ? match[1]
-          : match[0];
-  }
-
+  const candidateText = extractRegexMatchValue(sourceText, rule, extractionContext.populatedFields);
   if (!candidateText || candidateText.trim().length === 0) {
     return undefined;
   }
 
-  const match = await resolveCanonicalOptionFromCandidate(
+  return resolveCanonicalOptionFromCandidate(
     candidateText,
     targetField,
     request.spaceId,
     targetSchema,
     deps
   );
-  if (match) {
-    return {
-      value: match.value,
-      ...(match.linkedFields ? { linkedFields: match.linkedFields } : {}),
-    };
-  }
-
-  return undefined;
 }
 
 export interface SourceParserServiceDeps {
@@ -1390,7 +1331,7 @@ export class SourceParserService implements SourceParserPort {
       };
     }
 
-    if (!parseSchema || !parseSchema.extractors || parseSchema.extractors.length === 0) {
+    if (!parseSchema || ((!parseSchema.extractors || parseSchema.extractors.length === 0) && !parseSchema.fallback)) {
       return { fields: populatedFields };
     }
 
@@ -1398,7 +1339,7 @@ export class SourceParserService implements SourceParserPort {
     const jsonLogicContext = buildJsonLogicContext(request.context);
     const candidateAttachmentNames = getCandidateAttachmentNames(request.context);
 
-    for (const extractor of parseSchema.extractors) {
+    for (const extractor of parseSchema.extractors ?? []) {
       try {
         if (extractor.source !== 'gmail') {
           // Structural placeholders (drive, pdfForm, googleDoc) are skipped in Pass 2 deterministic Gmail pipeline
@@ -1470,15 +1411,9 @@ export class SourceParserService implements SourceParserPort {
                   // nosemgrep: domain-pass-through-read
                   boundAttachmentName = lookupResult.matchedAttachmentName;
                 }
-                const { value: lookupVal, linkedFields: lookupLinked } = lookupResult;
+                const { value: lookupVal, matchedTuple: lookupTuple } = lookupResult;
                 populatedFields[fieldKey] = lookupVal;
-                if (lookupLinked) {
-                  for (const [siblingKey, siblingVal] of Object.entries(lookupLinked)) {
-                    if (!(siblingKey in populatedFields)) {
-                      populatedFields[siblingKey] = siblingVal;
-                    }
-                  }
-                }
+                populateLinkedFields(fieldKey, lookupTuple, targetSchema, populatedFields);
                 break;
               }
             } else {
@@ -1494,34 +1429,9 @@ export class SourceParserService implements SourceParserPort {
                   // nosemgrep: domain-pass-through-read
                   boundAttachmentName = candidateResult.matchedAttachmentName;
                 }
-                // nosemgrep: domain-pass-through-read
-                const candidate = candidateResult.value;
-                populatedFields[fieldKey] = candidate;
-                if (targetField.options && targetSchema?.fields) {
-                  const sourceKey = targetField.options.source as string;
-                  const optionTuples = targetSchema.options?.[sourceKey] ?? [];
-                  const matchedTuple = optionTuples.find(
-                    (tuple) =>
-                      String(tuple.key) === candidate ||
-                      (tuple.name && String(tuple.name).toLowerCase() === candidate.toLowerCase())
-                  );
-                  if (matchedTuple) {
-                    for (const sibling of targetSchema.fields) {
-                      if (sibling.linkedField && sibling.linkedField.sourceField === fieldKey) {
-                        if (!(sibling.key in populatedFields)) {
-                          const propVal = matchedTuple[sibling.linkedField.sourceProperty];
-                          if (
-                            propVal !== undefined &&
-                            propVal !== null &&
-                            (typeof propVal === 'string' ? propVal.trim().length > 0 : true)
-                          ) {
-                            populatedFields[sibling.key] = String(propVal);
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
+                const { value: candidateVal, matchedTuple: candidateTuple } = candidateResult;
+                populatedFields[fieldKey] = candidateVal;
+                populateLinkedFields(fieldKey, candidateTuple, targetSchema, populatedFields);
                 break;
               }
             }
@@ -1536,16 +1446,70 @@ export class SourceParserService implements SourceParserPort {
     }
 
     if (parseSchema.fallback && this.deps.fallbackExtractor) {
-      try {
-        const fallbackResult = await this.deps.fallbackExtractor.extractFields(request);
-        for (const [key, value] of Object.entries(fallbackResult)) {
-          if (!(key in populatedFields) && value !== undefined && value !== null) {
-            populatedFields[key] = value;
+      const allTargetableKeys = (targetSchema?.fields ?? [])
+        .filter((f) => !f.linkedField)
+        .map((f) => f.key);
+      const targetableKeys = parseSchema.fallback.fields
+        ? parseSchema.fallback.fields.filter((k) => allTargetableKeys.includes(k))
+        : allTargetableKeys;
+      const unpopulatedTargetKeys = targetableKeys.filter((k) => !(k in populatedFields));
+
+      if (unpopulatedTargetKeys.length > 0) {
+        try {
+          const fallbackResult = await this.deps.fallbackExtractor.extractFields({
+            ...request,
+            existingData: { ...populatedFields },
+          });
+          const unpopulatedSet = new Set(unpopulatedTargetKeys);
+          const lookupFieldKeys = new Set<string>();
+          for (const ext of parseSchema.extractors ?? []) {
+            if (ext.source === 'gmail') {
+              for (const [fKey, ruleOrRules] of Object.entries(ext.fields)) {
+                const rules = Array.isArray(ruleOrRules) ? ruleOrRules : [ruleOrRules];
+                if (rules.some((r) => 'lookup' in r && r.lookup === true)) {
+                  lookupFieldKeys.add(fKey);
+                }
+              }
+            }
           }
+
+          for (const [key, value] of Object.entries(fallbackResult ?? {})) {
+            if (!unpopulatedSet.has(key) || key in populatedFields || value === undefined || value === null) {
+              continue;
+            }
+            const targetField = targetSchema?.fields.find((f) => f.key === key);
+            if (!targetField) {
+              continue;
+            }
+            const strVal = typeof value === 'string' ? value : String(value);
+            let accepted: ValidatedCandidate | undefined;
+            if (targetField.options) {
+              const useCanonicalLookup =
+                targetField.options.dynamicConfig !== undefined ||
+                lookupFieldKeys.has(key) ||
+                targetField.options.allowUserInput === true;
+              accepted = useCanonicalLookup
+                ? await resolveCanonicalOptionFromCandidate(
+                    strVal,
+                    targetField,
+                    request.spaceId,
+                    targetSchema,
+                    this.deps
+                  )
+                : validateCandidateWithTuple(strVal, targetField, targetSchema);
+            } else {
+              accepted = validateCandidateWithTuple(strVal, targetField, targetSchema);
+            }
+            if (accepted) {
+              const { value: acceptedVal, matchedTuple: acceptedTuple } = accepted;
+              populatedFields[key] = acceptedVal;
+              populateLinkedFields(key, acceptedTuple, targetSchema, populatedFields);
+            }
+          }
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          statusMessages.push(`Fallback extraction failed: ${errorMsg}`);
         }
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        statusMessages.push(`Fallback extraction failed: ${errorMsg}`);
       }
     }
 

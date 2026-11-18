@@ -123,9 +123,6 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     return resolution.items.map((item) => ({
       key: item.value,
       name: item.text,
-      ...(Array.isArray((item as unknown as { aliases?: unknown }).aliases)
-        ? { aliases: (item as unknown as { aliases: string[] }).aliases }
-        : {}),
     }));
   }
 
