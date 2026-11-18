@@ -15,6 +15,7 @@ import {
   DocumentSpaceTypeSchema,
 } from '../../src/features/document-space/domain';
 import { DocumentSpaceManifestRegistryAdapter } from '../../src/features/document-space/adapters/document-space-manifest-registry';
+import { ParseSchemaRegistryAdapter } from '../../src/features/source-parser/adapters/parse-schema-registry.adapter';
 import type {
   DocumentSpaceManifestRegistryPort,
   DocumentSpaceStoragePort,
@@ -275,8 +276,64 @@ describe('DocumentType JSON files schema validation', () => {
       const driveConfig = await manifestProvider.getDriveConfig();
       expect(driveConfig?.defaultFolderName).toBe('Unfiled');
     });
+
+    it('should validate shared contacts and vendors AliasDictionaries and DocumentParseSchemas across all four DocumentTypes', async () => {
+      const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
+      const manifestProvider = new AppManifestProvider({ manifestPath });
+      const rawManifest = (await manifestProvider.getRawManifest()) as {
+        aliases?: Record<string, string>;
+      };
+
+      expect(rawManifest.aliases).toBeDefined();
+      expect(rawManifest.aliases?.contacts).toBe('./aliases/contacts.json');
+      expect(rawManifest.aliases?.vendors).toBe('./aliases/vendors.json');
+
+      const registry = new ParseSchemaRegistryAdapter(manifestProvider);
+      await registry.initialize();
+
+      const contactsDict = registry.getAliasDictionary('contacts');
+      expect(contactsDict).toBeDefined();
+      expect(contactsDict?.source).toBe('contacts');
+      expect(Object.keys(contactsDict?.mappings ?? {}).length).toBeGreaterThan(0);
+
+      const vendorsDict = registry.getAliasDictionary('vendors');
+      expect(vendorsDict).toBeDefined();
+      expect(vendorsDict?.source).toBe('vendors');
+      expect(Object.keys(vendorsDict?.mappings ?? {}).length).toBeGreaterThan(0);
+
+      for (const docKey of [
+        'communication-project',
+        'communication-proposal',
+        'submittal-arch',
+        'submittal-ffe',
+      ]) {
+        const parseSchema = registry.getParseSchema(docKey);
+        expect(parseSchema).toBeDefined();
+        expect(parseSchema?.extractors.length).toBeGreaterThan(0);
+      }
+
+      const archParse = registry.getParseSchema('submittal-arch');
+      const archExtractor = archParse?.extractors[0];
+      expect(archExtractor?.fields).toHaveProperty('action');
+      expect(archExtractor?.fields).toHaveProperty('date');
+      expect(archExtractor?.fields).toHaveProperty('contact');
+      expect(archExtractor?.fields).toHaveProperty('section');
+      expect(archExtractor?.fields).toHaveProperty('number');
+      expect(archExtractor?.fields).toHaveProperty('revision');
+      expect(archExtractor?.fields).toHaveProperty('title');
+
+      const ffeParse = registry.getParseSchema('submittal-ffe');
+      const ffeExtractor = ffeParse?.extractors[0];
+      expect(ffeExtractor?.fields).toHaveProperty('action');
+      expect(ffeExtractor?.fields).toHaveProperty('date');
+      expect(ffeExtractor?.fields).toHaveProperty('contact');
+      expect(ffeExtractor?.fields).toHaveProperty('vendor');
+      expect(ffeExtractor?.fields).toHaveProperty('specTag');
+      expect(ffeExtractor?.fields).toHaveProperty('revision');
+    });
   });
 });
+
 
 
 

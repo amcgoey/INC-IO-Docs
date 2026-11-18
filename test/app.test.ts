@@ -534,6 +534,140 @@ describe('App integration tests', () => {
       listFoldersSpy.mockRestore();
     });
 
+    it('submits submittal-arch Document resolving identity, calculated fields, and workflow activity', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      const prodApp = createApp({
+        skipSpaceValidation: true,
+        manifestPath,
+        activityEngine: mockDispatcher,
+      });
+
+      await prodApp.initialize();
+
+      const archPayload = {
+        type: 'submittal-arch',
+        space: {
+          id: 'space-projects-1',
+          name: 'Active Projects',
+          typeId: 'projects',
+          abstractStorageId: 'space-projects-1',
+        },
+        data: {
+          status: 'Open',
+          section: '071200',
+          number: '001',
+          revision: 'A',
+          title: 'Waterproofing Specs',
+          date: '261020',
+          contact: 'PMG',
+          action: 'REC',
+        },
+      };
+
+      const response = await prodApp.server.inject({
+        method: 'POST',
+        url: '/documents?eventName=onSubmit',
+        payload: archPayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.success).toBe(true);
+      expect(body.data.id).toBe('071200-001-A-261020-1');
+      expect(body.data.idDocument).toBe('071200-001-A');
+      expect(body.data.idGroup).toBe('071200-001');
+      expect(body.data.calculated.fileName).toBe('071200-001-A Waterproofing Specs - 261020 PMG');
+      expect(body.activities).toEqual([
+        {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'space-projects-1',
+            parentPath: '6 Construction',
+            folderName: 'Submittals',
+          },
+        },
+      ]);
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
+        type: 'MOVE_FILE',
+        payload: {
+          rootStorageId: 'space-projects-1',
+          parentPath: '6 Construction',
+          folderName: 'Submittals',
+        },
+      });
+    });
+
+    it('submits submittal-ffe Document resolving identity, calculated fields, and workflow activity', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      const prodApp = createApp({
+        skipSpaceValidation: true,
+        manifestPath,
+        activityEngine: mockDispatcher,
+      });
+
+      await prodApp.initialize();
+
+      const ffePayload = {
+        type: 'submittal-ffe',
+        space: {
+          id: 'space-projects-1',
+          name: 'Active Projects',
+          typeId: 'projects',
+          abstractStorageId: 'space-projects-1',
+        },
+        data: {
+          status: 'Open',
+          specTag: 'CG104',
+          revision: 'A',
+          specTitle: 'BED - KING',
+          vendor: 'BM',
+          date: '261021',
+          contact: 'INC',
+          action: 'REC',
+        },
+      };
+
+      const response = await prodApp.server.inject({
+        method: 'POST',
+        url: '/documents?eventName=onSubmit',
+        payload: ffePayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.success).toBe(true);
+      expect(body.data.id).toBe('CG104-A-261021-1');
+      expect(body.data.idDocument).toBe('CG104-A');
+      expect(body.data.idGroup).toBe('CG104');
+      expect(body.data.calculated.fileName).toBe('CG104-A Berman Falk - 261021 INC');
+      expect(body.activities).toEqual([
+        {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'space-projects-1',
+            parentPath: '3 FFE',
+            folderName: '05 Submittals',
+          },
+        },
+      ]);
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
+        type: 'MOVE_FILE',
+        payload: {
+          rootStorageId: 'space-projects-1',
+          parentPath: '3 FFE',
+          folderName: '05 Submittals',
+        },
+      });
+    });
+
     it('rejects payload with 400 when lookup field has an invalid option value', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),

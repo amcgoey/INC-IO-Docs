@@ -8,6 +8,8 @@ import {
   normalizeHtmlBodyForPass2,
   splitRfc5322Recipients,
   parseRecipient,
+  getCandidateAttachmentNames,
+  matchesCorrelatedCode,
   FFE_PROXIMITY_REGEX_1,
   FFE_PROXIMITY_REGEX_2,
 } from './domain';
@@ -2186,6 +2188,502 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
 
         expect(result.fields.contact).toBeUndefined();
         expect(mockCanonicalProvider.getCanonicalOptions).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('Ticket #305: Correlated single-attachment extraction and production Submittal Arch & FF&E extraction', () => {
+      it('getCandidateAttachmentNames handles isDriveUrl, items in order, and fallback to email.attachments', () => {
+        expect(
+          getCandidateAttachmentNames({
+            isDriveUrl: true,
+            items: [{ id: '1', name: 'File1.pdf' }],
+            email: { id: 'm1', attachments: [{ id: 'a1', name: 'Att1.pdf' }] },
+          })
+        ).toEqual([]);
+
+        expect(
+          getCandidateAttachmentNames({
+            items: [
+              { id: '1', name: 'File1.pdf' },
+              { id: '2', name: 'File2.pdf' },
+            ],
+            email: { id: 'm1', attachments: [{ id: 'a1', name: 'Att1.pdf' }] },
+          })
+        ).toEqual(['File1.pdf', 'File2.pdf']);
+
+        expect(
+          getCandidateAttachmentNames({
+            items: [],
+            email: {
+              id: 'm1',
+              attachments: [
+                { id: 'a1', name: 'Att1.pdf' },
+                { id: 'a2', name: 'Att2.pdf' },
+              ],
+            },
+          })
+        ).toEqual(['Att1.pdf', 'Att2.pdf']);
+
+        expect(
+          getCandidateAttachmentNames({
+            items: [{ id: '1', name: '   ' }],
+            email: {
+              id: 'm1',
+              attachments: [{ id: 'a1', name: 'FallbackAtt.pdf' }],
+            },
+          })
+        ).toEqual(['FallbackAtt.pdf']);
+      });
+
+      it('matchesCorrelatedCode validates CSI section and number correlation against populated fields', () => {
+        const csiMatch = '071200-001-B Specs'.match(/(\d{6})-(\d{3})-([A-Za-z0-9]+)/);
+        expect(csiMatch).not.toBeNull();
+        expect(
+          matchesCorrelatedCode(csiMatch!, 3, { section: '071200', number: '001' })
+        ).toBe(true);
+        expect(
+          matchesCorrelatedCode(csiMatch!, 3, { section: '081100', number: '001' })
+        ).toBe(false);
+        expect(
+          matchesCorrelatedCode(csiMatch!, 3, { section: '071200', number: '002' })
+        ).toBe(false);
+
+        const mismatchedCsiMatch = '081100-002-C Doors'.match(/(\d{6})-(\d{3})-([A-Za-z0-9]+)/);
+        expect(
+          matchesCorrelatedCode(mismatchedCsiMatch!, 3, { section: '071200', number: '001' })
+        ).toBe(false);
+      });
+
+      it('matchesCorrelatedCode validates FF&E specTag correlation against populated fields', () => {
+        const specMatch = 'CG104-B Cut Sheet'.match(/([A-Za-z]{2}\d{3}[A-Za-z]?)-([A-Za-z0-9]+)/);
+        expect(specMatch).not.toBeNull();
+        expect(matchesCorrelatedCode(specMatch!, 2, { specTag: 'CG104' })).toBe(true);
+        expect(matchesCorrelatedCode(specMatch!, 2, { specTag: 'cg104' })).toBe(true);
+        expect(matchesCorrelatedCode(specMatch!, 2, { specTag: 'LT108' })).toBe(false);
+      });
+
+      it('binds compound attachment extraction to first matching attachment and prevents cross-attachment field splicing in Submittal Arch', async () => {
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  section: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?',
+                      group: 1,
+                    },
+                  ],
+                  number: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?',
+                      group: 2,
+                    },
+                  ],
+                  revision: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '(\\d{6})-(\\d{3})-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 3,
+                    },
+                    {
+                      from: 'email.labels',
+                      pattern: '(\\d{6})-(\\d{3})-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 3,
+                    },
+                    {
+                      from: 'email.subjectClean',
+                      pattern: '(\\d{6})-(\\d{3})-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 3,
+                    },
+                  ],
+                  title: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?[\\s_]+(?:[-–—]\\s*)?(.+?)(?:\\.[A-Za-z]{2,5})?$',
+                      group: 4,
+                    },
+                    {
+                      from: 'email.labels',
+                      pattern: '(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?[\\s_]+(?:[-–—]\\s*)?(.+?)(?:\\.[A-Za-z]{2,5})?$',
+                      group: 4,
+                    },
+                    {
+                      from: 'email.subjectClean',
+                      pattern: '(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?[\\s_]+(?:[-–—]\\s*)?(.+?)(?:\\.[A-Za-z]{2,5})?$',
+                      group: 4,
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              { key: 'section', type: 'string', pattern: '^\\d{6}$' },
+              { key: 'number', type: 'string', pattern: '^\\d{3}$' },
+              { key: 'revision', type: 'string', minLength: 1 },
+              { key: 'title', type: 'string', minLength: 1 },
+            ],
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        const result = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          context: {
+            email: {
+              id: 'msg-submittal-arch-1',
+              subject: 'Re: Submittal 071200-001-B Waterproofing Specs',
+              attachments: [
+                { id: 'att-0', name: 'Invoice_12345.pdf' },
+                { id: 'att-1', name: '071200-001 Waterproofing Specs.pdf' },
+                { id: 'att-2', name: '081100-002-C Hollow Metal Doors.pdf' },
+              ],
+            },
+          },
+        });
+
+        expect(result.fields.section).toBe('071200');
+        expect(result.fields.number).toBe('001');
+        expect(result.fields.title).toBe('Waterproofing Specs');
+        expect(result.fields.revision).toBe('B');
+      });
+
+      it('rejects fallback revision and title when leading code does not match already-populated section and number', async () => {
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  section: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?',
+                      group: 1,
+                    },
+                  ],
+                  number: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?',
+                      group: 2,
+                    },
+                  ],
+                  revision: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '(\\d{6})-(\\d{3})-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 3,
+                    },
+                    {
+                      from: 'email.subjectClean',
+                      pattern: '(\\d{6})-(\\d{3})-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 3,
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              { key: 'section', type: 'string', pattern: '^\\d{6}$' },
+              { key: 'number', type: 'string', pattern: '^\\d{3}$' },
+              { key: 'revision', type: 'string', minLength: 1 },
+            ],
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        const result = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          context: {
+            email: {
+              id: 'msg-submittal-arch-2',
+              subject: 'Re: 081100-002-D Doors for another project',
+              attachments: [
+                { id: 'att-1', name: '071200-001 Waterproofing Specs.pdf' },
+              ],
+            },
+          },
+        });
+
+        expect(result.fields.section).toBe('071200');
+        expect(result.fields.number).toBe('001');
+        expect(result.fields.revision).toBeUndefined();
+      });
+
+      it('resolves specTag with lookup: true, auto-derives LinkedField specTitle, binds revision, and resolves vendor across 3 tiers for Submittal FF&E', async () => {
+        const mockCanonicalProvider = {
+          getCanonicalOptions: vi.fn().mockImplementation(async (_spaceId, field) => {
+            if (field.options?.source === 'vendors') {
+              return [
+                { key: 'BM', name: 'Berman Falk' },
+                { key: 'Carn', name: 'Carnegie' },
+              ];
+            }
+            return [];
+          }),
+        };
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  action: [
+                    {
+                      when: { '!=': [{ var: 'email.fromDomain' }, 'inc.nyc'] },
+                      set: 'REC',
+                    },
+                  ],
+                  date: { from: 'email.date' },
+                  contact: [
+                    {
+                      when: {
+                        or: [
+                          { in: ['SENT', { var: 'email.labels' }] },
+                          { '==': [{ var: 'email.fromDomain' }, 'inc.nyc'] },
+                        ],
+                      },
+                      from: 'email.to',
+                      excludePattern: '@inc\\.nyc\\b',
+                      lookup: true,
+                    },
+                    { from: 'email.from', lookup: true },
+                  ],
+                  vendor: [
+                    { from: 'attachmentName', lookup: true },
+                    { from: 'email.labels', lookup: true },
+                    { from: 'email.subjectClean', lookup: true },
+                    {
+                      when: { '!=': [{ var: 'email.fromDomain' }, 'inc.nyc'] },
+                      from: 'email.from',
+                      lookup: true,
+                    },
+                  ],
+                  specTag: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '([A-Za-z]{2}\\d{3}[A-Za-z]?)(?:-([A-Za-z0-9]+))?',
+                      group: 1,
+                      lookup: true,
+                    },
+                  ],
+                  revision: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 2,
+                    },
+                    {
+                      from: 'email.subjectClean',
+                      pattern: '([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 2,
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              {
+                key: 'action',
+                type: 'string',
+                options: { source: 'actions', key: 'key', name: 'name' },
+              },
+              { key: 'date', type: 'string' },
+              {
+                key: 'contact',
+                type: 'string',
+                options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true },
+              },
+              {
+                key: 'vendor',
+                type: 'string',
+                options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true, dynamicConfig: { provider: 'google_drive' } },
+              },
+              {
+                key: 'specTag',
+                type: 'string',
+                options: { source: 'specs', key: 'key', allowUserInput: true },
+              },
+              {
+                key: 'specTitle',
+                type: 'string',
+                linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+              },
+              { key: 'revision', type: 'string', minLength: 1 },
+            ],
+            options: {
+              actions: [{ key: 'REC', name: 'Received' }],
+              contacts: [
+                { key: 'BW', name: 'Benjamin West' },
+                { key: 'INC', name: 'INC Architecture & Design' },
+              ],
+              specs: [
+                { key: 'CG104', name: 'BED - KING' },
+                { key: 'LT108', name: 'SCONCE' },
+              ],
+            },
+          }),
+          getAliasDictionary: vi.fn().mockImplementation((source: string) => {
+            if (source === 'vendors') {
+              return {
+                source: 'vendors',
+                mappings: {
+                  BM: ['@bermanfalk.com', 'Berman Falk', 'BermanFalk'],
+                },
+              };
+            }
+            if (source === 'contacts') {
+              return {
+                source: 'contacts',
+                mappings: {
+                  BW: ['@benjaminwest.com', 'Benjamin West'],
+                },
+              };
+            }
+            return undefined;
+          }),
+        };
+
+        const mockPredicateEvaluator = {
+          evaluate: vi.fn((rule: unknown, data: Record<string, unknown>) => {
+            const typedRule = rule as Record<string, unknown> | undefined;
+            const typedData = data as { email?: { fromDomain?: string; labels?: string[] } };
+            if (typedRule && typedRule['!=']) {
+              return typedData.email?.fromDomain !== 'inc.nyc';
+            }
+            if (typedRule && typedRule.or) {
+              return (
+                (typedData.email?.labels ?? []).includes('SENT') ||
+                typedData.email?.fromDomain === 'inc.nyc'
+              );
+            }
+            return false;
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+          predicateEvaluator: mockPredicateEvaluator,
+          canonicalOptionsProvider: mockCanonicalProvider,
+        });
+
+        const result = await service.extractFields({
+          documentTypeKey: 'submittal-ffe',
+          spaceId: 'space-projects-1',
+          context: {
+            email: {
+              id: 'msg-ffe-1',
+              subject: 'CG104-A Berman Falk King Bed Submittal',
+              date: 'Wed, 21 Oct 2026 10:00:00 GMT',
+              from: 'Berman Rep <rep@bermanfalk.com>',
+              to: 'Designer <designer@inc.nyc>',
+              labels: ['INBOX', 'Submittals'],
+              attachments: [
+                { id: 'att-1', name: 'CG104-A Berman Falk Cut Sheet.pdf' },
+              ],
+            },
+          },
+        });
+
+        expect(result.fields.action).toBe('REC');
+        expect(result.fields.date).toBe('261021');
+        expect(result.fields.specTag).toBe('CG104');
+        expect(result.fields.specTitle).toBe('BED - KING');
+        expect(result.fields.revision).toBe('A');
+        expect(result.fields.vendor).toBe('BM');
+      });
+
+      it('rejects fallback revision in Submittal FF&E when subject specTag does not match populated specTag', async () => {
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  specTag: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '([A-Za-z]{2}\\d{3}[A-Za-z]?)(?:-([A-Za-z0-9]+))?',
+                      group: 1,
+                      lookup: true,
+                    },
+                  ],
+                  revision: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 2,
+                    },
+                    {
+                      from: 'email.subjectClean',
+                      pattern: '([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 2,
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              {
+                key: 'specTag',
+                type: 'string',
+                options: { source: 'specs', key: 'key', allowUserInput: true },
+              },
+              { key: 'revision', type: 'string', minLength: 1 },
+            ],
+            options: {
+              specs: [
+                { key: 'CG104', name: 'BED - KING' },
+                { key: 'LT108', name: 'SCONCE' },
+              ],
+            },
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        // Attachment binds CG104 (no revision in filename)
+        // Subject mentions a different spec tag: LT108-B
+        const result = await service.extractFields({
+          documentTypeKey: 'submittal-ffe',
+          context: {
+            email: {
+              id: 'msg-ffe-2',
+              subject: 'Re: LT108-B Sconces inquiry',
+              attachments: [
+                { id: 'att-1', name: 'CG104 Cut Sheet.pdf' },
+              ],
+            },
+          },
+        });
+
+        expect(result.fields.specTag).toBe('CG104');
+        expect(result.fields.revision).toBeUndefined();
       });
     });
   });
