@@ -13,6 +13,11 @@ import {
   type DynamicValidationQuery,
   type DynamicValidationResult,
 } from '../features/document/ports';
+import type {
+  CanonicalOptionsProviderPort,
+  ParseTargetDocumentField,
+  ParseTargetDocumentOptionTuple,
+} from '../features/source-parser/ports';
 
 export interface DynamicOptionsDriveClient {
   listFolders(options?: {
@@ -88,14 +93,37 @@ function cleanSpaceId(spaceId?: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynamicValidationPort {
+export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynamicValidationPort, CanonicalOptionsProviderPort {
   private readonly timeoutMs: number;
+  private readonly queryResolutionCache = new Map<string, Promise<DynamicOptionResolution>>();
 
   constructor(
     private readonly driveClient: DynamicOptionsDriveClient,
     options?: DynamicOptionsAdapterOptions
   ) {
     this.timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  async getCanonicalOptions(
+    spaceId: string | undefined,
+    field: ParseTargetDocumentField
+  ): Promise<ParseTargetDocumentOptionTuple[]> {
+    const cleanedSpace = cleanSpaceId(spaceId);
+    if (!cleanedSpace || !field.options || !field.options.dynamicConfig) {
+      return [];
+    }
+    const query: DynamicOptionQuery = {
+      sourceKey: field.options.source,
+      config: field.options.dynamicConfig,
+    };
+    const resolution = await this.resolveQueryWithTimeout(query, cleanedSpace);
+    if (resolution.status !== 'ready') {
+      return [];
+    }
+    return resolution.items.map((item) => ({
+      key: item.value,
+      name: item.text,
+    }));
   }
 
   async fetchOptions(
@@ -127,7 +155,20 @@ export class DynamicOptionsAdapter implements OptionsFetcherPort, DocumentDynami
     return results;
   }
 
-  private async resolveQueryWithTimeout(
+  private resolveQueryWithTimeout(
+    query: DynamicOptionQuery,
+    spaceId?: string
+  ): Promise<DynamicOptionResolution> {
+    const cacheKey = `${spaceId ?? ''}::${query.sourceKey}::${JSON.stringify(query.config ?? {})}`;
+    let cached = this.queryResolutionCache.get(cacheKey);
+    if (!cached) {
+      cached = this.executeResolveQueryWithTimeout(query, spaceId);
+      this.queryResolutionCache.set(cacheKey, cached);
+    }
+    return cached;
+  }
+
+  private async executeResolveQueryWithTimeout(
     query: DynamicOptionQuery,
     spaceId?: string
   ): Promise<DynamicOptionResolution> {

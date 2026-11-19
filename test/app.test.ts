@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createApp, type AppInstance } from '../src/app/server';
+import { createApp, type AppInstance, type CompositeManifestProvider } from '../src/app/server';
 import type {
   DocumentSchemaRegistryPort,
   ActivityDispatcherPort,
@@ -187,7 +187,6 @@ describe('App integration tests', () => {
       });
       expect(mockActivityEngine.dispatch).not.toHaveBeenCalled();
     });
-
   });
 
   describe('Fail-fast startup behavior', () => {
@@ -511,6 +510,7 @@ describe('App integration tests', () => {
       const body = JSON.parse(response.payload);
       expect(body.success).toBe(true);
       expect(body.data).toEqual(expectedDocument);
+      expect('aliases' in (body.data.data.direction as Record<string, unknown>)).toBe(false);
       expect(body.activities).toEqual([
         {
           type: 'MOVE_FILE',
@@ -532,6 +532,140 @@ describe('App integration tests', () => {
       });
 
       listFoldersSpy.mockRestore();
+    });
+
+    it('submits submittal-arch Document resolving identity, calculated fields, and workflow activity', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      const prodApp = createApp({
+        skipSpaceValidation: true,
+        manifestPath,
+        activityEngine: mockDispatcher,
+      });
+
+      await prodApp.initialize();
+
+      const archPayload = {
+        type: 'submittal-arch',
+        space: {
+          id: 'space-projects-1',
+          name: 'Active Projects',
+          typeId: 'projects',
+          abstractStorageId: 'space-projects-1',
+        },
+        data: {
+          status: 'Open',
+          section: '071200',
+          number: '001',
+          revision: 'A',
+          title: 'Waterproofing Specs',
+          date: '261020',
+          contact: 'PMG',
+          action: 'REC',
+        },
+      };
+
+      const response = await prodApp.server.inject({
+        method: 'POST',
+        url: '/documents?eventName=onSubmit',
+        payload: archPayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.success).toBe(true);
+      expect(body.data.id).toBe('071200-001-A-261020-1');
+      expect(body.data.idDocument).toBe('071200-001-A');
+      expect(body.data.idGroup).toBe('071200-001');
+      expect(body.data.calculated.fileName).toBe('071200-001-A Waterproofing Specs - 261020 PMG');
+      expect(body.activities).toEqual([
+        {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'space-projects-1',
+            parentPath: '6 Construction',
+            folderName: 'Submittals',
+          },
+        },
+      ]);
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
+        type: 'MOVE_FILE',
+        payload: {
+          rootStorageId: 'space-projects-1',
+          parentPath: '6 Construction',
+          folderName: 'Submittals',
+        },
+      });
+    });
+
+    it('submits submittal-ffe Document resolving identity, calculated fields, and workflow activity', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      const prodApp = createApp({
+        skipSpaceValidation: true,
+        manifestPath,
+        activityEngine: mockDispatcher,
+      });
+
+      await prodApp.initialize();
+
+      const ffePayload = {
+        type: 'submittal-ffe',
+        space: {
+          id: 'space-projects-1',
+          name: 'Active Projects',
+          typeId: 'projects',
+          abstractStorageId: 'space-projects-1',
+        },
+        data: {
+          status: 'Open',
+          specTag: 'CG104',
+          revision: 'A',
+          specTitle: 'BED - KING',
+          vendor: 'BM',
+          date: '261021',
+          contact: 'INC',
+          action: 'REC',
+        },
+      };
+
+      const response = await prodApp.server.inject({
+        method: 'POST',
+        url: '/documents?eventName=onSubmit',
+        payload: ffePayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.success).toBe(true);
+      expect(body.data.id).toBe('CG104-A-261021-1');
+      expect(body.data.idDocument).toBe('CG104-A');
+      expect(body.data.idGroup).toBe('CG104');
+      expect(body.data.calculated.fileName).toBe('CG104-A Berman Falk - 261021 INC');
+      expect(body.activities).toEqual([
+        {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'space-projects-1',
+            parentPath: '3 FFE',
+            folderName: '05 Submittals',
+          },
+        },
+      ]);
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
+        type: 'MOVE_FILE',
+        payload: {
+          rootStorageId: 'space-projects-1',
+          parentPath: '3 FFE',
+          folderName: '05 Submittals',
+        },
+      });
     });
 
     it('rejects payload with 400 when lookup field has an invalid option value', async () => {
@@ -1046,6 +1180,183 @@ describe('App integration tests', () => {
       });
 
       expect(appInstance).toBeDefined();
+    });
+  });
+
+  describe('DocumentParseSchema fail-fast startup validation', () => {
+    it('fails fast on createApp().initialize() if a documentParseSchema targets an unknown field', async () => {
+      const mockManifestProvider = {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: ['./types/bad-parse.json'],
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'bad-parse',
+          documentSchema: {
+            fields: [{ key: 'date', type: 'string' }],
+          },
+          documentParseSchema: {
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  unknownField: { from: 'email.date' },
+                },
+              },
+            ],
+          },
+        }),
+        getDriveConfig: vi.fn().mockResolvedValue(undefined),
+        getWorkspaceConfig: vi.fn().mockResolvedValue(undefined),
+        getSheetsConfig: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const appInstance = createApp({
+        manifestProvider: mockManifestProvider as unknown as CompositeManifestProvider,
+        skipSpaceValidation: true,
+      });
+
+      await expect(appInstance.initialize()).rejects.toThrow(
+        'targets unknown field "unknownField"'
+      );
+    });
+
+    it('fails fast on createApp().initialize() if lookup: true targets a field without options', async () => {
+      const mockManifestProvider = {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: ['./types/bad-lookup.json'],
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'bad-lookup',
+          documentSchema: {
+            fields: [{ key: 'date', type: 'string' }],
+          },
+          documentParseSchema: {
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  date: { from: 'email.date', lookup: true },
+                },
+              },
+            ],
+          },
+        }),
+        getDriveConfig: vi.fn().mockResolvedValue(undefined),
+        getWorkspaceConfig: vi.fn().mockResolvedValue(undefined),
+        getSheetsConfig: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const appInstance = createApp({
+        manifestProvider: mockManifestProvider as unknown as CompositeManifestProvider,
+        skipSpaceValidation: true,
+      });
+
+      await expect(appInstance.initialize()).rejects.toThrow(
+        'specifies lookup: true for field "date" which does not have options'
+      );
+    });
+
+    it('fails fast on createApp().initialize() if excludePattern contains invalid regex', async () => {
+      const mockManifestProvider = {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: ['./types/bad-regex.json'],
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'bad-regex',
+          documentSchema: {
+            fields: [
+              {
+                key: 'contact',
+                type: 'string',
+                options: { source: 'contacts', key: 'key', name: 'name' },
+              },
+            ],
+          },
+          documentParseSchema: {
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  contact: { from: 'email.to', excludePattern: '(?+invalid', lookup: true },
+                },
+              },
+            ],
+          },
+        }),
+        getDriveConfig: vi.fn().mockResolvedValue(undefined),
+        getWorkspaceConfig: vi.fn().mockResolvedValue(undefined),
+        getSheetsConfig: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const appInstance = createApp({
+        manifestProvider: mockManifestProvider as unknown as CompositeManifestProvider,
+        skipSpaceValidation: true,
+      });
+
+      await expect(appInstance.initialize()).rejects.toThrow(/invalid excludePattern/i);
+    });
+
+    it('fails fast on createApp().initialize() if Tier 1 aliases contain duplicate normalized alias across keys', async () => {
+      const mockManifestProvider = {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: ['./types/dup-alias.json'],
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'dup-alias',
+          documentSchema: {
+            fields: [
+              {
+                key: 'direction',
+                type: 'string',
+                options: { source: 'direction', key: 'key', name: 'name' },
+              },
+            ],
+            options: {
+              direction: [
+                { key: 'IN', name: 'Incoming', aliases: ['inbound'] },
+                { key: 'OT', name: 'Outgoing', aliases: ['INBOUND'] },
+              ],
+            },
+          },
+        }),
+        getDriveConfig: vi.fn().mockResolvedValue(undefined),
+        getWorkspaceConfig: vi.fn().mockResolvedValue(undefined),
+        getSheetsConfig: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const appInstance = createApp({
+        manifestProvider: mockManifestProvider as unknown as CompositeManifestProvider,
+        skipSpaceValidation: true,
+      });
+
+      await expect(appInstance.initialize()).rejects.toThrow(/Duplicate alias "INBOUND"/i);
+    });
+
+    it('fails fast on createApp().initialize() if Tier 3 shared AliasDictionary contains empty/whitespace alias', async () => {
+      const mockManifestProvider = {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: [],
+          aliases: {
+            contacts: './aliases/contacts.json',
+          },
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          source: 'contacts',
+          mappings: {
+            c1: ['   '],
+          },
+        }),
+        getDriveConfig: vi.fn().mockResolvedValue(undefined),
+        getWorkspaceConfig: vi.fn().mockResolvedValue(undefined),
+        getSheetsConfig: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const appInstance = createApp({
+        manifestProvider: mockManifestProvider as unknown as CompositeManifestProvider,
+        skipSpaceValidation: true,
+      });
+
+      await expect(appInstance.initialize()).rejects.toThrow(/Empty or whitespace-only alias/i);
     });
   });
 });

@@ -29,6 +29,30 @@ function extractKey(raw: unknown): string {
   return Value.Check(RawDocumentKeySchema, raw) && raw.key ? ` "${raw.key}"` : '';
 }
 
+export function stripOptionAliases(documentType: DocumentType): DocumentType {
+  if (!documentType.documentSchema.options) {
+    return documentType;
+  }
+  const strippedOptions: Record<string, Record<string, unknown>[]> = {};
+  for (const [sourceKey, tuples] of Object.entries(documentType.documentSchema.options)) {
+    strippedOptions[sourceKey] = tuples.map((tuple) => {
+      if (tuple && typeof tuple === 'object' && 'aliases' in tuple) {
+        const tupleObj = { ...(tuple as Record<string, unknown>) };
+        delete tupleObj.aliases;
+        return tupleObj;
+      }
+      return tuple;
+    });
+  }
+  return {
+    ...documentType,
+    documentSchema: {
+      ...documentType.documentSchema,
+      options: strippedOptions,
+    },
+  };
+}
+
 export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort {
   constructor(
     private readonly manifestProvider: RawManifestProviderPort,
@@ -117,7 +141,7 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
         }
       }
 
-      documentTypes.push(validatedDocumentType);
+      documentTypes.push(stripOptionAliases(validatedDocumentType));
     }
 
     return documentTypes;

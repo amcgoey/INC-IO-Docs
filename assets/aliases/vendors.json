@@ -1,0 +1,43 @@
+{
+  "source": "vendors",
+  "mappings": {
+    "BM": [
+      "@bermanfalk.com",
+      "Berman Falk",
+      "BermanFalk",
+      "Berman"
+    ],
+    "AL": [
+      "@ashleylighting.com",
+      "Ashley Lighting",
+      "Ashley"
+    ],
+    "Carn": [
+      "@carnegiefabrics.com",
+      "Carnegie Fabrics",
+      "Carnegie"
+    ],
+    "Delta": [
+      "@deltafabrics.com",
+      "Delta Fabrics",
+      "Delta Furniture"
+    ],
+    "FDT": [
+      "@fildoux.com",
+      "Fil Doux Textiles",
+      "Fil Doux",
+      "FilDoux"
+    ],
+    "LA": [
+      "@lightannex.com",
+      "Light Annex",
+      "LightAnnex"
+    ],
+    "MH": [
+      "@mohawkgroup.com",
+      "Mohawk Group",
+      "Mohawk Fabrics",
+      "Mohawk"
+    ]
+  }
+}

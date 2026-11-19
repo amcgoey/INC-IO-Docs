@@ -77,6 +77,7 @@ export const UiProcessGmailMessageDescriptorSchema = Type.Object({
   date: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   plainTextBody: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   htmlBody: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  labels: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   attachments: Type.Array(UiProcessGmailAttachmentDescriptorSchema),
 });
 export type UiProcessGmailMessageDescriptor = Static<typeof UiProcessGmailMessageDescriptorSchema>;
@@ -158,11 +159,46 @@ export function extractTextFromHtml(html?: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
+export function isSystemLabel(label: string): boolean {
+  const upper = label.toUpperCase();
+  return (
+    upper === 'INBOX' ||
+    upper === 'SENT' ||
+    upper === 'DRAFT' ||
+    upper === 'TRASH' ||
+    upper === 'SPAM' ||
+    upper === 'UNREAD' ||
+    upper === 'STARRED' ||
+    upper === 'IMPORTANT' ||
+    upper === 'CHAT' ||
+    upper.startsWith('CATEGORY_')
+  );
+}
+
 export function hasProposalOpportunityMarkers(
   subject?: string,
   plainTextBody?: string,
-  htmlBody?: string
+  htmlBody?: string,
+  labels?: string[]
 ): boolean {
+  if (labels && labels.length > 0) {
+    for (const label of labels) {
+      if (typeof label !== 'string') continue;
+      const trimmed = label.trim();
+      if (!trimmed || isSystemLabel(trimmed)) continue;
+      if (PROPOSAL_OPPORTUNITY_MARKERS_REGEX.test(trimmed)) {
+        return true;
+      }
+      const segments = trimmed.split('/');
+      for (const seg of segments) {
+        const segTrimmed = seg.trim();
+        if (segTrimmed && segTrimmed !== trimmed && PROPOSAL_OPPORTUNITY_MARKERS_REGEX.test(segTrimmed)) {
+          return true;
+        }
+      }
+    }
+  }
+
   if (subject && PROPOSAL_OPPORTUNITY_MARKERS_REGEX.test(subject)) {
     return true;
   }
@@ -511,6 +547,76 @@ export function extractDocumentData(
   formData?: Record<string, unknown>
 ): Record<string, unknown> {
   return filterFormData(formData, (key) => !isSelectionKey(key));
+}
+
+export function sanitizeFormDataForSourceReset(
+  formData?: Record<string, unknown>
+): Record<string, unknown> {
+  return filterFormData(formData, (key) => isSelectionKey(key) || key === 'spaceId');
+}
+
+export function isInactiveDocTypeFieldKey(
+  key: string,
+  activeDocTypeKey: string | undefined,
+  allKnownDocTypes: Iterable<string>
+): boolean {
+  for (const dt of allKnownDocTypes) {
+    if (dt !== activeDocTypeKey && key.endsWith(`_${dt}`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function pruneFormDataForTypeSwitch(
+  formData: Record<string, unknown>,
+  activeDocTypeKey: string | undefined,
+  allKnownDocTypes: Iterable<string>,
+  activeDocSchemaFields?: Set<string>
+): Record<string, unknown> {
+  const pruned: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(formData)) {
+    if (isSelectionKey(key) || key === 'spaceId') {
+      pruned[key] = value;
+      continue;
+    }
+    if (isInactiveDocTypeFieldKey(key, activeDocTypeKey, allKnownDocTypes)) {
+      pruned[key] = value;
+      continue;
+    }
+    if (activeDocSchemaFields === undefined || activeDocSchemaFields.has(key)) {
+      pruned[key] = value;
+    }
+  }
+  return pruned;
+}
+
+export function extractActiveTypeExistingData(
+  formData: Record<string, unknown> | undefined,
+  activeDocTypeKey: string | undefined,
+  allKnownDocTypes: Iterable<string>
+): Record<string, unknown> {
+  if (!formData) {
+    return {};
+  }
+  const existingData: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(formData)) {
+    if (
+      isSelectionKey(key) ||
+      key === 'spaceId' ||
+      isInactiveDocTypeFieldKey(key, activeDocTypeKey, allKnownDocTypes)
+    ) {
+      continue;
+    }
+    if (
+      typeof value === 'string'
+        ? value.trim().length > 0
+        : value !== undefined && value !== null
+    ) {
+      existingData[key] = value;
+    }
+  }
+  return existingData;
 }
 
 /**

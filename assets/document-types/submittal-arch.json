@@ -220,5 +220,141 @@
         ]
       }
     ]
+  },
+  "documentParseSchema": {
+    "extractors": [
+      {
+        "source": "gmail",
+        "fields": {
+          "action": [
+            {
+              "when": {
+                "!=": [
+                  { "var": "email.fromDomain" },
+                  "inc.nyc"
+                ]
+              },
+              "set": "REC"
+            }
+          ],
+          "date": {
+            "from": "email.date"
+          },
+          "contact": [
+            {
+              "when": {
+                "or": [
+                  {
+                    "in": [
+                      "SENT",
+                      { "var": "email.labels" }
+                    ]
+                  },
+                  {
+                    "==": [
+                      { "var": "email.fromDomain" },
+                      "inc.nyc"
+                    ]
+                  }
+                ]
+              },
+              "from": "email.to",
+              "excludePattern": "@inc\\.nyc\\b",
+              "lookup": true
+            },
+            {
+              "when": {
+                "!": {
+                  "or": [
+                    {
+                      "in": [
+                        "SENT",
+                        { "var": "email.labels" }
+                      ]
+                    },
+                    {
+                      "==": [
+                        { "var": "email.fromDomain" },
+                        "inc.nyc"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "from": "email.from",
+              "lookup": true
+            }
+          ],
+          "section": [
+            {
+              "from": "attachmentName",
+              "pattern": "(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?",
+              "group": 1
+            },
+            {
+              "from": "email.labels",
+              "pattern": "(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?",
+              "group": 1
+            },
+            {
+              "from": "email.subjectClean",
+              "pattern": "(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?",
+              "group": 1
+            }
+          ],
+          "number": [
+            {
+              "from": "attachmentName",
+              "pattern": "(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?",
+              "group": 2
+            },
+            {
+              "from": "email.labels",
+              "pattern": "(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?",
+              "group": 2
+            },
+            {
+              "from": "email.subjectClean",
+              "pattern": "(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?",
+              "group": 2
+            }
+          ],
+          "revision": [
+            {
+              "from": "attachmentName",
+              "pattern": "(\\d{6})-(\\d{3})-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)",
+              "group": 3
+            },
+            {
+              "from": "email.labels",
+              "pattern": "(\\d{6})-(\\d{3})-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)",
+              "group": 3
+            },
+            {
+              "from": "email.subjectClean",
+              "pattern": "(\\d{6})-(\\d{3})-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)",
+              "group": 3
+            }
+          ],
+          "title": [
+            {
+              "from": "attachmentName",
+              "pattern": "(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?[\\s_]+(?:[-–—]\\s*)?(.+?)(?:\\.[A-Za-z]{2,5})?$",
+              "group": 4
+            },
+            {
+              "from": "email.labels",
+              "pattern": "(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?[\\s_]+(?:[-–—]\\s*)?(.+?)(?:\\.[A-Za-z]{2,5})?$",
+              "group": 4
+            },
+            {
+              "from": "email.subjectClean",
+              "pattern": "(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?[\\s_]+(?:[-–—]\\s*)?(.+?)(?:\\.[A-Za-z]{2,5})?$",
+              "group": 4
+            }
+          ]
+        }
+      }
+    ]
   }
 }

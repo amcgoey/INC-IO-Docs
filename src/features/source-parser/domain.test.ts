@@ -2,6 +2,16 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   SourceParserService,
   extractTextFromHtml,
+  matchCandidateSpaces,
+  cleanSubject,
+  parseDateToYymmdd,
+  normalizeHtmlBodyForPass2,
+  splitRfc5322Recipients,
+  parseRecipient,
+  getCandidateAttachmentNames,
+  matchesCorrelatedCode,
+  FFE_PROXIMITY_REGEX_1,
+  FFE_PROXIMITY_REGEX_2,
 } from './domain';
 import type {
   DriveSourceContextPort,
@@ -1249,6 +1259,2137 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
         statusMessages: [
           'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.',
         ],
+      });
+    });
+  });
+
+  describe('Gmail labels hydration & label-aware Pass 1 routing (Ticket #302)', () => {
+    const mockDrivePort: DriveSourceContextPort = {
+      getItemHierarchy: vi.fn(),
+    };
+
+    const candidateSpaces = [
+      { id: 'proj-123', name: '123 Main St', typeId: 'projects' },
+      { id: 'proj-skyline', name: 'Skyline Tower', typeId: 'projects' },
+    ];
+
+    describe('FFE Proximity Regular Expressions with hierarchical delimiters and plural forms', () => {
+      it('matches hierarchical label with slash delimiter and plural Submittals', () => {
+        expect(FFE_PROXIMITY_REGEX_1.test('Projects/FF&E/Submittals')).toBe(true);
+        expect(FFE_PROXIMITY_REGEX_1.test('FF&E Submittals')).toBe(true);
+        expect(FFE_PROXIMITY_REGEX_1.test('FFE Submittal')).toBe(true);
+        expect(FFE_PROXIMITY_REGEX_2.test('Submittals/FF&E')).toBe(true);
+        expect(FFE_PROXIMITY_REGEX_2.test('Submittals / FF&E')).toBe(true);
+        expect(FFE_PROXIMITY_REGEX_2.test('Submittal - FF&E')).toBe(true);
+      });
+    });
+
+    describe('matchCandidateSpaces with labels', () => {
+      it('matches candidate space from non-system label across full string and hierarchical segments', () => {
+        const matchFull = matchCandidateSpaces(
+          candidateSpaces,
+          undefined,
+          undefined,
+          ['Projects/123 Main St/Submittals']
+        );
+        expect(matchFull?.id).toBe('proj-123');
+
+        const matchSegment = matchCandidateSpaces(
+          candidateSpaces,
+          undefined,
+          undefined,
+          ['123 Main St']
+        );
+        expect(matchSegment?.id).toBe('proj-123');
+      });
+
+      it('inspects non-system labels ahead of subject and body text', () => {
+        const match = matchCandidateSpaces(
+          candidateSpaces,
+          'Update regarding Skyline Tower',
+          'We are discussing Skyline Tower project',
+          ['Projects/123 Main St/Submittals']
+        );
+        expect(match?.id).toBe('proj-123');
+      });
+
+      it('ignores system labels and falls back to subject/body', () => {
+        const match = matchCandidateSpaces(
+          candidateSpaces,
+          'Skyline Tower Kickoff',
+          undefined,
+          ['INBOX', 'SENT', 'UNREAD', 'STARRED', 'IMPORTANT', 'CATEGORY_PROMOTIONS']
+        );
+        expect(match?.id).toBe('proj-skyline');
+      });
+    });
+
+    describe('SourceParserService Pass 1 inferRouting with Gmail labels', () => {
+      it('lets explicit FF&E code-bearing attachment win over generic Submittals Gmail label', async () => {
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+        const result = await service.inferRouting({
+          candidateSpaces,
+          email: {
+            id: 'msg-1',
+            attachments: [{ id: 'att-1', name: 'CG104-A_Chair.pdf' }],
+            labels: ['Projects/123 Main St/Submittals'],
+          },
+        });
+
+        expect(result).toEqual({
+          spaceTypeId: 'projects',
+          spaceIdOrName: 'proj-123',
+          documentTypeKey: 'submittal-ffe',
+        });
+      });
+
+      it('lets explicit CSI code-bearing attachment win over specific FF&E Gmail label', async () => {
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+        const result = await service.inferRouting({
+          candidateSpaces,
+          email: {
+            id: 'msg-1',
+            attachments: [{ id: 'att-1', name: '071200-001_Waterproofing.pdf' }],
+            labels: ['Projects/FF&E/Submittals'],
+          },
+        });
+
+        expect(result).toEqual({
+          spaceTypeId: 'projects',
+          documentTypeKey: 'submittal-arch',
+        });
+      });
+
+      it('infers submittal-ffe when label contains FF&E + Submittals proximity and attachments have no code', async () => {
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+        const result = await service.inferRouting({
+          candidateSpaces,
+          email: {
+            id: 'msg-1',
+            attachments: [{ id: 'att-1', name: 'cutsheet.pdf' }],
+            labels: ['Projects/FF&E/Submittals', '123 Main St'],
+          },
+        });
+
+        expect(result).toEqual({
+          spaceTypeId: 'projects',
+          spaceIdOrName: 'proj-123',
+          documentTypeKey: 'submittal-ffe',
+        });
+      });
+
+      it('infers submittal-arch and candidate space from generic Submittals Gmail label when no specific codes match', async () => {
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+        const result = await service.inferRouting({
+          candidateSpaces,
+          email: {
+            id: 'msg-1',
+            attachments: [{ id: 'att-1', name: 'general-cutsheet.pdf' }],
+            labels: ['Projects/123 Main St/Submittals'],
+          },
+        });
+
+        expect(result).toEqual({
+          spaceTypeId: 'projects',
+          spaceIdOrName: 'proj-123',
+          documentTypeKey: 'submittal-arch',
+        });
+      });
+
+      it('infers submittal-arch from standalone Submittal / Submittals label', async () => {
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+        const result = await service.inferRouting({
+          candidateSpaces,
+          email: {
+            id: 'msg-1',
+            labels: ['Submittals'],
+          },
+        });
+
+        expect(result).toEqual({
+          spaceTypeId: 'projects',
+          documentTypeKey: 'submittal-arch',
+        });
+      });
+
+      it('lets specific FF&E proximity in subject win over generic Submittals label', async () => {
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+        const result = await service.inferRouting({
+          candidateSpaces,
+          email: {
+            id: 'msg-1',
+            subject: 'FF&E Submittals for 123 Main St',
+            labels: ['Submittals'],
+          },
+        });
+
+        expect(result).toEqual({
+          spaceTypeId: 'projects',
+          spaceIdOrName: 'proj-123',
+          documentTypeKey: 'submittal-ffe',
+        });
+      });
+
+      it('does NOT infer submittal-arch when labels contain only system labels', async () => {
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort);
+        const result = await service.inferRouting({
+          candidateSpaces,
+          email: {
+            id: 'msg-1',
+            subject: 'General check-in',
+            labels: ['INBOX', 'SENT', 'UNREAD', 'STARRED', 'IMPORTANT'],
+          },
+        });
+
+        expect(result.documentTypeKey).toBeUndefined();
+      });
+    });
+  });
+
+  describe('SourceParser Pass 2 helper functions', () => {
+    describe('cleanSubject', () => {
+      it('strips leading Re:, Fwd:, FW:, and aw: prefixes case-insensitively', () => {
+        expect(cleanSubject('Re: Project Update')).toBe('Project Update');
+        expect(cleanSubject('FWD: Re: aw: Hello World')).toBe('Hello World');
+        expect(cleanSubject('fw: meeting notes')).toBe('meeting notes');
+        expect(cleanSubject('Clean Subject')).toBe('Clean Subject');
+        expect(cleanSubject('')).toBe('');
+      });
+    });
+
+    describe('parseDateToYymmdd', () => {
+      it('parses RFC 2822 dates with named timezone offsets', () => {
+        expect(parseDateToYymmdd('Mon, 18 Oct 2026 12:00:00 GMT')).toBe('261018');
+        expect(parseDateToYymmdd('Sun, 20 Sep 2026 10:00:00 EDT')).toBe('260920');
+      });
+
+      it('parses ISO dates with numeric timezone offsets', () => {
+        expect(parseDateToYymmdd('2026-09-20T10:00:00-04:00')).toBe('260920');
+        expect(parseDateToYymmdd('2026-10-18T12:00:00Z')).toBe('261018');
+      });
+
+      it('returns undefined for unparseable dates', () => {
+        expect(parseDateToYymmdd('invalid-date')).toBeUndefined();
+        expect(parseDateToYymmdd('')).toBeUndefined();
+        expect(parseDateToYymmdd(undefined)).toBeUndefined();
+      });
+    });
+
+    describe('normalizeHtmlBodyForPass2', () => {
+      it('converts line-breaking tags to newlines and table cells to spaces', () => {
+        const html = '<p>Paragraph 1</p><p>Paragraph 2</p><table><tr><td>Cell 1</td><td>Cell 2</td></tr></table>';
+        const text = normalizeHtmlBodyForPass2(html);
+        expect(text).toContain('Paragraph 1\nParagraph 2');
+        expect(text).toContain('Cell 1 Cell 2');
+      });
+
+      it('decodes HTML entities including en-dash and em-dash', () => {
+        const html = '<div>A &ndash; B &#8211; C &mdash; D &#8212; E &amp; F &quot;G&quot; &#39;H&#39;</div>';
+        const text = normalizeHtmlBodyForPass2(html);
+        expect(text).toBe('A \u2013 B \u2013 C \u2014 D \u2014 E & F "G" \'H\'');
+      });
+
+      it('preserves newline line boundaries while collapsing horizontal whitespace', () => {
+        const html = 'Line 1    extra spaces<br>Line 2   more spaces';
+        const text = normalizeHtmlBodyForPass2(html);
+        expect(text).toBe('Line 1 extra spaces\nLine 2 more spaces');
+      });
+    });
+  });
+
+  describe('SourceParserService Pass 2 (extractFields)', () => {
+    const mockDrivePort: DriveSourceContextPort = {
+      getItemHierarchy: vi.fn(),
+    };
+
+    it('seeds populatedFields from non-empty existingData without overwriting it', async () => {
+      const mockParseRegistry = {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockResolvedValue({
+          extractors: [
+            {
+              source: 'gmail',
+              fields: {
+                description: { from: 'email.subjectClean' },
+                date: { from: 'email.date' },
+              },
+            },
+          ],
+        }),
+        getTargetSchema: vi.fn().mockResolvedValue({
+          fields: [
+            { key: 'description', type: 'string' },
+            { key: 'date', type: 'string' },
+          ],
+        }),
+      };
+
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: mockParseRegistry,
+      });
+
+      const result = await service.extractFields({
+        documentTypeKey: 'communication-project',
+        existingData: {
+          description: 'User Existing Description',
+        },
+        context: {
+          email: {
+            id: 'msg-1',
+            subject: 'New Subject in Email',
+            date: 'Sun, 20 Sep 2026 10:00:00 EDT',
+          },
+        },
+      });
+
+      expect(result.fields.description).toBe('User Existing Description');
+      expect(result.fields.date).toBe('260920');
+    });
+
+    it('evaluates extractor.match and FieldRule.when using predicateEvaluator', async () => {
+      const mockParseRegistry = {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockResolvedValue({
+          extractors: [
+            {
+              source: 'gmail',
+              match: { '==': [{ var: 'email.fromDomain' }, 'inc.nyc'] },
+              fields: {
+                direction: [
+                  {
+                    when: { in: ['SENT', { var: 'email.labels' }] },
+                    set: 'OT',
+                  },
+                  { set: 'IN' },
+                ],
+              },
+            },
+          ],
+        }),
+        getTargetSchema: vi.fn().mockResolvedValue({
+          fields: [
+            {
+              key: 'direction',
+              type: 'string',
+              options: { source: 'direction', key: 'key', name: 'name' },
+            },
+          ],
+          options: {
+            direction: [
+              { key: 'IN', name: 'Incoming' },
+              { key: 'OT', name: 'Outgoing' },
+            ],
+          },
+        }),
+      };
+
+      const mockPredicateEvaluator = {
+        evaluate: vi.fn((rule: unknown, data: Record<string, unknown>) => {
+          const typedRule = rule as Record<string, unknown> | undefined;
+          const typedData = data as { email?: { fromDomain?: string; labels?: string[] } };
+          if (typedRule && typedRule['==']) {
+            return typedData.email?.fromDomain === 'inc.nyc';
+          }
+          if (typedRule && typedRule.in) {
+            return (typedData.email?.labels ?? []).includes('SENT');
+          }
+          return false;
+        }),
+      };
+
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: mockParseRegistry,
+        predicateEvaluator: mockPredicateEvaluator,
+      });
+
+      const resultSent = await service.extractFields({
+        documentTypeKey: 'communication-project',
+        context: {
+          email: {
+            id: 'msg-1',
+            from: 'Alice <alice@inc.nyc>',
+            labels: ['SENT', 'INBOX'],
+          },
+        },
+      });
+      expect(resultSent.fields.direction).toBe('OT');
+
+      const resultNotSent = await service.extractFields({
+        documentTypeKey: 'communication-project',
+        context: {
+          email: {
+            id: 'msg-2',
+            from: 'Alice <alice@inc.nyc>',
+            labels: ['INBOX'],
+          },
+        },
+      });
+      expect(resultNotSent.fields.direction).toBe('IN');
+
+      const resultMismatchedDomain = await service.extractFields({
+        documentTypeKey: 'communication-project',
+        context: {
+          email: {
+            id: 'msg-3',
+            from: 'Bob <bob@other.com>',
+            labels: ['SENT'],
+          },
+        },
+      });
+      expect(resultMismatchedDomain.fields.direction).toBeUndefined();
+    });
+
+    it('extracts date, clean subject, body, and labels with regex patterns', async () => {
+      const mockParseRegistry = {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockResolvedValue({
+          extractors: [
+            {
+              source: 'gmail',
+              fields: {
+                date: { from: 'email.date' },
+                description: { from: 'email.subjectClean' },
+                sectionCode: {
+                  from: 'email.labels',
+                  pattern: '^(\\d{6})$',
+                  group: 1,
+                },
+                bodySnippet: {
+                  from: 'email.body',
+                  pattern: '^Submittal\\s*#?\\s*(\\d+)',
+                  flags: 'im',
+                  group: 1,
+                },
+              },
+            },
+          ],
+        }),
+        getTargetSchema: vi.fn().mockResolvedValue({
+          fields: [
+            { key: 'date', type: 'string' },
+            { key: 'description', type: 'string' },
+            { key: 'sectionCode', type: 'string' },
+            { key: 'bodySnippet', type: 'string' },
+          ],
+        }),
+      };
+
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: mockParseRegistry,
+      });
+
+      const result = await service.extractFields({
+        documentTypeKey: 'communication-project',
+        context: {
+          email: {
+            id: 'msg-1',
+            subject: 'Re: Fwd: Important Update',
+            date: 'Mon, 18 Oct 2026 12:00:00 GMT',
+            labels: ['Projects/123 Main St', '071200'],
+            htmlBody: '<p>Line 1</p><p>Submittal #1234 details</p>',
+          },
+        },
+      });
+
+      expect(result.fields.date).toBe('261018');
+      expect(result.fields.description).toBe('Important Update');
+      expect(result.fields.sectionCode).toBe('071200');
+      expect(result.fields.bodySnippet).toBe('1234');
+    });
+
+    it('validates candidate against minLength, pattern, and canonical LookupField options', async () => {
+      const mockParseRegistry = {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockResolvedValue({
+          extractors: [
+            {
+              source: 'gmail',
+              fields: {
+                shortField: [
+                  { from: 'email.subject', pattern: '^(a)$' }, // minLength 3 -> rejected
+                  { set: 'Valid Long' }, // passes
+                ],
+                patternField: [
+                  { set: 'not-matching' }, // fails pattern ^\\d+$
+                  { set: '12345' }, // passes
+                ],
+                direction: [
+                  { set: 'INVALID_DIR' }, // not in options -> rejected
+                  { set: 'Incoming' }, // matches name -> normalizes to key 'IN'
+                ],
+              },
+            },
+          ],
+        }),
+        getTargetSchema: vi.fn().mockResolvedValue({
+          fields: [
+            { key: 'shortField', type: 'string', minLength: 3 },
+            { key: 'patternField', type: 'string', pattern: '^\\d+$' },
+            {
+              key: 'direction',
+              type: 'string',
+              options: { source: 'direction', key: 'key', name: 'name' },
+            },
+          ],
+          options: {
+            direction: [
+              { key: 'IN', name: 'Incoming' },
+              { key: 'OT', name: 'Outgoing' },
+            ],
+          },
+        }),
+      };
+
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: mockParseRegistry,
+      });
+
+      const result = await service.extractFields({
+        documentTypeKey: 'test-doc',
+        context: {
+          email: {
+            id: 'msg-1',
+            subject: 'a',
+          },
+        },
+      });
+
+      expect(result.fields.shortField).toBe('Valid Long');
+      expect(result.fields.patternField).toBe('12345');
+      expect(result.fields.direction).toBe('IN');
+    });
+
+    it('catches extractor errors non-blockingly and appends statusMessages', async () => {
+      const mockParseRegistry = {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockResolvedValue({
+          extractors: [
+            {
+              source: 'gmail',
+              name: 'Broken Extractor',
+              fields: {
+                date: { from: 'email.date' },
+              },
+            },
+            {
+              source: 'gmail',
+              name: 'Healthy Extractor',
+              fields: {
+                description: { from: 'email.subjectClean' },
+              },
+            },
+          ],
+        }),
+        getTargetSchema: vi.fn().mockResolvedValue({
+          fields: [
+            Object.defineProperty({ key: 'date', type: 'string' }, 'minLength', {
+              get() {
+                throw new Error('Broken field getter');
+              },
+            }),
+            { key: 'description', type: 'string' },
+          ],
+        }),
+      };
+
+      const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: mockParseRegistry,
+      });
+
+      const result = await service.extractFields({
+        documentTypeKey: 'test-doc',
+        context: {
+          email: {
+            id: 'msg-1',
+            date: 'Mon, 18 Oct 2026 12:00:00 GMT',
+            subject: 'Clean Subject',
+          },
+        },
+      });
+
+      expect(result.statusMessages).toBeDefined();
+      expect(result.statusMessages?.[0]).toContain('Could not extract fields from Broken Extractor');
+      expect(result.fields.description).toBe('Clean Subject');
+    });
+
+    describe('RFC 5322 Recipient Splitting and Parsing', () => {
+      it('splits recipients preserving commas inside quoted display names', () => {
+        const input = '"McGovern, James" <jmcgovern@pavarini.com>, "Smith, Bob" <bsmith@inc.nyc>, Jane Doe <jane@example.com>';
+        const split = splitRfc5322Recipients(input);
+        expect(split).toEqual([
+          '"McGovern, James" <jmcgovern@pavarini.com>',
+          '"Smith, Bob" <bsmith@inc.nyc>',
+          'Jane Doe <jane@example.com>',
+        ]);
+      });
+
+      it('handles escaped quotes and returns empty array on empty input', () => {
+        expect(splitRfc5322Recipients('')).toEqual([]);
+        expect(splitRfc5322Recipients('   ')).toEqual([]);
+        const input = '"Escaped \\"Quote\\", Test" <test@example.com>';
+        expect(splitRfc5322Recipients(input)).toEqual(['"Escaped \\"Quote\\", Test" <test@example.com>']);
+      });
+
+      it('parses recipient into displayName, email, and domain', () => {
+        expect(parseRecipient('"McGovern, James" <jmcgovern@pavarini.com>')).toEqual({
+          raw: '"McGovern, James" <jmcgovern@pavarini.com>',
+          displayName: 'McGovern, James',
+          email: 'jmcgovern@pavarini.com',
+          domain: 'pavarini.com',
+        });
+        expect(parseRecipient('<contact@domain.org>')).toEqual({
+          raw: '<contact@domain.org>',
+          email: 'contact@domain.org',
+          domain: 'domain.org',
+        });
+        expect(parseRecipient('user@inc.nyc')).toEqual({
+          raw: 'user@inc.nyc',
+          email: 'user@inc.nyc',
+          domain: 'inc.nyc',
+        });
+        expect(parseRecipient('Bare Name')).toEqual({
+          raw: 'Bare Name',
+          displayName: 'Bare Name',
+        });
+      });
+    });
+
+    describe('LookupField 3-Tier Entity Resolution & LinkedField Derivation', () => {
+      const targetDocSchema = {
+        fields: [
+          {
+            key: 'contact',
+            name: 'Contact',
+            type: 'string',
+            options: {
+              source: 'contactFolders',
+              key: 'key',
+              name: 'name',
+              allowUserInput: true,
+              dynamicConfig: { provider: 'google_drive', relativePath: 'Contacts' },
+            },
+          },
+          {
+            key: 'specTag',
+            name: 'Spec Tag',
+            type: 'string',
+            options: {
+              source: 'specItems',
+              key: 'code',
+              name: 'title',
+            },
+          },
+          {
+            key: 'specTitle',
+            name: 'Spec Title',
+            type: 'string',
+            linkedField: {
+              sourceField: 'specTag',
+              sourceProperty: 'title',
+            },
+          },
+        ],
+        options: {
+          specItems: [
+            { code: '071200', title: 'Waterproofing', aliases: ['WP', 'dampproofing'] },
+            { code: '092200', title: 'Drywall', aliases: ['gypsum', 'GWB'] },
+          ],
+        },
+      };
+
+      it('resolves Tier 1 local option aliases first and derives sibling LinkedField', async () => {
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockReturnValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  specTag: { from: 'email.subjectClean', lookup: true },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockReturnValue(targetDocSchema),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        const result = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-1',
+              subject: 'Re: Dampproofing Submittal for review',
+            },
+          },
+        });
+
+        expect(result.fields.specTag).toBe('071200');
+        expect(result.fields.specTitle).toBe('Waterproofing');
+      });
+
+      it('filters out entries matching excludePattern on email.to and matches external counterparty', async () => {
+        const mockCanonicalProvider = {
+          getCanonicalOptions: vi.fn().mockResolvedValue([
+            { key: 'Pavarini Construction', name: 'Pavarini Construction' },
+            { key: 'Structure Tone', name: 'Structure Tone' },
+          ]),
+        };
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockReturnValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  contact: {
+                    from: 'email.to',
+                    excludePattern: '@inc\\.nyc\\b',
+                    lookup: true,
+                  },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockReturnValue(targetDocSchema),
+          getAliasDictionary: vi.fn().mockReturnValue({
+            source: 'contactFolders',
+            mappings: {
+              'Pavarini Construction': ['@pavarini.com', 'PCNE'],
+            },
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+          canonicalOptionsProvider: mockCanonicalProvider,
+        });
+
+        const result = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          spaceId: 'space-999',
+          context: {
+            email: {
+              id: 'msg-1',
+              to: 'colleague@inc.nyc, "McGovern, James" <jmcgovern@pavarini.com>',
+            },
+          },
+        });
+
+        expect(result.fields.contact).toBe('Pavarini Construction');
+        expect(mockCanonicalProvider.getCanonicalOptions).toHaveBeenCalledWith(
+          'space-999',
+          expect.objectContaining({ key: 'contact' })
+        );
+      });
+
+      it('shadowing: higher tiers shadow lower tiers and collision in winning tier returns undefined', async () => {
+        // Tier 1 has static options with local alias 'shared-alias' mapping to key '071200'
+        // Tier 3 shared dictionary attempts to map 'shared-alias' to key '092200' -> shadowed by Tier 1!
+        const schemaWithLocalAlias = {
+          ...targetDocSchema,
+          options: {
+            specItems: [
+              { code: '071200', title: 'Waterproofing', aliases: ['wp-tier1'] },
+              { code: '092200', title: 'Drywall', aliases: ['dw-tier1'] },
+            ],
+          },
+        };
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockReturnValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  specTag: { from: 'email.subjectClean', lookup: true },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockReturnValue(schemaWithLocalAlias),
+          getAliasDictionary: vi.fn().mockReturnValue({
+            source: 'specItems',
+            mappings: {
+              '092200': ['wp-tier1'], // attempted conflict in Tier 3
+            },
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        // 'wp-tier1' is in Tier 1 for 071200, so it matches 071200 and ignores Tier 3 mapping to 092200
+        const result = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-1',
+              subject: 'Checking wp-tier1 notes',
+            },
+          },
+        });
+
+        expect(result.fields.specTag).toBe('071200');
+      });
+
+      it('longest strict-substring tie-breaking picks the longer entity, but multi-entity collision returns undefined', async () => {
+        const schemaWithSubstrings = {
+          ...targetDocSchema,
+          options: {
+            specItems: [
+              { code: '071200', title: 'Pavarini Construction', aliases: ['Pavarini Construction'] },
+              { code: '092200', title: 'Pavarini', aliases: ['Pavarini'] },
+            ],
+          },
+        };
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockReturnValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  specTag: { from: 'email.subjectClean', lookup: true },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockReturnValue(schemaWithSubstrings),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        // 1. Text has "Pavarini Construction" - "Pavarini" is a strict substring, so "Pavarini Construction" (071200) wins
+        const result1 = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-1',
+              subject: 'Meeting with Pavarini Construction team',
+            },
+          },
+        });
+        expect(result1.fields.specTag).toBe('071200');
+
+        // 2. Text has two non-substring entities: "Pavarini" and "Drywall" -> collision returns undefined
+        const schemaWithIndependent = {
+          ...targetDocSchema,
+          options: {
+            specItems: [
+              { code: '071200', title: 'Pavarini', aliases: ['Pavarini'] },
+              { code: '092200', title: 'Drywall', aliases: ['Drywall'] },
+            ],
+          },
+        };
+        mockParseRegistry.getTargetSchema.mockReturnValue(schemaWithIndependent);
+
+        const result2 = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-2',
+              subject: 'Pavarini and Drywall meeting',
+            },
+          },
+        });
+        expect(result2.fields.specTag).toBeUndefined();
+      });
+
+      it('canonical-only guard: never pre-populates unverified strings even when allowUserInput is true', async () => {
+        const mockCanonicalProvider = {
+          getCanonicalOptions: vi.fn().mockResolvedValue([
+            { key: 'Known Contact', name: 'Known Contact' },
+          ]),
+        };
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockReturnValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  contact: { from: 'email.from', lookup: true },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockReturnValue(targetDocSchema),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+          canonicalOptionsProvider: mockCanonicalProvider,
+        });
+
+        // Unknown email from an unregistered sender
+        const result = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          spaceId: 'space-123',
+          context: {
+            email: {
+              id: 'msg-1',
+              from: 'stranger@unknown-vendor.com',
+            },
+          },
+        });
+
+        // Contact must remain blank (not populated with 'stranger@unknown-vendor.com')
+        expect(result.fields.contact).toBeUndefined();
+      });
+
+      it('discards candidate when spaceId is missing for dynamic options', async () => {
+        const mockCanonicalProvider = {
+          getCanonicalOptions: vi.fn().mockResolvedValue([
+            { key: 'Known Contact', name: 'Known Contact' },
+          ]),
+        };
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockReturnValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  contact: { from: 'email.from', lookup: true },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockReturnValue(targetDocSchema),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+          canonicalOptionsProvider: mockCanonicalProvider,
+        });
+
+        const result = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          // spaceId omitted
+          context: {
+            email: {
+              id: 'msg-1',
+              from: 'Known Contact <contact@example.com>',
+            },
+          },
+        });
+
+        expect(result.fields.contact).toBeUndefined();
+        expect(mockCanonicalProvider.getCanonicalOptions).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('Ticket #305: Correlated single-attachment extraction and production Submittal Arch & FF&E extraction', () => {
+      it('getCandidateAttachmentNames handles isDriveUrl, items in order, and fallback to email.attachments', () => {
+        expect(
+          getCandidateAttachmentNames({
+            isDriveUrl: true,
+            items: [{ id: '1', name: 'File1.pdf' }],
+            email: { id: 'm1', attachments: [{ id: 'a1', name: 'Att1.pdf' }] },
+          })
+        ).toEqual([]);
+
+        expect(
+          getCandidateAttachmentNames({
+            items: [
+              { id: '1', name: 'File1.pdf' },
+              { id: '2', name: 'File2.pdf' },
+            ],
+            email: { id: 'm1', attachments: [{ id: 'a1', name: 'Att1.pdf' }] },
+          })
+        ).toEqual(['File1.pdf', 'File2.pdf']);
+
+        expect(
+          getCandidateAttachmentNames({
+            items: [],
+            email: {
+              id: 'm1',
+              attachments: [
+                { id: 'a1', name: 'Att1.pdf' },
+                { id: 'a2', name: 'Att2.pdf' },
+              ],
+            },
+          })
+        ).toEqual(['Att1.pdf', 'Att2.pdf']);
+
+        expect(
+          getCandidateAttachmentNames({
+            items: [{ id: '1', name: '   ' }],
+            email: {
+              id: 'm1',
+              attachments: [{ id: 'a1', name: 'FallbackAtt.pdf' }],
+            },
+          })
+        ).toEqual(['FallbackAtt.pdf']);
+      });
+
+      it('matchesCorrelatedCode validates CSI section and number correlation against populated fields', () => {
+        const csiMatch = '071200-001-B Specs'.match(/(\d{6})-(\d{3})-([A-Za-z0-9]+)/);
+        expect(csiMatch).not.toBeNull();
+        expect(
+          matchesCorrelatedCode(csiMatch!, 3, { section: '071200', number: '001' })
+        ).toBe(true);
+        expect(
+          matchesCorrelatedCode(csiMatch!, 3, { section: '081100', number: '001' })
+        ).toBe(false);
+        expect(
+          matchesCorrelatedCode(csiMatch!, 3, { section: '071200', number: '002' })
+        ).toBe(false);
+
+        const mismatchedCsiMatch = '081100-002-C Doors'.match(/(\d{6})-(\d{3})-([A-Za-z0-9]+)/);
+        expect(
+          matchesCorrelatedCode(mismatchedCsiMatch!, 3, { section: '071200', number: '001' })
+        ).toBe(false);
+      });
+
+      it('matchesCorrelatedCode validates FF&E specTag correlation against populated fields', () => {
+        const specMatch = 'CG104-B Cut Sheet'.match(/([A-Za-z]{2}\d{3}[A-Za-z]?)-([A-Za-z0-9]+)/);
+        expect(specMatch).not.toBeNull();
+        expect(matchesCorrelatedCode(specMatch!, 2, { specTag: 'CG104' })).toBe(true);
+        expect(matchesCorrelatedCode(specMatch!, 2, { specTag: 'cg104' })).toBe(true);
+        expect(matchesCorrelatedCode(specMatch!, 2, { specTag: 'LT108' })).toBe(false);
+      });
+
+      it('binds compound attachment extraction to first matching attachment and prevents cross-attachment field splicing in Submittal Arch', async () => {
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  section: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?',
+                      group: 1,
+                    },
+                  ],
+                  number: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?',
+                      group: 2,
+                    },
+                  ],
+                  revision: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '(\\d{6})-(\\d{3})-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 3,
+                    },
+                    {
+                      from: 'email.labels',
+                      pattern: '(\\d{6})-(\\d{3})-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 3,
+                    },
+                    {
+                      from: 'email.subjectClean',
+                      pattern: '(\\d{6})-(\\d{3})-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 3,
+                    },
+                  ],
+                  title: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?[\\s_]+(?:[-–—]\\s*)?(.+?)(?:\\.[A-Za-z]{2,5})?$',
+                      group: 4,
+                    },
+                    {
+                      from: 'email.labels',
+                      pattern: '(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?[\\s_]+(?:[-–—]\\s*)?(.+?)(?:\\.[A-Za-z]{2,5})?$',
+                      group: 4,
+                    },
+                    {
+                      from: 'email.subjectClean',
+                      pattern: '(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?[\\s_]+(?:[-–—]\\s*)?(.+?)(?:\\.[A-Za-z]{2,5})?$',
+                      group: 4,
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              { key: 'section', type: 'string', pattern: '^\\d{6}$' },
+              { key: 'number', type: 'string', pattern: '^\\d{3}$' },
+              { key: 'revision', type: 'string', minLength: 1 },
+              { key: 'title', type: 'string', minLength: 1 },
+            ],
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        const result = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          context: {
+            email: {
+              id: 'msg-submittal-arch-1',
+              subject: 'Re: Submittal 071200-001-B Waterproofing Specs',
+              attachments: [
+                { id: 'att-0', name: 'Invoice_12345.pdf' },
+                { id: 'att-1', name: '071200-001 Waterproofing Specs.pdf' },
+                { id: 'att-2', name: '081100-002-C Hollow Metal Doors.pdf' },
+              ],
+            },
+          },
+        });
+
+        expect(result.fields.section).toBe('071200');
+        expect(result.fields.number).toBe('001');
+        expect(result.fields.title).toBe('Waterproofing Specs');
+        expect(result.fields.revision).toBe('B');
+      });
+
+      it('rejects fallback revision and title when leading code does not match already-populated section and number', async () => {
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  section: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?',
+                      group: 1,
+                    },
+                  ],
+                  number: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?',
+                      group: 2,
+                    },
+                  ],
+                  revision: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '(\\d{6})-(\\d{3})-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 3,
+                    },
+                    {
+                      from: 'email.subjectClean',
+                      pattern: '(\\d{6})-(\\d{3})-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 3,
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              { key: 'section', type: 'string', pattern: '^\\d{6}$' },
+              { key: 'number', type: 'string', pattern: '^\\d{3}$' },
+              { key: 'revision', type: 'string', minLength: 1 },
+            ],
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        const result = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          context: {
+            email: {
+              id: 'msg-submittal-arch-2',
+              subject: 'Re: 081100-002-D Doors for another project',
+              attachments: [
+                { id: 'att-1', name: '071200-001 Waterproofing Specs.pdf' },
+              ],
+            },
+          },
+        });
+
+        expect(result.fields.section).toBe('071200');
+        expect(result.fields.number).toBe('001');
+        expect(result.fields.revision).toBeUndefined();
+      });
+
+      it('resolves specTag with lookup: true, auto-derives LinkedField specTitle, binds revision, and resolves vendor across 3 tiers for Submittal FF&E', async () => {
+        const mockCanonicalProvider = {
+          getCanonicalOptions: vi.fn().mockImplementation(async (_spaceId, field) => {
+            if (field.options?.source === 'vendors') {
+              return [
+                { key: 'BM', name: 'Berman Falk' },
+                { key: 'Carn', name: 'Carnegie' },
+              ];
+            }
+            return [];
+          }),
+        };
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  action: [
+                    {
+                      when: { '!=': [{ var: 'email.fromDomain' }, 'inc.nyc'] },
+                      set: 'REC',
+                    },
+                  ],
+                  date: { from: 'email.date' },
+                  contact: [
+                    {
+                      when: {
+                        or: [
+                          { in: ['SENT', { var: 'email.labels' }] },
+                          { '==': [{ var: 'email.fromDomain' }, 'inc.nyc'] },
+                        ],
+                      },
+                      from: 'email.to',
+                      excludePattern: '@inc\\.nyc\\b',
+                      lookup: true,
+                    },
+                    { from: 'email.from', lookup: true },
+                  ],
+                  vendor: [
+                    { from: 'attachmentName', lookup: true },
+                    { from: 'email.labels', lookup: true },
+                    { from: 'email.subjectClean', lookup: true },
+                    {
+                      when: { '!=': [{ var: 'email.fromDomain' }, 'inc.nyc'] },
+                      from: 'email.from',
+                      lookup: true,
+                    },
+                  ],
+                  specTag: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '([A-Za-z]{2}\\d{3}[A-Za-z]?)(?:-([A-Za-z0-9]+))?',
+                      group: 1,
+                      lookup: true,
+                    },
+                  ],
+                  revision: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 2,
+                    },
+                    {
+                      from: 'email.subjectClean',
+                      pattern: '([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 2,
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              {
+                key: 'action',
+                type: 'string',
+                options: { source: 'actions', key: 'key', name: 'name' },
+              },
+              { key: 'date', type: 'string' },
+              {
+                key: 'contact',
+                type: 'string',
+                options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true },
+              },
+              {
+                key: 'vendor',
+                type: 'string',
+                options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true, dynamicConfig: { provider: 'google_drive' } },
+              },
+              {
+                key: 'specTag',
+                type: 'string',
+                options: { source: 'specs', key: 'key', allowUserInput: true },
+              },
+              {
+                key: 'specTitle',
+                type: 'string',
+                linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+              },
+              { key: 'revision', type: 'string', minLength: 1 },
+            ],
+            options: {
+              actions: [{ key: 'REC', name: 'Received' }],
+              contacts: [
+                { key: 'BW', name: 'Benjamin West' },
+                { key: 'INC', name: 'INC Architecture & Design' },
+              ],
+              specs: [
+                { key: 'CG104', name: 'BED - KING' },
+                { key: 'LT108', name: 'SCONCE' },
+              ],
+            },
+          }),
+          getAliasDictionary: vi.fn().mockImplementation((source: string) => {
+            if (source === 'vendors') {
+              return {
+                source: 'vendors',
+                mappings: {
+                  BM: ['@bermanfalk.com', 'Berman Falk', 'BermanFalk'],
+                },
+              };
+            }
+            if (source === 'contacts') {
+              return {
+                source: 'contacts',
+                mappings: {
+                  BW: ['@benjaminwest.com', 'Benjamin West'],
+                },
+              };
+            }
+            return undefined;
+          }),
+        };
+
+        const mockPredicateEvaluator = {
+          evaluate: vi.fn((rule: unknown, data: Record<string, unknown>) => {
+            const typedRule = rule as Record<string, unknown> | undefined;
+            const typedData = data as { email?: { fromDomain?: string; labels?: string[] } };
+            if (typedRule && typedRule['!=']) {
+              return typedData.email?.fromDomain !== 'inc.nyc';
+            }
+            if (typedRule && typedRule.or) {
+              return (
+                (typedData.email?.labels ?? []).includes('SENT') ||
+                typedData.email?.fromDomain === 'inc.nyc'
+              );
+            }
+            return false;
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+          predicateEvaluator: mockPredicateEvaluator,
+          canonicalOptionsProvider: mockCanonicalProvider,
+        });
+
+        const result = await service.extractFields({
+          documentTypeKey: 'submittal-ffe',
+          spaceId: 'space-projects-1',
+          context: {
+            email: {
+              id: 'msg-ffe-1',
+              subject: 'CG104-A Berman Falk King Bed Submittal',
+              date: 'Wed, 21 Oct 2026 10:00:00 GMT',
+              from: 'Berman Rep <rep@bermanfalk.com>',
+              to: 'Designer <designer@inc.nyc>',
+              labels: ['INBOX', 'Submittals'],
+              attachments: [
+                { id: 'att-1', name: 'CG104-A Berman Falk Cut Sheet.pdf' },
+              ],
+            },
+          },
+        });
+
+        expect(result.fields.action).toBe('REC');
+        expect(result.fields.date).toBe('261021');
+        expect(result.fields.specTag).toBe('CG104');
+        expect(result.fields.specTitle).toBe('BED - KING');
+        expect(result.fields.revision).toBe('A');
+        expect(result.fields.vendor).toBe('BM');
+      });
+
+      it('rejects fallback revision in Submittal FF&E when subject specTag does not match populated specTag', async () => {
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  specTag: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '([A-Za-z]{2}\\d{3}[A-Za-z]?)(?:-([A-Za-z0-9]+))?',
+                      group: 1,
+                      lookup: true,
+                    },
+                  ],
+                  revision: [
+                    {
+                      from: 'attachmentName',
+                      pattern: '([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 2,
+                    },
+                    {
+                      from: 'email.subjectClean',
+                      pattern: '([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)',
+                      group: 2,
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              {
+                key: 'specTag',
+                type: 'string',
+                options: { source: 'specs', key: 'key', allowUserInput: true },
+              },
+              { key: 'revision', type: 'string', minLength: 1 },
+            ],
+            options: {
+              specs: [
+                { key: 'CG104', name: 'BED - KING' },
+                { key: 'LT108', name: 'SCONCE' },
+              ],
+            },
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        // Attachment binds CG104 (no revision in filename)
+        // Subject mentions a different spec tag: LT108-B
+        const result = await service.extractFields({
+          documentTypeKey: 'submittal-ffe',
+          context: {
+            email: {
+              id: 'msg-ffe-2',
+              subject: 'Re: LT108-B Sconces inquiry',
+              attachments: [
+                { id: 'att-1', name: 'CG104 Cut Sheet.pdf' },
+              ],
+            },
+          },
+        });
+
+        expect(result.fields.specTag).toBe('CG104');
+        expect(result.fields.revision).toBeUndefined();
+      });
+    });
+
+    describe('Iteration 1 Review Fixes (S2, Spec #1, Spec #5, S10)', () => {
+      it('honors configured options.key and options.name for non-lookup and lookup options and derives LinkedFields', async () => {
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  action: { set: 'Received' },
+                  specTag: { from: 'email.subjectClean', lookup: true },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              {
+                key: 'action',
+                type: 'string',
+                options: { source: 'actions', key: 'code', name: 'label' },
+              },
+              {
+                key: 'specTag',
+                type: 'string',
+                options: { source: 'specs', key: 'code', name: 'label', allowUserInput: true },
+              },
+              {
+                key: 'specTitle',
+                type: 'string',
+                linkedField: { sourceField: 'specTag', sourceProperty: 'label' },
+              },
+            ],
+            options: {
+              actions: [{ code: 'REC', label: 'Received' }],
+              specs: [{ code: '071200', label: 'Waterproofing' }],
+            },
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        const result = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-1',
+              subject: 'Submittal: Waterproofing Review',
+            },
+          },
+        });
+
+        expect(result.fields.action).toBe('REC');
+        expect(result.fields.specTag).toBe('071200');
+        expect(result.fields.specTitle).toBe('Waterproofing');
+      });
+
+      it('evaluates Step 1 (@domain) across Tiers 1 -> 2 -> 3 before Step 2 (exact displayName), supports subdomain boundaries and embedded emails, and halts on ambiguity', async () => {
+        const targetSchemaWithOptions = {
+          fields: [
+            {
+              key: 'contact',
+              type: 'string',
+              options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true },
+            },
+          ],
+          options: {
+            contacts: [
+              { key: 'PMG', name: 'Pavarini McGovern' },
+              { key: 'OTHER', name: 'Other Company' },
+            ],
+          },
+        };
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  contact: { from: 'email.from', lookup: true },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue(targetSchemaWithOptions),
+          getAliasDictionary: vi.fn().mockReturnValue({
+            source: 'contacts',
+            mappings: {
+              PMG: ['@pavarini.com'],
+            },
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        // 1. Step 1 (Tier 3 @pavarini.com) beats Step 2 (Tier 1 canonical name "Other Company" in displayName)
+        const step1PriorityRes = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-1',
+              from: 'Other Company <jmcgovern@pavarini.com>',
+            },
+          },
+        });
+        expect(step1PriorityRes.fields.contact).toBe('PMG');
+
+        // 2. Subdomain boundary: @pavarini.com matches mail.pavarini.com, not notpavarini.com
+        const subdomainRes = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-2',
+              from: 'Forwarded from user@mail.pavarini.com',
+            },
+          },
+        });
+        expect(subdomainRes.fields.contact).toBe('PMG');
+
+        const lookalikeRes = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-3',
+              from: 'User <user@notpavarini.com>',
+            },
+          },
+        });
+        expect(lookalikeRes.fields.contact).toBeUndefined();
+
+        // 3. Ambiguity collision in Tier 1 Step 3 halts immediately without falling through to Tier 3
+        mockParseRegistry.getTargetSchema.mockResolvedValue({
+          fields: [
+            {
+              key: 'contact',
+              type: 'string',
+              options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true },
+            },
+          ],
+          options: {
+            contacts: [
+              { key: 'PMG', name: 'Pavarini McGovern', aliases: ['Alpha'] },
+              { key: 'OTHER', name: 'Other Company', aliases: ['Beta'] },
+            ],
+          },
+        });
+        mockParseRegistry.getAliasDictionary.mockReturnValue({
+          source: 'contacts',
+          mappings: {
+            PMG: ['Gamma'],
+          },
+        });
+
+        const ambiguousRes = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-4',
+              from: 'Alpha and Beta with Gamma',
+            },
+          },
+        });
+        expect(ambiguousRes.fields.contact).toBeUndefined();
+      });
+
+      it('gates FallbackFieldExtractorPort, validates fallback candidates, rejects unverified lookup strings, and derives LinkedFields', async () => {
+        const targetSchema = {
+          fields: [
+            { key: 'date', type: 'string', pattern: '^\\d{6}$' },
+            { key: 'description', type: 'string', minLength: 3 },
+            {
+              key: 'specTag',
+              type: 'string',
+              options: { source: 'specs', key: 'key', name: 'name', allowUserInput: true },
+            },
+            {
+              key: 'specTitle',
+              type: 'string',
+              linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+            },
+            {
+              key: 'action',
+              type: 'string',
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+          ],
+          options: {
+            specs: [{ key: 'CG104', name: 'BED - KING' }],
+            actions: [{ key: 'REC', name: 'Received' }],
+          },
+        };
+
+        const fallbackExtractor = {
+          extractFields: vi.fn().mockResolvedValue({
+            date: 'bad-date', // fails pattern ^\\d{6}$ -> rejected
+            description: 'Valid AI Description',
+            specTag: 'CG104', // valid canonical option -> populates specTag & derives specTitle
+            specTitle: 'SHOULD NOT BE ACCEPTED DIRECTLY',
+            action: 'Received', // normalizes name -> key 'REC'
+            unknownField: 'ignored',
+          }),
+        };
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [], // empty extractors, fallback still runs!
+            fallback: {
+              strategy: 'ai',
+              fields: ['date', 'description', 'specTag', 'action'],
+            },
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue(targetSchema),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+          fallbackExtractor,
+        });
+
+        const res1 = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: { email: { id: 'msg-1', subject: 'Hello' } },
+        });
+
+        expect(fallbackExtractor.extractFields).toHaveBeenCalledTimes(1);
+        expect(res1.fields).toEqual({
+          description: 'Valid AI Description',
+          specTag: 'CG104',
+          specTitle: 'BED - KING',
+          action: 'REC',
+        });
+
+        // Rejects unverified allowUserInput lookup candidate from fallback
+        fallbackExtractor.extractFields.mockResolvedValueOnce({
+          specTag: 'UNVERIFIED-TAG',
+        });
+        const resUnverified = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: { email: { id: 'msg-2', subject: 'Hello' } },
+        });
+        expect(resUnverified.fields.specTag).toBeUndefined();
+
+        // Skips fallbackExtractor entirely when all targetable fields are already populated
+        fallbackExtractor.extractFields.mockClear();
+        const resAllPopulated = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: { email: { id: 'msg-3', subject: 'Hello' } },
+          existingData: {
+            date: '261020',
+            description: 'Already Set',
+            specTag: 'CG104',
+            action: 'REC',
+          },
+        });
+        expect(fallbackExtractor.extractFields).not.toHaveBeenCalled();
+        expect(resAllPopulated.fields.description).toBe('Already Set');
+      });
+    });
+
+    describe('Iteration 2 Review Fixes', () => {
+      it('fails closed when extractor.match or rule.when is present without predicateEvaluator, while still executing unconditional rules', async () => {
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                match: { '==': [{ var: 'email.fromDomain' }, 'inc.nyc'] },
+                fields: {
+                  description: { from: 'email.subjectClean' },
+                },
+              },
+              {
+                source: 'gmail',
+                fields: {
+                  action: [
+                    {
+                      when: { '!=': [{ var: 'email.fromDomain' }, 'inc.nyc'] },
+                      set: 'REC',
+                    },
+                  ],
+                  date: { from: 'email.date' },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              { key: 'description', type: 'string' },
+              {
+                key: 'action',
+                type: 'string',
+                options: { source: 'actions', key: 'key', name: 'name' },
+              },
+              { key: 'date', type: 'string' },
+            ],
+            options: {
+              actions: [{ key: 'REC', name: 'Received' }],
+            },
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+          // predicateEvaluator intentionally omitted
+        });
+
+        const result = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-fail-closed',
+              from: 'Someone <someone@inc.nyc>',
+              subject: 'Should not populate gated description',
+              date: 'Wed, 21 Oct 2026 10:00:00 GMT',
+            },
+          },
+        });
+
+        expect(result.fields.description).toBeUndefined();
+        expect(result.fields.action).toBeUndefined();
+        expect(result.fields.date).toBe('261021');
+      });
+
+      it('iterates multiple regex matches for lookup and correlated fields ("PO123-45 - CG104-A", "PO12345 - CG104-A", and "081100-002-C and 071200-001-B")', async () => {
+        const ffeSpecPattern =
+          '(?<=^|[\\s_./-])([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?=[\\s_./-]|$)';
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockImplementation(async (docTypeKey: string) => {
+            if (docTypeKey === 'submittal-ffe') {
+              return {
+                extractors: [
+                  {
+                    source: 'gmail',
+                    fields: {
+                      specTag: {
+                        from: 'email.subjectClean',
+                        pattern: ffeSpecPattern,
+                        group: 1,
+                        lookup: true,
+                      },
+                      revision: {
+                        from: 'email.subjectClean',
+                        pattern: ffeSpecPattern,
+                        group: 2,
+                      },
+                    },
+                  },
+                ],
+              };
+            }
+            return {
+              extractors: [
+                {
+                  source: 'gmail',
+                  fields: {
+                    section: {
+                      from: 'email.subjectClean',
+                      pattern: '(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?',
+                      group: 1,
+                    },
+                    number: {
+                      from: 'email.subjectClean',
+                      pattern: '(\\d{6})-(\\d{3})(?:-([A-Za-z0-9]+))?',
+                      group: 2,
+                    },
+                    revision: {
+                      from: 'email.subjectClean',
+                      pattern: '(\\d{6})-(\\d{3})-([A-Za-z0-9]+)',
+                      group: 3,
+                    },
+                  },
+                },
+              ],
+            };
+          }),
+          getTargetSchema: vi.fn().mockImplementation(async (docTypeKey: string) => {
+            if (docTypeKey === 'submittal-ffe') {
+              return {
+                fields: [
+                  {
+                    key: 'specTag',
+                    type: 'string',
+                    options: { source: 'specs', key: 'key', name: 'name', allowUserInput: true },
+                  },
+                  {
+                    key: 'specTitle',
+                    type: 'string',
+                    linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+                  },
+                  { key: 'revision', type: 'string', minLength: 1 },
+                ],
+                options: {
+                  specs: [{ key: 'CG104', name: 'BED - KING' }],
+                },
+              };
+            }
+            return {
+              fields: [
+                { key: 'section', type: 'string' },
+                { key: 'number', type: 'string' },
+                { key: 'revision', type: 'string' },
+              ],
+            };
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        // "PO123-45 - CG104-A": PO123 fails lookup, multi-match moves to CG104-A
+        const res1 = await service.extractFields({
+          documentTypeKey: 'submittal-ffe',
+          context: {
+            email: {
+              id: 'msg-multi-ffe-1',
+              subject: 'PO123-45 - CG104-A',
+            },
+          },
+        });
+        expect(res1.fields.specTag).toBe('CG104');
+        expect(res1.fields.specTitle).toBe('BED - KING');
+        expect(res1.fields.revision).toBe('A');
+
+        // "PO12345 - CG104-A": PO12345 does not match bounded specTag pattern, resolves CG104-A
+        const res2 = await service.extractFields({
+          documentTypeKey: 'submittal-ffe',
+          context: {
+            email: {
+              id: 'msg-multi-ffe-2',
+              subject: 'PO12345 - CG104-A',
+            },
+          },
+        });
+        expect(res2.fields.specTag).toBe('CG104');
+        expect(res2.fields.specTitle).toBe('BED - KING');
+        expect(res2.fields.revision).toBe('A');
+
+        // "081100-002-C and 071200-001-B": existingData has section 071200 & number 001 -> correlated revision B
+        const resCsi = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          existingData: {
+            section: '071200',
+            number: '001',
+          },
+          context: {
+            email: {
+              id: 'msg-multi-csi',
+              subject: '081100-002-C and 071200-001-B',
+            },
+          },
+        });
+        expect(resCsi.fields.revision).toBe('B');
+      });
+
+      it('supports pattern, flags, group, and excludePattern on email.to and email.cc lookups', async () => {
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  contact: [
+                    {
+                      from: 'email.to',
+                      pattern: '\\[code:([A-Za-z0-9]+)\\]',
+                      flags: 'i',
+                      group: 1,
+                      excludePattern: '@inc\\.nyc\\b',
+                      lookup: true,
+                    },
+                    {
+                      from: 'email.cc',
+                      pattern: '<([^>]+)>',
+                      flags: 'i',
+                      group: 1,
+                      excludePattern: '@inc\\.nyc\\b',
+                      lookup: true,
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              {
+                key: 'contact',
+                type: 'string',
+                options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true },
+              },
+            ],
+            options: {
+              contacts: [
+                { key: 'PMG', name: 'Pavarini McGovern', aliases: ['pavarini.com'] },
+                { key: 'STO', name: 'Structure Tone', aliases: ['@structuretone.com'] },
+              ],
+            },
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        const toRes = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-to-pattern',
+              to: '"Internal, Team [code:PMG]" <team@inc.nyc>, "External [code:STO]" <ext@example.com>',
+            },
+          },
+        });
+        expect(toRes.fields.contact).toBe('STO');
+
+        const ccRes = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-cc-pattern',
+              to: 'colleague@inc.nyc',
+              cc: 'PM <pm@inc.nyc>, "McGovern, James" <jmcgovern@structuretone.com>',
+            },
+          },
+        });
+        expect(ccRes.fields.contact).toBe('STO');
+      });
+
+      it('binds specTag to CG104-A_CutSheet.pdf before vendor lookup in multi-attachment FF&E emails', async () => {
+        const ffeSpecPattern =
+          '(?<=^|[\\s_./-])([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?=[\\s_./-]|$)';
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  specTag: [
+                    {
+                      from: 'attachmentName',
+                      pattern: ffeSpecPattern,
+                      group: 1,
+                      lookup: true,
+                    },
+                  ],
+                  revision: [
+                    {
+                      from: 'attachmentName',
+                      pattern: ffeSpecPattern,
+                      group: 2,
+                    },
+                  ],
+                  vendor: [
+                    {
+                      from: 'attachmentName',
+                      lookup: true,
+                    },
+                    {
+                      from: 'email.from',
+                      lookup: true,
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              {
+                key: 'specTag',
+                type: 'string',
+                options: { source: 'specs', key: 'key', name: 'name', allowUserInput: true },
+              },
+              {
+                key: 'specTitle',
+                type: 'string',
+                linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+              },
+              { key: 'revision', type: 'string', minLength: 1 },
+              {
+                key: 'vendor',
+                type: 'string',
+                options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true },
+              },
+            ],
+            options: {
+              specs: [{ key: 'CG104', name: 'BED - KING' }],
+              vendors: [{ key: 'BM', name: 'Berman Falk', aliases: ['Berman', '@bermanfalk.com'] }],
+            },
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        const result = await service.extractFields({
+          documentTypeKey: 'submittal-ffe',
+          context: {
+            email: {
+              id: 'msg-multi-att-ffe',
+              from: 'Rep <rep@bermanfalk.com>',
+              attachments: [
+                { id: 'att-1', name: 'Berman_Cover.pdf' },
+                { id: 'att-2', name: 'CG104-A_CutSheet.pdf' },
+              ],
+            },
+          },
+        });
+
+        expect(result.fields.specTag).toBe('CG104');
+        expect(result.fields.specTitle).toBe('BED - KING');
+        expect(result.fields.revision).toBe('A');
+        expect(result.fields.vendor).toBe('BM');
+      });
+    });
+
+    describe('Iteration 3 Review Fixes', () => {
+      it('parses apostrophes inside double-quoted and unquoted display names in parseRecipient and extractFields lookup', async () => {
+        expect(parseRecipient('"O\'Brien, James" <jobrien@example.com>')).toEqual({
+          raw: '"O\'Brien, James" <jobrien@example.com>',
+          displayName: "O'Brien, James",
+          email: 'jobrien@example.com',
+          domain: 'example.com',
+        });
+
+        expect(parseRecipient("O'Brien <jobrien@example.com>")).toEqual({
+          raw: "O'Brien <jobrien@example.com>",
+          displayName: "O'Brien",
+          email: 'jobrien@example.com',
+          domain: 'example.com',
+        });
+
+        const mockParseRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  contact: [
+                    {
+                      from: 'email.from',
+                      lookup: true,
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              {
+                key: 'contact',
+                type: 'string',
+                options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true },
+              },
+            ],
+            options: {
+              contacts: [
+                { key: 'OBR', name: "O'Brien, James", aliases: ["O'Brien"] },
+              ],
+            },
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: mockParseRegistry,
+        });
+
+        const quotedRes = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-obrien-quoted',
+              from: '"O\'Brien, James" <jobrien@example.com>',
+            },
+          },
+        });
+        expect(quotedRes.fields.contact).toBe('OBR');
+
+        const unquotedRes = await service.extractFields({
+          documentTypeKey: 'test-doc',
+          context: {
+            email: {
+              id: 'msg-obrien-unquoted',
+              from: "O'Brien <jobrien@example.com>",
+            },
+          },
+        });
+        expect(unquotedRes.fields.contact).toBe('OBR');
       });
     });
   });

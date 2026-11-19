@@ -11,6 +11,7 @@ import {
 } from './document.wiring';
 import { createDocumentSpaceFeatureWiring } from './document-space.wiring';
 import { wireWorkspaceAddonRoutes } from './workspace-addon.wiring';
+import { createSourceParserWiring } from './source-parser.wiring';
 import type { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
 
 import type { DocumentSpaceService } from '../features/document-space/domain';
@@ -146,6 +147,20 @@ export function createApp(options?: AppOptions): AppInstance {
 
   const gmailClient = options?.gmailClient ?? new GoogleGmailClient();
 
+  const spaceTypesProvider =
+    documentSpaceService ??
+    documentSpaceWiring.documentSpaceRegistry ?? {
+      getAllTypes: () => [],
+    };
+
+  const sourceParserWiring = createSourceParserWiring({
+    spaceTypesProvider,
+    manifestProvider,
+    driveClient,
+    driveService: options?.driveService,
+    configProvider: manifestProvider ?? defaultAppConfigProvider,
+  });
+
   wireWorkspaceAddonRoutes({
     server,
     documentService: options?.documentService,
@@ -163,9 +178,12 @@ export function createApp(options?: AppOptions): AppInstance {
     storageAdapter,
     pdfProcessor: options?.pdfProcessor,
     driveService: options?.driveService,
+    sourceParser: sourceParserWiring.sourceParser,
+    createSourceParser: sourceParserWiring.createSourceParser,
   });
 
   const initialize = async () => {
+    await sourceParserWiring.parseSchemaRegistry.initialize();
     if (compiledSchemaRegistry) {
       await compiledSchemaRegistry.initialize();
     }

@@ -2540,6 +2540,228 @@ describe('GoogleGmailClient', () => {
     });
   });
 
+  describe('Label Resolution and Hydration (Ticket #302)', () => {
+    it('resolves user label IDs via users.labels.list in getMessage and caches result per auth token', async () => {
+      let currentTime = 1000;
+      const mockLabelsList = vi.fn().mockResolvedValue({
+        data: {
+          labels: [
+            { id: 'Label_1', name: 'Projects/123 Main St/Submittals' },
+            { id: 'Label_2', name: 'FF&E Submittals' },
+          ],
+        },
+      });
+
+      const mockGetMessage = vi.fn().mockImplementation(async ({ id }: { id: string }) => ({
+        data: {
+          id,
+          labelIds: ['Label_1', 'INBOX'],
+        },
+      }));
+
+      const mockGmail = {
+        users: {
+          messages: { get: mockGetMessage },
+          labels: { list: mockLabelsList },
+        },
+      } as unknown as gmail_v1.Gmail;
+
+      const client = new GoogleGmailClient({
+        gmail: mockGmail,
+        cacheOptions: {
+          ttlMs: 5000,
+          clock: () => currentTime,
+        },
+      });
+
+      const result1 = await client.getMessage('msg-1');
+      expect(mockLabelsList).toHaveBeenCalledTimes(1);
+      expect(mockLabelsList).toHaveBeenCalledWith({ userId: 'me' });
+      expect(result1.labels).toEqual(['Projects/123 Main St/Submittals', 'INBOX']);
+
+      // Second call within TTL with a new message that also has user labels should reuse cached labelMap
+      const result2 = await client.getMessage('msg-2');
+      expect(mockLabelsList).toHaveBeenCalledTimes(1);
+      expect(result2.labels).toEqual(['Projects/123 Main St/Submittals', 'INBOX']);
+
+      // After TTL expires, next call re-fetches labels.list
+      currentTime += 6000;
+      const result3 = await client.getMessage('msg-3');
+      expect(mockLabelsList).toHaveBeenCalledTimes(2);
+      expect(result3.labels).toEqual(['Projects/123 Main St/Submittals', 'INBOX']);
+    });
+
+    it('deduplicates concurrent in-flight labels.list lookups for the same auth token', async () => {
+      let resolveLabelsPromise: (val: unknown) => void;
+      const labelsPromise = new Promise((resolve) => {
+        resolveLabelsPromise = resolve;
+      });
+
+      const mockLabelsList = vi.fn().mockImplementation(() => labelsPromise);
+      const mockGetMessage = vi.fn().mockImplementation(async ({ id }: { id: string }) => ({
+        data: {
+          id,
+          labelIds: ['Label_1'],
+        },
+      }));
+
+      const mockGmail = {
+        users: {
+          messages: { get: mockGetMessage },
+          labels: { list: mockLabelsList },
+        },
+      } as unknown as gmail_v1.Gmail;
+
+      const client = new GoogleGmailClient({ gmail: mockGmail });
+
+      const p1 = client.getMessage('msg-concurrent-1');
+      const p2 = client.getMessage('msg-concurrent-2');
+
+      // Yield microtasks so messages.get resolves and triggers resolveLabelMap
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // labels.list should have been called only once despite two concurrent calls
+      expect(mockLabelsList).toHaveBeenCalledTimes(1);
+
+      resolveLabelsPromise!({
+        data: {
+          labels: [{ id: 'Label_1', name: 'Projects/123 Main St' }],
+        },
+      });
+
+      const [res1, res2] = await Promise.all([p1, p2]);
+      expect(res1.labels).toEqual(['Projects/123 Main St']);
+      expect(res2.labels).toEqual(['Projects/123 Main St']);
+      expect(mockLabelsList).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips calling labels.list when message only contains system labels', async () => {
+      const mockLabelsList = vi.fn();
+      const mockGetMessage = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-system-only',
+          labelIds: ['INBOX', 'UNREAD', 'STARRED', 'IMPORTANT', 'CATEGORY_PROMOTIONS', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'CHAT'],
+        },
+      });
+
+      const mockGmail = {
+        users: {
+          messages: { get: mockGetMessage },
+          labels: { list: mockLabelsList },
+        },
+      } as unknown as gmail_v1.Gmail;
+
+      const client = new GoogleGmailClient({ gmail: mockGmail });
+      const res = await client.getMessage('msg-system-only');
+
+      expect(mockLabelsList).not.toHaveBeenCalled();
+      expect(res.labels).toEqual([
+        'INBOX',
+        'UNREAD',
+        'STARRED',
+        'IMPORTANT',
+        'CATEGORY_PROMOTIONS',
+        'SENT',
+        'DRAFT',
+        'TRASH',
+        'SPAM',
+        'CHAT',
+      ]);
+    });
+
+    it('falls back non-fatally to raw labelIds when labels.list fails or is unavailable', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const mockLabelsList = vi.fn().mockRejectedValue(new Error('Labels API unavailable'));
+      const mockGetMessage = vi.fn().mockResolvedValue({
+        data: {
+          id: 'msg-fail',
+          labelIds: ['Label_1', 'INBOX'],
+        },
+      });
+
+      const mockGmail = {
+        users: {
+          messages: { get: mockGetMessage },
+          labels: { list: mockLabelsList },
+        },
+      } as unknown as gmail_v1.Gmail;
+
+      const client = new GoogleGmailClient({ gmail: mockGmail });
+      const res = await client.getMessage('msg-fail');
+
+      expect(res.id).toBe('msg-fail');
+      // Falls back to raw label IDs
+      expect(res.labels).toEqual(['Label_1', 'INBOX']);
+      warnSpy.mockRestore();
+    });
+
+    it('clears labelMapCache when clearCache() is called', async () => {
+      const mockLabelsList = vi.fn().mockResolvedValue({
+        data: {
+          labels: [{ id: 'Label_1', name: 'Projects/123 Main St' }],
+        },
+      });
+      const mockGetMessage = vi.fn().mockImplementation(async ({ id }: { id: string }) => ({
+        data: {
+          id,
+          labelIds: ['Label_1'],
+        },
+      }));
+
+      const mockGmail = {
+        users: {
+          messages: { get: mockGetMessage },
+          labels: { list: mockLabelsList },
+        },
+      } as unknown as gmail_v1.Gmail;
+
+      const client = new GoogleGmailClient({ gmail: mockGmail });
+      await client.getMessage('msg-1');
+      expect(mockLabelsList).toHaveBeenCalledTimes(1);
+
+      client.clearCache();
+
+      await client.getMessage('msg-2');
+      expect(mockLabelsList).toHaveBeenCalledTimes(2);
+    });
+
+    it('resolves user label IDs in getThread across all messages with a single labels.list call', async () => {
+      const mockLabelsList = vi.fn().mockResolvedValue({
+        data: {
+          labels: [
+            { id: 'Label_1', name: 'Projects/123 Main St' },
+            { id: 'Label_2', name: 'Submittals' },
+          ],
+        },
+      });
+
+      const mockGetThread = vi.fn().mockResolvedValue({
+        data: {
+          id: 'th-labels',
+          messages: [
+            { id: 'msg-th-1', labelIds: ['Label_1', 'INBOX'] },
+            { id: 'msg-th-2', labelIds: ['Label_2', 'SENT'] },
+          ],
+        },
+      });
+
+      const mockGmail = {
+        users: {
+          threads: { get: mockGetThread },
+          labels: { list: mockLabelsList },
+        },
+      } as unknown as gmail_v1.Gmail;
+
+      const client = new GoogleGmailClient({ gmail: mockGmail });
+      const thread = await client.getThread('th-labels');
+
+      expect(mockLabelsList).toHaveBeenCalledTimes(1);
+      expect(thread.messages[0].labels).toEqual(['Projects/123 Main St', 'INBOX']);
+      expect(thread.messages[1].labels).toEqual(['Submittals', 'SENT']);
+    });
+  });
+
   describe('parseMessageDetails', () => {
     it('parses message headers, body, and fallback id correctly', () => {
       const parsed = parseMessageDetails(
@@ -2567,6 +2789,56 @@ describe('GoogleGmailClient', () => {
     it('uses fallbackId when message.id is missing', () => {
       const parsed = parseMessageDetails({}, 'fallback-id');
       expect(parsed.id).toBe('fallback-id');
+    });
+
+    it('resolves labelIds via labelMap synchronously while preserving unmapped and system labels', () => {
+      const labelMap = new Map<string, string>([
+        ['Label_1', 'Projects/123 Main St/Submittals'],
+        ['Label_2', 'FF&E Submittals'],
+      ]);
+
+      const parsedWithMap = parseMessageDetails(
+        {
+          id: 'msg-labels',
+          labelIds: ['Label_1', 'Label_2', 'Label_Unknown', 'INBOX', 'SENT'],
+        },
+        'fallback-id',
+        labelMap
+      );
+
+      expect(parsedWithMap.labels).toEqual([
+        'Projects/123 Main St/Submittals',
+        'FF&E Submittals',
+        'Label_Unknown',
+        'INBOX',
+        'SENT',
+      ]);
+
+      // Record<string, string> form
+      const parsedWithRecord = parseMessageDetails(
+        {
+          id: 'msg-labels',
+          labelIds: ['Label_1', 'INBOX'],
+        },
+        'fallback-id',
+        { Label_1: 'Projects/123 Main St/Submittals' }
+      );
+      expect(parsedWithRecord.labels).toEqual([
+        'Projects/123 Main St/Submittals',
+        'INBOX',
+      ]);
+
+      // Without labelMap, preserves raw labelIds
+      const parsedWithoutMap = parseMessageDetails({
+        id: 'msg-labels',
+        labelIds: ['Label_1', 'INBOX'],
+      });
+      expect(parsedWithoutMap.labels).toEqual(['Label_1', 'INBOX']);
+
+      // When message.labelIds is undefined, labels property is undefined (omitted)
+      const parsedNoLabels = parseMessageDetails({ id: 'msg-no-labels' });
+      expect(parsedNoLabels.labels).toBeUndefined();
+      expect('labels' in parsedNoLabels).toBe(false);
     });
   });
 });

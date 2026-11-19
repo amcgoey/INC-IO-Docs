@@ -1,0 +1,49 @@
+{
+  "source": "contacts",
+  "mappings": {
+    "INC": [
+      "@inc.nyc",
+      "INC Architecture",
+      "INC Architecture and Design",
+      "INC Architecture & Design"
+    ],
+    "PMG": [
+      "@pavarini.com",
+      "Pavarini McGovern",
+      "Pavarini"
+    ],
+    "FXC": [
+      "@fxcollaborative.com",
+      "FX Collaborative",
+      "FXCollaborative",
+      "FXFOWLE"
+    ],
+    "IE": [
+      "@interfaceeng.com",
+      "Interface Engineering",
+      "Interface Eng"
+    ],
+    "VLD": [
+      "@ventresca.com",
+      "Ventresca Lighting Design",
+      "Ventresca Lighting",
+      "Ventresca"
+    ],
+    "TT": [
+      "@thorntontomasetti.com",
+      "Thornton Tomasetti",
+      "Thorton Tomasetti"
+    ],
+    "BW": [
+      "@benjaminwest.com",
+      "Benjamin West",
+      "BenjaminWest"
+    ],
+    "IHG": [
+      "@ihg.com",
+      "IHG Hotels",
+      "IHG Hotels & Resorts",
+      "InterContinental Hotels Group"
+    ]
+  }
+}

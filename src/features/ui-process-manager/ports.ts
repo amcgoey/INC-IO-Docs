@@ -241,6 +241,7 @@ export const UiProcessSourceEmailDescriptorSchema = Type.Object({
   date: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   plainTextBody: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   htmlBody: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  labels: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   attachments: Type.Optional(Type.Union([Type.Array(UiProcessSourceEmailAttachmentDescriptorSchema), Type.Undefined()])),
 });
 export type UiProcessSourceEmailDescriptor = Static<typeof UiProcessSourceEmailDescriptorSchema>;
@@ -260,8 +261,23 @@ export const UiProcessSourceContextSchema = Type.Object({
 });
 export type UiProcessSourceContext = Static<typeof UiProcessSourceContextSchema>;
 
+export const UiProcessExtractFieldsRequestSchema = Type.Object({
+  documentTypeKey: Type.String({ minLength: 1 }),
+  spaceId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  context: UiProcessSourceContextSchema,
+  existingData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
+});
+export type UiProcessExtractFieldsRequest = Static<typeof UiProcessExtractFieldsRequestSchema>;
+
+export const UiProcessExtractedFieldsResultSchema = Type.Object({
+  fields: Type.Record(Type.String(), Type.Unknown()),
+  statusMessages: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+});
+export type UiProcessExtractedFieldsResult = Static<typeof UiProcessExtractedFieldsResultSchema>;
+
 export interface UiProcessSourceParserPort {
   inferRouting(context: UiProcessSourceContext): Promise<UiProcessInferredRoutingResult>;
+  extractFields?(request: UiProcessExtractFieldsRequest): Promise<UiProcessExtractedFieldsResult>;
 }
 
 // --- Driving Port ---

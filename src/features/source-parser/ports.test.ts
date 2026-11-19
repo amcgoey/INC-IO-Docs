@@ -10,6 +10,12 @@ import {
   ExtractFieldsRequestSchema,
   ExtractedFieldsResultSchema,
   SourceParserSpaceTypeConfigSchema,
+  GmailFieldRuleOrListSchema,
+  GmailExtractorRuleSchema,
+  ParseTargetDocumentFieldSchema,
+  ParseTargetCalculatedFieldSchema,
+  ParseTargetDocumentOptionTupleSchema,
+  ParseTargetDocumentSchemaSchema,
 } from './ports';
 
 describe('SourceParser ports and schemas', () => {
@@ -82,6 +88,7 @@ describe('SourceParser ports and schemas', () => {
           date: 'Mon, 19 Oct 2026 14:00:00 -0400',
           plainTextBody: 'Body text',
           htmlBody: '<p>Body text</p>',
+          labels: ['Projects/123 Main St', 'INBOX'],
           attachments: [{ id: 'att-1', name: 'Plan.pdf', mimeType: 'application/pdf' }],
         },
       })
@@ -99,6 +106,7 @@ describe('SourceParser ports and schemas', () => {
           date: undefined,
           plainTextBody: undefined,
           htmlBody: undefined,
+          labels: undefined,
           attachments: undefined,
         },
       })
@@ -146,6 +154,69 @@ describe('SourceParser ports and schemas', () => {
           defaultDocumentType: 'communication-project',
         },
         storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+      })
+    ).toBe(true);
+  });
+
+  it('validates GmailFieldRuleOrListSchema rejecting empty rule arrays', () => {
+    expect(Value.Check(GmailFieldRuleOrListSchema, { from: 'email.date' })).toBe(true);
+    expect(Value.Check(GmailFieldRuleOrListSchema, [{ from: 'email.date' }])).toBe(true);
+    expect(Value.Check(GmailFieldRuleOrListSchema, [])).toBe(false);
+    expect(
+      Value.Check(GmailExtractorRuleSchema, {
+        source: 'gmail',
+        fields: { date: [] },
+      })
+    ).toBe(false);
+  });
+
+  it('validates ParseTargetDocumentSchema TypeBox DTOs', () => {
+    expect(
+      Value.Check(ParseTargetDocumentFieldSchema, {
+        key: 'contact',
+        name: 'Contact',
+        type: 'string',
+        minLength: 1,
+        pattern: '^.*$',
+        options: {
+          source: 'contacts',
+          key: 'code',
+          name: 'title',
+          allowUserInput: true,
+          dynamicConfig: { provider: 'google_drive' },
+        },
+      })
+    ).toBe(true);
+
+    expect(
+      Value.Check(ParseTargetDocumentFieldSchema, {
+        key: 'contact',
+        unknownProp: 'rejected',
+      })
+    ).toBe(false);
+
+    expect(
+      Value.Check(ParseTargetCalculatedFieldSchema, {
+        key: 'fileName',
+        name: 'File Name',
+      })
+    ).toBe(true);
+
+    expect(
+      Value.Check(ParseTargetDocumentOptionTupleSchema, {
+        code: '071200',
+        title: 'Waterproofing',
+        aliases: ['wp'],
+      })
+    ).toBe(true);
+
+    expect(
+      Value.Check(ParseTargetDocumentSchemaSchema, {
+        fields: [{ key: 'date' }],
+        calculatedFields: [{ key: 'fileName' }],
+        options: {
+          contacts: [{ key: 'PMG', name: 'Pavarini', aliases: ['@pavarini.com'] }],
+        },
       })
     ).toBe(true);
   });

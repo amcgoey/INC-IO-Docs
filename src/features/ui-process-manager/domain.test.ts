@@ -32,6 +32,10 @@ import {
   DRIVE_ROUTING_FALLBACK_NOTICE,
   extractTextFromHtml,
   hasProposalOpportunityMarkers,
+  sanitizeFormDataForSourceReset,
+  isInactiveDocTypeFieldKey,
+  pruneFormDataForTypeSwitch,
+  extractActiveTypeExistingData,
   type ProcessUiStateInput,
 } from './domain';
 import {
@@ -3526,6 +3530,97 @@ describe('ui-process-manager domain', () => {
     it('returns false when no proposal markers exist in subject, plainTextBody, or htmlBody', () => {
       expect(hasProposalOpportunityMarkers('Submittal 071200-001 Waterproofing', 'Attached is submittal for review.', '<p>Submittal review</p>')).toBe(false);
       expect(hasProposalOpportunityMarkers(undefined, undefined, undefined)).toBe(false);
+    });
+
+    it('returns true when non-system labels or hierarchical label segments contain proposal/opportunity markers', () => {
+      // Direct user label
+      expect(hasProposalOpportunityMarkers(undefined, undefined, undefined, ['Proposals'])).toBe(true);
+      expect(hasProposalOpportunityMarkers('Meeting Notes', undefined, undefined, ['RFP Responses'])).toBe(true);
+
+      // Hierarchical label segment
+      expect(hasProposalOpportunityMarkers(undefined, undefined, undefined, ['Clients/Acme/Proposals'])).toBe(true);
+      expect(hasProposalOpportunityMarkers(undefined, undefined, undefined, ['Pipeline/2026 Opportunities/Active'])).toBe(true);
+
+      // Ignores system labels and non-matching labels
+      expect(hasProposalOpportunityMarkers(undefined, undefined, undefined, ['INBOX', 'SENT', 'UNREAD', 'STARRED', 'CATEGORY_PROMOTIONS'])).toBe(false);
+      expect(hasProposalOpportunityMarkers(undefined, undefined, undefined, ['INBOX', 'Projects/123 Main St/Submittals'])).toBe(false);
+
+      // System labels alongside proposal label
+      expect(hasProposalOpportunityMarkers(undefined, undefined, undefined, ['INBOX', 'Proposals'])).toBe(true);
+    });
+  });
+
+  describe('Form-cleansing & pruning helpers (S6b, Spec #2)', () => {
+    it('sanitizeFormDataForSourceReset retains selection keys and spaceId while purging data keys', () => {
+      const cleaned = sanitizeFormDataForSourceReset({
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentSpace_projects: 'Project Main',
+        SelectDocumentType_projects: 'communication-project',
+        SelectFileSource: 'Email Attachments',
+        spaceId: 'proj-1',
+        description: 'Stale desc',
+        'description_communication-proposal': 'Stale suffixed desc',
+      });
+
+      expect(cleaned).toEqual({
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentSpace_projects: 'Project Main',
+        SelectDocumentType_projects: 'communication-project',
+        SelectFileSource: 'Email Attachments',
+        spaceId: 'proj-1',
+      });
+    });
+
+    it('isInactiveDocTypeFieldKey identifies inactive docType-suffixed keys', () => {
+      const allDocTypes = ['communication-project', 'submittal-arch'];
+      expect(isInactiveDocTypeFieldKey('description_communication-project', 'submittal-arch', allDocTypes)).toBe(true);
+      expect(isInactiveDocTypeFieldKey('section_submittal-arch', 'submittal-arch', allDocTypes)).toBe(false);
+      expect(isInactiveDocTypeFieldKey('date', 'submittal-arch', allDocTypes)).toBe(false);
+    });
+
+    it('pruneFormDataForTypeSwitch retains selection keys, inactive suffixed edits, and active schema keys while dropping incompatible unsuffixed keys', () => {
+      const allDocTypes = ['communication-project', 'submittal-arch'];
+      const activeFields = new Set(['date', 'section', 'number', 'contact']);
+      const pruned = pruneFormDataForTypeSwitch(
+        {
+          SelectDocumentType: 'submittal-arch',
+          spaceId: 'proj-1',
+          'description_communication-project': 'Saved Comm Desc',
+          date: '261020',
+          description: 'Incompatible unsuffixed field',
+        },
+        'submittal-arch',
+        allDocTypes,
+        activeFields
+      );
+
+      expect(pruned).toEqual({
+        SelectDocumentType: 'submittal-arch',
+        spaceId: 'proj-1',
+        'description_communication-project': 'Saved Comm Desc',
+        date: '261020',
+      });
+    });
+
+    it('extractActiveTypeExistingData excludes selection keys, spaceId, blanks, and inactive suffixed keys', () => {
+      const allDocTypes = ['communication-project', 'submittal-arch'];
+      const existing = extractActiveTypeExistingData(
+        {
+          SelectDocumentType: 'submittal-arch',
+          spaceId: 'proj-1',
+          'description_communication-project': 'Inactive Edit',
+          section: '071200',
+          number: '   ',
+          revision: undefined,
+          notes: null,
+        },
+        'submittal-arch',
+        allDocTypes
+      );
+
+      expect(existing).toEqual({
+        section: '071200',
+      });
     });
   });
 });
