@@ -1011,4 +1011,52 @@ describe('ParseSchemaRegistryAdapter', () => {
       await expect(badAdapter.initialize()).rejects.toThrow(/Invalid DocumentParseSchema structure/i);
     });
   });
+
+  describe('Ticket #311: compactAlnum normalizer mode at ParseSchemaRegistryPort.initialize()', () => {
+    it('accepts compactAlnum on gmail and drive lookup/extract rules', async () => {
+      const validAdapter = new ParseSchemaRegistryAdapter({
+        getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-ffe.json'] }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'test-ffe',
+          documentSchema: {
+            fields: [
+              { key: 'specTag', type: 'string', options: { source: 'specs', key: 'key' } },
+            ],
+            options: {
+              specs: [{ key: 'CG104', name: 'BED - KING' }],
+            },
+          },
+          documentParseSchema: {
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  specTag: {
+                    from: 'attachmentName',
+                    pattern: '([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)',
+                    group: 1,
+                    normalize: 'compactAlnum',
+                    lookup: true,
+                  },
+                },
+              },
+              {
+                source: 'drive',
+                fields: {
+                  specTag: {
+                    from: 'drive.fileNameStem',
+                    pattern: '([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)',
+                    group: 1,
+                    normalize: 'compactAlnum',
+                    lookup: true,
+                  },
+                },
+              },
+            ],
+          },
+        }),
+      });
+      await expect(validAdapter.initialize()).resolves.toBeUndefined();
+    });
+  });
 });

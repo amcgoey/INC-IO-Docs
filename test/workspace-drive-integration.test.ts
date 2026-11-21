@@ -3087,4 +3087,217 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       ).toBe('261115');
     });
   });
+
+  describe('Ticket #311: Flexible Submittal FF&E routing and Drive pre-population', () => {
+    it('binds multi-file selection [Berman_Cover.pdf, CG-104_v2_Fil_Doux.pdf] to item 2 and populates specTag, LinkedField specTitle, 0-based revision, vendor, date, action, and status', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-11-20T15:00:00Z'));
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/file-cover-311')
+        .query(true)
+        .reply(200, {
+          id: 'file-cover-311',
+          name: 'Berman_Cover.pdf',
+          mimeType: 'application/pdf',
+          parents: ['folder-unfiled-311'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-01T15:00:00Z',
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/folder-unfiled-311')
+        .query(true)
+        .reply(200, {
+          id: 'folder-unfiled-311',
+          name: 'Unfiled',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/file-submittal-311')
+        .query(true)
+        .reply(200, {
+          id: 'file-submittal-311',
+          name: 'CG-104_v2_Fil_Doux.pdf',
+          mimeType: 'application/pdf',
+          parents: ['folder-unfiled-311'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [
+              { id: 'file-cover-311', title: 'Berman_Cover.pdf' },
+              { id: 'file-submittal-311', title: 'CG-104_v2_Fil_Doux.pdf' },
+            ],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const card = JSON.parse(response.payload).action.navigations[0].pushCard;
+      const docTypeSec = card.sections.find((s: { header?: string }) => s.header === 'Document Type');
+      const selectedDocType = docTypeSec.widgets
+        .find((w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'SelectDocumentType_projects')
+        ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+      expect(selectedDocType).toBe('submittal-ffe');
+
+      const docDataSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      const getTextVal = (field: string) =>
+        docDataSec.widgets.find(
+          (w: { textInput?: { name: string } }) => w.textInput?.name === getDocumentInfoWidgetName(field, 'submittal-ffe')
+        )?.textInput?.value;
+      const getSelVal = (field: string) =>
+        docDataSec.widgets
+          .find(
+            (w: { selectionInput?: { name: string } }) =>
+              w.selectionInput?.name === getDocumentInfoWidgetName(field, 'submittal-ffe')
+          )
+          ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+
+      expect(getTextVal('specTag')).toBe('CG104');
+      expect(getTextVal('specTitle')).toBe('BED - KING');
+      expect(getTextVal('revision')).toBe('1');
+      expect(getTextVal('vendor')).toBe('FDT');
+      expect(getTextVal('date')).toBe('261118');
+      expect(getSelVal('action')).toBe('REC');
+      expect(getSelVal('status')).toBe('Open');
+    });
+
+    it('extracts varied FF&E formats (CG104-A_Berman_Falk, LT 159A_R0, Light_Annex without rev) and rejects lowercase prose ("in 100 days at 120V panel")', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-11-20T15:00:00Z'));
+
+      const ffeCases = [
+        {
+          id: 'ffe-case-1',
+          name: 'CG104-A_Berman_Falk.pdf',
+          specTag: 'CG104',
+          specTitle: 'BED - KING',
+          revision: 'A',
+          vendor: 'BM',
+          date: '261118',
+        },
+        {
+          id: 'ffe-case-2',
+          name: 'LT 159A_R0.pdf',
+          specTag: 'LT159A',
+          specTitle: 'SCONCE - CORRIDOR',
+          revision: '0',
+          vendor: undefined,
+          date: '261118',
+        },
+        {
+          id: 'ffe-case-3',
+          name: 'CG-104_Light_Annex_2026-11-15.pdf',
+          specTag: 'CG104',
+          specTitle: 'BED - KING',
+          revision: undefined,
+          vendor: 'LA',
+          date: '261115',
+        },
+      ];
+
+      for (const tc of ffeCases) {
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/drives')
+          .query(true)
+          .reply(200, {
+            drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+          });
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${tc.id}`)
+          .query(true)
+          .reply(200, {
+            id: tc.id,
+            name: tc.name,
+            mimeType: 'application/pdf',
+            parents: ['projects-shared-drive-001'],
+            driveId: 'projects-shared-drive-001',
+            modifiedTime: '2026-11-18T15:00:00Z',
+          });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/drive-items-selected',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+            drive: { selectedItems: [{ id: tc.id, title: tc.name }] },
+          },
+        });
+        expect(res.statusCode).toBe(200);
+        const card = JSON.parse(res.payload).action.navigations[0].pushCard;
+        const docTypeSec = card.sections.find((s: { header?: string }) => s.header === 'Document Type');
+        const selectedDocType = docTypeSec.widgets
+          .find((w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'SelectDocumentType_projects')
+          ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+        expect(selectedDocType, tc.name).toBe('submittal-ffe');
+
+        const docDataSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+        const getTextVal = (field: string) =>
+          docDataSec.widgets.find(
+            (w: { textInput?: { name: string } }) => w.textInput?.name === getDocumentInfoWidgetName(field, 'submittal-ffe')
+          )?.textInput?.value;
+
+        expect(getTextVal('specTag'), tc.name).toBe(tc.specTag);
+        expect(getTextVal('specTitle'), tc.name).toBe(tc.specTitle);
+        expect(getTextVal('revision'), tc.name).toBe(tc.revision);
+        expect(getTextVal('vendor'), tc.name).toBe(tc.vendor);
+        expect(getTextVal('date'), tc.name).toBe(tc.date);
+      }
+
+      // Lowercase prose ("in 100 days", "at 120V panel") must NOT route to submittal-ffe
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/ffe-prose-neg')
+        .query(true)
+        .reply(200, {
+          id: 'ffe-prose-neg',
+          name: 'Work in 100 days at 120V panel.pdf',
+          mimeType: 'application/pdf',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+
+      const negRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: { selectedItems: [{ id: 'ffe-prose-neg', title: 'Work in 100 days at 120V panel.pdf' }] },
+        },
+      });
+      expect(negRes.statusCode).toBe(200);
+      const negCard = JSON.parse(negRes.payload).action.navigations[0].pushCard;
+      const negDocTypeSec = negCard.sections.find((s: { header?: string }) => s.header === 'Document Type');
+      const negSelectedDocType = negDocTypeSec.widgets
+        .find((w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'SelectDocumentType_projects')
+        ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+      expect(negSelectedDocType).toBe('communication-project');
+    });
+  });
 });

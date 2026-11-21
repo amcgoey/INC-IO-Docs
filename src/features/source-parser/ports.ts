@@ -121,6 +121,7 @@ export type DriveExtractSource = Static<typeof DriveExtractSourceSchema>;
 export const FieldCandidateNormalizeSchema = Type.Union([
   Type.Literal('digits6'),
   Type.Literal('pad3'),
+  Type.Literal('compactAlnum'),
   Type.Literal('revision'),
   Type.Literal('yymmdd'),
   Type.Literal('cleanFilenameText'),

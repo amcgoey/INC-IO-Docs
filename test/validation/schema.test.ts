@@ -350,12 +350,22 @@ describe('DocumentType JSON files schema validation', () => {
 
       const ffeParse = registry.getParseSchema('submittal-ffe');
       const ffeExtractor = ffeParse?.extractors[0];
+      expect(ffeExtractor?.source).toBe('gmail');
       expect(ffeExtractor?.fields).toHaveProperty('action');
       expect(ffeExtractor?.fields).toHaveProperty('date');
       expect(ffeExtractor?.fields).toHaveProperty('contact');
       expect(ffeExtractor?.fields).toHaveProperty('vendor');
       expect(ffeExtractor?.fields).toHaveProperty('specTag');
       expect(ffeExtractor?.fields).toHaveProperty('revision');
+
+      const ffeDriveExtractor = ffeParse?.extractors[1];
+      expect(ffeDriveExtractor?.source).toBe('drive');
+      expect(Object.keys(ffeDriveExtractor?.fields ?? {})).toEqual([
+        'specTag',
+        'revision',
+        'vendor',
+        'date',
+      ]);
     });
   });
 });
