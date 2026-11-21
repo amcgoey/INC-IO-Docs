@@ -2857,4 +2857,234 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       );
     });
   });
+
+  describe('Ticket #310: Flexible Submittal Arch routing and Drive pre-population', () => {
+    it('binds multi-file selection [Cover_Notes.pdf, 07 12 00 - 1_v1_Waterproofing.pdf] to the submittal file and populates section, number, 0-based revision, title, date, action, and status', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-11-20T15:00:00Z'));
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/file-cover-310')
+        .query(true)
+        .reply(200, {
+          id: 'file-cover-310',
+          name: 'Cover_Notes.pdf',
+          mimeType: 'application/pdf',
+          parents: ['folder-unfiled-310'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-01T15:00:00Z',
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/folder-unfiled-310')
+        .query(true)
+        .reply(200, {
+          id: 'folder-unfiled-310',
+          name: 'Unfiled',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/file-submittal-310')
+        .query(true)
+        .reply(200, {
+          id: 'file-submittal-310',
+          name: '07 12 00 - 1_v1_Waterproofing.pdf',
+          mimeType: 'application/pdf',
+          parents: ['folder-unfiled-310'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [
+              { id: 'file-cover-310', title: 'Cover_Notes.pdf' },
+              { id: 'file-submittal-310', title: '07 12 00 - 1_v1_Waterproofing.pdf' },
+            ],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const card = JSON.parse(response.payload).action.navigations[0].pushCard;
+      const cardJson = JSON.stringify(card);
+      expect(cardJson).toContain('submittal-arch');
+
+      const docDataSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      const getTextVal = (field: string) =>
+        docDataSec.widgets.find(
+          (w: { textInput?: { name: string } }) => w.textInput?.name === getDocumentInfoWidgetName(field, 'submittal-arch')
+        )?.textInput?.value;
+      const getSelVal = (field: string) =>
+        docDataSec.widgets
+          .find(
+            (w: { selectionInput?: { name: string } }) =>
+              w.selectionInput?.name === getDocumentInfoWidgetName(field, 'submittal-arch')
+          )
+          ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+
+      expect(getTextVal('section')).toBe('071200');
+      expect(getTextVal('number')).toBe('001');
+      expect(getTextVal('revision')).toBe('0');
+      expect(getTextVal('title')).toBe('Waterproofing');
+      expect(getTextVal('date')).toBe('261118');
+      expect(getSelVal('action')).toBe('REC');
+      expect(getSelVal('status')).toBe('Open');
+    });
+
+    it('extracts varied contractor submittal formats, strips trailing stamps, protects R-19/120V/v1.2, and does not route ISO-date files to submittal-arch', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-11-20T15:00:00Z'));
+
+      const submittalCases = [
+        {
+          id: 'arch-case-1',
+          name: '07.12.00_Submittal_002_Rev1_Waterproofing_2026-11-15.pdf',
+          section: '071200',
+          number: '002',
+          revision: '1',
+          title: 'Waterproofing',
+          date: '261115',
+        },
+        {
+          id: 'arch-case-2',
+          name: 'Section 07-12-00 Submittal #12 - Fluid Applied Waterproofing.pdf',
+          section: '071200',
+          number: '012',
+          revision: undefined,
+          title: 'Fluid Applied Waterproofing',
+          date: '261118',
+        },
+        {
+          id: 'arch-case-3',
+          name: '071200-001-A Fluid Applied Waterproofing - 261115 PMG_NET.pdf',
+          section: '071200',
+          number: '001',
+          revision: 'A',
+          title: 'Fluid Applied Waterproofing',
+          date: '261115',
+        },
+        {
+          id: 'arch-case-4',
+          name: '071200-001-R R-19 Insulation.pdf',
+          section: '071200',
+          number: '001',
+          revision: 'R',
+          title: 'R-19 Insulation',
+          date: '261118',
+        },
+        {
+          id: 'arch-case-5',
+          name: '071200-001_v1.2_120V_Review.pdf',
+          section: '071200',
+          number: '001',
+          revision: undefined,
+          title: 'v1.2 120V Review',
+          date: '261118',
+        },
+      ];
+
+      for (const tc of submittalCases) {
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/drives')
+          .query(true)
+          .reply(200, {
+            drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+          });
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${tc.id}`)
+          .query(true)
+          .reply(200, {
+            id: tc.id,
+            name: tc.name,
+            mimeType: 'application/pdf',
+            parents: ['projects-shared-drive-001'],
+            driveId: 'projects-shared-drive-001',
+            modifiedTime: '2026-11-18T15:00:00Z',
+          });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/drive-items-selected',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+            drive: { selectedItems: [{ id: tc.id, title: tc.name }] },
+          },
+        });
+        expect(res.statusCode).toBe(200);
+        const card = JSON.parse(res.payload).action.navigations[0].pushCard;
+        expect(JSON.stringify(card), tc.name).toContain('submittal-arch');
+        const docDataSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+        const getTextVal = (field: string) =>
+          docDataSec.widgets.find(
+            (w: { textInput?: { name: string } }) => w.textInput?.name === getDocumentInfoWidgetName(field, 'submittal-arch')
+          )?.textInput?.value;
+
+        expect(getTextVal('section'), tc.name).toBe(tc.section);
+        expect(getTextVal('number'), tc.name).toBe(tc.number);
+        expect(getTextVal('revision'), tc.name).toBe(tc.revision);
+        expect(getTextVal('title'), tc.name).toBe(tc.title);
+        expect(getTextVal('date'), tc.name).toBe(tc.date);
+      }
+
+      // ISO date filename must NOT route to submittal-arch
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/iso-date-only')
+        .query(true)
+        .reply(200, {
+          id: 'iso-date-only',
+          name: '2026-11-15_Meeting_Notes.pdf',
+          mimeType: 'application/pdf',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+
+      const isoRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: { selectedItems: [{ id: 'iso-date-only', title: '2026-11-15_Meeting_Notes.pdf' }] },
+        },
+      });
+      expect(isoRes.statusCode).toBe(200);
+      const isoCard = JSON.parse(isoRes.payload).action.navigations[0].pushCard;
+      const docTypeSec = isoCard.sections.find((s: { header?: string }) => s.header === 'Document Type');
+      const selectedDocType = docTypeSec.widgets
+        .find((w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'SelectDocumentType_projects')
+        ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+      expect(selectedDocType).toBe('communication-project');
+      const isoDocDataSec = isoCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      expect(
+        isoDocDataSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-project')
+        )?.textInput?.value
+      ).toBe('261115');
+    });
+  });
 });

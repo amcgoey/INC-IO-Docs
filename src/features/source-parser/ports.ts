@@ -118,7 +118,13 @@ export const DriveExtractSourceSchema = Type.Union([
 ]);
 export type DriveExtractSource = Static<typeof DriveExtractSourceSchema>;
 
-export const FieldCandidateNormalizeSchema = Type.Literal('yymmdd');
+export const FieldCandidateNormalizeSchema = Type.Union([
+  Type.Literal('digits6'),
+  Type.Literal('pad3'),
+  Type.Literal('revision'),
+  Type.Literal('yymmdd'),
+  Type.Literal('cleanFilenameText'),
+]);
 export type FieldCandidateNormalize = Static<typeof FieldCandidateNormalizeSchema>;
 
 function createFieldRuleSchemas<T extends TSchema>(sourceSchema: T) {

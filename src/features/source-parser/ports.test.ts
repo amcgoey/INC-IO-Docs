@@ -214,6 +214,10 @@ describe('SourceParser ports and schemas', () => {
       ])
     ).toBe(true);
     expect(Value.Check(FieldCandidateNormalizeSchema, 'yymmdd')).toBe(true);
+    expect(Value.Check(FieldCandidateNormalizeSchema, 'digits6')).toBe(true);
+    expect(Value.Check(FieldCandidateNormalizeSchema, 'pad3')).toBe(true);
+    expect(Value.Check(FieldCandidateNormalizeSchema, 'revision')).toBe(true);
+    expect(Value.Check(FieldCandidateNormalizeSchema, 'cleanFilenameText')).toBe(true);
     expect(Value.Check(FieldCandidateNormalizeSchema, 'unknown')).toBe(false);
     expect(Value.Check(GmailFieldRuleOrListSchema, { from: 'email.subjectClean', normalize: 'yymmdd' })).toBe(true);
     expect(Value.Check(GmailFieldRuleOrListSchema, { from: 'email.subjectClean', normalize: 'yymmdd', lookup: true })).toBe(true);

@@ -329,6 +329,7 @@ describe('DocumentType JSON files schema validation', () => {
 
       const archParse = registry.getParseSchema('submittal-arch');
       const archExtractor = archParse?.extractors[0];
+      expect(archExtractor?.source).toBe('gmail');
       expect(archExtractor?.fields).toHaveProperty('action');
       expect(archExtractor?.fields).toHaveProperty('date');
       expect(archExtractor?.fields).toHaveProperty('contact');
@@ -336,6 +337,16 @@ describe('DocumentType JSON files schema validation', () => {
       expect(archExtractor?.fields).toHaveProperty('number');
       expect(archExtractor?.fields).toHaveProperty('revision');
       expect(archExtractor?.fields).toHaveProperty('title');
+
+      const archDriveExtractor = archParse?.extractors[1];
+      expect(archDriveExtractor?.source).toBe('drive');
+      expect(Object.keys(archDriveExtractor?.fields ?? {})).toEqual([
+        'section',
+        'number',
+        'revision',
+        'title',
+        'date',
+      ]);
 
       const ffeParse = registry.getParseSchema('submittal-ffe');
       const ffeExtractor = ffeParse?.extractors[0];

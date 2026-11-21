@@ -6247,6 +6247,193 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         ).toBe('Active Projects - Restricted Link Discussion');
       });
     });
+
+    describe('Ticket #310: Flexible Submittal Arch Gmail Email Attachments & Google Drive URL pre-population', () => {
+      it('pre-populates flexible attachment fields in Email Attachments mode, skips Drive API, avoids splicing unrelated subject v2, and preserves .Inc/.Ltd in subject', async () => {
+        const driveGetFileSpy = vi.spyOn(GoogleDriveClient.prototype, 'getFile');
+
+        vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string) => {
+          if (threadId === 'th-arch-310-att') {
+            return {
+              id: 'th-arch-310-att',
+              messages: [
+                {
+                  id: 'msg-arch-310-att',
+                  threadId: 'th-arch-310-att',
+                  subject: 'Re: Submittal Package v2 - 071200-001 Waterproofing by Acme.Inc',
+                  from: 'James McGovern <jmcgovern@pavarini.com>',
+                  to: 'Architect <pm@inc.nyc>',
+                  date: 'Tue, 17 Nov 2026 14:00:00 -0500',
+                  labels: ['INBOX', 'Active Projects'],
+                  plainTextBody: 'Attached is the waterproofing submittal.',
+                  inlineImages: [],
+                  attachments: [
+                    {
+                      partId: 'part-1',
+                      attachmentId: 'att-1',
+                      filename: '071200-001_Waterproofing.pdf',
+                      mimeType: 'application/pdf',
+                      size: 1024,
+                    },
+                  ],
+                },
+              ],
+            };
+          }
+          return {
+            id: 'th-arch-310-subj',
+            messages: [
+              {
+                id: 'msg-arch-310-subj',
+                threadId: 'th-arch-310-subj',
+                subject: 'Re: 071200-001 Waterproofing by Acme.Inc',
+                from: 'James McGovern <jmcgovern@pavarini.com>',
+                to: 'Architect <pm@inc.nyc>',
+                date: 'Tue, 17 Nov 2026 14:00:00 -0500',
+                labels: ['INBOX', 'Active Projects'],
+                plainTextBody: 'Please review.',
+                inlineImages: [],
+                attachments: [],
+              },
+            ],
+          };
+        });
+
+        // 1. Attachment without revision + unrelated "v2" in subject -> revision stays blank, Drive API never called
+        const res1 = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-arch-310-att',
+              threadId: 'th-arch-310-att',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+        expect(res1.statusCode).toBe(200);
+        expect(driveGetFileSpy).not.toHaveBeenCalled();
+
+        const card1 = (JSON.parse(res1.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.pushCard;
+        const docSec1 = card1?.sections.find((s) => s.header === 'Document Data');
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch'))?.textInput?.value
+        ).toBe('071200');
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('number', 'submittal-arch'))?.textInput?.value
+        ).toBe('001');
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-arch'))?.textInput?.value
+        ).toBeUndefined();
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('title', 'submittal-arch'))?.textInput?.value
+        ).toBe('Waterproofing');
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'submittal-arch'))?.textInput?.value
+        ).toBe('PMG');
+
+        // 2. Subject ending in .Inc does NOT get truncated as a file extension
+        const res2 = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-arch-310-subj',
+              threadId: 'th-arch-310-subj',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+        expect(res2.statusCode).toBe(200);
+        const card2 = (JSON.parse(res2.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.pushCard;
+        const docSec2 = card2?.sections.find((s) => s.header === 'Document Data');
+        expect(
+          docSec2?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('title', 'submittal-arch'))?.textInput?.value
+        ).toBe('Waterproofing by Acme.Inc');
+      });
+
+      it('runs gmail before drive in Google Drive URL mode for submittal-arch, letting gmail win first and drive fill remaining blank fields', async () => {
+        vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
+          id: 'drive-url-arch-310',
+          name: '07 12 00 - 1_v1_Waterproofing_Drive_Title.pdf',
+          mimeType: 'application/pdf',
+          parents: ['folder-unfiled'],
+          driveId: 'space-projects-1',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+        vi.spyOn(GoogleDriveClient.prototype, 'listSharedDrives').mockResolvedValue({
+          drives: [{ id: 'space-projects-1', name: 'Active Projects' }],
+        });
+
+        vi.spyOn(mockGmailClient, 'getThread').mockResolvedValueOnce({
+          id: 'th-drive-url-arch-310',
+          messages: [
+            {
+              id: 'msg-drive-url-arch-310',
+              threadId: 'th-drive-url-arch-310',
+              subject: '071200-001 Waterproofing by Acme.Inc',
+              from: 'James McGovern <jmcgovern@pavarini.com>',
+              to: 'Architect <pm@inc.nyc>',
+              labels: ['INBOX', 'Active Projects'],
+              plainTextBody: 'See Google Drive link.',
+              inlineImages: [],
+              attachments: [],
+            },
+          ],
+        });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: { action: 'onFormChange', previousDriveUrl: '' },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: {
+                  stringInputs: { value: ['https://drive.google.com/file/d/drive-url-arch-310/view'] },
+                },
+              },
+            },
+            gmail: {
+              messageId: 'msg-drive-url-arch-310',
+              threadId: 'th-drive-url-arch-310',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const card = (JSON.parse(res.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.updateCard;
+        const docSec = card?.sections.find((s) => s.header === 'Document Data');
+
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch'))?.textInput?.value
+        ).toBe('071200');
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('number', 'submittal-arch'))?.textInput?.value
+        ).toBe('001');
+        // Gmail wins title (preserving .Inc), while Drive fills blank revision ('0' from v1) and date ('261118')
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('title', 'submittal-arch'))?.textInput?.value
+        ).toBe('Waterproofing by Acme.Inc');
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-arch'))?.textInput?.value
+        ).toBe('0');
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('date', 'submittal-arch'))?.textInput?.value
+        ).toBe('261118');
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'submittal-arch'))?.textInput?.value
+        ).toBe('PMG');
+      });
+    });
   });
 });
 
