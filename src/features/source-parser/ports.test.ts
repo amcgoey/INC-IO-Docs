@@ -13,6 +13,7 @@ import {
   GmailFieldRuleOrListSchema,
   GmailExtractorRuleSchema,
   DriveExtractSourceSchema,
+  FieldCandidateNormalizeSchema,
   DriveFieldRuleOrListSchema,
   DriveExtractorRuleSchema,
   StructuralExtractorRuleSchema,
@@ -207,10 +208,16 @@ describe('SourceParser ports and schemas', () => {
 
     expect(
       Value.Check(DriveFieldRuleOrListSchema, [
-        { from: 'drive.modifiedTime', when: undefined, pattern: undefined, flags: undefined, group: undefined },
+        { from: 'drive.modifiedTime', when: undefined, pattern: undefined, flags: undefined, group: undefined, normalize: undefined },
+        { from: 'drive.fileNameStem', normalize: 'yymmdd' },
         { from: 'drive.createdTime' },
       ])
     ).toBe(true);
+    expect(Value.Check(FieldCandidateNormalizeSchema, 'yymmdd')).toBe(true);
+    expect(Value.Check(FieldCandidateNormalizeSchema, 'unknown')).toBe(false);
+    expect(Value.Check(GmailFieldRuleOrListSchema, { from: 'email.subjectClean', normalize: 'yymmdd' })).toBe(true);
+    expect(Value.Check(GmailFieldRuleOrListSchema, { from: 'email.subjectClean', normalize: 'yymmdd', lookup: true })).toBe(true);
+    expect(Value.Check(DriveFieldRuleOrListSchema, { set: 'IN', normalize: 'yymmdd' })).toBe(false);
     expect(Value.Check(DriveFieldRuleOrListSchema, [])).toBe(false);
     expect(Value.Check(DriveFieldRuleOrListSchema, { from: 'drive.fileName', extraProp: true })).toBe(false);
 

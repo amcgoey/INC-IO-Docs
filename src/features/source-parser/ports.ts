@@ -118,6 +118,9 @@ export const DriveExtractSourceSchema = Type.Union([
 ]);
 export type DriveExtractSource = Static<typeof DriveExtractSourceSchema>;
 
+export const FieldCandidateNormalizeSchema = Type.Literal('yymmdd');
+export type FieldCandidateNormalize = Static<typeof FieldCandidateNormalizeSchema>;
+
 function createFieldRuleSchemas<T extends TSchema>(sourceSchema: T) {
   const SetFieldRuleSchema = Type.Object(
     {
@@ -134,6 +137,7 @@ function createFieldRuleSchemas<T extends TSchema>(sourceSchema: T) {
       pattern: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
       flags: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
       group: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Undefined()])),
+      normalize: Type.Optional(Type.Union([FieldCandidateNormalizeSchema, Type.Undefined()])),
     },
     { additionalProperties: false }
   );
@@ -145,6 +149,7 @@ function createFieldRuleSchemas<T extends TSchema>(sourceSchema: T) {
       pattern: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
       flags: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
       group: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Undefined()])),
+      normalize: Type.Optional(Type.Union([FieldCandidateNormalizeSchema, Type.Undefined()])),
       excludePattern: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
       lookup: Type.Literal(true),
     },

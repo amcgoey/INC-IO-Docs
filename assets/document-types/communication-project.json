@@ -226,6 +226,10 @@
         "fields": {
           "date": [
             {
+              "from": "drive.fileNameStem",
+              "normalize": "yymmdd"
+            },
+            {
               "from": "drive.modifiedTime"
             },
             {

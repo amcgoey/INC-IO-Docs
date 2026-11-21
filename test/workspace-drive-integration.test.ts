@@ -2383,4 +2383,249 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(dateWidget?.textInput?.value).toBe('261101');
     });
   });
+
+  describe('Ticket #308: Explicit filename yymmdd date extraction ([today - 12 months, today]) and Google Workspace stem handling', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('pre-populates communication-project and communication-proposal date from INC yyMMdd and delimited filename dates within [today - 12 months, today] ahead of modifiedTime', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-11-20T15:00:00Z'));
+
+      // Case 1: communication-project with INC yyMMdd filename
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/file-comm-yymmdd')
+        .query(true)
+        .reply(200, {
+          id: 'file-comm-yymmdd',
+          name: '261115_Client_Meeting_Notes.pdf',
+          mimeType: 'application/pdf',
+          parents: ['folder-comm-308'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T14:00:00Z',
+          createdTime: '2026-11-10T12:00:00Z',
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/folder-comm-308')
+        .query(true)
+        .reply(200, {
+          id: 'folder-comm-308',
+          name: '1 Admin/Communication',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+        });
+
+      const projResp = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [{ id: 'file-comm-yymmdd', title: '261115_Client_Meeting_Notes.pdf' }],
+          },
+        },
+      });
+
+      expect(projResp.statusCode).toBe(200);
+      const projBody = JSON.parse(projResp.payload);
+      const projCard = projBody.action.navigations[0].pushCard;
+      const projDocDataSec = projCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      const projDateWidget = projDocDataSec.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-project')
+      );
+      expect(projDateWidget?.textInput?.value).toBe('261115');
+
+      // Case 2: communication-proposal with delimited YYYY-MM-DD filename
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/file-prop-delimited')
+        .query(true)
+        .reply(200, {
+          id: 'file-prop-delimited',
+          name: 'Proposal_Notes_2026-11-12.pdf',
+          mimeType: 'application/pdf',
+          parents: ['proposal-space-folder-308'],
+          driveId: 'drive-marketing-1',
+          modifiedTime: '2026-11-18T14:00:00Z',
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'drive-marketing-1', name: 'INC Marketing' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/proposal-space-folder-308')
+        .query(true)
+        .reply(200, {
+          id: 'proposal-space-folder-308',
+          name: 'Client Proposals',
+          parents: ['opp-folder-308'],
+          driveId: 'drive-marketing-1',
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/opp-folder-308')
+        .query(true)
+        .reply(200, {
+          id: 'opp-folder-308',
+          name: 'Opportunities',
+          parents: ['drive-marketing-1'],
+          driveId: 'drive-marketing-1',
+        });
+
+      const propResp = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [{ id: 'file-prop-delimited', title: 'Proposal_Notes_2026-11-12.pdf' }],
+          },
+        },
+      });
+
+      expect(propResp.statusCode).toBe(200);
+      const propBody = JSON.parse(propResp.payload);
+      const propCard = propBody.action.navigations[0].pushCard;
+      const propDocDataSec = propCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      const propDateWidget = propDocDataSec.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-proposal')
+      );
+      expect(propDateWidget?.textInput?.value).toBe('261112');
+
+      // Case 3: late-December yyMMdd filename in early January
+      vi.setSystemTime(new Date('2026-01-05T15:00:00Z'));
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/file-comm-jan-dec')
+        .query(true)
+        .reply(200, {
+          id: 'file-comm-jan-dec',
+          name: '251228_Year_End_Notes.pdf',
+          mimeType: 'application/pdf',
+          parents: ['folder-comm-308'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-01-05T14:00:00Z',
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/folder-comm-308')
+        .query(true)
+        .reply(200, {
+          id: 'folder-comm-308',
+          name: '1 Admin/Communication',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+        });
+
+      const janResp = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [{ id: 'file-comm-jan-dec', title: '251228_Year_End_Notes.pdf' }],
+          },
+        },
+      });
+
+      expect(janResp.statusCode).toBe(200);
+      const janBody = JSON.parse(janResp.payload);
+      const janCard = janBody.action.navigations[0].pushCard;
+      const janDocDataSec = janCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      const janDateWidget = janDocDataSec.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-project')
+      );
+      expect(janDateWidget?.textInput?.value).toBe('251228');
+    });
+
+    it('falls back to modifiedTime when filename has rejected date (> today, < today - 12 months, 260519-001, 260230) or extensionless Google Workspace doc (07.12.00, Spec_v1.2)', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-11-20T15:00:00Z'));
+
+      for (const testCase of [
+        { id: 'file-future-308', name: '261125_Future_Notes.pdf', mimeType: 'application/pdf' },
+        { id: 'file-stale-308', name: '251110_Stale_Notes.pdf', mimeType: 'application/pdf' },
+        { id: 'file-div26-308', name: '260519-001_Lighting_Submittal.pdf', mimeType: 'application/pdf' },
+        { id: 'file-invalid-308', name: '260230_Invalid_Calendar.pdf', mimeType: 'application/pdf' },
+        { id: 'file-gdoc-csi-308', name: '07.12.00', mimeType: 'application/vnd.google-apps.document' },
+        { id: 'file-gdoc-spec-308', name: 'Spec_v1.2', mimeType: 'application/vnd.google-apps.document' },
+      ]) {
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${testCase.id}`)
+          .query(true)
+          .reply(200, {
+            id: testCase.id,
+            name: testCase.name,
+            mimeType: testCase.mimeType,
+            parents: ['folder-comm-308'],
+            driveId: 'projects-shared-drive-001',
+            modifiedTime: '2026-11-18T14:00:00Z',
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/drives')
+          .query(true)
+          .reply(200, {
+            drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files/folder-comm-308')
+          .query(true)
+          .reply(200, {
+            id: 'folder-comm-308',
+            name: '1 Admin/Communication',
+            parents: ['projects-shared-drive-001'],
+            driveId: 'projects-shared-drive-001',
+          });
+
+        const resp = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/drive-items-selected',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+            drive: {
+              selectedItems: [{ id: testCase.id, title: testCase.name }],
+            },
+          },
+        });
+
+        expect(resp.statusCode).toBe(200);
+        const body = JSON.parse(resp.payload);
+        const card = body.action.navigations[0].pushCard;
+        const docDataSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+        const dateWidget = docDataSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-project')
+        );
+        expect(dateWidget?.textInput?.value, testCase.name).toBe('261118');
+      }
+    });
+  });
 });

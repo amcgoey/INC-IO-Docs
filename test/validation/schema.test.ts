@@ -319,7 +319,11 @@ describe('DocumentType JSON files schema validation', () => {
         expect(commParse?.extractors[0]?.source).toBe('gmail');
         expect(commParse?.extractors[1]?.source).toBe('drive');
         expect(commParse?.extractors[1]?.fields).toEqual({
-          date: [{ from: 'drive.modifiedTime' }, { from: 'drive.createdTime' }],
+          date: [
+            { from: 'drive.fileNameStem', normalize: 'yymmdd' },
+            { from: 'drive.modifiedTime' },
+            { from: 'drive.createdTime' },
+          ],
         });
       }
 
