@@ -431,6 +431,64 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
       });
     });
 
+    it('infers submittal-ffe for spaced/hyphenated FF&E spec tags while rejecting lowercase prose ("in 100 days", "at 120V panel") and partial code prefixes (#311)', async () => {
+      const positiveCases = [
+        'CG-104 v2',
+        'CG-104_v2_Fil_Doux.pdf',
+        'LT 159A_R0.pdf',
+        'LT 159A_R0',
+        'CG104-A_Berman_Falk.pdf',
+        'CG-104-A.pdf',
+        'CG-104_Fil_Doux.pdf',
+        'XCG104-Z - CG104-A',
+      ];
+      for (const name of positiveCases) {
+        const mockDrive: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockResolvedValue({
+            item: { id: 'f-ffe-pos', name, mimeType: 'application/pdf' },
+            driveId: 'project-drive-001',
+            driveName: 'Project 1001 Alpha',
+            ancestors: [{ id: 'folder-unfiled', name: 'Unfiled' }],
+          }),
+        };
+        const service = new SourceParserService(mockDrive, mockSpaceConfigPort);
+        const driveRes = await service.inferRouting({ items: [{ id: 'f-ffe-pos' }] });
+        expect(driveRes.documentTypeKey, `Drive: ${name}`).toBe('submittal-ffe');
+
+        const gmailRes = await service.inferRouting({
+          email: { id: 'msg-ffe-pos', subject: name.replace(/\.pdf$/, '') },
+        });
+        expect(gmailRes.documentTypeKey, `Gmail: ${name}`).toBe('submittal-ffe');
+      }
+
+      const negativeCases = [
+        'in 100 days',
+        'at 120V panel',
+        'Meeting in 100 days about at 120V panel',
+        'XCG104-Z',
+        'PO12345',
+        '2026-11-15_Notes.pdf',
+      ];
+      for (const name of negativeCases) {
+        const mockDrive: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockResolvedValue({
+            item: { id: 'f-ffe-neg', name, mimeType: 'application/pdf' },
+            driveId: 'project-drive-001',
+            driveName: 'Project 1001 Alpha',
+            ancestors: [{ id: 'folder-unfiled', name: 'Unfiled' }],
+          }),
+        };
+        const service = new SourceParserService(mockDrive, mockSpaceConfigPort);
+        const driveRes = await service.inferRouting({ items: [{ id: 'f-ffe-neg' }] });
+        expect(driveRes.documentTypeKey, `Drive negative: ${name}`).toBeUndefined();
+
+        const gmailRes = await service.inferRouting({
+          email: { id: 'msg-ffe-neg', subject: name.replace(/\.pdf$/, '') },
+        });
+        expect(gmailRes.documentTypeKey, `Gmail negative: ${name}`).toBeUndefined();
+      }
+    });
+
     it('infers submittal-ffe for bounded proximity keywords (FF&E ... Submittal)', async () => {
       const hierarchy: DriveItemHierarchy = {
         item: {
@@ -4696,6 +4754,121 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
           revision: '0',
           date: '261118',
         });
+      });
+    });
+
+    describe('Ticket #311: compactAlnum normalizer, correlated specTag revision, and FF&E lookup/LinkedField derivation', () => {
+      it('applies normalize: "compactAlnum" before LookupField resolution and derives LinkedField specTitle', async () => {
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'drive' as const,
+                fields: {
+                  specTag: {
+                    from: 'drive.fileNameStem' as const,
+                    pattern: '(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)(?=[\\s_./-]|$)',
+                    group: 1,
+                    normalize: 'compactAlnum' as const,
+                    lookup: true as const,
+                  },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              {
+                key: 'specTag',
+                type: 'string',
+                minLength: 1,
+                options: { source: 'specs', key: 'key', allowUserInput: true },
+              },
+              {
+                key: 'specTitle',
+                type: 'string',
+                linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+              },
+            ],
+            options: {
+              specs: [
+                { key: 'CG104', name: 'BED - KING' },
+                { key: 'LT159A', name: 'SCONCE - CORRIDOR' },
+              ],
+            },
+          }),
+        };
+
+        const cases: Array<{ name: string; expectedTag: string; expectedTitle: string }> = [
+          { name: 'CG-104_v2_Fil_Doux.pdf', expectedTag: 'CG104', expectedTitle: 'BED - KING' },
+          { name: 'LT 159A_R0.pdf', expectedTag: 'LT159A', expectedTitle: 'SCONCE - CORRIDOR' },
+          { name: 'CG.104_CutSheet.pdf', expectedTag: 'CG104', expectedTitle: 'BED - KING' },
+          { name: 'CG_104_CutSheet.pdf', expectedTag: 'CG104', expectedTitle: 'BED - KING' },
+        ];
+
+        for (const c of cases) {
+          const drivePort: DriveSourceContextPort = {
+            getItemHierarchy: vi.fn().mockResolvedValue({
+              item: { id: 'f-ffe', name: c.name, mimeType: 'application/pdf' },
+              ancestors: [],
+            }),
+          };
+          const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+            parseSchemaRegistry: registry,
+          });
+          const res = await service.extractFields({
+            documentTypeKey: 'submittal-ffe',
+            context: { items: [{ id: 'f-ffe' }] },
+          });
+          expect(res.fields.specTag, c.name).toBe(c.expectedTag);
+          expect(res.fields.specTitle, c.name).toBe(c.expectedTitle);
+        }
+      });
+
+      it('normalizes spaced/hyphenated specTag in matchesCorrelatedCode when extracting correlated revision', async () => {
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail' as const,
+                fields: {
+                  revision: {
+                    from: 'email.subjectClean' as const,
+                    pattern:
+                      '(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)[\\s_.-]+((?:v|ver\\.?|version)[\\s_.-]*\\d+(?:\\.\\d+)?|(?:rev(?:ision)?\\.?|r(?=[\\s_.]*(?:\\d|[A-Za-z]\\b)))[\\s_.-]*(?:\\d{1,2}[A-Za-z]?|[A-Za-z]\\d{0,2}))(?![A-Za-z0-9]|\\.\\d)',
+                    group: 2,
+                    normalize: 'revision' as const,
+                  },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              { key: 'specTag', type: 'string' },
+              { key: 'revision', type: 'string', minLength: 1 },
+            ],
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+        });
+
+        const res = await service.extractFields({
+          documentTypeKey: 'submittal-ffe',
+          existingData: { specTag: 'LT159A' },
+          context: {
+            email: {
+              id: 'msg-ffe-corr',
+              subject: 'CG-104 v2 and LT 159A_R0',
+            },
+          },
+        });
+
+        expect(res.fields.revision).toBe('0');
       });
     });
   });

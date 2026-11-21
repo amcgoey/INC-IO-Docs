@@ -30,7 +30,8 @@ import type {
 
 export const CSI_SECTION_REGEX =
   /(?<=^|[\s_./-])(?:\d{6}|\d{2}([\s._-])\d{2}\1\d{2})(?:[\s_.-]*(?:submittal|sub\.?|no\.?)[\s_.-]*#?[\s_.-]*|[\s_.-]*#[\s_.-]*|[\s_.-]+)\d{1,3}(?![A-Za-z0-9])(?!-\d{2}[-_.]\d{2,4})/i;
-export const FFE_SPEC_TAG_REGEX = /(?<=^|[\s_.-])[A-Za-z]{2}\d{3}[A-Za-z]?-[A-Za-z0-9]+(?=[\s_.-]|$)/i;
+export const FFE_SPEC_TAG_REGEX =
+  /(?<=^|[\s_./-])[A-Z]{2}[\s._-]?\d{3}[A-Z]?(?:-[A-Za-z0-9]+)?(?=[\s_./-]|$)/;
 export const FFE_PROXIMITY_REGEX_1 = /(?<=^|[\s_./-])FF&?E(?=[\s_./-]|$).{0,100}(?<=^|[\s_./-])Submittals?(?=[\s_./-]|$)/is;
 export const FFE_PROXIMITY_REGEX_2 = /(?<=^|[\s_./-])Submittals?(?=[\s_./-]|$).{0,100}(?<=^|[\s_./-])FF&?E(?=[\s_./-]|$)/is;
 export const GENERIC_SUBMITTAL_REGEX = /(?<=^|[\s_./-])Submittals?(?=[\s_./-]|$)/i;
@@ -527,6 +528,14 @@ function normalizePad3Candidate(candidate: string): string | undefined {
   return trimmed.padStart(3, '0');
 }
 
+function normalizeCompactAlnumCandidate(candidate: string): string | undefined {
+  const compacted = candidate.replace(/[\s._-]+/g, '');
+  if (compacted.length === 0 || !/^[A-Za-z0-9]+$/.test(compacted)) {
+    return undefined;
+  }
+  return compacted;
+}
+
 const REVISION_MARKER_REGEX =
   /(?<=^|[\s_.-])(?:(v|ver\.?|version)[\s_.-]*(\d+)(?:\.(\d+))?|(rev\.?|revision)(?:[\s_.-]*(\d{1,2})|[\s_.-]+(\d{1,2}[A-Za-z]?|[A-Za-z]\d{0,2}))|(r)(?:[\s_.]*(\d{1,2})|[\s_.]+([A-Za-z])))(?![A-Za-z0-9]|\.\d)/gi;
 
@@ -596,6 +605,8 @@ function applyFieldCandidateNormalize(
       return normalizeDigits6Candidate(candidate);
     case 'pad3':
       return normalizePad3Candidate(candidate);
+    case 'compactAlnum':
+      return normalizeCompactAlnumCandidate(candidate);
     case 'revision':
       return normalizeRevisionCandidate(candidate);
     case 'yymmdd': {
@@ -904,13 +915,14 @@ export function matchesCorrelatedCode(
     }
   }
 
-  // Check specTag correlation (FF&E spec tag codes: group 1 = 2 letters + 3 digits + optional letter)
-  if (groupIndex >= 2 && match[1] !== undefined) {
-    if (/^[A-Za-z]{2}\d{3}[A-Za-z]?$/i.test(match[1])) {
-      if (
-        populatedFields.specTag !== undefined &&
-        match[1].toLowerCase() !== String(populatedFields.specTag).toLowerCase()
-      ) {
+  // Check specTag correlation (FF&E spec tag codes: group 1 = 2 letters + optional delimiter + 3 digits + optional letter)
+  const rawSpecTag = match[1]?.trim();
+  if (groupIndex >= 2 && rawSpecTag !== undefined && /^[A-Za-z]{2}[\s._-]?\d{3}[A-Za-z]?$/.test(rawSpecTag)) {
+    const normMatchTag = normalizeCompactAlnumCandidate(rawSpecTag);
+    if (normMatchTag !== undefined && populatedFields.specTag !== undefined) {
+      const populatedTag = String(populatedFields.specTag);
+      const normPopulatedTag = normalizeCompactAlnumCandidate(populatedTag) ?? populatedTag.trim();
+      if (normMatchTag.toLowerCase() !== normPopulatedTag.toLowerCase()) {
         return false;
       }
     }
