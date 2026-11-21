@@ -23,6 +23,7 @@ import type {
   DriveLookupFieldRule,
   DriveExtractSource,
   DriveExtractorRule,
+  FieldCandidateNormalize,
   CanonicalOptionsProviderPort,
   ParseTargetDocumentOptionTuple,
 } from './ports';
@@ -372,6 +373,165 @@ export function parseDateToYymmdd(dateString?: string, timeZone?: string): strin
   return `${yy.slice(-2)}${mm.padStart(2, '0')}${dd.padStart(2, '0')}`;
 }
 
+interface YearMonthDay {
+  year: number;
+  month: number;
+  day: number;
+}
+
+function getYearMonthDayInTimeZone(date: Date, timeZone?: string): YearMonthDay | undefined {
+  const effectiveTimeZone =
+    typeof timeZone === 'string' && timeZone.trim().length > 0 ? timeZone.trim() : 'UTC';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: effectiveTimeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+
+  let yearStr = '';
+  let monthStr = '';
+  let dayStr = '';
+  for (const { type, value } of parts) {
+    if (type === 'year') yearStr = value;
+    else if (type === 'month') monthStr = value;
+    else if (type === 'day') dayStr = value;
+  }
+
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10);
+  const day = parseInt(dayStr, 10);
+  if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) {
+    return undefined;
+  }
+  return { year, month, day };
+}
+
+function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return false;
+  }
+  const utcDate = new Date(Date.UTC(year, month - 1, day));
+  utcDate.setUTCFullYear(year);
+  return (
+    utcDate.getUTCFullYear() === year &&
+    utcDate.getUTCMonth() === month - 1 &&
+    utcDate.getUTCDate() === day
+  );
+}
+
+function isWithinRollingTwelveMonths(
+  year: number,
+  month: number,
+  day: number,
+  today: YearMonthDay
+): boolean {
+  const minYear = today.year - 1;
+  const maxDayInMinMonth = new Date(Date.UTC(minYear, today.month, 0)).getUTCDate();
+  const minDay = Math.min(today.day, maxDayInMinMonth);
+
+  const candYmd = year * 10000 + month * 100 + day;
+  const minYmd = minYear * 10000 + today.month * 100 + minDay;
+  const todayYmd = today.year * 10000 + today.month * 100 + today.day;
+
+  return candYmd >= minYmd && candYmd <= todayYmd;
+}
+
+function formatYymmdd(year: number, month: number, day: number): string {
+  const yy = String(year).slice(-2).padStart(2, '0');
+  const mm = String(month).padStart(2, '0');
+  const dd = String(day).padStart(2, '0');
+  return `${yy}${mm}${dd}`;
+}
+
+function tryFormatBoundedDate(
+  year: number,
+  month: number,
+  day: number,
+  today: YearMonthDay
+): string | undefined {
+  if (!isValidCalendarDate(year, month, day)) {
+    return undefined;
+  }
+  if (!isWithinRollingTwelveMonths(year, month, day, today)) {
+    return undefined;
+  }
+  return formatYymmdd(year, month, day);
+}
+
+/**
+ * Extracts and validates an explicit date token formatted as INC `yyMMdd`
+ * within the rolling `[today - 12 months, today]` window in the workspace timezone.
+ */
+function normalizeYymmddCandidate(
+  candidate: string,
+  timeZone: string | undefined,
+  nowDate: Date
+): string | undefined {
+  const today = getYearMonthDayInTimeZone(nowDate, timeZone);
+  if (!today) {
+    return undefined;
+  }
+
+  // Tier 1: 4-digit-year delimited formats (YYYY[-_.]MM[-_.]DD or MM[-_.]DD[-_.]YYYY)
+  const fourDigitYearRegex =
+    /(?<![A-Za-z0-9])(?:(\d{4})([-_.])(\d{2})\2(\d{2})|(\d{2})([-_.])(\d{2})\6(\d{4}))(?![A-Za-z0-9])/g;
+  for (const match of candidate.matchAll(fourDigitYearRegex)) {
+    const year = match[1] !== undefined ? parseInt(match[1], 10) : parseInt(match[8], 10);
+    const month = match[3] !== undefined ? parseInt(match[3], 10) : parseInt(match[5], 10);
+    const day = match[4] !== undefined ? parseInt(match[4], 10) : parseInt(match[7], 10);
+    const formatted = tryFormatBoundedDate(year, month, day, today);
+    if (formatted !== undefined) {
+      return formatted;
+    }
+  }
+
+  // Tier 2: 2-digit-year delimited format (MM[-_.]DD[-_.]YY)
+  const twoDigitDelimitedRegex = /(?<![A-Za-z0-9])(\d{2})([-_.])(\d{2})\2(\d{2})(?![A-Za-z0-9])/g;
+  for (const match of candidate.matchAll(twoDigitDelimitedRegex)) {
+    const month = parseInt(match[1], 10);
+    const day = parseInt(match[3], 10);
+    const year = 2000 + parseInt(match[4], 10);
+    const formatted = tryFormatBoundedDate(year, month, day, today);
+    if (formatted !== undefined) {
+      return formatted;
+    }
+  }
+
+  // Tier 3: INC 6-digit yyMMdd format, skipping CSI/submittal prefixes followed by -\d{1,3}
+  const sixDigitRegex = /(?<![A-Za-z0-9])(\d{2})(\d{2})(\d{2})(?![A-Za-z0-9])(?!-\d{1,3}(?!\d))/g;
+  for (const match of candidate.matchAll(sixDigitRegex)) {
+    const year = 2000 + parseInt(match[1], 10);
+    const month = parseInt(match[2], 10);
+    const day = parseInt(match[3], 10);
+    const formatted = tryFormatBoundedDate(year, month, day, today);
+    if (formatted !== undefined) {
+      return formatted;
+    }
+  }
+
+  return undefined;
+}
+
+function applyFieldCandidateNormalize(
+  candidate: string,
+  normalize: FieldCandidateNormalize | undefined,
+  timeZone: string | undefined,
+  now?: (() => Date) | undefined
+): string | undefined {
+  if (normalize === undefined) {
+    return candidate;
+  }
+  switch (normalize) {
+    case 'yymmdd': {
+      const nowDate = now ? now() : new Date();
+      return normalizeYymmddCandidate(candidate, timeZone, nowDate);
+    }
+    default:
+      return undefined;
+  }
+}
+
 export function normalizeHtmlBodyForPass2(html?: string): string {
   if (!html || typeof html !== 'string') {
     return '';
@@ -679,6 +839,7 @@ export interface RuleExtractionContext {
   boundAttachmentName?: string | undefined;
   populatedFields: Record<string, unknown>;
   timeZone?: string | undefined;
+  now?: (() => Date) | undefined;
 }
 
 export interface ExtractedCandidateResult {
@@ -802,7 +963,8 @@ function extractCandidateFromSourceItems(
   targetField: ParseTargetDocumentField,
   targetSchema: ParseTargetDocumentSchema | undefined,
   populatedFields: Record<string, unknown>,
-  timeZone?: string
+  timeZone?: string,
+  now?: () => Date
 ): ExtractedCandidateResult | undefined {
   if ('set' in rule) {
     const validated = validateCandidateWithTuple(rule.set, targetField, targetSchema);
@@ -825,7 +987,16 @@ function extractCandidateFromSourceItems(
       timeZone
     );
     for (const rawCandidate of candidates) {
-      const validated = validateCandidateWithTuple(rawCandidate, targetField, targetSchema);
+      const normalizedCandidate = applyFieldCandidateNormalize(
+        rawCandidate,
+        'normalize' in rule ? rule.normalize : undefined,
+        timeZone,
+        now
+      );
+      if (normalizedCandidate === undefined) {
+        continue;
+      }
+      const validated = validateCandidateWithTuple(normalizedCandidate, targetField, targetSchema);
       if (validated !== undefined) {
         return {
           value: validated.value,
@@ -853,7 +1024,8 @@ function extractCandidateFromRule(
       targetField,
       targetSchema,
       extractionContext.populatedFields,
-      extractionContext.timeZone
+      extractionContext.timeZone,
+      extractionContext.now
     );
   }
   if (!('from' in rule)) {
@@ -872,7 +1044,8 @@ function extractCandidateFromRule(
     targetField,
     targetSchema,
     extractionContext.populatedFields,
-    extractionContext.timeZone
+    extractionContext.timeZone,
+    extractionContext.now
   );
 }
 
@@ -1340,7 +1513,8 @@ async function extractLookupCandidateFromSourceItems(
   targetField: ParseTargetDocumentField,
   targetSchema: ParseTargetDocumentSchema | undefined,
   deps: SourceParserServiceDeps | undefined,
-  populatedFields: Record<string, unknown>
+  populatedFields: Record<string, unknown>,
+  timeZone?: string
 ): Promise<{ value: string; matchedTuple: ParseTargetDocumentOptionTuple; matchedAttachmentName?: string } | undefined> {
   const excludeRegex = rule.excludePattern ? new RegExp(rule.excludePattern, 'i') : undefined;
 
@@ -1358,12 +1532,18 @@ async function extractLookupCandidateFromSourceItems(
     );
 
     for (const candidateText of candidates) {
-      if (candidateText.trim().length === 0) {
+      const normalizedCandidate = applyFieldCandidateNormalize(
+        candidateText,
+        'normalize' in rule ? rule.normalize : undefined,
+        timeZone,
+        deps?.now
+      );
+      if (normalizedCandidate === undefined || normalizedCandidate.trim().length === 0) {
         continue;
       }
 
       const match = await resolveCanonicalOptionFromCandidate(
-        candidateText,
+        normalizedCandidate,
         targetField,
         request.spaceId,
         targetSchema,
@@ -1403,7 +1583,8 @@ async function extractLookupCandidate(
     targetField,
     targetSchema,
     deps,
-    extractionContext.populatedFields
+    extractionContext.populatedFields,
+    extractionContext.timeZone
   );
 }
 
@@ -1427,6 +1608,7 @@ export interface SourceParserServiceDeps {
   fallbackExtractor?: FallbackFieldExtractorPort | undefined;
   canonicalOptionsProvider?: CanonicalOptionsProviderPort | undefined;
   configPort?: SourceParserConfigPort | undefined;
+  now?: (() => Date) | undefined;
 }
 
 interface HydratedDriveItemContext {
@@ -1582,6 +1764,7 @@ export class SourceParserService implements SourceParserPort {
               boundAttachmentName,
               populatedFields,
               timeZone,
+              now: this.deps?.now,
             };
 
             const result: ExtractedCandidateResult | undefined =
@@ -1760,7 +1943,8 @@ export class SourceParserService implements SourceParserPort {
               targetField,
               targetSchema,
               populatedFields,
-              timeZone
+              timeZone,
+              this.deps?.now
             );
           } else if ('from' in rule) {
             const sourceText = getDriveSourceText(rule.from, hierarchy);
@@ -1774,7 +1958,8 @@ export class SourceParserService implements SourceParserPort {
                 targetField,
                 targetSchema,
                 this.deps,
-                populatedFields
+                populatedFields,
+                timeZone
               );
             } else {
               result = extractCandidateFromSourceItems(
@@ -1784,7 +1969,8 @@ export class SourceParserService implements SourceParserPort {
                 targetField,
                 targetSchema,
                 populatedFields,
-                timeZone
+                timeZone,
+                this.deps?.now
               );
             }
           }

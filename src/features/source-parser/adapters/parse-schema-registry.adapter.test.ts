@@ -874,4 +874,78 @@ describe('ParseSchemaRegistryAdapter', () => {
       await expect(badLinkedAdapter.initialize()).rejects.toThrow(/LinkedField/i);
     });
   });
+
+  describe('Ticket #308: FieldCandidateNormalizeSchema validation at ParseSchemaRegistryPort.initialize()', () => {
+    it('accepts normalize: "yymmdd" on both gmail and drive extract and lookup rules and rejects unknown normalize modes or set rules with normalize', async () => {
+      const validAdapter = new ParseSchemaRegistryAdapter({
+        getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-doc.json'] }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'test-doc',
+          documentSchema: {
+            fields: [
+              { key: 'date', type: 'string' },
+              {
+                key: 'contact',
+                type: 'string',
+                options: { source: 'contacts', key: 'key', name: 'name' },
+              },
+            ],
+            options: {
+              contacts: [{ key: 'ACM', name: 'Acme' }],
+            },
+          },
+          documentParseSchema: {
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  date: { from: 'email.subjectClean', normalize: 'yymmdd' },
+                  contact: { from: 'email.subjectClean', normalize: 'yymmdd', lookup: true },
+                },
+              },
+              {
+                source: 'drive',
+                fields: {
+                  date: [
+                    { from: 'drive.fileNameStem', normalize: 'yymmdd' },
+                    { from: 'drive.modifiedTime' },
+                  ],
+                  contact: { from: 'drive.fileNameStem', normalize: 'yymmdd', lookup: true },
+                },
+              },
+            ],
+          },
+        }),
+      });
+      await expect(validAdapter.initialize()).resolves.toBeUndefined();
+
+      for (const badRule of [
+        { source: 'drive', fields: { date: { from: 'drive.fileNameStem', normalize: 'invalidMode' } } },
+        { source: 'gmail', fields: { date: { from: 'email.subjectClean', normalize: 'invalidMode' } } },
+        { source: 'drive', fields: { contact: { from: 'drive.fileNameStem', normalize: 'invalidMode', lookup: true } } },
+        { source: 'drive', fields: { date: { set: '261115', normalize: 'yymmdd' } } },
+      ]) {
+        const badAdapter = new ParseSchemaRegistryAdapter({
+          getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-doc.json'] }),
+          readParsedSchema: vi.fn().mockResolvedValue({
+            key: 'test-doc',
+            documentSchema: {
+              fields: [
+                { key: 'date', type: 'string' },
+                {
+                  key: 'contact',
+                  type: 'string',
+                  options: { source: 'contacts', key: 'key', name: 'name' },
+                },
+              ],
+            },
+            documentParseSchema: {
+              extractors: [badRule],
+            },
+          }),
+        });
+        await expect(badAdapter.initialize()).rejects.toThrow(/Invalid DocumentParseSchema structure/i);
+      }
+    });
+  });
 });
