@@ -28,7 +28,8 @@ import type {
   ParseTargetDocumentOptionTuple,
 } from './ports';
 
-export const CSI_SECTION_REGEX = /(?<=^|[\s_.-])\d{6}-\d{3}(?:-[A-Za-z0-9]+)?(?=[\s_.-]|$)/;
+export const CSI_SECTION_REGEX =
+  /(?<=^|[\s_./-])(?:\d{6}|\d{2}([\s._-])\d{2}\1\d{2})(?:[\s_.-]*(?:submittal|sub\.?|no\.?)[\s_.-]*#?[\s_.-]*|[\s_.-]*#[\s_.-]*|[\s_.-]+)\d{1,3}(?![A-Za-z0-9])(?!-\d{2}[-_.]\d{2,4})/i;
 export const FFE_SPEC_TAG_REGEX = /(?<=^|[\s_.-])[A-Za-z]{2}\d{3}[A-Za-z]?-[A-Za-z0-9]+(?=[\s_.-]|$)/i;
 export const FFE_PROXIMITY_REGEX_1 = /(?<=^|[\s_./-])FF&?E(?=[\s_./-]|$).{0,100}(?<=^|[\s_./-])Submittals?(?=[\s_./-]|$)/is;
 export const FFE_PROXIMITY_REGEX_2 = /(?<=^|[\s_./-])Submittals?(?=[\s_./-]|$).{0,100}(?<=^|[\s_./-])FF&?E(?=[\s_./-]|$)/is;
@@ -513,20 +514,96 @@ function normalizeYymmddCandidate(
   return undefined;
 }
 
+function normalizeDigits6Candidate(candidate: string): string | undefined {
+  const digits = candidate.replace(/\D/g, '');
+  return digits.length === 6 ? digits : undefined;
+}
+
+function normalizePad3Candidate(candidate: string): string | undefined {
+  const trimmed = candidate.trim();
+  if (!/^\d{1,3}$/.test(trimmed)) {
+    return undefined;
+  }
+  return trimmed.padStart(3, '0');
+}
+
+const REVISION_MARKER_REGEX =
+  /(?<=^|[\s_.-])(?:(v|ver\.?|version)[\s_.-]*(\d+)(?:\.(\d+))?|(rev\.?|revision)(?:[\s_.-]*(\d{1,2})|[\s_.-]+(\d{1,2}[A-Za-z]?|[A-Za-z]\d{0,2}))|(r)(?:[\s_.]*(\d{1,2})|[\s_.]+([A-Za-z])))(?![A-Za-z0-9]|\.\d)/gi;
+
+function normalizeRevisionCandidate(candidate: string): string | undefined {
+  const trimmed = candidate.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  // Tight code-suffix token (e.g. "-A", "A", "-0", "0", "-R", "R", "-12", "12")
+  if (/^-?(?:\d{1,2}|[A-Za-z])$/.test(trimmed)) {
+    return trimmed.startsWith('-') ? trimmed.slice(1) : trimmed;
+  }
+
+  for (const match of trimmed.matchAll(REVISION_MARKER_REGEX)) {
+    if (match[1] !== undefined && match[2] !== undefined) {
+      const major = parseInt(match[2], 10);
+      if (match[3] !== undefined && parseInt(match[3], 10) !== 0) {
+        continue;
+      }
+      return major === 0 ? '0' : String(major - 1);
+    }
+    if (match[4] !== undefined) {
+      const revVal = match[5] ?? match[6];
+      if (revVal !== undefined && revVal.length > 0) {
+        return revVal;
+      }
+    }
+    if (match[7] !== undefined) {
+      const rVal = match[8] ?? match[9];
+      if (rVal !== undefined && rVal.length > 0) {
+        return rVal;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeCleanFilenameTextCandidate(
+  candidate: string,
+  fromSource?: GmailExtractSource | DriveExtractSource
+): string | undefined {
+  let text = candidate.trim();
+  if (fromSource === 'drive.fileName' || fromSource === 'attachmentName') {
+    text = text.replace(/\.[A-Za-z0-9]{1,8}$/, '');
+  }
+  text = text
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s\-–—_:.]+|[\s\-–—_:.]+$/g, '');
+  return text.length > 0 ? text : undefined;
+}
+
 function applyFieldCandidateNormalize(
   candidate: string,
   normalize: FieldCandidateNormalize | undefined,
   timeZone: string | undefined,
-  now?: (() => Date) | undefined
+  now?: (() => Date) | undefined,
+  fromSource?: GmailExtractSource | DriveExtractSource
 ): string | undefined {
   if (normalize === undefined) {
     return candidate;
   }
   switch (normalize) {
+    case 'digits6':
+      return normalizeDigits6Candidate(candidate);
+    case 'pad3':
+      return normalizePad3Candidate(candidate);
+    case 'revision':
+      return normalizeRevisionCandidate(candidate);
     case 'yymmdd': {
       const nowDate = now ? now() : new Date();
       return normalizeYymmddCandidate(candidate, timeZone, nowDate);
     }
+    case 'cleanFilenameText':
+      return normalizeCleanFilenameTextCandidate(candidate, fromSource);
     default:
       return undefined;
   }
@@ -800,20 +877,29 @@ export function matchesCorrelatedCode(
     return true;
   }
 
-  // Check section + number correlation (CSI codes: group 1 = 6 digits, group 2 = 3 digits)
-  if (groupIndex >= 3 && match[1] !== undefined && match[2] !== undefined) {
-    if (/^\d{6}$/.test(match[1]) && /^\d{3}$/.test(match[2])) {
+  // Check section (+ number for groupIndex >= 3) correlation with uniform CSI delimiters
+  const rawGroup1 = match[1]?.trim();
+  if (
+    rawGroup1 !== undefined &&
+    /^(?:\d{6}|\d{2}([\s._-])\d{2}\1\d{2})$/.test(rawGroup1)
+  ) {
+    const normSection = normalizeDigits6Candidate(rawGroup1);
+    if (normSection !== undefined) {
       if (
         populatedFields.section !== undefined &&
-        match[1] !== String(populatedFields.section)
+        normSection !== String(populatedFields.section)
       ) {
         return false;
       }
-      if (
-        populatedFields.number !== undefined &&
-        match[2] !== String(populatedFields.number)
-      ) {
-        return false;
+      if (groupIndex >= 3 && match[2] !== undefined) {
+        const normNumber = normalizePad3Candidate(match[2]);
+        if (
+          normNumber !== undefined &&
+          populatedFields.number !== undefined &&
+          normNumber !== String(populatedFields.number)
+        ) {
+          return false;
+        }
       }
     }
   }
@@ -991,7 +1077,8 @@ function extractCandidateFromSourceItems(
         rawCandidate,
         'normalize' in rule ? rule.normalize : undefined,
         timeZone,
-        now
+        now,
+        fromSource
       );
       if (normalizedCandidate === undefined) {
         continue;
@@ -1536,7 +1623,8 @@ async function extractLookupCandidateFromSourceItems(
         candidateText,
         'normalize' in rule ? rule.normalize : undefined,
         timeZone,
-        deps?.now
+        deps?.now,
+        fromSource
       );
       if (normalizedCandidate === undefined || normalizedCandidate.trim().length === 0) {
         continue;

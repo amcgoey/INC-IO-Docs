@@ -948,4 +948,67 @@ describe('ParseSchemaRegistryAdapter', () => {
       }
     });
   });
+
+  describe('Ticket #310: Submittal normalizer modes (digits6, pad3, revision, cleanFilenameText) at ParseSchemaRegistryPort.initialize()', () => {
+    it('accepts digits6, pad3, revision, and cleanFilenameText on gmail and drive rules and rejects unknown modes', async () => {
+      const validAdapter = new ParseSchemaRegistryAdapter({
+        getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-doc.json'] }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'test-doc',
+          documentSchema: {
+            fields: [
+              { key: 'section', type: 'string' },
+              { key: 'number', type: 'string' },
+              { key: 'revision', type: 'string' },
+              { key: 'title', type: 'string' },
+            ],
+          },
+          documentParseSchema: {
+            extractors: [
+              {
+                source: 'gmail',
+                fields: {
+                  section: { from: 'attachmentName', pattern: '(\\d{2} \\d{2} \\d{2})', group: 1, normalize: 'digits6' },
+                  number: { from: 'attachmentName', pattern: '(\\d{1,3})', group: 1, normalize: 'pad3' },
+                  revision: { from: 'attachmentName', pattern: '(v\\d+)', group: 1, normalize: 'revision' },
+                  title: { from: 'attachmentName', pattern: '(.+)', group: 1, normalize: 'cleanFilenameText' },
+                },
+              },
+              {
+                source: 'drive',
+                fields: {
+                  section: { from: 'drive.fileNameStem', pattern: '(\\d{2} \\d{2} \\d{2})', group: 1, normalize: 'digits6' },
+                  number: { from: 'drive.fileNameStem', pattern: '(\\d{1,3})', group: 1, normalize: 'pad3' },
+                  revision: { from: 'drive.fileNameStem', pattern: '(v\\d+)', group: 1, normalize: 'revision' },
+                  title: { from: 'drive.fileNameStem', pattern: '(.+)', group: 1, normalize: 'cleanFilenameText' },
+                },
+              },
+            ],
+          },
+        }),
+      });
+      await expect(validAdapter.initialize()).resolves.toBeUndefined();
+
+      const badAdapter = new ParseSchemaRegistryAdapter({
+        getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-doc.json'] }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'test-doc',
+          documentSchema: {
+            fields: [{ key: 'section', type: 'string' }],
+          },
+          documentParseSchema: {
+            extractors: [
+              {
+                source: 'drive',
+                fields: {
+                  section: { from: 'drive.fileNameStem', normalize: 'unknownNormalizer' },
+                },
+              },
+            ],
+          },
+        }),
+      });
+      await expect(badAdapter.initialize()).rejects.toThrow(/Invalid DocumentParseSchema structure/i);
+    });
+  });
 });
