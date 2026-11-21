@@ -343,36 +343,19 @@ export function parseDateToYymmdd(dateString?: string, timeZone?: string): strin
     const targetMs = parsed.getTime() + effectiveOffset * 60_000;
     const targetDate = new Date(targetMs);
 
-    const yy = String(targetDate.getUTCFullYear()).slice(-2);
-    const mm = String(targetDate.getUTCMonth() + 1).padStart(2, '0');
-    const dd = String(targetDate.getUTCDate()).padStart(2, '0');
-
-    return `${yy}${mm}${dd}`;
+    return formatYymmdd(
+      targetDate.getUTCFullYear(),
+      targetDate.getUTCMonth() + 1,
+      targetDate.getUTCDate()
+    );
   }
 
-  const effectiveTimeZone =
-    typeof timeZone === 'string' && timeZone.trim().length > 0 ? timeZone.trim() : 'UTC';
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: effectiveTimeZone,
-    year: '2-digit',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(parsed);
-
-  let yy = '';
-  let mm = '';
-  let dd = '';
-  for (const { type, value } of parts) {
-    if (type === 'year') yy = value;
-    else if (type === 'month') mm = value;
-    else if (type === 'day') dd = value;
-  }
-
-  if (!yy || !mm || !dd) {
+  const ymd = getYearMonthDayInTimeZone(parsed, timeZone);
+  if (!ymd) {
     return undefined;
   }
 
-  return `${yy.slice(-2)}${mm.padStart(2, '0')}${dd.padStart(2, '0')}`;
+  return formatYymmdd(ymd.year, ymd.month, ymd.day);
 }
 
 interface YearMonthDay {
@@ -575,13 +558,24 @@ function normalizeRevisionCandidate(candidate: string): string | undefined {
   return undefined;
 }
 
+const FILENAME_EXTENSION_REGEX = /\.(?!(?:inc|ltd)$)[A-Za-z0-9]{1,8}$/i;
+
 function normalizeCleanFilenameTextCandidate(
   candidate: string,
-  fromSource?: GmailExtractSource | DriveExtractSource
+  fromSource?: GmailExtractSource | DriveExtractSource,
+  originalSourceText?: string
 ): string | undefined {
   let text = candidate.trim();
   if (fromSource === 'drive.fileName' || fromSource === 'attachmentName') {
-    text = text.replace(/\.[A-Za-z0-9]{1,8}$/, '');
+    const trimmedOriginal = originalSourceText?.trim();
+    if (trimmedOriginal === undefined || text === trimmedOriginal) {
+      text = text.replace(FILENAME_EXTENSION_REGEX, '');
+    } else {
+      const sourceExt = trimmedOriginal.match(FILENAME_EXTENSION_REGEX)?.[0];
+      if (sourceExt && text.toLowerCase().endsWith(sourceExt.toLowerCase())) {
+        text = text.slice(0, -sourceExt.length);
+      }
+    }
   }
   text = text
     .replace(/_/g, ' ')
@@ -595,7 +589,8 @@ function applyFieldCandidateNormalize(
   normalize: FieldCandidateNormalize | undefined,
   timeZone: string | undefined,
   now?: (() => Date) | undefined,
-  fromSource?: GmailExtractSource | DriveExtractSource
+  fromSource?: GmailExtractSource | DriveExtractSource,
+  originalSourceText?: string
 ): string | undefined {
   if (normalize === undefined) {
     return candidate;
@@ -614,7 +609,7 @@ function applyFieldCandidateNormalize(
       return normalizeYymmddCandidate(candidate, timeZone, nowDate);
     }
     case 'cleanFilenameText':
-      return normalizeCleanFilenameTextCandidate(candidate, fromSource);
+      return normalizeCleanFilenameTextCandidate(candidate, fromSource, originalSourceText);
     default:
       return undefined;
   }
@@ -916,9 +911,8 @@ export function matchesCorrelatedCode(
   }
 
   // Check specTag correlation (FF&E spec tag codes: group 1 = 2 letters + optional delimiter + 3 digits + optional letter)
-  const rawSpecTag = match[1]?.trim();
-  if (groupIndex >= 2 && rawSpecTag !== undefined && /^[A-Za-z]{2}[\s._-]?\d{3}[A-Za-z]?$/.test(rawSpecTag)) {
-    const normMatchTag = normalizeCompactAlnumCandidate(rawSpecTag);
+  if (rawGroup1 !== undefined && /^[A-Za-z]{2}[\s._-]?\d{3}[A-Za-z]?$/.test(rawGroup1)) {
+    const normMatchTag = normalizeCompactAlnumCandidate(rawGroup1);
     if (normMatchTag !== undefined && populatedFields.specTag !== undefined) {
       const populatedTag = String(populatedFields.specTag);
       const normPopulatedTag = normalizeCompactAlnumCandidate(populatedTag) ?? populatedTag.trim();
@@ -1090,7 +1084,8 @@ function extractCandidateFromSourceItems(
         'normalize' in rule ? rule.normalize : undefined,
         timeZone,
         now,
-        fromSource
+        fromSource,
+        item.text
       );
       if (normalizedCandidate === undefined) {
         continue;
@@ -1636,7 +1631,8 @@ async function extractLookupCandidateFromSourceItems(
         'normalize' in rule ? rule.normalize : undefined,
         timeZone,
         deps?.now,
-        fromSource
+        fromSource,
+        item.text
       );
       if (normalizedCandidate === undefined || normalizedCandidate.trim().length === 0) {
         continue;
@@ -1714,6 +1710,13 @@ export interface SourceParserServiceDeps {
 interface HydratedDriveItemContext {
   hierarchy: DriveItemHierarchy;
   driveContext: Record<string, unknown>;
+}
+
+function areExtractorFieldsPopulated(
+  fields: Record<string, unknown>,
+  populatedFields: Record<string, unknown>
+): boolean {
+  return Object.keys(fields).every((k) => k in populatedFields);
 }
 
 export class SourceParserService implements SourceParserPort {
@@ -1801,9 +1804,7 @@ export class SourceParserService implements SourceParserPort {
           if (validItemIds.length === 0) {
             continue;
           }
-          const extractorTargetKeys = Object.keys(extractor.fields);
-          const allAlreadyPopulated = extractorTargetKeys.every((k) => k in populatedFields);
-          if (allAlreadyPopulated) {
+          if (areExtractorFieldsPopulated(extractor.fields, populatedFields)) {
             continue;
           }
           const timeZone = await getWorkspaceTimeZone();
@@ -1833,9 +1834,7 @@ export class SourceParserService implements SourceParserPort {
           continue;
         }
 
-        const extractorTargetKeys = Object.keys(extractor.fields);
-        const allAlreadyPopulated = extractorTargetKeys.every((k) => k in populatedFields);
-        if (allAlreadyPopulated) {
+        if (areExtractorFieldsPopulated(extractor.fields, populatedFields)) {
           continue;
         }
 

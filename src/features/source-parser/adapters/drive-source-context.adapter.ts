@@ -1,33 +1,10 @@
 import type {
   DriveSourceContextPort,
+  DriveSourceContextClientPort,
+  DriveSourceFileMetadata,
   DriveItemHierarchy,
   DriveHierarchyNode,
 } from '../ports';
-
-export interface DriveSourceFileMetadata {
-  id: string;
-  name: string;
-  parents?: string[] | undefined;
-  mimeType?: string | undefined;
-  webViewLink?: string | undefined;
-  driveId?: string | undefined;
-  createdTime?: string | undefined;
-  modifiedTime?: string | undefined;
-  shortcutDetails?:
-    | {
-        targetId?: string | undefined;
-        targetMimeType?: string | undefined;
-      }
-    | undefined;
-}
-
-export interface DriveSourceContextClientPort {
-  getFile(fileId: string): Promise<DriveSourceFileMetadata>;
-  listSharedDrives?(options?: { pageSize?: number; pageToken?: string }): Promise<{
-    drives: Array<{ id: string; name: string }>;
-    nextPageToken?: string | undefined;
-  }>;
-}
 
 export function isTerminalRoutingFolder(name: string): boolean {
   const normalized = name.trim().toLowerCase();

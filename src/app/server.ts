@@ -33,7 +33,7 @@ import type {
   WorkspaceAuthVerifierPort,
 } from '../infrastructure/workspace-addon/api';
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
-import type { DriveSourceContextClientPort } from '../features/source-parser';
+import type { DriveSourceContextClientPort } from '../features/source-parser/ports';
 
 export type CompositeManifestProvider =
   AppConfigurationProviderPort &

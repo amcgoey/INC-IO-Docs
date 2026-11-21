@@ -17,6 +17,25 @@ export const DriveItemHierarchySchema = Type.Object({
 });
 export type DriveItemHierarchy = Static<typeof DriveItemHierarchySchema>;
 
+export const DriveSourceShortcutDetailsSchema = Type.Object({
+  targetId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  targetMimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type DriveSourceShortcutDetails = Static<typeof DriveSourceShortcutDetailsSchema>;
+
+export const DriveSourceFileMetadataSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  name: Type.String({ minLength: 1 }),
+  parents: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  webViewLink: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  driveId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  createdTime: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  modifiedTime: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  shortcutDetails: Type.Optional(Type.Union([DriveSourceShortcutDetailsSchema, Type.Undefined()])),
+});
+export type DriveSourceFileMetadata = Static<typeof DriveSourceFileMetadataSchema>;
+
 export const SourceItemDescriptorSchema = Type.Object({
   id: Type.String({ minLength: 1 }),
   name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
@@ -364,6 +383,14 @@ export const SourceParserSpaceTypeConfigSchema = Type.Object({
 export type SourceParserSpaceTypeConfig = Static<typeof SourceParserSpaceTypeConfigSchema>;
 
 // Driven Ports
+export interface DriveSourceContextClientPort {
+  getFile(fileId: string): Promise<DriveSourceFileMetadata>;
+  listSharedDrives?(options?: { pageSize?: number; pageToken?: string }): Promise<{
+    drives: Array<{ id: string; name: string }>;
+    nextPageToken?: string | undefined;
+  }>;
+}
+
 export interface DriveSourceContextPort {
   getItemHierarchy(itemId: string): Promise<DriveItemHierarchy>;
 }

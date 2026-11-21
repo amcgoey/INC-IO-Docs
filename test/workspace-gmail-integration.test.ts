@@ -6356,6 +6356,91 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         ).toBe('Waterproofing by Acme.Inc');
       });
 
+      it('extracts submittal-arch attachmentName titles cleanly without double-stripping .Inc/.Ltd/.2 while stripping trailing dates', async () => {
+        const attachmentCases = [
+          {
+            threadId: 'th-arch-310-date-att',
+            messageId: 'msg-arch-310-date-att',
+            filename: '071200-001_Waterproofing_2026-11-15.pdf',
+            expectedTitle: 'Waterproofing',
+          },
+          {
+            threadId: 'th-arch-310-inc-att',
+            messageId: 'msg-arch-310-inc-att',
+            filename: '071200-001_Waterproofing_by_Acme.Inc.pdf',
+            expectedTitle: 'Waterproofing by Acme.Inc',
+          },
+          {
+            threadId: 'th-arch-310-ltd-att',
+            messageId: 'msg-arch-310-ltd-att',
+            filename: '071200-001_Waterproofing_Supply.Ltd.pdf',
+            expectedTitle: 'Waterproofing Supply.Ltd',
+          },
+          {
+            threadId: 'th-arch-310-spec-att',
+            messageId: 'msg-arch-310-spec-att',
+            filename: '071200-001_Spec_v1.2.pdf',
+            expectedTitle: 'Spec v1.2',
+          },
+        ] as const;
+
+        vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string) => {
+          const matched = attachmentCases.find((c) => c.threadId === threadId);
+          if (!matched) {
+            throw new Error(`Unexpected threadId: ${threadId}`);
+          }
+          return {
+            id: matched.threadId,
+            messages: [
+              {
+                id: matched.messageId,
+                threadId: matched.threadId,
+                subject: 'Submittal Package',
+                from: 'James McGovern <jmcgovern@pavarini.com>',
+                to: 'Architect <pm@inc.nyc>',
+                date: 'Tue, 17 Nov 2026 14:00:00 -0500',
+                labels: ['INBOX', 'Active Projects'],
+                plainTextBody: 'Attached.',
+                inlineImages: [],
+                attachments: [
+                  {
+                    partId: 'part-1',
+                    attachmentId: 'att-1',
+                    filename: matched.filename,
+                    mimeType: 'application/pdf',
+                    size: 1024,
+                  },
+                ],
+              },
+            ],
+          };
+        });
+
+        for (const c of attachmentCases) {
+          const res = await app.server.inject({
+            method: 'POST',
+            url: '/workspace/gmail-contextual',
+            headers: { authorization: 'Bearer valid-jwt-token' },
+            payload: {
+              hostApp: 'GMAIL',
+              gmail: {
+                messageId: c.messageId,
+                threadId: c.threadId,
+                accessToken: 'ya29.live-token',
+              },
+            },
+          });
+          expect(res.statusCode).toBe(200);
+          const card = (JSON.parse(res.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.pushCard;
+          const docSec = card?.sections.find((s) => s.header === 'Document Data');
+          expect(
+            docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('title', 'submittal-arch'))
+              ?.textInput?.value,
+            c.filename
+          ).toBe(c.expectedTitle);
+        }
+      });
+
       it('runs gmail before drive in Google Drive URL mode for submittal-arch, letting gmail win first and drive fill remaining blank fields', async () => {
         vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
           id: 'drive-url-arch-310',
