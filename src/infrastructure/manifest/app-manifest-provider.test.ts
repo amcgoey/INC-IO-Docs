@@ -133,9 +133,9 @@ describe('AppManifestProvider', () => {
   });
 
   describe('Configuration Provider', () => {
-    it('exposes only defaultDocumentType and defaultDocumentSpaceType on WorkspaceConfigurationSchema', () => {
+    it('exposes defaultDocumentType, defaultDocumentSpaceType, and timeZone on WorkspaceConfigurationSchema', () => {
       const keys = Object.keys(WorkspaceConfigurationSchema.properties);
-      expect(keys.sort()).toEqual(['defaultDocumentSpaceType', 'defaultDocumentType']);
+      expect(keys.sort()).toEqual(['defaultDocumentSpaceType', 'defaultDocumentType', 'timeZone']);
     });
 
     it('loads and returns drive and workspace configuration when defined in manifest', async () => {
@@ -148,6 +148,7 @@ describe('AppManifestProvider', () => {
             workspace: {
               defaultDocumentSpaceType: 'projects',
               defaultDocumentType: 'custom-type',
+              timeZone: 'America/New_York',
             },
             drive: {
               defaultFolderName: 'SpecialFolder',
@@ -174,6 +175,7 @@ describe('AppManifestProvider', () => {
       expect(wsConfig).toEqual({
         defaultDocumentSpaceType: 'projects',
         defaultDocumentType: 'custom-type',
+        timeZone: 'America/New_York',
       });
     });
 
@@ -296,6 +298,44 @@ describe('AppManifestProvider', () => {
         contacts: 'assets/aliases/contacts.json',
         vendors: 'assets/aliases/vendors.json',
       });
+    });
+
+    it('fails fast on load when configuration.workspace.timeZone is invalid even with empty documentTypes', async () => {
+      const manifestPath = path.join(tempDir, 'invalid-tz-manifest.json');
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({
+          documentTypes: [],
+          configuration: {
+            workspace: {
+              timeZone: 'Mars/Olympus_Mons',
+            },
+          },
+        }),
+        'utf-8'
+      );
+
+      const provider = new AppManifestProvider({ manifestPath });
+      await expect(provider.getRawManifest()).rejects.toThrow(/timeZone/i);
+    });
+
+    it('fails fast on load when configuration.workspace.timeZone is empty or whitespace', async () => {
+      const manifestPath = path.join(tempDir, 'empty-tz-manifest.json');
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({
+          documentTypes: [],
+          configuration: {
+            workspace: {
+              timeZone: '   ',
+            },
+          },
+        }),
+        'utf-8'
+      );
+
+      const provider = new AppManifestProvider({ manifestPath });
+      await expect(provider.getWorkspaceConfig()).rejects.toThrow(/timeZone/i);
     });
   });
 });

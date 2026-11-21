@@ -1,17 +1,10 @@
-import type { DriveFileMetadata } from '../../../infrastructure/drive/drive-client';
 import type {
   DriveSourceContextPort,
+  DriveSourceContextClientPort,
+  DriveSourceFileMetadata,
   DriveItemHierarchy,
   DriveHierarchyNode,
 } from '../ports';
-
-export interface DriveSourceContextClientPort {
-  getFile(fileId: string): Promise<DriveFileMetadata>;
-  listSharedDrives?(options?: { pageSize?: number; pageToken?: string }): Promise<{
-    drives: Array<{ id: string; name: string }>;
-    nextPageToken?: string | undefined;
-  }>;
-}
 
 export function isTerminalRoutingFolder(name: string): boolean {
   const normalized = name.trim().toLowerCase();
@@ -48,12 +41,23 @@ export function isPermissionBoundaryOrNotFound(error: unknown): boolean {
 }
 
 export class DriveSourceContextAdapter implements DriveSourceContextPort {
-  private readonly fileCache = new Map<string, DriveFileMetadata>();
-  private sharedDrivesMap?: Map<string, string>;
+  private readonly filePromiseCache = new Map<string, Promise<DriveSourceFileMetadata>>();
+  private readonly hierarchyPromiseCache = new Map<string, Promise<DriveItemHierarchy>>();
+  private sharedDrivesPromise?: Promise<Map<string, string>>;
 
   constructor(private readonly client: DriveSourceContextClientPort) {}
 
-  async getItemHierarchy(itemId: string): Promise<DriveItemHierarchy> {
+  getItemHierarchy(itemId: string): Promise<DriveItemHierarchy> {
+    const existing = this.hierarchyPromiseCache.get(itemId);
+    if (existing) {
+      return existing;
+    }
+    const promise = this.loadItemHierarchy(itemId);
+    this.hierarchyPromiseCache.set(itemId, promise);
+    return promise;
+  }
+
+  private async loadItemHierarchy(itemId: string): Promise<DriveItemHierarchy> {
     let itemMetadata = await this.getCachedFile(itemId);
 
     if (
@@ -82,7 +86,7 @@ export class DriveSourceContextAdapter implements DriveSourceContextPort {
       visited.add(parentId);
       depth++;
 
-      let parentMetadata: DriveFileMetadata;
+      let parentMetadata: DriveSourceFileMetadata;
       try {
         parentMetadata = await this.getCachedFile(parentId);
       } catch (error: unknown) {
@@ -112,6 +116,8 @@ export class DriveSourceContextAdapter implements DriveSourceContextPort {
         id: itemMetadata.id,
         name: itemMetadata.name,
         ...(itemMetadata.mimeType !== undefined ? { mimeType: itemMetadata.mimeType } : {}),
+        ...(itemMetadata.createdTime !== undefined ? { createdTime: itemMetadata.createdTime } : {}),
+        ...(itemMetadata.modifiedTime !== undefined ? { modifiedTime: itemMetadata.modifiedTime } : {}),
       },
       ...(driveId !== undefined ? { driveId } : {}),
       ...(driveName !== undefined ? { driveName } : {}),
@@ -119,33 +125,42 @@ export class DriveSourceContextAdapter implements DriveSourceContextPort {
     };
   }
 
-  private async getCachedFile(fileId: string): Promise<DriveFileMetadata> {
-    const existing = this.fileCache.get(fileId);
+  private getCachedFile(fileId: string): Promise<DriveSourceFileMetadata> {
+    const existing = this.filePromiseCache.get(fileId);
     if (existing) {
       return existing;
     }
-    const fetched = await this.client.getFile(fileId);
-    this.fileCache.set(fileId, fetched);
-    return fetched;
+    const promise = (async () => this.client.getFile(fileId))();
+    this.filePromiseCache.set(fileId, promise);
+    return promise;
   }
 
   private async resolveDriveName(driveId: string): Promise<string | undefined> {
     if (!this.client.listSharedDrives) {
       return undefined;
     }
-    if (!this.sharedDrivesMap) {
-      this.sharedDrivesMap = new Map();
-      try {
-        const res = await this.client.listSharedDrives();
-        for (const drive of res.drives ?? []) {
-          if (drive.id && drive.name) {
-            this.sharedDrivesMap.set(drive.id, drive.name);
-          }
-        }
-      } catch {
-        return undefined;
-      }
+    if (!this.sharedDrivesPromise) {
+      this.sharedDrivesPromise = this.loadSharedDrivesMap();
     }
-    return this.sharedDrivesMap.get(driveId);
+    const map = await this.sharedDrivesPromise;
+    return map.get(driveId);
+  }
+
+  private async loadSharedDrivesMap(): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    if (!this.client.listSharedDrives) {
+      return map;
+    }
+    try {
+      const res = await this.client.listSharedDrives();
+      for (const drive of res.drives ?? []) {
+        if (drive.id && drive.name) {
+          map.set(drive.id, drive.name);
+        }
+      }
+    } catch {
+      // Non-fatal: driveName remains undefined if shared drives listing fails
+    }
+    return map;
   }
 }

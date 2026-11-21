@@ -260,6 +260,7 @@ describe('DocumentType JSON files schema validation', () => {
       expect(rawManifest.configuration?.workspace).toEqual({
         defaultDocumentSpaceType: 'projects',
         defaultDocumentType: 'communication-project',
+        timeZone: 'America/New_York',
       });
       expect(rawManifest.configuration?.workspace).not.toHaveProperty('appTitle');
       expect(rawManifest.configuration?.workspace).not.toHaveProperty('actionButtonText');
@@ -271,6 +272,7 @@ describe('DocumentType JSON files schema validation', () => {
       expect(workspaceConfig).toEqual({
         defaultDocumentSpaceType: 'projects',
         defaultDocumentType: 'communication-project',
+        timeZone: 'America/New_York',
       });
 
       const driveConfig = await manifestProvider.getDriveConfig();
@@ -312,8 +314,22 @@ describe('DocumentType JSON files schema validation', () => {
         expect(parseSchema?.extractors.length).toBeGreaterThan(0);
       }
 
+      for (const commKey of ['communication-project', 'communication-proposal']) {
+        const commParse = registry.getParseSchema(commKey);
+        expect(commParse?.extractors[0]?.source).toBe('gmail');
+        expect(commParse?.extractors[1]?.source).toBe('drive');
+        expect(commParse?.extractors[1]?.fields).toEqual({
+          date: [
+            { from: 'drive.fileNameStem', normalize: 'yymmdd' },
+            { from: 'drive.modifiedTime' },
+            { from: 'drive.createdTime' },
+          ],
+        });
+      }
+
       const archParse = registry.getParseSchema('submittal-arch');
       const archExtractor = archParse?.extractors[0];
+      expect(archExtractor?.source).toBe('gmail');
       expect(archExtractor?.fields).toHaveProperty('action');
       expect(archExtractor?.fields).toHaveProperty('date');
       expect(archExtractor?.fields).toHaveProperty('contact');
@@ -322,14 +338,34 @@ describe('DocumentType JSON files schema validation', () => {
       expect(archExtractor?.fields).toHaveProperty('revision');
       expect(archExtractor?.fields).toHaveProperty('title');
 
+      const archDriveExtractor = archParse?.extractors[1];
+      expect(archDriveExtractor?.source).toBe('drive');
+      expect(Object.keys(archDriveExtractor?.fields ?? {})).toEqual([
+        'section',
+        'number',
+        'revision',
+        'title',
+        'date',
+      ]);
+
       const ffeParse = registry.getParseSchema('submittal-ffe');
       const ffeExtractor = ffeParse?.extractors[0];
+      expect(ffeExtractor?.source).toBe('gmail');
       expect(ffeExtractor?.fields).toHaveProperty('action');
       expect(ffeExtractor?.fields).toHaveProperty('date');
       expect(ffeExtractor?.fields).toHaveProperty('contact');
       expect(ffeExtractor?.fields).toHaveProperty('vendor');
       expect(ffeExtractor?.fields).toHaveProperty('specTag');
       expect(ffeExtractor?.fields).toHaveProperty('revision');
+
+      const ffeDriveExtractor = ffeParse?.extractors[1];
+      expect(ffeDriveExtractor?.source).toBe('drive');
+      expect(Object.keys(ffeDriveExtractor?.fields ?? {})).toEqual([
+        'specTag',
+        'revision',
+        'vendor',
+        'date',
+      ]);
     });
   });
 });

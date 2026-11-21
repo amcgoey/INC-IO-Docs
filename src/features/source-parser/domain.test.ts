@@ -352,6 +352,57 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
       });
     });
 
+    it('infers submittal-arch for varied uniform-delimiter CSI formats while rejecting ISO dates and mixed delimiters (#310)', async () => {
+      const positiveCases = [
+        '07 12 00 - 1_v1_Waterproofing.pdf',
+        '07.12.00_01_Waterproofing.pdf',
+        '07.12.00_Submittal_002_Rev1_Waterproofing_2026-11-15.pdf',
+        'Section 07-12-00 Submittal #12 - Fluid Applied Waterproofing.pdf',
+      ];
+      for (const name of positiveCases) {
+        const mockDrive: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockResolvedValue({
+            item: { id: 'f-pos', name, mimeType: 'application/pdf' },
+            driveId: 'project-drive-001',
+            driveName: 'Project 1001 Alpha',
+            ancestors: [{ id: 'folder-unfiled', name: 'Unfiled' }],
+          }),
+        };
+        const service = new SourceParserService(mockDrive, mockSpaceConfigPort);
+        const driveRes = await service.inferRouting({ items: [{ id: 'f-pos' }] });
+        expect(driveRes.documentTypeKey, `Drive: ${name}`).toBe('submittal-arch');
+
+        const gmailRes = await service.inferRouting({
+          email: { id: 'msg-pos', subject: name.replace(/\.pdf$/, '') },
+        });
+        expect(gmailRes.documentTypeKey, `Gmail: ${name}`).toBe('submittal-arch');
+      }
+
+      const negativeCases = [
+        '2026-11-15_Meeting_Notes.pdf',
+        'Report_2026-11-15_01.pdf',
+        '07 12.00 - 1_Mixed.pdf',
+      ];
+      for (const name of negativeCases) {
+        const mockDrive: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockResolvedValue({
+            item: { id: 'f-neg', name, mimeType: 'application/pdf' },
+            driveId: 'project-drive-001',
+            driveName: 'Project 1001 Alpha',
+            ancestors: [{ id: 'folder-unfiled', name: 'Unfiled' }],
+          }),
+        };
+        const service = new SourceParserService(mockDrive, mockSpaceConfigPort);
+        const driveRes = await service.inferRouting({ items: [{ id: 'f-neg' }] });
+        expect(driveRes.documentTypeKey, `Drive negative: ${name}`).toBeUndefined();
+
+        const gmailRes = await service.inferRouting({
+          email: { id: 'msg-neg', subject: name.replace(/\.pdf$/, '') },
+        });
+        expect(gmailRes.documentTypeKey, `Gmail negative: ${name}`).toBeUndefined();
+      }
+    });
+
     it('infers submittal-ffe and dynamically resolves spaceTypeId in My Drive for FF&E spec tag filename', async () => {
       const hierarchy: DriveItemHierarchy = {
         item: {
@@ -374,6 +425,64 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
         spaceIdOrName: undefined,
         documentTypeKey: 'submittal-ffe',
       });
+    });
+
+    it('infers submittal-ffe for spaced/hyphenated FF&E spec tags while rejecting lowercase prose ("in 100 days", "at 120V panel") and partial code prefixes (#311)', async () => {
+      const positiveCases = [
+        'CG-104 v2',
+        'CG-104_v2_Fil_Doux.pdf',
+        'LT 159A_R0.pdf',
+        'LT 159A_R0',
+        'CG104-A_Berman_Falk.pdf',
+        'CG-104-A.pdf',
+        'CG-104_Fil_Doux.pdf',
+        'XCG104-Z - CG104-A',
+      ];
+      for (const name of positiveCases) {
+        const mockDrive: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockResolvedValue({
+            item: { id: 'f-ffe-pos', name, mimeType: 'application/pdf' },
+            driveId: 'project-drive-001',
+            driveName: 'Project 1001 Alpha',
+            ancestors: [{ id: 'folder-unfiled', name: 'Unfiled' }],
+          }),
+        };
+        const service = new SourceParserService(mockDrive, mockSpaceConfigPort);
+        const driveRes = await service.inferRouting({ items: [{ id: 'f-ffe-pos' }] });
+        expect(driveRes.documentTypeKey, `Drive: ${name}`).toBe('submittal-ffe');
+
+        const gmailRes = await service.inferRouting({
+          email: { id: 'msg-ffe-pos', subject: name.replace(/\.pdf$/, '') },
+        });
+        expect(gmailRes.documentTypeKey, `Gmail: ${name}`).toBe('submittal-ffe');
+      }
+
+      const negativeCases = [
+        'in 100 days',
+        'at 120V panel',
+        'Meeting in 100 days about at 120V panel',
+        'XCG104-Z',
+        'PO12345',
+        '2026-11-15_Notes.pdf',
+      ];
+      for (const name of negativeCases) {
+        const mockDrive: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockResolvedValue({
+            item: { id: 'f-ffe-neg', name, mimeType: 'application/pdf' },
+            driveId: 'project-drive-001',
+            driveName: 'Project 1001 Alpha',
+            ancestors: [{ id: 'folder-unfiled', name: 'Unfiled' }],
+          }),
+        };
+        const service = new SourceParserService(mockDrive, mockSpaceConfigPort);
+        const driveRes = await service.inferRouting({ items: [{ id: 'f-ffe-neg' }] });
+        expect(driveRes.documentTypeKey, `Drive negative: ${name}`).toBeUndefined();
+
+        const gmailRes = await service.inferRouting({
+          email: { id: 'msg-ffe-neg', subject: name.replace(/\.pdf$/, '') },
+        });
+        expect(gmailRes.documentTypeKey, `Gmail negative: ${name}`).toBeUndefined();
+      }
     });
 
     it('infers submittal-ffe for bounded proximity keywords (FF&E ... Submittal)', async () => {
@@ -1472,6 +1581,31 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
         expect(parseDateToYymmdd('invalid-date')).toBeUndefined();
         expect(parseDateToYymmdd('')).toBeUndefined();
         expect(parseDateToYymmdd(undefined)).toBeUndefined();
+      });
+
+      it('formats UTC ISO and timezone-less date-time strings in workspace timeZone without shifting date-only strings or explicit offsets (#307)', () => {
+        // Evening UTC Z rolls back to prior calendar day in America/New_York
+        expect(parseDateToYymmdd('2026-03-16T02:30:00Z', 'America/New_York')).toBe('260315');
+        expect(parseDateToYymmdd('2026-03-16T02:30:00Z')).toBe('260316');
+
+        // DST spring-forward (2026-03-08 02:00 EST -> 03:00 EDT = 07:00Z)
+        expect(parseDateToYymmdd('2026-03-08T04:30:00Z', 'America/New_York')).toBe('260307'); // 23:30 EST Mar 7
+        expect(parseDateToYymmdd('2026-03-08T07:30:00Z', 'America/New_York')).toBe('260308'); // 03:30 EDT Mar 8
+
+        // DST fall-back (2026-11-01 02:00 EDT -> 01:00 EST = 06:00Z)
+        expect(parseDateToYymmdd('2026-11-02T04:30:00Z', 'America/New_York')).toBe('261101'); // 23:30 EST Nov 1
+
+        // Timezone-less ISO date-time treated as UTC and formatted in workspace timeZone
+        expect(parseDateToYymmdd('2026-03-16T02:30:00', 'America/New_York')).toBe('260315');
+
+        // Date-only strings remain unshifted in America/New_York
+        expect(parseDateToYymmdd('2026-03-15', 'America/New_York')).toBe('260315');
+        expect(parseDateToYymmdd('Mar 15, 2026', 'America/New_York')).toBe('260315');
+
+        // Explicit RFC 2822 numeric and named offsets are preserved even when timeZone is provided
+        expect(parseDateToYymmdd('Mon, 16 Mar 2026 02:30:00 +0000', 'America/New_York')).toBe('260316');
+        expect(parseDateToYymmdd('Sun, 20 Sep 2026 23:30:00 EDT', 'America/New_York')).toBe('260920');
+        expect(parseDateToYymmdd('Mon, 16 Mar 2026 02:30:00 GMT', 'America/New_York')).toBe('260316');
       });
     });
 
@@ -3390,6 +3524,1405 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
           },
         });
         expect(unquotedRes.fields.contact).toBe('OBR');
+      });
+    });
+
+    describe('Ticket #307: Pass 2 source: "drive" extractor, workspace timeZone, and Gmail-first precedence', () => {
+      const commParseSchema = {
+        extractors: [
+          {
+            source: 'gmail' as const,
+            fields: {
+              date: { from: 'email.date' as const },
+              description: { from: 'email.subjectClean' as const },
+            },
+          },
+          {
+            source: 'drive' as const,
+            fields: {
+              date: [
+                { from: 'drive.modifiedTime' as const },
+                { from: 'drive.createdTime' as const },
+              ],
+            },
+          },
+        ],
+      };
+
+      const commTargetSchema = {
+        fields: [
+          { key: 'contact', type: 'string', options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'date', type: 'string' },
+          { key: 'direction', type: 'string' },
+          { key: 'description', type: 'string' },
+        ],
+      };
+
+      it('populates date in yyMMdd from drive.modifiedTime in workspace timeZone and falls back to drive.createdTime', async () => {
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi
+            .fn()
+            .mockResolvedValueOnce({
+              item: {
+                id: 'file-evening',
+                name: 'Project_Notes.pdf',
+                mimeType: 'application/pdf',
+                // 2026-03-16 02:30 UTC is 2026-03-15 22:30 EDT in America/New_York
+                modifiedTime: '2026-03-16T02:30:00Z',
+                createdTime: '2026-03-10T12:00:00Z',
+              },
+              ancestors: [],
+            })
+            .mockResolvedValueOnce({
+              item: {
+                id: 'file-created-only',
+                name: 'Created_Only.pdf',
+                mimeType: 'application/pdf',
+                createdTime: '2026-11-02T04:30:00Z', // 2026-11-01 23:30 EST (post DST fall-back)
+              },
+              ancestors: [],
+            }),
+        };
+
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue(commParseSchema),
+          getTargetSchema: vi.fn().mockResolvedValue(commTargetSchema),
+        };
+
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+          configPort: { getWorkspaceTimeZone: async () => 'America/New_York' },
+        });
+
+        const res1 = await service.extractFields({
+          documentTypeKey: 'communication-project',
+          context: { items: [{ id: 'file-evening' }] },
+        });
+        expect(res1.fields).toEqual({ date: '260315' });
+
+        const res2 = await service.extractFields({
+          documentTypeKey: 'communication-project',
+          context: { items: [{ id: 'file-created-only' }] },
+        });
+        expect(res2.fields).toEqual({ date: '261101' });
+      });
+
+      it('exposes full drive metadata in JsonLogic without mutating cached ancestors and handles Google Workspace MIME stems', async () => {
+        const cachedAncestors = [
+          { id: 'f-1', name: '1 Admin/Communication' },
+          { id: 'f-2', name: 'Acme' },
+        ];
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockResolvedValue({
+            item: {
+              id: 'gdoc-1',
+              name: 'Spec_v1.2',
+              mimeType: 'application/vnd.google-apps.document',
+              modifiedTime: '2026-10-19T15:00:00Z',
+              createdTime: '2026-10-18T12:00:00Z',
+            },
+            driveId: 'drive-1',
+            driveName: 'Project Alpha',
+            ancestors: cachedAncestors,
+          }),
+        };
+
+        const capturedData: Array<Record<string, unknown>> = [];
+        const spyEvaluator = {
+          evaluate: vi.fn((_rule: unknown, data: Record<string, unknown>) => {
+            capturedData.push(data);
+            return true;
+          }),
+        };
+
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'drive' as const,
+                match: { '==': [{ var: 'drive.isFolder' }, false] },
+                fields: {
+                  description: {
+                    when: { '==': [{ var: 'drive.parentName' }, 'Acme'] },
+                    from: 'drive.fileNameStem' as const,
+                  },
+                  date: { from: 'drive.modifiedTime' as const },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue(commTargetSchema),
+        };
+
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+          predicateEvaluator: spyEvaluator,
+          configPort: { getWorkspaceTimeZone: () => 'America/New_York' },
+        });
+
+        const res = await service.extractFields({
+          documentTypeKey: 'communication-project',
+          context: { items: [{ id: 'gdoc-1' }] },
+        });
+
+        expect(res.fields).toEqual({
+          description: 'Spec_v1.2',
+          date: '261019',
+        });
+        expect(cachedAncestors).toEqual([
+          { id: 'f-1', name: '1 Admin/Communication' },
+          { id: 'f-2', name: 'Acme' },
+        ]);
+        expect(capturedData[0]?.drive).toEqual({
+          id: 'gdoc-1',
+          fileName: 'Spec_v1.2',
+          fileNameStem: 'Spec_v1.2',
+          mimeType: 'application/vnd.google-apps.document',
+          isFolder: false,
+          createdTime: '2026-10-18T12:00:00Z',
+          modifiedTime: '2026-10-19T15:00:00Z',
+          parentName: 'Acme',
+          folderPath: '1 Admin/Communication/Acme',
+          ancestors: ['1 Admin/Communication', 'Acme'],
+          driveId: 'drive-1',
+          driveName: 'Project Alpha',
+        });
+      });
+
+      it('runs gmail before drive in Google Drive URL mode: skips getItemHierarchy when gmail populates date, and falls back to drive when email.date is absent', async () => {
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockResolvedValue({
+            item: {
+              id: 'drive-url-file',
+              name: 'URL_File.pdf',
+              modifiedTime: '2026-10-20T14:00:00Z',
+            },
+            ancestors: [],
+          }),
+        };
+
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue(commParseSchema),
+          getTargetSchema: vi.fn().mockResolvedValue(commTargetSchema),
+        };
+
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+          configPort: { getWorkspaceTimeZone: () => 'America/New_York' },
+        });
+
+        // Case 1: email.date present -> gmail wins, getItemHierarchy not called
+        const resWithEmailDate = await service.extractFields({
+          documentTypeKey: 'communication-project',
+          context: {
+            isDriveUrl: true,
+            items: [{ id: 'drive-url-file' }],
+            email: {
+              id: 'msg-1',
+              subject: 'Re: Progress Update',
+              date: 'Mon, 19 Oct 2026 10:00:00 -0400',
+            },
+          },
+        });
+        expect(resWithEmailDate.fields).toEqual({
+          date: '261019',
+          description: 'Progress Update',
+        });
+        expect(drivePort.getItemHierarchy).not.toHaveBeenCalled();
+
+        // Case 2: email.date absent -> gmail populates description, drive fills blank date
+        const resWithoutEmailDate = await service.extractFields({
+          documentTypeKey: 'communication-project',
+          context: {
+            isDriveUrl: true,
+            items: [{ id: 'drive-url-file' }],
+            email: {
+              id: 'msg-2',
+              subject: 'Re: Progress Update',
+            },
+          },
+        });
+        expect(resWithoutEmailDate.fields).toEqual({
+          description: 'Progress Update',
+          date: '261020',
+        });
+        expect(drivePort.getItemHierarchy).toHaveBeenCalledTimes(1);
+      });
+
+      it('skips source: "drive" extractors completely in Gmail Email Attachments mode', async () => {
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn(),
+        };
+
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue(commParseSchema),
+          getTargetSchema: vi.fn().mockResolvedValue(commTargetSchema),
+        };
+
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+        });
+
+        const res = await service.extractFields({
+          documentTypeKey: 'communication-project',
+          context: {
+            items: [{ id: 'gmail-att-part-1', name: 'Notes.pdf' }],
+            email: {
+              id: 'msg-att-1',
+              subject: 'Email With Attachment',
+              attachments: [{ id: 'gmail-att-part-1', name: 'Notes.pdf' }],
+            },
+          },
+        });
+
+        expect(res.fields).toEqual({ description: 'Email With Attachment' });
+        expect(drivePort.getItemHierarchy).not.toHaveBeenCalled();
+      });
+
+      it('emits deduplicated Pass 2 Drive metadata error notice when getItemHierarchy throws and includes drive lookup fields in fallback validation', async () => {
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockRejectedValue(new Error('Drive API 503')),
+        };
+        const fallbackExtractor = {
+          extractFields: vi.fn().mockResolvedValue({ contact: 'Acme Corp' }),
+        };
+
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'drive' as const,
+                fields: {
+                  date: { from: 'drive.modifiedTime' as const },
+                  contact: { from: 'drive.fileNameStem' as const, lookup: true as const },
+                },
+              },
+            ],
+            fallback: { strategy: 'ai' as const, fields: ['contact'] },
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              { key: 'date', type: 'string' },
+              { key: 'contact', type: 'string', options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true } },
+            ],
+            options: {
+              contacts: [{ key: 'ACM', name: 'Acme Corp' }],
+            },
+          }),
+        };
+
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+          fallbackExtractor,
+        });
+
+        const res = await service.extractFields({
+          documentTypeKey: 'communication-project',
+          context: { items: [{ id: 'file-err' }] },
+        });
+
+        expect(res.statusMessages).toEqual([
+          'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.',
+        ]);
+        expect(res.fields.contact).toBe('ACM');
+      });
+
+      it('handles DriveSourceContextPort errors across Pass 1 + Pass 2, preserves gmail fields, and deduplicates Pass 2 notice across multiple drive extractors', async () => {
+        const err = new Error('Not found') as Error & { statusCode: number };
+        err.statusCode = 404;
+        const mockedDrivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockRejectedValue(err),
+        };
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail' as const,
+                fields: {
+                  description: { from: 'email.subjectClean' as const },
+                },
+              },
+              {
+                source: 'drive' as const,
+                fields: {
+                  date: { from: 'drive.modifiedTime' as const },
+                },
+              },
+              {
+                source: 'drive' as const,
+                fields: {
+                  contact: { from: 'drive.fileNameStem' as const },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              { key: 'description', type: 'string' },
+              { key: 'date', type: 'string' },
+              { key: 'contact', type: 'string' },
+            ],
+          }),
+        };
+
+        const spaceConfigPort: SourceParserSpaceConfigPort = {
+          getDocumentSpaceTypes: vi.fn().mockResolvedValue([
+            {
+              id: 'projects',
+              displayName: 'Projects',
+              spaceSchema: {
+                allowedDocumentTypes: ['communication-project'],
+                defaultDocumentType: 'communication-project',
+              },
+              storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+            },
+          ]),
+        };
+
+        const service = new SourceParserService(mockedDrivePort, spaceConfigPort, {
+          parseSchemaRegistry: registry,
+        });
+
+        const routing = await service.inferRouting({
+          items: [{ id: 'shortcut-broken' }],
+        });
+        expect(routing.statusMessages).toEqual([
+          'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.',
+        ]);
+
+        const extracted = await service.extractFields({
+          documentTypeKey: 'communication-project',
+          context: {
+            isDriveUrl: true,
+            items: [{ id: 'shortcut-broken' }],
+            email: {
+              id: 'msg-1',
+              subject: 'Weekly Update',
+            },
+          },
+        });
+
+        expect(extracted.fields.description).toBe('Weekly Update');
+        expect(extracted.statusMessages).toEqual([
+          'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.',
+        ]);
+      });
+
+      it('remains stateless across separate extractFields calls on distinct contexts for the same itemId', async () => {
+        let callCount = 0;
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockImplementation(async (itemId: string) => {
+            callCount++;
+            return {
+              item: {
+                id: itemId,
+                name: 'File.pdf',
+                mimeType: 'application/pdf',
+                modifiedTime: callCount === 1 ? '2026-10-15T12:00:00Z' : '2026-10-20T12:00:00Z',
+              },
+              ancestors: [],
+            };
+          }),
+        };
+
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'drive' as const,
+                fields: {
+                  date: { from: 'drive.modifiedTime' as const },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [{ key: 'date', type: 'string' }],
+          }),
+        };
+
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+        });
+
+        const first = await service.extractFields({
+          documentTypeKey: 'communication-project',
+          context: { items: [{ id: 'shared-id' }] },
+        });
+        const second = await service.extractFields({
+          documentTypeKey: 'communication-project',
+          context: { items: [{ id: 'shared-id' }] },
+        });
+
+        expect(first.fields.date).toBe('261015');
+        expect(second.fields.date).toBe('261020');
+        expect(drivePort.getItemHierarchy).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    describe('Ticket #308: normalize: "yymmdd" ([today - 12 months, today]) and Google Workspace MIME-aware fileNameStem', () => {
+      const commParseSchemaWithFilenameDate = {
+        extractors: [
+          {
+            source: 'drive' as const,
+            fields: {
+              date: [
+                { from: 'drive.fileNameStem' as const, normalize: 'yymmdd' as const },
+                { from: 'drive.modifiedTime' as const },
+                { from: 'drive.createdTime' as const },
+              ],
+            },
+          },
+        ],
+      };
+
+      const commTargetSchema = {
+        fields: [
+          { key: 'date', type: 'string' },
+          { key: 'description', type: 'string' },
+          {
+            key: 'contact',
+            type: 'string',
+            options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true },
+          },
+        ],
+        options: {
+          contacts: [{ key: 'ACM', name: 'Acme' }],
+        },
+      };
+
+      it('extracts INC yyMMdd date from drive.fileNameStem within [today - 12 months, today] ahead of modifiedTime using injected now clock', async () => {
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi
+            .fn()
+            .mockResolvedValueOnce({
+              item: {
+                id: 'file-yymmdd',
+                name: '261115_Client_Meeting_Notes.pdf',
+                mimeType: 'application/pdf',
+                modifiedTime: '2026-11-18T14:00:00Z',
+                createdTime: '2026-11-18T12:00:00Z',
+              },
+              ancestors: [],
+            })
+            .mockResolvedValueOnce({
+              item: {
+                id: 'file-jan-dec',
+                name: '251228_Year_End_Minutes.pdf',
+                mimeType: 'application/pdf',
+                modifiedTime: '2026-01-05T14:00:00Z',
+              },
+              ancestors: [],
+            }),
+        };
+
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue(commParseSchemaWithFilenameDate),
+          getTargetSchema: vi.fn().mockResolvedValue(commTargetSchema),
+        };
+
+        const novService = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+          configPort: { getWorkspaceTimeZone: () => 'America/New_York' },
+          now: () => new Date('2026-11-20T15:00:00Z'),
+        });
+
+        const novRes = await novService.extractFields({
+          documentTypeKey: 'communication-project',
+          context: { items: [{ id: 'file-yymmdd' }] },
+        });
+        expect(novRes.fields).toEqual({ date: '261115' });
+
+        // Late-December date in early January is within [today - 12 months, today]
+        const janService = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+          configPort: { getWorkspaceTimeZone: () => 'America/New_York' },
+          now: () => new Date('2026-01-05T15:00:00Z'),
+        });
+
+        const janRes = await janService.extractFields({
+          documentTypeKey: 'communication-project',
+          context: { items: [{ id: 'file-jan-dec' }] },
+        });
+        expect(janRes.fields).toEqual({ date: '251228' });
+      });
+
+      it('extracts delimited 4-digit and 2-digit year dates, prioritizing 4-digit-year patterns before 2-digit-year and yyMMdd', async () => {
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi
+            .fn()
+            .mockResolvedValueOnce({
+              item: {
+                id: 'f-ymd-dash',
+                name: '07.12.00_Submittal_002_Rev1_Waterproofing_2026-11-15.pdf',
+                mimeType: 'application/pdf',
+                modifiedTime: '2026-11-19T12:00:00Z',
+              },
+              ancestors: [],
+            })
+            .mockResolvedValueOnce({
+              item: {
+                id: 'f-mdy-4',
+                name: 'Notes_11_15_2026.pdf',
+                mimeType: 'application/pdf',
+                modifiedTime: '2026-11-19T12:00:00Z',
+              },
+              ancestors: [],
+            })
+            .mockResolvedValueOnce({
+              item: {
+                id: 'f-mdy-2',
+                name: 'Notes_11.14.26.pdf',
+                mimeType: 'application/pdf',
+                modifiedTime: '2026-11-19T12:00:00Z',
+              },
+              ancestors: [],
+            })
+            .mockResolvedValueOnce({
+              item: {
+                id: 'f-priority',
+                name: '260101_Notes_2026-11-15.pdf',
+                mimeType: 'application/pdf',
+                modifiedTime: '2026-11-19T12:00:00Z',
+              },
+              ancestors: [],
+            }),
+        };
+
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue(commParseSchemaWithFilenameDate),
+          getTargetSchema: vi.fn().mockResolvedValue(commTargetSchema),
+        };
+
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+          configPort: { getWorkspaceTimeZone: () => 'America/New_York' },
+          now: () => new Date('2026-11-20T15:00:00Z'),
+        });
+
+        expect(
+          (await service.extractFields({ documentTypeKey: 'communication-project', context: { items: [{ id: 'f-ymd-dash' }] } })).fields
+        ).toEqual({ date: '261115' });
+        expect(
+          (await service.extractFields({ documentTypeKey: 'communication-project', context: { items: [{ id: 'f-mdy-4' }] } })).fields
+        ).toEqual({ date: '261115' });
+        expect(
+          (await service.extractFields({ documentTypeKey: 'communication-project', context: { items: [{ id: 'f-mdy-2' }] } })).fields
+        ).toEqual({ date: '261114' });
+        expect(
+          (await service.extractFields({ documentTypeKey: 'communication-project', context: { items: [{ id: 'f-priority' }] } })).fields
+        ).toEqual({ date: '261115' });
+      });
+
+      it('enforces [today - 12 months, today] in workspace timeZone, rejects calendar-invalid dates and CSI prefixes (260519-001, 07.12.00, 081113), and falls back to modifiedTime', async () => {
+        const cases: Array<{ id: string; name: string; expectedDate: string }> = [
+          // Inclusive lower and upper bounds on 2026-11-20 EST (2026-11-21T02:00:00Z is still Nov 20 in NY!)
+          { id: 'c-today', name: '261120_Today_Notes.pdf', expectedDate: '261120' },
+          { id: 'c-12mo', name: '251120_Year_Ago_Notes.pdf', expectedDate: '251120' },
+          // Rejected future date (> today in America/New_York) -> falls back to modifiedTime
+          { id: 'c-future', name: '261121_Tomorrow_Notes.pdf', expectedDate: '261118' },
+          // Rejected stale date (< today - 12 months) -> falls back to modifiedTime
+          { id: 'c-stale', name: '251119_Too_Old_Notes.pdf', expectedDate: '261118' },
+          // Rejected calendar-invalid dates -> falls back to modifiedTime
+          { id: 'c-feb30', name: '260230_Invalid_Date.pdf', expectedDate: '261118' },
+          { id: 'c-apr31', name: '260431_Invalid_Date.pdf', expectedDate: '261118' },
+          { id: 'c-feb29-nonleap', name: '260229_Non_Leap.pdf', expectedDate: '261118' },
+          { id: 'c-071200', name: '071200_Invalid_CSI.pdf', expectedDate: '261118' },
+          // Rejected out-of-window CSI codes -> falls back to modifiedTime
+          { id: 'c-csi-dot', name: '07.12.00_Waterproofing.pdf', expectedDate: '261118' },
+          { id: 'c-csi-08', name: '081113_Hollow_Metal_Doors.pdf', expectedDate: '261118' },
+          // Protected Division 26 CSI prefix (260519-001) -> falls back to modifiedTime
+          { id: 'c-div26', name: '260519-001_Lighting_Controls.pdf', expectedDate: '261118' },
+          // Protected Division 26 prefix followed by actual date -> extracts trailing date
+          { id: 'c-div26-plus-date', name: '260519-001_Minutes_261115.pdf', expectedDate: '261115' },
+        ];
+
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn(async (id: string) => {
+            const match = cases.find((c) => c.id === id);
+            return {
+              item: {
+                id,
+                name: match?.name ?? 'Unknown.pdf',
+                mimeType: 'application/pdf',
+                modifiedTime: '2026-11-18T14:00:00Z',
+              },
+              ancestors: [],
+            };
+          }),
+        };
+
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue(commParseSchemaWithFilenameDate),
+          getTargetSchema: vi.fn().mockResolvedValue(commTargetSchema),
+        };
+
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+          configPort: { getWorkspaceTimeZone: () => 'America/New_York' },
+          // 2026-11-21 02:00 UTC = 2026-11-20 21:00 EST in America/New_York
+          now: () => new Date('2026-11-21T02:00:00Z'),
+        });
+
+        for (const testCase of cases) {
+          const res = await service.extractFields({
+            documentTypeKey: 'communication-project',
+            context: { items: [{ id: testCase.id }] },
+          });
+          expect(res.fields.date, testCase.id).toBe(testCase.expectedDate);
+        }
+
+        // Leap day 240229 is accepted when within [today - 12 months, today]
+        const leapDrivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockResolvedValue({
+            item: {
+              id: 'leap-day',
+              name: '240229_Leap_Day_Notes.pdf',
+              mimeType: 'application/pdf',
+              modifiedTime: '2024-03-01T12:00:00Z',
+            },
+            ancestors: [],
+          }),
+        };
+        const leapService = new SourceParserService(leapDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+          configPort: { getWorkspaceTimeZone: () => 'America/New_York' },
+          now: () => new Date('2024-06-01T12:00:00Z'),
+        });
+        const leapRes = await leapService.extractFields({
+          documentTypeKey: 'communication-project',
+          context: { items: [{ id: 'leap-day' }] },
+        });
+        expect(leapRes.fields.date).toBe('240229');
+      });
+
+      it('preserves extensionless Google Workspace titles (Spec_v1.2, 07.12.00) in drive.fileNameStem and falls back to modifiedTime for date', async () => {
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi
+            .fn()
+            .mockResolvedValueOnce({
+              item: {
+                id: 'gdoc-spec',
+                name: 'Spec_v1.2',
+                mimeType: 'application/vnd.google-apps.document',
+                modifiedTime: '2026-11-18T14:00:00Z',
+              },
+              ancestors: [],
+            })
+            .mockResolvedValueOnce({
+              item: {
+                id: 'gsheet-csi',
+                name: '07.12.00',
+                mimeType: 'application/vnd.google-apps.spreadsheet',
+                modifiedTime: '2026-11-17T14:00:00Z',
+              },
+              ancestors: [],
+            })
+            .mockResolvedValueOnce({
+              item: {
+                id: 'gfolder',
+                name: '261115_Client.Review',
+                mimeType: 'application/vnd.google-apps.folder',
+                modifiedTime: '2026-11-16T14:00:00Z',
+              },
+              ancestors: [],
+            }),
+        };
+
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'drive' as const,
+                fields: {
+                  description: { from: 'drive.fileNameStem' as const },
+                  date: [
+                    { from: 'drive.fileNameStem' as const, normalize: 'yymmdd' as const },
+                    { from: 'drive.modifiedTime' as const },
+                  ],
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue(commTargetSchema),
+        };
+
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+          configPort: { getWorkspaceTimeZone: () => 'America/New_York' },
+          now: () => new Date('2026-11-20T15:00:00Z'),
+        });
+
+        expect(
+          (await service.extractFields({ documentTypeKey: 'communication-project', context: { items: [{ id: 'gdoc-spec' }] } })).fields
+        ).toEqual({ description: 'Spec_v1.2', date: '261118' });
+
+        expect(
+          (await service.extractFields({ documentTypeKey: 'communication-project', context: { items: [{ id: 'gsheet-csi' }] } })).fields
+        ).toEqual({ description: '07.12.00', date: '261117' });
+
+        expect(
+          (await service.extractFields({ documentTypeKey: 'communication-project', context: { items: [{ id: 'gfolder' }] } })).fields
+        ).toEqual({ description: '261115_Client.Review', date: '261115' });
+      });
+
+      it('applies normalize: "yymmdd" before DocumentField pattern constraints and LookupField resolution on both gmail and drive', async () => {
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockResolvedValue({
+            item: {
+              id: 'file-lookup-norm',
+              name: 'Meeting_2026-11-15.pdf',
+              mimeType: 'application/pdf',
+              modifiedTime: '2026-11-18T14:00:00Z',
+            },
+            ancestors: [],
+          }),
+        };
+
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail' as const,
+                fields: {
+                  date: { from: 'email.subjectClean' as const, normalize: 'yymmdd' as const },
+                },
+              },
+              {
+                source: 'drive' as const,
+                fields: {
+                  contact: { from: 'drive.fileNameStem' as const, normalize: 'yymmdd' as const, lookup: true as const },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              { key: 'date', type: 'string', pattern: '^\\d{6}$' },
+              {
+                key: 'contact',
+                type: 'string',
+                options: { source: 'contacts', key: 'key', name: 'name' },
+              },
+            ],
+            options: {
+              contacts: [{ key: '261115', name: 'Nov 15 Batch' }],
+            },
+          }),
+        };
+
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+          configPort: { getWorkspaceTimeZone: () => 'America/New_York' },
+          now: () => new Date('2026-11-20T15:00:00Z'),
+        });
+
+        const res = await service.extractFields({
+          documentTypeKey: 'communication-project',
+          context: {
+            isDriveUrl: true,
+            items: [{ id: 'file-lookup-norm' }],
+            email: {
+              id: 'msg-norm',
+              subject: 'Re: Minutes 11-14-2026',
+            },
+          },
+        });
+
+        expect(res.fields).toEqual({
+          date: '261114',
+          contact: '261115',
+        });
+      });
+    });
+
+    describe('Ticket #310: Flexible Submittal Arch normalizers, correlated codes, and multi-file Drive binding', () => {
+      it('applies normalize: "digits6" and "pad3" before field pattern validation and skips non-conforming values', async () => {
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'drive' as const,
+                fields: {
+                  section: [
+                    { from: 'drive.fileNameStem' as const, pattern: '(\\d{2}[\\s._-]\\d{2}[\\s._-]\\d{2}|\\d{5,7})', group: 1, normalize: 'digits6' as const },
+                  ],
+                  number: [
+                    { from: 'drive.fileNameStem' as const, pattern: '#(\\d{1,4})', group: 1, normalize: 'pad3' as const },
+                  ],
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              { key: 'section', type: 'string', pattern: '^\\d{6}$' },
+              { key: 'number', type: 'string', pattern: '^\\d{3}$' },
+            ],
+          }),
+        };
+
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi
+            .fn()
+            .mockResolvedValueOnce({
+              item: { id: 'f1', name: 'Section 07 12 00 #1.pdf', mimeType: 'application/pdf' },
+              ancestors: [],
+            })
+            .mockResolvedValueOnce({
+              item: { id: 'f2', name: '07.12.00 #12.pdf', mimeType: 'application/pdf' },
+              ancestors: [],
+            })
+            .mockResolvedValueOnce({
+              item: { id: 'f3', name: '07120 #1234.pdf', mimeType: 'application/pdf' },
+              ancestors: [],
+            }),
+        };
+
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+        });
+
+        expect((await service.extractFields({ documentTypeKey: 'submittal-arch', context: { items: [{ id: 'f1' }] } })).fields).toEqual({
+          section: '071200',
+          number: '001',
+        });
+        expect((await service.extractFields({ documentTypeKey: 'submittal-arch', context: { items: [{ id: 'f2' }] } })).fields).toEqual({
+          section: '071200',
+          number: '012',
+        });
+        expect((await service.extractFields({ documentTypeKey: 'submittal-arch', context: { items: [{ id: 'f3' }] } })).fields).toEqual({});
+      });
+
+      it('normalizes revision and 1-based version tokens while rejecting Review, Revised, R-19, 120V, 277V, v1.2, v1.0.2, Rev 1.0, -Waterproofing, and -2026', async () => {
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'drive' as const,
+                fields: {
+                  revision: { from: 'drive.fileNameStem' as const, normalize: 'revision' as const },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [{ key: 'revision', type: 'string', minLength: 1 }],
+          }),
+        };
+
+        const cases: Array<{ name: string; expected: string | undefined }> = [
+          { name: '07 12 00 - 1_v1_Waterproofing.pdf', expected: '0' },
+          { name: '07 12 00 - 1_v2_Waterproofing.pdf', expected: '1' },
+          { name: '07 12 00 - 1_v0_Waterproofing.pdf', expected: '0' },
+          { name: '07 12 00 - 1_v1.0_Waterproofing.pdf', expected: '0' },
+          { name: '07 12 00 - 1_Ver. 1_Waterproofing.pdf', expected: '0' },
+          { name: '07 12 00 - 1_Version 03_Waterproofing.pdf', expected: '2' },
+          { name: '07.12.00_Submittal_002_Rev 0_Waterproofing.pdf', expected: '0' },
+          { name: '07.12.00_Submittal_002_Rev. A_Waterproofing.pdf', expected: 'A' },
+          { name: '07.12.00_Submittal_002_R1_Waterproofing.pdf', expected: '1' },
+          { name: '07.12.00_Submittal_002_Revision B_Waterproofing.pdf', expected: 'B' },
+          { name: '071200-001_v1.2_Waterproofing.pdf', expected: undefined },
+          { name: '071200-001_v1.0.2_Waterproofing.pdf', expected: undefined },
+          { name: '071200-001_Rev 1.0_Waterproofing.pdf', expected: undefined },
+          { name: '071200-001_Review_Waterproofing.pdf', expected: undefined },
+          { name: '071200-001_Revised_Waterproofing.pdf', expected: undefined },
+          { name: '071200-001_R-19_Insulation.pdf', expected: undefined },
+          { name: '071200-001_120V_Panel.pdf', expected: undefined },
+          { name: '071200-001_277V_Lighting.pdf', expected: undefined },
+          { name: '071200-001-Waterproofing.pdf', expected: undefined },
+          { name: '071200-001-Berman_Falk.pdf', expected: undefined },
+          { name: '071200-001-2026.pdf', expected: undefined },
+        ];
+
+        for (const c of cases) {
+          const drivePort: DriveSourceContextPort = {
+            getItemHierarchy: vi.fn().mockResolvedValue({
+              item: { id: 'f-rev', name: c.name, mimeType: 'application/pdf' },
+              ancestors: [],
+            }),
+          };
+          const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+            parseSchemaRegistry: registry,
+          });
+          const res = await service.extractFields({
+            documentTypeKey: 'submittal-arch',
+            context: { items: [{ id: 'f-rev' }] },
+          });
+          expect(res.fields.revision, c.name).toBe(c.expected);
+        }
+
+        // Tight single-token suffix values (-A, -0, -R, -12) when extracted by regex group
+        const suffixRegistry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'drive' as const,
+                fields: {
+                  revision: {
+                    from: 'drive.fileNameStem' as const,
+                    pattern: '\\d{6}-\\d{3}(-\\d{1,2}|-[A-Za-z])(?![A-Za-z0-9])',
+                    group: 1,
+                    normalize: 'revision' as const,
+                  },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [{ key: 'revision', type: 'string', minLength: 1 }],
+          }),
+        };
+
+        for (const [name, expected] of [
+          ['071200-001-R Waterproofing.pdf', 'R'],
+          ['071200-001-0 Waterproofing.pdf', '0'],
+          ['071200-001-A Waterproofing.pdf', 'A'],
+          ['071200-001-12 Waterproofing.pdf', '12'],
+        ] as const) {
+          const drivePort: DriveSourceContextPort = {
+            getItemHierarchy: vi.fn().mockResolvedValue({
+              item: { id: 'f-suf', name, mimeType: 'application/pdf' },
+              ancestors: [],
+            }),
+          };
+          const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+            parseSchemaRegistry: suffixRegistry,
+          });
+          const res = await service.extractFields({
+            documentTypeKey: 'submittal-arch',
+            context: { items: [{ id: 'f-suf' }] },
+          });
+          expect(res.fields.revision, name).toBe(expected);
+        }
+      });
+
+      it('applies cleanFilenameText stripping extensions only on drive.fileName and attachmentName without truncating .Inc/.Ltd in email.subjectClean', async () => {
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail' as const,
+                fields: {
+                  title: [
+                    { from: 'attachmentName' as const, normalize: 'cleanFilenameText' as const },
+                    { from: 'email.subjectClean' as const, normalize: 'cleanFilenameText' as const },
+                  ],
+                },
+              },
+              {
+                source: 'drive' as const,
+                fields: {
+                  title: { from: 'drive.fileName' as const, normalize: 'cleanFilenameText' as const },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [{ key: 'title', type: 'string', minLength: 1 }],
+          }),
+        };
+
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockResolvedValue({
+            item: { id: 'f-clean', name: ' - __Fluid__Applied_Waterproofing_-_.pdf', mimeType: 'application/pdf' },
+            ancestors: [],
+          }),
+        };
+
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+        });
+
+        // Subject with .Inc / .Ltd is NOT truncated
+        const subjRes = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          context: {
+            email: {
+              id: 'msg-inc',
+              subject: 'Re: -- _Waterproofing_by_Acme.Inc_ --',
+            },
+          },
+        });
+        expect(subjRes.fields.title).toBe('Waterproofing by Acme.Inc');
+
+        const ltdRes = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          context: {
+            email: {
+              id: 'msg-ltd',
+              subject: 'Waterproofing_Supply.Ltd',
+            },
+          },
+        });
+        expect(ltdRes.fields.title).toBe('Waterproofing Supply.Ltd');
+
+        // attachmentName strips extension
+        const attRes = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          context: {
+            email: {
+              id: 'msg-att',
+              attachments: [{ id: 'a1', name: ' - Fluid_Applied_Waterproofing_Spec.pdf' }],
+            },
+          },
+        });
+        expect(attRes.fields.title).toBe('Fluid Applied Waterproofing Spec');
+
+        // drive.fileName strips extension and trims separators
+        const driveRes = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          context: { items: [{ id: 'f-clean' }] },
+        });
+        expect(driveRes.fields.title).toBe('Fluid Applied Waterproofing');
+      });
+
+      it('does not double-strip .Inc/.Ltd/.2 when attachmentName or drive.fileName pattern already stripped .pdf', async () => {
+        const attachmentTitlePattern =
+          '(?:^|[\\s_./-])(\\d{6}|\\d{2} \\d{2} \\d{2}|\\d{2}\\.\\d{2}\\.\\d{2}|\\d{2}-\\d{2}-\\d{2}|\\d{2}_\\d{2}_\\d{2})(?:[\\s_.-]*(?:submittal|sub\\.?|no\\.?)[\\s_.-]*#?[\\s_.-]*|[\\s_.-]*#[\\s_.-]*|[\\s_.-]+)(\\d{1,3})(?![A-Za-z0-9])(?!-\\d{2}[-_.]\\d{2,4})(?:-(?:\\d{1,2}|[A-Za-z])(?![A-Za-z0-9]|-\\d)|[\\s_.-]+(?:(?:v|ver\\.?|version)[\\s_.-]*\\d+(?:\\.0+)?|(?:rev(?:ision)?\\.?|r(?=[\\s_.]*(?:\\d|[A-Za-z]\\b)))[\\s_.-]*(?:\\d{1,2}[A-Za-z]?|[A-Za-z]\\d{0,2}))(?![A-Za-z0-9]|\\.\\d))?(?:[\\s_.-]+(?:\\d{4}[-_.]\\d{2}[-_.]\\d{2}|\\d{2}[-_.]\\d{2}[-_.]\\d{4}|\\d{2}[-_.]\\d{2}[-_.]\\d{2}))?[\\s_.-]+(?:[-–—][\\s_]*)?(.+?)(?:[\\s_.-]+[-–—]?[\\s_]*\\d{6}[\\s_]+[A-Za-z0-9]{1,10}(?:_[A-Za-z0-9]{1,6})?|[\\s_.-]+(?:\\d{4}[-_.]\\d{2}[-_.]\\d{2}|\\d{2}[-_.]\\d{2}[-_.]\\d{4}|\\d{2}[-_.]\\d{2}[-_.]\\d{2}|\\d{6})|[\\s_.-]+(?:(?:v|ver\\.?|version)[\\s_.-]*\\d+(?:\\.0+)?|(?:rev(?:ision)?\\.?|r(?=[\\s_.]*(?:\\d|[A-Za-z]\\b)))[\\s_.-]*(?:\\d{1,2}[A-Za-z]?|[A-Za-z]\\d{0,2}))(?![A-Za-z0-9]|\\.\\d))*(?:\\.(?!inc$|ltd$)[A-Za-z0-9]{1,5})?$';
+
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail' as const,
+                fields: {
+                  title: {
+                    from: 'attachmentName' as const,
+                    pattern: attachmentTitlePattern,
+                    group: 3,
+                    normalize: 'cleanFilenameText' as const,
+                  },
+                },
+              },
+              {
+                source: 'drive' as const,
+                fields: {
+                  title: {
+                    from: 'drive.fileName' as const,
+                    pattern: attachmentTitlePattern,
+                    group: 3,
+                    normalize: 'cleanFilenameText' as const,
+                  },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [{ key: 'title', type: 'string', minLength: 1 }],
+          }),
+        };
+
+        const cases = [
+          ['071200-001_Waterproofing_2026-11-15.pdf', 'Waterproofing'],
+          ['071200-001_Waterproofing_by_Acme.Inc.pdf', 'Waterproofing by Acme.Inc'],
+          ['071200-001_Waterproofing_Supply.Ltd.pdf', 'Waterproofing Supply.Ltd'],
+          ['071200-001_Spec_v1.2.pdf', 'Spec v1.2'],
+        ] as const;
+
+        for (const [filename, expectedTitle] of cases) {
+          const drivePort: DriveSourceContextPort = {
+            getItemHierarchy: vi.fn().mockResolvedValue({
+              item: { id: 'f-title', name: filename, mimeType: 'application/pdf' },
+              ancestors: [],
+            }),
+          };
+          const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+            parseSchemaRegistry: registry,
+          });
+
+          const attRes = await service.extractFields({
+            documentTypeKey: 'submittal-arch',
+            context: {
+              email: {
+                id: 'msg-1',
+                attachments: [{ id: 'att-1', name: filename }],
+              },
+            },
+          });
+          expect(attRes.fields.title, `attachmentName: ${filename}`).toBe(expectedTitle);
+
+          const driveRes = await service.extractFields({
+            documentTypeKey: 'submittal-arch',
+            context: { items: [{ id: 'f-title' }] },
+          });
+          expect(driveRes.fields.title, `drive.fileName: ${filename}`).toBe(expectedTitle);
+        }
+      });
+
+      it('normalizes CSI section/number in matchesCorrelatedCode including groupIndex === 2', async () => {
+        const csiPattern =
+          '(\\d{6}|\\d{2} \\d{2} \\d{2}|\\d{2}\\.\\d{2}\\.\\d{2})[\\s_-]+(\\d{1,3})(?:[\\s_-]+(v\\d+|Rev\\d+))?';
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail' as const,
+                fields: {
+                  number: {
+                    from: 'email.subjectClean' as const,
+                    pattern: csiPattern,
+                    group: 2,
+                    normalize: 'pad3' as const,
+                  },
+                  revision: {
+                    from: 'email.subjectClean' as const,
+                    pattern: csiPattern,
+                    group: 3,
+                    normalize: 'revision' as const,
+                  },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              { key: 'section', type: 'string', pattern: '^\\d{6}$' },
+              { key: 'number', type: 'string', pattern: '^\\d{3}$' },
+              { key: 'revision', type: 'string', minLength: 1 },
+            ],
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+        });
+
+        const res = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          existingData: { section: '071200' },
+          context: {
+            email: {
+              id: 'msg-corr',
+              subject: '08 11 00 - 2_v9 and 07.12.00_1_v2',
+            },
+          },
+        });
+        expect(res.fields.number).toBe('001');
+        expect(res.fields.revision).toBe('1');
+      });
+
+      it('binds boundDriveItemId in declared field order so [Cover_Notes.pdf, 07 12 00 - 1_v1_Waterproofing.pdf] binds to item 2 including date', async () => {
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi
+            .fn()
+            .mockImplementation(async (itemId: string) => {
+              if (itemId === 'item-cover') {
+                return {
+                  item: {
+                    id: 'item-cover',
+                    name: 'Cover_Notes.pdf',
+                    mimeType: 'application/pdf',
+                    modifiedTime: '2026-11-01T15:00:00Z',
+                  },
+                  ancestors: [],
+                };
+              }
+              return {
+                item: {
+                  id: 'item-submittal',
+                  name: '07 12 00 - 1_v1_Waterproofing.pdf',
+                  mimeType: 'application/pdf',
+                  modifiedTime: '2026-11-18T15:00:00Z',
+                },
+                ancestors: [],
+              };
+            }),
+        };
+
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'drive' as const,
+                fields: {
+                  section: {
+                    from: 'drive.fileNameStem' as const,
+                    pattern: '(\\d{6}|\\d{2} \\d{2} \\d{2})[\\s_-]+(\\d{1,3})',
+                    group: 1,
+                    normalize: 'digits6' as const,
+                  },
+                  number: {
+                    from: 'drive.fileNameStem' as const,
+                    pattern: '(\\d{6}|\\d{2} \\d{2} \\d{2})[\\s_-]+(\\d{1,3})',
+                    group: 2,
+                    normalize: 'pad3' as const,
+                  },
+                  revision: {
+                    from: 'drive.fileNameStem' as const,
+                    normalize: 'revision' as const,
+                  },
+                  date: [
+                    { from: 'drive.fileNameStem' as const, normalize: 'yymmdd' as const },
+                    { from: 'drive.modifiedTime' as const },
+                  ],
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              { key: 'section', type: 'string', pattern: '^\\d{6}$' },
+              { key: 'number', type: 'string', pattern: '^\\d{3}$' },
+              { key: 'revision', type: 'string', minLength: 1 },
+              { key: 'date', type: 'string' },
+            ],
+          }),
+        };
+
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+          configPort: { getWorkspaceTimeZone: () => 'America/New_York' },
+          now: () => new Date('2026-11-20T15:00:00Z'),
+        });
+
+        const res = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          context: {
+            items: [{ id: 'item-cover' }, { id: 'item-submittal' }],
+          },
+        });
+
+        expect(res.fields).toEqual({
+          section: '071200',
+          number: '001',
+          revision: '0',
+          date: '261118',
+        });
+      });
+    });
+
+    describe('Ticket #311: compactAlnum normalizer, correlated specTag revision, and FF&E lookup/LinkedField derivation', () => {
+      it('applies normalize: "compactAlnum" before LookupField resolution and derives LinkedField specTitle', async () => {
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'drive' as const,
+                fields: {
+                  specTag: {
+                    from: 'drive.fileNameStem' as const,
+                    pattern: '(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)(?=[\\s_./-]|$)',
+                    group: 1,
+                    normalize: 'compactAlnum' as const,
+                    lookup: true as const,
+                  },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              {
+                key: 'specTag',
+                type: 'string',
+                minLength: 1,
+                options: { source: 'specs', key: 'key', allowUserInput: true },
+              },
+              {
+                key: 'specTitle',
+                type: 'string',
+                linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+              },
+            ],
+            options: {
+              specs: [
+                { key: 'CG104', name: 'BED - KING' },
+                { key: 'LT159A', name: 'SCONCE - CORRIDOR' },
+              ],
+            },
+          }),
+        };
+
+        const cases: Array<{ name: string; expectedTag: string; expectedTitle: string }> = [
+          { name: 'CG-104_v2_Fil_Doux.pdf', expectedTag: 'CG104', expectedTitle: 'BED - KING' },
+          { name: 'LT 159A_R0.pdf', expectedTag: 'LT159A', expectedTitle: 'SCONCE - CORRIDOR' },
+          { name: 'CG.104_CutSheet.pdf', expectedTag: 'CG104', expectedTitle: 'BED - KING' },
+          { name: 'CG_104_CutSheet.pdf', expectedTag: 'CG104', expectedTitle: 'BED - KING' },
+        ];
+
+        for (const c of cases) {
+          const drivePort: DriveSourceContextPort = {
+            getItemHierarchy: vi.fn().mockResolvedValue({
+              item: { id: 'f-ffe', name: c.name, mimeType: 'application/pdf' },
+              ancestors: [],
+            }),
+          };
+          const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+            parseSchemaRegistry: registry,
+          });
+          const res = await service.extractFields({
+            documentTypeKey: 'submittal-ffe',
+            context: { items: [{ id: 'f-ffe' }] },
+          });
+          expect(res.fields.specTag, c.name).toBe(c.expectedTag);
+          expect(res.fields.specTitle, c.name).toBe(c.expectedTitle);
+        }
+      });
+
+      it('normalizes spaced/hyphenated specTag in matchesCorrelatedCode when extracting correlated revision', async () => {
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail' as const,
+                fields: {
+                  revision: {
+                    from: 'email.subjectClean' as const,
+                    pattern:
+                      '(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)[\\s_.-]+((?:v|ver\\.?|version)[\\s_.-]*\\d+(?:\\.\\d+)?|(?:rev(?:ision)?\\.?|r(?=[\\s_.]*(?:\\d|[A-Za-z]\\b)))[\\s_.-]*(?:\\d{1,2}[A-Za-z]?|[A-Za-z]\\d{0,2}))(?![A-Za-z0-9]|\\.\\d)',
+                    group: 2,
+                    normalize: 'revision' as const,
+                  },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [
+              { key: 'specTag', type: 'string' },
+              { key: 'revision', type: 'string', minLength: 1 },
+            ],
+          }),
+        };
+
+        const service = new SourceParserService(mockDrivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+        });
+
+        const res = await service.extractFields({
+          documentTypeKey: 'submittal-ffe',
+          existingData: { specTag: 'LT159A' },
+          context: {
+            email: {
+              id: 'msg-ffe-corr',
+              subject: 'CG-104 v2 and LT 159A_R0',
+            },
+          },
+        });
+
+        expect(res.fields.revision).toBe('0');
       });
     });
   });

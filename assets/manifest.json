@@ -8,7 +8,8 @@
   "configuration": {
     "workspace": {
       "defaultDocumentSpaceType": "projects",
-      "defaultDocumentType": "communication-project"
+      "defaultDocumentType": "communication-project",
+      "timeZone": "America/New_York"
     },
     "drive": {
       "defaultFolderName": "Unfiled",

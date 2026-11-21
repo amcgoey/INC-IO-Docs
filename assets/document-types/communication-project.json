@@ -220,6 +220,23 @@
             "from": "email.subjectClean"
           }
         }
+      },
+      {
+        "source": "drive",
+        "fields": {
+          "date": [
+            {
+              "from": "drive.fileNameStem",
+              "normalize": "yymmdd"
+            },
+            {
+              "from": "drive.modifiedTime"
+            },
+            {
+              "from": "drive.createdTime"
+            }
+          ]
+        }
       }
     ]
   },

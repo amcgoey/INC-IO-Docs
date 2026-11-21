@@ -1,9 +1,11 @@
-import { Type, type Static } from '@sinclair/typebox';
+import { Type, type Static, type TSchema } from '@sinclair/typebox';
 
 export const DriveHierarchyNodeSchema = Type.Object({
   id: Type.String({ minLength: 1 }),
   name: Type.String({ minLength: 1 }),
   mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  createdTime: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  modifiedTime: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
 });
 export type DriveHierarchyNode = Static<typeof DriveHierarchyNodeSchema>;
 
@@ -14,6 +16,25 @@ export const DriveItemHierarchySchema = Type.Object({
   ancestors: Type.Array(DriveHierarchyNodeSchema),
 });
 export type DriveItemHierarchy = Static<typeof DriveItemHierarchySchema>;
+
+export const DriveSourceShortcutDetailsSchema = Type.Object({
+  targetId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  targetMimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type DriveSourceShortcutDetails = Static<typeof DriveSourceShortcutDetailsSchema>;
+
+export const DriveSourceFileMetadataSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  name: Type.String({ minLength: 1 }),
+  parents: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  webViewLink: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  driveId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  createdTime: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  modifiedTime: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  shortcutDetails: Type.Optional(Type.Union([DriveSourceShortcutDetailsSchema, Type.Undefined()])),
+});
+export type DriveSourceFileMetadata = Static<typeof DriveSourceFileMetadataSchema>;
 
 export const SourceItemDescriptorSchema = Type.Object({
   id: Type.String({ minLength: 1 }),
@@ -108,40 +129,102 @@ export const GmailExtractSourceSchema = Type.Union([
 ]);
 export type GmailExtractSource = Static<typeof GmailExtractSourceSchema>;
 
-export const GmailSetFieldRuleSchema = Type.Object(
-  {
-    when: Type.Optional(Type.Union([ParseJsonLogicRuleSchema, Type.Undefined()])),
-    set: Type.String({ minLength: 1 }),
-  },
-  { additionalProperties: false }
-);
+export const DriveExtractSourceSchema = Type.Union([
+  Type.Literal('drive.fileName'),
+  Type.Literal('drive.fileNameStem'),
+  Type.Literal('drive.modifiedTime'),
+  Type.Literal('drive.createdTime'),
+]);
+export type DriveExtractSource = Static<typeof DriveExtractSourceSchema>;
+
+export const FieldCandidateNormalizeSchema = Type.Union([
+  Type.Literal('digits6'),
+  Type.Literal('pad3'),
+  Type.Literal('compactAlnum'),
+  Type.Literal('revision'),
+  Type.Literal('yymmdd'),
+  Type.Literal('cleanFilenameText'),
+]);
+export type FieldCandidateNormalize = Static<typeof FieldCandidateNormalizeSchema>;
+
+function createFieldRuleSchemas<T extends TSchema>(sourceSchema: T) {
+  const SetFieldRuleSchema = Type.Object(
+    {
+      when: Type.Optional(Type.Union([ParseJsonLogicRuleSchema, Type.Undefined()])),
+      set: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false }
+  );
+
+  const ExtractFieldRuleSchema = Type.Object(
+    {
+      when: Type.Optional(Type.Union([ParseJsonLogicRuleSchema, Type.Undefined()])),
+      from: sourceSchema,
+      pattern: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+      flags: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+      group: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Undefined()])),
+      normalize: Type.Optional(Type.Union([FieldCandidateNormalizeSchema, Type.Undefined()])),
+    },
+    { additionalProperties: false }
+  );
+
+  const LookupFieldRuleSchema = Type.Object(
+    {
+      when: Type.Optional(Type.Union([ParseJsonLogicRuleSchema, Type.Undefined()])),
+      from: sourceSchema,
+      pattern: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+      flags: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+      group: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Undefined()])),
+      normalize: Type.Optional(Type.Union([FieldCandidateNormalizeSchema, Type.Undefined()])),
+      excludePattern: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+      lookup: Type.Literal(true),
+    },
+    { additionalProperties: false }
+  );
+
+  const FieldRuleSchema = Type.Union([
+    SetFieldRuleSchema,
+    ExtractFieldRuleSchema,
+    LookupFieldRuleSchema,
+  ]);
+
+  const FieldRuleOrListSchema = Type.Union([
+    FieldRuleSchema,
+    Type.Array(FieldRuleSchema, { minItems: 1 }),
+  ]);
+
+  return {
+    SetFieldRuleSchema,
+    ExtractFieldRuleSchema,
+    LookupFieldRuleSchema,
+    FieldRuleSchema,
+    FieldRuleOrListSchema,
+  };
+}
+
+const gmailRuleSchemas = createFieldRuleSchemas(GmailExtractSourceSchema);
+export const GmailSetFieldRuleSchema = gmailRuleSchemas.SetFieldRuleSchema;
 export type GmailSetFieldRule = Static<typeof GmailSetFieldRuleSchema>;
-
-export const GmailExtractFieldRuleSchema = Type.Object(
-  {
-    when: Type.Optional(Type.Union([ParseJsonLogicRuleSchema, Type.Undefined()])),
-    from: GmailExtractSourceSchema,
-    pattern: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
-    flags: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
-    group: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Undefined()])),
-  },
-  { additionalProperties: false }
-);
+export const GmailExtractFieldRuleSchema = gmailRuleSchemas.ExtractFieldRuleSchema;
 export type GmailExtractFieldRule = Static<typeof GmailExtractFieldRuleSchema>;
-
-export const GmailLookupFieldRuleSchema = Type.Object(
-  {
-    when: Type.Optional(Type.Union([ParseJsonLogicRuleSchema, Type.Undefined()])),
-    from: GmailExtractSourceSchema,
-    pattern: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
-    flags: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
-    group: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Undefined()])),
-    excludePattern: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
-    lookup: Type.Literal(true),
-  },
-  { additionalProperties: false }
-);
+export const GmailLookupFieldRuleSchema = gmailRuleSchemas.LookupFieldRuleSchema;
 export type GmailLookupFieldRule = Static<typeof GmailLookupFieldRuleSchema>;
+export const GmailFieldRuleSchema = gmailRuleSchemas.FieldRuleSchema;
+export type GmailFieldRule = Static<typeof GmailFieldRuleSchema>;
+export const GmailFieldRuleOrListSchema = gmailRuleSchemas.FieldRuleOrListSchema;
+export type GmailFieldRuleOrList = Static<typeof GmailFieldRuleOrListSchema>;
+
+const driveRuleSchemas = createFieldRuleSchemas(DriveExtractSourceSchema);
+export const DriveSetFieldRuleSchema = driveRuleSchemas.SetFieldRuleSchema;
+export type DriveSetFieldRule = Static<typeof DriveSetFieldRuleSchema>;
+export const DriveExtractFieldRuleSchema = driveRuleSchemas.ExtractFieldRuleSchema;
+export type DriveExtractFieldRule = Static<typeof DriveExtractFieldRuleSchema>;
+export const DriveLookupFieldRuleSchema = driveRuleSchemas.LookupFieldRuleSchema;
+export type DriveLookupFieldRule = Static<typeof DriveLookupFieldRuleSchema>;
+export const DriveFieldRuleSchema = driveRuleSchemas.FieldRuleSchema;
+export type DriveFieldRule = Static<typeof DriveFieldRuleSchema>;
+export const DriveFieldRuleOrListSchema = driveRuleSchemas.FieldRuleOrListSchema;
+export type DriveFieldRuleOrList = Static<typeof DriveFieldRuleOrListSchema>;
 
 export const AliasDictionarySchema = Type.Object(
   {
@@ -151,19 +234,6 @@ export const AliasDictionarySchema = Type.Object(
   { additionalProperties: false }
 );
 export type AliasDictionary = Static<typeof AliasDictionarySchema>;
-
-export const GmailFieldRuleSchema = Type.Union([
-  GmailSetFieldRuleSchema,
-  GmailExtractFieldRuleSchema,
-  GmailLookupFieldRuleSchema,
-]);
-export type GmailFieldRule = Static<typeof GmailFieldRuleSchema>;
-
-export const GmailFieldRuleOrListSchema = Type.Union([
-  GmailFieldRuleSchema,
-  Type.Array(GmailFieldRuleSchema, { minItems: 1 }),
-]);
-export type GmailFieldRuleOrList = Static<typeof GmailFieldRuleOrListSchema>;
 
 export const GmailExtractorRuleSchema = Type.Object(
   {
@@ -179,10 +249,23 @@ export const GmailExtractorRuleSchema = Type.Object(
 );
 export type GmailExtractorRule = Static<typeof GmailExtractorRuleSchema>;
 
+export const DriveExtractorRuleSchema = Type.Object(
+  {
+    source: Type.Literal('drive'),
+    name: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+    match: Type.Optional(Type.Union([ParseJsonLogicRuleSchema, Type.Undefined()])),
+    fields: Type.Record(
+      Type.String({ minLength: 1 }),
+      DriveFieldRuleOrListSchema
+    ),
+  },
+  { additionalProperties: false }
+);
+export type DriveExtractorRule = Static<typeof DriveExtractorRuleSchema>;
+
 export const StructuralExtractorRuleSchema = Type.Object(
   {
     source: Type.Union([
-      Type.Literal('drive'),
       Type.Literal('pdfForm'),
       Type.Literal('googleDoc'),
     ]),
@@ -196,6 +279,7 @@ export type StructuralExtractorRule = Static<typeof StructuralExtractorRuleSchem
 
 export const SourceExtractorRuleSchema = Type.Union([
   GmailExtractorRuleSchema,
+  DriveExtractorRuleSchema,
   StructuralExtractorRuleSchema,
 ]);
 export type SourceExtractorRule = Static<typeof SourceExtractorRuleSchema>;
@@ -299,12 +383,24 @@ export const SourceParserSpaceTypeConfigSchema = Type.Object({
 export type SourceParserSpaceTypeConfig = Static<typeof SourceParserSpaceTypeConfigSchema>;
 
 // Driven Ports
+export interface DriveSourceContextClientPort {
+  getFile(fileId: string): Promise<DriveSourceFileMetadata>;
+  listSharedDrives?(options?: { pageSize?: number; pageToken?: string }): Promise<{
+    drives: Array<{ id: string; name: string }>;
+    nextPageToken?: string | undefined;
+  }>;
+}
+
 export interface DriveSourceContextPort {
   getItemHierarchy(itemId: string): Promise<DriveItemHierarchy>;
 }
 
 export interface SourceParserSpaceConfigPort {
   getDocumentSpaceTypes(): Promise<SourceParserSpaceTypeConfig[]> | SourceParserSpaceTypeConfig[];
+}
+
+export interface SourceParserConfigPort {
+  getWorkspaceTimeZone(): Promise<string | undefined> | string | undefined;
 }
 
 export interface ParseSchemaRegistryPort {

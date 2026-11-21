@@ -7,6 +7,7 @@ import type {
   SourceParserSpaceTypeConfig,
   DriveSourceContextPort,
   SourceParserSpaceConfigPort,
+  SourceParserConfigPort,
   SourceParserPort,
   CandidateSpaceDescriptor,
   ParseSchemaRegistryPort,
@@ -18,12 +19,19 @@ import type {
   GmailFieldRule,
   GmailLookupFieldRule,
   GmailExtractSource,
+  DriveFieldRule,
+  DriveLookupFieldRule,
+  DriveExtractSource,
+  DriveExtractorRule,
+  FieldCandidateNormalize,
   CanonicalOptionsProviderPort,
   ParseTargetDocumentOptionTuple,
 } from './ports';
 
-export const CSI_SECTION_REGEX = /(?<=^|[\s_.-])\d{6}-\d{3}(?:-[A-Za-z0-9]+)?(?=[\s_.-]|$)/;
-export const FFE_SPEC_TAG_REGEX = /(?<=^|[\s_.-])[A-Za-z]{2}\d{3}[A-Za-z]?-[A-Za-z0-9]+(?=[\s_.-]|$)/i;
+export const CSI_SECTION_REGEX =
+  /(?<=^|[\s_./-])(?:\d{6}|\d{2}([\s._-])\d{2}\1\d{2})(?:[\s_.-]*(?:submittal|sub\.?|no\.?)[\s_.-]*#?[\s_.-]*|[\s_.-]*#[\s_.-]*|[\s_.-]+)\d{1,3}(?![A-Za-z0-9])(?!-\d{2}[-_.]\d{2,4})/i;
+export const FFE_SPEC_TAG_REGEX =
+  /(?<=^|[\s_./-])[A-Z]{2}[\s._-]?\d{3}[A-Z]?(?:-[A-Za-z0-9]+)?(?=[\s_./-]|$)/;
 export const FFE_PROXIMITY_REGEX_1 = /(?<=^|[\s_./-])FF&?E(?=[\s_./-]|$).{0,100}(?<=^|[\s_./-])Submittals?(?=[\s_./-]|$)/is;
 export const FFE_PROXIMITY_REGEX_2 = /(?<=^|[\s_./-])Submittals?(?=[\s_./-]|$).{0,100}(?<=^|[\s_./-])FF&?E(?=[\s_./-]|$)/is;
 export const GENERIC_SUBMITTAL_REGEX = /(?<=^|[\s_./-])Submittals?(?=[\s_./-]|$)/i;
@@ -37,6 +45,9 @@ export const PROCORE_AUTODESK_SUBMITTAL_REVERSE_REGEX =
 
 export const DRIVE_HIERARCHY_ERROR_MESSAGE =
   'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.';
+
+export const DRIVE_METADATA_EXTRACT_ERROR_MESSAGE =
+  'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.';
 
 export function extractTextFromHtml(html?: string): string {
   if (!html || typeof html !== 'string') {
@@ -272,7 +283,7 @@ const NAMED_TIMEZONE_OFFSETS: Record<string, number> = {
   UTC: 0,
 };
 
-export function parseDateToYymmdd(dateString?: string): string | undefined {
+export function parseDateToYymmdd(dateString?: string, timeZone?: string): string | undefined {
   if (!dateString || typeof dateString !== 'string') {
     return undefined;
   }
@@ -294,6 +305,8 @@ export function parseDateToYymmdd(dateString?: string): string | undefined {
       offsetMinutes = NAMED_TIMEZONE_OFFSETS[namedMatch[1]];
     }
   }
+
+  const hasTimeComponent = trimmed.includes('T') || /\d{1,2}:\d{2}/.test(trimmed);
 
   let parsed: Date;
   if (offsetMinutes === undefined) {
@@ -325,15 +338,281 @@ export function parseDateToYymmdd(dateString?: string): string | undefined {
     return undefined;
   }
 
-  const effectiveOffset = offsetMinutes ?? 0;
-  const targetMs = parsed.getTime() + effectiveOffset * 60_000;
-  const targetDate = new Date(targetMs);
+  if (offsetMinutes !== undefined || !hasTimeComponent) {
+    const effectiveOffset = offsetMinutes ?? 0;
+    const targetMs = parsed.getTime() + effectiveOffset * 60_000;
+    const targetDate = new Date(targetMs);
 
-  const yy = String(targetDate.getUTCFullYear()).slice(-2);
-  const mm = String(targetDate.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(targetDate.getUTCDate()).padStart(2, '0');
+    return formatYymmdd(
+      targetDate.getUTCFullYear(),
+      targetDate.getUTCMonth() + 1,
+      targetDate.getUTCDate()
+    );
+  }
 
+  const ymd = getYearMonthDayInTimeZone(parsed, timeZone);
+  if (!ymd) {
+    return undefined;
+  }
+
+  return formatYymmdd(ymd.year, ymd.month, ymd.day);
+}
+
+interface YearMonthDay {
+  year: number;
+  month: number;
+  day: number;
+}
+
+function getYearMonthDayInTimeZone(date: Date, timeZone?: string): YearMonthDay | undefined {
+  const effectiveTimeZone =
+    typeof timeZone === 'string' && timeZone.trim().length > 0 ? timeZone.trim() : 'UTC';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: effectiveTimeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+
+  let yearStr = '';
+  let monthStr = '';
+  let dayStr = '';
+  for (const { type, value } of parts) {
+    if (type === 'year') yearStr = value;
+    else if (type === 'month') monthStr = value;
+    else if (type === 'day') dayStr = value;
+  }
+
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10);
+  const day = parseInt(dayStr, 10);
+  if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) {
+    return undefined;
+  }
+  return { year, month, day };
+}
+
+function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return false;
+  }
+  const utcDate = new Date(Date.UTC(year, month - 1, day));
+  utcDate.setUTCFullYear(year);
+  return (
+    utcDate.getUTCFullYear() === year &&
+    utcDate.getUTCMonth() === month - 1 &&
+    utcDate.getUTCDate() === day
+  );
+}
+
+function isWithinRollingTwelveMonths(
+  year: number,
+  month: number,
+  day: number,
+  today: YearMonthDay
+): boolean {
+  const minYear = today.year - 1;
+  const maxDayInMinMonth = new Date(Date.UTC(minYear, today.month, 0)).getUTCDate();
+  const minDay = Math.min(today.day, maxDayInMinMonth);
+
+  const candYmd = year * 10000 + month * 100 + day;
+  const minYmd = minYear * 10000 + today.month * 100 + minDay;
+  const todayYmd = today.year * 10000 + today.month * 100 + today.day;
+
+  return candYmd >= minYmd && candYmd <= todayYmd;
+}
+
+function formatYymmdd(year: number, month: number, day: number): string {
+  const yy = String(year).slice(-2).padStart(2, '0');
+  const mm = String(month).padStart(2, '0');
+  const dd = String(day).padStart(2, '0');
   return `${yy}${mm}${dd}`;
+}
+
+function tryFormatBoundedDate(
+  year: number,
+  month: number,
+  day: number,
+  today: YearMonthDay
+): string | undefined {
+  if (!isValidCalendarDate(year, month, day)) {
+    return undefined;
+  }
+  if (!isWithinRollingTwelveMonths(year, month, day, today)) {
+    return undefined;
+  }
+  return formatYymmdd(year, month, day);
+}
+
+/**
+ * Extracts and validates an explicit date token formatted as INC `yyMMdd`
+ * within the rolling `[today - 12 months, today]` window in the workspace timezone.
+ */
+function normalizeYymmddCandidate(
+  candidate: string,
+  timeZone: string | undefined,
+  nowDate: Date
+): string | undefined {
+  const today = getYearMonthDayInTimeZone(nowDate, timeZone);
+  if (!today) {
+    return undefined;
+  }
+
+  // Tier 1: 4-digit-year delimited formats (YYYY[-_.]MM[-_.]DD or MM[-_.]DD[-_.]YYYY)
+  const fourDigitYearRegex =
+    /(?<![A-Za-z0-9])(?:(\d{4})([-_.])(\d{2})\2(\d{2})|(\d{2})([-_.])(\d{2})\6(\d{4}))(?![A-Za-z0-9])/g;
+  for (const match of candidate.matchAll(fourDigitYearRegex)) {
+    const year = match[1] !== undefined ? parseInt(match[1], 10) : parseInt(match[8], 10);
+    const month = match[3] !== undefined ? parseInt(match[3], 10) : parseInt(match[5], 10);
+    const day = match[4] !== undefined ? parseInt(match[4], 10) : parseInt(match[7], 10);
+    const formatted = tryFormatBoundedDate(year, month, day, today);
+    if (formatted !== undefined) {
+      return formatted;
+    }
+  }
+
+  // Tier 2: 2-digit-year delimited format (MM[-_.]DD[-_.]YY)
+  const twoDigitDelimitedRegex = /(?<![A-Za-z0-9])(\d{2})([-_.])(\d{2})\2(\d{2})(?![A-Za-z0-9])/g;
+  for (const match of candidate.matchAll(twoDigitDelimitedRegex)) {
+    const month = parseInt(match[1], 10);
+    const day = parseInt(match[3], 10);
+    const year = 2000 + parseInt(match[4], 10);
+    const formatted = tryFormatBoundedDate(year, month, day, today);
+    if (formatted !== undefined) {
+      return formatted;
+    }
+  }
+
+  // Tier 3: INC 6-digit yyMMdd format, skipping CSI/submittal prefixes followed by -\d{1,3}
+  const sixDigitRegex = /(?<![A-Za-z0-9])(\d{2})(\d{2})(\d{2})(?![A-Za-z0-9])(?!-\d{1,3}(?!\d))/g;
+  for (const match of candidate.matchAll(sixDigitRegex)) {
+    const year = 2000 + parseInt(match[1], 10);
+    const month = parseInt(match[2], 10);
+    const day = parseInt(match[3], 10);
+    const formatted = tryFormatBoundedDate(year, month, day, today);
+    if (formatted !== undefined) {
+      return formatted;
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeDigits6Candidate(candidate: string): string | undefined {
+  const digits = candidate.replace(/\D/g, '');
+  return digits.length === 6 ? digits : undefined;
+}
+
+function normalizePad3Candidate(candidate: string): string | undefined {
+  const trimmed = candidate.trim();
+  if (!/^\d{1,3}$/.test(trimmed)) {
+    return undefined;
+  }
+  return trimmed.padStart(3, '0');
+}
+
+function normalizeCompactAlnumCandidate(candidate: string): string | undefined {
+  const compacted = candidate.replace(/[\s._-]+/g, '');
+  if (compacted.length === 0 || !/^[A-Za-z0-9]+$/.test(compacted)) {
+    return undefined;
+  }
+  return compacted;
+}
+
+const REVISION_MARKER_REGEX =
+  /(?<=^|[\s_.-])(?:(v|ver\.?|version)[\s_.-]*(\d+)(?:\.(\d+))?|(rev\.?|revision)(?:[\s_.-]*(\d{1,2})|[\s_.-]+(\d{1,2}[A-Za-z]?|[A-Za-z]\d{0,2}))|(r)(?:[\s_.]*(\d{1,2})|[\s_.]+([A-Za-z])))(?![A-Za-z0-9]|\.\d)/gi;
+
+function normalizeRevisionCandidate(candidate: string): string | undefined {
+  const trimmed = candidate.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  // Tight code-suffix token (e.g. "-A", "A", "-0", "0", "-R", "R", "-12", "12")
+  if (/^-?(?:\d{1,2}|[A-Za-z])$/.test(trimmed)) {
+    return trimmed.startsWith('-') ? trimmed.slice(1) : trimmed;
+  }
+
+  for (const match of trimmed.matchAll(REVISION_MARKER_REGEX)) {
+    if (match[1] !== undefined && match[2] !== undefined) {
+      const major = parseInt(match[2], 10);
+      if (match[3] !== undefined && parseInt(match[3], 10) !== 0) {
+        continue;
+      }
+      return major === 0 ? '0' : String(major - 1);
+    }
+    if (match[4] !== undefined) {
+      const revVal = match[5] ?? match[6];
+      if (revVal !== undefined && revVal.length > 0) {
+        return revVal;
+      }
+    }
+    if (match[7] !== undefined) {
+      const rVal = match[8] ?? match[9];
+      if (rVal !== undefined && rVal.length > 0) {
+        return rVal;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+const FILENAME_EXTENSION_REGEX = /\.(?!(?:inc|ltd)$)[A-Za-z0-9]{1,8}$/i;
+
+function normalizeCleanFilenameTextCandidate(
+  candidate: string,
+  fromSource?: GmailExtractSource | DriveExtractSource,
+  originalSourceText?: string
+): string | undefined {
+  let text = candidate.trim();
+  if (fromSource === 'drive.fileName' || fromSource === 'attachmentName') {
+    const trimmedOriginal = originalSourceText?.trim();
+    if (trimmedOriginal === undefined || text === trimmedOriginal) {
+      text = text.replace(FILENAME_EXTENSION_REGEX, '');
+    } else {
+      const sourceExt = trimmedOriginal.match(FILENAME_EXTENSION_REGEX)?.[0];
+      if (sourceExt && text.toLowerCase().endsWith(sourceExt.toLowerCase())) {
+        text = text.slice(0, -sourceExt.length);
+      }
+    }
+  }
+  text = text
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s\-–—_:.]+|[\s\-–—_:.]+$/g, '');
+  return text.length > 0 ? text : undefined;
+}
+
+function applyFieldCandidateNormalize(
+  candidate: string,
+  normalize: FieldCandidateNormalize | undefined,
+  timeZone: string | undefined,
+  now?: (() => Date) | undefined,
+  fromSource?: GmailExtractSource | DriveExtractSource,
+  originalSourceText?: string
+): string | undefined {
+  if (normalize === undefined) {
+    return candidate;
+  }
+  switch (normalize) {
+    case 'digits6':
+      return normalizeDigits6Candidate(candidate);
+    case 'pad3':
+      return normalizePad3Candidate(candidate);
+    case 'compactAlnum':
+      return normalizeCompactAlnumCandidate(candidate);
+    case 'revision':
+      return normalizeRevisionCandidate(candidate);
+    case 'yymmdd': {
+      const nowDate = now ? now() : new Date();
+      return normalizeYymmddCandidate(candidate, timeZone, nowDate);
+    }
+    case 'cleanFilenameText':
+      return normalizeCleanFilenameTextCandidate(candidate, fromSource, originalSourceText);
+    default:
+      return undefined;
+  }
 }
 
 export function normalizeHtmlBodyForPass2(html?: string): string {
@@ -604,31 +883,40 @@ export function matchesCorrelatedCode(
     return true;
   }
 
-  // Check section + number correlation (CSI codes: group 1 = 6 digits, group 2 = 3 digits)
-  if (groupIndex >= 3 && match[1] !== undefined && match[2] !== undefined) {
-    if (/^\d{6}$/.test(match[1]) && /^\d{3}$/.test(match[2])) {
+  // Check section (+ number for groupIndex >= 3) correlation with uniform CSI delimiters
+  const rawGroup1 = match[1]?.trim();
+  if (
+    rawGroup1 !== undefined &&
+    /^(?:\d{6}|\d{2}([\s._-])\d{2}\1\d{2})$/.test(rawGroup1)
+  ) {
+    const normSection = normalizeDigits6Candidate(rawGroup1);
+    if (normSection !== undefined) {
       if (
         populatedFields.section !== undefined &&
-        match[1] !== String(populatedFields.section)
+        normSection !== String(populatedFields.section)
       ) {
         return false;
       }
-      if (
-        populatedFields.number !== undefined &&
-        match[2] !== String(populatedFields.number)
-      ) {
-        return false;
+      if (groupIndex >= 3 && match[2] !== undefined) {
+        const normNumber = normalizePad3Candidate(match[2]);
+        if (
+          normNumber !== undefined &&
+          populatedFields.number !== undefined &&
+          normNumber !== String(populatedFields.number)
+        ) {
+          return false;
+        }
       }
     }
   }
 
-  // Check specTag correlation (FF&E spec tag codes: group 1 = 2 letters + 3 digits + optional letter)
-  if (groupIndex >= 2 && match[1] !== undefined) {
-    if (/^[A-Za-z]{2}\d{3}[A-Za-z]?$/i.test(match[1])) {
-      if (
-        populatedFields.specTag !== undefined &&
-        match[1].toLowerCase() !== String(populatedFields.specTag).toLowerCase()
-      ) {
+  // Check specTag correlation (FF&E spec tag codes: group 1 = 2 letters + optional delimiter + 3 digits + optional letter)
+  if (rawGroup1 !== undefined && /^[A-Za-z]{2}[\s._-]?\d{3}[A-Za-z]?$/.test(rawGroup1)) {
+    const normMatchTag = normalizeCompactAlnumCandidate(rawGroup1);
+    if (normMatchTag !== undefined && populatedFields.specTag !== undefined) {
+      const populatedTag = String(populatedFields.specTag);
+      const normPopulatedTag = normalizeCompactAlnumCandidate(populatedTag) ?? populatedTag.trim();
+      if (normMatchTag.toLowerCase() !== normPopulatedTag.toLowerCase()) {
         return false;
       }
     }
@@ -642,6 +930,8 @@ export interface RuleExtractionContext {
   candidateAttachmentNames: string[];
   boundAttachmentName?: string | undefined;
   populatedFields: Record<string, unknown>;
+  timeZone?: string | undefined;
+  now?: (() => Date) | undefined;
 }
 
 export interface ExtractedCandidateResult {
@@ -653,6 +943,49 @@ export interface ExtractedCandidateResult {
 interface RuleSourceItem {
   text: string;
   attachmentName?: string;
+}
+
+function computeDriveFileNameStem(name: string, mimeType?: string): string {
+  if (mimeType && mimeType.startsWith('application/vnd.google-apps.')) {
+    return name;
+  }
+  return name.replace(/\.[A-Za-z0-9]{1,8}$/, '');
+}
+
+function buildDriveJsonLogicContext(hierarchy: DriveItemHierarchy): Record<string, unknown> {
+  const { item } = hierarchy;
+  const ancestorNames = hierarchy.ancestors.map((a) => a.name);
+  const mimeType = item.mimeType ?? '';
+  return {
+    id: item.id,
+    fileName: item.name,
+    fileNameStem: computeDriveFileNameStem(item.name, item.mimeType),
+    mimeType,
+    isFolder: mimeType === 'application/vnd.google-apps.folder',
+    createdTime: item.createdTime ?? '',
+    modifiedTime: item.modifiedTime ?? '',
+    parentName: ancestorNames.length > 0 ? ancestorNames[ancestorNames.length - 1] : '',
+    folderPath: ancestorNames.join('/'),
+    ancestors: ancestorNames,
+    driveId: hierarchy.driveId ?? '',
+    driveName: hierarchy.driveName ?? '',
+  };
+}
+
+function getDriveSourceText(fromSource: DriveExtractSource, hierarchy: DriveItemHierarchy): string {
+  const { item } = hierarchy;
+  switch (fromSource) {
+    case 'drive.fileName':
+      return item.name;
+    case 'drive.fileNameStem':
+      return computeDriveFileNameStem(item.name, item.mimeType);
+    case 'drive.modifiedTime':
+      return item.modifiedTime ?? '';
+    case 'drive.createdTime':
+      return item.createdTime ?? '';
+    default:
+      return '';
+  }
 }
 
 function resolveRuleSourceItems(
@@ -692,25 +1025,38 @@ function resolveRuleSourceItems(
   return sourceText.trim().length > 0 ? [{ text: sourceText }] : [];
 }
 
+function isDateTimestampSource(fromSource: GmailExtractSource | DriveExtractSource): boolean {
+  return (
+    fromSource === 'email.date' ||
+    fromSource === 'drive.modifiedTime' ||
+    fromSource === 'drive.createdTime'
+  );
+}
+
 function extractRuleCandidatesForText(
   text: string,
-  fromSource: GmailExtractSource,
+  fromSource: GmailExtractSource | DriveExtractSource,
   rule: { pattern?: string | undefined; flags?: string | undefined; group?: number | undefined },
   populatedFields: Record<string, unknown>,
-  applyDateFormatting: boolean
+  applyDateFormatting: boolean,
+  timeZone?: string
 ): string[] {
-  if (applyDateFormatting && fromSource === 'email.date' && !rule.pattern) {
-    const formatted = parseDateToYymmdd(text);
+  if (applyDateFormatting && isDateTimestampSource(fromSource) && !rule.pattern) {
+    const formatted = parseDateToYymmdd(text, timeZone);
     return formatted !== undefined ? [formatted] : [];
   }
   return extractRegexMatchValues(text, rule, populatedFields);
 }
 
-function extractCandidateFromRule(
-  rule: GmailFieldRule,
+function extractCandidateFromSourceItems(
+  rule: GmailFieldRule | DriveFieldRule,
+  sourceItems: RuleSourceItem[],
+  fromSource: GmailExtractSource | DriveExtractSource | undefined,
   targetField: ParseTargetDocumentField,
   targetSchema: ParseTargetDocumentSchema | undefined,
-  extractionContext: RuleExtractionContext
+  populatedFields: Record<string, unknown>,
+  timeZone?: string,
+  now?: () => Date
 ): ExtractedCandidateResult | undefined {
   if ('set' in rule) {
     const validated = validateCandidateWithTuple(rule.set, targetField, targetSchema);
@@ -719,27 +1065,32 @@ function extractCandidateFromRule(
       : undefined;
   }
 
-  if (!('from' in rule)) {
+  if (!fromSource) {
     return undefined;
   }
-
-  const sourceItems = resolveRuleSourceItems(
-    rule.from,
-    extractionContext.sourceContext,
-    extractionContext,
-    false
-  );
 
   for (const item of sourceItems) {
     const candidates = extractRuleCandidatesForText(
       item.text,
-      rule.from,
+      fromSource,
       rule,
-      extractionContext.populatedFields,
-      true
+      populatedFields,
+      true,
+      timeZone
     );
     for (const rawCandidate of candidates) {
-      const validated = validateCandidateWithTuple(rawCandidate, targetField, targetSchema);
+      const normalizedCandidate = applyFieldCandidateNormalize(
+        rawCandidate,
+        'normalize' in rule ? rule.normalize : undefined,
+        timeZone,
+        now,
+        fromSource,
+        item.text
+      );
+      if (normalizedCandidate === undefined) {
+        continue;
+      }
+      const validated = validateCandidateWithTuple(normalizedCandidate, targetField, targetSchema);
       if (validated !== undefined) {
         return {
           value: validated.value,
@@ -751,6 +1102,45 @@ function extractCandidateFromRule(
   }
 
   return undefined;
+}
+
+function extractCandidateFromRule(
+  rule: GmailFieldRule,
+  targetField: ParseTargetDocumentField,
+  targetSchema: ParseTargetDocumentSchema | undefined,
+  extractionContext: RuleExtractionContext
+): ExtractedCandidateResult | undefined {
+  if ('set' in rule) {
+    return extractCandidateFromSourceItems(
+      rule,
+      [],
+      undefined,
+      targetField,
+      targetSchema,
+      extractionContext.populatedFields,
+      extractionContext.timeZone,
+      extractionContext.now
+    );
+  }
+  if (!('from' in rule)) {
+    return undefined;
+  }
+  const sourceItems = resolveRuleSourceItems(
+    rule.from,
+    extractionContext.sourceContext,
+    extractionContext,
+    false
+  );
+  return extractCandidateFromSourceItems(
+    rule,
+    sourceItems,
+    rule.from,
+    targetField,
+    targetSchema,
+    extractionContext.populatedFields,
+    extractionContext.timeZone,
+    extractionContext.now
+  );
 }
 
 export function splitRfc5322Recipients(input: string): string[] {
@@ -1209,20 +1599,17 @@ async function resolveCanonicalOptionFromCandidate(
   };
 }
 
-async function extractLookupCandidate(
-  rule: GmailLookupFieldRule,
+async function extractLookupCandidateFromSourceItems(
+  rule: GmailLookupFieldRule | DriveLookupFieldRule,
+  sourceItems: RuleSourceItem[],
+  fromSource: GmailExtractSource | DriveExtractSource,
   request: ExtractFieldsRequest,
   targetField: ParseTargetDocumentField,
   targetSchema: ParseTargetDocumentSchema | undefined,
   deps: SourceParserServiceDeps | undefined,
-  extractionContext: RuleExtractionContext
+  populatedFields: Record<string, unknown>,
+  timeZone?: string
 ): Promise<{ value: string; matchedTuple: ParseTargetDocumentOptionTuple; matchedAttachmentName?: string } | undefined> {
-  const sourceItems = resolveRuleSourceItems(
-    rule.from,
-    request.context,
-    extractionContext,
-    true
-  );
   const excludeRegex = rule.excludePattern ? new RegExp(rule.excludePattern, 'i') : undefined;
 
   for (const item of sourceItems) {
@@ -1232,19 +1619,27 @@ async function extractLookupCandidate(
 
     const candidates = extractRuleCandidatesForText(
       item.text,
-      rule.from,
+      fromSource,
       rule,
-      extractionContext.populatedFields,
+      populatedFields,
       false
     );
 
     for (const candidateText of candidates) {
-      if (candidateText.trim().length === 0) {
+      const normalizedCandidate = applyFieldCandidateNormalize(
+        candidateText,
+        'normalize' in rule ? rule.normalize : undefined,
+        timeZone,
+        deps?.now,
+        fromSource,
+        item.text
+      );
+      if (normalizedCandidate === undefined || normalizedCandidate.trim().length === 0) {
         continue;
       }
 
       const match = await resolveCanonicalOptionFromCandidate(
-        candidateText,
+        normalizedCandidate,
         targetField,
         request.spaceId,
         targetSchema,
@@ -1260,6 +1655,33 @@ async function extractLookupCandidate(
   }
 
   return undefined;
+}
+
+async function extractLookupCandidate(
+  rule: GmailLookupFieldRule,
+  request: ExtractFieldsRequest,
+  targetField: ParseTargetDocumentField,
+  targetSchema: ParseTargetDocumentSchema | undefined,
+  deps: SourceParserServiceDeps | undefined,
+  extractionContext: RuleExtractionContext
+): Promise<{ value: string; matchedTuple: ParseTargetDocumentOptionTuple; matchedAttachmentName?: string } | undefined> {
+  const sourceItems = resolveRuleSourceItems(
+    rule.from,
+    request.context,
+    extractionContext,
+    true
+  );
+  return extractLookupCandidateFromSourceItems(
+    rule,
+    sourceItems,
+    rule.from,
+    request,
+    targetField,
+    targetSchema,
+    deps,
+    extractionContext.populatedFields,
+    extractionContext.timeZone
+  );
 }
 
 function evaluateCondition(
@@ -1281,6 +1703,20 @@ export interface SourceParserServiceDeps {
   predicateEvaluator?: PredicateEvaluatorPort | undefined;
   fallbackExtractor?: FallbackFieldExtractorPort | undefined;
   canonicalOptionsProvider?: CanonicalOptionsProviderPort | undefined;
+  configPort?: SourceParserConfigPort | undefined;
+  now?: (() => Date) | undefined;
+}
+
+interface HydratedDriveItemContext {
+  hierarchy: DriveItemHierarchy;
+  driveContext: Record<string, unknown>;
+}
+
+function areExtractorFieldsPopulated(
+  fields: Record<string, unknown>,
+  populatedFields: Record<string, unknown>
+): boolean {
+  return Object.keys(fields).every((k) => k in populatedFields);
 }
 
 export class SourceParserService implements SourceParserPort {
@@ -1330,11 +1766,63 @@ export class SourceParserService implements SourceParserPort {
     const statusMessages: string[] = [];
     const jsonLogicContext = buildJsonLogicContext(request.context);
     const candidateAttachmentNames = getCandidateAttachmentNames(request.context);
+    const hydratedDriveItems = new Map<string, HydratedDriveItemContext>();
+    let resolvedTimeZone: string | undefined;
+    let timeZoneLoaded = false;
+
+    const getWorkspaceTimeZone = async (): Promise<string | undefined> => {
+      if (!timeZoneLoaded) {
+        timeZoneLoaded = true;
+        resolvedTimeZone = await this.deps?.configPort?.getWorkspaceTimeZone();
+      }
+      return resolvedTimeZone;
+    };
+
+    const getHydratedDriveItem = async (itemId: string): Promise<HydratedDriveItemContext> => {
+      const existing = hydratedDriveItems.get(itemId);
+      if (existing) {
+        return existing;
+      }
+      const hierarchy = await this.driveContextPort.getItemHierarchy(itemId);
+      const entry: HydratedDriveItemContext = {
+        hierarchy,
+        driveContext: buildDriveJsonLogicContext(hierarchy),
+      };
+      hydratedDriveItems.set(itemId, entry);
+      return entry;
+    };
 
     for (const extractor of parseSchema.extractors ?? []) {
       try {
+        if (extractor.source === 'drive') {
+          if (request.context.email && request.context.isDriveUrl !== true) {
+            continue;
+          }
+          const validItemIds = (request.context.items ?? [])
+            .map((item) => (typeof item?.id === 'string' ? item.id.trim() : ''))
+            .filter((id) => id.length > 0);
+          if (validItemIds.length === 0) {
+            continue;
+          }
+          if (areExtractorFieldsPopulated(extractor.fields, populatedFields)) {
+            continue;
+          }
+          const timeZone = await getWorkspaceTimeZone();
+          await this.extractDriveExtractorFields({
+            extractor,
+            validItemIds,
+            request,
+            targetSchema,
+            jsonLogicContext,
+            populatedFields,
+            timeZone,
+            getHydratedDriveItem,
+          });
+          continue;
+        }
+
         if (extractor.source !== 'gmail') {
-          // Structural placeholders (drive, pdfForm, googleDoc) are skipped in Pass 2 deterministic Gmail pipeline
+          // Structural placeholders (pdfForm, googleDoc) are skipped in Pass 2 deterministic pipeline
           continue;
         }
 
@@ -1346,12 +1834,11 @@ export class SourceParserService implements SourceParserPort {
           continue;
         }
 
-        const extractorTargetKeys = Object.keys(extractor.fields);
-        const allAlreadyPopulated = extractorTargetKeys.every((k) => k in populatedFields);
-        if (allAlreadyPopulated) {
+        if (areExtractorFieldsPopulated(extractor.fields, populatedFields)) {
           continue;
         }
 
+        const timeZone = await getWorkspaceTimeZone();
         let boundAttachmentName: string | undefined = undefined;
 
         for (const [fieldKey, ruleOrRules] of Object.entries(extractor.fields)) {
@@ -1375,6 +1862,8 @@ export class SourceParserService implements SourceParserPort {
               candidateAttachmentNames,
               boundAttachmentName,
               populatedFields,
+              timeZone,
+              now: this.deps?.now,
             };
 
             const result: ExtractedCandidateResult | undefined =
@@ -1407,10 +1896,14 @@ export class SourceParserService implements SourceParserPort {
           }
         }
       } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        statusMessages.push(
-          `Could not extract fields from ${extractor.name ?? extractor.source}: ${errorMsg}`
-        );
+        if (extractor.source === 'drive') {
+          statusMessages.push(DRIVE_METADATA_EXTRACT_ERROR_MESSAGE);
+        } else {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          statusMessages.push(
+            `Could not extract fields from ${extractor.name ?? extractor.source}: ${errorMsg}`
+          );
+        }
       }
     }
 
@@ -1432,7 +1925,7 @@ export class SourceParserService implements SourceParserPort {
           const unpopulatedSet = new Set(unpopulatedTargetKeys);
           const lookupFieldKeys = new Set<string>();
           for (const ext of parseSchema.extractors ?? []) {
-            if (ext.source === 'gmail') {
+            if (ext.source === 'gmail' || ext.source === 'drive') {
               for (const [fKey, ruleOrRules] of Object.entries(ext.fields)) {
                 const rules = Array.isArray(ruleOrRules) ? ruleOrRules : [ruleOrRules];
                 if (rules.some((r) => 'lookup' in r && r.lookup === true)) {
@@ -1489,6 +1982,116 @@ export class SourceParserService implements SourceParserPort {
       fields: populatedFields,
       ...(deduplicatedStatus ? { statusMessages: deduplicatedStatus } : {}),
     };
+  }
+
+  private async extractDriveExtractorFields(params: {
+    extractor: DriveExtractorRule;
+    validItemIds: string[];
+    request: ExtractFieldsRequest;
+    targetSchema: ParseTargetDocumentSchema | undefined;
+    jsonLogicContext: Record<string, unknown>;
+    populatedFields: Record<string, unknown>;
+    timeZone: string | undefined;
+    getHydratedDriveItem: (itemId: string) => Promise<HydratedDriveItemContext>;
+  }): Promise<void> {
+    const {
+      extractor,
+      validItemIds,
+      request,
+      targetSchema,
+      jsonLogicContext,
+      populatedFields,
+      timeZone,
+      getHydratedDriveItem,
+    } = params;
+
+    let boundDriveItemId: string | undefined = undefined;
+
+    for (const [fieldKey, ruleOrRules] of Object.entries(extractor.fields)) {
+      if (fieldKey in populatedFields) {
+        continue;
+      }
+
+      const targetField = targetSchema?.fields.find((f) => f.key === fieldKey);
+      if (!targetField) {
+        continue;
+      }
+
+      const rules = Array.isArray(ruleOrRules) ? ruleOrRules : [ruleOrRules];
+      for (const rule of rules) {
+        const candidateItemIds: string[] = boundDriveItemId !== undefined ? [boundDriveItemId] : validItemIds;
+        let fieldPopulated = false;
+
+        for (const candidateItemId of candidateItemIds) {
+          const { hierarchy, driveContext } = await getHydratedDriveItem(candidateItemId);
+          const itemJsonLogicContext = { ...jsonLogicContext, drive: driveContext };
+
+          if (!evaluateCondition(extractor.match, itemJsonLogicContext, this.deps?.predicateEvaluator)) {
+            continue;
+          }
+          if (!evaluateCondition(rule.when, itemJsonLogicContext, this.deps?.predicateEvaluator)) {
+            continue;
+          }
+
+          let result: ExtractedCandidateResult | undefined;
+          if ('set' in rule) {
+            result = extractCandidateFromSourceItems(
+              rule,
+              [],
+              undefined,
+              targetField,
+              targetSchema,
+              populatedFields,
+              timeZone,
+              this.deps?.now
+            );
+          } else if ('from' in rule) {
+            const sourceText = getDriveSourceText(rule.from, hierarchy);
+            const sourceItems: RuleSourceItem[] = sourceText.trim().length > 0 ? [{ text: sourceText }] : [];
+            if ('lookup' in rule && rule.lookup === true) {
+              result = await extractLookupCandidateFromSourceItems(
+                rule,
+                sourceItems,
+                rule.from,
+                request,
+                targetField,
+                targetSchema,
+                this.deps,
+                populatedFields,
+                timeZone
+              );
+            } else {
+              result = extractCandidateFromSourceItems(
+                rule,
+                sourceItems,
+                rule.from,
+                targetField,
+                targetSchema,
+                populatedFields,
+                timeZone,
+                this.deps?.now
+              );
+            }
+          }
+
+          if (result !== undefined) {
+            if (boundDriveItemId === undefined) {
+              // nosemgrep: domain-pass-through-read
+              boundDriveItemId = candidateItemId;
+            }
+            const { value: candidateValue, matchedTuple } = result;
+            populatedFields[fieldKey] = candidateValue;
+            populateLinkedFields(fieldKey, matchedTuple, targetSchema, populatedFields);
+            fieldPopulated = true;
+            break;
+          }
+        }
+
+        if (fieldPopulated) {
+          break;
+        }
+      }
+    }
   }
 
   async inferRouting(context: SourceContext): Promise<InferredRoutingResult> {

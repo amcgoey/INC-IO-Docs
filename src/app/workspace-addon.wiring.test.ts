@@ -176,4 +176,88 @@ describe('workspace-addon.wiring (S3)', () => {
     });
     expect(res.statusCode).toBe(200);
   });
+
+  it('wires workspace timeZone lazily and driveContextClient in standalone wireWorkspaceAddonRoutes (#307)', async () => {
+    const server = createHttpServer();
+    const documentSpaceService = createSpaceService();
+    const manifestProvider = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./types/comm-doc.json'],
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        key: 'comm-doc',
+        name: 'Comm Doc',
+        documentSchema: {
+          fields: [
+            { key: 'date', name: 'Date', type: 'string' },
+          ],
+        },
+        documentUiSchema: {
+          layout: ['date'],
+          fields: {
+            date: { widget: 'textInput', label: 'Date' },
+          },
+        },
+        documentParseSchema: {
+          extractors: [
+            {
+              source: 'drive',
+              fields: {
+                date: { from: 'drive.modifiedTime' },
+              },
+            },
+          ],
+        },
+      }),
+    };
+
+    let currentTimeZone: string | undefined = undefined;
+    const configProvider = {
+      getWorkspaceConfig: vi.fn().mockImplementation(async () => ({
+        defaultDocumentSpaceType: 'projects',
+        defaultDocumentType: 'comm-doc',
+        ...(currentTimeZone !== undefined ? { timeZone: currentTimeZone } : {}),
+      })),
+    };
+
+    const driveContextClient = {
+      getFile: vi.fn().mockResolvedValue({
+        id: 'drive-file-1',
+        name: 'Notes.pdf',
+        parents: [],
+        modifiedTime: '2026-03-16T02:30:00Z',
+      }),
+      listSharedDrives: vi.fn().mockResolvedValue({ drives: [] }),
+    };
+
+    wireWorkspaceAddonRoutes({
+      server,
+      authVerifier: createAuthVerifier(),
+      manifestProvider,
+      configProvider,
+      documentSpaceService,
+      gmailClient: createGmailClient(),
+      driveContextClient,
+    });
+
+    currentTimeZone = 'America/New_York';
+
+    const res = await server.inject({
+      method: 'POST',
+      url: '/workspace/drive-items-selected',
+      headers: { authorization: 'Bearer valid' },
+      payload: {
+        hostApp: 'DRIVE',
+        drive: {
+          selectedItems: [{ id: 'drive-file-1', title: 'Notes.pdf' }],
+        },
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+    const dateWidget = body.action?.navigations?.[0]?.pushCard?.sections
+      .find((s) => s.header === 'Document Data')
+      ?.widgets.find((w) => w.textInput?.name?.startsWith('date'));
+    expect(dateWidget?.textInput?.value).toBe('260315');
+  });
 });

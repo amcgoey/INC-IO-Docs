@@ -6,6 +6,7 @@ import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import type { DocumentSpaceStoragePort } from '../src/features/document-space/ports';
 import { GoogleGmailClient } from '../src/infrastructure/gmail/gmail-client';
+import { GoogleDriveClient } from '../src/infrastructure/drive/drive-client';
 import type { GmailThreadDetails } from '../src/infrastructure/gmail/types';
 // nosemgrep: adapter-leakage-warning
 import { google, type gmail_v1 } from 'googleapis';
@@ -6040,6 +6041,723 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(
           docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-ffe'))?.textInput?.value
         ).toBe('A');
+      });
+    });
+
+    describe('Ticket #307: Gmail Google Drive URL fallback vs Email Attachments skip for source: "drive"', () => {
+      it('prefers gmail email.date in Google Drive URL mode and falls back to drive.modifiedTime when email.date is absent', async () => {
+        const driveGetFileSpy = vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
+          id: 'drive-url-comm-1',
+          name: 'Meeting_Minutes.pdf',
+          mimeType: 'application/pdf',
+          parents: ['folder-comm-1'],
+          driveId: 'space-projects-1',
+          modifiedTime: '2026-03-16T02:30:00Z', // 260315 in America/New_York
+        });
+        vi.spyOn(GoogleDriveClient.prototype, 'listSharedDrives').mockResolvedValue({
+          drives: [{ id: 'space-projects-1', name: 'Active Projects' }],
+        });
+
+        vi.spyOn(mockGmailClient, 'getThread').mockResolvedValue({
+          id: 'th-drive-url-307',
+          messages: [
+            {
+              id: 'msg-with-date',
+              threadId: 'th-drive-url-307',
+              subject: 'Re: Active Projects - Weekly Sync',
+              from: 'Alice <alice@example.com>',
+              date: 'Mon, 19 Oct 2026 10:00:00 -0400',
+              plainTextBody: 'See link.',
+              inlineImages: [],
+              attachments: [],
+            },
+            {
+              id: 'msg-no-date',
+              threadId: 'th-drive-url-307',
+              subject: 'Re: Active Projects - Follow-up Sync',
+              from: 'Alice <alice@example.com>',
+              plainTextBody: 'See link.',
+              inlineImages: [],
+              attachments: [],
+            },
+          ],
+        });
+
+        // 1. email.date present -> gmail wins (261019)
+        const res1 = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: { action: 'onFormChange', previousDriveUrl: '' },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: { stringInputs: { value: ['https://drive.google.com/file/d/drive-url-comm-1/view'] } },
+              },
+            },
+            gmail: {
+              messageId: 'msg-with-date',
+              threadId: 'th-drive-url-307',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+        expect(res1.statusCode).toBe(200);
+        const body1 = JSON.parse(res1.payload) as GoogleWorkspaceActionResponse;
+        const docSec1 = body1.action?.navigations?.[0]?.updateCard?.sections.find((s) => s.header === 'Document Data');
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-project'))?.textInput?.value
+        ).toBe('261019');
+
+        // 2. email.date absent -> drive fills blank date (260315) while gmail fills description
+        driveGetFileSpy.mockClear();
+        const res2 = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: { action: 'onFormChange', previousDriveUrl: '' },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: { stringInputs: { value: ['https://drive.google.com/file/d/drive-url-comm-1/view'] } },
+              },
+            },
+            gmail: {
+              messageId: 'msg-no-date',
+              threadId: 'th-drive-url-307',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+        expect(res2.statusCode).toBe(200);
+        const body2 = JSON.parse(res2.payload) as GoogleWorkspaceActionResponse;
+        const docSec2 = body2.action?.navigations?.[0]?.updateCard?.sections.find((s) => s.header === 'Document Data');
+        expect(
+          docSec2?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-project'))?.textInput?.value
+        ).toBe('260315');
+        expect(
+          docSec2?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('description', 'communication-project'))?.textInput?.value
+        ).toBe('Active Projects - Follow-up Sync');
+      });
+
+      it('skips source: "drive" extractors completely in Gmail Email Attachments mode', async () => {
+        const driveGetFileSpy = vi.spyOn(GoogleDriveClient.prototype, 'getFile');
+
+        vi.spyOn(mockGmailClient, 'getThread').mockResolvedValueOnce({
+          id: 'th-att-skip-307',
+          messages: [
+            {
+              id: 'msg-att-skip-307',
+              threadId: 'th-att-skip-307',
+              subject: 'Active Projects - No Date Email',
+              from: 'Alice <alice@example.com>',
+              plainTextBody: 'Attached.',
+              inlineImages: [],
+              attachments: [{ partId: '1', attachmentId: 'att-part-1', filename: 'Notes.pdf', mimeType: 'application/pdf', size: 100 }],
+            },
+          ],
+        });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-att-skip-307',
+              threadId: 'th-att-skip-307',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(driveGetFileSpy).not.toHaveBeenCalled();
+      });
+
+      it('memoizes target-item 403 error across Pass 1 + Pass 2 in Google Drive URL mode, still populates gmail fields, and emits only one Drive warning banner', async () => {
+        const err403 = new Error('Forbidden') as Error & { statusCode: number };
+        err403.statusCode = 403;
+        const driveGetFileSpy = vi
+          .spyOn(GoogleDriveClient.prototype, 'getFile')
+          .mockRejectedValue(err403);
+
+        vi.spyOn(mockGmailClient, 'getThread').mockResolvedValueOnce({
+          id: 'th-drive-url-403',
+          messages: [
+            {
+              id: 'msg-drive-url-403',
+              threadId: 'th-drive-url-403',
+              subject: 'Re: Active Projects - Restricted Link Discussion',
+              from: 'Alice <alice@example.com>',
+              plainTextBody: 'Please see the restricted file.',
+              inlineImages: [],
+              attachments: [],
+            },
+          ],
+        });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: { action: 'onFormChange', previousDriveUrl: '' },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: {
+                  stringInputs: { value: ['https://drive.google.com/file/d/forbidden-drive-url-1/view'] },
+                },
+              },
+            },
+            gmail: {
+              messageId: 'msg-drive-url-403',
+              threadId: 'th-drive-url-403',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(driveGetFileSpy).toHaveBeenCalledTimes(1);
+
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const card = body.action?.navigations?.[0]?.updateCard;
+        const cardJson = JSON.stringify(card);
+
+        expect(cardJson).toContain(
+          'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.'
+        );
+        expect(cardJson).not.toContain(
+          'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.'
+        );
+
+        const docSec = card?.sections.find((s) => s.header === 'Document Data');
+        expect(
+          docSec?.widgets.find(
+            (w) => w.textInput?.name === getDocumentInfoWidgetName('description', 'communication-project')
+          )?.textInput?.value
+        ).toBe('Active Projects - Restricted Link Discussion');
+      });
+    });
+
+    describe('Ticket #310: Flexible Submittal Arch Gmail Email Attachments & Google Drive URL pre-population', () => {
+      it('pre-populates flexible attachment fields in Email Attachments mode, skips Drive API, avoids splicing unrelated subject v2, and preserves .Inc/.Ltd in subject', async () => {
+        const driveGetFileSpy = vi.spyOn(GoogleDriveClient.prototype, 'getFile');
+
+        vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string) => {
+          if (threadId === 'th-arch-310-att') {
+            return {
+              id: 'th-arch-310-att',
+              messages: [
+                {
+                  id: 'msg-arch-310-att',
+                  threadId: 'th-arch-310-att',
+                  subject: 'Re: Submittal Package v2 - 071200-001 Waterproofing by Acme.Inc',
+                  from: 'James McGovern <jmcgovern@pavarini.com>',
+                  to: 'Architect <pm@inc.nyc>',
+                  date: 'Tue, 17 Nov 2026 14:00:00 -0500',
+                  labels: ['INBOX', 'Active Projects'],
+                  plainTextBody: 'Attached is the waterproofing submittal.',
+                  inlineImages: [],
+                  attachments: [
+                    {
+                      partId: 'part-1',
+                      attachmentId: 'att-1',
+                      filename: '071200-001_Waterproofing.pdf',
+                      mimeType: 'application/pdf',
+                      size: 1024,
+                    },
+                  ],
+                },
+              ],
+            };
+          }
+          return {
+            id: 'th-arch-310-subj',
+            messages: [
+              {
+                id: 'msg-arch-310-subj',
+                threadId: 'th-arch-310-subj',
+                subject: 'Re: 071200-001 Waterproofing by Acme.Inc',
+                from: 'James McGovern <jmcgovern@pavarini.com>',
+                to: 'Architect <pm@inc.nyc>',
+                date: 'Tue, 17 Nov 2026 14:00:00 -0500',
+                labels: ['INBOX', 'Active Projects'],
+                plainTextBody: 'Please review.',
+                inlineImages: [],
+                attachments: [],
+              },
+            ],
+          };
+        });
+
+        // 1. Attachment without revision + unrelated "v2" in subject -> revision stays blank, Drive API never called
+        const res1 = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-arch-310-att',
+              threadId: 'th-arch-310-att',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+        expect(res1.statusCode).toBe(200);
+        expect(driveGetFileSpy).not.toHaveBeenCalled();
+
+        const card1 = (JSON.parse(res1.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.pushCard;
+        const docSec1 = card1?.sections.find((s) => s.header === 'Document Data');
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch'))?.textInput?.value
+        ).toBe('071200');
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('number', 'submittal-arch'))?.textInput?.value
+        ).toBe('001');
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-arch'))?.textInput?.value
+        ).toBeUndefined();
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('title', 'submittal-arch'))?.textInput?.value
+        ).toBe('Waterproofing');
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'submittal-arch'))?.textInput?.value
+        ).toBe('PMG');
+
+        // 2. Subject ending in .Inc does NOT get truncated as a file extension
+        const res2 = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-arch-310-subj',
+              threadId: 'th-arch-310-subj',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+        expect(res2.statusCode).toBe(200);
+        const card2 = (JSON.parse(res2.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.pushCard;
+        const docSec2 = card2?.sections.find((s) => s.header === 'Document Data');
+        expect(
+          docSec2?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('title', 'submittal-arch'))?.textInput?.value
+        ).toBe('Waterproofing by Acme.Inc');
+      });
+
+      it('extracts submittal-arch attachmentName titles cleanly without double-stripping .Inc/.Ltd/.2 while stripping trailing dates', async () => {
+        const attachmentCases = [
+          {
+            threadId: 'th-arch-310-date-att',
+            messageId: 'msg-arch-310-date-att',
+            filename: '071200-001_Waterproofing_2026-11-15.pdf',
+            expectedTitle: 'Waterproofing',
+          },
+          {
+            threadId: 'th-arch-310-inc-att',
+            messageId: 'msg-arch-310-inc-att',
+            filename: '071200-001_Waterproofing_by_Acme.Inc.pdf',
+            expectedTitle: 'Waterproofing by Acme.Inc',
+          },
+          {
+            threadId: 'th-arch-310-ltd-att',
+            messageId: 'msg-arch-310-ltd-att',
+            filename: '071200-001_Waterproofing_Supply.Ltd.pdf',
+            expectedTitle: 'Waterproofing Supply.Ltd',
+          },
+          {
+            threadId: 'th-arch-310-spec-att',
+            messageId: 'msg-arch-310-spec-att',
+            filename: '071200-001_Spec_v1.2.pdf',
+            expectedTitle: 'Spec v1.2',
+          },
+        ] as const;
+
+        vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string) => {
+          const matched = attachmentCases.find((c) => c.threadId === threadId);
+          if (!matched) {
+            throw new Error(`Unexpected threadId: ${threadId}`);
+          }
+          return {
+            id: matched.threadId,
+            messages: [
+              {
+                id: matched.messageId,
+                threadId: matched.threadId,
+                subject: 'Submittal Package',
+                from: 'James McGovern <jmcgovern@pavarini.com>',
+                to: 'Architect <pm@inc.nyc>',
+                date: 'Tue, 17 Nov 2026 14:00:00 -0500',
+                labels: ['INBOX', 'Active Projects'],
+                plainTextBody: 'Attached.',
+                inlineImages: [],
+                attachments: [
+                  {
+                    partId: 'part-1',
+                    attachmentId: 'att-1',
+                    filename: matched.filename,
+                    mimeType: 'application/pdf',
+                    size: 1024,
+                  },
+                ],
+              },
+            ],
+          };
+        });
+
+        for (const c of attachmentCases) {
+          const res = await app.server.inject({
+            method: 'POST',
+            url: '/workspace/gmail-contextual',
+            headers: { authorization: 'Bearer valid-jwt-token' },
+            payload: {
+              hostApp: 'GMAIL',
+              gmail: {
+                messageId: c.messageId,
+                threadId: c.threadId,
+                accessToken: 'ya29.live-token',
+              },
+            },
+          });
+          expect(res.statusCode).toBe(200);
+          const card = (JSON.parse(res.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.pushCard;
+          const docSec = card?.sections.find((s) => s.header === 'Document Data');
+          expect(
+            docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('title', 'submittal-arch'))
+              ?.textInput?.value,
+            c.filename
+          ).toBe(c.expectedTitle);
+        }
+      });
+
+      it('runs gmail before drive in Google Drive URL mode for submittal-arch, letting gmail win first and drive fill remaining blank fields', async () => {
+        vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
+          id: 'drive-url-arch-310',
+          name: '07 12 00 - 1_v1_Waterproofing_Drive_Title.pdf',
+          mimeType: 'application/pdf',
+          parents: ['folder-unfiled'],
+          driveId: 'space-projects-1',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+        vi.spyOn(GoogleDriveClient.prototype, 'listSharedDrives').mockResolvedValue({
+          drives: [{ id: 'space-projects-1', name: 'Active Projects' }],
+        });
+
+        vi.spyOn(mockGmailClient, 'getThread').mockResolvedValueOnce({
+          id: 'th-drive-url-arch-310',
+          messages: [
+            {
+              id: 'msg-drive-url-arch-310',
+              threadId: 'th-drive-url-arch-310',
+              subject: '071200-001 Waterproofing by Acme.Inc',
+              from: 'James McGovern <jmcgovern@pavarini.com>',
+              to: 'Architect <pm@inc.nyc>',
+              labels: ['INBOX', 'Active Projects'],
+              plainTextBody: 'See Google Drive link.',
+              inlineImages: [],
+              attachments: [],
+            },
+          ],
+        });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: { action: 'onFormChange', previousDriveUrl: '' },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: {
+                  stringInputs: { value: ['https://drive.google.com/file/d/drive-url-arch-310/view'] },
+                },
+              },
+            },
+            gmail: {
+              messageId: 'msg-drive-url-arch-310',
+              threadId: 'th-drive-url-arch-310',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const card = (JSON.parse(res.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.updateCard;
+        const docSec = card?.sections.find((s) => s.header === 'Document Data');
+
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch'))?.textInput?.value
+        ).toBe('071200');
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('number', 'submittal-arch'))?.textInput?.value
+        ).toBe('001');
+        // Gmail wins title (preserving .Inc), while Drive fills blank revision ('0' from v1) and date ('261118')
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('title', 'submittal-arch'))?.textInput?.value
+        ).toBe('Waterproofing by Acme.Inc');
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-arch'))?.textInput?.value
+        ).toBe('0');
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('date', 'submittal-arch'))?.textInput?.value
+        ).toBe('261118');
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'submittal-arch'))?.textInput?.value
+        ).toBe('PMG');
+      });
+    });
+
+    describe('Ticket #311: Flexible Submittal FF&E Gmail Email Attachments & Google Drive URL pre-population', () => {
+      it('pre-populates flexible FF&E attachment fields in Email Attachments mode (CG-104_v2_Fil_Doux.pdf, LT 159A_R0.pdf), skips Drive API, and guards lowercase prose', async () => {
+        const driveGetFileSpy = vi.spyOn(GoogleDriveClient.prototype, 'getFile');
+
+        vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string) => {
+          if (threadId === 'th-ffe-311-att') {
+            return {
+              id: 'th-ffe-311-att',
+              messages: [
+                {
+                  id: 'msg-ffe-311-att',
+                  threadId: 'th-ffe-311-att',
+                  subject: 'King Bed Cut Sheet',
+                  from: 'Rep <rep@fildoux.com>',
+                  to: 'Designer <designer@inc.nyc>',
+                  date: 'Tue, 17 Nov 2026 14:00:00 -0500',
+                  labels: ['INBOX', 'Active Projects'],
+                  plainTextBody: 'Attached is the revised cut sheet.',
+                  inlineImages: [],
+                  attachments: [
+                    {
+                      partId: 'part-1',
+                      attachmentId: 'att-1',
+                      filename: 'CG-104_v2_Fil_Doux.pdf',
+                      mimeType: 'application/pdf',
+                      size: 1024,
+                    },
+                  ],
+                },
+              ],
+            };
+          }
+          if (threadId === 'th-ffe-311-lt') {
+            return {
+              id: 'th-ffe-311-lt',
+              messages: [
+                {
+                  id: 'msg-ffe-311-lt',
+                  threadId: 'th-ffe-311-lt',
+                  subject: 'Re: Corridor Sconce Submittal',
+                  from: 'Lighting <sales@ashleylighting.com>',
+                  to: 'Designer <designer@inc.nyc>',
+                  date: 'Tue, 17 Nov 2026 14:00:00 -0500',
+                  labels: ['INBOX', 'Active Projects'],
+                  plainTextBody: 'See attached.',
+                  inlineImages: [],
+                  attachments: [
+                    {
+                      partId: 'part-1',
+                      attachmentId: 'att-1',
+                      filename: 'LT 159A_R0.pdf',
+                      mimeType: 'application/pdf',
+                      size: 1024,
+                    },
+                  ],
+                },
+              ],
+            };
+          }
+          return {
+            id: 'th-ffe-311-neg',
+            messages: [
+              {
+                id: 'msg-ffe-311-neg',
+                threadId: 'th-ffe-311-neg',
+                subject: 'Schedule Update',
+                from: 'Alice <alice@example.com>',
+                to: 'Designer <designer@inc.nyc>',
+                date: 'Tue, 17 Nov 2026 14:00:00 -0500',
+                labels: ['INBOX', 'Active Projects'],
+                plainTextBody: 'Delivery in 100 days and installation at 120V panel.',
+                inlineImages: [],
+                attachments: [],
+              },
+            ],
+          };
+        });
+
+        // 1. CG-104_v2_Fil_Doux.pdf -> specTag CG104, specTitle BED - KING, revision 1, vendor FDT, Drive API never called
+        const res1 = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-ffe-311-att',
+              threadId: 'th-ffe-311-att',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+        expect(res1.statusCode).toBe(200);
+        expect(driveGetFileSpy).not.toHaveBeenCalled();
+
+        const card1 = (JSON.parse(res1.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.pushCard;
+        const docSec1 = card1?.sections.find((s) => s.header === 'Document Data');
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTag', 'submittal-ffe'))?.textInput?.value
+        ).toBe('CG104');
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))?.textInput?.value
+        ).toBe('BED - KING');
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-ffe'))?.textInput?.value
+        ).toBe('1');
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('vendor', 'submittal-ffe'))?.textInput?.value
+        ).toBe('FDT');
+
+        // 2. LT 159A_R0.pdf -> specTag LT159A, specTitle SCONCE - CORRIDOR, revision 0, vendor AL
+        const res2 = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-ffe-311-lt',
+              threadId: 'th-ffe-311-lt',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+        expect(res2.statusCode).toBe(200);
+        const card2 = (JSON.parse(res2.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.pushCard;
+        const docSec2 = card2?.sections.find((s) => s.header === 'Document Data');
+        expect(
+          docSec2?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTag', 'submittal-ffe'))?.textInput?.value
+        ).toBe('LT159A');
+        expect(
+          docSec2?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))?.textInput?.value
+        ).toBe('SCONCE - CORRIDOR');
+        expect(
+          docSec2?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-ffe'))?.textInput?.value
+        ).toBe('0');
+        expect(
+          docSec2?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('vendor', 'submittal-ffe'))?.textInput?.value
+        ).toBe('AL');
+
+        // 3. Negative lowercase prose ("in 100 days" / "at 120V panel") -> does NOT route to submittal-ffe
+        const res3 = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-ffe-311-neg',
+              threadId: 'th-ffe-311-neg',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+        expect(res3.statusCode).toBe(200);
+        const card3 = (JSON.parse(res3.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.pushCard;
+        const docTypeSec3 = card3?.sections.find((s) => s.header === 'Document Type');
+        const selectedDocType3 = docTypeSec3?.widgets
+          .find((w) => w.selectionInput?.name === getDocumentTypeWidgetName('projects'))
+          ?.selectionInput?.items.find((i) => i.selected)?.value;
+        expect(selectedDocType3).toBe('communication-project');
+      });
+
+      it('runs gmail before drive in Google Drive URL mode for submittal-ffe, letting gmail win first and drive fill remaining blank fields', async () => {
+        vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
+          id: 'drive-url-ffe-311',
+          name: 'CG-104_v2_Fil_Doux.pdf',
+          mimeType: 'application/pdf',
+          parents: ['folder-unfiled'],
+          driveId: 'space-projects-1',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+        vi.spyOn(GoogleDriveClient.prototype, 'listSharedDrives').mockResolvedValue({
+          drives: [{ id: 'space-projects-1', name: 'Active Projects' }],
+        });
+
+        vi.spyOn(mockGmailClient, 'getThread').mockResolvedValueOnce({
+          id: 'th-drive-url-ffe-311',
+          messages: [
+            {
+              id: 'msg-drive-url-ffe-311',
+              threadId: 'th-drive-url-ffe-311',
+              subject: 'Please review attached link',
+              from: 'Benjamin West <procurement@benjaminwest.com>',
+              to: 'Designer <designer@inc.nyc>',
+              labels: ['INBOX', 'Active Projects'],
+              plainTextBody: 'See Google Drive link.',
+              inlineImages: [],
+              attachments: [],
+            },
+          ],
+        });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: { action: 'onFormChange', previousDriveUrl: '' },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: {
+                  stringInputs: { value: ['https://drive.google.com/file/d/drive-url-ffe-311/view'] },
+                },
+              },
+            },
+            gmail: {
+              messageId: 'msg-drive-url-ffe-311',
+              threadId: 'th-drive-url-ffe-311',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const card = (JSON.parse(res.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.updateCard;
+        const docSec = card?.sections.find((s) => s.header === 'Document Data');
+
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTag', 'submittal-ffe'))?.textInput?.value
+        ).toBe('CG104');
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))?.textInput?.value
+        ).toBe('BED - KING');
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-ffe'))?.textInput?.value
+        ).toBe('1');
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('vendor', 'submittal-ffe'))?.textInput?.value
+        ).toBe('FDT');
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('date', 'submittal-ffe'))?.textInput?.value
+        ).toBe('261118');
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'submittal-ffe'))?.textInput?.value
+        ).toBe('BW');
       });
     });
   });

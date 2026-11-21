@@ -3,6 +3,8 @@ import { Value } from '@sinclair/typebox/value';
 import {
   DriveHierarchyNodeSchema,
   DriveItemHierarchySchema,
+  DriveSourceShortcutDetailsSchema,
+  DriveSourceFileMetadataSchema,
   SourceItemDescriptorSchema,
   CandidateSpaceDescriptorSchema,
   SourceContextSchema,
@@ -12,6 +14,12 @@ import {
   SourceParserSpaceTypeConfigSchema,
   GmailFieldRuleOrListSchema,
   GmailExtractorRuleSchema,
+  DriveExtractSourceSchema,
+  FieldCandidateNormalizeSchema,
+  DriveFieldRuleOrListSchema,
+  DriveExtractorRuleSchema,
+  StructuralExtractorRuleSchema,
+  SourceExtractorRuleSchema,
   ParseTargetDocumentFieldSchema,
   ParseTargetCalculatedFieldSchema,
   ParseTargetDocumentOptionTupleSchema,
@@ -25,6 +33,24 @@ describe('SourceParser ports and schemas', () => {
         id: 'node-1',
         name: 'Folder',
         mimeType: 'application/vnd.google-apps.folder',
+      })
+    ).toBe(true);
+
+    expect(
+      Value.Check(DriveHierarchyNodeSchema, {
+        id: 'node-1',
+        name: 'File.pdf',
+        createdTime: '2026-10-18T12:00:00Z',
+        modifiedTime: '2026-10-19T23:30:00Z',
+      })
+    ).toBe(true);
+
+    expect(
+      Value.Check(DriveHierarchyNodeSchema, {
+        id: 'node-1',
+        name: 'File.pdf',
+        createdTime: undefined,
+        modifiedTime: undefined,
       })
     ).toBe(true);
 
@@ -71,6 +97,49 @@ describe('SourceParser ports and schemas', () => {
         ancestors: [],
       })
     ).toBe(true);
+  });
+
+  it('validates DriveSourceShortcutDetailsSchema and DriveSourceFileMetadataSchema', () => {
+    expect(
+      Value.Check(DriveSourceShortcutDetailsSchema, {
+        targetId: 'target-1',
+        targetMimeType: 'application/pdf',
+      })
+    ).toBe(true);
+
+    expect(
+      Value.Check(DriveSourceShortcutDetailsSchema, {
+        targetId: undefined,
+        targetMimeType: undefined,
+      })
+    ).toBe(true);
+
+    expect(
+      Value.Check(DriveSourceFileMetadataSchema, {
+        id: 'file-1',
+        name: 'Submittal.pdf',
+        parents: ['folder-1'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://drive.google.com/file/d/file-1/view',
+        driveId: 'drive-1',
+        createdTime: '2026-11-01T10:00:00Z',
+        modifiedTime: '2026-11-02T10:00:00Z',
+        shortcutDetails: { targetId: 'target-1' },
+      })
+    ).toBe(true);
+
+    expect(
+      Value.Check(DriveSourceFileMetadataSchema, {
+        id: 'file-2',
+        name: 'Minimal.pdf',
+        parents: undefined,
+        mimeType: undefined,
+        shortcutDetails: undefined,
+      })
+    ).toBe(true);
+
+    expect(Value.Check(DriveSourceFileMetadataSchema, { id: '', name: 'Bad' })).toBe(false);
+    expect(Value.Check(DriveSourceFileMetadataSchema, { id: 'file-3', name: '' })).toBe(false);
   });
 
   it('validates SourceContextSchema including email metadata (Ticket #292)', () => {
@@ -166,6 +235,77 @@ describe('SourceParser ports and schemas', () => {
       Value.Check(GmailExtractorRuleSchema, {
         source: 'gmail',
         fields: { date: [] },
+      })
+    ).toBe(false);
+  });
+
+  it('validates DriveExtractSourceSchema, DriveExtractorRuleSchema, and StructuralExtractorRuleSchema (#307)', () => {
+    for (const validSource of [
+      'drive.fileName',
+      'drive.fileNameStem',
+      'drive.modifiedTime',
+      'drive.createdTime',
+    ]) {
+      expect(Value.Check(DriveExtractSourceSchema, validSource)).toBe(true);
+    }
+    expect(Value.Check(DriveExtractSourceSchema, 'email.date')).toBe(false);
+    expect(Value.Check(DriveExtractSourceSchema, 'drive.unknown')).toBe(false);
+
+    expect(
+      Value.Check(DriveFieldRuleOrListSchema, [
+        { from: 'drive.modifiedTime', when: undefined, pattern: undefined, flags: undefined, group: undefined, normalize: undefined },
+        { from: 'drive.fileNameStem', normalize: 'yymmdd' },
+        { from: 'drive.createdTime' },
+      ])
+    ).toBe(true);
+    expect(Value.Check(FieldCandidateNormalizeSchema, 'yymmdd')).toBe(true);
+    expect(Value.Check(FieldCandidateNormalizeSchema, 'digits6')).toBe(true);
+    expect(Value.Check(FieldCandidateNormalizeSchema, 'pad3')).toBe(true);
+    expect(Value.Check(FieldCandidateNormalizeSchema, 'compactAlnum')).toBe(true);
+    expect(Value.Check(FieldCandidateNormalizeSchema, 'revision')).toBe(true);
+    expect(Value.Check(FieldCandidateNormalizeSchema, 'cleanFilenameText')).toBe(true);
+    expect(Value.Check(FieldCandidateNormalizeSchema, 'unknown')).toBe(false);
+    expect(Value.Check(GmailFieldRuleOrListSchema, { from: 'email.subjectClean', normalize: 'yymmdd' })).toBe(true);
+    expect(Value.Check(GmailFieldRuleOrListSchema, { from: 'email.subjectClean', normalize: 'yymmdd', lookup: true })).toBe(true);
+    expect(Value.Check(DriveFieldRuleOrListSchema, { set: 'IN', normalize: 'yymmdd' })).toBe(false);
+    expect(Value.Check(DriveFieldRuleOrListSchema, [])).toBe(false);
+    expect(Value.Check(DriveFieldRuleOrListSchema, { from: 'drive.fileName', extraProp: true })).toBe(false);
+
+    expect(
+      Value.Check(DriveExtractorRuleSchema, {
+        source: 'drive',
+        name: undefined,
+        match: { '==': [{ var: 'drive.isFolder' }, false] },
+        fields: {
+          date: [{ from: 'drive.modifiedTime' }, { from: 'drive.createdTime' }],
+          contact: { from: 'drive.fileNameStem', lookup: true },
+          direction: { set: 'IN' },
+        },
+      })
+    ).toBe(true);
+
+    expect(
+      Value.Check(StructuralExtractorRuleSchema, {
+        source: 'pdfForm',
+        fields: { date: { custom: 'placeholder' } },
+      })
+    ).toBe(true);
+    expect(
+      Value.Check(StructuralExtractorRuleSchema, {
+        source: 'googleDoc',
+        fields: { date: { custom: 'placeholder' } },
+      })
+    ).toBe(true);
+    expect(
+      Value.Check(StructuralExtractorRuleSchema, {
+        source: 'drive',
+        fields: { date: { custom: 'placeholder' } },
+      })
+    ).toBe(false);
+    expect(
+      Value.Check(SourceExtractorRuleSchema, {
+        source: 'drive',
+        fields: { date: { custom: 'placeholder' } },
       })
     ).toBe(false);
   });

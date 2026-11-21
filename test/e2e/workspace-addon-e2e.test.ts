@@ -155,6 +155,10 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       authVerifier: mockAuthVerifier,
       storageAdapter: mockStorageAdapter,
       driveService: mockDriveService,
+      driveContextClient: {
+        getFile: (fileId: string) => mockDriveService.getFile(fileId),
+        listSharedDrives: vi.fn().mockResolvedValue({ drives: [] }),
+      },
       documentService: mockDocumentService,
     });
 

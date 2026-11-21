@@ -73,6 +73,14 @@ async function runE2E(): Promise<void> {
     ...(hasLiveCredentials
       ? {}
       : {
+          driveContextClient: {
+            getFile: async (fileId: string) => ({
+              id: fileId,
+              name: 'E2E_Test_Document.pdf',
+              parents: ['root'],
+            }),
+            listSharedDrives: async () => ({ drives: [] }),
+          },
           driveService: {
             getFile: async (fileId: string) => ({
               id: fileId,

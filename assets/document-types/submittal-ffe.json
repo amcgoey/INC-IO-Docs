@@ -361,43 +361,74 @@
           "specTag": [
             {
               "from": "attachmentName",
-              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?=[\\s_./-]|$)",
+              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)(?=[\\s_./-]|$)",
               "group": 1,
+              "normalize": "compactAlnum",
               "lookup": true
             },
             {
               "from": "email.labels",
-              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?=[\\s_./-]|$)",
+              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)(?=[\\s_./-]|$)",
               "group": 1,
+              "normalize": "compactAlnum",
               "lookup": true
             },
             {
               "from": "email.subjectClean",
-              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?=[\\s_./-]|$)",
+              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)(?=[\\s_./-]|$)",
               "group": 1,
+              "normalize": "compactAlnum",
               "lookup": true
             }
           ],
           "revision": [
             {
               "from": "attachmentName",
-              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)",
-              "group": 2
+              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)-(\\d{1,2}|[A-Za-z])(?![A-Za-z0-9]|-\\d)",
+              "group": 2,
+              "normalize": "revision"
+            },
+            {
+              "from": "attachmentName",
+              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)[\\s_.-]+((?:v|ver\\.?|version)[\\s_.-]*\\d+(?:\\.\\d+)?|(?:rev(?:ision)?\\.?|r(?=[\\s_.]*(?:\\d|[A-Za-z]\\b)))[\\s_.-]*(?:\\d{1,2}[A-Za-z]?|[A-Za-z]\\d{0,2}))(?![A-Za-z0-9]|\\.\\d)",
+              "group": 2,
+              "normalize": "revision"
+            },
+            {
+              "from": "attachmentName",
+              "pattern": "(?:^|[\\s_.-])((?:v|ver\\.?|version)[\\s_.-]*\\d+(?:\\.\\d+)?|(?:rev(?:ision)?\\.?|r(?=[\\s_.]*(?:\\d|[A-Za-z]\\b)))[\\s_.-]*(?:\\d{1,2}[A-Za-z]?|[A-Za-z]\\d{0,2}))(?![A-Za-z0-9]|\\.\\d)",
+              "group": 1,
+              "normalize": "revision"
             },
             {
               "from": "email.labels",
-              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)",
-              "group": 2
+              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)-(\\d{1,2}|[A-Za-z])(?![A-Za-z0-9]|-\\d)",
+              "group": 2,
+              "normalize": "revision"
+            },
+            {
+              "from": "email.labels",
+              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)[\\s_.-]+((?:v|ver\\.?|version)[\\s_.-]*\\d+(?:\\.\\d+)?|(?:rev(?:ision)?\\.?|r(?=[\\s_.]*(?:\\d|[A-Za-z]\\b)))[\\s_.-]*(?:\\d{1,2}[A-Za-z]?|[A-Za-z]\\d{0,2}))(?![A-Za-z0-9]|\\.\\d)",
+              "group": 2,
+              "normalize": "revision"
             },
             {
               "from": "email.subjectClean",
-              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}\\d{3}[A-Za-z]?)-([A-Za-z0-9]+)(?:[\\s_]|\\.[A-Za-z]{2,5}$|$)",
-              "group": 2
+              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)-(\\d{1,2}|[A-Za-z])(?![A-Za-z0-9]|-\\d)",
+              "group": 2,
+              "normalize": "revision"
+            },
+            {
+              "from": "email.subjectClean",
+              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)[\\s_.-]+((?:v|ver\\.?|version)[\\s_.-]*\\d+(?:\\.\\d+)?|(?:rev(?:ision)?\\.?|r(?=[\\s_.]*(?:\\d|[A-Za-z]\\b)))[\\s_.-]*(?:\\d{1,2}[A-Za-z]?|[A-Za-z]\\d{0,2}))(?![A-Za-z0-9]|\\.\\d)",
+              "group": 2,
+              "normalize": "revision"
             }
           ],
           "vendor": [
             {
               "from": "attachmentName",
+              "normalize": "cleanFilenameText",
               "lookup": true
             },
             {
@@ -417,6 +448,55 @@
               },
               "from": "email.from",
               "lookup": true
+            }
+          ]
+        }
+      },
+      {
+        "source": "drive",
+        "fields": {
+          "specTag": {
+            "from": "drive.fileNameStem",
+            "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)(?=[\\s_./-]|$)",
+            "group": 1,
+            "normalize": "compactAlnum",
+            "lookup": true
+          },
+          "revision": [
+            {
+              "from": "drive.fileNameStem",
+              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)-(\\d{1,2}|[A-Za-z])(?![A-Za-z0-9]|-\\d)",
+              "group": 2,
+              "normalize": "revision"
+            },
+            {
+              "from": "drive.fileNameStem",
+              "pattern": "(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)[\\s_.-]+((?:v|ver\\.?|version)[\\s_.-]*\\d+(?:\\.\\d+)?|(?:rev(?:ision)?\\.?|r(?=[\\s_.]*(?:\\d|[A-Za-z]\\b)))[\\s_.-]*(?:\\d{1,2}[A-Za-z]?|[A-Za-z]\\d{0,2}))(?![A-Za-z0-9]|\\.\\d)",
+              "group": 2,
+              "normalize": "revision"
+            },
+            {
+              "from": "drive.fileNameStem",
+              "pattern": "(?:^|[\\s_.-])((?:v|ver\\.?|version)[\\s_.-]*\\d+(?:\\.\\d+)?|(?:rev(?:ision)?\\.?|r(?=[\\s_.]*(?:\\d|[A-Za-z]\\b)))[\\s_.-]*(?:\\d{1,2}[A-Za-z]?|[A-Za-z]\\d{0,2}))(?![A-Za-z0-9]|\\.\\d)",
+              "group": 1,
+              "normalize": "revision"
+            }
+          ],
+          "vendor": {
+            "from": "drive.fileNameStem",
+            "normalize": "cleanFilenameText",
+            "lookup": true
+          },
+          "date": [
+            {
+              "from": "drive.fileNameStem",
+              "normalize": "yymmdd"
+            },
+            {
+              "from": "drive.modifiedTime"
+            },
+            {
+              "from": "drive.createdTime"
             }
           ]
         }
