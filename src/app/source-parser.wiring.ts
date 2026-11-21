@@ -6,6 +6,7 @@ import {
   type SourceParserPort,
   type SourceParserSpaceConfigPort,
   type SourceParserSpaceTypeConfig,
+  type SourceParserConfigPort,
   type DriveSourceContextClientPort,
   type ParseSchemaRegistryPort,
   type RawManifestProviderPort,
@@ -14,7 +15,8 @@ import {
 } from '../features/source-parser';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
-import type { AppConfigurationProviderPort, DriveServicePort } from '../features/document/ports';
+import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
+import type { AppConfigurationProviderPort } from '../features/document/ports';
 
 export interface SpaceTypesProvider {
   getAllTypes?(): SourceParserSpaceTypeConfig[];
@@ -30,8 +32,9 @@ export interface SourceParserWiringOptions {
   spaceTypesProvider: SpaceTypesProvider;
   manifestProvider?: RawManifestProviderPort | undefined;
   driveClient?: GoogleDriveClient | undefined;
-  driveService?: DriveServicePort | undefined;
-  configProvider?: AppConfigurationProviderPort | undefined;
+  driveContextClient?: DriveSourceContextClientPort | undefined;
+  configProvider?: (Partial<AppConfigurationProviderPort> & Partial<WorkspaceConfigProviderPort>) | undefined;
+  workspaceConfigProvider?: WorkspaceConfigProviderPort | undefined;
   predicateEvaluator?: PredicateEvaluatorPort | undefined;
   canonicalOptionsProvider?: CanonicalOptionsProviderPort | undefined;
   getCanonicalOptionsProvider?: ((context: WorkspaceExecutionContext) => CanonicalOptionsProviderPort | undefined) | undefined;
@@ -47,19 +50,19 @@ function createDriveContextClient(
   options: SourceParserWiringOptions,
   token?: string
 ): DriveSourceContextClientPort {
-  if (options.driveService) {
-    return {
-      getFile: async (id) => options.driveService!.getFile(id),
-      listSharedDrives: options.driveClient
-        ? (opts) => options.driveClient!.listSharedDrives(opts)
-        : async () => ({ drives: [] }),
-    };
+  if (options.driveContextClient) {
+    return options.driveContextClient;
   }
+
+  const driveAppConfigProvider: AppConfigurationProviderPort | undefined =
+    options.configProvider && typeof options.configProvider.getDriveConfig === 'function'
+      ? (options.configProvider as AppConfigurationProviderPort)
+      : undefined;
 
   if (token) {
     const driveClient = new GoogleDriveClient({
       auth: token,
-      configProvider: options.configProvider,
+      configProvider: driveAppConfigProvider,
     });
     return driveClient;
   }
@@ -68,7 +71,7 @@ function createDriveContextClient(
     return options.driveClient;
   }
 
-  return new GoogleDriveClient({ configProvider: options.configProvider });
+  return new GoogleDriveClient({ configProvider: driveAppConfigProvider });
 }
 
 export function createSourceParserWiring(
@@ -86,6 +89,21 @@ export function createSourceParserWiring(
     },
   };
 
+  const workspaceConfigProvider: WorkspaceConfigProviderPort | undefined =
+    options.workspaceConfigProvider ??
+    (options.configProvider && typeof options.configProvider.getWorkspaceConfig === 'function'
+      ? (options.configProvider as WorkspaceConfigProviderPort)
+      : undefined);
+
+  const configPort: SourceParserConfigPort | undefined = workspaceConfigProvider
+    ? {
+        getWorkspaceTimeZone: async () => {
+          const wsConfig = await workspaceConfigProvider.getWorkspaceConfig();
+          return wsConfig?.timeZone;
+        },
+      }
+    : undefined;
+
   const parseSchemaRegistry: ParseSchemaRegistryPort = new ParseSchemaRegistryAdapter(options.manifestProvider);
 
   const predicateEvaluator: PredicateEvaluatorPort = options.predicateEvaluator ?? {
@@ -102,6 +120,7 @@ export function createSourceParserWiring(
   const sourceParser = new SourceParserService(defaultContextAdapter, spaceConfigPort, {
     parseSchemaRegistry,
     predicateEvaluator,
+    ...(configPort !== undefined ? { configPort } : {}),
     ...(options.canonicalOptionsProvider !== undefined ? { canonicalOptionsProvider: options.canonicalOptionsProvider } : {}),
   });
 
@@ -118,6 +137,7 @@ export function createSourceParserWiring(
     return new SourceParserService(contextAdapter, spaceConfigPort, {
       parseSchemaRegistry,
       predicateEvaluator,
+      ...(configPort !== undefined ? { configPort } : {}),
       ...(canonicalOptionsProvider !== undefined ? { canonicalOptionsProvider } : {}),
     });
   };

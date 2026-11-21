@@ -6,6 +6,7 @@ import { parseJson, validateAndCleanSchema } from '../validation/json-schema';
 export const WorkspaceConfigurationSchema = Type.Object({
   defaultDocumentType: Type.Optional(Type.String()),
   defaultDocumentSpaceType: Type.Optional(Type.String()),
+  timeZone: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
 });
 
 export const DriveConfigurationSchema = Type.Object({
@@ -88,6 +89,23 @@ export class AppManifestProvider {
       rawData,
       `Invalid manifest file structure at "${this.manifestPath}"`
     );
+
+    const timeZone = validatedManifest.configuration?.workspace?.timeZone;
+    if (timeZone !== undefined) {
+      if (timeZone.trim().length === 0) {
+        throw new Error(
+          `Invalid workspace configuration at "${this.manifestPath}": timeZone must be a non-empty valid IANA timezone identifier`
+        );
+      }
+      try {
+        new Intl.DateTimeFormat(undefined, { timeZone });
+      } catch (err) {
+        throw new Error(
+          `Invalid workspace configuration at "${this.manifestPath}": invalid IANA timeZone "${timeZone}"`,
+          { cause: err }
+        );
+      }
+    }
 
     this.cachedConfiguration = validatedManifest.configuration;
     this.cachedRawManifest = rawData;

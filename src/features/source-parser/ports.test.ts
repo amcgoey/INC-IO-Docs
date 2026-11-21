@@ -12,6 +12,11 @@ import {
   SourceParserSpaceTypeConfigSchema,
   GmailFieldRuleOrListSchema,
   GmailExtractorRuleSchema,
+  DriveExtractSourceSchema,
+  DriveFieldRuleOrListSchema,
+  DriveExtractorRuleSchema,
+  StructuralExtractorRuleSchema,
+  SourceExtractorRuleSchema,
   ParseTargetDocumentFieldSchema,
   ParseTargetCalculatedFieldSchema,
   ParseTargetDocumentOptionTupleSchema,
@@ -25,6 +30,24 @@ describe('SourceParser ports and schemas', () => {
         id: 'node-1',
         name: 'Folder',
         mimeType: 'application/vnd.google-apps.folder',
+      })
+    ).toBe(true);
+
+    expect(
+      Value.Check(DriveHierarchyNodeSchema, {
+        id: 'node-1',
+        name: 'File.pdf',
+        createdTime: '2026-10-18T12:00:00Z',
+        modifiedTime: '2026-10-19T23:30:00Z',
+      })
+    ).toBe(true);
+
+    expect(
+      Value.Check(DriveHierarchyNodeSchema, {
+        id: 'node-1',
+        name: 'File.pdf',
+        createdTime: undefined,
+        modifiedTime: undefined,
       })
     ).toBe(true);
 
@@ -166,6 +189,66 @@ describe('SourceParser ports and schemas', () => {
       Value.Check(GmailExtractorRuleSchema, {
         source: 'gmail',
         fields: { date: [] },
+      })
+    ).toBe(false);
+  });
+
+  it('validates DriveExtractSourceSchema, DriveExtractorRuleSchema, and StructuralExtractorRuleSchema (#307)', () => {
+    for (const validSource of [
+      'drive.fileName',
+      'drive.fileNameStem',
+      'drive.modifiedTime',
+      'drive.createdTime',
+    ]) {
+      expect(Value.Check(DriveExtractSourceSchema, validSource)).toBe(true);
+    }
+    expect(Value.Check(DriveExtractSourceSchema, 'email.date')).toBe(false);
+    expect(Value.Check(DriveExtractSourceSchema, 'drive.unknown')).toBe(false);
+
+    expect(
+      Value.Check(DriveFieldRuleOrListSchema, [
+        { from: 'drive.modifiedTime', when: undefined, pattern: undefined, flags: undefined, group: undefined },
+        { from: 'drive.createdTime' },
+      ])
+    ).toBe(true);
+    expect(Value.Check(DriveFieldRuleOrListSchema, [])).toBe(false);
+    expect(Value.Check(DriveFieldRuleOrListSchema, { from: 'drive.fileName', extraProp: true })).toBe(false);
+
+    expect(
+      Value.Check(DriveExtractorRuleSchema, {
+        source: 'drive',
+        name: undefined,
+        match: { '==': [{ var: 'drive.isFolder' }, false] },
+        fields: {
+          date: [{ from: 'drive.modifiedTime' }, { from: 'drive.createdTime' }],
+          contact: { from: 'drive.fileNameStem', lookup: true },
+          direction: { set: 'IN' },
+        },
+      })
+    ).toBe(true);
+
+    expect(
+      Value.Check(StructuralExtractorRuleSchema, {
+        source: 'pdfForm',
+        fields: { date: { custom: 'placeholder' } },
+      })
+    ).toBe(true);
+    expect(
+      Value.Check(StructuralExtractorRuleSchema, {
+        source: 'googleDoc',
+        fields: { date: { custom: 'placeholder' } },
+      })
+    ).toBe(true);
+    expect(
+      Value.Check(StructuralExtractorRuleSchema, {
+        source: 'drive',
+        fields: { date: { custom: 'placeholder' } },
+      })
+    ).toBe(false);
+    expect(
+      Value.Check(SourceExtractorRuleSchema, {
+        source: 'drive',
+        fields: { date: { custom: 'placeholder' } },
       })
     ).toBe(false);
   });

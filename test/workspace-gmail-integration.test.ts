@@ -6,6 +6,7 @@ import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import type { DocumentSpaceStoragePort } from '../src/features/document-space/ports';
 import { GoogleGmailClient } from '../src/infrastructure/gmail/gmail-client';
+import { GoogleDriveClient } from '../src/infrastructure/drive/drive-client';
 import type { GmailThreadDetails } from '../src/infrastructure/gmail/types';
 // nosemgrep: adapter-leakage-warning
 import { google, type gmail_v1 } from 'googleapis';
@@ -6040,6 +6041,143 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(
           docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-ffe'))?.textInput?.value
         ).toBe('A');
+      });
+    });
+
+    describe('Ticket #307: Gmail Google Drive URL fallback vs Email Attachments skip for source: "drive"', () => {
+      it('prefers gmail email.date in Google Drive URL mode and falls back to drive.modifiedTime when email.date is absent', async () => {
+        const driveGetFileSpy = vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
+          id: 'drive-url-comm-1',
+          name: 'Meeting_Minutes.pdf',
+          mimeType: 'application/pdf',
+          parents: ['folder-comm-1'],
+          driveId: 'space-projects-1',
+          modifiedTime: '2026-03-16T02:30:00Z', // 260315 in America/New_York
+        });
+        vi.spyOn(GoogleDriveClient.prototype, 'listSharedDrives').mockResolvedValue({
+          drives: [{ id: 'space-projects-1', name: 'Active Projects' }],
+        });
+
+        vi.spyOn(mockGmailClient, 'getThread').mockResolvedValue({
+          id: 'th-drive-url-307',
+          messages: [
+            {
+              id: 'msg-with-date',
+              threadId: 'th-drive-url-307',
+              subject: 'Re: Active Projects - Weekly Sync',
+              from: 'Alice <alice@example.com>',
+              date: 'Mon, 19 Oct 2026 10:00:00 -0400',
+              plainTextBody: 'See link.',
+              inlineImages: [],
+              attachments: [],
+            },
+            {
+              id: 'msg-no-date',
+              threadId: 'th-drive-url-307',
+              subject: 'Re: Active Projects - Follow-up Sync',
+              from: 'Alice <alice@example.com>',
+              plainTextBody: 'See link.',
+              inlineImages: [],
+              attachments: [],
+            },
+          ],
+        });
+
+        // 1. email.date present -> gmail wins (261019)
+        const res1 = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: { action: 'onFormChange', previousDriveUrl: '' },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: { stringInputs: { value: ['https://drive.google.com/file/d/drive-url-comm-1/view'] } },
+              },
+            },
+            gmail: {
+              messageId: 'msg-with-date',
+              threadId: 'th-drive-url-307',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+        expect(res1.statusCode).toBe(200);
+        const body1 = JSON.parse(res1.payload) as GoogleWorkspaceActionResponse;
+        const docSec1 = body1.action?.navigations?.[0]?.updateCard?.sections.find((s) => s.header === 'Document Data');
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-project'))?.textInput?.value
+        ).toBe('261019');
+
+        // 2. email.date absent -> drive fills blank date (260315) while gmail fills description
+        driveGetFileSpy.mockClear();
+        const res2 = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: { action: 'onFormChange', previousDriveUrl: '' },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: { stringInputs: { value: ['https://drive.google.com/file/d/drive-url-comm-1/view'] } },
+              },
+            },
+            gmail: {
+              messageId: 'msg-no-date',
+              threadId: 'th-drive-url-307',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+        expect(res2.statusCode).toBe(200);
+        const body2 = JSON.parse(res2.payload) as GoogleWorkspaceActionResponse;
+        const docSec2 = body2.action?.navigations?.[0]?.updateCard?.sections.find((s) => s.header === 'Document Data');
+        expect(
+          docSec2?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-project'))?.textInput?.value
+        ).toBe('260315');
+        expect(
+          docSec2?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('description', 'communication-project'))?.textInput?.value
+        ).toBe('Active Projects - Follow-up Sync');
+      });
+
+      it('skips source: "drive" extractors completely in Gmail Email Attachments mode', async () => {
+        const driveGetFileSpy = vi.spyOn(GoogleDriveClient.prototype, 'getFile');
+
+        vi.spyOn(mockGmailClient, 'getThread').mockResolvedValueOnce({
+          id: 'th-att-skip-307',
+          messages: [
+            {
+              id: 'msg-att-skip-307',
+              threadId: 'th-att-skip-307',
+              subject: 'Active Projects - No Date Email',
+              from: 'Alice <alice@example.com>',
+              plainTextBody: 'Attached.',
+              inlineImages: [],
+              attachments: [{ partId: '1', attachmentId: 'att-part-1', filename: 'Notes.pdf', mimeType: 'application/pdf', size: 100 }],
+            },
+          ],
+        });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            hostApp: 'GMAIL',
+            gmail: {
+              messageId: 'msg-att-skip-307',
+              threadId: 'th-att-skip-307',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(driveGetFileSpy).not.toHaveBeenCalled();
       });
     });
   });

@@ -33,6 +33,7 @@ import type {
   WorkspaceAuthVerifierPort,
 } from '../infrastructure/workspace-addon/api';
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
+import type { DriveSourceContextClientPort } from '../features/source-parser';
 
 export type CompositeManifestProvider =
   AppConfigurationProviderPort &
@@ -49,6 +50,7 @@ export interface AppOptions {
   templateEvaluator?: TemplateEvaluatorPort | undefined;
   authVerifier?: WorkspaceAuthVerifierPort | undefined;
   driveService?: DriveServicePort | undefined;
+  driveContextClient?: DriveSourceContextClientPort | undefined;
   gmailClient?: GoogleGmailClient | undefined;
   storageAdapter?: DocumentSpaceStoragePort | undefined;
   documentSpaceStoragePort?: DocumentSpaceStoragePort | undefined;
@@ -157,8 +159,9 @@ export function createApp(options?: AppOptions): AppInstance {
     spaceTypesProvider,
     manifestProvider,
     driveClient,
-    driveService: options?.driveService,
+    driveContextClient: options?.driveContextClient,
     configProvider: manifestProvider ?? defaultAppConfigProvider,
+    workspaceConfigProvider: manifestProvider,
   });
 
   wireWorkspaceAddonRoutes({
@@ -177,7 +180,7 @@ export function createApp(options?: AppOptions): AppInstance {
     documentSpaceRegistry: documentSpaceWiring.documentSpaceRegistry,
     storageAdapter,
     pdfProcessor: options?.pdfProcessor,
-    driveService: options?.driveService,
+    driveContextClient: options?.driveContextClient,
     sourceParser: sourceParserWiring.sourceParser,
     createSourceParser: sourceParserWiring.createSourceParser,
   });

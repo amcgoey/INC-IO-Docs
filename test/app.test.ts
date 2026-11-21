@@ -1027,6 +1027,10 @@ describe('App integration tests', () => {
       const appInstance = createApp({ skipSpaceValidation: true, 
         manifestPath,
         driveService: mockDriveService,
+        driveContextClient: {
+          getFile: (fileId: string) => mockDriveService.getFile(fileId),
+          listSharedDrives: vi.fn().mockResolvedValue({ drives: [] }),
+        },
         authVerifier: mockAuthVerifier,
       });
 
@@ -1357,6 +1361,34 @@ describe('App integration tests', () => {
       });
 
       await expect(appInstance.initialize()).rejects.toThrow(/Empty or whitespace-only alias/i);
+    });
+
+    it('fails fast on createApp().initialize() when configuration.workspace.timeZone is invalid even with empty documentTypes (#307)', async () => {
+      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'app-tz-test-'));
+      try {
+        const badTzManifestPath = path.join(tempDir, 'manifest.json');
+        await fs.writeFile(
+          badTzManifestPath,
+          JSON.stringify({
+            documentTypes: [],
+            configuration: {
+              workspace: {
+                timeZone: 'Invalid/Zone_Name',
+              },
+            },
+          }),
+          'utf-8'
+        );
+
+        const appInstance = createApp({
+          manifestPath: badTzManifestPath,
+          skipSpaceValidation: true,
+        });
+
+        await expect(appInstance.initialize()).rejects.toThrow(/timeZone/i);
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      }
     });
   });
 });

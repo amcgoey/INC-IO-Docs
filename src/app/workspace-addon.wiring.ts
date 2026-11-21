@@ -30,12 +30,12 @@ import type {
   DocumentSchemaRegistryPort,
   TemplateEvaluatorPort,
   AppConfigurationProviderPort,
-  DriveServicePort,
 } from '../features/document/ports';
 import { createSourceParserWiring } from './source-parser.wiring';
 import type {
   SourceParserPort,
   CanonicalOptionsProviderPort,
+  DriveSourceContextClientPort,
 } from '../features/source-parser';
 import type { DocumentSpaceManifestRegistryAdapter } from '../features/document-space/adapters/document-space-manifest-registry';
 import type { DocumentSpaceStoragePort } from '../features/document-space/ports';
@@ -74,7 +74,7 @@ export interface WorkspaceAddonWiringOptions {
         overrides?: { canonicalOptionsProvider?: CanonicalOptionsProviderPort | undefined }
       ) => SourceParserPort | Promise<SourceParserPort>)
     | undefined;
-  driveService?: DriveServicePort | undefined;
+  driveContextClient?: DriveSourceContextClientPort | undefined;
 }
 
 export function wireWorkspaceAddonRoutes(
@@ -182,8 +182,9 @@ export function wireWorkspaceAddonRoutes(
         spaceTypesProvider,
         manifestProvider,
         driveClient: options.driveClient,
-        driveService: options.driveService,
+        driveContextClient: options.driveContextClient,
         configProvider: appConfigProvider,
+        workspaceConfigProvider: options.configProvider,
         getCanonicalOptionsProvider: (ctx) => getDynamicOptionsAdapter(ctx),
       });
       sourceParser = sourceParserWiring.sourceParser;

@@ -1,12 +1,28 @@
-import type { DriveFileMetadata } from '../../../infrastructure/drive/drive-client';
 import type {
   DriveSourceContextPort,
   DriveItemHierarchy,
   DriveHierarchyNode,
 } from '../ports';
 
+export interface DriveSourceFileMetadata {
+  id: string;
+  name: string;
+  parents?: string[] | undefined;
+  mimeType?: string | undefined;
+  webViewLink?: string | undefined;
+  driveId?: string | undefined;
+  createdTime?: string | undefined;
+  modifiedTime?: string | undefined;
+  shortcutDetails?:
+    | {
+        targetId?: string | undefined;
+        targetMimeType?: string | undefined;
+      }
+    | undefined;
+}
+
 export interface DriveSourceContextClientPort {
-  getFile(fileId: string): Promise<DriveFileMetadata>;
+  getFile(fileId: string): Promise<DriveSourceFileMetadata>;
   listSharedDrives?(options?: { pageSize?: number; pageToken?: string }): Promise<{
     drives: Array<{ id: string; name: string }>;
     nextPageToken?: string | undefined;
@@ -48,7 +64,7 @@ export function isPermissionBoundaryOrNotFound(error: unknown): boolean {
 }
 
 export class DriveSourceContextAdapter implements DriveSourceContextPort {
-  private readonly fileCache = new Map<string, DriveFileMetadata>();
+  private readonly fileCache = new Map<string, DriveSourceFileMetadata>();
   private sharedDrivesMap?: Map<string, string>;
 
   constructor(private readonly client: DriveSourceContextClientPort) {}
@@ -82,7 +98,7 @@ export class DriveSourceContextAdapter implements DriveSourceContextPort {
       visited.add(parentId);
       depth++;
 
-      let parentMetadata: DriveFileMetadata;
+      let parentMetadata: DriveSourceFileMetadata;
       try {
         parentMetadata = await this.getCachedFile(parentId);
       } catch (error: unknown) {
@@ -112,6 +128,8 @@ export class DriveSourceContextAdapter implements DriveSourceContextPort {
         id: itemMetadata.id,
         name: itemMetadata.name,
         ...(itemMetadata.mimeType !== undefined ? { mimeType: itemMetadata.mimeType } : {}),
+        ...(itemMetadata.createdTime !== undefined ? { createdTime: itemMetadata.createdTime } : {}),
+        ...(itemMetadata.modifiedTime !== undefined ? { modifiedTime: itemMetadata.modifiedTime } : {}),
       },
       ...(driveId !== undefined ? { driveId } : {}),
       ...(driveName !== undefined ? { driveName } : {}),
@@ -119,7 +137,7 @@ export class DriveSourceContextAdapter implements DriveSourceContextPort {
     };
   }
 
-  private async getCachedFile(fileId: string): Promise<DriveFileMetadata> {
+  private async getCachedFile(fileId: string): Promise<DriveSourceFileMetadata> {
     const existing = this.fileCache.get(fileId);
     if (existing) {
       return existing;

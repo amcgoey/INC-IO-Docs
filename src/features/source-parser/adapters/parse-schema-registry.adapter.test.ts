@@ -66,7 +66,7 @@ describe('ParseSchemaRegistryAdapter', () => {
             {
               source: 'drive',
               fields: {
-                date: { custom: 'placeholder' },
+                date: [{ from: 'drive.modifiedTime' }, { from: 'drive.createdTime' }],
               },
             },
           ],
@@ -770,6 +770,108 @@ describe('ParseSchemaRegistryAdapter', () => {
       expect(() =>
         validateJsonLogicAst({ unknownOp: ['foo'] })
       ).toThrow('Unrecognized operation unknownOp');
+    });
+  });
+
+  describe('DriveExtractorRule fail-fast validation (#307)', () => {
+    it('rejects unknown from source in source: "drive" extractor', async () => {
+      const adapter = new ParseSchemaRegistryAdapter({
+        getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-doc.json'] }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'test-doc',
+          documentSchema: { fields: [{ key: 'date', type: 'string' }] },
+          documentParseSchema: {
+            extractors: [
+              {
+                source: 'drive',
+                fields: { date: { from: 'drive.unknownField' } },
+              },
+            ],
+          },
+        }),
+      });
+      await expect(adapter.initialize()).rejects.toThrow(/Invalid DocumentParseSchema structure/i);
+    });
+
+    it('rejects invalid regex, lookup on non-LookupField, and CalculatedField/LinkedField targets in source: "drive"', async () => {
+      const badRegexAdapter = new ParseSchemaRegistryAdapter({
+        getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-doc.json'] }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'test-doc',
+          documentSchema: { fields: [{ key: 'date', type: 'string' }] },
+          documentParseSchema: {
+            extractors: [
+              {
+                source: 'drive',
+                fields: { date: { from: 'drive.fileNameStem', pattern: '(?+bad' } },
+              },
+            ],
+          },
+        }),
+      });
+      await expect(badRegexAdapter.initialize()).rejects.toThrow(/invalid RegExp pattern/i);
+
+      const badLookupAdapter = new ParseSchemaRegistryAdapter({
+        getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-doc.json'] }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'test-doc',
+          documentSchema: { fields: [{ key: 'date', type: 'string' }] },
+          documentParseSchema: {
+            extractors: [
+              {
+                source: 'drive',
+                fields: { date: { from: 'drive.fileNameStem', lookup: true } },
+              },
+            ],
+          },
+        }),
+      });
+      await expect(badLookupAdapter.initialize()).rejects.toThrow(/does not have options/i);
+
+      const badCalcAdapter = new ParseSchemaRegistryAdapter({
+        getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-doc.json'] }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'test-doc',
+          documentSchema: {
+            fields: [
+              { key: 'specTag', type: 'string' },
+              { key: 'specTitle', type: 'string', linkedField: { sourceField: 'specTag', sourceProperty: 'name' } },
+            ],
+            calculatedFields: [{ key: 'fileName', template: '{{specTag}}' }],
+          },
+          documentParseSchema: {
+            extractors: [
+              {
+                source: 'drive',
+                fields: { fileName: { from: 'drive.fileNameStem' } },
+              },
+            ],
+          },
+        }),
+      });
+      await expect(badCalcAdapter.initialize()).rejects.toThrow(/CalculatedField/i);
+
+      const badLinkedAdapter = new ParseSchemaRegistryAdapter({
+        getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-doc.json'] }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'test-doc',
+          documentSchema: {
+            fields: [
+              { key: 'specTag', type: 'string' },
+              { key: 'specTitle', type: 'string', linkedField: { sourceField: 'specTag', sourceProperty: 'name' } },
+            ],
+          },
+          documentParseSchema: {
+            extractors: [
+              {
+                source: 'drive',
+                fields: { specTitle: { from: 'drive.fileNameStem' } },
+              },
+            ],
+          },
+        }),
+      });
+      await expect(badLinkedAdapter.initialize()).rejects.toThrow(/LinkedField/i);
     });
   });
 });

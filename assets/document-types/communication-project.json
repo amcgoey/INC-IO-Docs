@@ -220,6 +220,19 @@
             "from": "email.subjectClean"
           }
         }
+      },
+      {
+        "source": "drive",
+        "fields": {
+          "date": [
+            {
+              "from": "drive.modifiedTime"
+            },
+            {
+              "from": "drive.createdTime"
+            }
+          ]
+        }
       }
     ]
   },
