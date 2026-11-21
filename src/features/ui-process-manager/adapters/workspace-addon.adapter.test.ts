@@ -5624,6 +5624,220 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(spaceCallArg.context.isDriveUrl).toBe(true);
     });
   });
+
+  describe('Ticket #309: Drive SelectFiles filtering, type-switch edit preservation & single-banner suppression', () => {
+    it('filters Pass 2 Drive SourceContext.items by SelectFiles when !isResetOrInitial and treats omitted SelectFiles as []', async () => {
+      const mockSourceParser: UiProcessSourceParserPort = {
+        inferRouting: vi.fn().mockResolvedValue({}),
+        extractFields: vi.fn().mockResolvedValue({ fields: {} }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        sourceParser: mockSourceParser,
+      });
+
+      const selectedItems = [
+        { id: 'file-1', title: 'Cover_Notes.pdf', mimeType: 'application/pdf' },
+        { id: 'file-2', title: 'Submittal.pdf', mimeType: 'application/pdf' },
+      ];
+
+      // 1. Partial SelectFiles on onDocumentTypeChange -> only checked item passed
+      await adapter.processUiEvent({
+        actionName: 'onDocumentTypeChange',
+        selectedItems,
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectFiles: ['file-2'],
+        },
+      });
+
+      const partialCall = (mockSourceParser.extractFields as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(partialCall.context.items).toEqual([
+        { id: 'file-2', name: 'Submittal.pdf', mimeType: 'application/pdf' },
+      ]);
+
+      // 2. Omitted SelectFiles on onSpaceTypeChange (all checkboxes unchecked) -> items: []
+      await adapter.processUiEvent({
+        actionName: 'onSpaceTypeChange',
+        selectedItems,
+        formData: {
+          SelectDocumentSpaceType: 'proposals',
+        },
+      });
+
+      const omittedCall = (mockSourceParser.extractFields as ReturnType<typeof vi.fn>).mock.calls[1][0];
+      expect(omittedCall.context.items).toEqual([]);
+
+      // 3. Explicit empty SelectFiles: [] on onDocumentTypeChange -> items: []
+      await adapter.processUiEvent({
+        actionName: 'onDocumentTypeChange',
+        selectedItems,
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentType_projects: 'communication-project',
+          SelectFiles: [],
+        },
+      });
+
+      const emptyArrayCall = (mockSourceParser.extractFields as ReturnType<typeof vi.fn>).mock.calls[2][0];
+      expect(emptyArrayCall.context.items).toEqual([]);
+
+      // 4. Refresh (isResetOrInitial = true) -> includes all selectedItems regardless of SelectFiles
+      await adapter.processUiEvent({
+        actionName: 'refresh',
+        selectedItems,
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectFiles: ['file-2'],
+        },
+      });
+
+      const refreshCall = (mockSourceParser.extractFields as ReturnType<typeof vi.fn>).mock.calls[3][0];
+      expect(refreshCall.context.items).toEqual([
+        { id: 'file-1', name: 'Cover_Notes.pdf', mimeType: 'application/pdf' },
+        { id: 'file-2', name: 'Submittal.pdf', mimeType: 'application/pdf' },
+      ]);
+    });
+
+    it('suppresses Pass 2 Drive metadata notice when Pass 1 emitted DRIVE_ROUTING_FALLBACK_NOTICE in the same request, while surfacing Pass 2 notice standalone on manual type switches', async () => {
+      const pass2DriveNotice =
+        'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.';
+
+      const mockSourceParser: UiProcessSourceParserPort = {
+        inferRouting: vi.fn().mockResolvedValue({
+          statusMessages: [DRIVE_ROUTING_FALLBACK_NOTICE],
+        }),
+        extractFields: vi.fn().mockResolvedValue({
+          fields: {},
+          statusMessages: [pass2DriveNotice],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        sourceParser: mockSourceParser,
+      });
+
+      // 1. Initial Drive load where both Pass 1 and Pass 2 fail -> only 1 banner
+      const initialResult = (await adapter.processUiEvent({
+        selectedItems: [{ id: 'broken-drive-item', title: 'Broken.pdf' }],
+      })) as UiProcessRenderResult;
+
+      expect(initialResult.statusMessages).toEqual([DRIVE_ROUTING_FALLBACK_NOTICE]);
+
+      // 2. Gmail Google Drive URL onFormChange where both Pass 1 and Pass 2 fail -> only 1 banner
+      const gmailDriveUrlResult = (await adapter.processUiEvent({
+        actionName: 'onFormChange',
+        hostApp: 'GMAIL',
+        gmail: { messageId: 'msg-1' },
+        parameters: { action: 'onFormChange', previousDriveUrl: '' },
+        formData: {
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: 'https://drive.google.com/file/d/forbidden-item/view',
+        },
+      })) as UiProcessRenderResult;
+
+      expect(gmailDriveUrlResult.statusMessages).toEqual([DRIVE_ROUTING_FALLBACK_NOTICE]);
+
+      // 3. Manual onDocumentTypeChange (Pass 1 does not run) -> Pass 2 notice surfaces standalone
+      const docSwitchResult = (await adapter.processUiEvent({
+        actionName: 'onDocumentTypeChange',
+        selectedItems: [{ id: 'broken-drive-item', title: 'Broken.pdf' }],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectFiles: ['broken-drive-item'],
+        },
+      })) as UiProcessRenderResult;
+
+      expect(docSwitchResult.statusMessages).toEqual([pass2DriveNotice]);
+
+      // 4. Manual onSpaceTypeChange (Pass 1 does not run) -> Pass 2 notice surfaces standalone
+      const spaceSwitchResult = (await adapter.processUiEvent({
+        actionName: 'onSpaceTypeChange',
+        selectedItems: [{ id: 'broken-drive-item', title: 'Broken.pdf' }],
+        formData: {
+          SelectDocumentSpaceType: 'proposals',
+          SelectFiles: ['broken-drive-item'],
+        },
+      })) as UiProcessRenderResult;
+
+      expect(spaceSwitchResult.statusMessages).toEqual([pass2DriveNotice]);
+    });
+
+    it('preserves non-empty active-type user edits, populates blank fields from Pass 2, and evaluates formEvaluator on onDocumentTypeChange and onSpaceTypeChange', async () => {
+      const mockSourceParser: UiProcessSourceParserPort = {
+        inferRouting: vi.fn().mockResolvedValue({}),
+        extractFields: vi.fn().mockResolvedValue({
+          fields: {
+            date: '261119',
+            description: 'From Drive Metadata',
+          },
+        }),
+      };
+
+      const mockFormEvaluator: UiProcessFormEvaluatorPort = {
+        evaluate: vi.fn().mockImplementation(async (rawFormData) => ({
+          computedData: {
+            ...rawFormData,
+            direction: rawFormData.direction ?? 'IN',
+            computedSummary: `${rawFormData.date ?? ''}-${rawFormData.description ?? ''}`,
+          },
+          hiddenFields: ['internalNotes'],
+          disabledFields: [],
+        })),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        sourceParser: mockSourceParser,
+        formEvaluator: mockFormEvaluator,
+      });
+
+      const docSwitchResult = (await adapter.processUiEvent({
+        actionName: 'onDocumentTypeChange',
+        selectedItems: [{ id: 'file-1', title: 'Notes.pdf' }],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'communication-project',
+          SelectFiles: ['file-1'],
+          'description_communication-project': 'User Custom Description',
+        },
+      })) as UiProcessRenderResult;
+
+      expect(docSwitchResult.formData?.description).toBe('User Custom Description');
+      expect(docSwitchResult.formData?.date).toBe('261119');
+      expect(docSwitchResult.formData?.direction).toBe('IN');
+      expect(docSwitchResult.formData?.computedSummary).toBe('261119-User Custom Description');
+      expect(mockFormEvaluator.evaluate).toHaveBeenCalledTimes(1);
+
+      const spaceSwitchResult = (await adapter.processUiEvent({
+        actionName: 'onSpaceTypeChange',
+        selectedItems: [{ id: 'file-1', title: 'Notes.pdf' }],
+        formData: {
+          SelectDocumentSpaceType: 'proposals',
+          SelectFiles: ['file-1'],
+          'description_communication-proposal': 'Proposal User Edit',
+        },
+      })) as UiProcessRenderResult;
+
+      expect(spaceSwitchResult.formData?.description).toBe('Proposal User Edit');
+      expect(spaceSwitchResult.formData?.date).toBe('261119');
+      expect(spaceSwitchResult.formData?.direction).toBe('IN');
+      expect(spaceSwitchResult.formData?.computedSummary).toBe('261119-Proposal User Edit');
+      expect(mockFormEvaluator.evaluate).toHaveBeenCalledTimes(2);
+    });
+  });
 });
 
 

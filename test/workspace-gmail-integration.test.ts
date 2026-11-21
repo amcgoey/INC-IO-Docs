@@ -6179,6 +6179,73 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(res.statusCode).toBe(200);
         expect(driveGetFileSpy).not.toHaveBeenCalled();
       });
+
+      it('memoizes target-item 403 error across Pass 1 + Pass 2 in Google Drive URL mode, still populates gmail fields, and emits only one Drive warning banner', async () => {
+        const err403 = new Error('Forbidden') as Error & { statusCode: number };
+        err403.statusCode = 403;
+        const driveGetFileSpy = vi
+          .spyOn(GoogleDriveClient.prototype, 'getFile')
+          .mockRejectedValue(err403);
+
+        vi.spyOn(mockGmailClient, 'getThread').mockResolvedValueOnce({
+          id: 'th-drive-url-403',
+          messages: [
+            {
+              id: 'msg-drive-url-403',
+              threadId: 'th-drive-url-403',
+              subject: 'Re: Active Projects - Restricted Link Discussion',
+              from: 'Alice <alice@example.com>',
+              plainTextBody: 'Please see the restricted file.',
+              inlineImages: [],
+              attachments: [],
+            },
+          ],
+        });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: { action: 'onFormChange', previousDriveUrl: '' },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: {
+                  stringInputs: { value: ['https://drive.google.com/file/d/forbidden-drive-url-1/view'] },
+                },
+              },
+            },
+            gmail: {
+              messageId: 'msg-drive-url-403',
+              threadId: 'th-drive-url-403',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(driveGetFileSpy).toHaveBeenCalledTimes(1);
+
+        const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+        const card = body.action?.navigations?.[0]?.updateCard;
+        const cardJson = JSON.stringify(card);
+
+        expect(cardJson).toContain(
+          'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.'
+        );
+        expect(cardJson).not.toContain(
+          'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.'
+        );
+
+        const docSec = card?.sections.find((s) => s.header === 'Document Data');
+        expect(
+          docSec?.widgets.find(
+            (w) => w.textInput?.name === getDocumentInfoWidgetName('description', 'communication-project')
+          )?.textInput?.value
+        ).toBe('Active Projects - Restricted Link Discussion');
+      });
     });
   });
 });

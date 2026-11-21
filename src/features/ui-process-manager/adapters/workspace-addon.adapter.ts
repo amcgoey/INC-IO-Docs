@@ -41,8 +41,10 @@ import {
   SAVE_EMAIL_TO_PDF_KEY,
   SELECT_EMAIL_MESSAGE_KEY,
   DRIVE_ROUTING_FALLBACK_NOTICE,
+  DRIVE_METADATA_FALLBACK_NOTICE,
   hasProposalOpportunityMarkers,
   extractSelectFilesSet,
+  resolveCheckedDriveItems,
   resolveAttachmentId,
   parseGoogleDriveUrl,
   isGmailContext,
@@ -98,6 +100,8 @@ function buildSourceContextItems(params: {
   driveUrlId?: string | undefined;
   activeMsg?: UiProcessGmailMessageDescriptor | undefined;
   selectedItems?: UiProcessEventContext['selectedItems'];
+  isResetOrInitial: boolean;
+  formData?: Record<string, unknown> | undefined;
 }): UiProcessSourceContextItem[] {
   if (params.driveUrlId !== undefined) {
     return [{ id: params.driveUrlId }];
@@ -112,16 +116,15 @@ function buildSourceContextItems(params: {
       ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
     }));
   }
-  return (params.selectedItems ?? [])
-    .filter(
-      (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
-        typeof item?.id === 'string' && item.id.trim().length > 0
-    )
-    .map((item) => ({
-      id: item.id.trim(),
-      ...(item.title !== undefined ? { name: item.title } : {}),
-      ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
-    }));
+  return resolveCheckedDriveItems({
+    selectedItems: params.selectedItems,
+    formData: params.formData,
+    isResetOrInitial: params.isResetOrInitial,
+  }).map((item) => ({
+    id: item.id.trim(),
+    ...(item.title !== undefined ? { name: item.title } : {}),
+    ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
+  }));
 }
 
 function buildSourceEmailDescriptor(
@@ -588,6 +591,8 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         driveUrlId: isGmailDriveUrlMode ? gmailDriveSelection.parsedCurrentDriveUrl?.id : undefined,
         activeMsg,
         selectedItems: effectiveContext.selectedItems,
+        isResetOrInitial,
+        formData: effectiveContext.formData,
       });
 
       const pass2EmailContext = buildSourceEmailDescriptor(activeMsg);
@@ -623,15 +628,26 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         }
 
         if (extractedResult?.statusMessages && extractedResult.statusMessages.length > 0) {
-          effectiveContext = {
-            ...effectiveContext,
-            statusMessages: Array.from(
-              new Set([
-                ...(effectiveContext.statusMessages ?? []),
-                ...extractedResult.statusMessages,
-              ])
-            ),
-          };
+          const pass1EmittedDriveWarning = Boolean(
+            inferred?.statusMessages?.includes(DRIVE_ROUTING_FALLBACK_NOTICE)
+          );
+          const filteredPass2StatusMessages = pass1EmittedDriveWarning
+            ? extractedResult.statusMessages.filter(
+                (msg) => msg !== DRIVE_METADATA_FALLBACK_NOTICE
+              )
+            : extractedResult.statusMessages;
+
+          if (filteredPass2StatusMessages.length > 0) {
+            effectiveContext = {
+              ...effectiveContext,
+              statusMessages: Array.from(
+                new Set([
+                  ...(effectiveContext.statusMessages ?? []),
+                  ...filteredPass2StatusMessages,
+                ])
+              ),
+            };
+          }
         }
       } catch (e) {
         console.warn('SourceParser Pass 2 extractFields error in UiProcessManager:', e);
@@ -1120,6 +1136,8 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       const candidateItems = buildSourceContextItems({
         isGmail: false,
         selectedItems: effectiveContext.selectedItems,
+        isResetOrInitial: true,
+        formData: effectiveContext.formData,
       });
 
       if (candidateItems.length > 0) {
@@ -1137,6 +1155,8 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         isGmail: true,
         driveUrlId: isGmailDriveUrlPass1Event ? parsedCurrentDriveUrl!.id : undefined,
         activeMsg,
+        isResetOrInitial,
+        formData: effectiveContext.formData,
       });
 
       const emailContext = buildSourceEmailDescriptor(activeMsg);

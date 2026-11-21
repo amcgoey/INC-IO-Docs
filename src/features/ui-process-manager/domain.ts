@@ -137,6 +137,9 @@ export const GMAIL_WORKSPACE_ADDON_VIEW_ID = 'gmail-document-process-card';
 export const DRIVE_ROUTING_FALLBACK_NOTICE =
   'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.';
 
+export const DRIVE_METADATA_FALLBACK_NOTICE =
+  'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.';
+
 export const PROPOSAL_OPPORTUNITY_MARKERS_REGEX =
   /\b(?:proposal|proposals|opportunity|opportunities|rfp|rfps)\b/i;
 
@@ -389,6 +392,37 @@ export function extractSelectFilesSet(
     }
   }
   return set;
+}
+
+function isDriveFileSelected(
+  fileId: string,
+  resetOrInitialLoad: boolean,
+  selectedFilesSet: Set<string>
+): boolean {
+  return resetOrInitialLoad || selectedFilesSet.has(fileId);
+}
+
+/**
+ * Resolves checked Drive items using the same SelectFiles semantics as evaluateProcessUiState:
+ * initial load and refresh include all valid selectedItems; in-card actions treat an omitted
+ * SelectFiles key as zero selected items.
+ */
+export function resolveCheckedDriveItems<T extends { id?: string | undefined }>(params: {
+  selectedItems?: readonly T[] | undefined;
+  formData?: Record<string, unknown> | undefined;
+  isResetOrInitial: boolean;
+}): Array<T & { id: string }> {
+  const validItems = (params.selectedItems ?? []).filter(
+    (item): item is T & { id: string } =>
+      typeof item?.id === 'string' && item.id.trim().length > 0
+  );
+  if (params.isResetOrInitial) {
+    return validItems;
+  }
+  const selectedFilesSet = extractSelectFilesSet(params.formData, SELECT_FILES_KEY);
+  return validItems.filter((item) =>
+    isDriveFileSelected(item.id.trim(), false, selectedFilesSet)
+  );
 }
 
 const NAMED_TIMEZONE_OFFSETS: Record<string, number> = {
@@ -1050,7 +1084,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
       return {
         text: trimmedTitle.length > 0 ? trimmedTitle : fileId,
         value: item.id,
-        selected: resetOrInitialLoad ? true : selectedFilesSet.has(fileId),
+        selected: isDriveFileSelected(fileId, resetOrInitialLoad, selectedFilesSet),
       };
     });
   }

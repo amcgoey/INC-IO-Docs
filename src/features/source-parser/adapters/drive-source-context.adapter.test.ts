@@ -455,4 +455,153 @@ describe('DriveSourceContextAdapter', () => {
       await expect(adapter.getItemHierarchy('shortcut-broken')).rejects.toThrow(GoogleDriveApiError);
     });
   });
+
+  describe('Per-request promise memoization (Ticket #309)', () => {
+    it('memoizes in-flight getFile and listSharedDrives promises across concurrent getItemHierarchy calls', async () => {
+      let resolveFile: ((val: DriveSourceFileMetadata) => void) | undefined;
+      let resolveDrives: ((val: { drives: Array<{ id: string; name: string }> }) => void) | undefined;
+
+      mockClient.getFile = vi.fn().mockImplementation(
+        () =>
+          new Promise<DriveSourceFileMetadata>((resolve) => {
+            resolveFile = resolve;
+          })
+      );
+      mockClient.listSharedDrives = vi.fn().mockImplementation(
+        () =>
+          new Promise<{ drives: Array<{ id: string; name: string }> }>((resolve) => {
+            resolveDrives = resolve;
+          })
+      );
+
+      const adapter = new DriveSourceContextAdapter(mockClient);
+      const p1 = adapter.getItemHierarchy('concurrent-file');
+      const p2 = adapter.getItemHierarchy('concurrent-file');
+
+      await vi.waitFor(() => expect(resolveFile).toBeDefined());
+      resolveFile!({
+        id: 'concurrent-file',
+        name: 'Concurrent.pdf',
+        parents: [],
+        driveId: 'drive-proj-1',
+        modifiedTime: '2026-10-19T23:30:00Z',
+      });
+      await vi.waitFor(() => expect(resolveDrives).toBeDefined());
+      resolveDrives!({
+        drives: [{ id: 'drive-proj-1', name: 'Project 1001 Alpha' }],
+      });
+
+      const [h1, h2] = await Promise.all([p1, p2]);
+      expect(mockClient.getFile).toHaveBeenCalledTimes(1);
+      expect(mockClient.listSharedDrives).toHaveBeenCalledTimes(1);
+      expect(h1.driveName).toBe('Project 1001 Alpha');
+      expect(h2.driveName).toBe('Project 1001 Alpha');
+    });
+
+    it('memoizes listSharedDrives across concurrent calls for distinct items on the same shared drive', async () => {
+      let resolveDrives: ((val: { drives: Array<{ id: string; name: string }> }) => void) | undefined;
+
+      mockClient.getFile = vi.fn().mockImplementation(async (fileId: string) => ({
+        id: fileId,
+        name: `${fileId}.pdf`,
+        parents: [],
+        driveId: 'drive-proj-1',
+      }));
+      mockClient.listSharedDrives = vi.fn().mockImplementation(
+        () =>
+          new Promise<{ drives: Array<{ id: string; name: string }> }>((resolve) => {
+            resolveDrives = resolve;
+          })
+      );
+
+      const adapter = new DriveSourceContextAdapter(mockClient);
+      const p1 = adapter.getItemHierarchy('item-a');
+      const p2 = adapter.getItemHierarchy('item-b');
+
+      await vi.waitFor(() => expect(resolveDrives).toBeDefined());
+      resolveDrives!({
+        drives: [{ id: 'drive-proj-1', name: 'Project 1001 Alpha' }],
+      });
+
+      const [h1, h2] = await Promise.all([p1, p2]);
+      expect(mockClient.listSharedDrives).toHaveBeenCalledTimes(1);
+      expect(h1.driveName).toBe('Project 1001 Alpha');
+      expect(h2.driveName).toBe('Project 1001 Alpha');
+    });
+
+    it('memoizes settled rejected promises for broken shortcuts and target-item errors across repeated lookups', async () => {
+      fileStore.set('shortcut-broken', {
+        id: 'shortcut-broken',
+        name: 'Broken Shortcut',
+        mimeType: 'application/vnd.google-apps.shortcut',
+        shortcutDetails: {
+          targetId: 'target-deleted',
+        },
+      });
+
+      mockClient.getFile = vi.fn().mockImplementation(async (fileId: string) => {
+        if (fileId === 'shortcut-broken') {
+          return fileStore.get(fileId)!;
+        }
+        if (fileId === 'target-deleted') {
+          throw new GoogleDriveApiError('Target not found', { statusCode: 404 });
+        }
+        throw new GoogleDriveApiError('Forbidden', { statusCode: 403 });
+      });
+
+      const adapter = new DriveSourceContextAdapter(mockClient);
+
+      await expect(adapter.getItemHierarchy('shortcut-broken')).rejects.toThrow(GoogleDriveApiError);
+      await expect(adapter.getItemHierarchy('shortcut-broken')).rejects.toThrow(GoogleDriveApiError);
+      expect(mockClient.getFile).toHaveBeenCalledWith('shortcut-broken');
+      expect(mockClient.getFile).toHaveBeenCalledWith('target-deleted');
+      expect(mockClient.getFile).toHaveBeenCalledTimes(2);
+
+      await expect(adapter.getItemHierarchy('forbidden-item')).rejects.toThrow(GoogleDriveApiError);
+      await expect(adapter.getItemHierarchy('forbidden-item')).rejects.toThrow(GoogleDriveApiError);
+      const forbiddenCalls = (mockClient.getFile as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c) => c[0] === 'forbidden-item'
+      );
+      expect(forbiddenCalls).toHaveLength(1);
+    });
+
+    it('memoizes rejected parent-folder 403 promise across items sharing the restricted parent without throwing', async () => {
+      fileStore.set('leaf-1', {
+        id: 'leaf-1',
+        name: 'Leaf1.pdf',
+        parents: ['restricted-parent'],
+        modifiedTime: '2026-10-19T12:00:00Z',
+      });
+      fileStore.set('leaf-2', {
+        id: 'leaf-2',
+        name: 'Leaf2.pdf',
+        parents: ['restricted-parent'],
+        modifiedTime: '2026-10-20T12:00:00Z',
+      });
+
+      mockClient.getFile = vi.fn().mockImplementation(async (fileId: string) => {
+        if (fileStore.has(fileId)) {
+          return fileStore.get(fileId)!;
+        }
+        if (fileId === 'restricted-parent') {
+          throw new GoogleDriveApiError('Forbidden', { statusCode: 403 });
+        }
+        throw new Error(`Unexpected fileId: ${fileId}`);
+      });
+
+      const adapter = new DriveSourceContextAdapter(mockClient);
+      const h1 = await adapter.getItemHierarchy('leaf-1');
+      const h2 = await adapter.getItemHierarchy('leaf-2');
+
+      expect(h1.item.modifiedTime).toBe('2026-10-19T12:00:00Z');
+      expect(h1.ancestors).toEqual([]);
+      expect(h2.item.modifiedTime).toBe('2026-10-20T12:00:00Z');
+      expect(h2.ancestors).toEqual([]);
+
+      const parentCalls = (mockClient.getFile as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c) => c[0] === 'restricted-parent'
+      );
+      expect(parentCalls).toHaveLength(1);
+    });
+  });
 });
