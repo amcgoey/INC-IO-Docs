@@ -260,6 +260,7 @@ describe('DocumentType JSON files schema validation', () => {
       expect(rawManifest.configuration?.workspace).toEqual({
         defaultDocumentSpaceType: 'projects',
         defaultDocumentType: 'communication-project',
+        timeZone: 'America/New_York',
       });
       expect(rawManifest.configuration?.workspace).not.toHaveProperty('appTitle');
       expect(rawManifest.configuration?.workspace).not.toHaveProperty('actionButtonText');
@@ -271,6 +272,7 @@ describe('DocumentType JSON files schema validation', () => {
       expect(workspaceConfig).toEqual({
         defaultDocumentSpaceType: 'projects',
         defaultDocumentType: 'communication-project',
+        timeZone: 'America/New_York',
       });
 
       const driveConfig = await manifestProvider.getDriveConfig();
@@ -310,6 +312,15 @@ describe('DocumentType JSON files schema validation', () => {
         const parseSchema = registry.getParseSchema(docKey);
         expect(parseSchema).toBeDefined();
         expect(parseSchema?.extractors.length).toBeGreaterThan(0);
+      }
+
+      for (const commKey of ['communication-project', 'communication-proposal']) {
+        const commParse = registry.getParseSchema(commKey);
+        expect(commParse?.extractors[0]?.source).toBe('gmail');
+        expect(commParse?.extractors[1]?.source).toBe('drive');
+        expect(commParse?.extractors[1]?.fields).toEqual({
+          date: [{ from: 'drive.modifiedTime' }, { from: 'drive.createdTime' }],
+        });
       }
 
       const archParse = registry.getParseSchema('submittal-arch');

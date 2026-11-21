@@ -2227,4 +2227,160 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(nock.isDone()).toBe(true);
     });
   });
+
+  describe('Ticket #307: Pass 2 Drive timestamp date pre-population on Communications in workspace timeZone', () => {
+    it('pre-populates communication-project date in yyMMdd from evening UTC-Z modifiedTime in America/New_York, leaving description/contact blank and direction IN', async () => {
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/file-comm-evening')
+        .query(true)
+        .reply(200, {
+          id: 'file-comm-evening',
+          name: 'Client_Meeting_Notes.pdf',
+          mimeType: 'application/pdf',
+          parents: ['folder-comm'],
+          driveId: 'projects-shared-drive-001',
+          // 2026-03-16 02:30Z = 2026-03-15 22:30 EDT in America/New_York
+          modifiedTime: '2026-03-16T02:30:00Z',
+          createdTime: '2026-03-10T12:00:00Z',
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/folder-comm')
+        .query(true)
+        .reply(200, {
+          id: 'folder-comm',
+          name: '1 Admin/Communication',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [{ id: 'file-comm-evening', title: 'Client_Meeting_Notes.pdf' }],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      const card = body.action.navigations[0].pushCard;
+      const docDataSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+
+      const dateWidget = docDataSec.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-project')
+      );
+      expect(dateWidget?.textInput?.value).toBe('260315');
+
+      const descWidget = docDataSec.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('description', 'communication-project')
+      );
+      expect(descWidget?.textInput?.value ?? '').toBe('');
+
+      const contactWidget = docDataSec.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('contact', 'communication-project')
+      );
+      expect(contactWidget?.textInput?.value ?? '').toBe('');
+
+      const dirWidget = docDataSec.widgets.find(
+        (w: { selectionInput?: { name: string } }) =>
+          w.selectionInput?.name === getDocumentInfoWidgetName('direction', 'communication-project')
+      );
+      expect(
+        dirWidget?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value
+      ).toBe('IN');
+    });
+
+    it('pre-populates communication-proposal date from Drive shortcut target createdTime across DST fall-back boundary', async () => {
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/shortcut-prop')
+        .query(true)
+        .reply(200, {
+          id: 'shortcut-prop',
+          name: 'Proposal Shortcut',
+          mimeType: 'application/vnd.google-apps.shortcut',
+          shortcutDetails: {
+            targetId: 'target-prop-file',
+            targetMimeType: 'application/pdf',
+          },
+          parents: ['root'],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/target-prop-file')
+        .query(true)
+        .reply(200, {
+          id: 'target-prop-file',
+          name: 'Proposal_Notes.pdf',
+          mimeType: 'application/pdf',
+          parents: ['proposal-space-folder'],
+          driveId: 'drive-marketing-1',
+          // 2026-11-02 04:30Z = 2026-11-01 23:30 EST in America/New_York
+          createdTime: '2026-11-02T04:30:00Z',
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'drive-marketing-1', name: 'INC Marketing' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/proposal-space-folder')
+        .query(true)
+        .reply(200, {
+          id: 'proposal-space-folder',
+          name: 'Client Proposals',
+          parents: ['opp-folder'],
+          driveId: 'drive-marketing-1',
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/opp-folder')
+        .query(true)
+        .reply(200, {
+          id: 'opp-folder',
+          name: 'Opportunities',
+          parents: ['drive-marketing-1'],
+          driveId: 'drive-marketing-1',
+        });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [{ id: 'shortcut-prop', title: 'Proposal Shortcut' }],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      const card = body.action.navigations[0].pushCard;
+      const docDataSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      const dateWidget = docDataSec.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-proposal')
+      );
+      expect(dateWidget?.textInput?.value).toBe('261101');
+    });
+  });
 });

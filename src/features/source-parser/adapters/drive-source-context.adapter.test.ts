@@ -2,12 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   DriveSourceContextAdapter,
   type DriveSourceContextClientPort,
+  type DriveSourceFileMetadata,
 } from './drive-source-context.adapter';
-import { GoogleDriveApiError, type DriveFileMetadata } from '../../../infrastructure/drive/drive-client';
+import { GoogleDriveApiError } from '../../../infrastructure/drive/drive-client';
 
 describe('DriveSourceContextAdapter', () => {
   let mockClient: DriveSourceContextClientPort;
-  let fileStore: Map<string, DriveFileMetadata>;
+  let fileStore: Map<string, DriveSourceFileMetadata>;
 
   beforeEach(() => {
     fileStore = new Map();
@@ -34,6 +35,8 @@ describe('DriveSourceContextAdapter', () => {
       name: 'Submittal.pdf',
       parents: ['sub-folder'],
       driveId: 'drive-proj-1',
+      createdTime: '2026-10-18T12:00:00Z',
+      modifiedTime: '2026-10-19T23:30:00Z',
     });
     fileStore.set('sub-folder', {
       id: 'sub-folder',
@@ -51,7 +54,12 @@ describe('DriveSourceContextAdapter', () => {
     const adapter = new DriveSourceContextAdapter(mockClient);
     const hierarchy = await adapter.getItemHierarchy('file-1');
 
-    expect(hierarchy.item).toEqual({ id: 'file-1', name: 'Submittal.pdf' });
+    expect(hierarchy.item).toEqual({
+      id: 'file-1',
+      name: 'Submittal.pdf',
+      createdTime: '2026-10-18T12:00:00Z',
+      modifiedTime: '2026-10-19T23:30:00Z',
+    });
     expect(hierarchy.driveId).toBe('drive-proj-1');
     expect(hierarchy.driveName).toBe('Project 1001 Alpha');
     // Ancestors: top-level (3 FFE) down to immediate parent (05 Submittals)
@@ -255,6 +263,8 @@ describe('DriveSourceContextAdapter', () => {
         mimeType: 'application/pdf',
         parents: ['ffe-folder'],
         driveId: 'drive-proj-1',
+        createdTime: '2026-10-10T14:00:00Z',
+        modifiedTime: '2026-10-15T22:00:00Z',
       });
       fileStore.set('ffe-folder', {
         id: 'ffe-folder',
@@ -266,11 +276,13 @@ describe('DriveSourceContextAdapter', () => {
       const adapter = new DriveSourceContextAdapter(mockClient);
       const hierarchy = await adapter.getItemHierarchy('shortcut-1');
 
-      // Evaluates target item's identity, drive, and hierarchy
+      // Evaluates target item's identity, timestamps, drive, and hierarchy
       expect(hierarchy.item).toEqual({
         id: 'target-file-123',
         name: '071200-001_Waterproofing.pdf',
         mimeType: 'application/pdf',
+        createdTime: '2026-10-10T14:00:00Z',
+        modifiedTime: '2026-10-15T22:00:00Z',
       });
       expect(hierarchy.driveId).toBe('drive-proj-1');
       expect(hierarchy.driveName).toBe('Project 1001 Alpha');
