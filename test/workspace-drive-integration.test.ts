@@ -2383,4 +2383,232 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(dateWidget?.textInput?.value).toBe('261101');
     });
   });
+
+  describe('Ticket #309: End-to-end SelectFiles filtering, type-switch edit preservation & single-banner Drive error degradation', () => {
+    it('silently retains partial ancestors on parent-folder 403 with zero warning banners and still populates date from file metadata', async () => {
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/file-restricted-parent')
+        .query(true)
+        .reply(200, {
+          id: 'file-restricted-parent',
+          name: 'Restricted_Parent_Notes.pdf',
+          mimeType: 'application/pdf',
+          parents: ['forbidden-parent'],
+          driveId: 'projects-shared-drive-001',
+          // 2026-03-16 02:30Z -> 260315 in America/New_York
+          modifiedTime: '2026-03-16T02:30:00Z',
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/forbidden-parent')
+        .query(true)
+        .reply(403, { error: { code: 403, message: 'Forbidden' } });
+
+      const response = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [{ id: 'file-restricted-parent', title: 'Restricted_Parent_Notes.pdf' }],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      const card = body.action.navigations[0].pushCard;
+      const cardJson = JSON.stringify(card);
+
+      expect(cardJson).not.toContain('Could not inspect Google Drive folder hierarchy');
+      expect(cardJson).not.toContain('Could not read Google Drive file metadata');
+
+      const docDataSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      const dateWidget = docDataSec.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-project')
+      );
+      expect(dateWidget?.textInput?.value).toBe('260315');
+    });
+
+    it('suppresses Pass 2 Drive metadata notice on initial load when Drive fails (503) and memoizes getFile per request, while surfacing Pass 2 notice standalone on manual onDocumentTypeChange', async () => {
+      mockAllowedDocumentTypes(manifestProvider, 'projects', ['communication-project', 'communication-proposal']);
+      const getFileSpy = vi
+        .spyOn(GoogleDriveClient.prototype, 'getFile')
+        .mockRejectedValue(new GoogleDriveApiError('Service Unavailable', { statusCode: 503 }));
+
+      // 1. Initial load -> Pass 1 + Pass 2 share memoized rejected promise (1 getFile call) & emit only 1 banner
+      const initialRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [{ id: 'file-503', title: 'Outage.pdf' }],
+          },
+        },
+      });
+
+      expect(initialRes.statusCode).toBe(200);
+      expect(getFileSpy).toHaveBeenCalledTimes(1);
+      const initialJson = JSON.stringify(JSON.parse(initialRes.payload).action.navigations[0].pushCard);
+      expect(initialJson).toContain(
+        'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.'
+      );
+      expect(initialJson).not.toContain(
+        'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.'
+      );
+
+      // 2. Manual onDocumentTypeChange -> Pass 1 does not run, Pass 2 notice surfaces standalone
+      getFileSpy.mockClear();
+      const switchRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [{ id: 'file-503', title: 'Outage.pdf' }],
+          },
+          commonEventObject: {
+            parameters: { action: 'onDocumentTypeChange' },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentTypeWidgetName('projects')]: {
+                stringInputs: { value: ['communication-proposal'] },
+              },
+              [getDocumentSpaceWidgetName('projects')]: {
+                stringInputs: { value: ['Active Projects'] },
+              },
+              SelectFiles: { stringInputs: { value: ['file-503'] } },
+            },
+          },
+        },
+      });
+
+      expect(switchRes.statusCode).toBe(200);
+      expect(getFileSpy).toHaveBeenCalledTimes(1);
+      const switchJson = JSON.stringify(JSON.parse(switchRes.payload).action.navigations[0].updateCard);
+      expect(switchJson).not.toContain('Could not inspect Google Drive folder hierarchy');
+      expect(switchJson).toContain(
+        'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.'
+      );
+    });
+
+    it('filters checked SelectFiles items on manual type switches (treating omitted SelectFiles as []), preserves active-type edits, and evaluates defaults', async () => {
+      mockAllowedDocumentTypes(manifestProvider, 'projects', ['communication-project', 'communication-proposal']);
+      const getFileSpy = vi
+        .spyOn(GoogleDriveClient.prototype, 'getFile')
+        .mockImplementation(async (fileId: string) => ({
+          id: fileId,
+          name: `${fileId}.pdf`,
+          mimeType: 'application/pdf',
+          parents: [],
+          modifiedTime: fileId === 'file-checked' ? '2026-10-22T14:00:00Z' : '2026-10-10T14:00:00Z',
+        }));
+
+      // 1. Partial SelectFiles on onDocumentTypeChange -> fetches only file-checked, preserves user edit, defaults direction IN
+      const partialRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [
+              { id: 'file-unchecked', title: 'Unchecked.pdf' },
+              { id: 'file-checked', title: 'Checked.pdf' },
+            ],
+          },
+          commonEventObject: {
+            parameters: { action: 'onDocumentTypeChange' },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentTypeWidgetName('projects')]: {
+                stringInputs: { value: ['communication-proposal'] },
+              },
+              [getDocumentSpaceWidgetName('projects')]: {
+                stringInputs: { value: ['Active Projects'] },
+              },
+              SelectFiles: { stringInputs: { value: ['file-checked'] } },
+              [getDocumentInfoWidgetName('description', 'communication-proposal')]: {
+                stringInputs: { value: ['Custom User Note'] },
+              },
+            },
+          },
+        },
+      });
+
+      expect(partialRes.statusCode).toBe(200);
+      expect(getFileSpy).toHaveBeenCalledTimes(1);
+      expect(getFileSpy).toHaveBeenCalledWith('file-checked');
+
+      const partialCard = JSON.parse(partialRes.payload).action.navigations[0].updateCard;
+      const partialDocSec = partialCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      expect(
+        partialDocSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('date', 'communication-proposal')
+        )?.textInput?.value
+      ).toBe('261022');
+      expect(
+        partialDocSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('description', 'communication-proposal')
+        )?.textInput?.value
+      ).toBe('Custom User Note');
+      expect(
+        partialDocSec.widgets
+          .find(
+            (w: { selectionInput?: { name: string } }) =>
+              w.selectionInput?.name === getDocumentInfoWidgetName('direction', 'communication-proposal')
+          )
+          ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value
+      ).toBe('IN');
+
+      // 2. All checkboxes unchecked (SelectFiles omitted) on onSpaceTypeChange -> 0 Drive API calls, items stay unselected
+      getFileSpy.mockClear();
+      const allUncheckedRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [
+              { id: 'file-unchecked', title: 'Unchecked.pdf' },
+              { id: 'file-checked', title: 'Checked.pdf' },
+            ],
+          },
+          commonEventObject: {
+            parameters: { action: 'onSpaceTypeChange' },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['proposals'] } },
+            },
+          },
+        },
+      });
+
+      expect(allUncheckedRes.statusCode).toBe(200);
+      expect(getFileSpy).not.toHaveBeenCalled();
+
+      const uncheckedCard = JSON.parse(allUncheckedRes.payload).action.navigations[0].updateCard;
+      const fileSelSec = uncheckedCard.sections.find((s: { header?: string }) => s.header === 'File Selection');
+      const selectFilesWidget = fileSelSec.widgets.find(
+        (w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'SelectFiles'
+      );
+      expect(selectFilesWidget?.selectionInput?.items.every((i: { selected?: boolean }) => i.selected === false)).toBe(
+        true
+      );
+    });
+  });
 });
