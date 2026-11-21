@@ -3,6 +3,8 @@ import { Value } from '@sinclair/typebox/value';
 import {
   DriveHierarchyNodeSchema,
   DriveItemHierarchySchema,
+  DriveSourceShortcutDetailsSchema,
+  DriveSourceFileMetadataSchema,
   SourceItemDescriptorSchema,
   CandidateSpaceDescriptorSchema,
   SourceContextSchema,
@@ -95,6 +97,49 @@ describe('SourceParser ports and schemas', () => {
         ancestors: [],
       })
     ).toBe(true);
+  });
+
+  it('validates DriveSourceShortcutDetailsSchema and DriveSourceFileMetadataSchema', () => {
+    expect(
+      Value.Check(DriveSourceShortcutDetailsSchema, {
+        targetId: 'target-1',
+        targetMimeType: 'application/pdf',
+      })
+    ).toBe(true);
+
+    expect(
+      Value.Check(DriveSourceShortcutDetailsSchema, {
+        targetId: undefined,
+        targetMimeType: undefined,
+      })
+    ).toBe(true);
+
+    expect(
+      Value.Check(DriveSourceFileMetadataSchema, {
+        id: 'file-1',
+        name: 'Submittal.pdf',
+        parents: ['folder-1'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://drive.google.com/file/d/file-1/view',
+        driveId: 'drive-1',
+        createdTime: '2026-11-01T10:00:00Z',
+        modifiedTime: '2026-11-02T10:00:00Z',
+        shortcutDetails: { targetId: 'target-1' },
+      })
+    ).toBe(true);
+
+    expect(
+      Value.Check(DriveSourceFileMetadataSchema, {
+        id: 'file-2',
+        name: 'Minimal.pdf',
+        parents: undefined,
+        mimeType: undefined,
+        shortcutDetails: undefined,
+      })
+    ).toBe(true);
+
+    expect(Value.Check(DriveSourceFileMetadataSchema, { id: '', name: 'Bad' })).toBe(false);
+    expect(Value.Check(DriveSourceFileMetadataSchema, { id: 'file-3', name: '' })).toBe(false);
   });
 
   it('validates SourceContextSchema including email metadata (Ticket #292)', () => {

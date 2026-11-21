@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-  DriveSourceContextAdapter,
-  type DriveSourceContextClientPort,
-  type DriveSourceFileMetadata,
-} from './drive-source-context.adapter';
+import { DriveSourceContextAdapter } from './drive-source-context.adapter';
+import type {
+  DriveSourceContextClientPort,
+  DriveSourceFileMetadata,
+} from '../ports';
 import { GoogleDriveApiError } from '../../../infrastructure/drive/drive-client';
 
 describe('DriveSourceContextAdapter', () => {

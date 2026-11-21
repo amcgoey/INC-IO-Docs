@@ -19,10 +19,6 @@ import type {
   SourceParserSpaceTypeConfig,
   DriveItemHierarchy,
 } from './ports';
-import {
-  DriveSourceContextAdapter,
-  type DriveSourceContextClientPort,
-} from './adapters/drive-source-context.adapter';
 
 describe('SourceParserService Pass 1 (inferRouting)', () => {
   const standardSpaceTypes: SourceParserSpaceTypeConfig[] = [
@@ -3836,25 +3832,12 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
         expect(res.fields.contact).toBe('ACM');
       });
 
-      it('memoizes broken-shortcut and item-error promises across Pass 1 + Pass 2 via DriveSourceContextAdapter and deduplicates Pass 2 notice', async () => {
-        const mockClient: DriveSourceContextClientPort = {
-          getFile: vi.fn().mockImplementation(async (fileId: string) => {
-            if (fileId === 'shortcut-broken') {
-              return {
-                id: 'shortcut-broken',
-                name: 'Broken Shortcut',
-                mimeType: 'application/vnd.google-apps.shortcut',
-                shortcutDetails: { targetId: 'target-missing' },
-              };
-            }
-            const err = new Error('Not found') as Error & { statusCode: number };
-            err.statusCode = 404;
-            throw err;
-          }),
-          listSharedDrives: vi.fn().mockResolvedValue({ drives: [] }),
+      it('handles DriveSourceContextPort errors across Pass 1 + Pass 2, preserves gmail fields, and deduplicates Pass 2 notice across multiple drive extractors', async () => {
+        const err = new Error('Not found') as Error & { statusCode: number };
+        err.statusCode = 404;
+        const mockedDrivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockRejectedValue(err),
         };
-
-        const requestDrivePort = new DriveSourceContextAdapter(mockClient);
         const registry = {
           initialize: vi.fn(),
           getParseSchema: vi.fn().mockResolvedValue({
@@ -3902,11 +3885,10 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
           ]),
         };
 
-        const service = new SourceParserService(requestDrivePort, spaceConfigPort, {
+        const service = new SourceParserService(mockedDrivePort, spaceConfigPort, {
           parseSchemaRegistry: registry,
         });
 
-        // Pass 1 fails on broken shortcut (calls getFile('shortcut-broken') and getFile('target-missing') once each)
         const routing = await service.inferRouting({
           items: [{ id: 'shortcut-broken' }],
         });
@@ -3914,7 +3896,6 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
           'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.',
         ]);
 
-        // Pass 2 runs both failing drive extractors in the same request without re-fetching Drive API
         const extracted = await service.extractFields({
           documentTypeKey: 'communication-project',
           context: {
@@ -3927,7 +3908,6 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
           },
         });
 
-        expect(mockClient.getFile).toHaveBeenCalledTimes(2);
         expect(extracted.fields.description).toBe('Weekly Update');
         expect(extracted.statusMessages).toEqual([
           'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.',
@@ -4611,6 +4591,80 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
           context: { items: [{ id: 'f-clean' }] },
         });
         expect(driveRes.fields.title).toBe('Fluid Applied Waterproofing');
+      });
+
+      it('does not double-strip .Inc/.Ltd/.2 when attachmentName or drive.fileName pattern already stripped .pdf', async () => {
+        const attachmentTitlePattern =
+          '(?:^|[\\s_./-])(\\d{6}|\\d{2} \\d{2} \\d{2}|\\d{2}\\.\\d{2}\\.\\d{2}|\\d{2}-\\d{2}-\\d{2}|\\d{2}_\\d{2}_\\d{2})(?:[\\s_.-]*(?:submittal|sub\\.?|no\\.?)[\\s_.-]*#?[\\s_.-]*|[\\s_.-]*#[\\s_.-]*|[\\s_.-]+)(\\d{1,3})(?![A-Za-z0-9])(?!-\\d{2}[-_.]\\d{2,4})(?:-(?:\\d{1,2}|[A-Za-z])(?![A-Za-z0-9]|-\\d)|[\\s_.-]+(?:(?:v|ver\\.?|version)[\\s_.-]*\\d+(?:\\.0+)?|(?:rev(?:ision)?\\.?|r(?=[\\s_.]*(?:\\d|[A-Za-z]\\b)))[\\s_.-]*(?:\\d{1,2}[A-Za-z]?|[A-Za-z]\\d{0,2}))(?![A-Za-z0-9]|\\.\\d))?(?:[\\s_.-]+(?:\\d{4}[-_.]\\d{2}[-_.]\\d{2}|\\d{2}[-_.]\\d{2}[-_.]\\d{4}|\\d{2}[-_.]\\d{2}[-_.]\\d{2}))?[\\s_.-]+(?:[-–—][\\s_]*)?(.+?)(?:[\\s_.-]+[-–—]?[\\s_]*\\d{6}[\\s_]+[A-Za-z0-9]{1,10}(?:_[A-Za-z0-9]{1,6})?|[\\s_.-]+(?:\\d{4}[-_.]\\d{2}[-_.]\\d{2}|\\d{2}[-_.]\\d{2}[-_.]\\d{4}|\\d{2}[-_.]\\d{2}[-_.]\\d{2}|\\d{6})|[\\s_.-]+(?:(?:v|ver\\.?|version)[\\s_.-]*\\d+(?:\\.0+)?|(?:rev(?:ision)?\\.?|r(?=[\\s_.]*(?:\\d|[A-Za-z]\\b)))[\\s_.-]*(?:\\d{1,2}[A-Za-z]?|[A-Za-z]\\d{0,2}))(?![A-Za-z0-9]|\\.\\d))*(?:\\.(?!inc$|ltd$)[A-Za-z0-9]{1,5})?$';
+
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail' as const,
+                fields: {
+                  title: {
+                    from: 'attachmentName' as const,
+                    pattern: attachmentTitlePattern,
+                    group: 3,
+                    normalize: 'cleanFilenameText' as const,
+                  },
+                },
+              },
+              {
+                source: 'drive' as const,
+                fields: {
+                  title: {
+                    from: 'drive.fileName' as const,
+                    pattern: attachmentTitlePattern,
+                    group: 3,
+                    normalize: 'cleanFilenameText' as const,
+                  },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [{ key: 'title', type: 'string', minLength: 1 }],
+          }),
+        };
+
+        const cases = [
+          ['071200-001_Waterproofing_2026-11-15.pdf', 'Waterproofing'],
+          ['071200-001_Waterproofing_by_Acme.Inc.pdf', 'Waterproofing by Acme.Inc'],
+          ['071200-001_Waterproofing_Supply.Ltd.pdf', 'Waterproofing Supply.Ltd'],
+          ['071200-001_Spec_v1.2.pdf', 'Spec v1.2'],
+        ] as const;
+
+        for (const [filename, expectedTitle] of cases) {
+          const drivePort: DriveSourceContextPort = {
+            getItemHierarchy: vi.fn().mockResolvedValue({
+              item: { id: 'f-title', name: filename, mimeType: 'application/pdf' },
+              ancestors: [],
+            }),
+          };
+          const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+            parseSchemaRegistry: registry,
+          });
+
+          const attRes = await service.extractFields({
+            documentTypeKey: 'submittal-arch',
+            context: {
+              email: {
+                id: 'msg-1',
+                attachments: [{ id: 'att-1', name: filename }],
+              },
+            },
+          });
+          expect(attRes.fields.title, `attachmentName: ${filename}`).toBe(expectedTitle);
+
+          const driveRes = await service.extractFields({
+            documentTypeKey: 'submittal-arch',
+            context: { items: [{ id: 'f-title' }] },
+          });
+          expect(driveRes.fields.title, `drive.fileName: ${filename}`).toBe(expectedTitle);
+        }
       });
 
       it('normalizes CSI section/number in matchesCorrelatedCode including groupIndex === 2', async () => {
