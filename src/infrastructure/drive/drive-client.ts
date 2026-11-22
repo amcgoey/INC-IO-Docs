@@ -763,15 +763,37 @@ export class GoogleDriveClient {
     }
   }
 
-  async downloadAsBuffer(
+  async downloadFileMedia(
     fileId: string,
     options?: DriveOperationOptions
   ): Promise<Uint8Array> {
     const drive = this.getDrive(options?.auth);
     try {
+      const res = await this.executeWithRetry(() =>
+        drive.files.get(
+          {
+            fileId,
+            alt: 'media',
+            supportsAllDrives: true,
+          },
+          { responseType: 'arraybuffer' }
+        )
+      );
+      return toUint8Array(res.data);
+    } catch (error) {
+      this.wrapApiError('downloadFileMedia', error);
+    }
+  }
+
+  async downloadAsBuffer(
+    fileId: string,
+    options?: DriveOperationOptions
+  ): Promise<Uint8Array> {
+    try {
       const file = await this.getFile(fileId, options);
 
       if (isGoogleWorkspaceDocument(file.mimeType)) {
+        const drive = this.getDrive(options?.auth);
         const res = await this.executeWithRetry(() =>
           drive.files.export(
             {
@@ -783,17 +805,23 @@ export class GoogleDriveClient {
         );
         return toUint8Array(res.data);
       } else {
-        const res = await this.executeWithRetry(() =>
-          drive.files.get(
-            {
-              fileId,
-              alt: 'media',
-              supportsAllDrives: true,
-            },
-            { responseType: 'arraybuffer' }
-          )
-        );
-        return toUint8Array(res.data);
+        try {
+          return await this.downloadFileMedia(fileId, options);
+        } catch (error) {
+          if (
+            error instanceof GoogleDriveApiError &&
+            error.message.startsWith('Google Drive API error in downloadFileMedia: ')
+          ) {
+            throw new GoogleDriveApiError(
+              error.message.replace(
+                'Google Drive API error in downloadFileMedia: ',
+                'Google Drive API error in downloadAsBuffer: '
+              ),
+              { cause: error.cause ?? error, statusCode: error.statusCode }
+            );
+          }
+          throw error;
+        }
       }
     } catch (error) {
       this.wrapApiError('downloadAsBuffer', error);

@@ -185,6 +185,10 @@ export function wireWorkspaceAddonRoutes(
         driveContextClient: options.driveContextClient,
         configProvider: appConfigProvider,
         workspaceConfigProvider: options.configProvider,
+        ...(options.pdfProcessor !== undefined ? { pdfProcessor: options.pdfProcessor } : {}),
+        ...(options.templateEvaluator !== undefined
+          ? { templateEvaluator: options.templateEvaluator }
+          : {}),
         getCanonicalOptionsProvider: (ctx) => getDynamicOptionsAdapter(ctx),
       });
       sourceParser = sourceParserWiring.sourceParser;

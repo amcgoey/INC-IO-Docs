@@ -20,6 +20,10 @@ _Avoid_: documentUiConfig, FormSchema
 The declarative blueprint within a `DocumentType` defining how `Document` data fields are extracted from a `SourceContext`. Separated from the core domain.
 _Avoid_: documentParseConfig, ParseRules, ExtractionSchema
 
+**DocumentFormSchema**:
+The declarative blueprint within a `DocumentType` mapping structured document form field names (such as PDF AcroForm widgets or Google Docs form fields), Handlebars field templates, option value overrides, and date formats to `Document` fields for both reading and writing. Separated from the core domain.
+_Avoid_: PdfFormSchema, PdfConfig, AcroFormMapping, StampSchema
+
 **DocumentSpaceType**:
 The structural definition for a category of storage containers (e.g., Projects or Proposals), specifying which `DocumentType`s are allowed and how `DocumentSpace` instances are fetched from storage.
 _Avoid_: ContainerType, SpaceCategory
@@ -49,7 +53,7 @@ A descriptor representing an input file or folder to be processed by an `Activit
 _Avoid_: SelectedItem, Attachment, RawFile
 
 **SourceContext**:
-A normalized representation of a source's metadata and structured content (such as a Gmail message/thread, Google Drive file metadata, PDF form fields, or Google Doc variables) inspected by `SourceParser` to pre-populate UI state before filing.
+A normalized representation of a source's metadata and structured content (such as a Gmail message/thread, Google Drive file metadata, PDF form fields, or Google Docs form fields) inspected by `SourceParser` to pre-populate UI state before filing.
 _Avoid_: ParseInput, RawEventContext, SourcePayload
 
 **FileLocator**:

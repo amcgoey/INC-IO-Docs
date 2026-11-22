@@ -3,12 +3,14 @@ import { Value } from '@sinclair/typebox/value';
 import jsonLogic from 'json-logic-js';
 import {
   DocumentParseSchemaSchema,
+  DocumentFormSchemaSchema,
   AliasDictionarySchema,
   ParseTargetDocumentFieldSchema,
   ParseTargetCalculatedFieldSchema,
   ParseTargetDocumentOptionTupleSchema,
   ParseTargetDocumentSchemaSchema,
   type DocumentParseSchema,
+  type DocumentFormSchema,
   type ParseTargetDocumentSchema,
   type ParseTargetDocumentField,
   type ParseTargetCalculatedField,
@@ -16,7 +18,12 @@ import {
   type ParseSchemaRegistryPort,
   type RawManifestProviderPort,
   type AliasDictionary,
+  type FormTemplateParserPort,
 } from '../ports';
+import {
+  classifyFormFieldMatcher,
+  parseDocumentFieldTemplate,
+} from '../form-field-parser';
 
 export function validateJsonLogicAst(rule: unknown): void {
   if (rule === null || rule === undefined || typeof rule !== 'object') {
@@ -90,13 +97,191 @@ function validateUniqueNormalizedAliases(
   }
 }
 
+function validateValueMap(
+  valueMap: Record<string, string>,
+  targetField: ParseTargetDocumentField,
+  cleanedOptions: Record<string, ParseTargetDocumentOptionTuple[]> | undefined,
+  prefix: string
+): void {
+  if (!targetField.options) {
+    throw new Error(`${prefix} specifies valueMap for non-LookupField "${targetField.key}"`);
+  }
+
+  const seenLabels = new Map<string, string>();
+  for (const [mapKey, mapLabel] of Object.entries(valueMap)) {
+    if (mapKey.trim().length === 0 || mapLabel.trim().length === 0) {
+      throw new Error(`${prefix} contains empty or whitespace-only valueMap key or value`);
+    }
+    const normLabel = mapLabel.trim().toLowerCase();
+    const existingKey = seenLabels.get(normLabel);
+    if (existingKey !== undefined && existingKey !== mapKey) {
+      throw new Error(
+        `${prefix} contains duplicate case-insensitive valueMap label "${mapLabel}" across keys "${existingKey}" and "${mapKey}"`
+      );
+    }
+    seenLabels.set(normLabel, mapKey);
+  }
+
+  if (targetField.options.dynamicConfig !== undefined) {
+    return;
+  }
+
+  const staticTuples = cleanedOptions?.[targetField.options.source];
+  if (!staticTuples) {
+    return;
+  }
+
+  const keyProp = targetField.options.key ?? 'key';
+  const nameProp = targetField.options.name ?? 'name';
+
+  for (const [mapKey, mapLabel] of Object.entries(valueMap)) {
+    const matchesTuple = staticTuples.some(
+      (tuple) => String(tuple[keyProp] ?? '') === mapKey
+    );
+    if (!matchesTuple) {
+      throw new Error(
+        `${prefix} valueMap key "${mapKey}" does not match any canonical option in "${targetField.options.source}"`
+      );
+    }
+
+    const normLabel = mapLabel.trim().toLowerCase();
+    for (const tuple of staticTuples) {
+      const tupleKey = String(tuple[keyProp] ?? '');
+      if (tupleKey === mapKey) {
+        continue;
+      }
+      const tupleName = typeof tuple[nameProp] === 'string' ? tuple[nameProp] : undefined;
+      if (
+        tupleKey.trim().toLowerCase() === normLabel ||
+        (tupleName !== undefined && tupleName.trim().toLowerCase() === normLabel)
+      ) {
+        throw new Error(
+          `${prefix} valueMap label "${mapLabel}" for key "${mapKey}" collides with canonical option "${tupleKey}"`
+        );
+      }
+    }
+  }
+}
+
+function validateDocumentFormSchema(params: {
+  rawFormSchema: unknown;
+  relPath: string;
+  formTemplateParser: FormTemplateParserPort | undefined;
+  targetFields: ParseTargetDocumentField[];
+  knownFieldKeys: Set<string>;
+  calcFieldKeys: Set<string>;
+  linkedFieldKeys: Set<string>;
+  cleanedOptions: Record<string, ParseTargetDocumentOptionTuple[]> | undefined;
+}): DocumentFormSchema {
+  const {
+    rawFormSchema,
+    relPath,
+    formTemplateParser,
+    targetFields,
+    knownFieldKeys,
+    calcFieldKeys,
+    linkedFieldKeys,
+    cleanedOptions,
+  } = params;
+
+  if (!Value.Check(DocumentFormSchemaSchema, rawFormSchema)) {
+    const errors = [...Value.Errors(DocumentFormSchemaSchema, rawFormSchema)]
+      .map((e) => `${e.path}: ${e.message}`)
+      .join(', ');
+    throw new Error(`Invalid DocumentFormSchema structure in "${relPath}": ${errors}`);
+  }
+
+  if (!formTemplateParser) {
+    throw new Error(
+      `DocumentFormSchema in "${relPath}" requires a FormTemplateParserPort to validate field templates`
+    );
+  }
+
+  const formSchema = rawFormSchema as DocumentFormSchema;
+
+  for (const [formFieldName, binding] of Object.entries(formSchema.fields)) {
+    if (formFieldName.trim().length === 0) {
+      throw new Error(`DocumentFormSchema in "${relPath}" contains an empty form field name`);
+    }
+
+    const prefix = `DocumentFormSchema field "${formFieldName}" in "${relPath}"`;
+    const parsed = parseDocumentFieldTemplate(formTemplateParser, binding.template);
+
+    const seenFieldKeys = new Set<string>();
+    for (const token of parsed.tokens) {
+      if (seenFieldKeys.has(token.fieldKey)) {
+        throw new Error(`${prefix} references duplicate field "${token.fieldKey}"`);
+      }
+      seenFieldKeys.add(token.fieldKey);
+
+      assertTargetableFieldKey(
+        token.fieldKey,
+        knownFieldKeys,
+        calcFieldKeys,
+        linkedFieldKeys,
+        prefix
+      );
+
+      const targetField = targetFields.find((f) => f.key === token.fieldKey)!;
+
+      if (token.property !== undefined) {
+        if (!targetField.options) {
+          throw new Error(
+            `${prefix} accesses property ".${token.property}" on non-LookupField "${token.fieldKey}"`
+          );
+        }
+        if (targetField.options.dynamicConfig === undefined) {
+          const staticTuples = cleanedOptions?.[targetField.options.source];
+          if (staticTuples !== undefined) {
+            const keyProp = targetField.options.key ?? 'key';
+            const nameProp = targetField.options.name ?? 'name';
+            const isValidProp =
+              token.property === keyProp ||
+              token.property === nameProp ||
+              staticTuples.some((tuple) => token.property! in tuple);
+            if (!isValidProp) {
+              throw new Error(
+                `${prefix} accesses unknown property ".${token.property}" on LookupField "${token.fieldKey}"`
+              );
+            }
+          }
+        }
+      }
+
+      if (parsed.tokens.length > 1 && classifyFormFieldMatcher(targetField) === undefined) {
+        throw new Error(
+          `${prefix} multi-token template targets unsupported field "${token.fieldKey}"`
+        );
+      }
+    }
+
+    if (parsed.tokens.length > 1) {
+      if (binding.format === 'date') {
+        throw new Error(`${prefix} cannot specify format: "date" on a multi-token template`);
+      }
+      if (binding.valueMap !== undefined) {
+        throw new Error(`${prefix} cannot specify valueMap on a multi-token template`);
+      }
+    } else if (binding.valueMap !== undefined) {
+      const singleTargetField = targetFields.find((f) => f.key === parsed.tokens[0].fieldKey)!;
+      validateValueMap(binding.valueMap, singleTargetField, cleanedOptions, prefix);
+    }
+  }
+
+  return formSchema;
+}
+
 export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
   private readonly parseSchemas = new Map<string, DocumentParseSchema>();
   private readonly targetSchemas = new Map<string, ParseTargetDocumentSchema>();
+  private readonly formSchemas = new Map<string, DocumentFormSchema>();
   private readonly aliasDictionaries = new Map<string, AliasDictionary>();
   private initialized = false;
 
-  constructor(private readonly manifestProvider?: RawManifestProviderPort | undefined) {}
+  constructor(
+    private readonly manifestProvider?: RawManifestProviderPort | undefined,
+    private readonly formTemplateParser?: FormTemplateParserPort | undefined
+  ) {}
 
   async initialize(): Promise<void> {
     if (this.initialized) {
@@ -242,6 +427,21 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
       }
       this.targetSchemas.set(documentTypeKey, candidateTargetSchema);
 
+      let validatedFormSchema: DocumentFormSchema | undefined;
+      if (docDef.documentFormSchema !== undefined) {
+        validatedFormSchema = validateDocumentFormSchema({
+          rawFormSchema: docDef.documentFormSchema,
+          relPath,
+          formTemplateParser: this.formTemplateParser,
+          targetFields,
+          knownFieldKeys,
+          calcFieldKeys,
+          linkedFieldKeys,
+          cleanedOptions,
+        });
+        this.formSchemas.set(documentTypeKey, validatedFormSchema);
+      }
+
       if (!docDef.documentParseSchema) {
         continue;
       }
@@ -260,6 +460,15 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
       for (const extractor of parseSchema.extractors) {
         if (extractor.match !== undefined) {
           validateJsonLogicAst(extractor.match);
+        }
+
+        if (extractor.source === 'form') {
+          if (!validatedFormSchema) {
+            throw new Error(
+              `DocumentParseSchema in "${relPath}" declares a { source: "form" } extractor without a documentFormSchema`
+            );
+          }
+          continue;
         }
 
         for (const [fieldKey, ruleOrRules] of Object.entries(extractor.fields)) {
@@ -373,6 +582,10 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
 
   getTargetSchema(documentTypeKey: string): ParseTargetDocumentSchema | undefined {
     return this.targetSchemas.get(documentTypeKey);
+  }
+
+  getDocumentFormSchema(documentTypeKey: string): DocumentFormSchema | undefined {
+    return this.formSchemas.get(documentTypeKey);
   }
 
   getAliasDictionary(sourceKey: string): AliasDictionary | undefined {

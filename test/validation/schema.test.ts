@@ -290,7 +290,7 @@ describe('DocumentType JSON files schema validation', () => {
       expect(rawManifest.aliases?.contacts).toBe('./aliases/contacts.json');
       expect(rawManifest.aliases?.vendors).toBe('./aliases/vendors.json');
 
-      const registry = new ParseSchemaRegistryAdapter(manifestProvider);
+      const registry = new ParseSchemaRegistryAdapter(manifestProvider, new HandlebarsAdapter());
       await registry.initialize();
 
       const contactsDict = registry.getAliasDictionary('contacts');
@@ -316,56 +316,111 @@ describe('DocumentType JSON files schema validation', () => {
 
       for (const commKey of ['communication-project', 'communication-proposal']) {
         const commParse = registry.getParseSchema(commKey);
-        expect(commParse?.extractors[0]?.source).toBe('gmail');
-        expect(commParse?.extractors[1]?.source).toBe('drive');
-        expect(commParse?.extractors[1]?.fields).toEqual({
-          date: [
-            { from: 'drive.fileNameStem', normalize: 'yymmdd' },
-            { from: 'drive.modifiedTime' },
-            { from: 'drive.createdTime' },
-          ],
-        });
+        expect(commParse?.extractors.map((e) => e.source)).toEqual(['gmail', 'drive']);
+        expect(registry.getDocumentFormSchema(commKey)).toBeUndefined();
+        const commDrive = commParse?.extractors[1];
+        expect(commDrive?.source).toBe('drive');
+        if (commDrive?.source === 'drive') {
+          expect(commDrive.fields).toEqual({
+            date: [
+              { from: 'drive.fileNameStem', normalize: 'yymmdd' },
+              { from: 'drive.modifiedTime' },
+              { from: 'drive.createdTime' },
+            ],
+          });
+        }
       }
 
       const archParse = registry.getParseSchema('submittal-arch');
       const archExtractor = archParse?.extractors[0];
       expect(archExtractor?.source).toBe('gmail');
-      expect(archExtractor?.fields).toHaveProperty('action');
-      expect(archExtractor?.fields).toHaveProperty('date');
-      expect(archExtractor?.fields).toHaveProperty('contact');
-      expect(archExtractor?.fields).toHaveProperty('section');
-      expect(archExtractor?.fields).toHaveProperty('number');
-      expect(archExtractor?.fields).toHaveProperty('revision');
-      expect(archExtractor?.fields).toHaveProperty('title');
+      if (archExtractor?.source === 'gmail') {
+        expect(archExtractor.fields).toHaveProperty('action');
+        expect(archExtractor.fields).toHaveProperty('date');
+        expect(archExtractor.fields).toHaveProperty('contact');
+        expect(archExtractor.fields).toHaveProperty('section');
+        expect(archExtractor.fields).toHaveProperty('number');
+        expect(archExtractor.fields).toHaveProperty('revision');
+        expect(archExtractor.fields).toHaveProperty('title');
+      }
 
-      const archDriveExtractor = archParse?.extractors[1];
+      const archFormExtractor = archParse?.extractors[1];
+      expect(archFormExtractor?.source).toBe('form');
+
+      const archDriveExtractor = archParse?.extractors[2];
       expect(archDriveExtractor?.source).toBe('drive');
-      expect(Object.keys(archDriveExtractor?.fields ?? {})).toEqual([
-        'section',
-        'number',
-        'revision',
-        'title',
-        'date',
-      ]);
+      if (archDriveExtractor?.source === 'drive') {
+        expect(Object.keys(archDriveExtractor.fields)).toEqual([
+          'section',
+          'number',
+          'revision',
+          'title',
+          'date',
+        ]);
+      }
+
+      expect(registry.getDocumentFormSchema('submittal-arch')).toEqual({
+        fields: {
+          'Submittal No': {
+            template: '{{section}}-{{number}}-{{revision}}',
+          },
+          'Submittal Response': {
+            template: '{{action.name}}',
+            valueMap: { RR: 'Revise and Resubmit' },
+          },
+          Date: {
+            template: '{{date}}',
+            format: 'date',
+          },
+        },
+      });
 
       const ffeParse = registry.getParseSchema('submittal-ffe');
+      expect(ffeParse?.extractors.map((e) => e.source)).toEqual(['gmail', 'form', 'drive']);
       const ffeExtractor = ffeParse?.extractors[0];
       expect(ffeExtractor?.source).toBe('gmail');
-      expect(ffeExtractor?.fields).toHaveProperty('action');
-      expect(ffeExtractor?.fields).toHaveProperty('date');
-      expect(ffeExtractor?.fields).toHaveProperty('contact');
-      expect(ffeExtractor?.fields).toHaveProperty('vendor');
-      expect(ffeExtractor?.fields).toHaveProperty('specTag');
-      expect(ffeExtractor?.fields).toHaveProperty('revision');
+      if (ffeExtractor?.source === 'gmail') {
+        expect(ffeExtractor.fields).toHaveProperty('action');
+        expect(ffeExtractor.fields).toHaveProperty('date');
+        expect(ffeExtractor.fields).toHaveProperty('contact');
+        expect(ffeExtractor.fields).toHaveProperty('vendor');
+        expect(ffeExtractor.fields).toHaveProperty('specTag');
+        expect(ffeExtractor.fields).toHaveProperty('revision');
+      }
 
-      const ffeDriveExtractor = ffeParse?.extractors[1];
+      const ffeFormExtractor = ffeParse?.extractors[1];
+      expect(ffeFormExtractor?.source).toBe('form');
+
+      const ffeDriveExtractor = ffeParse?.extractors[2];
       expect(ffeDriveExtractor?.source).toBe('drive');
-      expect(Object.keys(ffeDriveExtractor?.fields ?? {})).toEqual([
-        'specTag',
-        'revision',
-        'vendor',
-        'date',
-      ]);
+      if (ffeDriveExtractor?.source === 'drive') {
+        expect(Object.keys(ffeDriveExtractor.fields)).toEqual([
+          'specTag',
+          'revision',
+          'vendor',
+          'date',
+        ]);
+      }
+
+      expect(registry.getDocumentFormSchema('submittal-ffe')).toEqual({
+        fields: {
+          'Submittal No': {
+            template: '{{specTag.key}}-{{revision}}',
+          },
+          'Submittal Response': {
+            template: '{{action.name}}',
+            valueMap: { RR: 'Revise and Resubmit' },
+          },
+          Date: {
+            template: '{{date}}',
+            format: 'date',
+          },
+        },
+      });
+
+      const ffeTargetSchema = registry.getTargetSchema('submittal-ffe');
+      const nocOption = ffeTargetSchema?.options?.actions?.find((a) => a.key === 'NOC');
+      expect(nocOption?.name).toBe('No Objections As Corrected');
     });
   });
 });

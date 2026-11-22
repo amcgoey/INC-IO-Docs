@@ -162,6 +162,8 @@ export function createApp(options?: AppOptions): AppInstance {
     driveContextClient: options?.driveContextClient,
     configProvider: manifestProvider ?? defaultAppConfigProvider,
     workspaceConfigProvider: manifestProvider,
+    templateEvaluator,
+    ...(options?.pdfProcessor !== undefined ? { pdfProcessor: options.pdfProcessor } : {}),
   });
 
   wireWorkspaceAddonRoutes({

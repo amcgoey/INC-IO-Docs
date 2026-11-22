@@ -5953,13 +5953,13 @@ describe('Document domain', () => {
       }
     });
 
-    it('rejects invalid number pattern (non-3-digits)', async () => {
+    it('rejects invalid number pattern (<3 digits or non-digits) and accepts 3+ digits (#317)', async () => {
       const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
       const customRegistry = createCustomRegistry([submittalArchSchema]);
       const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
       await service.initialize();
 
-      const invalidNumbers = ['1', '01', '0001', '00A', 'abc', ''];
+      const invalidNumbers = ['1', '01', '00A', 'abc', ''];
       for (const number of invalidNumbers) {
         const inputDoc: Document = {
           type: 'submittal-arch',
@@ -5979,6 +5979,24 @@ describe('Document domain', () => {
         if (!result.success) {
           expect(result.errors.some((err) => err.includes('/number:'))).toBe(true);
         }
+      }
+
+      for (const validNumber of ['001', '0001', '1042']) {
+        const validDoc: Document = {
+          type: 'submittal-arch',
+          data: {
+            status: 'Open',
+            section: '071200',
+            number: validNumber,
+            revision: '1',
+            title: 'Waterproofing',
+            date: '261102',
+            contact: 'PMG',
+            action: 'REC',
+          },
+        };
+        const result = await service.processDocument(validDoc, 'onSubmit');
+        expect(result.success).toBe(true);
       }
     });
 

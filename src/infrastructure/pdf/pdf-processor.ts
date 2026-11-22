@@ -202,7 +202,13 @@ export class PdfProcessor {
         } else if (field instanceof PDFCheckBox) {
           data[name] = field.isChecked();
         } else if (field instanceof PDFRadioGroup) {
-          data[name] = field.getSelected();
+          const selected = field.getSelected();
+          // pdf-lib reads /V rather than widget /AS appearance states when /V is a valid member of getOptions().
+          // Ignore stale/orphaned /V dictionary entries (e.g. /Choice10, /Choice5) that are not valid options.
+          data[name] =
+            selected !== undefined && field.getOptions().includes(selected)
+              ? selected
+              : undefined;
         } else if (
           field instanceof PDFDropdown ||
           field instanceof PDFOptionList

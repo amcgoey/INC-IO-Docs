@@ -4,6 +4,7 @@ import {
   validateJsonLogicAst,
 } from './parse-schema-registry.adapter';
 import type { RawManifestProviderPort } from '../ports';
+import { HandlebarsAdapter } from '../../../infrastructure/template-engine/handlebars-adapter';
 
 describe('ParseSchemaRegistryAdapter', () => {
   it('treats omitted manifestProvider as a safe no-op', async () => {
@@ -1057,6 +1058,306 @@ describe('ParseSchemaRegistryAdapter', () => {
         }),
       });
       await expect(validAdapter.initialize()).resolves.toBeUndefined();
+    });
+  });
+
+  describe('Ticket #315: DocumentFormSchema hydration and fail-fast validation', () => {
+    const formTemplateParser = new HandlebarsAdapter();
+
+    const baseDocSchema = {
+      fields: [
+        { key: 'section', type: 'string', pattern: '^\\d{6}$' },
+        { key: 'number', type: 'string', pattern: '^\\d{3}$' },
+        { key: 'revision', type: 'string' },
+        { key: 'title', type: 'string' },
+        { key: 'date', type: 'string' },
+        {
+          key: 'action',
+          type: 'string',
+          options: { source: 'actions', key: 'key', name: 'name' },
+        },
+        {
+          key: 'specTag',
+          type: 'string',
+          options: { source: 'specs', key: 'key', name: 'name' },
+        },
+        {
+          key: 'specTitle',
+          type: 'string',
+          linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+        },
+        {
+          key: 'vendor',
+          type: 'string',
+          options: {
+            source: 'vendors',
+            key: 'key',
+            name: 'name',
+            dynamicConfig: { provider: 'google_drive' },
+          },
+        },
+      ],
+      options: {
+        actions: [
+          { key: 'REC', name: 'Received', suffix: '' },
+          { key: 'RR', name: 'Revise & Resubmit', suffix: '_RR' },
+          { key: 'NOC', name: 'No Objections As Corrected', suffix: '_NOC' },
+          { key: 'NET', name: 'No Exceptions Taken', suffix: '_NET' },
+        ],
+        specs: [{ key: 'CG104', name: 'BED - KING' }],
+      },
+      calculatedFields: [{ key: 'fileName', name: 'File Name', template: '{{section}}' }],
+    };
+
+    function makeAdapter(docDef: Record<string, unknown>, includeParser = true) {
+      return new ParseSchemaRegistryAdapter(
+        {
+          getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-doc.json'] }),
+          readParsedSchema: vi.fn().mockResolvedValue({
+            key: 'test-doc',
+            documentSchema: baseDocSchema,
+            ...docDef,
+          }),
+        },
+        includeParser ? formTemplateParser : undefined
+      );
+    }
+
+    it('hydrates standalone documentFormSchema even when documentParseSchema is omitted', async () => {
+      const adapter = makeAdapter({
+        documentFormSchema: {
+          fields: {
+            'Submittal Response': {
+              template: '{{action.name}}',
+              valueMap: { RR: 'Revise and Resubmit' },
+            },
+            Date: {
+              template: '{{date}}',
+              format: 'date',
+            },
+          },
+        },
+      });
+
+      await adapter.initialize();
+
+      expect(adapter.getParseSchema('test-doc')).toBeUndefined();
+      expect(adapter.getDocumentFormSchema('test-doc')).toEqual({
+        fields: {
+          'Submittal Response': {
+            template: '{{action.name}}',
+            valueMap: { RR: 'Revise and Resubmit' },
+          },
+          Date: {
+            template: '{{date}}',
+            format: 'date',
+          },
+        },
+      });
+    });
+
+    it('validates { source: "form" } extractors with optional name and JsonLogic match when documentFormSchema exists', async () => {
+      const adapter = makeAdapter({
+        documentFormSchema: {
+          fields: {
+            'Submittal Response': {
+              template: '{{action.suffix}}',
+            },
+            Date: {
+              template: '{{date}}',
+              format: 'date',
+            },
+          },
+        },
+        documentParseSchema: {
+          extractors: [
+            {
+              source: 'form',
+              name: 'PDF Cover Stamp',
+              match: { '==': [{ var: 'drive.isFolder' }, false] },
+            },
+          ],
+        },
+      });
+
+      await expect(adapter.initialize()).resolves.toBeUndefined();
+      expect(adapter.getParseSchema('test-doc')?.extractors).toEqual([
+        {
+          source: 'form',
+          name: 'PDF Cover Stamp',
+          match: { '==': [{ var: 'drive.isFolder' }, false] },
+        },
+      ]);
+    });
+
+    it('fails fast if documentFormSchema is present without FormTemplateParserPort', async () => {
+      const adapter = makeAdapter(
+        {
+          documentFormSchema: {
+            fields: {
+              Date: { template: '{{date}}' },
+            },
+          },
+        },
+        false
+      );
+
+      await expect(adapter.initialize()).rejects.toThrow(/FormTemplateParserPort/i);
+    });
+
+    it.each([
+      ['empty fields', { fields: {} }],
+      ['empty valueMap', { fields: { 'Submittal Response': { template: '{{action.name}}', valueMap: {} } } }],
+      ['unknown fieldKey', { fields: { Foo: { template: '{{unknownField}}' } } }],
+      ['CalculatedField target', { fields: { Foo: { template: '{{fileName}}' } } }],
+      ['CalculatedField namespace', { fields: { Foo: { template: '{{calculated.fileName}}' } } }],
+      ['Stage-2 Document namespace', { fields: { Foo: { template: '{{Document.data.section}}' } } }],
+      ['path deeper than fieldKey.property', { fields: { Foo: { template: '{{a.b.c}}' } } }],
+      ['this/section relative path', { fields: { Foo: { template: '{{this/section}}' } } }],
+      ['this/a/b nested relative path', { fields: { Foo: { template: '{{this/a/b}}' } } }],
+      ['.. relative path', { fields: { Foo: { template: '{{..}}' } } }],
+      ['direct LinkedField target', { fields: { Foo: { template: '{{specTitle}}' } } }],
+      ['zero-token template', { fields: { Foo: { template: 'literal' } } }],
+      ['logic block in template', { fields: { Foo: { template: '{{#if date}}{{date}}{{/if}}' } } }],
+      ['duplicate fieldKey in multi-token template', { fields: { Foo: { template: '{{section}}-{{section}}' } } }],
+      ['.property on non-LookupField', { fields: { Foo: { template: '{{section.key}}' } } }],
+      ['invalid .property on static LookupField', { fields: { Foo: { template: '{{action.nonExistent}}' } } }],
+      ['format: date on multi-token template', { fields: { Foo: { template: '{{section}}-{{number}}', format: 'date' } } }],
+      ['valueMap on multi-token template', { fields: { Foo: { template: '{{specTag.key}}-{{revision}}', valueMap: { CG104: 'Chair' } } } }],
+      ['unsupported multi-token field type (title)', { fields: { Foo: { template: '{{section}}-{{title}}' } } }],
+      ['unsupported multi-token field type (date)', { fields: { Foo: { template: '{{section}}-{{date}}' } } }],
+      ['valueMap on non-LookupField', { fields: { Foo: { template: '{{title}}', valueMap: { A: 'Alpha' } } } }],
+      ['whitespace-only valueMap key', { fields: { Foo: { template: '{{action.name}}', valueMap: { '   ': 'Alpha' } } } }],
+      ['whitespace-only valueMap value', { fields: { Foo: { template: '{{action.name}}', valueMap: { RR: '   ' } } } }],
+      ['unknown valueMap key vs static options', { fields: { Foo: { template: '{{action.name}}', valueMap: { BOGUS: 'Bogus Label' } } } }],
+      [
+        'case-insensitive duplicate valueMap labels across keys',
+        {
+          fields: {
+            Foo: {
+              template: '{{action.name}}',
+              valueMap: { RR: 'Custom Label', NET: ' custom label ' },
+            },
+          },
+        },
+      ],
+      [
+        'valueMap label colliding with canonical key of another tuple',
+        {
+          fields: {
+            Foo: {
+              template: '{{action.name}}',
+              valueMap: { RR: 'net' },
+            },
+          },
+        },
+      ],
+      [
+        'valueMap label colliding with canonical name of another tuple',
+        {
+          fields: {
+            Foo: {
+              template: '{{action.name}}',
+              valueMap: { RR: 'no exceptions taken' },
+            },
+          },
+        },
+      ],
+    ])('rejects invalid documentFormSchema (%s)', async (_label, documentFormSchema) => {
+      const adapter = makeAdapter({ documentFormSchema });
+      await expect(adapter.initialize()).rejects.toThrow();
+    });
+
+    it('allows dynamic LookupField .property and valid valueMap without static tuple restriction', async () => {
+      const adapter = makeAdapter({
+        documentFormSchema: {
+          fields: {
+            Vendor: {
+              template: '{{vendor.companyName}}',
+              valueMap: { V1: 'Vendor One' },
+            },
+            'Submittal No': {
+              template: '{{section}}-{{number}}-{{revision}}',
+            },
+            'FF&E No': {
+              template: '{{specTag.key}}-{{revision}}',
+            },
+          },
+        },
+      });
+      await expect(adapter.initialize()).resolves.toBeUndefined();
+    });
+
+    it('rejects { source: "form" } when documentFormSchema is absent', async () => {
+      const adapter = makeAdapter({
+        documentParseSchema: {
+          extractors: [{ source: 'form' }],
+        },
+      });
+      await expect(adapter.initialize()).rejects.toThrow(/documentFormSchema/i);
+    });
+
+    it('rejects invalid JsonLogic AST on { source: "form" } extractor.match', async () => {
+      const adapter = makeAdapter({
+        documentFormSchema: {
+          fields: { Date: { template: '{{date}}' } },
+        },
+        documentParseSchema: {
+          extractors: [
+            {
+              source: 'form',
+              match: { unknownOp: [1, 2] },
+            },
+          ],
+        },
+      });
+      await expect(adapter.initialize()).rejects.toThrow(/Invalid JsonLogic AST/i);
+    });
+
+    it('accepts number.pattern "^\\\\d{3,}$" and rejects fixed 4-digit "^\\\\d{4}$" in multi-token templates (#317)', async () => {
+      const validAdapter = new ParseSchemaRegistryAdapter(
+        {
+          getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-doc.json'] }),
+          readParsedSchema: vi.fn().mockResolvedValue({
+            key: 'test-doc',
+            documentSchema: {
+              ...baseDocSchema,
+              fields: baseDocSchema.fields.map((f) =>
+                f.key === 'number' ? { ...f, pattern: '^\\d{3,}$' } : f
+              ),
+            },
+            documentFormSchema: {
+              fields: {
+                'Submittal No': { template: '{{section}}-{{number}}-{{revision}}' },
+              },
+            },
+          }),
+        },
+        formTemplateParser
+      );
+      await expect(validAdapter.initialize()).resolves.toBeUndefined();
+
+      const invalidAdapter = new ParseSchemaRegistryAdapter(
+        {
+          getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-doc.json'] }),
+          readParsedSchema: vi.fn().mockResolvedValue({
+            key: 'test-doc',
+            documentSchema: {
+              ...baseDocSchema,
+              fields: baseDocSchema.fields.map((f) =>
+                f.key === 'number' ? { ...f, pattern: '^\\d{4}$' } : f
+              ),
+            },
+            documentFormSchema: {
+              fields: {
+                'Submittal No': { template: '{{section}}-{{number}}-{{revision}}' },
+              },
+            },
+          }),
+        },
+        formTemplateParser
+      );
+      await expect(invalidAdapter.initialize()).rejects.toThrow(/unsupported field "number"/i);
     });
   });
 });

@@ -1,12 +1,34 @@
 import Handlebars from 'handlebars';
 
+interface HandlebarsPathNode {
+  type?: string;
+  original?: string;
+  parts?: string[];
+  data?: boolean;
+  depth?: number;
+}
+
 interface HandlebarsAstNode {
   type?: string;
-  path?: { type?: string; original?: string; parts?: string[] };
+  original?: string;
+  value?: string;
+  escaped?: boolean;
+  path?: HandlebarsPathNode;
   body?: unknown[];
   program?: unknown;
   inverse?: unknown;
   params?: unknown[];
+  hash?: { pairs?: unknown[] };
+}
+
+interface MustacheTemplateToken {
+  original: string;
+  parts: string[];
+}
+
+interface ParsedMustacheTemplate {
+  tokens: MustacheTemplateToken[];
+  literals: string[];
 }
 
 export class HandlebarsAdapter {
@@ -117,5 +139,80 @@ export class HandlebarsAdapter {
   public evaluate(template: string, context: { [key: string]: unknown }): string {
     const compiled = Handlebars.compile(template, { noEscape: true });
     return compiled(context);
+  }
+
+  /**
+   * Parses a logic-less Handlebars mustache template into ordered path-expression tokens and
+   * literal segments, rejecting logic blocks, helpers, comments, partials, unescaped mustaches,
+   * data variables, and relative/parent context paths.
+   */
+  public parseMustacheTemplate(template: string): ParsedMustacheTemplate {
+    const ast = Handlebars.parse(template) as unknown as HandlebarsAstNode;
+    const body = Array.isArray(ast.body) ? ast.body : [];
+
+    const tokens: MustacheTemplateToken[] = [];
+    const literals: string[] = [];
+    let currentLiteral = '';
+
+    for (const rawStatement of body) {
+      const stmt = rawStatement as HandlebarsAstNode;
+      if (stmt.type === 'ContentStatement') {
+        currentLiteral += typeof stmt.value === 'string' ? stmt.value : (stmt.original ?? '');
+        continue;
+      }
+
+      if (stmt.type !== 'MustacheStatement') {
+        throw new Error(`Unsupported Handlebars statement "${stmt.type ?? 'unknown'}" in template`);
+      }
+
+      if (stmt.escaped === false) {
+        throw new Error('Triple-stash unescaped expressions ({{{...}}}) are not allowed in templates');
+      }
+
+      if (Array.isArray(stmt.params) && stmt.params.length > 0) {
+        throw new Error('Helper parameters are not allowed in templates');
+      }
+
+      if (stmt.hash && Array.isArray(stmt.hash.pairs) && stmt.hash.pairs.length > 0) {
+        throw new Error('Hash arguments are not allowed in templates');
+      }
+
+      const pathNode = stmt.path;
+      if (!pathNode || pathNode.type !== 'PathExpression') {
+        throw new Error('SubExpressions and literal mustaches are not allowed in templates');
+      }
+
+      if (pathNode.data === true) {
+        throw new Error(`Data variables ("${pathNode.original ?? '@'}") are not allowed in templates`);
+      }
+
+      if (typeof pathNode.depth === 'number' && pathNode.depth > 0) {
+        throw new Error(`Parent path traversal ("${pathNode.original ?? '../'}") is not allowed in templates`);
+      }
+
+      const original = pathNode.original ?? '';
+      if (
+        original === 'this' ||
+        original.startsWith('this.') ||
+        original.startsWith('this/') ||
+        original === '.' ||
+        original.startsWith('./') ||
+        original.startsWith('..')
+      ) {
+        throw new Error(`Relative context path "${original}" is not allowed in templates`);
+      }
+
+      const parts = Array.isArray(pathNode.parts) ? pathNode.parts : [];
+      if (parts.length === 0 || parts.some((part) => part.trim().length === 0)) {
+        throw new Error(`Invalid path "${original}" in template`);
+      }
+
+      literals.push(currentLiteral);
+      currentLiteral = '';
+      tokens.push({ original, parts });
+    }
+
+    literals.push(currentLiteral);
+    return { tokens, literals };
   }
 }
