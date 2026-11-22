@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
+import type { docs_v1 } from 'googleapis';
 import { createHttpServer } from '../infrastructure/http';
+import { GoogleDocsClient } from '../infrastructure/docs';
+import { getDocumentInfoWidgetName } from '../features/schema-driven-ui/blocks/document-info';
 import { wireWorkspaceAddonRoutes } from './workspace-addon.wiring';
 import { createSourceParserWiring } from './source-parser.wiring';
 import { ParseSchemaRegistryAdapter } from '../features/source-parser/adapters/parse-schema-registry.adapter';
@@ -259,5 +262,167 @@ describe('workspace-addon.wiring (S3)', () => {
       .find((s) => s.header === 'Document Data')
       ?.widgets.find((w) => w.textInput?.name?.startsWith('date'));
     expect(dateWidget?.textInput?.value).toBe('260315');
+  });
+
+  it('wires docsClient in standalone wireWorkspaceAddonRoutes without pre-wired createSourceParser (#321)', async () => {
+    const server = createHttpServer();
+    const documentSpaceService = {
+      getAllTypes: () => [
+        {
+          id: 'projects',
+          displayName: 'Projects',
+          spaceSchema: {
+            allowedDocumentTypes: ['submittal-arch'],
+            defaultDocumentType: 'submittal-arch',
+          },
+          storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+        },
+      ],
+      getCollection: async () => ({
+        spaces: [
+          {
+            id: 'projects-shared-drive-001',
+            typeId: 'projects',
+            name: 'Projects Shared Drive 001',
+            abstractStorageId: 'projects-shared-drive-001',
+          },
+        ],
+      }),
+    } as unknown as DocumentSpaceService;
+
+    const manifestProvider = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./types/submittal-arch.json'],
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        key: 'submittal-arch',
+        name: 'Submittal Arch',
+        documentSchema: {
+          fields: [
+            { key: 'section', name: 'Section', type: 'string', required: true, pattern: '^\\d{6}$' },
+            { key: 'number', name: 'Number', type: 'string', required: true, pattern: '^\\d{3,}$' },
+            { key: 'revision', name: 'Revision', type: 'string', required: true, minLength: 1, pattern: '^.*\\S+.*$' },
+          ],
+        },
+        documentUiSchema: {
+          layout: ['section', 'number', 'revision'],
+          fields: {
+            section: { widget: 'textInput', label: 'Section' },
+            number: { widget: 'textInput', label: 'Number' },
+            revision: { widget: 'textInput', label: 'Revision' },
+          },
+        },
+        documentFormSchema: {
+          fields: {
+            'Submittal No': {
+              template: '{{section}}-{{number}}-{{revision}}',
+            },
+          },
+        },
+        documentParseSchema: {
+          extractors: [{ source: 'form' }],
+        },
+      }),
+    };
+
+    const driveContextClient = {
+      getFile: vi.fn().mockResolvedValue({
+        id: 'gdoc-wiring-321',
+        name: 'Waterproofing_Stamped',
+        mimeType: 'application/vnd.google-apps.document',
+        parents: ['projects-shared-drive-001'],
+        driveId: 'projects-shared-drive-001',
+      }),
+      listSharedDrives: vi.fn().mockResolvedValue({
+        drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+      }),
+    };
+
+    const mockGet = vi.fn().mockResolvedValue({
+      data: {
+        documentId: 'gdoc-wiring-321',
+        body: null,
+        tabs: [
+          {
+            documentTab: {
+              body: {
+                content: [
+                  {
+                    table: {
+                      rows: 1,
+                      columns: 2,
+                      tableRows: [
+                        {
+                          tableCells: [
+                            {
+                              content: [
+                                { paragraph: { elements: [{ textRun: { content: 'Submittal No.\n' } }] } },
+                              ],
+                            },
+                            {
+                              content: [
+                                { paragraph: { elements: [{ textRun: { content: '071200-001-1\n' } }] } },
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    });
+    const docsClient = new GoogleDocsClient({
+      docs: { documents: { get: mockGet } } as unknown as docs_v1.Docs,
+    });
+
+    wireWorkspaceAddonRoutes({
+      server,
+      authVerifier: createAuthVerifier(),
+      manifestProvider,
+      documentSpaceService,
+      gmailClient: createGmailClient(),
+      driveContextClient,
+      docsClient,
+    });
+
+    const res = await server.inject({
+      method: 'POST',
+      url: '/workspace/drive-items-selected',
+      headers: { authorization: 'Bearer valid' },
+      payload: {
+        hostApp: 'DRIVE',
+        drive: {
+          selectedItems: [{ id: 'gdoc-wiring-321', title: 'Waterproofing_Stamped' }],
+        },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockGet).toHaveBeenCalledWith(
+      {
+        documentId: 'gdoc-wiring-321',
+        includeTabsContent: true,
+        suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+      },
+      { timeout: 10_000 }
+    );
+
+    const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+    const docDataSection = body.action?.navigations?.[0]?.pushCard?.sections.find(
+      (s) => s.header === 'Document Data'
+    );
+    const readText = (fieldKey: string) =>
+      docDataSection?.widgets.find(
+        (w) => w.textInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-arch')
+      )?.textInput?.value;
+
+    expect(readText('section')).toBe('071200');
+    expect(readText('number')).toBe('001');
+    expect(readText('revision')).toBe('1');
   });
 });

@@ -10,64 +10,11 @@ import type {
   GmailAttachmentDescriptor,
 } from './types';
 import { GoogleGmailApiError, GoogleGmailNotFoundError } from './errors';
-
-function extractHttpStatusCode(error: unknown): number | undefined {
-  if (!error || typeof error !== 'object') return undefined;
-  const err = error as { statusCode?: unknown; status?: unknown; code?: unknown; response?: { status?: unknown } };
-  if (typeof err.statusCode === 'number') return err.statusCode;
-  if (typeof err.status === 'number') return err.status;
-  if (err.response && typeof err.response.status === 'number') return err.response.status;
-  if (typeof err.code === 'number') return err.code;
-  if (typeof err.code === 'string' && !Number.isNaN(Number(err.code))) return Number(err.code);
-  return undefined;
-}
-
-function isRateLimitOrQuotaError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const status = extractHttpStatusCode(error);
-  if (status === 429) return true;
-
-  const err = error as Record<string, unknown>;
-  if (err.code === '429' || err.code === 429) return true;
-
-  if (status === 403 || err.code === '403' || err.code === 403) {
-    try {
-      const errorStr = JSON.stringify(error);
-      const quotaReasons = ['userRateLimitExceeded', 'rateLimitExceeded', 'quotaExceeded'];
-      if (quotaReasons.some((reason) => errorStr.includes(reason))) {
-        return true;
-      }
-    } catch {
-      // Non-serializable object
-    }
-    const message = formatErrorMessage(error).toLowerCase();
-    if (
-      message.includes('rate limit') ||
-      message.includes('ratelimit') ||
-      message.includes('quota exceeded') ||
-      message.includes('user rate limit')
-    ) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function formatErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (
-    error &&
-    typeof error === 'object' &&
-    'message' in error &&
-    typeof (error as { message: unknown }).message === 'string'
-  ) {
-    return (error as { message: string }).message;
-  }
-  return String(error);
-}
+import {
+  extractHttpStatusCode,
+  formatErrorMessage,
+  executeWithRateLimitRetry,
+} from '../google/retry';
 
 function getHeaderValue(
   headers: gmail_v1.Schema$MessagePartHeader[] | undefined,
@@ -469,30 +416,8 @@ export class GoogleGmailClient {
     throw new GoogleGmailApiError(message, { cause: error, statusCode });
   }
 
-  private async executeWithRetry<T>(operation: () => Promise<T>): Promise<T> {
-    const maxRetries = this.retryOptions.maxRetries ?? 3;
-    const initialDelayMs = this.retryOptions.initialDelayMs ?? 1000;
-    const backoffFactor = this.retryOptions.backoffFactor ?? 2;
-    const sleep =
-      this.retryOptions.sleep ??
-      ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
-
-    let attempt = 0;
-    while (true) {
-      try {
-        return await operation();
-      } catch (error) {
-        if (isRateLimitOrQuotaError(error) && attempt < maxRetries) {
-          const baseDelay = initialDelayMs * Math.pow(backoffFactor, attempt);
-          const jitter = 0.75 + Math.random() * 0.5;
-          const delay = Math.round(baseDelay * jitter);
-          attempt++;
-          await sleep(delay);
-          continue;
-        }
-        throw error;
-      }
-    }
+  private executeWithRetry<T>(operation: () => Promise<T>): Promise<T> {
+    return executeWithRateLimitRetry(operation, this.retryOptions);
   }
 
   private async resolveLabelMap(

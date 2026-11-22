@@ -89,20 +89,27 @@ describe('Google Workspace Add-on Deployment Manifest Generator', () => {
     );
   });
 
-  it('contains expected OAuth scopes', () => {
+  it('retains the exact 5 OAuth scopes with zero additions', () => {
+    const expectedScopes = [
+      'https://www.googleapis.com/auth/drive',
+      'https://www.googleapis.com/auth/drive.addons.metadata.readonly',
+      'https://www.googleapis.com/auth/gmail.addons.execute',
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/userinfo.email',
+    ];
+
+    const parsedTemplate = JSON.parse(templateContent) as { oauthScopes: string[] };
+    expect(parsedTemplate.oauthScopes).toEqual(expectedScopes);
+    expect(parsedTemplate.oauthScopes).toHaveLength(5);
+
     const { manifest } = generateDeploymentManifest({
       templateContent,
       serviceUrl: 'https://service.run.app',
       environment: 'dev',
     });
 
-    expect(manifest.oauthScopes).toContain('https://www.googleapis.com/auth/drive');
-    expect(manifest.oauthScopes).toContain(
-      'https://www.googleapis.com/auth/drive.addons.metadata.readonly'
-    );
-    expect(manifest.oauthScopes).toContain('https://www.googleapis.com/auth/gmail.addons.execute');
-    expect(manifest.oauthScopes).toContain('https://www.googleapis.com/auth/gmail.readonly');
-    expect(manifest.oauthScopes).toContain('https://www.googleapis.com/auth/userinfo.email');
+    expect(manifest.oauthScopes).toEqual(expectedScopes);
+    expect(manifest.oauthScopes).toHaveLength(5);
   });
 
   it('allows addOnName override regardless of environment', () => {

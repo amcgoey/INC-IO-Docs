@@ -9,6 +9,8 @@ import type {
 } from '../src/features/document/ports';
 import type { DocumentType } from '../src/features/document/domain';
 import { GoogleDriveClient } from '../src/infrastructure/drive/drive-client';
+import { GoogleDocsClient, type GoogleDocsClientOptions } from '../src/infrastructure/docs';
+import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
 
 describe('App integration tests', () => {
   let app: AppInstance;
@@ -1389,6 +1391,204 @@ describe('App integration tests', () => {
       } finally {
         await fs.rm(tempDir, { recursive: true, force: true });
       }
+    });
+
+    it('accepts optional docsClient in createApp() and forwards it through initialize() and workspace routes (#321)', async () => {
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          documentId: 'gdoc-app-321',
+          body: null,
+          tabs: [
+            {
+              documentTab: {
+                body: {
+                  content: [
+                    {
+                      table: {
+                        rows: 1,
+                        columns: 2,
+                        tableRows: [
+                          {
+                            tableCells: [
+                              {
+                                content: [
+                                  { paragraph: { elements: [{ textRun: { content: 'Submittal No.\n' } }] } },
+                                ],
+                              },
+                              {
+                                content: [
+                                  { paragraph: { elements: [{ textRun: { content: '071200-001-1\n' } }] } },
+                                ],
+                              },
+                            ],
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      });
+      const customDocsClient = new GoogleDocsClient({
+        docs: { documents: { get: mockGet } } as unknown as NonNullable<
+          GoogleDocsClientOptions['docs']
+        >,
+      });
+
+      const mockManifestProvider = {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: ['./types/submittal-arch.json'],
+          DocumentSpaceTypes: [
+            {
+              id: 'projects',
+              displayName: 'Projects',
+              spaceSchema: {
+                allowedDocumentTypes: ['submittal-arch'],
+                defaultDocumentType: 'submittal-arch',
+              },
+              storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+            },
+          ],
+          configuration: {
+            workspace: {
+              defaultDocumentSpaceType: 'projects',
+              defaultDocumentType: 'submittal-arch',
+            },
+          },
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'submittal-arch',
+          name: 'Submittal Arch',
+          documentSchema: {
+            fields: [
+              { key: 'section', name: 'Section', type: 'string', required: true, pattern: '^\\d{6}$' },
+              { key: 'number', name: 'Number', type: 'string', required: true, pattern: '^\\d{3,}$' },
+              { key: 'revision', name: 'Revision', type: 'string', required: true, minLength: 1, pattern: '^.*\\S+.*$' },
+            ],
+          },
+          documentUiSchema: {
+            layout: ['section', 'number', 'revision'],
+            fields: {
+              section: { widget: 'textInput', label: 'Section' },
+              number: { widget: 'textInput', label: 'Number' },
+              revision: { widget: 'textInput', label: 'Revision' },
+            },
+            events: {
+              onSubmit: { catchAllWorkflow: 'FileSubmittalArch' },
+            },
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'FileSubmittalArch',
+                activitySequence: [{ type: 'LOG_DOCUMENT', payload: {} }],
+              },
+            ],
+          },
+          documentFormSchema: {
+            fields: {
+              'Submittal No': {
+                template: '{{section}}-{{number}}-{{revision}}',
+              },
+            },
+          },
+          documentParseSchema: {
+            extractors: [{ source: 'form' }],
+          },
+        }),
+        getDriveConfig: vi.fn().mockResolvedValue(undefined),
+        getWorkspaceConfig: vi.fn().mockResolvedValue({
+          defaultDocumentSpaceType: 'projects',
+          defaultDocumentType: 'submittal-arch',
+        }),
+        getSheetsConfig: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const storageAdapter = {
+        fetchSpaces: vi.fn().mockResolvedValue([
+          {
+            id: 'projects-shared-drive-001',
+            typeId: 'projects',
+            name: 'Projects Shared Drive 001',
+            abstractStorageId: 'projects-shared-drive-001',
+          },
+        ]),
+        resolveStorageLocation: vi.fn().mockResolvedValue({
+          provider: 'google_drive',
+          abstractStorageId: 'projects-shared-drive-001',
+        }),
+      };
+
+      const driveContextClient = {
+        getFile: vi.fn().mockResolvedValue({
+          id: 'gdoc-app-321',
+          name: 'Waterproofing_Stamped',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+        }),
+        listSharedDrives: vi.fn().mockResolvedValue({
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        }),
+      };
+
+      const authVerifier = {
+        verifyToken: vi.fn().mockResolvedValue({
+          isValid: true,
+          payload: { email: 'user@inc.nyc', sub: 'user-1' },
+        }),
+      };
+
+      const appInstance = createApp({
+        skipSpaceValidation: true,
+        manifestProvider: mockManifestProvider as unknown as CompositeManifestProvider,
+        activityEngine: mockActivityEngine,
+        storageAdapter,
+        driveContextClient,
+        authVerifier,
+        docsClient: customDocsClient,
+      });
+
+      await expect(appInstance.initialize()).resolves.toBeUndefined();
+
+      const res = await appInstance.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid' },
+        payload: {
+          hostApp: 'DRIVE',
+          drive: {
+            selectedItems: [{ id: 'gdoc-app-321', title: 'Waterproofing_Stamped' }],
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(mockGet).toHaveBeenCalledWith(
+        {
+          documentId: 'gdoc-app-321',
+          includeTabsContent: true,
+          suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+        },
+        { timeout: 10_000 }
+      );
+
+      const body = JSON.parse(res.payload);
+      const docDataSec = body.action?.navigations?.[0]?.pushCard?.sections?.find(
+        (s: { header?: string }) => s.header === 'Document Data'
+      );
+      const readText = (fieldKey: string) =>
+        docDataSec?.widgets?.find(
+          (w: { textInput?: { name?: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-arch')
+        )?.textInput?.value;
+
+      expect(readText('section')).toBe('071200');
+      expect(readText('number')).toBe('001');
+      expect(readText('revision')).toBe('1');
     });
   });
 });

@@ -3,6 +3,7 @@ import { createHttpServer, type HttpServer } from '../infrastructure/http';
 import { AppManifestProvider } from '../infrastructure/manifest/app-manifest-provider';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
+import type { GoogleDocsClient } from '../infrastructure/docs';
 import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 import {
   createDocumentFeatureWiring,
@@ -61,6 +62,7 @@ export interface AppOptions {
   skipSpaceValidation?: boolean | undefined;
   appBaseUrl?: string | undefined;
   pdfProcessor?: PdfProcessor | undefined;
+  docsClient?: GoogleDocsClient | undefined;
 }
 
 export interface AppInstance {
@@ -164,6 +166,7 @@ export function createApp(options?: AppOptions): AppInstance {
     workspaceConfigProvider: manifestProvider,
     templateEvaluator,
     ...(options?.pdfProcessor !== undefined ? { pdfProcessor: options.pdfProcessor } : {}),
+    ...(options?.docsClient !== undefined ? { docsClient: options.docsClient } : {}),
   });
 
   wireWorkspaceAddonRoutes({
@@ -183,6 +186,7 @@ export function createApp(options?: AppOptions): AppInstance {
     storageAdapter,
     pdfProcessor: options?.pdfProcessor,
     driveContextClient: options?.driveContextClient,
+    ...(options?.docsClient !== undefined ? { docsClient: options.docsClient } : {}),
     sourceParser: sourceParserWiring.sourceParser,
     createSourceParser: sourceParserWiring.createSourceParser,
   });

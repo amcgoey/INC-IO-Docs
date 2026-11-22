@@ -40,6 +40,7 @@ import type {
 import type { DocumentSpaceManifestRegistryAdapter } from '../features/document-space/adapters/document-space-manifest-registry';
 import type { DocumentSpaceStoragePort } from '../features/document-space/ports';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
+import type { GoogleDocsClient } from '../infrastructure/docs';
 import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 import type { UiProcessGmailPort } from '../features/ui-process-manager';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
@@ -75,6 +76,7 @@ export interface WorkspaceAddonWiringOptions {
       ) => SourceParserPort | Promise<SourceParserPort>)
     | undefined;
   driveContextClient?: DriveSourceContextClientPort | undefined;
+  docsClient?: GoogleDocsClient | undefined;
 }
 
 export function wireWorkspaceAddonRoutes(
@@ -143,9 +145,10 @@ export function wireWorkspaceAddonRoutes(
     const getDynamicOptionsAdapter = (context: WorkspaceExecutionContext): DynamicOptionsAdapter => {
       let adapter = dynamicOptionsAdapters.get(context);
       if (!adapter) {
-        const driveClient = context.userOAuthToken
+        const oauthCredential = context.userOAuthToken ?? context.gmail?.accessToken;
+        const driveClient = oauthCredential
           ? new GoogleDriveClient({
-              auth: context.userOAuthToken,
+              auth: oauthCredential,
               configProvider: appConfigProvider,
             })
           : (options.driveClient ?? new GoogleDriveClient({ configProvider: appConfigProvider }));
@@ -186,6 +189,7 @@ export function wireWorkspaceAddonRoutes(
         configProvider: appConfigProvider,
         workspaceConfigProvider: options.configProvider,
         ...(options.pdfProcessor !== undefined ? { pdfProcessor: options.pdfProcessor } : {}),
+        ...(options.docsClient !== undefined ? { docsClient: options.docsClient } : {}),
         ...(options.templateEvaluator !== undefined
           ? { templateEvaluator: options.templateEvaluator }
           : {}),
