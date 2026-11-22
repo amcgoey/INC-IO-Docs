@@ -464,6 +464,880 @@ describe('GoogleDocsClient', () => {
     });
   });
 
+  describe('extractFormData — Dropdown smart-chip resolution, deduplication & Pattern 5 (Standalone Dropdowns)', () => {
+    const textCell = (text: string, style?: { columnSpan?: number; rowSpan?: number }) => ({
+      content: [{ paragraph: { elements: [{ textRun: { content: text } }] } }],
+      ...(style ? { tableCellStyle: style } : {}),
+    });
+
+    it('resolves omitted/null displayValue via dropdownDefinitions, strips unset prompts/glyphs, and deduplicates Pattern 4 Col 1 dropdowns by dropdownId and WeakSet', () => {
+      const client = new GoogleDocsClient();
+
+      const res = client.extractFormData({
+        tabs: [
+          {
+            documentTab: {
+              dropdownDefinitions: {
+                'def.priority': {
+                  dropdownDefinitionId: 'def.priority',
+                  dropdownDefinitionProperties: {
+                    title: 'Ignored Because Captured In Table',
+                    options: [
+                      { optionId: 'opt.prompt', displayValue: 'Select priority' },
+                      { optionId: 'opt.high', displayValue: 'High' },
+                    ],
+                  },
+                },
+                'def.noIdChip': {
+                  dropdownDefinitionId: 'def.noIdChip',
+                  dropdownDefinitionProperties: {
+                    title: 'Duplicate Title If Not WeakSet Deduped',
+                    options: [
+                      { optionId: 'opt.choose', displayValue: 'Choose...' },
+                      { optionId: 'opt.done', displayValue: 'Complete' },
+                    ],
+                  },
+                },
+                'def.unsetDash': {
+                  dropdownDefinitionId: 'def.unsetDash',
+                  dropdownDefinitionProperties: {
+                    title: 'Unset Dash In Table',
+                    options: [
+                      { optionId: 'opt.dash', displayValue: '—' },
+                      { optionId: 'opt.yes', displayValue: 'Approved' },
+                    ],
+                  },
+                },
+              },
+              body: {
+                content: [
+                  {
+                    table: {
+                      rows: 4,
+                      columns: 2,
+                      tableRows: [
+                        {
+                          tableCells: [
+                            textCell('Priority:\n'),
+                            {
+                              content: [
+                                {
+                                  paragraph: {
+                                    elements: [
+                                      {
+                                        dropdown: {
+                                          dropdownId: 'kix.dd.priority',
+                                          dropdownProperties: {
+                                            dropdownDefinitionId: 'def.priority',
+                                            selectedOptionId: 'opt.high',
+                                            displayValue: null,
+                                          },
+                                        },
+                                      },
+                                    ],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                        {
+                          tableCells: [
+                            textCell('NoId Status\n'),
+                            {
+                              content: [
+                                {
+                                  paragraph: {
+                                    elements: [
+                                      {
+                                        dropdown: {
+                                          // Intentionally omit dropdownId to test WeakSet identity tracking
+                                          dropdownProperties: {
+                                            dropdownDefinitionId: 'def.noIdChip',
+                                            selectedOptionId: 'opt.done',
+                                            displayValue: 'Complete',
+                                          },
+                                        },
+                                      },
+                                    ],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                        {
+                          tableCells: [
+                            textCell('Review Gate\n'),
+                            {
+                              content: [
+                                {
+                                  paragraph: {
+                                    elements: [
+                                      {
+                                        dropdown: {
+                                          dropdownProperties: {
+                                            dropdownDefinitionId: 'def.unsetDash',
+                                            selectedOptionId: 'opt.dash',
+                                            displayValue: '—',
+                                          },
+                                        },
+                                      },
+                                    ],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                        {
+                          tableCells: [
+                            textCell('Missing Def Prompt\n'),
+                            {
+                              content: [
+                                {
+                                  paragraph: {
+                                    elements: [
+                                      {
+                                        dropdown: {
+                                          dropdownProperties: {
+                                            displayValue: 'Select option',
+                                          },
+                                        },
+                                      },
+                                    ],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      });
+
+      expect(res).toEqual({
+        widgetCount: 4,
+        fields: {
+          Priority: 'High',
+          'NoId Status': 'Complete',
+        },
+      });
+    });
+
+    it('extracts Pattern 5 standalone dropdown smart chips from paragraphs and unmatched 1-row tables while stripping unset prompts', () => {
+      const client = new GoogleDocsClient();
+
+      const res = client.extractFormData({
+        tabs: [
+          {
+            documentTab: {
+              dropdownDefinitions: {
+                'def.docStatus': {
+                  dropdownDefinitionId: 'def.docStatus',
+                  dropdownDefinitionProperties: {
+                    title: '  Approval   Status: ',
+                    options: [
+                      { optionId: 'opt.0', displayValue: 'Select...' },
+                      { optionId: 'opt.1', displayValue: '  Approved  ' },
+                    ],
+                  },
+                },
+                'def.unmatchedCell': {
+                  dropdownDefinitionId: 'def.unmatchedCell',
+                  dropdownDefinitionProperties: {
+                    title: 'Discipline.',
+                    options: [
+                      { optionId: 'opt.0', displayValue: 'Choose one' },
+                      { optionId: 'opt.1', displayValue: 'Architectural' },
+                    ],
+                  },
+                },
+                'def.unsetFirst': {
+                  dropdownDefinitionId: 'def.unsetFirst',
+                  dropdownDefinitionProperties: {
+                    title: 'Pending Choice',
+                    options: [
+                      { optionId: 'opt.0', displayValue: 'Choose...' },
+                      { optionId: 'opt.1', displayValue: 'Ready' },
+                    ],
+                  },
+                },
+                'def.unsetNoDefFallback': {
+                  dropdownDefinitionId: 'def.unsetNoDefFallback',
+                  dropdownDefinitionProperties: {
+                    title: 'Unset No Sel',
+                    options: [
+                      { optionId: 'opt.0', displayValue: 'Other' },
+                      { optionId: 'opt.1', displayValue: 'Select item' },
+                    ],
+                  },
+                },
+                'def.nonFirstSelect': {
+                  dropdownDefinitionId: 'def.nonFirstSelect',
+                  dropdownDefinitionProperties: {
+                    title: 'NonFirst Prompt',
+                    options: [
+                      { optionId: 'opt.0', displayValue: 'None' },
+                      { optionId: 'opt.1', displayValue: 'Select All' },
+                    ],
+                  },
+                },
+                'def.uncheckedGlyph': {
+                  dropdownDefinitionId: 'def.uncheckedGlyph',
+                  dropdownDefinitionProperties: {
+                    title: 'Standalone Box',
+                    options: [
+                      { optionId: 'opt.0', displayValue: '☐' },
+                      { optionId: 'opt.1', displayValue: '☑' },
+                    ],
+                  },
+                },
+                'def.multilineTitle': {
+                  dropdownDefinitionId: 'def.multilineTitle',
+                  dropdownDefinitionProperties: {
+                    title: 'Line 1\nLine 2',
+                    options: [{ optionId: 'opt.0', displayValue: 'Value' }],
+                  },
+                },
+              },
+              body: {
+                content: [
+                  {
+                    paragraph: {
+                      elements: [
+                        {
+                          dropdown: {
+                            dropdownId: 'kix.standalone.1',
+                            dropdownProperties: {
+                              dropdownDefinitionId: 'def.docStatus',
+                              selectedOptionId: 'opt.1',
+                              displayValue: null,
+                            },
+                          },
+                        },
+                        {
+                          dropdown: {
+                            dropdownId: 'kix.standalone.2',
+                            dropdownProperties: {
+                              dropdownDefinitionId: 'def.unsetFirst',
+                              selectedOptionId: 'opt.0',
+                              displayValue: 'Choose...',
+                            },
+                          },
+                        },
+                        {
+                          dropdown: {
+                            dropdownId: 'kix.standalone.3',
+                            dropdownProperties: {
+                              dropdownDefinitionId: 'def.unsetNoDefFallback',
+                              // selectedOptionId absent -> prompt stripped
+                              displayValue: 'Select item',
+                            },
+                          },
+                        },
+                        {
+                          dropdown: {
+                            dropdownId: 'kix.standalone.4',
+                            dropdownProperties: {
+                              dropdownDefinitionId: 'def.nonFirstSelect',
+                              // selectedOptionId is NOT firstOptionId -> kept
+                              selectedOptionId: 'opt.1',
+                              displayValue: 'Select All',
+                            },
+                          },
+                        },
+                        {
+                          dropdown: {
+                            dropdownId: 'kix.standalone.5',
+                            dropdownProperties: {
+                              dropdownDefinitionId: 'def.uncheckedGlyph',
+                              selectedOptionId: 'opt.0',
+                              displayValue: '☐',
+                            },
+                          },
+                        },
+                        {
+                          dropdown: {
+                            dropdownId: 'kix.standalone.bad',
+                            dropdownProperties: {
+                              dropdownDefinitionId: 'def.multilineTitle',
+                              selectedOptionId: 'opt.0',
+                              displayValue: 'Value',
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                  // Unmatched 1-row non-checkbox table containing a standalone dropdown
+                  {
+                    table: {
+                      rows: 1,
+                      columns: 1,
+                      tableRows: [
+                        {
+                          tableCells: [
+                            {
+                              content: [
+                                {
+                                  paragraph: {
+                                    elements: [
+                                      {
+                                        dropdown: {
+                                          dropdownProperties: {
+                                            dropdownDefinitionId: 'def.unmatchedCell',
+                                            selectedOptionId: 'opt.1',
+                                            displayValue: 'Architectural',
+                                          },
+                                        },
+                                      },
+                                    ],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      });
+
+      expect(res).toEqual({
+        widgetCount: 6,
+        fields: {
+          'Approval Status': 'Approved',
+          'NonFirst Prompt': 'Select All',
+          Discipline: 'Architectural',
+        },
+      });
+    });
+  });
+
+  describe('extractFormData — Pattern 1 (Heading + Checkbox Option Tables) & precedingHeadingLabel', () => {
+    const textCell = (text: string, style?: { columnSpan?: number; rowSpan?: number }) => ({
+      content: [{ paragraph: { elements: [{ textRun: { content: text } }] } }],
+      ...(style ? { tableCellStyle: style } : {}),
+    });
+
+    const RESPONSE_LABELS = [
+      'NO EXCEPTIONS TAKEN',
+      'NO OBJECTIONS AS CORRECTED',
+      'REVISE AND RESUBMIT',
+      'REJECTED',
+      'NOT REVIEWED',
+    ] as const;
+
+    function buildSubmittalStampTab(options: {
+      submittalNo?: string;
+      checkedIndices?: number[];
+      omitDisplayValue?: boolean;
+      spacerParagraphsBetweenHeadingAndTable?: Array<Record<string, unknown>>;
+    }) {
+      const checked = new Set(options.checkedIndices ?? []);
+      return {
+        documentTab: {
+          dropdownDefinitions: {
+            'kix.cb': {
+              dropdownDefinitionId: 'kix.cb',
+              dropdownDefinitionProperties: {
+                title: 'Checkbox',
+                options: [
+                  { optionId: 'opt.off', displayValue: '☐' },
+                  { optionId: 'opt.on', displayValue: '☑' },
+                ],
+              },
+            },
+          },
+          body: {
+            content: [
+              { sectionBreak: {} },
+              {
+                table: {
+                  rows: 1,
+                  columns: 2,
+                  tableRows: [
+                    {
+                      tableCells: [
+                        textCell('Submittal No.\n'),
+                        textCell(`${options.submittalNo ?? ''}\n`),
+                      ],
+                    },
+                  ],
+                },
+              },
+              { paragraph: { elements: [{ textRun: { content: '––––\n' } }] } },
+              { paragraph: { elements: [{ textRun: { content: 'Submittal Response\n' } }] } },
+              ...(options.spacerParagraphsBetweenHeadingAndTable ?? []),
+              {
+                table: {
+                  rows: 6,
+                  columns: 3,
+                  tableRows: [
+                    ...RESPONSE_LABELS.map((label, idx) => {
+                      const isChecked = checked.has(idx);
+                      const col2Cell =
+                        idx === 0
+                          ? textCell('NET/NOC Legend\n', { rowSpan: 2 })
+                          : idx === 1
+                            ? textCell('\n')
+                            : idx === 2
+                              ? textCell('RR/REJ Legend\n', { rowSpan: 2 })
+                              : textCell('\n');
+                      return {
+                        tableCells: [
+                          {
+                            tableCellStyle: { columnSpan: 1, rowSpan: 1 },
+                            content: [
+                              {
+                                paragraph: {
+                                  elements: [
+                                    {
+                                      dropdown: {
+                                        dropdownId: `kix.dd.${idx}`,
+                                        dropdownProperties: {
+                                          dropdownDefinitionId: 'kix.cb',
+                                          selectedOptionId: isChecked ? 'opt.on' : 'opt.off',
+                                          displayValue: options.omitDisplayValue
+                                            ? null
+                                            : isChecked
+                                              ? '☑'
+                                              : '☐',
+                                        },
+                                      },
+                                    },
+                                  ],
+                                },
+                              },
+                            ],
+                          },
+                          textCell(`${label}\n`, { columnSpan: 1, rowSpan: 1 }),
+                          col2Cell,
+                        ],
+                      };
+                    }),
+                    {
+                      tableCells: [
+                        textCell('Disclaimer prose spanning full table width.\n', {
+                          columnSpan: 3,
+                          rowSpan: 1,
+                        }),
+                        textCell('\n'),
+                        textCell('\n'),
+                      ],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      };
+    }
+
+    it('extracts all 5 Submittal Response options, handles 0-checked without error, and flags 2+ checked in ambiguousFields while omitting from fields', () => {
+      const client = new GoogleDocsClient();
+
+      // 0 checked -> omits Submittal Response, keeps Submittal No
+      const zeroRes = client.extractFormData({
+        tabs: [buildSubmittalStampTab({ submittalNo: '071200-001-0', checkedIndices: [] })],
+      });
+      expect(zeroRes).toEqual({
+        widgetCount: 2,
+        fields: { 'Submittal No': '071200-001-0' },
+      });
+      expect('ambiguousFields' in zeroRes).toBe(false);
+
+      // 1 checked across all 5 rows (including omitted displayValue resolved via dropdownDefinitions)
+      for (const [idx, expectedLabel] of RESPONSE_LABELS.entries()) {
+        const oneRes = client.extractFormData({
+          tabs: [
+            buildSubmittalStampTab({
+              submittalNo: '071200-001-1',
+              checkedIndices: [idx],
+              omitDisplayValue: idx % 2 === 1,
+            }),
+          ],
+        });
+        expect(oneRes).toEqual({
+          widgetCount: 2,
+          fields: {
+            'Submittal No': '071200-001-1',
+            'Submittal Response': expectedLabel,
+          },
+        });
+      }
+
+      // 2+ checked -> omits Submittal Response, returns ambiguousFields: ['Submittal Response']
+      const multiRes = client.extractFormData({
+        tabs: [buildSubmittalStampTab({ submittalNo: '071200-001-1', checkedIndices: [0, 3] })],
+      });
+      expect(multiRes).toEqual({
+        widgetCount: 2,
+        fields: { 'Submittal No': '071200-001-1' },
+        ambiguousFields: ['Submittal Response'],
+      });
+    });
+
+    it('preserves precedingHeadingLabel across 1-2 blank spacers and resets on 3rd blank spacer, horizontal divider, smart chip, multi-line/non-plausible paragraph, sectionBreak, or table', () => {
+      const client = new GoogleDocsClient();
+
+      // 2 blank spacers -> preserved
+      const twoSpacers = client.extractFormData({
+        tabs: [
+          buildSubmittalStampTab({
+            checkedIndices: [0],
+            spacerParagraphsBetweenHeadingAndTable: [
+              { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+              { paragraph: { elements: [{ textRun: { content: '   \n' } }] } },
+            ],
+          }),
+        ],
+      });
+      expect(twoSpacers.fields['Submittal Response']).toBe('NO EXCEPTIONS TAKEN');
+
+      // Resets on: 3rd blank spacer, horizontal divider, smart chip, \uE907, multi-line, >40 chars, sectionBreak, table
+      const resetCases = [
+        [
+          { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+          { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+          { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+        ],
+        [{ paragraph: { elements: [{ textRun: { content: '––––\n' } }] } }],
+        [{ paragraph: { elements: [{ dateElement: { dateElementProperties: { displayText: '2026-01-01' } } }] } }],
+        [{ paragraph: { elements: [{ person: { personProperties: { name: 'Alice' } } }] } }],
+        [{ paragraph: { elements: [{ textRun: { content: 'Note \uE907\n' } }] } }],
+        [{ paragraph: { elements: [{ textRun: { content: 'Line 1\nLine 2\n' } }] } }],
+        [{ paragraph: { elements: [{ textRun: { content: `${'X'.repeat(41)}\n` } }] } }],
+        [{ sectionBreak: {} }],
+        [{ tableOfContents: {} }],
+        [
+          {
+            paragraph: {
+              elements: [
+                {
+                  dropdown: {
+                    dropdownId: 'kix.breaker',
+                    dropdownProperties: { displayValue: 'Option' },
+                  },
+                },
+              ],
+            },
+          },
+        ],
+        [
+          {
+            table: {
+              rows: 1,
+              columns: 1,
+              tableRows: [{ tableCells: [textCell('Separator Table\n')] }],
+            },
+          },
+        ],
+      ];
+
+      for (const spacers of resetCases) {
+        const res = client.extractFormData({
+          tabs: [
+            buildSubmittalStampTab({
+              submittalNo: '071200-001-1',
+              checkedIndices: [0],
+              spacerParagraphsBetweenHeadingAndTable: spacers,
+            }),
+          ],
+        });
+        expect(res.fields['Submittal Response']).toBeUndefined();
+      }
+    });
+
+    it('supports explicit non-dropdown checkbox glyphs and typed x/X alongside ☐/[ ] while rejecting blank Col 0, plain x/empty, 0/1/2, Yes/No, true/false, and invalid unmerged rows', () => {
+      const client = new GoogleDocsClient();
+
+      // Positive cases with plain textRun checkbox glyphs and typed x/X alongside ☐/[ ]
+      const positiveGlyphCases: Array<{
+        checkedToken: string;
+        uncheckedTokens: string[];
+      }> = [
+        { checkedToken: '☑', uncheckedTokens: ['☐', '⬚', '□'] },
+        { checkedToken: '☒', uncheckedTokens: ['☐'] },
+        { checkedToken: '✓', uncheckedTokens: ['☐'] },
+        { checkedToken: '✔', uncheckedTokens: ['[ ]'] },
+        { checkedToken: '✕', uncheckedTokens: ['[  ]'] },
+        { checkedToken: '✖', uncheckedTokens: ['()'] },
+        { checkedToken: '[x]', uncheckedTokens: ['( )'] },
+        { checkedToken: '[X]', uncheckedTokens: ['[ ]'] },
+        { checkedToken: '(x)', uncheckedTokens: ['()'] },
+        { checkedToken: '(X)', uncheckedTokens: ['( )'] },
+        { checkedToken: 'x', uncheckedTokens: ['☐', ''] },
+        { checkedToken: 'X', uncheckedTokens: ['[ ]', ''] },
+      ];
+
+      for (const tc of positiveGlyphCases) {
+        const rows = [
+          { tableCells: [textCell(`${tc.checkedToken}\n`), textCell('NO EXCEPTIONS TAKEN\n'), textCell('Legend\n')] },
+          ...tc.uncheckedTokens.map((tok, i) => ({
+            tableCells: [textCell(`${tok}\n`), textCell(`OPTION ${i}\n`), textCell('\n')],
+          })),
+        ];
+        const res = client.extractFormData({
+          body: {
+            content: [
+              { paragraph: { elements: [{ textRun: { content: 'Submittal Response\n' } }] } },
+              { table: { rows: rows.length, columns: 3, tableRows: rows } },
+            ],
+          },
+        });
+        expect(res, `checked=${tc.checkedToken}`).toEqual({
+          widgetCount: 1,
+          fields: { 'Submittal Response': 'NO EXCEPTIONS TAKEN' },
+        });
+      }
+
+      // Adversarial rejections -> widgetCount: 0
+      const rejectedTables = [
+        // All-blank Col 0 (2-col and 3-col)
+        {
+          rows: 2,
+          columns: 2,
+          tableRows: [
+            { tableCells: [textCell('\n'), textCell('Option A\n')] },
+            { tableCells: [textCell('\n'), textCell('Option B\n')] },
+          ],
+        },
+        // Typed x + blank "" without any explicit checkbox glyph/bracket marker or dropdown
+        {
+          rows: 2,
+          columns: 2,
+          tableRows: [
+            { tableCells: [textCell('x\n'), textCell('Option A\n')] },
+            { tableCells: [textCell('\n'), textCell('Option B\n')] },
+          ],
+        },
+        // 0/1/2 revision table (3 columns)
+        {
+          rows: 3,
+          columns: 3,
+          tableRows: [
+            { tableCells: [textCell('0\n'), textCell('Initial Issue\n'), textCell('2026-01-01\n')] },
+            { tableCells: [textCell('1\n'), textCell('Addendum\n'), textCell('2026-02-01\n')] },
+            { tableCells: [textCell('2\n'), textCell('IFC\n'), textCell('2026-03-01\n')] },
+          ],
+        },
+        // Yes/No prose table (3 columns)
+        {
+          rows: 2,
+          columns: 3,
+          tableRows: [
+            { tableCells: [textCell('Yes\n'), textCell('Proceed with work\n'), textCell('Notes\n')] },
+            { tableCells: [textCell('No\n'), textCell('Do not proceed\n'), textCell('Notes\n')] },
+          ],
+        },
+        // true/false table (3 columns)
+        {
+          rows: 2,
+          columns: 3,
+          tableRows: [
+            { tableCells: [textCell('true\n'), textCell('Enabled\n'), textCell('Flag\n')] },
+            { tableCells: [textCell('false\n'), textCell('Disabled\n'), textCell('Flag\n')] },
+          ],
+        },
+        // Unmerged non-checkbox row mixed with valid checkbox rows (must reject whole table and not mark Col 0 dropdown captured)
+        {
+          rows: 3,
+          columns: 3,
+          tableRows: [
+            {
+              tableCells: [
+                {
+                  content: [
+                    {
+                      paragraph: {
+                        elements: [
+                          {
+                            dropdown: {
+                              dropdownId: 'kix.mixed.0',
+                              dropdownProperties: { displayValue: '☑' },
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+                textCell('Valid Row\n'),
+                textCell('\n'),
+              ],
+            },
+            { tableCells: [textCell('☐\n'), textCell('Valid Row 2\n'), textCell('\n')] },
+            { tableCells: [textCell('N/A\n'), textCell('Non-checkbox Row\n'), textCell('\n')] },
+          ],
+        },
+        // Merged Col 0 rowSpan > 1 or Col 1 columnSpan > 1
+        {
+          rows: 2,
+          columns: 3,
+          tableRows: [
+            { tableCells: [textCell('☑\n', { rowSpan: 2 }), textCell('Option A\n'), textCell('\n')] },
+            { tableCells: [textCell('☐\n'), textCell('Option B\n'), textCell('\n')] },
+          ],
+        },
+        {
+          rows: 2,
+          columns: 3,
+          tableRows: [
+            { tableCells: [textCell('☑\n'), textCell('Option A\n', { columnSpan: 2 }), textCell('\n')] },
+            { tableCells: [textCell('☐\n'), textCell('Option B\n'), textCell('\n')] },
+          ],
+        },
+      ];
+
+      for (const table of rejectedTables) {
+        const res = client.extractFormData({
+          body: {
+            content: [
+              { paragraph: { elements: [{ textRun: { content: 'Submittal Response\n' } }] } },
+              { table },
+            ],
+          },
+        });
+        expect(res).toEqual({ widgetCount: 0, fields: {} });
+      }
+    });
+
+    it('enforces cross-tab Pattern 1 ambiguity semantics and blocks later Pattern 4 and Pattern 5 overwrites of ambiguous fields', () => {
+      const client = new GoogleDocsClient();
+
+      // 1. Tab 1 0-checked + Tab 2 1-checked -> succeeds
+      const zeroThenOne = client.extractFormData({
+        tabs: [
+          buildSubmittalStampTab({ checkedIndices: [] }),
+          buildSubmittalStampTab({ checkedIndices: [2] }),
+        ],
+      });
+      expect(zeroThenOne).toEqual({
+        widgetCount: 4,
+        fields: { 'Submittal Response': 'REVISE AND RESUBMIT' },
+      });
+
+      // 2. Tab 1 1-checked + Tab 2 0-checked -> succeeds
+      const oneThenZero = client.extractFormData({
+        tabs: [
+          buildSubmittalStampTab({ checkedIndices: [1] }),
+          buildSubmittalStampTab({ checkedIndices: [] }),
+        ],
+      });
+      expect(oneThenZero).toEqual({
+        widgetCount: 4,
+        fields: { 'Submittal Response': 'NO OBJECTIONS AS CORRECTED' },
+      });
+
+      // 3. Identical single-checked selections across tabs -> succeeds
+      const identicalTabs = client.extractFormData({
+        tabs: [
+          buildSubmittalStampTab({ checkedIndices: [0] }),
+          buildSubmittalStampTab({ checkedIndices: [0] }),
+        ],
+      });
+      expect(identicalTabs).toEqual({
+        widgetCount: 4,
+        fields: { 'Submittal Response': 'NO EXCEPTIONS TAKEN' },
+      });
+
+      // 4. Conflicting single-checked selections across tabs ("NO EXCEPTIONS TAKEN" vs "REJECTED") -> ambiguous
+      const conflictingTabs = client.extractFormData({
+        tabs: [
+          buildSubmittalStampTab({ submittalNo: '071200-001-1', checkedIndices: [0] }),
+          buildSubmittalStampTab({ checkedIndices: [3] }),
+        ],
+      });
+      expect(conflictingTabs).toEqual({
+        widgetCount: 4,
+        fields: { 'Submittal No': '071200-001-1' },
+        ambiguousFields: ['Submittal Response'],
+      });
+
+      // 5. Single-checked Tab 1 + multi-checked Tab 2 -> ambiguous
+      const oneThenMulti = client.extractFormData({
+        tabs: [
+          buildSubmittalStampTab({ checkedIndices: [0] }),
+          buildSubmittalStampTab({ checkedIndices: [1, 2] }),
+        ],
+      });
+      expect(oneThenMulti).toEqual({
+        widgetCount: 4,
+        fields: {},
+        ambiguousFields: ['Submittal Response'],
+      });
+
+      // 6. Multi-checked Tab 1 + single-checked Tab 2 + later Pattern 4 & Pattern 5 with same key -> remains omitted & ambiguous
+      const multiThenOneAndPattern4And5 = client.extractFormData({
+        tabs: [
+          buildSubmittalStampTab({ checkedIndices: [0, 3] }),
+          buildSubmittalStampTab({ checkedIndices: [0] }),
+          {
+            documentTab: {
+              dropdownDefinitions: {
+                'def.resp': {
+                  dropdownDefinitionId: 'def.resp',
+                  dropdownDefinitionProperties: {
+                    title: 'Submittal Response',
+                    options: [{ optionId: 'opt.1', displayValue: 'APPROVED' }],
+                  },
+                },
+              },
+              body: {
+                content: [
+                  {
+                    table: {
+                      rows: 1,
+                      columns: 2,
+                      tableRows: [
+                        { tableCells: [textCell('Submittal Response:\n'), textCell('REJECTED\n')] },
+                      ],
+                    },
+                  },
+                  {
+                    paragraph: {
+                      elements: [
+                        {
+                          dropdown: {
+                            dropdownId: 'kix.p5.ambig',
+                            dropdownProperties: {
+                              dropdownDefinitionId: 'def.resp',
+                              selectedOptionId: 'opt.1',
+                              displayValue: 'APPROVED',
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      });
+      expect(multiThenOneAndPattern4And5).toEqual({
+        widgetCount: 6,
+        fields: {},
+        ambiguousFields: ['Submittal Response'],
+      });
+    });
+  });
+
   describe('extractDocumentFormFields — API transport, TypeBox validation, and error wrapping', () => {
     afterEach(() => {
       nock.cleanAll();
