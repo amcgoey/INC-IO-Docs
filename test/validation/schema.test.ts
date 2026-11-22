@@ -364,6 +364,10 @@ describe('DocumentType JSON files schema validation', () => {
             template: '{{action.name}}',
             valueMap: { RR: 'Revise and Resubmit' },
           },
+          Date: {
+            template: '{{date}}',
+            format: 'date',
+          },
         },
       });
 
