@@ -23,6 +23,7 @@ import {
   type UiProcessGmailAttachmentDescriptor,
   type UiProcessGmailMessageDescriptor,
   formatThreadEmailOptionLabel,
+  ProcessUiStateInputSchema,
   type UiProcessDocumentRunnerPort,
 } from './ports';
 
@@ -290,6 +291,33 @@ describe('UI Process Manager Ports & DTOs', () => {
       );
 
       expect(capturedPayload!.targetMessageId).toBe('msg-selected-456');
+    });
+  });
+
+  describe('ProcessUiStateInputSchema', () => {
+    const baseInput = {
+      context: {},
+      spaceTypes: [],
+      spaces: [],
+    };
+
+    it('accepts optional isResetOrInitial as true, false, undefined, or omitted', () => {
+      expect(Value.Check(ProcessUiStateInputSchema, baseInput)).toBe(true);
+      expect(
+        Value.Check(ProcessUiStateInputSchema, { ...baseInput, isResetOrInitial: true })
+      ).toBe(true);
+      expect(
+        Value.Check(ProcessUiStateInputSchema, { ...baseInput, isResetOrInitial: false })
+      ).toBe(true);
+      expect(
+        Value.Check(ProcessUiStateInputSchema, { ...baseInput, isResetOrInitial: undefined })
+      ).toBe(true);
+    });
+
+    it('rejects non-boolean values for isResetOrInitial', () => {
+      expect(
+        Value.Check(ProcessUiStateInputSchema, { ...baseInput, isResetOrInitial: 'true' })
+      ).toBe(false);
     });
   });
 });

@@ -115,6 +115,7 @@ export const ProcessUiStateInputSchema = Type.Object({
   spaceTypes: Type.Array(UiProcessSpaceTypeSchema),
   spaces: Type.Array(UiProcessSpaceItemSchema),
   threadMessages: Type.Optional(Type.Union([Type.Array(UiProcessGmailMessageDescriptorSchema), Type.Undefined()])),
+  isResetOrInitial: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
 });
 export type ProcessUiStateInput = Static<typeof ProcessUiStateInputSchema>;
 
@@ -899,7 +900,7 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
     selected: typeKey === currentDocTypeKey,
   }));
 
-  const resetOrInitialLoad = isResetOrInitialLoad(context);
+  const resetOrInitialLoad = input.isResetOrInitial ?? isResetOrInitialLoad(context);
 
   const isGmail = isGmailContext(context);
 
