@@ -33,7 +33,10 @@ import type {
   WorkspaceAuthVerifierPort,
 } from '../infrastructure/workspace-addon/api';
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
-import type { DriveSourceContextClientPort } from '../features/source-parser/ports';
+import type {
+  DriveSourceContextClientPort,
+  FormTemplateParserPort,
+} from '../features/source-parser/ports';
 
 export type CompositeManifestProvider =
   AppConfigurationProviderPort &
@@ -155,6 +158,11 @@ export function createApp(options?: AppOptions): AppInstance {
       getAllTypes: () => [],
     };
 
+  const formTemplateParser =
+    typeof (templateEvaluator as { parseFieldTemplate?: unknown }).parseFieldTemplate === 'function'
+      ? (templateEvaluator as unknown as FormTemplateParserPort)
+      : undefined;
+
   const sourceParserWiring = createSourceParserWiring({
     spaceTypesProvider,
     manifestProvider,
@@ -162,6 +170,8 @@ export function createApp(options?: AppOptions): AppInstance {
     driveContextClient: options?.driveContextClient,
     configProvider: manifestProvider ?? defaultAppConfigProvider,
     workspaceConfigProvider: manifestProvider,
+    ...(options?.pdfProcessor !== undefined ? { pdfProcessor: options.pdfProcessor } : {}),
+    ...(formTemplateParser !== undefined ? { formTemplateParser } : {}),
   });
 
   wireWorkspaceAddonRoutes({

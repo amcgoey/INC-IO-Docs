@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import nock from 'nock';
+import { PDFDocument } from 'pdf-lib';
 import { createApp, type AppInstance } from '../src/app/server';
 import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
@@ -302,6 +303,8 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     });
 
     it('infers submittal-arch from CSI filename in unmatched folder on drive-items-selected (Ticket #291)', async () => {
+      const flatPdfBytes = await (await PDFDocument.create()).save();
+      vi.spyOn(GoogleDriveClient.prototype, 'downloadFileMedia').mockResolvedValue(flatPdfBytes);
       vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => {
         if (fileId === 'file-csi-unfiled') {
           return {
@@ -406,6 +409,8 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     });
 
     it('applies multi-item selection precedence on drive-items-selected (Ticket #291)', async () => {
+      const flatPdfBytes = await (await PDFDocument.create()).save();
+      vi.spyOn(GoogleDriveClient.prototype, 'downloadFileMedia').mockResolvedValue(flatPdfBytes);
       vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => {
         if (fileId === 'item-csi-my-drive') {
           return {
@@ -452,6 +457,8 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     });
 
     it('retains partial hierarchy and falls back to filename without warning on parent folder 403 (Ticket #291)', async () => {
+      const flatPdfBytes = await (await PDFDocument.create()).save();
+      vi.spyOn(GoogleDriveClient.prototype, 'downloadFileMedia').mockResolvedValue(flatPdfBytes);
       vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => {
         if (fileId === 'file-csi-restricted-parent') {
           return {
@@ -2862,6 +2869,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     it('binds multi-file selection [Cover_Notes.pdf, 07 12 00 - 1_v1_Waterproofing.pdf] to the submittal file and populates section, number, 0-based revision, title, date, action, and status', async () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime(new Date('2026-11-20T15:00:00Z'));
+      const flatPdfBuffer = Buffer.from(await (await PDFDocument.create()).save());
 
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
@@ -2872,7 +2880,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       nock('https://www.googleapis.com')
         .get('/drive/v3/files/file-cover-310')
-        .query(true)
+        .query((q) => q.alt !== 'media')
         .reply(200, {
           id: 'file-cover-310',
           name: 'Cover_Notes.pdf',
@@ -2881,6 +2889,10 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
           driveId: 'projects-shared-drive-001',
           modifiedTime: '2026-11-01T15:00:00Z',
         });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/file-cover-310')
+        .query((q) => q.alt === 'media')
+        .reply(200, flatPdfBuffer, { 'content-type': 'application/pdf' });
 
       nock('https://www.googleapis.com')
         .get('/drive/v3/files/folder-unfiled-310')
@@ -2895,7 +2907,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       nock('https://www.googleapis.com')
         .get('/drive/v3/files/file-submittal-310')
-        .query(true)
+        .query((q) => q.alt !== 'media')
         .reply(200, {
           id: 'file-submittal-310',
           name: '07 12 00 - 1_v1_Waterproofing.pdf',
@@ -2904,6 +2916,10 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
           driveId: 'projects-shared-drive-001',
           modifiedTime: '2026-11-18T15:00:00Z',
         });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/file-submittal-310')
+        .query((q) => q.alt === 'media')
+        .reply(200, flatPdfBuffer, { 'content-type': 'application/pdf' });
 
       const response = await app.server.inject({
         method: 'POST',
@@ -2945,11 +2961,14 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(getTextVal('date')).toBe('261118');
       expect(getSelVal('action')).toBe('REC');
       expect(getSelVal('status')).toBe('Open');
+      expect(cardJson).not.toContain('Could not read Google Drive file metadata');
+      expect(nock.isDone()).toBe(true);
     });
 
     it('extracts varied contractor submittal formats, strips trailing stamps, protects R-19/120V/v1.2, and does not route ISO-date files to submittal-arch', async () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime(new Date('2026-11-20T15:00:00Z'));
+      const flatPdfBuffer = Buffer.from(await (await PDFDocument.create()).save());
 
       const submittalCases = [
         {
@@ -3008,7 +3027,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
           });
         nock('https://www.googleapis.com')
           .get(`/drive/v3/files/${tc.id}`)
-          .query(true)
+          .query((q) => q.alt !== 'media')
           .reply(200, {
             id: tc.id,
             name: tc.name,
@@ -3017,6 +3036,10 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
             driveId: 'projects-shared-drive-001',
             modifiedTime: '2026-11-18T15:00:00Z',
           });
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${tc.id}`)
+          .query((q) => q.alt === 'media')
+          .reply(200, flatPdfBuffer, { 'content-type': 'application/pdf' });
 
         const res = await app.server.inject({
           method: 'POST',
@@ -3298,6 +3321,181 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         .find((w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'SelectDocumentType_projects')
         ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
       expect(negSelectedDocType).toBe('communication-project');
+    });
+  });
+
+  describe('Ticket #315: Submittal Arch PDF AcroForm pre-population via source: "form"', () => {
+    async function buildStampedArchPdfBuffer(selectedOption?: string): Promise<Buffer> {
+      const doc = await PDFDocument.create();
+      doc.addPage([600, 400]);
+      const form = doc.getForm();
+      const radio = form.createRadioGroup('Submittal Response');
+      for (const [idx, label] of [
+        'No Exceptions Taken',
+        'No Objections As Corrected',
+        'Revise and Resubmit',
+        'Rejected',
+        'Not Reviewed',
+      ].entries()) {
+        radio.addOptionToPage(label, doc.getPage(0), {
+          x: 50,
+          y: 300 - idx * 20,
+          width: 12,
+          height: 12,
+        });
+      }
+      if (selectedOption !== undefined) {
+        radio.select(selectedOption);
+      }
+      return Buffer.from(await doc.save());
+    }
+
+    it('pre-populates action (NET, NOC, RR via valueMap, REJ, NR) and leaves REC when unchecked using single metadata + single alt=media download', async () => {
+      const cases = [
+        { id: 'arch-315-net', label: 'No Exceptions Taken', expectedAction: 'NET' },
+        { id: 'arch-315-noc', label: 'No Objections As Corrected', expectedAction: 'NOC' },
+        { id: 'arch-315-rr', label: 'Revise and Resubmit', expectedAction: 'RR' },
+        { id: 'arch-315-rej', label: 'Rejected', expectedAction: 'REJ' },
+        { id: 'arch-315-nr', label: 'Not Reviewed', expectedAction: 'NR' },
+        { id: 'arch-315-blank', label: undefined, expectedAction: 'REC' },
+      ];
+
+      for (const tc of cases) {
+        const pdfBuffer = await buildStampedArchPdfBuffer(tc.label);
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/drives')
+          .query(true)
+          .reply(200, {
+            drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+          });
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${tc.id}`)
+          .query((q) => q.alt !== 'media')
+          .reply(200, {
+            id: tc.id,
+            name: '071200-001_Waterproofing.pdf',
+            mimeType: 'application/pdf',
+            parents: ['projects-shared-drive-001'],
+            driveId: 'projects-shared-drive-001',
+            modifiedTime: '2026-11-18T15:00:00Z',
+          });
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${tc.id}`)
+          .query((q) => q.alt === 'media')
+          .reply(200, pdfBuffer, { 'content-type': 'application/pdf' });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/drive-items-selected',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+            drive: { selectedItems: [{ id: tc.id, title: '071200-001_Waterproofing.pdf' }] },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const card = JSON.parse(res.payload).action.navigations[0].pushCard;
+        const cardJson = JSON.stringify(card);
+        expect(cardJson).not.toContain('Could not read Google Drive file metadata');
+
+        const docDataSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+        const selectedAction = docDataSec.widgets
+          .find(
+            (w: { selectionInput?: { name: string } }) =>
+              w.selectionInput?.name === getDocumentInfoWidgetName('action', 'submittal-arch')
+          )
+          ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+        expect(selectedAction, String(tc.label)).toBe(tc.expectedAction);
+        expect(nock.isDone()).toBe(true);
+      }
+    });
+
+    it('resolves Drive shortcut to stamped Submittal Arch PDF and skips flat 0-widget drawing in [Flat_Drawing.pdf, Stamped_Cover.pdf]', async () => {
+      const flatPdfBuffer = Buffer.from(await (await PDFDocument.create()).save());
+      const stampedPdfBuffer = await buildStampedArchPdfBuffer('Revise and Resubmit');
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/flat-315')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'flat-315',
+          name: '071200-001_Waterproofing.pdf',
+          mimeType: 'application/pdf',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/flat-315')
+        .query((q) => q.alt === 'media')
+        .reply(200, flatPdfBuffer, { 'content-type': 'application/pdf' });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/shortcut-stamped-315')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'shortcut-stamped-315',
+          name: 'Shortcut to Cover.pdf',
+          mimeType: 'application/vnd.google-apps.shortcut',
+          parents: ['root'],
+          shortcutDetails: {
+            targetId: 'target-stamped-315',
+            targetMimeType: 'application/pdf',
+          },
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/target-stamped-315')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'target-stamped-315',
+          name: 'Stamped_Cover.pdf',
+          mimeType: 'application/pdf',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/target-stamped-315')
+        .query((q) => q.alt === 'media')
+        .reply(200, stampedPdfBuffer, { 'content-type': 'application/pdf' });
+
+      const res = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [
+              { id: 'flat-315', title: '071200-001_Waterproofing.pdf' },
+              { id: 'shortcut-stamped-315', title: 'Shortcut to Cover.pdf' },
+            ],
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const card = JSON.parse(res.payload).action.navigations[0].pushCard;
+      const cardJson = JSON.stringify(card);
+      expect(cardJson).not.toContain('Could not read Google Drive file metadata');
+
+      const docDataSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      const selectedAction = docDataSec.widgets
+        .find(
+          (w: { selectionInput?: { name: string } }) =>
+            w.selectionInput?.name === getDocumentInfoWidgetName('action', 'submittal-arch')
+        )
+        ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+      expect(selectedAction).toBe('RR');
+      expect(nock.isDone()).toBe(true);
     });
   });
 });

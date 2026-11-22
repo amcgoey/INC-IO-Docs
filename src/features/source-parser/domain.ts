@@ -26,7 +26,19 @@ import type {
   FieldCandidateNormalize,
   CanonicalOptionsProviderPort,
   ParseTargetDocumentOptionTuple,
+  FormExtractorPort,
+  FormTemplateParserPort,
 } from './ports';
+import {
+  extractFormExtractorFields,
+  PDF_FORM_ENCRYPTED_ERROR_MESSAGE,
+  DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE,
+} from './form-field-parser';
+
+export {
+  PDF_FORM_ENCRYPTED_ERROR_MESSAGE,
+  DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE,
+};
 
 export const CSI_SECTION_REGEX =
   /(?<=^|[\s_./-])(?:\d{6}|\d{2}([\s._-])\d{2}\1\d{2})(?:[\s_.-]*(?:submittal|sub\.?|no\.?)[\s_.-]*#?[\s_.-]*|[\s_.-]*#[\s_.-]*|[\s_.-]+)\d{1,3}(?![A-Za-z0-9])(?!-\d{2}[-_.]\d{2,4})/i;
@@ -1703,6 +1715,8 @@ export interface SourceParserServiceDeps {
   predicateEvaluator?: PredicateEvaluatorPort | undefined;
   fallbackExtractor?: FallbackFieldExtractorPort | undefined;
   canonicalOptionsProvider?: CanonicalOptionsProviderPort | undefined;
+  formExtractor?: FormExtractorPort | undefined;
+  formTemplateParser?: FormTemplateParserPort | undefined;
   configPort?: SourceParserConfigPort | undefined;
   now?: (() => Date) | undefined;
 }
@@ -1821,8 +1835,40 @@ export class SourceParserService implements SourceParserPort {
           continue;
         }
 
+        if (extractor.source === 'form') {
+          const validItemIds = (request.context.items ?? [])
+            .map((item) => (typeof item?.id === 'string' ? item.id.trim() : ''))
+            .filter((id) => id.length > 0);
+          const timeZone = await getWorkspaceTimeZone();
+          await extractFormExtractorFields({
+            extractor,
+            validItemIds,
+            request,
+            targetSchema,
+            jsonLogicContext,
+            populatedFields,
+            statusMessages,
+            timeZone,
+            parseSchemaRegistry: this.deps.parseSchemaRegistry,
+            formExtractor: this.deps.formExtractor,
+            formTemplateParser: this.deps.formTemplateParser,
+            getHydratedDriveItem,
+            helpers: {
+              applyFieldCandidateNormalize,
+              validateCandidateWithTuple,
+              resolveCanonicalOptionFromCandidate: (candidate, targetField, spaceId, schema) =>
+                resolveCanonicalOptionFromCandidate(candidate, targetField, spaceId, schema, this.deps),
+              populateLinkedFields,
+              evaluateCondition: (predicate, data) =>
+                evaluateCondition(predicate, data, this.deps?.predicateEvaluator),
+              driveMetadataErrorMessage: DRIVE_METADATA_EXTRACT_ERROR_MESSAGE,
+              now: this.deps.now,
+            },
+          });
+          continue;
+        }
+
         if (extractor.source !== 'gmail') {
-          // Structural placeholders (pdfForm, googleDoc) are skipped in Pass 2 deterministic pipeline
           continue;
         }
 
@@ -1930,6 +1976,26 @@ export class SourceParserService implements SourceParserPort {
                 const rules = Array.isArray(ruleOrRules) ? ruleOrRules : [ruleOrRules];
                 if (rules.some((r) => 'lookup' in r && r.lookup === true)) {
                   lookupFieldKeys.add(fKey);
+                }
+              }
+            }
+          }
+          if (this.deps.parseSchemaRegistry.getDocumentFormSchema && this.deps.formTemplateParser) {
+            const formSchema = await this.deps.parseSchemaRegistry.getDocumentFormSchema(
+              request.documentTypeKey
+            );
+            if (formSchema) {
+              for (const binding of Object.values(formSchema.fields)) {
+                try {
+                  const parsed = this.deps.formTemplateParser.parseFieldTemplate(binding.template);
+                  for (const token of parsed.tokens) {
+                    const fld = targetSchema?.fields.find((f) => f.key === token.fieldKey);
+                    if (fld?.options) {
+                      lookupFieldKeys.add(token.fieldKey);
+                    }
+                  }
+                } catch {
+                  // Ignore invalid form templates during fallback lookup key discovery
                 }
               }
             }

@@ -18,7 +18,16 @@ import {
   FieldCandidateNormalizeSchema,
   DriveFieldRuleOrListSchema,
   DriveExtractorRuleSchema,
-  StructuralExtractorRuleSchema,
+  FormExtractorRuleSchema,
+  DocumentFormFieldFormatSchema,
+  DocumentFormFieldBindingSchema,
+  DocumentFormSchemaSchema,
+  SUPPORTED_FORM_MIME_TYPES,
+  FormExtractTargetSchema,
+  FormFieldValueSchema,
+  FormExtractOutcomeSchema,
+  FormTemplateTokenSchema,
+  ParsedFormTemplateSchema,
   SourceExtractorRuleSchema,
   ParseTargetDocumentFieldSchema,
   ParseTargetCalculatedFieldSchema,
@@ -239,7 +248,7 @@ describe('SourceParser ports and schemas', () => {
     ).toBe(false);
   });
 
-  it('validates DriveExtractSourceSchema, DriveExtractorRuleSchema, and StructuralExtractorRuleSchema (#307)', () => {
+  it('validates DriveExtractSourceSchema, DriveExtractorRuleSchema, and FormExtractorRuleSchema (#315)', () => {
     for (const validSource of [
       'drive.fileName',
       'drive.fileNameStem',
@@ -285,29 +294,157 @@ describe('SourceParser ports and schemas', () => {
     ).toBe(true);
 
     expect(
-      Value.Check(StructuralExtractorRuleSchema, {
+      Value.Check(FormExtractorRuleSchema, {
+        source: 'form',
+        name: 'Cover Sheet Form',
+        match: { '==': [{ var: 'drive.isFolder' }, false] },
+      })
+    ).toBe(true);
+    expect(
+      Value.Check(FormExtractorRuleSchema, {
+        source: 'form',
+        name: undefined,
+        match: undefined,
+      })
+    ).toBe(true);
+    expect(
+      Value.Check(FormExtractorRuleSchema, {
+        source: 'form',
+        fields: {},
+      })
+    ).toBe(false);
+    expect(
+      Value.Check(SourceExtractorRuleSchema, {
         source: 'pdfForm',
         fields: { date: { custom: 'placeholder' } },
       })
-    ).toBe(true);
+    ).toBe(false);
     expect(
-      Value.Check(StructuralExtractorRuleSchema, {
+      Value.Check(SourceExtractorRuleSchema, {
         source: 'googleDoc',
         fields: { date: { custom: 'placeholder' } },
       })
-    ).toBe(true);
-    expect(
-      Value.Check(StructuralExtractorRuleSchema, {
-        source: 'drive',
-        fields: { date: { custom: 'placeholder' } },
-      })
     ).toBe(false);
+    expect(
+      Value.Check(SourceExtractorRuleSchema, {
+        source: 'form',
+      })
+    ).toBe(true);
     expect(
       Value.Check(SourceExtractorRuleSchema, {
         source: 'drive',
         fields: { date: { custom: 'placeholder' } },
       })
     ).toBe(false);
+  });
+
+  it('validates DocumentFormSchema, FormExtractorPort DTOs, and FormTemplateParserPort DTOs (#315)', () => {
+    expect(SUPPORTED_FORM_MIME_TYPES).toEqual([
+      'application/pdf',
+      'application/vnd.google-apps.document',
+    ]);
+
+    expect(Value.Check(DocumentFormFieldFormatSchema, 'date')).toBe(true);
+    expect(Value.Check(DocumentFormFieldFormatSchema, 'number')).toBe(false);
+
+    expect(
+      Value.Check(DocumentFormFieldBindingSchema, {
+        template: '{{action.name}}',
+        format: undefined,
+        valueMap: { RR: 'Revise and Resubmit' },
+      })
+    ).toBe(true);
+    expect(
+      Value.Check(DocumentFormFieldBindingSchema, {
+        template: '{{date}}',
+        format: 'date',
+      })
+    ).toBe(true);
+    expect(Value.Check(DocumentFormFieldBindingSchema, { template: '' })).toBe(false);
+    expect(
+      Value.Check(DocumentFormFieldBindingSchema, {
+        template: '{{action.name}}',
+        valueMap: {},
+      })
+    ).toBe(false);
+    expect(
+      Value.Check(DocumentFormFieldBindingSchema, {
+        template: '{{action.name}}',
+        extraProp: true,
+      })
+    ).toBe(false);
+
+    expect(
+      Value.Check(DocumentFormSchemaSchema, {
+        fields: {
+          'Submittal Response': {
+            template: '{{action.name}}',
+            valueMap: { RR: 'Revise and Resubmit' },
+          },
+        },
+      })
+    ).toBe(true);
+    expect(Value.Check(DocumentFormSchemaSchema, { fields: {} })).toBe(false);
+    expect(
+      Value.Check(DocumentFormSchemaSchema, {
+        fields: { Date: { template: '{{date}}' } },
+        extra: 1,
+      })
+    ).toBe(false);
+
+    expect(
+      Value.Check(FormExtractTargetSchema, {
+        id: 'file-1',
+        mimeType: 'application/pdf',
+      })
+    ).toBe(true);
+    expect(Value.Check(FormExtractTargetSchema, { id: '', mimeType: 'application/pdf' })).toBe(false);
+    expect(
+      Value.Check(FormExtractTargetSchema, { id: 'file-1', mimeType: 'application/pdf', extra: true })
+    ).toBe(false);
+
+    expect(Value.Check(FormFieldValueSchema, 'NET')).toBe(true);
+    expect(Value.Check(FormFieldValueSchema, true)).toBe(true);
+    expect(Value.Check(FormFieldValueSchema, ['A', 'B'])).toBe(true);
+    expect(Value.Check(FormFieldValueSchema, 123)).toBe(false);
+
+    expect(
+      Value.Check(FormExtractOutcomeSchema, {
+        status: 'ok',
+        widgetCount: 0,
+        fields: {},
+        ambiguousFields: undefined,
+      })
+    ).toBe(true);
+    expect(
+      Value.Check(FormExtractOutcomeSchema, {
+        status: 'ok',
+        widgetCount: 2,
+        fields: { 'Submittal Response': 'No Exceptions Taken', Flag: false },
+        ambiguousFields: ['Submittal Response'],
+      })
+    ).toBe(true);
+    expect(Value.Check(FormExtractOutcomeSchema, { status: 'encrypted' })).toBe(true);
+    expect(Value.Check(FormExtractOutcomeSchema, { status: 'corrupted' })).toBe(true);
+    expect(Value.Check(FormExtractOutcomeSchema, { status: 'source_error' })).toBe(true);
+    expect(
+      Value.Check(FormExtractOutcomeSchema, {
+        status: 'ok',
+        widgetCount: -1,
+        fields: {},
+      })
+    ).toBe(false);
+    expect(Value.Check(FormExtractOutcomeSchema, { status: 'encrypted', extra: 1 })).toBe(false);
+
+    expect(Value.Check(FormTemplateTokenSchema, { fieldKey: 'action', property: 'name' })).toBe(true);
+    expect(Value.Check(FormTemplateTokenSchema, { fieldKey: 'date', property: undefined })).toBe(true);
+    expect(
+      Value.Check(ParsedFormTemplateSchema, {
+        tokens: [{ fieldKey: 'action', property: 'name' }],
+        literals: ['', ''],
+      })
+    ).toBe(true);
+    expect(Value.Check(ParsedFormTemplateSchema, { tokens: [], literals: [''] })).toBe(false);
   });
 
   it('validates ParseTargetDocumentSchema TypeBox DTOs', () => {
