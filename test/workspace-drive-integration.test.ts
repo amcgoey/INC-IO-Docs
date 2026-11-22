@@ -5405,6 +5405,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       submittalNo?: string;
       checkedIndices?: number[];
       omitDisplayValue?: boolean;
+      date?: string;
     }) {
       const checked = new Set(options.checkedIndices ?? []);
       const cell = (text: string, style?: { columnSpan?: number; rowSpan?: number }) => ({
@@ -5502,6 +5503,24 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
                   ],
                 },
               },
+              ...(options.date !== undefined
+                ? [
+                    {
+                      table: {
+                        rows: 2,
+                        columns: 2,
+                        tableRows: [
+                          {
+                            tableCells: [cell('\n'), cell(`${options.date}\n`)],
+                          },
+                          {
+                            tableCells: [cell('Reviewed By\n'), cell('Date\n')],
+                          },
+                        ],
+                      },
+                    },
+                  ]
+                : []),
             ],
           },
         },
@@ -5678,30 +5697,48 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(nock.isDone()).toBe(true);
     });
 
-    it('renders formatAmbiguousFormFieldMessage for 2+ checked rows and cross-tab conflicts while still pre-populating Submittal No', async () => {
+    it('renders formatAmbiguousFormFieldMessage for 2+ checked rows and cross-tab conflicts while still pre-populating Submittal No and Date', async () => {
       const ambiguousCases = [
         {
           id: 'gdoc-322-multi',
-          tabs: [buildSubmittalTab({ submittalNo: '071200-001-2', checkedIndices: [0, 3] })],
+          tabs: [
+            buildSubmittalTab({
+              submittalNo: '071200-001-2',
+              checkedIndices: [0, 3],
+              date: '2026-11-21',
+            }),
+          ],
         },
         {
           id: 'gdoc-322-conflict-tabs',
           tabs: [
-            buildSubmittalTab({ submittalNo: '071200-001-2', checkedIndices: [0] }),
+            buildSubmittalTab({
+              submittalNo: '071200-001-2',
+              checkedIndices: [0],
+              date: '2026-11-21',
+            }),
             buildSubmittalTab({ checkedIndices: [3] }),
           ],
         },
         {
           id: 'gdoc-322-one-then-multi',
           tabs: [
-            buildSubmittalTab({ submittalNo: '071200-001-2', checkedIndices: [0] }),
+            buildSubmittalTab({
+              submittalNo: '071200-001-2',
+              checkedIndices: [0],
+              date: '2026-11-21',
+            }),
             buildSubmittalTab({ checkedIndices: [1, 2] }),
           ],
         },
         {
           id: 'gdoc-322-multi-then-one',
           tabs: [
-            buildSubmittalTab({ submittalNo: '071200-001-2', checkedIndices: [1, 2] }),
+            buildSubmittalTab({
+              submittalNo: '071200-001-2',
+              checkedIndices: [1, 2],
+              date: '2026-11-21',
+            }),
             buildSubmittalTab({ checkedIndices: [0] }),
           ],
         },
@@ -5733,6 +5770,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         expect(readTextValue(card, 'section', 'submittal-arch'), tc.id).toBe('071200');
         expect(readTextValue(card, 'number', 'submittal-arch'), tc.id).toBe('001');
         expect(readTextValue(card, 'revision', 'submittal-arch'), tc.id).toBe('2');
+        expect(readTextValue(card, 'date', 'submittal-arch'), tc.id).toBe('261121');
       }
 
       expect(nock.isDone()).toBe(true);
