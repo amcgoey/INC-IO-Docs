@@ -9,6 +9,7 @@ import type {
 } from '../src/features/document/ports';
 import type { DocumentType } from '../src/features/document/domain';
 import { GoogleDriveClient } from '../src/infrastructure/drive/drive-client';
+import { GoogleDocsClient } from '../src/infrastructure/docs';
 
 describe('App integration tests', () => {
   let app: AppInstance;
@@ -1389,6 +1390,18 @@ describe('App integration tests', () => {
       } finally {
         await fs.rm(tempDir, { recursive: true, force: true });
       }
+    });
+
+    it('accepts optional docsClient in createApp() and forwards it through initialize() and workspace routes (#321)', async () => {
+      const customDocsClient = new GoogleDocsClient();
+      const appInstance = createApp({
+        skipSpaceValidation: true,
+        documentSchemaRegistry: mockManifestRegistry,
+        activityEngine: mockActivityEngine,
+        docsClient: customDocsClient,
+      });
+
+      await expect(appInstance.initialize()).resolves.toBeUndefined();
     });
   });
 });

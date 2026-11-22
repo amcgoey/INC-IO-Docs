@@ -421,51 +421,78 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     });
 
     it('applies multi-item selection precedence on drive-items-selected (Ticket #291)', async () => {
-      const flatPdfBytes = await (await PDFDocument.create()).save();
-      vi.spyOn(GoogleDriveClient.prototype, 'downloadFileMedia').mockResolvedValue(flatPdfBytes);
-      vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => {
-        if (fileId === 'item-csi-my-drive') {
-          return {
-            id: 'item-csi-my-drive',
-            name: '071200-001-A Waterproofing.pdf',
-            parents: ['root'],
-            mimeType: 'application/pdf',
-          };
-        }
-        if (fileId === 'item-proj-notes') {
-          return {
-            id: 'item-proj-notes',
-            name: 'Meeting_Notes.docx',
-            parents: ['shared-drive-proj-root'],
-            driveId: 'shared-drive-proj-root',
-            mimeType: 'application/vnd.google-apps.document',
-          };
-        }
-        return { id: fileId, name: fileId, parents: [] };
-      });
-
-      const response = await app.server.inject({
-        method: 'POST',
-        url: '/workspace/drive-items-selected',
-        headers: { authorization: 'Bearer valid-jwt-token' },
-        payload: {
-          authorizationEventObject: { userOAuthToken: 'ya29.sample-token' },
-          drive: {
-            selectedItems: [
-              { id: 'item-csi-my-drive', title: '071200-001-A Waterproofing.pdf' },
-              { id: 'item-proj-notes', title: 'Meeting_Notes.docx' },
+      nock.disableNetConnect();
+      try {
+        const flatPdfBytes = await (await PDFDocument.create()).save();
+        vi.spyOn(GoogleDriveClient.prototype, 'downloadFileMedia').mockResolvedValue(flatPdfBytes);
+        vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => {
+          if (fileId === 'item-csi-my-drive') {
+            return {
+              id: 'item-csi-my-drive',
+              name: '071200-001-A Waterproofing.pdf',
+              parents: ['root'],
+              mimeType: 'application/pdf',
+            };
+          }
+          if (fileId === 'item-proj-notes') {
+            return {
+              id: 'item-proj-notes',
+              name: 'Meeting_Notes.docx',
+              parents: ['shared-drive-proj-root'],
+              driveId: 'shared-drive-proj-root',
+              mimeType: 'application/vnd.google-apps.document',
+            };
+          }
+          return { id: fileId, name: fileId, parents: [] };
+        });
+        nock('https://docs.googleapis.com')
+          .get('/v1/documents/item-proj-notes')
+          .query({
+            includeTabsContent: 'true',
+            suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+          })
+          .reply(200, {
+            documentId: 'item-proj-notes',
+            tabs: [
+              {
+                documentTab: {
+                  body: {
+                    content: [
+                      { paragraph: { elements: [{ textRun: { content: 'Plain meeting notes.\n' } }] } },
+                    ],
+                  },
+                },
+              },
             ],
+          });
+
+        const response = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/drive-items-selected',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            authorizationEventObject: { userOAuthToken: 'ya29.sample-token' },
+            drive: {
+              selectedItems: [
+                { id: 'item-csi-my-drive', title: '071200-001-A Waterproofing.pdf' },
+                { id: 'item-proj-notes', title: 'Meeting_Notes.docx' },
+              ],
+            },
           },
-        },
-      });
+        });
 
-      expect(response.statusCode).toBe(200);
-      const cardResponse = JSON.parse(response.payload);
-      const pushCard = cardResponse.action.navigations[0].pushCard;
-      const cardJson = JSON.stringify(pushCard);
+        expect(response.statusCode).toBe(200);
+        const cardResponse = JSON.parse(response.payload);
+        const pushCard = cardResponse.action.navigations[0].pushCard;
+        const cardJson = JSON.stringify(pushCard);
 
-      expect(cardJson).toContain('submittal-arch');
-      expect(cardJson).toContain('Active Projects');
+        expect(cardJson).toContain('submittal-arch');
+        expect(cardJson).toContain('Active Projects');
+        expect(cardJson).not.toContain('Could not read Google Drive file metadata');
+        expect(nock.isDone()).toBe(true);
+      } finally {
+        nock.enableNetConnect();
+      }
     });
 
     it('retains partial hierarchy and falls back to filename without warning on parent folder 403 (Ticket #291)', async () => {
@@ -4597,6 +4624,587 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         expect(getSelVal('action'), tc.id).toBe(tc.expectedAction);
         expect(getTextVal('date'), tc.id).toBe('261121');
       }
+      expect(nock.isDone()).toBe(true);
+    });
+  });
+
+  describe('Ticket #321: Google Docs N×2 Key/Value pre-population, shortcuts, multi-item fallback, and non-blocking degradation', () => {
+    beforeEach(() => {
+      nock.disableNetConnect();
+    });
+
+    afterEach(() => {
+      nock.enableNetConnect();
+    });
+
+    function buildNx2GoogleDocPayload(documentId: string, submittalNoText?: string) {
+      return {
+        documentId,
+        body: null,
+        tabs: [
+          {
+            documentTab: {
+              body: {
+                content: [
+                  {
+                    table: {
+                      rows: 1,
+                      columns: 2,
+                      tableRows: [
+                        {
+                          tableCells: [
+                            { content: [{ paragraph: { elements: [{ textRun: { content: 'Submittal No.\n' } }] } }] },
+                            {
+                              content: [
+                                {
+                                  paragraph: {
+                                    elements: [{ textRun: { content: `${submittalNoText ?? ''}\n` } }],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      };
+    }
+
+    function buildProseGoogleDocPayload(documentId: string, bodyText = 'Plain meeting notes without form tables.\n') {
+      return {
+        documentId,
+        body: null,
+        tabs: [
+          {
+            documentTab: {
+              body: {
+                content: [
+                  { paragraph: { elements: [{ textRun: { content: bodyText } }] } },
+                ],
+              },
+            },
+          },
+        ],
+      };
+    }
+
+    it('pre-populates full and partial Submittal No from N×2 table on Submittal Arch Google Doc cover sheets via nock', async () => {
+      const cases = [
+        {
+          id: 'gdoc-arch-full',
+          fileName: '071200-001_Waterproofing_Cover_Sheet',
+          subNo: '071200-001-1',
+          section: '071200',
+          number: '001',
+          revision: '1',
+          title: 'Waterproofing Cover Sheet',
+        },
+        {
+          id: 'gdoc-arch-no-rev',
+          fileName: '071200-001_Waterproofing_Cover_Sheet',
+          subNo: '071200-001',
+          section: '071200',
+          number: '001',
+          revision: undefined,
+          title: 'Waterproofing Cover Sheet',
+        },
+        {
+          id: 'gdoc-arch-4digit',
+          fileName: '071200-001_Waterproofing_Cover_Sheet',
+          subNo: '071200-1042',
+          section: '071200',
+          number: '1042',
+          revision: undefined,
+          title: undefined,
+        },
+        {
+          id: 'gdoc-arch-csi',
+          fileName: 'Waterproofing_Cover_Sheet',
+          subNo: '07 12 00',
+          section: '071200',
+          number: undefined,
+          revision: undefined,
+          title: undefined,
+        },
+        {
+          id: 'gdoc-arch-num-rev',
+          fileName: 'Waterproofing_Cover_Sheet',
+          subNo: '42 Rev B',
+          section: undefined,
+          number: '042',
+          revision: 'B',
+          title: undefined,
+        },
+        {
+          id: 'gdoc-arch-rev-only',
+          fileName: 'Waterproofing_Cover_Sheet',
+          subNo: 'R1',
+          section: undefined,
+          number: undefined,
+          revision: '1',
+          title: undefined,
+        },
+      ];
+
+      for (const tc of cases) {
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/drives')
+          .query(true)
+          .reply(200, {
+            drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+          });
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/folder-${tc.id}`)
+          .query(true)
+          .reply(200, {
+            id: `folder-${tc.id}`,
+            name: '6 Construction',
+            parents: ['projects-shared-drive-001'],
+            driveId: 'projects-shared-drive-001',
+            mimeType: 'application/vnd.google-apps.folder',
+          });
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${tc.id}`)
+          .query((q) => q.alt !== 'media')
+          .reply(200, {
+            id: tc.id,
+            name: tc.fileName,
+            mimeType: 'application/vnd.google-apps.document',
+            parents: [`folder-${tc.id}`],
+            driveId: 'projects-shared-drive-001',
+            modifiedTime: '2026-11-18T15:00:00Z',
+          });
+        nock('https://docs.googleapis.com', {
+          reqheaders: { authorization: 'Bearer ya29.valid-oauth-token' },
+        })
+          .get(`/v1/documents/${tc.id}`)
+          .query({
+            includeTabsContent: 'true',
+            suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+          })
+          .reply(200, buildNx2GoogleDocPayload(tc.id, tc.subNo));
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/drive-items-selected',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+            drive: { selectedItems: [{ id: tc.id, title: tc.fileName }] },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const card = JSON.parse(res.payload).action.navigations[0].pushCard;
+        expect(JSON.stringify(card)).not.toContain('Could not read Google Drive file metadata');
+
+        const docDataSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+        const getText = (fieldKey: string) =>
+          docDataSec.widgets.find(
+            (w: { textInput?: { name: string } }) =>
+              w.textInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-arch')
+          )?.textInput?.value;
+        const getSel = (fieldKey: string) =>
+          docDataSec.widgets
+            .find(
+              (w: { selectionInput?: { name: string } }) =>
+                w.selectionInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-arch')
+            )
+            ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+
+        expect(getText('section'), tc.id).toBe(tc.section);
+        expect(getText('number'), tc.id).toBe(tc.number);
+        expect(getText('revision'), tc.id).toBe(tc.revision);
+        expect(getText('title'), tc.id).toBe(tc.title);
+        expect(getText('date'), tc.id).toBe('261118');
+        expect(getSel('status'), tc.id).toBe('Open');
+        expect(getSel('action'), tc.id).toBe('REC');
+      }
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('pre-populates specTag, derived LinkedField specTitle, and revision on Submittal FF&E Google Doc cover sheet and handles 0-widget prose doc silently', async () => {
+      // 1. Submittal FF&E cover sheet with CG104-A
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/folder-ffe-321')
+        .query(true)
+        .reply(200, {
+          id: 'folder-ffe-321',
+          name: '3 FFE',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/gdoc-ffe-321')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'gdoc-ffe-321',
+          name: 'Berman_Falk',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['folder-ffe-321'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://docs.googleapis.com')
+        .get('/v1/documents/gdoc-ffe-321')
+        .query({
+          includeTabsContent: 'true',
+          suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+        })
+        .reply(200, buildNx2GoogleDocPayload('gdoc-ffe-321', 'CG104-A'));
+
+      const ffeRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: { selectedItems: [{ id: 'gdoc-ffe-321', title: 'Berman_Falk' }] },
+        },
+      });
+
+      expect(ffeRes.statusCode).toBe(200);
+      const ffeCard = JSON.parse(ffeRes.payload).action.navigations[0].pushCard;
+      const ffeSec = ffeCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      const getFfeText = (fieldKey: string) =>
+        ffeSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-ffe')
+        )?.textInput?.value;
+      const getFfeSel = (fieldKey: string) =>
+        ffeSec.widgets
+          .find(
+            (w: { selectionInput?: { name: string } }) =>
+              w.selectionInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-ffe')
+          )
+          ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+
+      expect(getFfeText('specTag')).toBe('CG104');
+      expect(getFfeText('specTitle')).toBe('BED - KING');
+      expect(getFfeText('revision')).toBe('A');
+      expect(getFfeText('vendor')).toBe('BM');
+      expect(getFfeText('date')).toBe('261118');
+      expect(getFfeSel('status')).toBe('Open');
+      expect(getFfeSel('action')).toBe('REC');
+
+      // 2. Plain 0-widget prose Google Doc silently falls through to drive rules with zero error banners
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/gdoc-prose-321')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'gdoc-prose-321',
+          name: '071200-003_Prose_Narrative',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://docs.googleapis.com')
+        .get('/v1/documents/gdoc-prose-321')
+        .query({
+          includeTabsContent: 'true',
+          suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+        })
+        .reply(200, buildProseGoogleDocPayload('gdoc-prose-321'));
+
+      const proseRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: { selectedItems: [{ id: 'gdoc-prose-321', title: '071200-003_Prose_Narrative' }] },
+        },
+      });
+
+      expect(proseRes.statusCode).toBe(200);
+      const proseCard = JSON.parse(proseRes.payload).action.navigations[0].pushCard;
+      expect(JSON.stringify(proseCard)).not.toContain('Could not read Google Drive file metadata');
+      expect(JSON.stringify(proseCard)).not.toContain(DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE);
+      const proseSec = proseCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      expect(
+        proseSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('071200');
+      expect(
+        proseSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('number', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('003');
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('resolves Drive shortcut to Google Doc and skips 0-widget candidates in multi-item selection', async () => {
+      // 1. Shortcut pointing to a Google Doc cover sheet
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/shortcut-gdoc-321')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'shortcut-gdoc-321',
+          name: 'Shortcut to Cover',
+          mimeType: 'application/vnd.google-apps.shortcut',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          shortcutDetails: {
+            targetId: 'target-gdoc-321',
+            targetMimeType: 'application/vnd.google-apps.document',
+          },
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/target-gdoc-321')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'target-gdoc-321',
+          name: 'Submittal_Cover_Doc',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['folder-target-arch-321'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/folder-target-arch-321')
+        .query(true)
+        .reply(200, {
+          id: 'folder-target-arch-321',
+          name: '6 Construction',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+      nock('https://docs.googleapis.com')
+        .get('/v1/documents/target-gdoc-321')
+        .query({
+          includeTabsContent: 'true',
+          suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+        })
+        .reply(200, buildNx2GoogleDocPayload('target-gdoc-321', '092900-007-2'));
+
+      const shortcutRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: { selectedItems: [{ id: 'shortcut-gdoc-321', title: 'Shortcut to Cover' }] },
+        },
+      });
+      expect(shortcutRes.statusCode).toBe(200);
+      const shortcutCard = JSON.parse(shortcutRes.payload).action.navigations[0].pushCard;
+      const shortcutSec = shortcutCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      expect(
+        shortcutSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('092900');
+      expect(
+        shortcutSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('number', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('007');
+      expect(
+        shortcutSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('2');
+
+      // 2. Multi-item [Flat_Drawing.pdf, Stamped_Cover_Doc] skips 0-widget PDF and binds to Stamped_Cover_Doc
+      const flatPdfBytes = Buffer.from(await (await PDFDocument.create()).save());
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/flat-pdf-321')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'flat-pdf-321',
+          name: '071200-001_Flat_Drawing.pdf',
+          mimeType: 'application/pdf',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/flat-pdf-321')
+        .query((q) => q.alt === 'media')
+        .reply(200, flatPdfBytes, { 'content-type': 'application/pdf' });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/stamped-gdoc-321')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'stamped-gdoc-321',
+          name: 'Stamped_Cover_Doc',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://docs.googleapis.com')
+        .get('/v1/documents/stamped-gdoc-321')
+        .query({
+          includeTabsContent: 'true',
+          suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+        })
+        .reply(200, buildNx2GoogleDocPayload('stamped-gdoc-321', '081100-012-A'));
+
+      const multiRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [
+              { id: 'flat-pdf-321', title: '071200-001_Flat_Drawing.pdf' },
+              { id: 'stamped-gdoc-321', title: 'Stamped_Cover_Doc' },
+            ],
+          },
+        },
+      });
+      expect(multiRes.statusCode).toBe(200);
+      const multiCard = JSON.parse(multiRes.payload).action.navigations[0].pushCard;
+      const multiSec = multiCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      expect(
+        multiSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('081100');
+      expect(
+        multiSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('number', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('012');
+      expect(
+        multiSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('A');
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('degrades non-blockingly on Docs 403/503 transport failure and malformed 200 payload', async () => {
+      // 1. Docs 403 -> single deduplicated DRIVE_METADATA_EXTRACT_ERROR_MESSAGE + Drive fallback still populates
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/gdoc-403-321')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'gdoc-403-321',
+          name: '071200-004_Restricted_Cover',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://docs.googleapis.com')
+        .get('/v1/documents/gdoc-403-321')
+        .query(true)
+        .reply(403, { error: { code: 403, message: 'Forbidden' } });
+
+      const errRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: { selectedItems: [{ id: 'gdoc-403-321', title: '071200-004_Restricted_Cover' }] },
+        },
+      });
+      expect(errRes.statusCode).toBe(200);
+      const errCard = JSON.parse(errRes.payload).action.navigations[0].pushCard;
+      const errCardJson = JSON.stringify(errCard);
+      expect(errCardJson.split(DRIVE_METADATA_EXTRACT_ERROR_MESSAGE).length - 1).toBe(1);
+      const errSec = errCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      expect(
+        errSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('071200');
+
+      // 2. Malformed 200 payload -> DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE + Drive fallback still populates
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/gdoc-corrupt-321')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'gdoc-corrupt-321',
+          name: '071200-005_Corrupt_Cover',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://docs.googleapis.com')
+        .get('/v1/documents/gdoc-corrupt-321')
+        .query(true)
+        .reply(200, { documentId: 'gdoc-corrupt-321' });
+
+      const corruptRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: { selectedItems: [{ id: 'gdoc-corrupt-321', title: '071200-005_Corrupt_Cover' }] },
+        },
+      });
+      expect(corruptRes.statusCode).toBe(200);
+      const corruptCard = JSON.parse(corruptRes.payload).action.navigations[0].pushCard;
+      expect(JSON.stringify(corruptCard)).toContain(DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE);
+      const corruptSec = corruptCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      expect(
+        corruptSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('071200');
       expect(nock.isDone()).toBe(true);
     });
   });
