@@ -32,21 +32,23 @@ export class GoogleDocsClient {
 
     if (options.docs) {
       this.defaultDocs = options.docs;
-    } else if (typeof options.auth === 'string') {
-      this.defaultDocs = this.createDocsClientFromToken(options.auth);
-    } else if (options.auth) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.defaultDocs = google.docs({ version: 'v1', auth: options.auth as any });
+    } else if (options.auth !== undefined) {
+      this.defaultDocs = this.resolveDocsClient(options.auth);
     } else {
       this.defaultDocs = google.docs({ version: 'v1' });
     }
   }
 
-  private createDocsClientFromToken(oauthCred: string): docs_v1.Docs {
-    const oauth2Client = new OAuth2Client();
-    oauth2Client.setCredentials({ access_token: oauthCred });
+  private resolveDocsClient(credential: OAuth2Client | string): docs_v1.Docs {
+    let auth: OAuth2Client;
+    if (typeof credential === 'string') {
+      auth = new OAuth2Client();
+      auth.setCredentials({ access_token: credential });
+    } else {
+      auth = credential;
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return google.docs({ version: 'v1', auth: oauth2Client as any });
+    return google.docs({ version: 'v1', auth: auth as any });
   }
 
   extractFormData(document: unknown): GoogleDocsFormExtractResult {
@@ -56,11 +58,7 @@ export class GoogleDocsClient {
   private getDocs(options?: DocsOperationOptions): docs_v1.Docs {
     const credential = options?.accessToken ?? options?.auth;
     if (credential) {
-      if (typeof credential === 'string') {
-        return this.createDocsClientFromToken(credential);
-      }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return google.docs({ version: 'v1', auth: credential as any });
+      return this.resolveDocsClient(credential);
     }
     return this.defaultDocs;
   }

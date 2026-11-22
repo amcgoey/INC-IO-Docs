@@ -1,6 +1,7 @@
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import type { OAuth2Client } from 'google-auth-library';
 import type { docs_v1 } from 'googleapis';
+import type { GoogleApiRetryOptions } from '../google/retry';
 
 export type GoogleDocsFormFieldValue = string | boolean | string[];
 
@@ -10,12 +11,8 @@ export interface GoogleDocsFormExtractResult {
   ambiguousFields?: string[] | undefined;
 }
 
-export interface DocsRetryOptions {
-  maxRetries?: number | undefined;
-  initialDelayMs?: number | undefined;
-  backoffFactor?: number | undefined;
+export interface DocsRetryOptions extends GoogleApiRetryOptions {
   requestTimeoutMs?: number | undefined;
-  sleep?: ((ms: number) => Promise<void>) | undefined;
 }
 
 export interface DocsOperationOptions {
