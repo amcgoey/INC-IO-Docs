@@ -134,42 +134,63 @@ describe('HandlebarsAdapter', () => {
     });
   });
 
-  describe('parseFieldTemplate', () => {
-    it('parses single-token and multi-token Stage-1 field templates with literal segments', () => {
-      expect(adapter.parseFieldTemplate('{{action.name}}')).toEqual({
-        tokens: [{ fieldKey: 'action', property: 'name' }],
+  describe('parseMustacheTemplate', () => {
+    it('parses domain-agnostic mustache tokens and literal segments without imposing field rules', () => {
+      expect(adapter.parseMustacheTemplate('{{action.name}}')).toEqual({
+        tokens: [{ original: 'action.name', parts: ['action', 'name'] }],
         literals: ['', ''],
       });
 
-      const dateParsed = adapter.parseFieldTemplate('{{date}}');
-      expect(dateParsed).toEqual({
-        tokens: [{ fieldKey: 'date' }],
+      expect(adapter.parseMustacheTemplate('{{date}}')).toEqual({
+        tokens: [{ original: 'date', parts: ['date'] }],
         literals: ['', ''],
       });
-      expect('property' in dateParsed.tokens[0]).toBe(false);
 
-      expect(adapter.parseFieldTemplate('{{section}}-{{number}}-{{revision}}')).toEqual({
+      expect(adapter.parseMustacheTemplate('{{section}}-{{number}}-{{revision}}')).toEqual({
         tokens: [
-          { fieldKey: 'section' },
-          { fieldKey: 'number' },
-          { fieldKey: 'revision' },
+          { original: 'section', parts: ['section'] },
+          { original: 'number', parts: ['number'] },
+          { original: 'revision', parts: ['revision'] },
         ],
         literals: ['', '-', '-', ''],
       });
 
-      expect(adapter.parseFieldTemplate('SUB-{{specTag.key}}-{{revision}}!')).toEqual({
+      expect(adapter.parseMustacheTemplate('SUB-{{specTag.key}}-{{revision}}!')).toEqual({
         tokens: [
-          { fieldKey: 'specTag', property: 'key' },
-          { fieldKey: 'revision' },
+          { original: 'specTag.key', parts: ['specTag', 'key'] },
+          { original: 'revision', parts: ['revision'] },
         ],
         literals: ['SUB-', '-', '!'],
+      });
+
+      expect(adapter.parseMustacheTemplate('{{a.b.c}}')).toEqual({
+        tokens: [{ original: 'a.b.c', parts: ['a', 'b', 'c'] }],
+        literals: ['', ''],
+      });
+
+      expect(adapter.parseMustacheTemplate('{{calculated.fileName}}')).toEqual({
+        tokens: [{ original: 'calculated.fileName', parts: ['calculated', 'fileName'] }],
+        literals: ['', ''],
+      });
+
+      expect(adapter.parseMustacheTemplate('{{Document.data.section}}')).toEqual({
+        tokens: [{ original: 'Document.data.section', parts: ['Document', 'data', 'section'] }],
+        literals: ['', ''],
+      });
+
+      expect(adapter.parseMustacheTemplate('static text only')).toEqual({
+        tokens: [],
+        literals: ['static text only'],
+      });
+
+      expect(adapter.parseMustacheTemplate('')).toEqual({
+        tokens: [],
+        literals: [''],
       });
     });
 
     it.each([
       ['malformed syntax', '{{unclosed'],
-      ['empty template', ''],
-      ['zero-token literal text', 'static text only'],
       ['BlockStatement #if', '{{#if action}}{{action.name}}{{/if}}'],
       ['BlockStatement #each', '{{#each items}}{{name}}{{/each}}'],
       ['helper parameters', '{{upper section}}'],
@@ -181,16 +202,15 @@ describe('HandlebarsAdapter', () => {
       ['@root data variable', '{{@root.section}}'],
       ['@index data variable', '{{@index}}'],
       ['parent depth traversal', '{{../section}}'],
+      ['parent .. bare reference', '{{..}}'],
       ['this bare reference', '{{this}}'],
       ['this.property reference', '{{this.section}}'],
+      ['this/property relative path', '{{this/section}}'],
+      ['this/a/b nested relative path', '{{this/a/b}}'],
       ['dot bare reference', '{{.}}'],
       ['./property reference', '{{./section}}'],
-      ['path deeper than fieldKey.property', '{{a.b.c}}'],
-      ['CalculatedField namespace', '{{calculated.fileName}}'],
-      ['Stage-2 Document namespace', '{{Document.data.section}}'],
-      ['Stage-2 Document.id', '{{Document.id}}'],
     ])('rejects %s: %s', (_label, template) => {
-      expect(() => adapter.parseFieldTemplate(template)).toThrow();
+      expect(() => adapter.parseMustacheTemplate(template)).toThrow();
     });
   });
 });

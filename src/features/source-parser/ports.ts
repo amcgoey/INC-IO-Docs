@@ -344,6 +344,24 @@ export const FormExtractOutcomeSchema = Type.Union([
 ]);
 export type FormExtractOutcome = Static<typeof FormExtractOutcomeSchema>;
 
+export const MustacheTemplateTokenSchema = Type.Object(
+  {
+    original: Type.String({ minLength: 1 }),
+    parts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  },
+  { additionalProperties: false }
+);
+export type MustacheTemplateToken = Static<typeof MustacheTemplateTokenSchema>;
+
+export const ParsedMustacheTemplateSchema = Type.Object(
+  {
+    tokens: Type.Array(MustacheTemplateTokenSchema),
+    literals: Type.Array(Type.String()),
+  },
+  { additionalProperties: false }
+);
+export type ParsedMustacheTemplate = Static<typeof ParsedMustacheTemplateSchema>;
+
 export const FormTemplateTokenSchema = Type.Object(
   {
     fieldKey: Type.String({ minLength: 1 }),
@@ -489,12 +507,32 @@ export interface ParseSchemaRegistryPort {
   getAliasDictionary?(sourceKey: string): AliasDictionary | undefined;
 }
 
+export interface DriveFormMediaClientPort {
+  downloadFileMedia(fileId: string): Promise<Uint8Array>;
+}
+
+export interface PdfFormExtractorPort {
+  extractFormData(
+    buffer: Uint8Array
+  ): Promise<Record<string, string | boolean | string[] | undefined>>;
+}
+
+export interface GoogleDocsFormExtractResult {
+  widgetCount: number;
+  fields: Record<string, string | boolean | string[]>;
+  ambiguousFields?: string[] | undefined;
+}
+
+export interface GoogleDocsFormReaderPort {
+  extractDocumentFormFields(documentId: string): Promise<GoogleDocsFormExtractResult>;
+}
+
 export interface FormExtractorPort {
   extractFormFields(item: FormExtractTarget): Promise<FormExtractOutcome>;
 }
 
 export interface FormTemplateParserPort {
-  parseFieldTemplate(template: string): ParsedFormTemplate;
+  parseMustacheTemplate(template: string): ParsedMustacheTemplate;
 }
 
 export interface CanonicalOptionsProviderPort {

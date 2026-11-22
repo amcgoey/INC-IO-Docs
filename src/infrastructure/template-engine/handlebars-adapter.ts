@@ -21,13 +21,13 @@ interface HandlebarsAstNode {
   hash?: { pairs?: unknown[] };
 }
 
-interface ParsedTemplateToken {
-  fieldKey: string;
-  property?: string | undefined;
+interface MustacheTemplateToken {
+  original: string;
+  parts: string[];
 }
 
-interface ParsedFieldTemplate {
-  tokens: ParsedTemplateToken[];
+interface ParsedMustacheTemplate {
+  tokens: MustacheTemplateToken[];
   literals: string[];
 }
 
@@ -142,15 +142,15 @@ export class HandlebarsAdapter {
   }
 
   /**
-   * Parses a Stage-1 DocumentField Handlebars template into ordered field tokens and literal
-   * separators, rejecting logic blocks, helpers, comments, partials, unescaped mustaches,
-   * relative/context paths, deeper paths, and non-Stage-1 namespaces (ADR 0003 & ADR 0016).
+   * Parses a logic-less Handlebars mustache template into ordered path-expression tokens and
+   * literal segments, rejecting logic blocks, helpers, comments, partials, unescaped mustaches,
+   * data variables, and relative/parent context paths.
    */
-  public parseFieldTemplate(template: string): ParsedFieldTemplate {
+  public parseMustacheTemplate(template: string): ParsedMustacheTemplate {
     const ast = Handlebars.parse(template) as unknown as HandlebarsAstNode;
     const body = Array.isArray(ast.body) ? ast.body : [];
 
-    const tokens: ParsedTemplateToken[] = [];
+    const tokens: MustacheTemplateToken[] = [];
     const literals: string[] = [];
     let currentLiteral = '';
 
@@ -162,65 +162,57 @@ export class HandlebarsAdapter {
       }
 
       if (stmt.type !== 'MustacheStatement') {
-        throw new Error(`Unsupported Handlebars statement "${stmt.type ?? 'unknown'}" in field template`);
+        throw new Error(`Unsupported Handlebars statement "${stmt.type ?? 'unknown'}" in template`);
       }
 
       if (stmt.escaped === false) {
-        throw new Error('Triple-stash unescaped expressions ({{{...}}}) are not allowed in field templates');
+        throw new Error('Triple-stash unescaped expressions ({{{...}}}) are not allowed in templates');
       }
 
       if (Array.isArray(stmt.params) && stmt.params.length > 0) {
-        throw new Error('Helper parameters are not allowed in field templates');
+        throw new Error('Helper parameters are not allowed in templates');
       }
 
       if (stmt.hash && Array.isArray(stmt.hash.pairs) && stmt.hash.pairs.length > 0) {
-        throw new Error('Hash arguments are not allowed in field templates');
+        throw new Error('Hash arguments are not allowed in templates');
       }
 
       const pathNode = stmt.path;
       if (!pathNode || pathNode.type !== 'PathExpression') {
-        throw new Error('SubExpressions and literal mustaches are not allowed in field templates');
+        throw new Error('SubExpressions and literal mustaches are not allowed in templates');
       }
 
       if (pathNode.data === true) {
-        throw new Error(`Data variables ("${pathNode.original ?? '@'}") are not allowed in field templates`);
+        throw new Error(`Data variables ("${pathNode.original ?? '@'}") are not allowed in templates`);
       }
 
       if (typeof pathNode.depth === 'number' && pathNode.depth > 0) {
-        throw new Error(`Parent path traversal ("${pathNode.original ?? '../'}") is not allowed in field templates`);
+        throw new Error(`Parent path traversal ("${pathNode.original ?? '../'}") is not allowed in templates`);
       }
 
       const original = pathNode.original ?? '';
       if (
         original === 'this' ||
         original.startsWith('this.') ||
+        original.startsWith('this/') ||
         original === '.' ||
-        original.startsWith('./')
+        original.startsWith('./') ||
+        original.startsWith('..')
       ) {
-        throw new Error(`Relative context path "${original}" is not allowed in field templates`);
+        throw new Error(`Relative context path "${original}" is not allowed in templates`);
       }
 
       const parts = Array.isArray(pathNode.parts) ? pathNode.parts : [];
-      if (parts.length === 0 || parts.length > 2 || parts.some((part) => part.trim().length === 0)) {
-        throw new Error(`Invalid field path "${original}" in field template (expected fieldKey or fieldKey.property)`);
-      }
-
-      const [fieldKey, property] = parts;
-      if (fieldKey === 'calculated' || fieldKey === 'Document') {
-        throw new Error(`Disallowed namespace "${fieldKey}" in Stage-1 field template`);
+      if (parts.length === 0 || parts.some((part) => part.trim().length === 0)) {
+        throw new Error(`Invalid path "${original}" in template`);
       }
 
       literals.push(currentLiteral);
       currentLiteral = '';
-      tokens.push(property !== undefined ? { fieldKey, property } : { fieldKey });
+      tokens.push({ original, parts });
     }
 
     literals.push(currentLiteral);
-
-    if (tokens.length === 0) {
-      throw new Error('Field template must reference at least one Stage-1 DocumentField token');
-    }
-
     return { tokens, literals };
   }
 }

@@ -219,7 +219,6 @@ describe('source-parser.wiring', () => {
       };
       const googleDocsFormReader = {
         extractDocumentFormFields: vi.fn().mockResolvedValue({
-          status: 'ok' as const,
           widgetCount: 1,
           fields: { 'Submittal Response': 'No Exceptions Taken' },
         }),
@@ -273,5 +272,73 @@ describe('source-parser.wiring', () => {
       getFileSpy.mockRestore();
       downloadMediaSpy.mockRestore();
     }
+  });
+
+  it('resolves FormTemplateParserPort from templateEvaluator option when parseMustacheTemplate is present', async () => {
+    const customParseMustache = vi.fn().mockReturnValue({
+      tokens: [{ original: 'action.name', parts: ['action', 'name'] }],
+      literals: ['', ''],
+    });
+    const wiring = createSourceParserWiring({
+      spaceTypesProvider: { getAllTypes: () => [] },
+      manifestProvider: {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: ['./types/submittal-arch.json'],
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'submittal-arch',
+          documentSchema: {
+            fields: [
+              {
+                key: 'action',
+                type: 'string',
+                options: { source: 'actions', key: 'key', name: 'name' },
+              },
+            ],
+            options: {
+              actions: [{ key: 'NET', name: 'No Exceptions Taken' }],
+            },
+          },
+          documentFormSchema: {
+            fields: {
+              'Submittal Response': { template: '{{action.name}}' },
+            },
+          },
+          documentParseSchema: {
+            extractors: [{ source: 'form' }],
+          },
+        }),
+      },
+      templateEvaluator: {
+        parseMustacheTemplate: customParseMustache,
+      },
+    });
+
+    await wiring.parseSchemaRegistry.initialize();
+    expect(customParseMustache).toHaveBeenCalledWith('{{action.name}}');
+
+    // Non-matching templateEvaluator falls back cleanly to default HandlebarsAdapter
+    const fallbackWiring = createSourceParserWiring({
+      spaceTypesProvider: { getAllTypes: () => [] },
+      manifestProvider: {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: ['./types/submittal-arch.json'],
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'submittal-arch',
+          documentSchema: {
+            fields: [{ key: 'date', type: 'string' }],
+          },
+          documentFormSchema: {
+            fields: {
+              Date: { template: '{{date}}' },
+            },
+          },
+        }),
+      },
+      templateEvaluator: { evaluate: vi.fn() },
+    });
+
+    await expect(fallbackWiring.parseSchemaRegistry.initialize()).resolves.toBeUndefined();
   });
 });

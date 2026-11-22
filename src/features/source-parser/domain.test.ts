@@ -29,6 +29,10 @@ import type {
   PredicateEvaluatorPort,
 } from './ports';
 import { HandlebarsAdapter } from '../../infrastructure/template-engine/handlebars-adapter';
+import {
+  classifyFormFieldMatcher,
+  extractFormExtractorFields,
+} from './form-field-parser';
 
 describe('SourceParserService Pass 1 (inferRouting)', () => {
   const standardSpaceTypes: SourceParserSpaceTypeConfig[] = [
@@ -6714,6 +6718,84 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
         action: 'NOC',
         vendor: 'BM',
       });
+    });
+
+    it('skips getWorkspaceTimeZone() when only source: "form" runs, returns pure results from extractFormExtractorFields, and classifies form matchers', async () => {
+      expect(
+        classifyFormFieldMatcher({
+          key: 'action',
+          options: { source: 'actions', key: 'key' },
+        })
+      ).toBe('lookup');
+      expect(classifyFormFieldMatcher({ key: 'section', pattern: '^\\d{6}$' })).toBe('sixDigitCode');
+      expect(classifyFormFieldMatcher({ key: 'number', pattern: '^\\d{3,}$' })).toBe('numericSequence');
+      expect(classifyFormFieldMatcher({ key: 'number', pattern: '^\\d{3}$' })).toBe('numericSequence');
+      expect(classifyFormFieldMatcher({ key: 'revision' })).toBe('revision');
+      expect(classifyFormFieldMatcher({ key: 'title' })).toBeUndefined();
+
+      const getWorkspaceTimeZone = vi.fn().mockResolvedValue('America/New_York');
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockResolvedValue({
+          status: 'ok',
+          widgetCount: 1,
+          fields: { Date: '2026-11-21' },
+        }),
+      };
+      const registry = {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockReturnValue({ extractors: [{ source: 'form' }] }),
+        getTargetSchema: vi.fn().mockReturnValue({
+          fields: [{ key: 'date' }, { key: 'revision' }],
+        }),
+        getDocumentFormSchema: vi.fn().mockReturnValue({
+          fields: { Date: { template: '{{date}}', format: 'date' } },
+        }),
+      };
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockResolvedValue({
+          item: { id: 'f-tz', name: 'Stamped.pdf', mimeType: 'application/pdf' },
+          ancestors: [],
+        }),
+      };
+
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: registry,
+        formExtractor,
+        formTemplateParser,
+        configPort: { getWorkspaceTimeZone },
+      });
+
+      const res = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: { items: [{ id: 'f-tz' }] },
+      });
+      expect(res.fields.date).toBe('261121');
+      expect(getWorkspaceTimeZone).not.toHaveBeenCalled();
+
+      const existingFields = Object.freeze({ revision: 'A' });
+      const pureResult = await extractFormExtractorFields({
+        extractor: { source: 'form' },
+        validItemIds: ['f-tz'],
+        request: {
+          documentTypeKey: 'submittal-arch',
+          context: { items: [{ id: 'f-tz' }] },
+        },
+        targetSchema: { fields: [{ key: 'date' }, { key: 'revision' }] },
+        jsonLogicContext: { isDriveUrl: true, items: [{ id: 'f-tz' }], email: null },
+        existingFields,
+        parseSchemaRegistry: registry,
+        formExtractor,
+        formTemplateParser,
+        getHydratedDriveItem: async (id) => ({
+          hierarchy: await drivePort.getItemHierarchy(id),
+          driveContext: { id, mimeType: 'application/pdf' },
+        }),
+      });
+      expect(pureResult).toEqual({
+        fields: { date: '261121' },
+        statusMessages: [],
+      });
+      expect(existingFields).toEqual({ revision: 'A' });
     });
   });
 });

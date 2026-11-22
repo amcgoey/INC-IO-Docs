@@ -20,6 +20,10 @@ import {
   type AliasDictionary,
   type FormTemplateParserPort,
 } from '../ports';
+import {
+  classifyFormFieldMatcher,
+  parseDocumentFieldTemplate,
+} from '../form-field-parser';
 
 export function validateJsonLogicAst(rule: unknown): void {
   if (rule === null || rule === undefined || typeof rule !== 'object') {
@@ -91,22 +95,6 @@ function validateUniqueNormalizedAliases(
       seenAliases.set(norm, canonicalKey);
     }
   }
-}
-
-function supportsMultiTokenFormMatcher(targetField: ParseTargetDocumentField): boolean {
-  if (targetField.options !== undefined) {
-    return true;
-  }
-  if (targetField.pattern === '^\\d{6}$') {
-    return true;
-  }
-  if (/^\^\\d\{3,?\}\$$/.test(targetField.pattern ?? '')) {
-    return true;
-  }
-  if (targetField.key === 'revision') {
-    return true;
-  }
-  return false;
 }
 
 function validateValueMap(
@@ -217,10 +205,7 @@ function validateDocumentFormSchema(params: {
     }
 
     const prefix = `DocumentFormSchema field "${formFieldName}" in "${relPath}"`;
-    const parsed = formTemplateParser.parseFieldTemplate(binding.template);
-    if (parsed.tokens.length === 0) {
-      throw new Error(`${prefix} template must reference at least one DocumentField`);
-    }
+    const parsed = parseDocumentFieldTemplate(formTemplateParser, binding.template);
 
     const seenFieldKeys = new Set<string>();
     for (const token of parsed.tokens) {
@@ -263,7 +248,7 @@ function validateDocumentFormSchema(params: {
         }
       }
 
-      if (parsed.tokens.length > 1 && !supportsMultiTokenFormMatcher(targetField)) {
+      if (parsed.tokens.length > 1 && classifyFormFieldMatcher(targetField) === undefined) {
         throw new Error(
           `${prefix} multi-token template targets unsupported field "${token.fieldKey}"`
         );

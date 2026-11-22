@@ -28,6 +28,8 @@ import {
   FormExtractOutcomeSchema,
   FormTemplateTokenSchema,
   ParsedFormTemplateSchema,
+  MustacheTemplateTokenSchema,
+  ParsedMustacheTemplateSchema,
   SourceExtractorRuleSchema,
   ParseTargetDocumentFieldSchema,
   ParseTargetCalculatedFieldSchema,
@@ -448,6 +450,19 @@ describe('SourceParser ports and schemas', () => {
       })
     ).toBe(true);
     expect(Value.Check(ParsedFormTemplateSchema, { tokens: [], literals: [''] })).toBe(false);
+
+    expect(
+      Value.Check(MustacheTemplateTokenSchema, {
+        original: 'a.b.c',
+        parts: ['a', 'b', 'c'],
+      })
+    ).toBe(true);
+    expect(
+      Value.Check(ParsedMustacheTemplateSchema, {
+        tokens: [],
+        literals: ['static'],
+      })
+    ).toBe(true);
   });
 
   it('validates ParseTargetDocumentSchema TypeBox DTOs', () => {
