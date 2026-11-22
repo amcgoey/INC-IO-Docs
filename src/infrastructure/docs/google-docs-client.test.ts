@@ -1338,6 +1338,902 @@ describe('GoogleDocsClient', () => {
     });
   });
 
+  describe('extractFormData — DateElement & Person smart-chip serialization', () => {
+    const textCell = (text: string) => ({
+      content: [{ paragraph: { elements: [{ textRun: { content: text } }] } }],
+    });
+
+    it('formats DateElement timestamps to YYYY-MM-DD in timeZoneId, falls back on invalid timeZoneId or missing/invalid timestamp, emits Person name/email, and strips unset \\uE907', () => {
+      const client = new GoogleDocsClient();
+
+      const res = client.extractFormData({
+        tabs: [
+          {
+            documentTab: {
+              body: {
+                content: [
+                  {
+                    table: {
+                      rows: 9,
+                      columns: 2,
+                      tableRows: [
+                        {
+                          tableCells: [
+                            textCell('Date NY:\n'),
+                            {
+                              content: [
+                                {
+                                  paragraph: {
+                                    elements: [
+                                      {
+                                        dateElement: {
+                                          dateElementProperties: {
+                                            timestamp: '2026-11-22T02:00:00Z',
+                                            timeZoneId: 'America/New_York',
+                                            displayText: 'Nov 21, 2026',
+                                          },
+                                        },
+                                      },
+                                    ],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                        {
+                          tableCells: [
+                            textCell('Date UTC:\n'),
+                            {
+                              content: [
+                                {
+                                  paragraph: {
+                                    elements: [
+                                      {
+                                        dateElement: {
+                                          dateElementProperties: {
+                                            timestamp: '2026-11-22T02:00:00Z',
+                                            displayText: 'Nov 22, 2026',
+                                          },
+                                        },
+                                      },
+                                    ],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                        {
+                          tableCells: [
+                            textCell('Date Invalid TZ:\n'),
+                            {
+                              content: [
+                                {
+                                  paragraph: {
+                                    elements: [
+                                      {
+                                        dateElement: {
+                                          dateElementProperties: {
+                                            timestamp: '2026-11-22T02:00:00Z',
+                                            timeZoneId: 'Mars/Olympus_Mons',
+                                          },
+                                        },
+                                      },
+                                    ],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                        {
+                          tableCells: [
+                            textCell('Date Missing TS:\n'),
+                            {
+                              content: [
+                                {
+                                  paragraph: {
+                                    elements: [
+                                      {
+                                        dateElement: {
+                                          dateElementProperties: {
+                                            displayText: '  11/21/2026  ',
+                                          },
+                                        },
+                                      },
+                                    ],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                        {
+                          tableCells: [
+                            textCell('Date Invalid TS:\n'),
+                            {
+                              content: [
+                                {
+                                  paragraph: {
+                                    elements: [
+                                      {
+                                        dateElement: {
+                                          dateElementProperties: {
+                                            timestamp: 'not-a-date',
+                                            displayText: '  Sept 8, 2026  ',
+                                          },
+                                        },
+                                      },
+                                    ],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                        {
+                          tableCells: [
+                            textCell('Person Name:\n'),
+                            {
+                              content: [
+                                {
+                                  paragraph: {
+                                    elements: [
+                                      {
+                                        person: {
+                                          personProperties: {
+                                            name: '  Alice Architect  ',
+                                            email: 'alice@inc.nyc',
+                                          },
+                                        },
+                                      },
+                                    ],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                        {
+                          tableCells: [
+                            textCell('Person Email Fallback:\n'),
+                            {
+                              content: [
+                                {
+                                  paragraph: {
+                                    elements: [
+                                      {
+                                        person: {
+                                          personProperties: {
+                                            name: null,
+                                            email: '  bob@inc.nyc  ',
+                                          },
+                                        },
+                                      },
+                                    ],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                        {
+                          tableCells: [
+                            textCell('Person Empty:\n'),
+                            {
+                              content: [
+                                {
+                                  paragraph: {
+                                    elements: [{ person: { personProperties: {} } }],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                        {
+                          tableCells: [
+                            textCell('Date Placeholder:\n'),
+                            textCell('\uE907\n'),
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      });
+
+      expect(res).toEqual({
+        widgetCount: 9,
+        fields: {
+          'Date NY': '2026-11-21',
+          'Date UTC': '2026-11-22',
+          'Date Invalid TZ': '2026-11-22',
+          'Date Missing TS': '11/21/2026',
+          'Date Invalid TS': 'Sept 8, 2026',
+          'Person Name': 'Alice Architect',
+          'Person Email Fallback': 'bob@inc.nyc',
+        },
+      });
+    });
+  });
+
+  describe('extractFormData — Pattern 2 (2×1 Stacked Field Box)', () => {
+    const textCell = (text: string, style?: { columnSpan?: number; rowSpan?: number }) => ({
+      content: [{ paragraph: { elements: [{ textRun: { content: text } }] } }],
+      ...(style ? { tableCellStyle: style } : {}),
+    });
+
+    it('extracts multi-line REMARKS value, strips pure {{INSERT REMARKS HERE}} while preserving partial user text, and deduplicates Row 1 dropdowns', () => {
+      const client = new GoogleDocsClient();
+
+      const res = client.extractFormData({
+        tabs: [
+          {
+            documentTab: {
+              dropdownDefinitions: {
+                'def.noteType': {
+                  dropdownDefinitionId: 'def.noteType',
+                  dropdownDefinitionProperties: {
+                    title: 'Should Not Leak To Pattern 5',
+                    options: [
+                      { optionId: 'opt.0', displayValue: 'Select...' },
+                      { optionId: 'opt.1', displayValue: 'Urgent' },
+                    ],
+                  },
+                },
+              },
+              body: {
+                content: [
+                  {
+                    table: {
+                      rows: 2,
+                      columns: 1,
+                      tableRows: [
+                        { tableCells: [textCell('REMARKS:\n')] },
+                        {
+                          tableCells: [
+                            {
+                              content: [
+                                { paragraph: { elements: [{ textRun: { content: 'Verify flashing details.\n' } }] } },
+                                {
+                                  paragraph: {
+                                    elements: [
+                                      {
+                                        dropdown: {
+                                          dropdownId: 'kix.p2.dd',
+                                          dropdownProperties: {
+                                            dropdownDefinitionId: 'def.noteType',
+                                            selectedOptionId: 'opt.1',
+                                            displayValue: 'Urgent',
+                                          },
+                                        },
+                                      },
+                                    ],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    table: {
+                      rows: 2,
+                      columns: 1,
+                      tableRows: [
+                        { tableCells: [textCell('EMPTY REMARKS\n')] },
+                        { tableCells: [textCell('{{INSERT REMARKS HERE}}\n')] },
+                      ],
+                    },
+                  },
+                  {
+                    table: {
+                      rows: 2,
+                      columns: 1,
+                      tableRows: [
+                        { tableCells: [textCell('PARTIAL REMARKS\n')] },
+                        { tableCells: [textCell('Check {{INSERT REMARKS HERE}} before fab\n')] },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      });
+
+      expect(res).toEqual({
+        widgetCount: 3,
+        fields: {
+          REMARKS: 'Verify flashing details.\nUrgent',
+          'PARTIAL REMARKS': 'Check {{INSERT REMARKS HERE}} before fab',
+        },
+      });
+    });
+
+    it('rejects 2×1 tables with smart-chip Row 0, multi-line Row 0, or merged cells, and respects first-seen / ambiguous guards', () => {
+      const client = new GoogleDocsClient();
+
+      const res = client.extractFormData({
+        tabs: [
+          {
+            documentTab: {
+              body: {
+                content: [
+                  // Smart-chip Row 0 (dateElement) -> rejected
+                  {
+                    table: {
+                      rows: 2,
+                      columns: 1,
+                      tableRows: [
+                        {
+                          tableCells: [
+                            {
+                              content: [
+                                {
+                                  paragraph: {
+                                    elements: [{ dateElement: { dateElementProperties: { displayText: 'Date' } } }],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                        { tableCells: [textCell('2026-11-21\n')] },
+                      ],
+                    },
+                  },
+                  // Multi-line Row 0 -> rejected
+                  {
+                    table: {
+                      rows: 2,
+                      columns: 1,
+                      tableRows: [
+                        {
+                          tableCells: [
+                            {
+                              content: [
+                                { paragraph: { elements: [{ textRun: { content: 'Line 1\n' } }] } },
+                                { paragraph: { elements: [{ textRun: { content: 'Line 2\n' } }] } },
+                              ],
+                            },
+                          ],
+                        },
+                        { tableCells: [textCell('Value\n')] },
+                      ],
+                    },
+                  },
+                  // Merged Row 0 -> rejected
+                  {
+                    table: {
+                      rows: 2,
+                      columns: 1,
+                      tableRows: [
+                        { tableCells: [textCell('REMARKS\n', { columnSpan: 2 })] },
+                        { tableCells: [textCell('Value\n')] },
+                      ],
+                    },
+                  },
+                  // Merged Row 1 -> rejected
+                  {
+                    table: {
+                      rows: 2,
+                      columns: 1,
+                      tableRows: [
+                        { tableCells: [textCell('REMARKS\n')] },
+                        { tableCells: [textCell('Value\n', { rowSpan: 2 })] },
+                      ],
+                    },
+                  },
+                  // Valid first REMARKS
+                  {
+                    table: {
+                      rows: 2,
+                      columns: 1,
+                      tableRows: [
+                        { tableCells: [textCell('REMARKS\n')] },
+                        { tableCells: [textCell('First remark\n')] },
+                      ],
+                    },
+                  },
+                  // Duplicate REMARKS -> first-seen preserved
+                  {
+                    table: {
+                      rows: 2,
+                      columns: 1,
+                      tableRows: [
+                        { tableCells: [textCell('REMARKS\n')] },
+                        { tableCells: [textCell('Second remark\n')] },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      });
+
+      expect(res).toEqual({
+        widgetCount: 2,
+        fields: {
+          REMARKS: 'First remark',
+        },
+      });
+    });
+  });
+
+  describe('extractFormData — Pattern 3 (2×N Signature / Bottom-Caption Tables) & Full Live-Template Payloads', () => {
+    const textCell = (text: string, style?: { columnSpan?: number; rowSpan?: number }) => ({
+      content: [{ paragraph: { elements: [{ textRun: { content: text } }] } }],
+      ...(style ? { tableCellStyle: style } : {}),
+    });
+
+    it('extracts 2×2 Reviewed By | Date with blank/\\uE907, Person + DateElement, ISO, typed dates, and multi-line / >40-char Row 0, plus 2×3 signature tables', () => {
+      const client = new GoogleDocsClient();
+
+      // 1. Blank + \uE907 Date Placeholder -> widgetCount: 2, fields: {}
+      const unreviewed = client.extractFormData({
+        body: {
+          content: [
+            {
+              table: {
+                rows: 2,
+                columns: 2,
+                tableRows: [
+                  { tableCells: [textCell('\n'), textCell('\uE907\n')] },
+                  { tableCells: [textCell('Reviewed By\n'), textCell('Date\n')] },
+                ],
+              },
+            },
+          ],
+        },
+      });
+      expect(unreviewed).toEqual({ widgetCount: 2, fields: {} });
+
+      // 2. Person + DateElement
+      const chips = client.extractFormData({
+        body: {
+          content: [
+            {
+              table: {
+                rows: 2,
+                columns: 2,
+                tableRows: [
+                  {
+                    tableCells: [
+                      {
+                        content: [
+                          {
+                            paragraph: {
+                              elements: [{ person: { personProperties: { name: 'Alice Reviewer', email: 'alice@inc.nyc' } } }],
+                            },
+                          },
+                        ],
+                      },
+                      {
+                        content: [
+                          {
+                            paragraph: {
+                              elements: [
+                                {
+                                  dateElement: {
+                                    dateElementProperties: {
+                                      timestamp: '2026-11-21T00:00:00Z',
+                                      timeZoneId: 'UTC',
+                                    },
+                                  },
+                                },
+                              ],
+                            },
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                  { tableCells: [textCell('Reviewed By\n'), textCell('Date\n')] },
+                ],
+              },
+            },
+          ],
+        },
+      });
+      expect(chips).toEqual({
+        widgetCount: 2,
+        fields: {
+          'Reviewed By': 'Alice Reviewer',
+          Date: '2026-11-21',
+        },
+      });
+
+      // 3. Typed dates (ISO, US slash, 2-digit year, written month) with alphabetic Row 1 captions
+      for (const typedDate of ['2026-11-21', '11/21/2026', '5/8/26', 'Sept 8, 2026']) {
+        const res = client.extractFormData({
+          body: {
+            content: [
+              {
+                table: {
+                  rows: 2,
+                  columns: 2,
+                  tableRows: [
+                    { tableCells: [textCell('Alice\n'), textCell(`${typedDate}\n`)] },
+                    { tableCells: [textCell('Reviewed By\n'), textCell('Date\n')] },
+                  ],
+                },
+              },
+            ],
+          },
+        });
+        expect(res, `typedDate=${typedDate}`).toEqual({
+          widgetCount: 2,
+          fields: {
+            'Reviewed By': 'Alice',
+            Date: typedDate,
+          },
+        });
+      }
+
+      // 4. Multi-line / >40-char Row 0 + 2×3 signature table
+      const threeCol = client.extractFormData({
+        body: {
+          content: [
+            {
+              table: {
+                rows: 2,
+                columns: 3,
+                tableRows: [
+                  {
+                    tableCells: [
+                      {
+                        content: [
+                          { paragraph: { elements: [{ textRun: { content: 'Bob Designer\n' } }] } },
+                          { paragraph: { elements: [{ textRun: { content: 'INC Studio\n' } }] } },
+                        ],
+                      },
+                      textCell('Alice Reviewer\n'),
+                      textCell('Nov 21, 2026\n'),
+                    ],
+                  },
+                  {
+                    tableCells: [
+                      textCell('Prepared By\n'),
+                      textCell('Reviewed By\n'),
+                      textCell('Date\n'),
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      });
+      expect(threeCol).toEqual({
+        widgetCount: 3,
+        fields: {
+          'Prepared By': 'Bob Designer\nINC Studio',
+          'Reviewed By': 'Alice Reviewer',
+          Date: 'Nov 21, 2026',
+        },
+      });
+    });
+
+    it('falls punctuation-free 2×2 Key/Value tables and Company:/Acme.Inc. tables through to Pattern 4 while ignoring 2×3 top-header summary tables', () => {
+      const client = new GoogleDocsClient();
+
+      // 1. Punctuation-free 2×2 Key/Value (Submittal No | 071200-001-1 / Date | 2026-11-21) -> Pattern 4
+      const kvNoPunct = client.extractFormData({
+        body: {
+          content: [
+            {
+              table: {
+                rows: 2,
+                columns: 2,
+                tableRows: [
+                  { tableCells: [textCell('Submittal No\n'), textCell('071200-001-1\n')] },
+                  { tableCells: [textCell('Date\n'), textCell('2026-11-21\n')] },
+                ],
+              },
+            },
+          ],
+        },
+      });
+      expect(kvNoPunct).toEqual({
+        widgetCount: 2,
+        fields: {
+          'Submittal No': '071200-001-1',
+          Date: '2026-11-21',
+        },
+      });
+
+      // 2. Company: | Acme.Inc. (even paired with a date in Row 0) -> Row 1 has punctuation so Pattern 3 rejects -> Pattern 4
+      const kvCompany = client.extractFormData({
+        body: {
+          content: [
+            {
+              table: {
+                rows: 2,
+                columns: 2,
+                tableRows: [
+                  { tableCells: [textCell('Date:\n'), textCell('2026-11-21\n')] },
+                  { tableCells: [textCell('Company:\n'), textCell('Acme.Inc.\n')] },
+                ],
+              },
+            },
+          ],
+        },
+      });
+      expect(kvCompany).toEqual({
+        widgetCount: 2,
+        fields: {
+          Date: '2026-11-21',
+          Company: 'Acme.Inc.',
+        },
+      });
+
+      // 3. 2×3 top-header summary tables (both date-containing and non-date) -> ignored (widgetCount: 0)
+      const ignoredSummaries = client.extractFormData({
+        body: {
+          content: [
+            {
+              table: {
+                rows: 2,
+                columns: 3,
+                tableRows: [
+                  { tableCells: [textCell('Date\n'), textCell('Reviewer\n'), textCell('Status\n')] },
+                  { tableCells: [textCell('2026-11-21\n'), textCell('Alice\n'), textCell('Open\n')] },
+                ],
+              },
+            },
+            {
+              table: {
+                rows: 2,
+                columns: 3,
+                tableRows: [
+                  { tableCells: [textCell('Reviewer\n'), textCell('Role\n'), textCell('Status\n')] },
+                  { tableCells: [textCell('Alice\n'), textCell('Architect\n'), textCell('Open\n')] },
+                ],
+              },
+            },
+            // Merged 2×3 table -> ignored
+            {
+              table: {
+                rows: 2,
+                columns: 3,
+                tableRows: [
+                  { tableCells: [textCell('\n', { columnSpan: 2 }), textCell('\n'), textCell('\n')] },
+                  { tableCells: [textCell('Prepared By\n'), textCell('Reviewed By\n'), textCell('Date\n')] },
+                ],
+              },
+            },
+            // Pure numeric / submittal code in Row 1 -> rejected by Pattern 3 (and 3 cols so not Pattern 4)
+            {
+              table: {
+                rows: 2,
+                columns: 3,
+                tableRows: [
+                  { tableCells: [textCell('\n'), textCell('\n'), textCell('\n')] },
+                  { tableCells: [textCell('42\n'), textCell('CG104-A\n'), textCell('Date\n')] },
+                ],
+              },
+            },
+          ],
+        },
+      });
+      expect(ignoredSummaries).toEqual({ widgetCount: 0, fields: {} });
+    });
+
+    it('extracts full realistic live-template-modeled cover-sheet payloads (unreviewed & stamped Arch/FF&E)', () => {
+      const client = new GoogleDocsClient();
+      const RESPONSE_LABELS = [
+        'NO EXCEPTIONS TAKEN',
+        'NO OBJECTIONS AS CORRECTED',
+        'REVISE AND RESUBMIT',
+        'REJECTED',
+        'NOT REVIEWED',
+      ];
+
+      const buildLiveTemplateDoc = (options: {
+        submittalNo?: string;
+        checkedIdx?: number;
+        remarks?: string;
+        reviewerName?: string;
+        dateChip?: Record<string, unknown>;
+      }) => ({
+        documentId: 'live-template-doc',
+        body: null,
+        tabs: [
+          {
+            documentTab: {
+              dropdownDefinitions: {
+                'kix.cb': {
+                  dropdownDefinitionId: 'kix.cb',
+                  dropdownDefinitionProperties: {
+                    title: 'Checkbox',
+                    options: [
+                      { optionId: 'opt.off', displayValue: '☐' },
+                      { optionId: 'opt.on', displayValue: '☑' },
+                    ],
+                  },
+                },
+              },
+              body: {
+                content: [
+                  { sectionBreak: {} },
+                  { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+                  {
+                    table: {
+                      rows: 1,
+                      columns: 2,
+                      tableRows: [
+                        {
+                          tableCells: [
+                            textCell('Submittal No.\n', { columnSpan: 1, rowSpan: 1 }),
+                            textCell(`${options.submittalNo ?? ''}\n`, { columnSpan: 1, rowSpan: 1 }),
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                  { paragraph: { elements: [{ textRun: { content: '––––\n' } }] } },
+                  { paragraph: { elements: [{ textRun: { content: 'Submittal Response\n' } }] } },
+                  {
+                    table: {
+                      rows: 6,
+                      columns: 3,
+                      tableRows: [
+                        ...RESPONSE_LABELS.map((label, idx) => {
+                          const isChecked = options.checkedIdx === idx;
+                          const col2 =
+                            idx === 0
+                              ? textCell('NET/NOC legend\n', { rowSpan: 2 })
+                              : idx === 2
+                                ? textCell('RR/REJ legend\n', { rowSpan: 2 })
+                                : textCell('\n');
+                          return {
+                            tableCells: [
+                              {
+                                tableCellStyle: { columnSpan: 1, rowSpan: 1 },
+                                content: [
+                                  {
+                                    paragraph: {
+                                      elements: [
+                                        {
+                                          dropdown: {
+                                            dropdownId: `kix.dd.${idx}`,
+                                            dropdownProperties: {
+                                              dropdownDefinitionId: 'kix.cb',
+                                              selectedOptionId: isChecked ? 'opt.on' : 'opt.off',
+                                              displayValue: isChecked ? '☑' : '☐',
+                                            },
+                                          },
+                                        },
+                                      ],
+                                    },
+                                  },
+                                ],
+                              },
+                              textCell(`${label}\n`, { columnSpan: 1, rowSpan: 1 }),
+                              col2,
+                            ],
+                          };
+                        }),
+                        {
+                          tableCells: [
+                            textCell('Disclaimer prose across full table width.\n', {
+                              columnSpan: 3,
+                              rowSpan: 1,
+                            }),
+                            textCell('\n'),
+                            textCell('\n'),
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                  { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+                  { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+                  {
+                    table: {
+                      rows: 2,
+                      columns: 1,
+                      tableRows: [
+                        { tableCells: [textCell('REMARKS\n', { columnSpan: 1, rowSpan: 1 })] },
+                        { tableCells: [textCell(`${options.remarks ?? ''}\n`, { columnSpan: 1, rowSpan: 1 })] },
+                      ],
+                    },
+                  },
+                  { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+                  {
+                    table: {
+                      rows: 2,
+                      columns: 2,
+                      tableRows: [
+                        {
+                          tableCells: [
+                            options.reviewerName
+                              ? {
+                                  tableCellStyle: { columnSpan: 1, rowSpan: 1 },
+                                  content: [
+                                    {
+                                      paragraph: {
+                                        elements: [{ person: { personProperties: { name: options.reviewerName } } }],
+                                      },
+                                    },
+                                  ],
+                                }
+                              : textCell('\n', { columnSpan: 1, rowSpan: 1 }),
+                            options.dateChip
+                              ? {
+                                  tableCellStyle: { columnSpan: 1, rowSpan: 1 },
+                                  content: [{ paragraph: { elements: [options.dateChip] } }],
+                                }
+                              : textCell('\uE907\n', { columnSpan: 1, rowSpan: 1 }),
+                          ],
+                        },
+                        {
+                          tableCells: [
+                            textCell('Reviewed By\n', { columnSpan: 1, rowSpan: 1 }),
+                            textCell('Date\n', { columnSpan: 1, rowSpan: 1 }),
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                  { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+                  { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+                ],
+              },
+            },
+          },
+        ],
+      });
+
+      // Unreviewed template -> 5 widgets, 0 populated fields
+      expect(client.extractFormData(buildLiveTemplateDoc({}))).toEqual({
+        widgetCount: 5,
+        fields: {},
+      });
+
+      // Stamped Submittal Arch template
+      expect(
+        client.extractFormData(
+          buildLiveTemplateDoc({
+            submittalNo: '071200-001-1',
+            checkedIdx: 1,
+            remarks: 'Provide updated flashing detail.',
+            reviewerName: 'Jane Architect',
+            dateChip: {
+              dateElement: {
+                dateElementProperties: {
+                  timestamp: '2026-11-21T00:00:00Z',
+                  timeZoneId: 'UTC',
+                },
+              },
+            },
+          })
+        )
+      ).toEqual({
+        widgetCount: 5,
+        fields: {
+          'Submittal No': '071200-001-1',
+          'Submittal Response': 'NO OBJECTIONS AS CORRECTED',
+          REMARKS: 'Provide updated flashing detail.',
+          'Reviewed By': 'Jane Architect',
+          Date: '2026-11-21',
+        },
+      });
+    });
+  });
+
   describe('extractDocumentFormFields — API transport, TypeBox validation, and error wrapping', () => {
     afterEach(() => {
       nock.cleanAll();
