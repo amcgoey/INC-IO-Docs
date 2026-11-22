@@ -360,6 +360,8 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     });
 
     it('resolves shortcut target hierarchy and drive on drive-items-selected (Ticket #291)', async () => {
+      const flatPdfBytes = await (await PDFDocument.create()).save();
+      vi.spyOn(GoogleDriveClient.prototype, 'downloadFileMedia').mockResolvedValue(flatPdfBytes);
       vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => {
         if (fileId === 'shortcut-ffe-1') {
           return {
@@ -415,6 +417,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       expect(cardJson).toContain('submittal-ffe');
       expect(cardJson).toContain('Active Projects');
+      expect(cardJson).not.toContain('Could not read Google Drive file metadata');
     });
 
     it('applies multi-item selection precedence on drive-items-selected (Ticket #291)', async () => {
@@ -3124,6 +3127,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     it('binds multi-file selection [Berman_Cover.pdf, CG-104_v2_Fil_Doux.pdf] to item 2 and populates specTag, LinkedField specTitle, 0-based revision, vendor, date, action, and status', async () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime(new Date('2026-11-20T15:00:00Z'));
+      const flatPdfBuffer = Buffer.from(await (await PDFDocument.create()).save());
 
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
@@ -3134,7 +3138,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       nock('https://www.googleapis.com')
         .get('/drive/v3/files/file-cover-311')
-        .query(true)
+        .query((q) => q.alt !== 'media')
         .reply(200, {
           id: 'file-cover-311',
           name: 'Berman_Cover.pdf',
@@ -3143,6 +3147,10 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
           driveId: 'projects-shared-drive-001',
           modifiedTime: '2026-11-01T15:00:00Z',
         });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/file-cover-311')
+        .query((q) => q.alt === 'media')
+        .reply(200, flatPdfBuffer, { 'content-type': 'application/pdf' });
 
       nock('https://www.googleapis.com')
         .get('/drive/v3/files/folder-unfiled-311')
@@ -3157,7 +3165,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       nock('https://www.googleapis.com')
         .get('/drive/v3/files/file-submittal-311')
-        .query(true)
+        .query((q) => q.alt !== 'media')
         .reply(200, {
           id: 'file-submittal-311',
           name: 'CG-104_v2_Fil_Doux.pdf',
@@ -3166,6 +3174,10 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
           driveId: 'projects-shared-drive-001',
           modifiedTime: '2026-11-18T15:00:00Z',
         });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/file-submittal-311')
+        .query((q) => q.alt === 'media')
+        .reply(200, flatPdfBuffer, { 'content-type': 'application/pdf' });
 
       const response = await app.server.inject({
         method: 'POST',
@@ -3210,11 +3222,14 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(getTextVal('date')).toBe('261118');
       expect(getSelVal('action')).toBe('REC');
       expect(getSelVal('status')).toBe('Open');
+      expect(JSON.stringify(card)).not.toContain('Could not read Google Drive file metadata');
+      expect(nock.isDone()).toBe(true);
     });
 
     it('extracts varied FF&E formats (CG104-A_Berman_Falk, LT 159A_R0, Light_Annex without rev) and rejects lowercase prose ("in 100 days at 120V panel")', async () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime(new Date('2026-11-20T15:00:00Z'));
+      const flatPdfBuffer = Buffer.from(await (await PDFDocument.create()).save());
 
       const ffeCases = [
         {
@@ -3255,7 +3270,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
           });
         nock('https://www.googleapis.com')
           .get(`/drive/v3/files/${tc.id}`)
-          .query(true)
+          .query((q) => q.alt !== 'media')
           .reply(200, {
             id: tc.id,
             name: tc.name,
@@ -3264,6 +3279,10 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
             driveId: 'projects-shared-drive-001',
             modifiedTime: '2026-11-18T15:00:00Z',
           });
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${tc.id}`)
+          .query((q) => q.alt === 'media')
+          .reply(200, flatPdfBuffer, { 'content-type': 'application/pdf' });
 
         const res = await app.server.inject({
           method: 'POST',
@@ -3293,7 +3312,9 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         expect(getTextVal('revision'), tc.name).toBe(tc.revision);
         expect(getTextVal('vendor'), tc.name).toBe(tc.vendor);
         expect(getTextVal('date'), tc.name).toBe(tc.date);
+        expect(JSON.stringify(card), tc.name).not.toContain('Could not read Google Drive file metadata');
       }
+      expect(nock.isDone()).toBe(true);
 
       // Lowercase prose ("in 100 days", "at 120V panel") must NOT route to submittal-ffe
       nock('https://www.googleapis.com')
@@ -4312,6 +4333,270 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
             w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch')
         )?.textInput?.value
       ).toBe('071200');
+      expect(nock.isDone()).toBe(true);
+    });
+  });
+
+  describe('Ticket #318: Submittal FF&E PDF AcroForm pre-population and LinkedField derivation via source: "form"', () => {
+    async function buildFullFfeCoverPdf(options: {
+      submittalNo?: string;
+      selectedAction?: string;
+      dateText?: string;
+      reviewedBy?: string;
+      includeFreeTextRemark?: boolean;
+    }): Promise<Buffer> {
+      const doc = await PDFDocument.create();
+      const page = doc.addPage([600, 400]);
+      const form = doc.getForm();
+
+      if (options.submittalNo !== undefined) {
+        const subNoField = form.createTextField('Submittal No');
+        subNoField.addToPage(page, { x: 50, y: 340, width: 180, height: 20 });
+        subNoField.setText(options.submittalNo);
+      }
+
+      const radio = form.createRadioGroup('Submittal Response');
+      for (const [idx, label] of [
+        'No Exceptions Taken',
+        'No Objections As Corrected',
+        'Revise and Resubmit',
+        'Rejected',
+        'Not Reviewed',
+      ].entries()) {
+        radio.addOptionToPage(label, page, {
+          x: 50,
+          y: 300 - idx * 20,
+          width: 12,
+          height: 12,
+        });
+      }
+      if (options.selectedAction !== undefined) {
+        radio.select(options.selectedAction);
+      }
+
+      if (options.dateText !== undefined) {
+        const dateField = form.createTextField('Date');
+        dateField.addToPage(page, { x: 200, y: 300, width: 120, height: 20 });
+        dateField.setText(options.dateText);
+      }
+
+      if (options.reviewedBy !== undefined) {
+        const revBy = form.createTextField('Reviewed By');
+        revBy.addToPage(page, { x: 200, y: 260, width: 140, height: 20 });
+        revBy.setText(options.reviewedBy);
+      }
+
+      if (options.includeFreeTextRemark) {
+        const freeTextAnnot = doc.context.obj({
+          Type: PDFName.of('Annot'),
+          Subtype: PDFName.of('FreeText'),
+          Rect: [20, 20, 200, 60],
+          Contents: PDFString.of('REMARK: Verify upholstery COM'),
+        });
+        const annotRef = doc.context.register(freeTextAnnot);
+        page.node.set(PDFName.of('Annots'), doc.context.obj([annotRef]));
+      }
+
+      return Buffer.from(await doc.save());
+    }
+
+    it('pre-populates specTag, LinkedField specTitle, revision, action, and date from stamped Submittal FF&E PDF while filling vendor from drive, defaulting status Open, and leaving contact blank', async () => {
+      const pdfBuffer = await buildFullFfeCoverPdf({
+        submittalNo: 'CG-104 - A',
+        selectedAction: 'Revise and Resubmit',
+        dateText: '5/8/26',
+        reviewedBy: 'Jane Designer',
+        includeFreeTextRemark: true,
+      });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/folder-3ffe-318')
+        .query(true)
+        .reply(200, {
+          id: 'folder-3ffe-318',
+          name: '3 FFE',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/stamped-ffe-318')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'stamped-ffe-318',
+          name: 'Berman_Falk.pdf',
+          mimeType: 'application/pdf',
+          parents: ['folder-3ffe-318'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/stamped-ffe-318')
+        .query((q) => q.alt === 'media')
+        .reply(200, pdfBuffer, { 'content-type': 'application/pdf' });
+
+      const res = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [{ id: 'stamped-ffe-318', title: 'Berman_Falk.pdf' }],
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const card = JSON.parse(res.payload).action.navigations[0].pushCard;
+      const cardJson = JSON.stringify(card);
+      expect(cardJson).not.toContain('Could not read Google Drive file metadata');
+
+      const docTypeSec = card.sections.find((s: { header?: string }) => s.header === 'Document Type');
+      const selectedDocType = docTypeSec.widgets
+        .find((w: { selectionInput?: { name: string } }) => w.selectionInput?.name === 'SelectDocumentType_projects')
+        ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+      expect(selectedDocType).toBe('submittal-ffe');
+
+      const docDataSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      const getTextVal = (fieldKey: string) =>
+        docDataSec.widgets.find(
+          (w: { textInput?: { name: string } }) => w.textInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-ffe')
+        )?.textInput?.value;
+      const getSelVal = (fieldKey: string) =>
+        docDataSec.widgets
+          .find(
+            (w: { selectionInput?: { name: string } }) =>
+              w.selectionInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-ffe')
+          )
+          ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+
+      expect(getTextVal('specTag')).toBe('CG104');
+      expect(getTextVal('specTitle')).toBe('BED - KING');
+      expect(getTextVal('revision')).toBe('A');
+      expect(getSelVal('action')).toBe('RR');
+      expect(getTextVal('date')).toBe('260508');
+      expect(getTextVal('vendor')).toBe('BM');
+      expect(getSelVal('status')).toBe('Open');
+      expect(getTextVal('contact')).toBeUndefined();
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('extracts CG104 without revision, CG104_A, CG 104 - A, NOC label, and leaves unlisted specTag XX999 - A blank across UiView renders', async () => {
+      const cases = [
+        {
+          id: 'ffe-form-case-1',
+          submittalNo: 'CG104',
+          selectedAction: 'No Objections As Corrected',
+          expectedSpecTag: 'CG104',
+          expectedSpecTitle: 'BED - KING',
+          expectedRevision: undefined,
+          expectedAction: 'NOC',
+        },
+        {
+          id: 'ffe-form-case-2',
+          submittalNo: 'CG104_A',
+          selectedAction: 'No Exceptions Taken',
+          expectedSpecTag: 'CG104',
+          expectedSpecTitle: 'BED - KING',
+          expectedRevision: 'A',
+          expectedAction: 'NET',
+        },
+        {
+          id: 'ffe-form-case-3',
+          submittalNo: 'CG 104 - A',
+          selectedAction: 'Revise and Resubmit',
+          expectedSpecTag: 'CG104',
+          expectedSpecTitle: 'BED - KING',
+          expectedRevision: 'A',
+          expectedAction: 'RR',
+        },
+        {
+          id: 'ffe-form-case-4',
+          submittalNo: 'XX999 - A',
+          selectedAction: 'No Objections As Corrected',
+          expectedSpecTag: undefined,
+          expectedSpecTitle: undefined,
+          expectedRevision: undefined,
+          expectedAction: 'NOC',
+        },
+      ];
+
+      for (const tc of cases) {
+        const pdfBuffer = await buildFullFfeCoverPdf({
+          submittalNo: tc.submittalNo,
+          selectedAction: tc.selectedAction,
+          dateText: '2026-11-21',
+        });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/drives')
+          .query(true)
+          .reply(200, {
+            drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+          });
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/folder-${tc.id}`)
+          .query(true)
+          .reply(200, {
+            id: `folder-${tc.id}`,
+            name: '3 FFE',
+            parents: ['projects-shared-drive-001'],
+            driveId: 'projects-shared-drive-001',
+            mimeType: 'application/vnd.google-apps.folder',
+          });
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${tc.id}`)
+          .query((q) => q.alt !== 'media')
+          .reply(200, {
+            id: tc.id,
+            name: 'Stamped_Submittal.pdf',
+            mimeType: 'application/pdf',
+            parents: [`folder-${tc.id}`],
+            driveId: 'projects-shared-drive-001',
+            modifiedTime: '2026-11-18T15:00:00Z',
+          });
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${tc.id}`)
+          .query((q) => q.alt === 'media')
+          .reply(200, pdfBuffer, { 'content-type': 'application/pdf' });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/drive-items-selected',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+            drive: { selectedItems: [{ id: tc.id, title: 'Stamped_Submittal.pdf' }] },
+          },
+        });
+        expect(res.statusCode).toBe(200);
+        const card = JSON.parse(res.payload).action.navigations[0].pushCard;
+        const docDataSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+        const getTextVal = (fieldKey: string) =>
+          docDataSec.widgets.find(
+            (w: { textInput?: { name: string } }) => w.textInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-ffe')
+          )?.textInput?.value;
+        const getSelVal = (fieldKey: string) =>
+          docDataSec.widgets
+            .find(
+              (w: { selectionInput?: { name: string } }) =>
+                w.selectionInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-ffe')
+            )
+            ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+
+        expect(getTextVal('specTag'), tc.id).toBe(tc.expectedSpecTag);
+        expect(getTextVal('specTitle'), tc.id).toBe(tc.expectedSpecTitle);
+        expect(getTextVal('revision'), tc.id).toBe(tc.expectedRevision);
+        expect(getSelVal('action'), tc.id).toBe(tc.expectedAction);
+        expect(getTextVal('date'), tc.id).toBe('261121');
+      }
       expect(nock.isDone()).toBe(true);
     });
   });

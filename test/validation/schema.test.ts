@@ -316,7 +316,8 @@ describe('DocumentType JSON files schema validation', () => {
 
       for (const commKey of ['communication-project', 'communication-proposal']) {
         const commParse = registry.getParseSchema(commKey);
-        expect(commParse?.extractors[0]?.source).toBe('gmail');
+        expect(commParse?.extractors.map((e) => e.source)).toEqual(['gmail', 'drive']);
+        expect(registry.getDocumentFormSchema(commKey)).toBeUndefined();
         const commDrive = commParse?.extractors[1];
         expect(commDrive?.source).toBe('drive');
         if (commDrive?.source === 'drive') {
@@ -375,6 +376,7 @@ describe('DocumentType JSON files schema validation', () => {
       });
 
       const ffeParse = registry.getParseSchema('submittal-ffe');
+      expect(ffeParse?.extractors.map((e) => e.source)).toEqual(['gmail', 'form', 'drive']);
       const ffeExtractor = ffeParse?.extractors[0];
       expect(ffeExtractor?.source).toBe('gmail');
       if (ffeExtractor?.source === 'gmail') {
@@ -386,7 +388,10 @@ describe('DocumentType JSON files schema validation', () => {
         expect(ffeExtractor.fields).toHaveProperty('revision');
       }
 
-      const ffeDriveExtractor = ffeParse?.extractors[1];
+      const ffeFormExtractor = ffeParse?.extractors[1];
+      expect(ffeFormExtractor?.source).toBe('form');
+
+      const ffeDriveExtractor = ffeParse?.extractors[2];
       expect(ffeDriveExtractor?.source).toBe('drive');
       if (ffeDriveExtractor?.source === 'drive') {
         expect(Object.keys(ffeDriveExtractor.fields)).toEqual([
@@ -396,6 +401,26 @@ describe('DocumentType JSON files schema validation', () => {
           'date',
         ]);
       }
+
+      expect(registry.getDocumentFormSchema('submittal-ffe')).toEqual({
+        fields: {
+          'Submittal No': {
+            template: '{{specTag.key}}-{{revision}}',
+          },
+          'Submittal Response': {
+            template: '{{action.name}}',
+            valueMap: { RR: 'Revise and Resubmit' },
+          },
+          Date: {
+            template: '{{date}}',
+            format: 'date',
+          },
+        },
+      });
+
+      const ffeTargetSchema = registry.getTargetSchema('submittal-ffe');
+      const nocOption = ffeTargetSchema?.options?.actions?.find((a) => a.key === 'NOC');
+      expect(nocOption?.name).toBe('No Objections As Corrected');
     });
   });
 });
