@@ -100,7 +100,7 @@
         { "key": "NR", "name": "Not Reviewed", "suffix": "_NR", "order": "3" },
         { "key": "REJ", "name": "Rejected", "suffix": "_REJ", "order": "4" },
         { "key": "RR", "name": "Revise & Resubmit", "suffix": "_RR", "order": "5" },
-        { "key": "NOC", "name": "No Objection as Corrected", "suffix": "_NOC", "order": "6" },
+        { "key": "NOC", "name": "No Objections As Corrected", "suffix": "_NOC", "order": "6" },
         { "key": "NET", "name": "No Exceptions Taken", "suffix": "_NET", "order": "7" }
       ],
       "contacts": [
@@ -220,6 +220,16 @@
         ]
       }
     ]
+  },
+  "documentFormSchema": {
+    "fields": {
+      "Submittal Response": {
+        "template": "{{action.name}}",
+        "valueMap": {
+          "RR": "Revise and Resubmit"
+        }
+      }
+    }
   },
   "documentParseSchema": {
     "extractors": [
@@ -390,6 +400,9 @@
             }
           ]
         }
+      },
+      {
+        "source": "form"
       },
       {
         "source": "drive",

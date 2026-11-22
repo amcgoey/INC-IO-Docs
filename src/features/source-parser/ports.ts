@@ -263,26 +263,103 @@ export const DriveExtractorRuleSchema = Type.Object(
 );
 export type DriveExtractorRule = Static<typeof DriveExtractorRuleSchema>;
 
-export const StructuralExtractorRuleSchema = Type.Object(
+export const DocumentFormFieldFormatSchema = Type.Literal('date');
+export type DocumentFormFieldFormat = Static<typeof DocumentFormFieldFormatSchema>;
+
+export const DocumentFormFieldBindingSchema = Type.Object(
   {
-    source: Type.Union([
-      Type.Literal('pdfForm'),
-      Type.Literal('googleDoc'),
-    ]),
-    name: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
-    match: Type.Optional(Type.Union([ParseJsonLogicRuleSchema, Type.Undefined()])),
-    fields: Type.Record(Type.String({ minLength: 1 }), Type.Unknown()),
+    template: Type.String({ minLength: 1 }),
+    format: Type.Optional(Type.Union([DocumentFormFieldFormatSchema, Type.Undefined()])),
+    valueMap: Type.Optional(
+      Type.Union([
+        Type.Record(Type.String({ minLength: 1 }), Type.String({ minLength: 1 }), { minProperties: 1 }),
+        Type.Undefined(),
+      ])
+    ),
   },
   { additionalProperties: false }
 );
-export type StructuralExtractorRule = Static<typeof StructuralExtractorRuleSchema>;
+export type DocumentFormFieldBinding = Static<typeof DocumentFormFieldBindingSchema>;
+
+export const DocumentFormSchemaSchema = Type.Object(
+  {
+    fields: Type.Record(Type.String({ minLength: 1 }), DocumentFormFieldBindingSchema, { minProperties: 1 }),
+  },
+  { additionalProperties: false }
+);
+export type DocumentFormSchema = Static<typeof DocumentFormSchemaSchema>;
+
+export const FormExtractorRuleSchema = Type.Object(
+  {
+    source: Type.Literal('form'),
+    name: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+    match: Type.Optional(Type.Union([ParseJsonLogicRuleSchema, Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+export type FormExtractorRule = Static<typeof FormExtractorRuleSchema>;
 
 export const SourceExtractorRuleSchema = Type.Union([
   GmailExtractorRuleSchema,
+  FormExtractorRuleSchema,
   DriveExtractorRuleSchema,
-  StructuralExtractorRuleSchema,
 ]);
 export type SourceExtractorRule = Static<typeof SourceExtractorRuleSchema>;
+
+export const SUPPORTED_FORM_MIME_TYPES = [
+  'application/pdf',
+  'application/vnd.google-apps.document',
+] as const;
+
+export const FormExtractTargetSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    mimeType: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false }
+);
+export type FormExtractTarget = Static<typeof FormExtractTargetSchema>;
+
+export const FormFieldValueSchema = Type.Union([
+  Type.String(),
+  Type.Boolean(),
+  Type.Array(Type.String()),
+]);
+export type FormFieldValue = Static<typeof FormFieldValueSchema>;
+
+export const FormExtractOutcomeSchema = Type.Union([
+  Type.Object(
+    {
+      status: Type.Literal('ok'),
+      widgetCount: Type.Integer({ minimum: 0 }),
+      fields: Type.Record(Type.String(), FormFieldValueSchema),
+      ambiguousFields: Type.Optional(Type.Union([Type.Array(Type.String({ minLength: 1 })), Type.Undefined()])),
+    },
+    { additionalProperties: false }
+  ),
+  Type.Object({ status: Type.Literal('encrypted') }, { additionalProperties: false }),
+  Type.Object({ status: Type.Literal('corrupted') }, { additionalProperties: false }),
+  Type.Object({ status: Type.Literal('source_error') }, { additionalProperties: false }),
+]);
+export type FormExtractOutcome = Static<typeof FormExtractOutcomeSchema>;
+
+export const FormTemplateTokenSchema = Type.Object(
+  {
+    fieldKey: Type.String({ minLength: 1 }),
+    property: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+export type FormTemplateToken = Static<typeof FormTemplateTokenSchema>;
+
+export const ParsedFormTemplateSchema = Type.Object(
+  {
+    tokens: Type.Array(FormTemplateTokenSchema, { minItems: 1 }),
+    literals: Type.Array(Type.String()),
+  },
+  { additionalProperties: false }
+);
+export type ParsedFormTemplate = Static<typeof ParsedFormTemplateSchema>;
 
 export const FallbackExtractorRuleSchema = Type.Object(
   {
@@ -407,7 +484,16 @@ export interface ParseSchemaRegistryPort {
   initialize(): Promise<void>;
   getParseSchema(documentTypeKey: string): Promise<DocumentParseSchema | undefined> | DocumentParseSchema | undefined;
   getTargetSchema(documentTypeKey: string): Promise<ParseTargetDocumentSchema | undefined> | ParseTargetDocumentSchema | undefined;
+  getDocumentFormSchema?(documentTypeKey: string): Promise<DocumentFormSchema | undefined> | DocumentFormSchema | undefined;
   getAliasDictionary?(sourceKey: string): AliasDictionary | undefined;
+}
+
+export interface FormExtractorPort {
+  extractFormFields(item: FormExtractTarget): Promise<FormExtractOutcome>;
+}
+
+export interface FormTemplateParserPort {
+  parseFieldTemplate(template: string): ParsedFormTemplate;
 }
 
 export interface CanonicalOptionsProviderPort {

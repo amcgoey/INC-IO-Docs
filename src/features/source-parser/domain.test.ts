@@ -12,13 +12,19 @@ import {
   matchesCorrelatedCode,
   FFE_PROXIMITY_REGEX_1,
   FFE_PROXIMITY_REGEX_2,
+  PDF_FORM_ENCRYPTED_ERROR_MESSAGE,
+  DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE,
+  DRIVE_METADATA_EXTRACT_ERROR_MESSAGE,
 } from './domain';
 import type {
   DriveSourceContextPort,
   SourceParserSpaceConfigPort,
   SourceParserSpaceTypeConfig,
   DriveItemHierarchy,
+  FormExtractorPort,
+  FormTemplateParserPort,
 } from './ports';
+import { HandlebarsAdapter } from '../../infrastructure/template-engine/handlebars-adapter';
 
 describe('SourceParserService Pass 1 (inferRouting)', () => {
   const standardSpaceTypes: SourceParserSpaceTypeConfig[] = [
@@ -4924,6 +4930,384 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
 
         expect(res.fields.revision).toBe('0');
       });
+    });
+  });
+
+  describe('Ticket #315: Pass 2 source: "form" single-token DocumentFormSchema evaluation', () => {
+    const formTemplateParser: FormTemplateParserPort = new HandlebarsAdapter();
+
+    const submittalActions = [
+      { key: 'REC', name: 'Received', suffix: '', order: '1' },
+      { key: 'REF', name: 'Referred', suffix: '_REF', order: '2' },
+      { key: 'NR', name: 'Not Reviewed', suffix: '_NR', order: '3' },
+      { key: 'REJ', name: 'Rejected', suffix: '_REJ', order: '4' },
+      { key: 'RR', name: 'Revise & Resubmit', suffix: '_RR', order: '5' },
+      { key: 'NOC', name: 'No Objections As Corrected', suffix: '_NOC', order: '6' },
+      { key: 'NET', name: 'No Exceptions Taken', suffix: '_NET', order: '7' },
+    ];
+
+    function makeArchRegistry(overrides?: {
+      extractors?: unknown[];
+      formFields?: Record<string, { template: string; format?: 'date'; valueMap?: Record<string, string> }>;
+      targetFields?: unknown[];
+      options?: Record<string, unknown[]>;
+    }) {
+      return {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockResolvedValue({
+          extractors: overrides?.extractors ?? [
+            { source: 'form' as const },
+            {
+              source: 'drive' as const,
+              fields: {
+                section: {
+                  from: 'drive.fileNameStem' as const,
+                  pattern: '(\\d{6})-(\\d{3})',
+                  group: 1,
+                  normalize: 'digits6' as const,
+                },
+                number: {
+                  from: 'drive.fileNameStem' as const,
+                  pattern: '(\\d{6})-(\\d{3})',
+                  group: 2,
+                  normalize: 'pad3' as const,
+                },
+                date: { from: 'drive.modifiedTime' as const },
+              },
+            },
+          ],
+        }),
+        getDocumentFormSchema: vi.fn().mockResolvedValue({
+          fields: overrides?.formFields ?? {
+            'Submittal Response': {
+              template: '{{action.name}}',
+              valueMap: { RR: 'Revise and Resubmit' },
+            },
+          },
+        }),
+        getTargetSchema: vi.fn().mockResolvedValue({
+          fields: overrides?.targetFields ?? [
+            { key: 'section', type: 'string', pattern: '^\\d{6}$' },
+            { key: 'number', type: 'string', pattern: '^\\d{3}$' },
+            { key: 'revision', type: 'string', minLength: 1 },
+            { key: 'date', type: 'string' },
+            {
+              key: 'action',
+              type: 'string',
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+          ],
+          options: overrides?.options ?? { actions: submittalActions },
+        }),
+      };
+    }
+
+    it('extracts NET, NOC, RR (via valueMap), REJ, and NR from Submittal Response and leaves action unpopulated when unchecked', async () => {
+      const cases = [
+        { raw: 'No Exceptions Taken', expected: 'NET' },
+        { raw: 'No Objections As Corrected', expected: 'NOC' },
+        { raw: 'Revise and Resubmit', expected: 'RR' },
+        { raw: 'revise and resubmit', expected: 'RR' },
+        { raw: 'Rejected', expected: 'REJ' },
+        { raw: 'Not Reviewed', expected: 'NR' },
+        { raw: undefined, expected: undefined },
+      ];
+
+      for (const tc of cases) {
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockResolvedValue({
+            item: {
+              id: 'pdf-stamped',
+              name: '071200-001_Waterproofing.pdf',
+              mimeType: 'application/pdf',
+              modifiedTime: '2026-11-18T15:00:00Z',
+            },
+            ancestors: [],
+          }),
+        };
+        const formExtractor: FormExtractorPort = {
+          extractFormFields: vi.fn().mockResolvedValue({
+            status: 'ok',
+            widgetCount: 2,
+            fields: tc.raw !== undefined ? { 'Submittal Response': tc.raw } : {},
+          }),
+        };
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: makeArchRegistry(),
+          formExtractor,
+          formTemplateParser,
+        });
+
+        const res = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          context: { items: [{ id: 'pdf-stamped' }] },
+        });
+
+        expect(res.fields.action, String(tc.raw)).toBe(tc.expected);
+        expect(res.fields.section).toBe('071200');
+        expect(res.fields.number).toBe('001');
+      }
+    });
+
+    it('skips Email Attachments mode and skips formExtractor when all bound fields are already populated by gmail or existingData', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn(),
+      };
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn(),
+      };
+
+      const registry = makeArchRegistry({
+        extractors: [
+          {
+            source: 'gmail' as const,
+            fields: { action: { set: 'REC' } },
+          },
+          { source: 'form' as const },
+        ],
+      });
+
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: registry,
+        formExtractor,
+        formTemplateParser,
+      });
+
+      // Email Attachments mode: isDriveUrl omitted
+      const attRes = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: {
+          items: [{ id: 'att-1', mimeType: 'application/pdf' }],
+          email: { id: 'msg-1', subject: 'Submittal' },
+        },
+      });
+      expect(attRes.fields.action).toBe('REC');
+      expect(drivePort.getItemHierarchy).not.toHaveBeenCalled();
+      expect(formExtractor.extractFormFields).not.toHaveBeenCalled();
+
+      // Google Drive URL mode where gmail already populated action
+      const urlRes = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: {
+          isDriveUrl: true,
+          items: [{ id: 'drive-pdf-1' }],
+          email: { id: 'msg-1', subject: 'Submittal' },
+        },
+      });
+      expect(urlRes.fields.action).toBe('REC');
+      expect(drivePort.getItemHierarchy).not.toHaveBeenCalled();
+      expect(formExtractor.extractFormFields).not.toHaveBeenCalled();
+
+      // existingData already has action
+      const existingRes = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        existingData: { action: 'NET' },
+        context: { items: [{ id: 'drive-pdf-1' }] },
+      });
+      expect(existingRes.fields.action).toBe('NET');
+      expect(formExtractor.extractFormFields).not.toHaveBeenCalled();
+    });
+
+    it('resolves Drive shortcuts, skips unsupported MIME types, silently skips 0-widget PDFs, and stops after first matching stamped form', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockImplementation(async (id: string) => {
+          if (id === 'img-1') {
+            return { item: { id: 'img-1', name: 'Photo.png', mimeType: 'image/png' }, ancestors: [] };
+          }
+          if (id === 'flat-1') {
+            return { item: { id: 'flat-1', name: 'Flat_Drawing.pdf', mimeType: 'application/pdf' }, ancestors: [] };
+          }
+          if (id === 'shortcut-cover') {
+            return {
+              item: { id: 'target-cover', name: 'Stamped_Cover.pdf', mimeType: 'application/pdf' },
+              ancestors: [],
+            };
+          }
+          return {
+            item: { id: 'extra-cover', name: 'Extra_Cover.pdf', mimeType: 'application/pdf' },
+            ancestors: [],
+          };
+        }),
+      };
+
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockImplementation(async ({ id }: { id: string }) => {
+          if (id === 'flat-1') {
+            return { status: 'ok', widgetCount: 0, fields: {} };
+          }
+          if (id === 'target-cover') {
+            return {
+              status: 'ok',
+              widgetCount: 2,
+              fields: { 'Submittal Response': 'No Exceptions Taken' },
+            };
+          }
+          return {
+            status: 'ok',
+            widgetCount: 1,
+            fields: { 'Submittal Response': 'Rejected' },
+          };
+        }),
+      };
+
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: makeArchRegistry(),
+        formExtractor,
+        formTemplateParser,
+      });
+
+      const res = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: {
+          items: [
+            { id: 'img-1' },
+            { id: 'flat-1' },
+            { id: 'shortcut-cover' },
+            { id: 'extra-cover' },
+          ],
+        },
+      });
+
+      expect(res.fields.action).toBe('NET');
+      expect(res.statusMessages).toBeUndefined();
+      expect(formExtractor.extractFormFields).toHaveBeenCalledTimes(2);
+      expect(formExtractor.extractFormFields).toHaveBeenNthCalledWith(1, {
+        id: 'flat-1',
+        mimeType: 'application/pdf',
+      });
+      expect(formExtractor.extractFormFields).toHaveBeenNthCalledWith(2, {
+        id: 'target-cover',
+        mimeType: 'application/pdf',
+      });
+    });
+
+    it('coerces boolean/string/string[] values, preserves "0", normalizes plain fields, resolves dynamic LookupFields, and populates LinkedFields', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockResolvedValue({
+          item: { id: 'pdf-1', name: 'Form.pdf', mimeType: 'application/pdf' },
+          ancestors: [],
+        }),
+      };
+
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockResolvedValue({
+          status: 'ok',
+          widgetCount: 6,
+          fields: {
+            SectionWidget: ' 07 12 00 ',
+            NumberWidget: ' 5 ',
+            RevisionWidget: '0',
+            SpecWidget: ['   ', 'CG104'],
+            FlagTrue: true,
+            FlagFalse: false,
+          },
+        }),
+      };
+
+      const registry = makeArchRegistry({
+        extractors: [{ source: 'form' as const }],
+        formFields: {
+          SectionWidget: { template: '{{section}}' },
+          NumberWidget: { template: '{{number}}' },
+          RevisionWidget: { template: '{{revision}}' },
+          SpecWidget: { template: '{{specTag.key}}' },
+          FlagTrue: { template: '{{flagTrue}}' },
+          FlagFalse: { template: '{{flagFalse}}' },
+        },
+        targetFields: [
+          { key: 'section', type: 'string', pattern: '^\\d{6}$' },
+          { key: 'number', type: 'string', pattern: '^\\d{3}$' },
+          { key: 'revision', type: 'string', minLength: 1 },
+          {
+            key: 'specTag',
+            type: 'string',
+            options: {
+              source: 'specs',
+              key: 'key',
+              name: 'name',
+              dynamicConfig: { provider: 'google_drive' },
+            },
+          },
+          {
+            key: 'specTitle',
+            type: 'string',
+            linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+          },
+          { key: 'flagTrue', type: 'string' },
+          { key: 'flagFalse', type: 'string' },
+        ],
+        options: {},
+      });
+
+      const canonicalOptionsProvider = {
+        getCanonicalOptions: vi.fn().mockResolvedValue([
+          { key: 'CG104', name: 'BED - KING' },
+        ]),
+      };
+
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: registry,
+        formExtractor,
+        formTemplateParser,
+        canonicalOptionsProvider,
+      });
+
+      const res = await service.extractFields({
+        documentTypeKey: 'submittal-ffe',
+        spaceId: 'space-1',
+        context: { items: [{ id: 'pdf-1' }] },
+      });
+
+      expect(res.fields).toEqual({
+        section: '071200',
+        number: '005',
+        revision: '0',
+        specTag: 'CG104',
+        specTitle: 'BED - KING',
+        flagTrue: 'true',
+      });
+      expect(res.fields.flagFalse).toBeUndefined();
+    });
+
+    it('emits non-blocking statusMessages on encrypted, corrupted, and source_error outcomes without blocking drive extractor', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockResolvedValue({
+          item: {
+            id: 'pdf-bad',
+            name: '071200-001_Waterproofing.pdf',
+            mimeType: 'application/pdf',
+            modifiedTime: '2026-11-18T15:00:00Z',
+          },
+          ancestors: [],
+        }),
+      };
+
+      const expectedMessages = {
+        encrypted: PDF_FORM_ENCRYPTED_ERROR_MESSAGE,
+        corrupted: DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE,
+        source_error: DRIVE_METADATA_EXTRACT_ERROR_MESSAGE,
+      } as const;
+
+      for (const status of ['encrypted', 'corrupted', 'source_error'] as const) {
+        const formExtractor: FormExtractorPort = {
+          extractFormFields: vi.fn().mockResolvedValue({ status }),
+        };
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: makeArchRegistry(),
+          formExtractor,
+          formTemplateParser,
+        });
+
+        const res = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          context: { items: [{ id: 'pdf-bad' }] },
+        });
+
+        expect(res.fields.section).toBe('071200');
+        expect(res.fields.number).toBe('001');
+        expect(res.fields.action).toBeUndefined();
+        expect(res.statusMessages).toEqual([expectedMessages[status]]);
+      }
     });
   });
 });
