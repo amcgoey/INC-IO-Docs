@@ -21,6 +21,7 @@ import {
   DRIVE_METADATA_EXTRACT_ERROR_MESSAGE,
   formatAmbiguousFormFieldMessage,
 } from '../src/features/source-parser/domain';
+import { DRIVE_ROUTING_FALLBACK_NOTICE } from '../src/features/ui-process-manager/domain';
 import { DriveFormExtractorAdapter } from '../src/features/source-parser/adapters/drive-form-extractor.adapter';
 
 describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () => {
@@ -5199,12 +5200,186 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       const corruptCard = JSON.parse(corruptRes.payload).action.navigations[0].pushCard;
       expect(JSON.stringify(corruptCard)).toContain(DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE);
       const corruptSec = corruptCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      expect(corruptSec.widgets.find(
+        (w: { textInput?: { name: string } }) =>
+          w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch')
+      )?.textInput?.value).toBe('071200');
+      expect(nock.isDone()).toBe(true);
+    });
+  });
+
+  describe('Ticket #324: GoogleDocsClient resiliency & non-blocking source_error / corrupted degradation', () => {
+    beforeEach(() => {
+      nock.disableNetConnect();
+    });
+
+    afterEach(() => {
+      nock.enableNetConnect();
+    });
+
+    it('renders DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE on malformed 200 Docs payload while Drive metadata still populates', async () => {
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/gdoc-corrupt-324')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'gdoc-corrupt-324',
+          name: '071200-008_Corrupt_Cover',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://docs.googleapis.com')
+        .get('/v1/documents/gdoc-corrupt-324')
+        .query({
+          includeTabsContent: 'true',
+          suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+        })
+        .reply(200, { documentId: 'gdoc-corrupt-324', body: { content: null } });
+
+      const res = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-cred' },
+          drive: { selectedItems: [{ id: 'gdoc-corrupt-324', title: '071200-008_Corrupt_Cover' }] },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const pushCard = JSON.parse(res.payload).action.navigations[0].pushCard;
+      const cardJson = JSON.stringify(pushCard);
+      expect(cardJson).toContain(DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE);
+      expect(cardJson).not.toContain(DRIVE_METADATA_EXTRACT_ERROR_MESSAGE);
+
+      const docSec = pushCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
       expect(
-        corruptSec.widgets.find(
+        docSec.widgets.find(
           (w: { textInput?: { name: string } }) =>
             w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch')
         )?.textInput?.value
       ).toBe('071200');
+      expect(
+        docSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('number', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('008');
+      expect(
+        docSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('date', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('261118');
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('renders at most one deduplicated DRIVE_METADATA_EXTRACT_ERROR_MESSAGE on permanent docs.googleapis.com 403 and 503 failures', async () => {
+      for (const failure of [
+        {
+          id: 'gdoc-403-324',
+          name: '071200-009_Forbidden_Cover',
+          expectedNumber: '009',
+          status: 403,
+          body: { error: { code: 403, message: 'Forbidden', errors: [{ reason: 'forbidden' }] } },
+        },
+        {
+          id: 'gdoc-503-324',
+          name: '071200-010_Unavailable_Cover',
+          expectedNumber: '010',
+          status: 503,
+          body: { error: { code: 503, message: 'Service Unavailable' } },
+        },
+      ]) {
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/drives')
+          .query(true)
+          .reply(200, {
+            drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+          });
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${failure.id}`)
+          .query((q) => q.alt !== 'media')
+          .reply(200, {
+            id: failure.id,
+            name: failure.name,
+            mimeType: 'application/vnd.google-apps.document',
+            parents: ['projects-shared-drive-001'],
+            driveId: 'projects-shared-drive-001',
+            modifiedTime: '2026-11-18T15:00:00Z',
+          });
+        nock('https://docs.googleapis.com')
+          .get(`/v1/documents/${failure.id}`)
+          .query({
+            includeTabsContent: 'true',
+            suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+          })
+          .reply(failure.status, failure.body);
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/drive-items-selected',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-cred' },
+            drive: { selectedItems: [{ id: failure.id, title: failure.name }] },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const pushCard = JSON.parse(res.payload).action.navigations[0].pushCard;
+        const cardJson = JSON.stringify(pushCard);
+        expect(cardJson.split(DRIVE_METADATA_EXTRACT_ERROR_MESSAGE).length - 1).toBe(1);
+
+        const docSec = pushCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+        expect(
+          docSec.widgets.find(
+            (w: { textInput?: { name: string } }) =>
+              w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch')
+          )?.textInput?.value
+        ).toBe('071200');
+        expect(
+          docSec.widgets.find(
+            (w: { textInput?: { name: string } }) =>
+              w.textInput?.name === getDocumentInfoWidgetName('number', 'submittal-arch')
+          )?.textInput?.value
+        ).toBe(failure.expectedNumber);
+        expect(nock.isDone()).toBe(true);
+      }
+    });
+
+    it('suppresses Pass 2 source_error notice when Pass 1 already emitted DRIVE_ROUTING_FALLBACK_NOTICE and leaves manual card entry unblocked', async () => {
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/gdoc-pass1-503-324')
+        .query((q) => q.alt !== 'media')
+        .reply(503, { error: { code: 503, message: 'Service Unavailable' } });
+
+      const res = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-cred' },
+          drive: { selectedItems: [{ id: 'gdoc-pass1-503-324', title: '071200-011_Unavailable' }] },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const pushCard = JSON.parse(res.payload).action.navigations[0].pushCard;
+      const cardJson = JSON.stringify(pushCard);
+
+      expect(cardJson.split(DRIVE_ROUTING_FALLBACK_NOTICE).length - 1).toBe(1);
+      expect(cardJson).not.toContain(DRIVE_METADATA_EXTRACT_ERROR_MESSAGE);
+      expect(cardJson).toContain('communication-project');
+      expect(cardJson).toContain('Active Projects');
+      expect(pushCard.sections.some((s: { header?: string }) => s.header === 'Document Data')).toBe(true);
       expect(nock.isDone()).toBe(true);
     });
   });

@@ -10,6 +10,14 @@ export interface GoogleDocsFormExtractResult {
   ambiguousFields?: string[] | undefined;
 }
 
+export interface DocsRetryOptions {
+  maxRetries?: number | undefined;
+  initialDelayMs?: number | undefined;
+  backoffFactor?: number | undefined;
+  requestTimeoutMs?: number | undefined;
+  sleep?: ((ms: number) => Promise<void>) | undefined;
+}
+
 export interface DocsOperationOptions {
   auth?: OAuth2Client | string | undefined;
   accessToken?: string | undefined;
@@ -20,6 +28,7 @@ export interface GoogleDocsClientOptions {
   auth?: OAuth2Client | string | undefined;
   docs?: docs_v1.Docs | undefined;
   requestTimeoutMs?: number | undefined;
+  retryOptions?: DocsRetryOptions | undefined;
 }
 
 const nullableOptional = <T extends TSchema>(schema: T) =>

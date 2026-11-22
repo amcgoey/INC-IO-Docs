@@ -4,6 +4,7 @@ import { Value } from '@sinclair/typebox/value';
 import {
   GoogleDocsDocumentSchema,
   type DocsOperationOptions,
+  type DocsRetryOptions,
   type GoogleDocsClientOptions,
   type GoogleDocsDocument,
   type GoogleDocsDocumentTab,
@@ -51,6 +52,38 @@ function formatErrorMessage(error: unknown): string {
     return (error as { message: string }).message;
   }
   return String(error);
+}
+
+function isRateLimitOrQuotaError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const status = extractHttpStatusCode(error);
+  if (status === 429) return true;
+
+  const err = error as Record<string, unknown>;
+  if (err.code === '429' || err.code === 429) return true;
+
+  if (status === 403 || err.code === '403' || err.code === 403) {
+    try {
+      const errorStr = JSON.stringify(error);
+      const quotaReasons = ['userRateLimitExceeded', 'rateLimitExceeded', 'quotaExceeded'];
+      if (quotaReasons.some((reason) => errorStr.includes(reason))) {
+        return true;
+      }
+    } catch {
+      // Non-serializable object
+    }
+    const message = formatErrorMessage(error).toLowerCase();
+    if (
+      message.includes('rate limit') ||
+      message.includes('ratelimit') ||
+      message.includes('quota exceeded') ||
+      message.includes('user rate limit')
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 const PURE_HANDLEBARS_PLACEHOLDER_REGEX = /^(?:\{\{[^{}]*\}\}[\s\-_./]*)+$/;
 const DIVIDER_PUNCTUATION_REGEX = /^[–—-]+$/;
@@ -415,9 +448,12 @@ function collectDocumentTabs(tabs: GoogleDocsTab[] | null | undefined): GoogleDo
 export class GoogleDocsClient {
   private readonly defaultDocs: docs_v1.Docs;
   private readonly defaultRequestTimeoutMs: number;
+  private readonly retryOptions: DocsRetryOptions;
 
   constructor(options: GoogleDocsClientOptions = {}) {
-    this.defaultRequestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    this.retryOptions = options.retryOptions ?? {};
+    this.defaultRequestTimeoutMs =
+      options.requestTimeoutMs ?? options.retryOptions?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
     if (options.docs) {
       this.defaultDocs = options.docs;
@@ -439,6 +475,23 @@ export class GoogleDocsClient {
   }
 
   extractFormData(document: unknown): GoogleDocsFormExtractResult {
+    try {
+      return this.extractFormDataValidated(document);
+    } catch (error) {
+      if (error instanceof GoogleDocsCorruptedError) {
+        throw error;
+      }
+      if (error instanceof TypeError || error instanceof RangeError) {
+        throw new GoogleDocsCorruptedError(
+          `Malformed Google Docs document structure: ${error.message}`,
+          { cause: error }
+        );
+      }
+      throw error;
+    }
+  }
+
+  private extractFormDataValidated(document: unknown): GoogleDocsFormExtractResult {
     const validDoc = validateGoogleDocsDocument(document);
     const docTabs: GoogleDocsDocumentTab[] =
       validDoc.tabs && validDoc.tabs.length > 0
@@ -615,7 +668,7 @@ export class GoogleDocsClient {
   }
 
   private wrapApiError(methodName: string, error: unknown): never {
-    if (error instanceof GoogleDocsApiError) {
+    if (error instanceof GoogleDocsApiError || error instanceof GoogleDocsCorruptedError) {
       throw error;
     }
     const statusCode = extractHttpStatusCode(error);
@@ -628,6 +681,32 @@ export class GoogleDocsClient {
     throw new GoogleDocsApiError(message, { cause: error, statusCode });
   }
 
+  private async executeWithRetry<T>(operation: () => Promise<T>): Promise<T> {
+    const maxRetries = this.retryOptions.maxRetries ?? 3;
+    const initialDelayMs = this.retryOptions.initialDelayMs ?? 1000;
+    const backoffFactor = this.retryOptions.backoffFactor ?? 2;
+    const sleep =
+      this.retryOptions.sleep ??
+      ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+
+    let attempt = 0;
+    while (true) {
+      try {
+        return await operation();
+      } catch (error) {
+        if (isRateLimitOrQuotaError(error) && attempt < maxRetries) {
+          const baseDelay = initialDelayMs * Math.pow(backoffFactor, attempt);
+          const jitter = 0.75 + Math.random() * 0.5;
+          const delay = Math.round(baseDelay * jitter);
+          attempt++;
+          await sleep(delay);
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
   async extractDocumentFormFields(
     documentId: string,
     options?: DocsOperationOptions
@@ -637,13 +716,15 @@ export class GoogleDocsClient {
 
     let response: { data: unknown };
     try {
-      response = await docs.documents.get(
-        {
-          documentId,
-          includeTabsContent: true,
-          suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
-        },
-        { timeout }
+      response = await this.executeWithRetry(() =>
+        docs.documents.get(
+          {
+            documentId,
+            includeTabsContent: true,
+            suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+          },
+          { timeout }
+        )
       );
     } catch (error) {
       this.wrapApiError('extractDocumentFormFields', error);
