@@ -82,7 +82,7 @@ Both [`infra/pulumi/Pulumi.dev.yaml`](../infra/pulumi/Pulumi.dev.yaml) and [`inf
 
 ### Provisioned Resources & Stack Outputs
 
-1. **Managed Project APIs (`gcp.projects.Service`)**: Enables `artifactregistry.googleapis.com`, `run.googleapis.com`, `compute.googleapis.com`, `drive.googleapis.com`, `appsmarket.googleapis.com`, `gsuiteaddons.googleapis.com`, and `gmail.googleapis.com` with `disableOnDestroy: false`.
+1. **Managed Project APIs (`gcp.projects.Service`)**: Enables `artifactregistry.googleapis.com`, `run.googleapis.com`, `compute.googleapis.com`, `drive.googleapis.com`, `appsmarket.googleapis.com`, `gsuiteaddons.googleapis.com`, `gmail.googleapis.com`, and `docs.googleapis.com` with `disableOnDestroy: false`.
 2. **Artifact Registry Repository (`gcp.artifactregistry.Repository`)**: Provisions the `DOCKER` repository `inc-io-docs` in `us-east4` and exports `repositoryUrl` (`us-east4-docker.pkg.dev/<project>/inc-io-docs`).
 3. **Service Accounts (`gcp.serviceaccount.Account`)**: Provisions `addon-invoker` (exporting `invokerServiceAccountEmail`) and the zero-privilege `addon-runtime` runtime identity.
 4. **Cloud Run v2 Service (`gcp.cloudrunv2.Service`)**: Deploys `inc-io-docs-dev` or `inc-io-docs-prod` bound to `template.serviceAccount = runtimeServiceAccount.email` (`addon-runtime`), listening on container port `8080` with `2` vCPU / `4Gi` memory limits and environment variables `NODE_ENV=production`, `NODE_OPTIONS=--max-old-space-size=3584`, and `SKIP_SPACE_VALIDATION=true`. Exports the HTTPS endpoint as `serviceUrl`.
