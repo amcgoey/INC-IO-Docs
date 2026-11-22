@@ -124,6 +124,8 @@ interface FormFieldEvaluatorHelpers {
 }
 
 const SIX_DIGIT_CODE_TOKEN_REGEX = /^(?:\d{6}|\d{2}([\s._-])\d{2}\1\d{2})(?=$|[\s_./-])/;
+const SPEC_TAG_CODE_TOKEN_REGEX = /^([A-Za-z]{2}[\s._-]?\d{3}[A-Za-z]?)(?=$|[\s_./-])/;
+const FALLBACK_DELIMITER_SEGMENT_REGEX = /^([^\s_./-]+)(?=$|[\s_./-])/;
 const LEADING_FORM_SEPARATOR_REGEX = /^[\s_./-]+/;
 const EXPLICIT_REVISION_PREFIX_REGEX =
   /^(?:(?:v|ver\.?|version)[\s_.-]*\d|rev(?:ision)?\.?(?:[\s_.-]*\d|[\s_.-]+[A-Za-z]\b)|r(?:[\s_.]*\d|[\s_.-]+[A-Za-z]\b))/i;
@@ -220,15 +222,134 @@ function resolveRevisionToken(
   return validated?.value;
 }
 
-function evaluateMultiTokenBinding(params: {
+async function resolveLookupCandidate(params: {
+  candidate: string;
+  property: string | undefined;
+  targetField: ParseTargetDocumentField;
+  targetSchema: ParseTargetDocumentSchema | undefined;
+  spaceId: string | undefined;
+  helpers: FormFieldEvaluatorHelpers;
+}): Promise<{ value: string; matchedTuple?: ParseTargetDocumentOptionTuple | undefined } | undefined> {
+  const { candidate, property, targetField, targetSchema, spaceId, helpers } = params;
+  const useCanonicalLookup =
+    targetField.options?.dynamicConfig !== undefined ||
+    targetField.options?.allowUserInput === true;
+
+  if (useCanonicalLookup) {
+    return helpers.resolveCanonicalOptionFromCandidate(
+      candidate,
+      targetField,
+      spaceId,
+      targetSchema
+    );
+  }
+
+  const validated = helpers.validateCandidateWithTuple(
+    candidate,
+    targetField,
+    targetSchema
+  );
+  if (validated) {
+    return validated;
+  }
+
+  if (property !== undefined && targetField.options) {
+    const keyProp = targetField.options.key ?? 'key';
+    const staticTuples = targetSchema?.options?.[targetField.options.source] ?? [];
+    const normCandidate = candidate.trim().toLowerCase();
+    const matchedByProp = staticTuples.find((tuple) => {
+      const propVal = tuple[property];
+      return typeof propVal === 'string' && propVal.trim().toLowerCase() === normCandidate;
+    });
+    if (matchedByProp) {
+      const canonicalKey = matchedByProp[keyProp] ?? matchedByProp.key;
+      if (canonicalKey !== undefined && canonicalKey !== null) {
+        return helpers.validateCandidateWithTuple(
+          String(canonicalKey),
+          targetField,
+          targetSchema
+        );
+      }
+    }
+  }
+
+  return undefined;
+}
+
+async function consumeLookupFieldToken(params: {
+  remaining: string;
+  property: string | undefined;
+  targetField: ParseTargetDocumentField;
+  targetSchema: ParseTargetDocumentSchema | undefined;
+  spaceId: string | undefined;
+  timeZone: string | undefined;
+  helpers: FormFieldEvaluatorHelpers;
+}): Promise<
+  | {
+      value: string;
+      matchedTuple?: ParseTargetDocumentOptionTuple | undefined;
+      nextRemaining: string;
+    }
+  | undefined
+> {
+  const { remaining, property, targetField, targetSchema, spaceId, timeZone, helpers } = params;
+  let rawToken: string;
+  let candidate: string | undefined;
+
+  const specMatch = remaining.match(SPEC_TAG_CODE_TOKEN_REGEX);
+  if (specMatch) {
+    rawToken = specMatch[0];
+    candidate = helpers.applyFieldCandidateNormalize(
+      specMatch[1],
+      'compactAlnum',
+      timeZone,
+      helpers.now
+    );
+  } else {
+    const fallbackMatch = remaining.match(FALLBACK_DELIMITER_SEGMENT_REGEX);
+    if (!fallbackMatch) {
+      return undefined;
+    }
+    rawToken = fallbackMatch[0];
+    candidate = fallbackMatch[1];
+  }
+
+  if (candidate === undefined) {
+    return undefined;
+  }
+
+  const resolved = await resolveLookupCandidate({
+    candidate,
+    property,
+    targetField,
+    targetSchema,
+    spaceId,
+    helpers,
+  });
+  if (!resolved) {
+    return undefined;
+  }
+
+  const nextRemaining = remaining
+    .slice(rawToken.length)
+    .replace(LEADING_FORM_SEPARATOR_REGEX, '');
+  return {
+    value: resolved.value,
+    matchedTuple: resolved.matchedTuple,
+    nextRemaining,
+  };
+}
+
+async function evaluateMultiTokenBinding(params: {
   parsed: ParsedFormTemplate;
   rawCandidate: string;
   targetSchema: ParseTargetDocumentSchema | undefined;
   populatedFields: Record<string, unknown>;
+  spaceId: string | undefined;
   timeZone: string | undefined;
   helpers: FormFieldEvaluatorHelpers;
-}): boolean {
-  const { parsed, rawCandidate, targetSchema, populatedFields, timeZone, helpers } = params;
+}): Promise<boolean> {
+  const { parsed, rawCandidate, targetSchema, populatedFields, spaceId, timeZone, helpers } = params;
   let remaining = rawCandidate.trim();
   let matchedSixDigitInField = false;
   let populatedAny = false;
@@ -240,6 +361,32 @@ function evaluateMultiTokenBinding(params: {
 
     const targetField = targetSchema?.fields.find((f) => f.key === token.fieldKey);
     if (!targetField || targetField.linkedField) {
+      continue;
+    }
+
+    if (targetField.options !== undefined) {
+      const matched = await consumeLookupFieldToken({
+        remaining,
+        property: token.property,
+        targetField,
+        targetSchema,
+        spaceId,
+        timeZone,
+        helpers,
+      });
+      if (matched) {
+        remaining = matched.nextRemaining;
+        if (!(token.fieldKey in populatedFields)) {
+          populatedFields[token.fieldKey] = matched.value;
+          helpers.populateLinkedFields(
+            token.fieldKey,
+            matched.matchedTuple,
+            targetSchema,
+            populatedFields
+          );
+          populatedAny = true;
+        }
+      }
       continue;
     }
 
@@ -385,49 +532,14 @@ async function resolveSingleTokenLookupCandidate(params: {
     }
   }
 
-  const useCanonicalLookup =
-    targetField.options?.dynamicConfig !== undefined ||
-    targetField.options?.allowUserInput === true;
-
-  if (useCanonicalLookup) {
-    return helpers.resolveCanonicalOptionFromCandidate(
-      candidateToResolve,
-      targetField,
-      spaceId,
-      targetSchema
-    );
-  }
-
-  const validated = helpers.validateCandidateWithTuple(
-    candidateToResolve,
+  return resolveLookupCandidate({
+    candidate: candidateToResolve,
+    property,
     targetField,
-    targetSchema
-  );
-  if (validated) {
-    return validated;
-  }
-
-  if (property !== undefined && targetField.options) {
-    const keyProp = targetField.options.key ?? 'key';
-    const staticTuples = targetSchema?.options?.[targetField.options.source] ?? [];
-    const normCandidate = candidateToResolve.trim().toLowerCase();
-    const matchedByProp = staticTuples.find((tuple) => {
-      const propVal = tuple[property];
-      return typeof propVal === 'string' && propVal.trim().toLowerCase() === normCandidate;
-    });
-    if (matchedByProp) {
-      const canonicalKey = matchedByProp[keyProp] ?? matchedByProp.key;
-      if (canonicalKey !== undefined && canonicalKey !== null) {
-        return helpers.validateCandidateWithTuple(
-          String(canonicalKey),
-          targetField,
-          targetSchema
-        );
-      }
-    }
-  }
-
-  return undefined;
+    targetSchema,
+    spaceId,
+    helpers,
+  });
 }
 
 export async function extractFormExtractorFields(params: {
@@ -603,11 +715,12 @@ export async function extractFormExtractorFields(params: {
 
         for (const rawCandidate of candidates) {
           if (
-            evaluateMultiTokenBinding({
+            await evaluateMultiTokenBinding({
               parsed,
               rawCandidate,
               targetSchema,
               populatedFields,
+              spaceId: request.spaceId,
               timeZone,
               helpers,
             })

@@ -19,6 +19,7 @@ import {
   formatAmbiguousFormFieldMessage,
 } from './domain';
 import type {
+  CanonicalOptionsProviderPort,
   DriveSourceContextPort,
   SourceParserSpaceConfigPort,
   SourceParserSpaceTypeConfig,
@@ -6432,6 +6433,287 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
 
       expect(res.fields.action).toBeUndefined();
       expect(res.statusMessages).toBeUndefined();
+    });
+  });
+
+  describe('Ticket #318: Composite LookupField cursor matcher, LinkedField derivation, and Submittal FF&E', () => {
+    const formTemplateParser = new HandlebarsAdapter();
+
+    function makeFfeRegistry(options?: { dynamicSpecTag?: boolean; customFormTemplate?: string }) {
+      const specOptions = options?.dynamicSpecTag
+        ? { source: 'specs', key: 'key', dynamicConfig: { provider: 'google_sheets' }, allowUserInput: true }
+        : { source: 'specs', key: 'key', allowUserInput: true };
+
+      return {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockResolvedValue({
+          extractors: [
+            {
+              source: 'gmail' as const,
+              fields: {
+                specTag: {
+                  from: 'email.subjectClean' as const,
+                  pattern: '(?<=^|[\\s_./-])([A-Za-z]{2}[\\s._-]?\\d{3}[A-Za-z]?)(?=[\\s_./-]|$)',
+                  group: 1,
+                  normalize: 'compactAlnum' as const,
+                  lookup: true,
+                },
+              },
+            },
+            { source: 'form' as const },
+            {
+              source: 'drive' as const,
+              fields: {
+                vendor: {
+                  from: 'drive.fileNameStem' as const,
+                  normalize: 'cleanFilenameText' as const,
+                  lookup: true,
+                },
+              },
+            },
+          ],
+        }),
+        getDocumentFormSchema: vi.fn().mockResolvedValue({
+          fields: {
+            'Submittal No': {
+              template: options?.customFormTemplate ?? '{{specTag.key}}-{{revision}}',
+            },
+            'Submittal Response': {
+              template: '{{action.name}}',
+              valueMap: { RR: 'Revise and Resubmit' },
+            },
+            Date: {
+              template: '{{date}}',
+              format: 'date' as const,
+            },
+          },
+        }),
+        getTargetSchema: vi.fn().mockResolvedValue({
+          fields: [
+            { key: 'specTag', type: 'string', minLength: 1, pattern: '^.*\\S+.*$', options: specOptions },
+            { key: 'revision', type: 'string', minLength: 1, pattern: '^.*\\S+.*$' },
+            {
+              key: 'specTitle',
+              type: 'string',
+              minLength: 1,
+              pattern: '^.*\\S+.*$',
+              linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+            },
+            {
+              key: 'vendor',
+              type: 'string',
+              options: { source: 'vendors', key: 'key', name: 'name' },
+            },
+            { key: 'date', type: 'string' },
+            {
+              key: 'action',
+              type: 'string',
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+          ],
+          options: {
+            specs: [
+              { key: 'CG104', name: 'BED - KING' },
+              { key: 'CG138M', name: 'CREDENZA - MIRRORED' },
+              { key: 'LT159A', name: 'SCONCE - CORRIDOR' },
+            ],
+            vendors: [
+              { key: 'BM', name: 'Berman Falk' },
+              { key: 'FDT', name: 'Fil Doux Textiles' },
+            ],
+            actions: [
+              { key: 'REC', name: 'Received' },
+              { key: 'RR', name: 'Revise & Resubmit' },
+              { key: 'NOC', name: 'No Objections As Corrected' },
+              { key: 'NET', name: 'No Exceptions Taken' },
+            ],
+          },
+        }),
+      };
+    }
+
+    it.each<[string, Record<string, unknown>]>([
+      ['CG104', { specTag: 'CG104', specTitle: 'BED - KING' }],
+      ['CG104 - A', { specTag: 'CG104', specTitle: 'BED - KING', revision: 'A' }],
+      ['CG-104 - A', { specTag: 'CG104', specTitle: 'BED - KING', revision: 'A' }],
+      ['CG104_A', { specTag: 'CG104', specTitle: 'BED - KING', revision: 'A' }],
+      ['CG 104 - A', { specTag: 'CG104', specTitle: 'BED - KING', revision: 'A' }],
+      ['LT 159A - R0', { specTag: 'LT159A', specTitle: 'SCONCE - CORRIDOR', revision: '0' }],
+      ['CG138M-2', { specTag: 'CG138M', specTitle: 'CREDENZA - MIRRORED', revision: '2' }],
+      ['Rev. B', { revision: 'B' }],
+      ['R1', { revision: '1' }],
+      ['A', { revision: 'A' }],
+      // Custom/unlisted specTag must not pre-populate unverified specTag or specTitle
+      ['XX999 - A', {}],
+      ['ZZ999', {}],
+    ])('decomposes FF&E Submittal No "%s" -> %j', async (submittalNo, expected) => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockResolvedValue({
+          item: { id: 'f-ffe', name: 'Stamped_Cover.pdf', mimeType: 'application/pdf' },
+          ancestors: [],
+        }),
+      };
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockResolvedValue({
+          status: 'ok',
+          widgetCount: 1,
+          fields: { 'Submittal No': submittalNo },
+        }),
+      };
+
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: makeFfeRegistry(),
+        formExtractor,
+        formTemplateParser,
+      });
+
+      const res = await service.extractFields({
+        documentTypeKey: 'submittal-ffe',
+        context: { items: [{ id: 'f-ffe' }] },
+      });
+
+      expect(res.fields).toEqual(expected);
+    });
+
+    it('resolves dynamic CanonicalOptionsProviderPort options for LookupField tokens and derives LinkedField specTitle', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockResolvedValue({
+          item: { id: 'f-dyn', name: 'Stamped_Cover.pdf', mimeType: 'application/pdf' },
+          ancestors: [],
+        }),
+      };
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockResolvedValue({
+          status: 'ok',
+          widgetCount: 3,
+          fields: {
+            'Submittal No': 'TA 210 - B',
+            'Submittal Response': 'Revise and Resubmit',
+            Date: '5/8/26',
+          },
+        }),
+      };
+      const canonicalOptionsProvider: CanonicalOptionsProviderPort = {
+        getCanonicalOptions: vi.fn().mockResolvedValue([
+          { key: 'TA210', name: 'DYNAMIC SIDE TABLE' },
+        ]),
+      };
+
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: makeFfeRegistry({ dynamicSpecTag: true }),
+        canonicalOptionsProvider,
+        formExtractor,
+        formTemplateParser,
+      });
+
+      const res = await service.extractFields({
+        documentTypeKey: 'submittal-ffe',
+        spaceId: 'proj-dyn-1',
+        context: { items: [{ id: 'f-dyn' }] },
+      });
+
+      expect(canonicalOptionsProvider.getCanonicalOptions).toHaveBeenCalledWith(
+        'proj-dyn-1',
+        expect.objectContaining({ key: 'specTag' })
+      );
+      expect(res.fields).toEqual({
+        specTag: 'TA210',
+        specTitle: 'DYNAMIC SIDE TABLE',
+        revision: 'B',
+        action: 'RR',
+        date: '260508',
+      });
+    });
+
+    it('matches fallback delimiter-bounded segment for non-spec-tag LookupField without allowUserInput', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockResolvedValue({
+          item: { id: 'f-vendor', name: 'Stamped_Cover.pdf', mimeType: 'application/pdf' },
+          ancestors: [],
+        }),
+      };
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockResolvedValue({
+          status: 'ok',
+          widgetCount: 1,
+          fields: { 'Submittal No': 'BM - 3' },
+        }),
+      };
+
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: makeFfeRegistry({ customFormTemplate: '{{vendor.key}}-{{revision}}' }),
+        formExtractor,
+        formTemplateParser,
+      });
+
+      const res = await service.extractFields({
+        documentTypeKey: 'submittal-ffe',
+        context: { items: [{ id: 'f-vendor' }] },
+      });
+
+      expect(res.fields).toEqual({
+        vendor: 'BM',
+        revision: '3',
+      });
+    });
+
+    it('advances cursor past already-populated specTag (from existingData or gmail) to extract trailing revision without overwriting specTag or specTitle', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockResolvedValue({
+          item: { id: 'f-ffe-cursor', name: 'Berman_Falk.pdf', mimeType: 'application/pdf' },
+          ancestors: [],
+        }),
+      };
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockResolvedValue({
+          status: 'ok',
+          widgetCount: 2,
+          fields: {
+            'Submittal No': 'LT159A - C',
+            'Submittal Response': 'No Objections As Corrected',
+          },
+        }),
+      };
+
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: makeFfeRegistry(),
+        formExtractor,
+        formTemplateParser,
+      });
+
+      // 1. existingData preserves custom user-edited specTag + specTitle while cursor consumes LT159A - to extract revision: C
+      const editedRes = await service.extractFields({
+        documentTypeKey: 'submittal-ffe',
+        existingData: { specTag: 'ZZ999', specTitle: 'CUSTOM BENCH' },
+        context: { items: [{ id: 'f-ffe-cursor' }] },
+      });
+      expect(editedRes.fields).toEqual({
+        specTag: 'ZZ999',
+        specTitle: 'CUSTOM BENCH',
+        revision: 'C',
+        action: 'NOC',
+        vendor: 'BM',
+      });
+
+      // 2. Gmail populates specTag/specTitle first, form advances cursor to revision + action, drive fills vendor
+      const gmailUrlRes = await service.extractFields({
+        documentTypeKey: 'submittal-ffe',
+        context: {
+          isDriveUrl: true,
+          items: [{ id: 'f-ffe-cursor' }],
+          email: {
+            id: 'msg-ffe-1',
+            subject: 'CG104 Submittal',
+          },
+        },
+      });
+      expect(gmailUrlRes.fields).toEqual({
+        specTag: 'CG104',
+        specTitle: 'BED - KING',
+        revision: 'C',
+        action: 'NOC',
+        vendor: 'BM',
+      });
     });
   });
 });
