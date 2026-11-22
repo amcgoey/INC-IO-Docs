@@ -6889,6 +6889,121 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(downloadMediaSpy).not.toHaveBeenCalled();
       });
     });
+
+    describe('Ticket #316: Submittal Arch Date pre-population vs email.date precedence in Gmail Google Drive URL mode', () => {
+      it('lets email.date win ahead of form Date when email.date exists, and uses form Date ahead of drive.modifiedTime when email.date is absent', async () => {
+        const doc = await PDFDocument.create();
+        doc.addPage([600, 400]);
+        const form = doc.getForm();
+        const radio = form.createRadioGroup('Submittal Response');
+        radio.addOptionToPage('No Objections As Corrected', doc.getPage(0), { x: 50, y: 300, width: 12, height: 12 });
+        radio.select('No Objections As Corrected');
+        const dateField = form.createTextField('Date');
+        dateField.addToPage(doc.getPage(0), { x: 200, y: 300, width: 120, height: 20 });
+        dateField.setText('2023-09-13');
+        const stampedPdfBytes = await doc.save();
+
+        vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
+          id: 'drive-url-arch-316',
+          name: '071200-001_Waterproofing_Stamped.pdf',
+          mimeType: 'application/pdf',
+          parents: ['folder-unfiled'],
+          driveId: 'space-projects-1',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+        vi.spyOn(GoogleDriveClient.prototype, 'downloadFileMedia').mockResolvedValue(stampedPdfBytes);
+        vi.spyOn(GoogleDriveClient.prototype, 'listSharedDrives').mockResolvedValue({
+          drives: [{ id: 'space-projects-1', name: 'Active Projects' }],
+        });
+
+        let emailDate: string | undefined = 'Tue, 17 Nov 2026 10:00:00 -0500';
+        vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string) => ({
+          id: threadId,
+          messages: [
+            {
+              id: `msg-${threadId}`,
+              threadId,
+              subject: '071200-001 Waterproofing Review',
+              from: 'Reviewer <pm@inc.nyc>',
+              to: 'James McGovern <jmcgovern@pavarini.com>',
+              ...(emailDate !== undefined ? { date: emailDate } : {}),
+              labels: ['INBOX', 'SENT', 'Active Projects'],
+              plainTextBody: 'See reviewed submittal.',
+              inlineImages: [],
+              attachments: [],
+            },
+          ],
+        }));
+
+        // 1. email.date present -> email.date wins ('261117') while form still populates action ('NOC')
+        const withEmailDateRes = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: { action: 'onFormChange', previousDriveUrl: '' },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: {
+                  stringInputs: { value: ['https://drive.google.com/file/d/drive-url-arch-316/view'] },
+                },
+              },
+            },
+            gmail: {
+              messageId: 'msg-th-316-1',
+              threadId: 'th-316-1',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(withEmailDateRes.statusCode).toBe(200);
+        const card1 = (JSON.parse(withEmailDateRes.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.updateCard;
+        const sec1 = card1?.sections.find((s) => s.header === 'Document Data');
+        expect(
+          sec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('date', 'submittal-arch'))?.textInput?.value
+        ).toBe('261117');
+        expect(
+          sec1?.widgets
+            .find((w) => w.selectionInput?.name === getDocumentInfoWidgetName('action', 'submittal-arch'))
+            ?.selectionInput?.items.find((i) => i.selected)?.value
+        ).toBe('NOC');
+
+        // 2. email.date absent -> form Date ('230913') wins ahead of drive.modifiedTime ('261118')
+        emailDate = undefined;
+        const withoutEmailDateRes = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: { action: 'onFormChange', previousDriveUrl: '' },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: {
+                  stringInputs: { value: ['https://drive.google.com/file/d/drive-url-arch-316/view'] },
+                },
+              },
+            },
+            gmail: {
+              messageId: 'msg-th-316-2',
+              threadId: 'th-316-2',
+              accessToken: 'ya29.live-token',
+            },
+          },
+        });
+
+        expect(withoutEmailDateRes.statusCode).toBe(200);
+        const card2 = (JSON.parse(withoutEmailDateRes.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.updateCard;
+        const sec2 = card2?.sections.find((s) => s.header === 'Document Data');
+        expect(
+          sec2?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('date', 'submittal-arch'))?.textInput?.value
+        ).toBe('230913');
+      });
+    });
   });
 });
 

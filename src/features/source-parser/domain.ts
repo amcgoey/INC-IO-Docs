@@ -35,6 +35,11 @@ import {
   DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE,
   formatAmbiguousFormFieldMessage,
 } from './form-field-parser';
+import {
+  formatYymmdd,
+  isValidCalendarDate,
+  normalizeFormDateCandidate,
+} from './form-date';
 
 export {
   PDF_FORM_ENCRYPTED_ERROR_MESSAGE,
@@ -406,19 +411,6 @@ function getYearMonthDayInTimeZone(date: Date, timeZone?: string): YearMonthDay 
   return { year, month, day };
 }
 
-function isValidCalendarDate(year: number, month: number, day: number): boolean {
-  if (month < 1 || month > 12 || day < 1 || day > 31) {
-    return false;
-  }
-  const utcDate = new Date(Date.UTC(year, month - 1, day));
-  utcDate.setUTCFullYear(year);
-  return (
-    utcDate.getUTCFullYear() === year &&
-    utcDate.getUTCMonth() === month - 1 &&
-    utcDate.getUTCDate() === day
-  );
-}
-
 function isWithinRollingTwelveMonths(
   year: number,
   month: number,
@@ -434,13 +426,6 @@ function isWithinRollingTwelveMonths(
   const todayYmd = today.year * 10000 + today.month * 100 + today.day;
 
   return candYmd >= minYmd && candYmd <= todayYmd;
-}
-
-function formatYymmdd(year: number, month: number, day: number): string {
-  const yy = String(year).slice(-2).padStart(2, '0');
-  const mm = String(month).padStart(2, '0');
-  const dd = String(day).padStart(2, '0');
-  return `${yy}${mm}${dd}`;
 }
 
 function tryFormatBoundedDate(
@@ -622,6 +607,8 @@ function applyFieldCandidateNormalize(
       const nowDate = now ? now() : new Date();
       return normalizeYymmddCandidate(candidate, timeZone, nowDate);
     }
+    case 'formDate':
+      return normalizeFormDateCandidate(candidate);
     case 'cleanFilenameText':
       return normalizeCleanFilenameTextCandidate(candidate, fromSource, originalSourceText);
     default:

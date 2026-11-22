@@ -160,8 +160,12 @@ function resolveFormValueMapKey(
 
 function inferPlainFieldNormalizeMode(
   targetField: ParseTargetDocumentField,
-  fieldKey: string
+  fieldKey: string,
+  binding: DocumentFormFieldBinding
 ): FieldCandidateNormalize | undefined {
+  if (binding.format === 'date') {
+    return 'formDate';
+  }
   if (targetField.pattern === '^\\d{6}$') {
     return 'digits6';
   }
@@ -181,14 +185,26 @@ async function resolveSingleTokenLookupCandidate(params: {
   targetField: ParseTargetDocumentField;
   targetSchema: ParseTargetDocumentSchema | undefined;
   spaceId: string | undefined;
+  timeZone: string | undefined;
   helpers: FormFieldEvaluatorHelpers;
 }): Promise<{ value: string; matchedTuple?: ParseTargetDocumentOptionTuple | undefined } | undefined> {
-  const { rawCandidate, binding, property, targetField, targetSchema, spaceId, helpers } = params;
+  const { rawCandidate, binding, property, targetField, targetSchema, spaceId, timeZone, helpers } = params;
   const mappedKey =
     binding.valueMap !== undefined
       ? resolveFormValueMapKey(rawCandidate, binding.valueMap)
       : undefined;
-  const candidateToResolve = mappedKey ?? rawCandidate;
+  let candidateToResolve: string | undefined = mappedKey ?? rawCandidate;
+  if (mappedKey === undefined && binding.format === 'date') {
+    candidateToResolve = helpers.applyFieldCandidateNormalize(
+      rawCandidate,
+      'formDate',
+      timeZone,
+      helpers.now
+    );
+    if (candidateToResolve === undefined) {
+      return undefined;
+    }
+  }
 
   const useCanonicalLookup =
     targetField.options?.dynamicConfig !== undefined ||
@@ -421,10 +437,15 @@ export async function extractFormExtractorFields(params: {
                 targetField,
                 targetSchema,
                 spaceId: request.spaceId,
+                timeZone,
                 helpers,
               })
             : (() => {
-                const normalizeMode = inferPlainFieldNormalizeMode(targetField, token.fieldKey);
+                const normalizeMode = inferPlainFieldNormalizeMode(
+                  targetField,
+                  token.fieldKey,
+                  binding
+                );
                 const normalized = helpers.applyFieldCandidateNormalize(
                   rawCandidate,
                   normalizeMode,

@@ -4355,6 +4355,67 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
           contact: '261115',
         });
       });
+
+      it('applies normalize: "formDate" on extractor rules across all 5 date groups without rolling 12-month cap', async () => {
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockResolvedValue({
+            item: {
+              id: 'file-formdate-rule',
+              name: 'Doc.pdf',
+              mimeType: 'application/pdf',
+            },
+            ancestors: [],
+          }),
+        };
+
+        const registry = {
+          initialize: vi.fn(),
+          getParseSchema: vi.fn().mockResolvedValue({
+            extractors: [
+              {
+                source: 'gmail' as const,
+                fields: {
+                  date: { from: 'email.subjectClean' as const, normalize: 'formDate' as const },
+                },
+              },
+            ],
+          }),
+          getTargetSchema: vi.fn().mockResolvedValue({
+            fields: [{ key: 'date', type: 'string', pattern: '^\\d{6}$' }],
+          }),
+        };
+
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: registry,
+          now: () => new Date('2026-11-22T12:00:00Z'),
+        });
+
+        const accepted = [
+          ['2023-09-13', '230913'],
+          ['2026-11-21T14:30:00Z', '261121'],
+          ['5/8/26', '260508'],
+          ['Sept 8, 2026', '260908'],
+          ['May 8th, 2026', '260508'],
+          ['8 May 2026', '260508'],
+          ['261121', '261121'],
+        ] as const;
+
+        for (const [input, expected] of accepted) {
+          const res = await service.extractFields({
+            documentTypeKey: 'submittal-arch',
+            context: { email: { id: 'm1', subject: input } },
+          });
+          expect(res.fields.date, input).toBe(expected);
+        }
+
+        for (const rejected of ['DATE', '1999-12-31', '2100-01-01', '2026-11/21', '02/29/2025', '2026-04-31']) {
+          const res = await service.extractFields({
+            documentTypeKey: 'submittal-arch',
+            context: { email: { id: 'm1', subject: rejected } },
+          });
+          expect(res.fields.date, rejected).toBeUndefined();
+        }
+      });
     });
 
     describe('Ticket #310: Flexible Submittal Arch normalizers, correlated codes, and multi-file Drive binding', () => {
@@ -5314,6 +5375,261 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
     });
   });
 
+  describe('Ticket #316: formDate (format: "date") normalization and fallthrough', () => {
+    const formTemplateParser = new HandlebarsAdapter();
+
+    function makeDateRegistry(overrides?: {
+      extractors?: Array<Record<string, unknown>>;
+      datePattern?: string;
+    }) {
+      return {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockResolvedValue({
+          extractors: overrides?.extractors ?? [
+            {
+              source: 'gmail' as const,
+              fields: {
+                date: { from: 'email.date' as const },
+              },
+            },
+            { source: 'form' as const },
+            {
+              source: 'drive' as const,
+              fields: {
+                date: { from: 'drive.modifiedTime' as const },
+              },
+            },
+          ],
+        }),
+        getDocumentFormSchema: vi.fn().mockResolvedValue({
+          fields: {
+            'Submittal Response': {
+              template: '{{action.name}}',
+              valueMap: { RR: 'Revise and Resubmit' },
+            },
+            Date: {
+              template: '{{date}}',
+              format: 'date' as const,
+            },
+          },
+        }),
+        getTargetSchema: vi.fn().mockResolvedValue({
+          fields: [
+            {
+              key: 'date',
+              type: 'string',
+              ...(overrides?.datePattern ? { pattern: overrides.datePattern } : {}),
+            },
+            {
+              key: 'action',
+              type: 'string',
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+          ],
+          options: {
+            actions: [
+              { key: 'REC', name: 'Received' },
+              { key: 'NOC', name: 'No Objections As Corrected' },
+              { key: 'NET', name: 'No Exceptions Taken' },
+            ],
+          },
+        }),
+      };
+    }
+
+    it('parses all 5 formDate format groups into INC yyMMdd without a rolling 12-month cap (even when target field has ^\\d{6}$ pattern)', async () => {
+      const acceptedCases: Array<[string, string]> = [
+        ['2026-11-21', '261121'],
+        ['2026-11-21T14:30:00Z', '261121'],
+        ['2026-11-21T00:00:00-05:00', '261121'],
+        ['2026/5/8', '260508'],
+        ['2026.05.08', '260508'],
+        ['2023-09-13', '230913'],
+        ['2000-01-01', '000101'],
+        ['2099-12-31', '991231'],
+        ['2024-02-29', '240229'],
+        ['  2026-11-21  ', '261121'],
+        ['05/08/2026', '260508'],
+        ['5/8/2026', '260508'],
+        ['05-08-2026', '260508'],
+        ['05.08.2026', '260508'],
+        ['5/8/26', '260508'],
+        ['05.08.26', '260508'],
+        ['11-21-26', '261121'],
+        ['Sept 8, 2026', '260908'],
+        ['Sep 8, 2026', '260908'],
+        ['September 8, 2026', '260908'],
+        ['May 8th, 2026', '260508'],
+        ['May 8 2026', '260508'],
+        ['8 May 2026', '260508'],
+        ['8th May, 2026', '260508'],
+        ['1st Jan, 26', '260101'],
+        ['2nd Feb 2024', '240202'],
+        ['3rd March 2026', '260303'],
+        ['21st Nov. 26', '261121'],
+        ['  DEC 25 2026  ', '261225'],
+        ['261121', '261121'],
+        ['240229', '240229'],
+      ];
+
+      for (const [rawDate, expected] of acceptedCases) {
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockResolvedValue({
+            item: {
+              id: 'pdf-date',
+              name: 'Stamped_Cover.pdf',
+              mimeType: 'application/pdf',
+              modifiedTime: '2026-11-18T15:00:00Z',
+            },
+            ancestors: [],
+          }),
+        };
+        const formExtractor: FormExtractorPort = {
+          extractFormFields: vi.fn().mockResolvedValue({
+            status: 'ok',
+            widgetCount: 1,
+            fields: { Date: rawDate },
+          }),
+        };
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: makeDateRegistry({ datePattern: '^\\d{6}$' }),
+          formExtractor,
+          formTemplateParser,
+          now: () => new Date('2026-11-22T12:00:00Z'),
+        });
+
+        const res = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          context: { items: [{ id: 'pdf-date' }] },
+        });
+        expect(res.fields.date, rawDate).toBe(expected);
+      }
+    });
+
+    it('rejects placeholder, out-of-bounds years, mixed delimiters, and invalid calendar dates so date falls through to drive.modifiedTime', async () => {
+      const rejectedInputs = [
+        'DATE',
+        '',
+        '   ',
+        '1999-12-31',
+        '12/31/1999',
+        '2100-01-01',
+        '01/01/2100',
+        'Dec 31, 1999',
+        'Jan 1, 2100',
+        '2026-11/21',
+        '05/08-2026',
+        '5/8.26',
+        '02/29/2025',
+        '2026-04-31',
+        '2026-02-30',
+        '2026-13-01',
+        '2026-00-01',
+        'Feb 29, 2025',
+        'April 31, 2026',
+        '250229',
+        '260431',
+        '2025-02-29T10:00:00Z',
+      ];
+
+      for (const badDate of rejectedInputs) {
+        const drivePort: DriveSourceContextPort = {
+          getItemHierarchy: vi.fn().mockResolvedValue({
+            item: {
+              id: 'pdf-bad-date',
+              name: 'Unfillable_DATE.pdf',
+              mimeType: 'application/pdf',
+              modifiedTime: '2026-11-18T15:00:00Z',
+            },
+            ancestors: [],
+          }),
+        };
+        const formExtractor: FormExtractorPort = {
+          extractFormFields: vi.fn().mockResolvedValue({
+            status: 'ok',
+            widgetCount: 1,
+            fields: { Date: badDate },
+          }),
+        };
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: makeDateRegistry(),
+          formExtractor,
+          formTemplateParser,
+        });
+
+        const res = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          context: { items: [{ id: 'pdf-bad-date' }] },
+        });
+        expect(res.fields.date, badDate).toBe('261118');
+      }
+    });
+
+    it('falls through [Unfillable_DATE.pdf, Stamped_Cover.pdf] and lets email.date win ahead of form in Gmail Google Drive URL mode', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockImplementation(async (id: string) => ({
+          item: {
+            id,
+            name: id === 'unfillable' ? 'Unfillable_DATE.pdf' : 'Stamped_Cover.pdf',
+            mimeType: 'application/pdf',
+            modifiedTime: '2026-11-18T15:00:00Z',
+          },
+          ancestors: [],
+        })),
+      };
+
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockImplementation(async ({ id }: { id: string }) => {
+          if (id === 'unfillable') {
+            return {
+              status: 'ok',
+              widgetCount: 2,
+              fields: { Date: 'DATE' },
+            };
+          }
+          return {
+            status: 'ok',
+            widgetCount: 2,
+            fields: { Date: 'Sept 8, 2026', 'Submittal Response': 'No Exceptions Taken' },
+          };
+        }),
+      };
+
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: makeDateRegistry(),
+        formExtractor,
+        formTemplateParser,
+      });
+
+      const multiRes = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: { items: [{ id: 'unfillable' }, { id: 'stamped' }] },
+      });
+      expect(multiRes.fields).toEqual({
+        date: '260908',
+        action: 'NET',
+      });
+      expect(formExtractor.extractFormFields).toHaveBeenCalledTimes(2);
+
+      // Gmail Google Drive URL mode: email.date wins ahead of form Date, while form still populates action
+      const urlRes = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: {
+          isDriveUrl: true,
+          items: [{ id: 'stamped' }],
+          email: {
+            id: 'msg-1',
+            date: 'Wed, 18 Nov 2026 10:00:00 -0500',
+          },
+        },
+      });
+      expect(urlRes.fields).toEqual({
+        date: '261118',
+        action: 'NET',
+      });
+    });
+  });
+
   describe('Ticket #319: Recursive JsonLogic form matching, ambiguous widgets, and per-item resilience', () => {
     const formTemplateParser: FormTemplateParserPort = new HandlebarsAdapter();
     const realPredicateEvaluator: PredicateEvaluatorPort = {
@@ -5490,7 +5806,7 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
           label: 'missing form.RequiredField on blank form (widgetCount > 0, fields: {})',
           rule: { 'in': ['form.RequiredField', { missing: ['drive.fileName', 'form.RequiredField'] }] },
           formFields: {},
-          shouldMatch: false, // missing returns ["form.RequiredField"], not matching unless 'in' or '!!'
+          shouldMatch: false,
         },
         {
           label: 'missing_some referencing form.Marker combined with drive.parentName',
@@ -5601,7 +5917,7 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
               status: 'ok',
               widgetCount: 3,
               fields: {
-                'Submittal Response': 'No Exceptions Taken', // even if present, must NOT be used when ambiguous
+                'Submittal Response': 'No Exceptions Taken',
                 Notes: 'Verify sealant color',
                 'Unmapped Checkboxes': 'Option A',
               },
@@ -5619,7 +5935,6 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
       const registry = makeFormMatchRegistry(undefined, {
         Notes: { template: '{{notes}}' },
       });
-      // Replace matchRule with undefined so extractor runs unconditionally
       registry.getParseSchema = vi.fn().mockResolvedValue({
         extractors: [{ source: 'form' as const }],
       });
