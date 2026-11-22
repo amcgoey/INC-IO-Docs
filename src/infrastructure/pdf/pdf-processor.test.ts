@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { PDFDocument, PDFPage, StandardFonts } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFPage, StandardFonts } from 'pdf-lib';
 import { PdfProcessor } from './pdf-processor';
 import type { EmailPdfRenderInput } from './types';
 import {
@@ -271,6 +271,35 @@ describe('PdfProcessor', () => {
 
       expect(Object.keys(extracted)).toEqual(['COMPLEX_Field__Name[0].SubField']);
       expect(extracted['COMPLEX_Field__Name[0].SubField']).toBe('TestValue');
+    });
+
+    it('returns undefined for PDFRadioGroup when stale /V value is not in getOptions() and returns option string for valid selection', async () => {
+      const doc = await PDFDocument.create();
+      const page = doc.addPage([400, 400]);
+      const form = doc.getForm();
+
+      const staleChoice10Radio = form.createRadioGroup('Submittal Response');
+      staleChoice10Radio.addOptionToPage('NET', page, { x: 20, y: 300, width: 15, height: 15 });
+      staleChoice10Radio.addOptionToPage('NOC', page, { x: 40, y: 300, width: 15, height: 15 });
+      staleChoice10Radio.addOptionToPage('RR', page, { x: 60, y: 300, width: 15, height: 15 });
+      staleChoice10Radio.acroField.dict.set(PDFName.of('V'), PDFName.of('Choice10'));
+
+      const staleChoice5Radio = form.createRadioGroup('Legacy.Status');
+      staleChoice5Radio.addOptionToPage('Approved', page, { x: 20, y: 260, width: 15, height: 15 });
+      staleChoice5Radio.addOptionToPage('Rejected', page, { x: 40, y: 260, width: 15, height: 15 });
+      staleChoice5Radio.acroField.dict.set(PDFName.of('V'), PDFName.of('Choice5'));
+
+      const validRadio = form.createRadioGroup('Valid.Response');
+      validRadio.addOptionToPage('NET', page, { x: 20, y: 220, width: 15, height: 15 });
+      validRadio.addOptionToPage('RR', page, { x: 40, y: 220, width: 15, height: 15 });
+      validRadio.select('RR');
+
+      const pdfBytes = await doc.save();
+      const extracted = await processor.extractFormData(pdfBytes);
+
+      expect(extracted['Submittal Response']).toBeUndefined();
+      expect(extracted['Legacy.Status']).toBeUndefined();
+      expect(extracted['Valid.Response']).toBe('RR');
     });
   });
 
