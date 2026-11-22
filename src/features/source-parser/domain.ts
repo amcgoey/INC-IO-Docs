@@ -502,7 +502,7 @@ function normalizeDigits6Candidate(candidate: string): string | undefined {
 
 function normalizePad3Candidate(candidate: string): string | undefined {
   const trimmed = candidate.trim();
-  if (!/^\d{1,3}$/.test(trimmed)) {
+  if (!/^\d+$/.test(trimmed)) {
     return undefined;
   }
   return trimmed.padStart(3, '0');

@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import nock from 'nock';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFString } from 'pdf-lib';
 import { createApp, type AppInstance } from '../src/app/server';
 import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
@@ -3675,6 +3675,327 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(dateValue).toBe('260908');
       expect(selectedAction).toBe('RR');
       expect(nock.isDone()).toBe(true);
+    });
+  });
+
+  describe('Ticket #317: Multi-token Submittal No decomposition and full Submittal Arch pre-population', () => {
+    async function buildFullArchCoverPdf(options: {
+      submittalNo?: string;
+      selectedAction?: string;
+      dateText?: string;
+      reviewedBy?: string;
+      includeFreeTextRemark?: boolean;
+    }): Promise<Buffer> {
+      const doc = await PDFDocument.create();
+      const page = doc.addPage([600, 400]);
+      const form = doc.getForm();
+
+      if (options.submittalNo !== undefined) {
+        const subNoField = form.createTextField('Submittal No');
+        subNoField.addToPage(page, { x: 50, y: 340, width: 180, height: 20 });
+        subNoField.setText(options.submittalNo);
+      }
+
+      const radio = form.createRadioGroup('Submittal Response');
+      for (const [idx, label] of [
+        'No Exceptions Taken',
+        'No Objections As Corrected',
+        'Revise and Resubmit',
+        'Rejected',
+        'Not Reviewed',
+      ].entries()) {
+        radio.addOptionToPage(label, page, {
+          x: 50,
+          y: 300 - idx * 20,
+          width: 12,
+          height: 12,
+        });
+      }
+      if (options.selectedAction !== undefined) {
+        radio.select(options.selectedAction);
+      }
+
+      if (options.dateText !== undefined) {
+        const dateField = form.createTextField('Date');
+        dateField.addToPage(page, { x: 200, y: 300, width: 120, height: 20 });
+        dateField.setText(options.dateText);
+      }
+
+      if (options.reviewedBy !== undefined) {
+        const revBy = form.createTextField('Reviewed By');
+        revBy.addToPage(page, { x: 200, y: 260, width: 140, height: 20 });
+        revBy.setText(options.reviewedBy);
+      }
+
+      if (options.includeFreeTextRemark) {
+        const freeTextAnnot = doc.context.obj({
+          Type: PDFName.of('Annot'),
+          Subtype: PDFName.of('FreeText'),
+          Rect: [20, 20, 200, 60],
+          Contents: PDFString.of('REMARK: Verify flashing detail'),
+        });
+        const annotRef = doc.context.register(freeTextAnnot);
+        page.node.set(PDFName.of('Annots'), doc.context.obj([annotRef]));
+      }
+
+      return Buffer.from(await doc.save());
+    }
+
+    it('pre-populates section, number, revision, action, and date from stamped Submittal Arch PDF (including 4-digit external numbers) while filling title from drive.fileNameStem, defaulting status Open, and leaving contact blank', async () => {
+      const pdfBuffer = await buildFullArchCoverPdf({
+        submittalNo: '07 12 00 - 001 - Rev. B',
+        selectedAction: 'Revise and Resubmit',
+        dateText: 'May 8th, 2026',
+        reviewedBy: 'Alice Architect',
+        includeFreeTextRemark: true,
+      });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/arch-317-full')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'arch-317-full',
+          name: '071200-001_Waterproofing_Review.pdf',
+          mimeType: 'application/pdf',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/arch-317-full')
+        .query((q) => q.alt === 'media')
+        .reply(200, pdfBuffer, { 'content-type': 'application/pdf' });
+
+      const res = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [{ id: 'arch-317-full', title: '071200-001_Waterproofing_Review.pdf' }],
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const card = JSON.parse(res.payload).action.navigations[0].pushCard;
+      const docDataSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+
+      const getText = (fieldKey: string) =>
+        docDataSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-arch')
+        )?.textInput?.value;
+      const getSelected = (fieldKey: string) =>
+        docDataSec.widgets
+          .find(
+            (w: { selectionInput?: { name: string } }) =>
+              w.selectionInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-arch')
+          )
+          ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+
+      expect(getSelected('status')).toBe('Open');
+      expect(getText('section')).toBe('071200');
+      expect(getText('number')).toBe('001');
+      expect(getText('revision')).toBe('B');
+      expect(getText('title')).toBe('Waterproofing Review');
+      expect(getText('date')).toBe('260508');
+      expect(getText('contact')).toBeUndefined();
+      expect(getSelected('action')).toBe('RR');
+      expect(nock.isDone()).toBe(true);
+
+      // 4-digit external submittal sequence number in Submittal No
+      const fourDigitBuffer = await buildFullArchCoverPdf({
+        submittalNo: '071200-1042-B',
+        selectedAction: 'No Exceptions Taken',
+        dateText: '2026-11-21',
+      });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/arch-317-1042')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'arch-317-1042',
+          name: '071200-001_Stamped_Cover.pdf',
+          mimeType: 'application/pdf',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/arch-317-1042')
+        .query((q) => q.alt === 'media')
+        .reply(200, fourDigitBuffer, { 'content-type': 'application/pdf' });
+
+      const res1042 = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [{ id: 'arch-317-1042', title: '071200-001_Stamped_Cover.pdf' }],
+          },
+        },
+      });
+      expect(res1042.statusCode).toBe(200);
+      const card1042 = JSON.parse(res1042.payload).action.navigations[0].pushCard;
+      const docSec1042 = card1042.sections.find(
+        (s: { header?: string }) => s.header === 'Document Data'
+      );
+      expect(
+        docSec1042.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('number', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('1042');
+      expect(
+        docSec1042.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('B');
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('preserves user edits on manual onDocumentTypeChange and onSpaceTypeChange while advancing multi-token cursor to fill remaining blank fields', async () => {
+      const allowedSpy = mockAllowedDocumentTypes(manifestProvider, 'projects', [
+        'communication-project',
+        'submittal-arch',
+      ]);
+      const pdfBuffer = await buildFullArchCoverPdf({
+        submittalNo: '081100-002-C',
+        selectedAction: 'No Exceptions Taken',
+        dateText: '2026-11-21',
+      });
+
+      vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
+        id: 'arch-317-switch',
+        name: '071200-001_Metal_Doors.pdf',
+        mimeType: 'application/pdf',
+        parents: ['space-projects-1'],
+        driveId: 'space-projects-1',
+        modifiedTime: '2026-11-18T15:00:00Z',
+      });
+      vi.spyOn(GoogleDriveClient.prototype, 'downloadFileMedia').mockResolvedValue(pdfBuffer);
+
+      // 1. onDocumentTypeChange to submittal-arch with user-edited section and number
+      const typeSwitchRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [{ id: 'arch-317-switch', title: '071200-001_Metal_Doors.pdf' }],
+          },
+          commonEventObject: {
+            parameters: { action: 'onDocumentTypeChange' },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentTypeWidgetName('projects')]: {
+                stringInputs: { value: ['submittal-arch'] },
+              },
+              [getDocumentSpaceWidgetName('projects')]: {
+                stringInputs: { value: ['Active Projects'] },
+              },
+              SelectFiles: { stringInputs: { value: ['arch-317-switch'] } },
+              [getDocumentInfoWidgetName('section', 'submittal-arch')]: {
+                stringInputs: { value: ['071200'] },
+              },
+              [getDocumentInfoWidgetName('number', 'submittal-arch')]: {
+                stringInputs: { value: ['001'] },
+              },
+            },
+          },
+        },
+      });
+
+      expect(typeSwitchRes.statusCode).toBe(200);
+      const switchCard = JSON.parse(typeSwitchRes.payload).action.navigations[0].updateCard;
+      const switchDocSec = switchCard.sections.find(
+        (s: { header?: string }) => s.header === 'Document Data'
+      );
+      const getSwitchText = (fieldKey: string) =>
+        switchDocSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-arch')
+        )?.textInput?.value;
+      const getSwitchSelected = (fieldKey: string) =>
+        switchDocSec.widgets
+          .find(
+            (w: { selectionInput?: { name: string } }) =>
+              w.selectionInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-arch')
+          )
+          ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+
+      expect(getSwitchText('section')).toBe('071200');
+      expect(getSwitchText('number')).toBe('001');
+      expect(getSwitchText('revision')).toBe('C');
+      expect(getSwitchText('date')).toBe('261121');
+      expect(getSwitchText('title')).toBe('Metal Doors');
+      expect(getSwitchSelected('action')).toBe('NET');
+
+      // 2. onSpaceTypeChange targeting projects (with submittal-arch resolved as space default) preserves user edits and re-evaluates reactive UiView
+      allowedSpy.mockRestore();
+      mockAllowedDocumentTypes(manifestProvider, 'projects', ['submittal-arch']);
+      const spaceSwitchRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [{ id: 'arch-317-switch', title: '071200-001_Metal_Doors.pdf' }],
+          },
+          commonEventObject: {
+            parameters: { action: 'onSpaceTypeChange' },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: {
+                stringInputs: { value: ['Active Projects'] },
+              },
+              SelectFiles: { stringInputs: { value: ['arch-317-switch'] } },
+              [getDocumentInfoWidgetName('section', 'submittal-arch')]: {
+                stringInputs: { value: ['071200'] },
+              },
+              [getDocumentInfoWidgetName('number', 'submittal-arch')]: {
+                stringInputs: { value: ['001'] },
+              },
+            },
+          },
+        },
+      });
+
+      expect(spaceSwitchRes.statusCode).toBe(200);
+      const spaceCard = JSON.parse(spaceSwitchRes.payload).action.navigations[0].updateCard;
+      const spaceDocSec = spaceCard.sections.find(
+        (s: { header?: string }) => s.header === 'Document Data'
+      );
+      expect(
+        spaceDocSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('C');
+      expect(
+        spaceDocSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('071200');
     });
   });
 });

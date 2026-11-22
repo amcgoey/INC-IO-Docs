@@ -26,9 +26,9 @@
         "key": "number",
         "name": "Number",
         "type": "string",
-        "description": "3-digit submittal sequence number (e.g. 001)",
+        "description": "Submittal sequence number (3+ digits, zero-padded to 3 digits, e.g. 001)",
         "required": true,
-        "pattern": "^\\d{3}$"
+        "pattern": "^\\d{3,}$"
       },
       {
         "key": "revision",
@@ -223,6 +223,9 @@
   },
   "documentFormSchema": {
     "fields": {
+      "Submittal No": {
+        "template": "{{section}}-{{number}}-{{revision}}"
+      },
       "Submittal Response": {
         "template": "{{action.name}}",
         "valueMap": {

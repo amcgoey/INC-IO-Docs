@@ -5626,4 +5626,298 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
       });
     });
   });
+
+  describe('Ticket #317: Multi-token Submittal No cursor decomposition, partial-input disambiguation, and pad3 widening', () => {
+    const formTemplateParser = new HandlebarsAdapter();
+
+    function makeArchMultiTokenRegistry(overrides?: { numberPattern?: string }) {
+      return {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockResolvedValue({
+          extractors: [
+            {
+              source: 'gmail' as const,
+              fields: {
+                section: {
+                  from: 'email.subjectClean' as const,
+                  pattern: '(\\d{6})-(\\d{1,4})',
+                  group: 1,
+                  normalize: 'digits6' as const,
+                },
+                number: {
+                  from: 'email.subjectClean' as const,
+                  pattern: '(\\d{6})-(\\d{1,4})',
+                  group: 2,
+                  normalize: 'pad3' as const,
+                },
+              },
+            },
+            { source: 'form' as const },
+            {
+              source: 'drive' as const,
+              fields: {
+                title: {
+                  from: 'drive.fileNameStem' as const,
+                  pattern: '^\\d{6}-\\d{3,}(?:-[A-Za-z0-9]+)?[\\s_-]+(.+)$',
+                  group: 1,
+                  normalize: 'cleanFilenameText' as const,
+                },
+              },
+            },
+          ],
+        }),
+        getDocumentFormSchema: vi.fn().mockResolvedValue({
+          fields: {
+            'Submittal No': {
+              template: '{{section}}-{{number}}-{{revision}}',
+            },
+            'Submittal Response': {
+              template: '{{action.name}}',
+              valueMap: { RR: 'Revise and Resubmit' },
+            },
+            Date: {
+              template: '{{date}}',
+              format: 'date' as const,
+            },
+          },
+        }),
+        getTargetSchema: vi.fn().mockResolvedValue({
+          fields: [
+            { key: 'section', type: 'string', pattern: '^\\d{6}$' },
+            { key: 'number', type: 'string', pattern: overrides?.numberPattern ?? '^\\d{3,}$' },
+            { key: 'revision', type: 'string', minLength: 1, pattern: '^.*\\S+.*$' },
+            { key: 'title', type: 'string' },
+            { key: 'date', type: 'string' },
+            {
+              key: 'action',
+              type: 'string',
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+          ],
+          options: {
+            actions: [
+              { key: 'REC', name: 'Received' },
+              { key: 'NOC', name: 'No Objections As Corrected' },
+              { key: 'NET', name: 'No Exceptions Taken' },
+            ],
+          },
+        }),
+      };
+    }
+
+    it('widens normalize: "pad3" to /^\\d+$/ while deferring max-digit validation to DocumentField.pattern', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockResolvedValue({
+          item: { id: 'f-pad3', name: '071200-1042 Waterproofing.pdf', mimeType: 'application/pdf' },
+          ancestors: [],
+        }),
+      };
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockResolvedValue({
+          status: 'ok',
+          widgetCount: 1,
+          fields: { 'Submittal No': '071200-1042-B' },
+        }),
+      };
+
+      const widenedService = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: makeArchMultiTokenRegistry({ numberPattern: '^\\d{3,}$' }),
+        formExtractor,
+        formTemplateParser,
+      });
+      const widenedRes = await widenedService.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: { items: [{ id: 'f-pad3' }] },
+      });
+      expect(widenedRes.fields).toEqual({
+        section: '071200',
+        number: '1042',
+        revision: 'B',
+        title: 'Waterproofing',
+      });
+
+      const strict3Service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: makeArchMultiTokenRegistry({ numberPattern: '^\\d{3}$' }),
+        formExtractor,
+        formTemplateParser,
+      });
+      const strictRes = await strict3Service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: { items: [{ id: 'f-pad3' }] },
+      });
+      expect(strictRes.fields).toEqual({
+        section: '071200',
+        title: 'Waterproofing',
+      });
+    });
+
+    it.each<[string, Record<string, unknown>]>([
+      // Full Submittal No with varied delimiters & formats
+      ['071200-001-A', { section: '071200', number: '001', revision: 'A' }],
+      ['07 12 00 - 001 - Rev. A', { section: '071200', number: '001', revision: 'A' }],
+      ['07.12.00_005_R1', { section: '071200', number: '005', revision: '1' }],
+      ['07-12-00 / 12 / v1', { section: '071200', number: '012', revision: '0' }],
+      ['071200-1042-B', { section: '071200', number: '1042', revision: 'B' }],
+      ['071200-01-01', { section: '071200', number: '001', revision: '01' }],
+      ['071200 - Submittal No. 5 - R12', { section: '071200', number: '005', revision: '12' }],
+      ['071200-001-0', { section: '071200', number: '001', revision: '0' }],
+      ['071200-001-1', { section: '071200', number: '001', revision: '1' }],
+      // Partial with CSI
+      ['071200-001', { section: '071200', number: '001' }],
+      ['071200-1042', { section: '071200', number: '1042' }],
+      ['071200-A', { section: '071200', revision: 'A' }],
+      ['071200 Rev B', { section: '071200', revision: 'B' }],
+      ['071200 - v1.0', { section: '071200', revision: '0' }],
+      ['071200 - R1', { section: '071200', revision: '1' }],
+      ['071200', { section: '071200' }],
+      // Standalone numeric sequences
+      ['5', { number: '005' }],
+      ['SUB-001', { number: '001' }],
+      ['Submittal No. 42 Rev B', { number: '042', revision: 'B' }],
+      ['#7', { number: '007' }],
+      ['005-A', { number: '005', revision: 'A' }],
+      ['1042', { number: '1042' }],
+      ['1042 Rev. A', { number: '1042', revision: 'A' }],
+      ['1042 R12', { number: '1042', revision: '12' }],
+      ['1042 v1.0', { number: '1042', revision: '0' }],
+      ['06102-05', { number: '06102', revision: '05' }],
+      // Standalone revision markers & tight single tokens
+      ['R1', { revision: '1' }],
+      ['Rev A', { revision: 'A' }],
+      ['Rev. A', { revision: 'A' }],
+      ['R12', { revision: '12' }],
+      ['v1', { revision: '0' }],
+      ['A', { revision: 'A' }],
+      ['R', { revision: 'R' }],
+      // Rejected / guarded inputs
+      ['1042-AB', {}],
+      ['06102-001-1', {}],
+      ['2026-11-15', {}],
+      ['12/31/26', {}],
+      ['R-19', {}],
+      ['N/A', {}],
+      ['071200-001-R-19', { section: '071200', number: '001' }],
+    ])('decomposes Submittal No "%s" -> %j', async (submittalNo, expected) => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockResolvedValue({
+          item: { id: 'f-sub', name: 'Stamped_Cover.pdf', mimeType: 'application/pdf' },
+          ancestors: [],
+        }),
+      };
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockResolvedValue({
+          status: 'ok',
+          widgetCount: 1,
+          fields: { 'Submittal No': submittalNo },
+        }),
+      };
+
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: makeArchMultiTokenRegistry(),
+        formExtractor,
+        formTemplateParser,
+      });
+
+      const res = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: { items: [{ id: 'f-sub' }] },
+      });
+
+      expect(res.fields).toEqual(expected);
+    });
+
+    it('advances left-to-right cursor over already-populated tokens without overwriting existingData or gmail fields', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockResolvedValue({
+          item: { id: 'f-cursor', name: '071200-001 Waterproofing.pdf', mimeType: 'application/pdf' },
+          ancestors: [],
+        }),
+      };
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockResolvedValue({
+          status: 'ok',
+          widgetCount: 2,
+          fields: {
+            'Submittal No': '081100-002-C',
+            'Submittal Response': 'No Objections As Corrected',
+          },
+        }),
+      };
+
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: makeArchMultiTokenRegistry(),
+        formExtractor,
+        formTemplateParser,
+      });
+
+      // 1. existingData preserves section + number while cursor still consumes 081100-002- to extract revision: C
+      const editedRes = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        existingData: { section: '071200', number: '001' },
+        context: { items: [{ id: 'f-cursor' }] },
+      });
+      expect(editedRes.fields).toEqual({
+        section: '071200',
+        number: '001',
+        revision: 'C',
+        action: 'NOC',
+        title: 'Waterproofing',
+      });
+
+      // 2. Gmail Google Drive URL mode: gmail populates section/number, form advances cursor to revision + action, drive fills title
+      const gmailUrlRes = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: {
+          isDriveUrl: true,
+          items: [{ id: 'f-cursor' }],
+          email: {
+            id: 'msg-1',
+            subject: '071200-001 Review',
+          },
+        },
+      });
+      expect(gmailUrlRes.fields).toEqual({
+        section: '071200',
+        number: '001',
+        revision: 'C',
+        action: 'NOC',
+        title: 'Waterproofing',
+      });
+    });
+
+    it('falls through to second PDF when first PDF has unparseable Submittal No', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockImplementation(async (id: string) => ({
+          item: { id, name: `${id}.pdf`, mimeType: 'application/pdf' },
+          ancestors: [],
+        })),
+      };
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockImplementation(async ({ id }: { id: string }) => {
+          if (id === 'first') {
+            return { status: 'ok', widgetCount: 1, fields: { 'Submittal No': '1042-AB' } };
+          }
+          return { status: 'ok', widgetCount: 1, fields: { 'Submittal No': '071200-042-B' } };
+        }),
+      };
+
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: makeArchMultiTokenRegistry(),
+        formExtractor,
+        formTemplateParser,
+      });
+
+      const res = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: { items: [{ id: 'first' }, { id: 'second' }] },
+      });
+
+      expect(res.fields).toEqual({
+        section: '071200',
+        number: '042',
+        revision: 'B',
+      });
+      expect(formExtractor.extractFormFields).toHaveBeenCalledTimes(2);
+    });
+  });
 });
