@@ -687,6 +687,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         spaceTypes,
         spaces,
         threadMessages,
+        isResetOrInitial,
       });
 
       return {
@@ -715,6 +716,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         spaceTypes,
         spaces,
         threadMessages,
+        isResetOrInitial,
       });
 
       const isGmail = isGmailContext(normalizedContext);

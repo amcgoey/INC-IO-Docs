@@ -2159,6 +2159,132 @@ describe('ui-process-manager domain', () => {
             const refreshState = evaluateProcessUiState(refreshInput);
             expect(refreshState.formData.SelectFiles).toBeUndefined();
           });
+
+          describe('explicit isResetOrInitial override (Pass 1 routing mutations)', () => {
+            it('marks all Drive selectedItems as selected: true when isResetOrInitial is true even with SelectDocument* keys in formData', () => {
+              const input: ProcessUiStateInput = {
+                context: {
+                  selectedItems: sampleSelectedItems,
+                  formData: {
+                    SelectDocumentSpaceType: 'projects',
+                    SelectDocumentSpace: 'Project Alpha',
+                    SelectDocumentType: 'communication-project',
+                  },
+                },
+                isResetOrInitial: true,
+                spaceTypes: sampleSpaceTypes,
+                spaces: [{ id: 'space-1', name: 'Project Alpha' }],
+              };
+
+              const state = evaluateProcessUiState(input);
+              expect(state.selectionState.files).toEqual([
+                { text: 'File 1.pdf', value: 'drive-1', selected: true },
+                { text: 'File 2.pdf', value: 'drive-2', selected: true },
+                { text: 'File 3.pdf', value: 'drive-3', selected: true },
+              ]);
+              expect(state.formData.SelectFiles).toBeUndefined();
+            });
+
+            it('marks all Gmail threadMessages attachments as selected: true and initializes Gmail defaults when isResetOrInitial is true even with SelectDocument* keys in formData', () => {
+              const input: ProcessUiStateInput = {
+                context: {
+                  hostApp: 'GMAIL',
+                  gmail: { messageId: 'msg-1' },
+                  formData: {
+                    SelectDocumentSpaceType: 'projects',
+                    SelectDocumentSpace: 'Project Alpha',
+                    SelectDocumentType: 'communication-project',
+                  },
+                },
+                isResetOrInitial: true,
+                spaceTypes: sampleSpaceTypes,
+                spaces: [{ id: 'space-1', name: 'Project Alpha' }],
+                threadMessages: [
+                  {
+                    id: 'msg-1',
+                    subject: 'Test Submittal',
+                    attachments: [
+                      { id: 'att-1', title: 'Submittal.pdf', mimeType: 'application/pdf' },
+                      { id: 'att-2', title: 'Specs.pdf', mimeType: 'application/pdf' },
+                    ],
+                  },
+                ],
+              };
+
+              const state = evaluateProcessUiState(input);
+              expect(state.selectionState.files).toEqual([
+                { text: 'Submittal.pdf', value: 'att-1', selected: true },
+                { text: 'Specs.pdf', value: 'att-2', selected: true },
+              ]);
+              expect(state.formData[SELECT_FILE_SOURCE_KEY]).toBe('Email Attachments');
+              expect(state.formData[INPUT_DRIVE_URL_KEY]).toBe('');
+              expect(state.formData[SAVE_EMAIL_TO_PDF_KEY]).toBe(false);
+            });
+
+            it('keeps Drive files and Gmail attachments selected: false when isResetOrInitial is false and SelectFiles/SelectAttachments are omitted', () => {
+              const driveInput: ProcessUiStateInput = {
+                context: {
+                  selectedItems: sampleSelectedItems,
+                  formData: {},
+                },
+                isResetOrInitial: false,
+                spaceTypes: sampleSpaceTypes,
+                spaces: [],
+              };
+              const driveState = evaluateProcessUiState(driveInput);
+              expect(driveState.selectionState.files).toEqual([
+                { text: 'File 1.pdf', value: 'drive-1', selected: false },
+                { text: 'File 2.pdf', value: 'drive-2', selected: false },
+                { text: 'File 3.pdf', value: 'drive-3', selected: false },
+              ]);
+
+              const gmailInput: ProcessUiStateInput = {
+                context: {
+                  hostApp: 'GMAIL',
+                  gmail: { messageId: 'msg-1' },
+                  formData: {
+                    [SELECT_FILE_SOURCE_KEY]: 'Email Attachments',
+                  },
+                },
+                isResetOrInitial: false,
+                spaceTypes: sampleSpaceTypes,
+                spaces: [],
+                threadMessages: [
+                  {
+                    id: 'msg-1',
+                    attachments: [
+                      { id: 'att-1', title: 'Submittal.pdf', mimeType: 'application/pdf' },
+                    ],
+                  },
+                ],
+              };
+              const gmailState = evaluateProcessUiState(gmailInput);
+              expect(gmailState.selectionState.files).toEqual([
+                { text: 'Submittal.pdf', value: 'att-1', selected: false },
+              ]);
+            });
+
+            it('falls back to isResetOrInitialLoad(context) when isResetOrInitial is omitted', () => {
+              const initialFallback = evaluateProcessUiState({
+                context: { selectedItems: sampleSelectedItems, formData: {} },
+                spaceTypes: sampleSpaceTypes,
+                spaces: [],
+              });
+              expect(initialFallback.selectionState.files).toHaveLength(3);
+              expect(initialFallback.selectionState.files?.every((f) => f.selected)).toBe(true);
+
+              const inCardFallback = evaluateProcessUiState({
+                context: {
+                  selectedItems: sampleSelectedItems,
+                  formData: { [SELECT_DOCUMENT_SPACE_TYPE_KEY]: 'projects' },
+                },
+                spaceTypes: sampleSpaceTypes,
+                spaces: [],
+              });
+              expect(inCardFallback.selectionState.files).toHaveLength(3);
+              expect(inCardFallback.selectionState.files?.every((f) => !f.selected)).toBe(true);
+            });
+          });
         });
       });
 

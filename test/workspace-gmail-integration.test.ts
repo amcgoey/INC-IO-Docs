@@ -7692,5 +7692,116 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
     });
   });
+
+  describe('Initial-load SelectAttachments preservation across Pass 1 routing mutations', () => {
+    it('renders SelectAttachments checkboxes selected: true and populates previousAttachments on dropdown onChangeAction parameters when Pass 1 infers projects + space + submittal-arch', async () => {
+      vi.spyOn(mockGmailClient, 'getThread').mockResolvedValue({
+        id: 'th-initial-pass1-sel',
+        messages: [
+          {
+            id: 'msg-initial-pass1-sel',
+            threadId: 'th-initial-pass1-sel',
+            subject: 'Submittal 071200-001-A Waterproofing Specs',
+            from: 'James McGovern <jmcgovern@pavarini.com>',
+            to: 'Architect <pm@inc.nyc>',
+            date: 'Tue, 20 Oct 2026 14:00:00 -04:00',
+            labels: ['INBOX', 'Active Projects'],
+            plainTextBody: 'Please find the waterproofing submittal attached.',
+            inlineImages: [],
+            attachments: [
+              {
+                partId: 'part-init-1',
+                attachmentId: 'att-init-1',
+                filename: '071200-001-A Waterproofing Specs.pdf',
+                mimeType: 'application/pdf',
+                size: 2048,
+              },
+              {
+                partId: 'part-init-2',
+                attachmentId: 'att-init-2',
+                filename: 'Cover_Notes.pdf',
+                mimeType: 'application/pdf',
+                size: 1024,
+              },
+            ],
+          },
+        ],
+      });
+
+      vi.spyOn(mockGmailClient, 'getMessage').mockResolvedValue({
+        id: 'msg-initial-pass1-sel',
+        messageId: 'msg-initial-pass1-sel',
+        inlineImages: [],
+        attachments: [
+          {
+            partId: 'part-init-1',
+            attachmentId: 'att-init-1',
+            filename: '071200-001-A Waterproofing Specs.pdf',
+            mimeType: 'application/pdf',
+            size: 2048,
+          },
+          {
+            partId: 'part-init-2',
+            attachmentId: 'att-init-2',
+            filename: 'Cover_Notes.pdf',
+            mimeType: 'application/pdf',
+            size: 1024,
+          },
+        ],
+      });
+
+      const res = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/gmail-contextual',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-initial-pass1-sel',
+            threadId: 'th-initial-pass1-sel',
+            accessToken: 'ya29.live-token',
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload) as GoogleWorkspaceActionResponse;
+      const pushCard = body.action?.navigations?.[0]?.pushCard;
+      expect(pushCard).toBeDefined();
+
+      const docTypeSec = pushCard!.sections.find((s) => s.header === 'Document Type')!;
+      expect(
+        docTypeSec.widgets[0].selectionInput?.items.find((i) => i.selected)?.value
+      ).toBe('projects');
+      expect(docTypeSec.widgets[1].textInput?.value).toBe('Active Projects');
+      expect(
+        docTypeSec.widgets[2].selectionInput?.items.find((i) => i.selected)?.value
+      ).toBe('submittal-arch');
+
+      const fileSec = pushCard!.sections.find((s) => s.header === 'File Selection')!;
+      const selectAttachments = fileSec.widgets.find(
+        (w) => w.selectionInput?.name === 'SelectAttachments'
+      )?.selectionInput;
+      expect(selectAttachments?.items).toEqual([
+        { text: '071200-001-A Waterproofing Specs.pdf', value: 'part-init-1', selected: true },
+        { text: 'Cover_Notes.pdf', value: 'part-init-2', selected: true },
+      ]);
+
+      const expectedPrevAttachments = JSON.stringify(['part-init-1', 'part-init-2']);
+      const getPrevAttachmentsParam = (
+        params?: Array<{ key: string; value: string }>
+      ) => params?.find((p) => p.key === 'previousAttachments')?.value;
+
+      const spaceTypeParams = docTypeSec.widgets[0].selectionInput?.onChangeAction?.parameters;
+      const docTypeParams = docTypeSec.widgets[2].selectionInput?.onChangeAction?.parameters;
+      const fileSourceParams = fileSec.widgets
+        .find((w) => w.selectionInput?.name === 'SelectFileSource')
+        ?.selectionInput?.onChangeAction?.parameters;
+
+      expect(getPrevAttachmentsParam(spaceTypeParams)).toBe(expectedPrevAttachments);
+      expect(getPrevAttachmentsParam(docTypeParams)).toBe(expectedPrevAttachments);
+      expect(getPrevAttachmentsParam(fileSourceParams)).toBe(expectedPrevAttachments);
+    });
+  });
 });
 
