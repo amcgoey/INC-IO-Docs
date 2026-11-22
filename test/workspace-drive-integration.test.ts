@@ -13,6 +13,15 @@ import {
 } from '../src/features/schema-driven-ui/blocks/document-type-selection';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
 import { GoogleDriveClient, GoogleDriveApiError } from '../src/infrastructure/drive/drive-client';
+import { PdfProcessor } from '../src/infrastructure/pdf/pdf-processor';
+import { PdfEncryptionError } from '../src/infrastructure/pdf/errors';
+import {
+  PDF_FORM_ENCRYPTED_ERROR_MESSAGE,
+  DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE,
+  DRIVE_METADATA_EXTRACT_ERROR_MESSAGE,
+  formatAmbiguousFormFieldMessage,
+} from '../src/features/source-parser/domain';
+import { DriveFormExtractorAdapter } from '../src/features/source-parser/adapters/drive-form-extractor.adapter';
 
 describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () => {
   let app: AppInstance;
@@ -2718,7 +2727,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.'
       );
       expect(initialJson).not.toContain(
-        'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.'
+        'Could not read Google Drive file metadata or document form fields to pre-populate fields; you can enter them manually.'
       );
 
       // 2. Manual onDocumentTypeChange -> Pass 1 does not run, Pass 2 notice surfaces standalone
@@ -2753,7 +2762,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       const switchJson = JSON.stringify(JSON.parse(switchRes.payload).action.navigations[0].updateCard);
       expect(switchJson).not.toContain('Could not inspect Google Drive folder hierarchy');
       expect(switchJson).toContain(
-        'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.'
+        'Could not read Google Drive file metadata or document form fields to pre-populate fields; you can enter them manually.'
       );
     });
 
@@ -3674,6 +3683,314 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
       expect(dateValue).toBe('260908');
       expect(selectedAction).toBe('RR');
+      expect(nock.isDone()).toBe(true);
+    });
+  });
+
+  describe('Ticket #319: Pass 2 form error degradation & multi-selection resilience (UiView)', () => {
+    async function buildStampedArchPdfBuffer(selectedOption?: string): Promise<Buffer> {
+      const doc = await PDFDocument.create();
+      doc.addPage([600, 400]);
+      const form = doc.getForm();
+      const radio = form.createRadioGroup('Submittal Response');
+      for (const [idx, label] of [
+        'No Exceptions Taken',
+        'No Objections As Corrected',
+        'Revise and Resubmit',
+        'Rejected',
+        'Not Reviewed',
+      ].entries()) {
+        radio.addOptionToPage(label, doc.getPage(0), {
+          x: 50,
+          y: 300 - idx * 20,
+          width: 12,
+          height: 12,
+        });
+      }
+      if (selectedOption !== undefined) {
+        radio.select(selectedOption);
+      }
+      return Buffer.from(await doc.save());
+    }
+
+    it('renders PDF_FORM_ENCRYPTED_ERROR_MESSAGE and DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE in UiView while still populating Drive filename/date fields', async () => {
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/enc-arch-319')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'enc-arch-319',
+          name: '071200-001_Encrypted_Cover.pdf',
+          mimeType: 'application/pdf',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/enc-arch-319')
+        .query((q) => q.alt === 'media')
+        .reply(200, Buffer.from('%PDF-1.4-encrypted'), { 'content-type': 'application/pdf' });
+
+      const extractSpy = vi
+        .spyOn(PdfProcessor.prototype, 'extractFormData')
+        .mockRejectedValueOnce(new PdfEncryptionError());
+
+      const encRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: { selectedItems: [{ id: 'enc-arch-319', title: '071200-001_Encrypted_Cover.pdf' }] },
+        },
+      });
+      extractSpy.mockRestore();
+
+      expect(encRes.statusCode).toBe(200);
+      const encCard = JSON.parse(encRes.payload).action.navigations[0].pushCard;
+      const encCardJson = JSON.stringify(encCard);
+      expect(encCardJson).toContain(PDF_FORM_ENCRYPTED_ERROR_MESSAGE);
+      const encDocSec = encCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      expect(
+        encDocSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('071200');
+      expect(
+        encDocSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('number', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('001');
+      expect(nock.isDone()).toBe(true);
+
+      // Corrupted PDF -> real PdfProcessor throws PdfCorruptedError on malformed bytes
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/corrupt-arch-319')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'corrupt-arch-319',
+          name: '071200-002_Corrupted_Cover.pdf',
+          mimeType: 'application/pdf',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/corrupt-arch-319')
+        .query((q) => q.alt === 'media')
+        .reply(200, Buffer.from('not-a-valid-pdf'), { 'content-type': 'application/pdf' });
+
+      const corruptRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: { selectedItems: [{ id: 'corrupt-arch-319', title: '071200-002_Corrupted_Cover.pdf' }] },
+        },
+      });
+
+      expect(corruptRes.statusCode).toBe(200);
+      const corruptCard = JSON.parse(corruptRes.payload).action.navigations[0].pushCard;
+      const corruptCardJson = JSON.stringify(corruptCard);
+      expect(corruptCardJson).toContain(DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE);
+      const corruptDocSec = corruptCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      expect(
+        corruptDocSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('071200');
+      expect(
+        corruptDocSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('number', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('002');
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('recovers from [Forbidden.pdf, Stamped_Cover.pdf] in source: "form" on onDocumentTypeChange and surfaces generalized Pass 2 Drive notice on downloadFileMedia 503', async () => {
+      mockAllowedDocumentTypes(manifestProvider, 'projects', ['communication-project', 'submittal-arch']);
+      const stampedPdfBuffer = await buildStampedArchPdfBuffer('Revise and Resubmit');
+
+      // 1. [Forbidden.pdf, Stamped_Cover.pdf] on onDocumentTypeChange -> form populates action RR + generalized notice
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/forbidden-319')
+        .query((q) => q.alt !== 'media')
+        .reply(403, { error: { code: 403, message: 'Forbidden' } });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/stamped-319')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'stamped-319',
+          name: '071200-003_Stamped_Cover.pdf',
+          mimeType: 'application/pdf',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/stamped-319')
+        .query((q) => q.alt === 'media')
+        .reply(200, stampedPdfBuffer, { 'content-type': 'application/pdf' });
+
+      const multiRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [
+              { id: 'forbidden-319', title: 'Forbidden.pdf' },
+              { id: 'stamped-319', title: '071200-003_Stamped_Cover.pdf' },
+            ],
+          },
+          commonEventObject: {
+            parameters: { action: 'onDocumentTypeChange' },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentTypeWidgetName('projects')]: {
+                stringInputs: { value: ['submittal-arch'] },
+              },
+              [getDocumentSpaceWidgetName('projects')]: {
+                stringInputs: { value: ['Active Projects'] },
+              },
+              SelectFiles: { stringInputs: { value: ['forbidden-319', 'stamped-319'] } },
+            },
+          },
+        },
+      });
+
+      expect(multiRes.statusCode).toBe(200);
+      const multiCard = JSON.parse(multiRes.payload).action.navigations[0].updateCard;
+      const multiCardJson = JSON.stringify(multiCard);
+      expect(multiCardJson).toContain(DRIVE_METADATA_EXTRACT_ERROR_MESSAGE);
+      const multiDocSec = multiCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      const selectedAction = multiDocSec.widgets
+        .find(
+          (w: { selectionInput?: { name: string } }) =>
+            w.selectionInput?.name === getDocumentInfoWidgetName('action', 'submittal-arch')
+        )
+        ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+      expect(selectedAction).toBe('RR');
+      expect(nock.isDone()).toBe(true);
+
+      // 2. Drive 503 on downloadFileMedia during initial load (Pass 1 succeeds -> Pass 2 generalized notice appears once)
+      const getFileSpy = vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
+        id: 'media-503-319',
+        name: '071200-004_Outage_Cover.pdf',
+        mimeType: 'application/pdf',
+        parents: ['projects-shared-drive-001'],
+        driveId: 'projects-shared-drive-001',
+        modifiedTime: '2026-11-18T15:00:00Z',
+      });
+      const listDrivesSpy = vi.spyOn(GoogleDriveClient.prototype, 'listSharedDrives').mockResolvedValue({
+        drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+      });
+      const downloadSpy = vi
+        .spyOn(GoogleDriveClient.prototype, 'downloadFileMedia')
+        .mockRejectedValue(new GoogleDriveApiError('Service Unavailable', { statusCode: 503 }));
+
+      const mediaOutageRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: { selectedItems: [{ id: 'media-503-319', title: '071200-004_Outage_Cover.pdf' }] },
+        },
+      });
+      getFileSpy.mockRestore();
+      listDrivesSpy.mockRestore();
+      downloadSpy.mockRestore();
+
+      expect(mediaOutageRes.statusCode).toBe(200);
+      const outageCard = JSON.parse(mediaOutageRes.payload).action.navigations[0].pushCard;
+      const outageCardJson = JSON.stringify(outageCard);
+      expect(outageCardJson).toContain(DRIVE_METADATA_EXTRACT_ERROR_MESSAGE);
+      const outageDocSec = outageCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      expect(
+        outageDocSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('071200');
+    });
+
+    it('renders formatAmbiguousFormFieldMessage in UiView for ambiguous form widgets while still populating Drive metadata fields', async () => {
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/ambig-gdoc-319')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'ambig-gdoc-319',
+          name: '071200-005_Ambiguous_Cover',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+
+      const extractFormSpy = vi
+        .spyOn(DriveFormExtractorAdapter.prototype, 'extractFormFields')
+        .mockResolvedValueOnce({
+          status: 'ok',
+          widgetCount: 2,
+          fields: {},
+          ambiguousFields: ['Submittal Response'],
+        });
+
+      const res = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [{ id: 'ambig-gdoc-319', title: '071200-005_Ambiguous_Cover' }],
+          },
+        },
+      });
+      extractFormSpy.mockRestore();
+
+      expect(res.statusCode).toBe(200);
+      const card = JSON.parse(res.payload).action.navigations[0].pushCard;
+      expect(card.sections[0]?.widgets?.[0]?.textParagraph?.text).toContain(
+        formatAmbiguousFormFieldMessage('Submittal Response')
+      );
+      const docSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      expect(
+        docSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('section', 'submittal-arch')
+        )?.textInput?.value
+      ).toBe('071200');
       expect(nock.isDone()).toBe(true);
     });
   });

@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { WorkspaceAddonAdapter, normalizeFormData } from './workspace-addon.adapter';
-import { DRIVE_ROUTING_FALLBACK_NOTICE } from '../domain';
+import {
+  DRIVE_ROUTING_FALLBACK_NOTICE,
+  DRIVE_METADATA_FALLBACK_NOTICE,
+} from '../domain';
 import {
   UiProcessResultSchema,
   type UiProcessSpaceProviderPort,
@@ -5706,7 +5709,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
 
     it('suppresses Pass 2 Drive metadata notice when Pass 1 emitted DRIVE_ROUTING_FALLBACK_NOTICE in the same request, while surfacing Pass 2 notice standalone on manual type switches', async () => {
       const pass2DriveNotice =
-        'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.';
+        'Could not read Google Drive file metadata or document form fields to pre-populate fields; you can enter them manually.';
 
       const mockSourceParser: UiProcessSourceParserPort = {
         inferRouting: vi.fn().mockResolvedValue({
@@ -5770,6 +5773,49 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       })) as UiProcessRenderResult;
 
       expect(spaceSwitchResult.statusMessages).toEqual([pass2DriveNotice]);
+    });
+
+    it('never suppresses PDF_FORM_ENCRYPTED_ERROR_MESSAGE, DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE, or ambiguous form-field notices even when Pass 1 emitted DRIVE_ROUTING_FALLBACK_NOTICE', async () => {
+      const encryptedMsg =
+        'Could not read PDF form fields because the file is password-protected; you can enter them manually.';
+      const corruptedMsg =
+        'Could not read document form fields because the file could not be parsed; you can enter them manually.';
+      const ambiguousMsg =
+        'Could not pre-populate from "Submittal Response" because multiple options are selected; please verify manually.';
+
+      const mockSourceParser: UiProcessSourceParserPort = {
+        inferRouting: vi.fn().mockResolvedValue({
+          statusMessages: [DRIVE_ROUTING_FALLBACK_NOTICE],
+        }),
+        extractFields: vi.fn().mockResolvedValue({
+          fields: {},
+          statusMessages: [
+            DRIVE_METADATA_FALLBACK_NOTICE,
+            encryptedMsg,
+            corruptedMsg,
+            ambiguousMsg,
+          ],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        sourceParser: mockSourceParser,
+      });
+
+      const result = (await adapter.processUiEvent({
+        selectedItems: [{ id: 'mixed-items', title: 'Mixed.pdf' }],
+      })) as UiProcessRenderResult;
+
+      expect(result.statusMessages).toEqual([
+        DRIVE_ROUTING_FALLBACK_NOTICE,
+        encryptedMsg,
+        corruptedMsg,
+        ambiguousMsg,
+      ]);
+      expect(result.statusMessages).not.toContain(DRIVE_METADATA_FALLBACK_NOTICE);
     });
 
     it('preserves non-empty active-type user edits, populates blank fields from Pass 2, and evaluates formEvaluator on onDocumentTypeChange and onSpaceTypeChange', async () => {
