@@ -4,6 +4,17 @@ import * as fs from "fs";
 import * as path from "path";
 import * as YAML from "yaml";
 
+const EXPECTED_REQUIRED_APIS = [
+  "artifactregistry.googleapis.com",
+  "run.googleapis.com",
+  "compute.googleapis.com",
+  "drive.googleapis.com",
+  "appsmarket.googleapis.com",
+  "gsuiteaddons.googleapis.com",
+  "gmail.googleapis.com",
+  "docs.googleapis.com",
+];
+
 function promiseOf<T>(output: pulumi.Output<T>): Promise<T> {
   return new Promise((resolve) => output.apply(resolve));
 }
@@ -88,6 +99,19 @@ describe("AppInfrastructure ComponentResource", () => {
     expect(runtimeSaAccountId).toBe("addon-runtime");
     expect(invokerIamId).toBeDefined();
     expect(workspaceIamId).toBeDefined();
+
+    // Check all 8 required GCP APIs are enabled with disableOnDestroy: false
+    const devApiResources = Object.values(resources).filter(
+      (r) => r.type === "gcp:projects/service:Service"
+    );
+    expect(devApiResources).toHaveLength(EXPECTED_REQUIRED_APIS.length);
+    expect(devApiResources.map((r) => r.inputs.service).sort()).toEqual(
+      [...EXPECTED_REQUIRED_APIS].sort()
+    );
+    for (const apiRes of devApiResources) {
+      expect(apiRes.inputs.disableOnDestroy).toBe(false);
+      expect(apiRes.inputs.project).toBe("inc-io-docs-dev");
+    }
 
     // Check Artifact Registry repository resource
     const repoRes = Object.values(resources).find(
@@ -214,6 +238,27 @@ describe("AppInfrastructure ComponentResource", () => {
     expect(prodRuntimeSaAccountId).toBe("addon-runtime");
     expect(invokerIamId).toBeDefined();
     expect(workspaceIamId).toBeDefined();
+
+    // Check all 8 required GCP APIs are enabled with disableOnDestroy: false
+    const prodApiResources = Object.values(resources).filter(
+      (r) => r.type === "gcp:projects/service:Service"
+    );
+    expect(prodApiResources).toHaveLength(EXPECTED_REQUIRED_APIS.length);
+    expect(prodApiResources.map((r) => r.inputs.service).sort()).toEqual(
+      [...EXPECTED_REQUIRED_APIS].sort()
+    );
+    for (const apiRes of prodApiResources) {
+      expect(apiRes.inputs.disableOnDestroy).toBe(false);
+      expect(apiRes.inputs.project).toBe("inc-io-docs-prod");
+    }
+
+    // Verify zero project-level IAM bindings created for addon-runtime
+    const prodRuntimeSaBindings = Object.values(resources).filter(
+      (r) =>
+        /iam/i.test(r.type) &&
+        (r.inputs.member as string)?.includes("addon-runtime")
+    );
+    expect(prodRuntimeSaBindings.length).toBe(0);
 
     // Check Cloud Run Service
     const runRes = Object.values(resources).find(
