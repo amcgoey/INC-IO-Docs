@@ -15,8 +15,8 @@ import {
   type CanonicalOptionsProviderPort,
   type FormExtractorPort,
   type FormTemplateParserPort,
-  type PdfFormExtractor,
-  type GoogleDocsFormReader,
+  type PdfFormExtractorPort,
+  type GoogleDocsFormReaderPort,
 } from '../features/source-parser';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
@@ -45,10 +45,22 @@ export interface SourceParserWiringOptions {
   predicateEvaluator?: PredicateEvaluatorPort | undefined;
   canonicalOptionsProvider?: CanonicalOptionsProviderPort | undefined;
   getCanonicalOptionsProvider?: ((context: WorkspaceExecutionContext) => CanonicalOptionsProviderPort | undefined) | undefined;
-  pdfProcessor?: PdfFormExtractor | undefined;
+  pdfProcessor?: PdfFormExtractorPort | undefined;
   formTemplateParser?: FormTemplateParserPort | undefined;
+  templateEvaluator?: unknown;
   formExtractor?: FormExtractorPort | undefined;
-  googleDocsFormReader?: GoogleDocsFormReader | undefined;
+  googleDocsFormReader?: GoogleDocsFormReaderPort | undefined;
+}
+
+function resolveFormTemplateParser(candidate: unknown): FormTemplateParserPort | undefined {
+  if (
+    candidate !== null &&
+    candidate !== undefined &&
+    typeof (candidate as { parseMustacheTemplate?: unknown }).parseMustacheTemplate === 'function'
+  ) {
+    return candidate as FormTemplateParserPort;
+  }
+  return undefined;
 }
 
 export interface SourceParserWiring {
@@ -131,8 +143,10 @@ export function createSourceParserWiring(
     : undefined;
 
   const formTemplateParser: FormTemplateParserPort =
-    options.formTemplateParser ?? new HandlebarsAdapter();
-  const pdfProcessor: PdfFormExtractor = options.pdfProcessor ?? new PdfProcessor();
+    options.formTemplateParser ??
+    resolveFormTemplateParser(options.templateEvaluator) ??
+    new HandlebarsAdapter();
+  const pdfProcessor: PdfFormExtractorPort = options.pdfProcessor ?? new PdfProcessor();
   const parseSchemaRegistry: ParseSchemaRegistryPort = new ParseSchemaRegistryAdapter(
     options.manifestProvider,
     formTemplateParser

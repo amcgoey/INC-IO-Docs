@@ -1,28 +1,17 @@
 import type {
+  DriveFormMediaClientPort,
   FormExtractOutcome,
   FormExtractTarget,
   FormExtractorPort,
   FormFieldValue,
+  GoogleDocsFormReaderPort,
+  PdfFormExtractorPort,
 } from '../ports';
 
-export interface DriveFormMediaClient {
-  downloadFileMedia(fileId: string): Promise<Uint8Array>;
-}
-
-export interface PdfFormExtractor {
-  extractFormData(
-    buffer: Uint8Array
-  ): Promise<Record<string, string | boolean | string[] | undefined>>;
-}
-
-export interface GoogleDocsFormReader {
-  extractDocumentFormFields(documentId: string): Promise<FormExtractOutcome>;
-}
-
 export interface DriveFormExtractorDeps {
-  driveMediaClient: DriveFormMediaClient;
-  pdfProcessor: PdfFormExtractor;
-  googleDocsFormReader?: GoogleDocsFormReader | undefined;
+  driveMediaClient: DriveFormMediaClientPort;
+  pdfProcessor: PdfFormExtractorPort;
+  googleDocsFormReader?: GoogleDocsFormReaderPort | undefined;
 }
 
 export class DriveFormExtractorAdapter implements FormExtractorPort {
@@ -92,18 +81,15 @@ export class DriveFormExtractorAdapter implements FormExtractorPort {
     }
 
     try {
-      const outcome = await this.deps.googleDocsFormReader.extractDocumentFormFields(documentId);
-      if (outcome.status !== 'ok') {
-        return outcome;
-      }
+      const result = await this.deps.googleDocsFormReader.extractDocumentFormFields(documentId);
       const normalizedAmbiguous =
-        outcome.ambiguousFields && outcome.ambiguousFields.length > 0
-          ? outcome.ambiguousFields
+        result.ambiguousFields && result.ambiguousFields.length > 0
+          ? result.ambiguousFields
           : undefined;
       return {
         status: 'ok',
-        widgetCount: outcome.widgetCount,
-        fields: outcome.fields,
+        widgetCount: result.widgetCount,
+        fields: result.fields,
         ...(normalizedAmbiguous !== undefined ? { ambiguousFields: normalizedAmbiguous } : {}),
       };
     } catch (error: unknown) {

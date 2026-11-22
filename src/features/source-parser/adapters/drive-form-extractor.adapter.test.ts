@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PDFDocument, PDFName } from 'pdf-lib';
-import {
-  DriveFormExtractorAdapter,
-  type DriveFormMediaClient,
-  type PdfFormExtractor,
-  type GoogleDocsFormReader,
-} from './drive-form-extractor.adapter';
+import { DriveFormExtractorAdapter } from './drive-form-extractor.adapter';
+import type {
+  DriveFormMediaClientPort,
+  PdfFormExtractorPort,
+  GoogleDocsFormReaderPort,
+} from '../ports';
 import { PdfProcessor } from '../../../infrastructure/pdf/pdf-processor';
 import {
   PdfProcessorError,
@@ -55,7 +55,7 @@ describe('DriveFormExtractorAdapter', () => {
       date: '0',
       checkedFlag: false,
     });
-    const driveMediaClient: DriveFormMediaClient = {
+    const driveMediaClient: DriveFormMediaClientPort = {
       downloadFileMedia: vi.fn().mockResolvedValue(pdfBytes),
     };
     const adapter = new DriveFormExtractorAdapter({
@@ -85,7 +85,7 @@ describe('DriveFormExtractorAdapter', () => {
     const flatPdf = await (await PDFDocument.create()).save();
     const staleBlankPdf = await createStampedSubmittalPdf({ staleChoice: true });
 
-    const driveMediaClient: DriveFormMediaClient = {
+    const driveMediaClient: DriveFormMediaClientPort = {
       downloadFileMedia: vi
         .fn()
         .mockResolvedValueOnce(flatPdf)
@@ -116,10 +116,10 @@ describe('DriveFormExtractorAdapter', () => {
   });
 
   it('classifies Drive media download errors as source_error without invoking PdfProcessor', async () => {
-    const driveMediaClient: DriveFormMediaClient = {
+    const driveMediaClient: DriveFormMediaClientPort = {
       downloadFileMedia: vi.fn().mockRejectedValue(new Error('Drive 403 Forbidden')),
     };
-    const pdfProcessor: PdfFormExtractor = {
+    const pdfProcessor: PdfFormExtractorPort = {
       extractFormData: vi.fn(),
     };
     const adapter = new DriveFormExtractorAdapter({ driveMediaClient, pdfProcessor });
@@ -134,10 +134,10 @@ describe('DriveFormExtractorAdapter', () => {
   });
 
   it('classifies PdfEncryptionError as encrypted and PdfCorruptedError/PdfProcessorError/TypeError/RangeError as corrupted', async () => {
-    const driveMediaClient: DriveFormMediaClient = {
+    const driveMediaClient: DriveFormMediaClientPort = {
       downloadFileMedia: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
     };
-    const pdfProcessor: PdfFormExtractor = {
+    const pdfProcessor: PdfFormExtractorPort = {
       extractFormData: vi
         .fn()
         .mockRejectedValueOnce(new PdfEncryptionError())
@@ -170,10 +170,10 @@ describe('DriveFormExtractorAdapter', () => {
   });
 
   it('defaults Google Docs to 0-widget no-op with zero I/O when googleDocsFormReader is omitted, and delegates/maps outcomes when injected', async () => {
-    const driveMediaClient: DriveFormMediaClient = {
+    const driveMediaClient: DriveFormMediaClientPort = {
       downloadFileMedia: vi.fn(),
     };
-    const pdfProcessor: PdfFormExtractor = {
+    const pdfProcessor: PdfFormExtractorPort = {
       extractFormData: vi.fn(),
     };
 
@@ -187,22 +187,19 @@ describe('DriveFormExtractorAdapter', () => {
     expect(driveMediaClient.downloadFileMedia).not.toHaveBeenCalled();
     expect(pdfProcessor.extractFormData).not.toHaveBeenCalled();
 
-    const googleDocsFormReader: GoogleDocsFormReader = {
+    const googleDocsFormReader: GoogleDocsFormReaderPort = {
       extractDocumentFormFields: vi
         .fn()
         .mockResolvedValueOnce({
-          status: 'ok',
           widgetCount: 2,
           fields: { 'Submittal Response': 'No Exceptions Taken' },
           ambiguousFields: ['Date'],
         })
         .mockResolvedValueOnce({
-          status: 'ok',
           widgetCount: 1,
           fields: { 'Submittal Response': 'Rejected' },
           ambiguousFields: [],
         })
-        .mockResolvedValueOnce({ status: 'source_error' })
         .mockRejectedValueOnce(Object.assign(new Error('Invalid Doc'), { name: 'GoogleDocsCorruptedError' }))
         .mockRejectedValueOnce(new TypeError('Invalid table shape'))
         .mockRejectedValueOnce(new RangeError('Invalid cell index'))
@@ -238,13 +235,6 @@ describe('DriveFormExtractorAdapter', () => {
 
     await expect(
       docsAdapter.extractFormFields({
-        id: 'gdoc-src-err-outcome',
-        mimeType: 'application/vnd.google-apps.document',
-      })
-    ).resolves.toEqual({ status: 'source_error' });
-
-    await expect(
-      docsAdapter.extractFormFields({
         id: 'gdoc-corrupt',
         mimeType: 'application/vnd.google-apps.document',
       })
@@ -271,10 +261,10 @@ describe('DriveFormExtractorAdapter', () => {
   });
 
   it('returns 0-widget no-op with zero I/O for unsupported MIME types', async () => {
-    const driveMediaClient: DriveFormMediaClient = {
+    const driveMediaClient: DriveFormMediaClientPort = {
       downloadFileMedia: vi.fn(),
     };
-    const pdfProcessor: PdfFormExtractor = {
+    const pdfProcessor: PdfFormExtractorPort = {
       extractFormData: vi.fn(),
     };
     const adapter = new DriveFormExtractorAdapter({ driveMediaClient, pdfProcessor });
@@ -290,10 +280,10 @@ describe('DriveFormExtractorAdapter', () => {
   });
 
   it('memoizes in-flight and settled promises per ${mimeType}:${id}', async () => {
-    const driveMediaClient: DriveFormMediaClient = {
+    const driveMediaClient: DriveFormMediaClientPort = {
       downloadFileMedia: vi.fn().mockResolvedValue(new Uint8Array([1])),
     };
-    const pdfProcessor: PdfFormExtractor = {
+    const pdfProcessor: PdfFormExtractorPort = {
       extractFormData: vi.fn().mockResolvedValue({ 'Submittal Response': 'No Exceptions Taken' }),
     };
     const adapter = new DriveFormExtractorAdapter({ driveMediaClient, pdfProcessor });

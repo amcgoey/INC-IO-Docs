@@ -36,7 +36,6 @@ import type {
   SourceParserPort,
   CanonicalOptionsProviderPort,
   DriveSourceContextClientPort,
-  FormTemplateParserPort,
 } from '../features/source-parser';
 import type { DocumentSpaceManifestRegistryAdapter } from '../features/document-space/adapters/document-space-manifest-registry';
 import type { DocumentSpaceStoragePort } from '../features/document-space/ports';
@@ -179,11 +178,6 @@ export function wireWorkspaceAddonRoutes(
         options.documentSpaceRegistry ?? {
           getAllTypes: () => [],
         };
-      const formTemplateParser =
-        options.templateEvaluator &&
-        typeof (options.templateEvaluator as { parseFieldTemplate?: unknown }).parseFieldTemplate === 'function'
-          ? (options.templateEvaluator as unknown as FormTemplateParserPort)
-          : undefined;
       const sourceParserWiring = createSourceParserWiring({
         spaceTypesProvider,
         manifestProvider,
@@ -192,7 +186,9 @@ export function wireWorkspaceAddonRoutes(
         configProvider: appConfigProvider,
         workspaceConfigProvider: options.configProvider,
         ...(options.pdfProcessor !== undefined ? { pdfProcessor: options.pdfProcessor } : {}),
-        ...(formTemplateParser !== undefined ? { formTemplateParser } : {}),
+        ...(options.templateEvaluator !== undefined
+          ? { templateEvaluator: options.templateEvaluator }
+          : {}),
         getCanonicalOptionsProvider: (ctx) => getDynamicOptionsAdapter(ctx),
       });
       sourceParser = sourceParserWiring.sourceParser;
