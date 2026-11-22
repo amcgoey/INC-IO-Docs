@@ -6237,7 +6237,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.'
         );
         expect(cardJson).not.toContain(
-          'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.'
+          'Could not read Google Drive file metadata or document form fields to pre-populate fields; you can enter them manually.'
         );
 
         const docSec = card?.sections.find((s) => s.header === 'Document Data');

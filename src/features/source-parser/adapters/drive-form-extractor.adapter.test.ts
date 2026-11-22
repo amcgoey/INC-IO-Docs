@@ -7,7 +7,11 @@ import {
   type GoogleDocsFormReader,
 } from './drive-form-extractor.adapter';
 import { PdfProcessor } from '../../../infrastructure/pdf/pdf-processor';
-import { PdfEncryptionError, PdfCorruptedError } from '../../../infrastructure/pdf/errors';
+import {
+  PdfProcessorError,
+  PdfEncryptionError,
+  PdfCorruptedError,
+} from '../../../infrastructure/pdf/errors';
 
 async function createStampedSubmittalPdf(options?: {
   response?: string;
@@ -129,7 +133,7 @@ describe('DriveFormExtractorAdapter', () => {
     expect(pdfProcessor.extractFormData).not.toHaveBeenCalled();
   });
 
-  it('classifies PdfEncryptionError as encrypted and PdfCorruptedError/TypeError/RangeError as corrupted', async () => {
+  it('classifies PdfEncryptionError as encrypted and PdfCorruptedError/PdfProcessorError/TypeError/RangeError as corrupted', async () => {
     const driveMediaClient: DriveFormMediaClient = {
       downloadFileMedia: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
     };
@@ -138,7 +142,9 @@ describe('DriveFormExtractorAdapter', () => {
         .fn()
         .mockRejectedValueOnce(new PdfEncryptionError())
         .mockRejectedValueOnce(new PdfCorruptedError())
-        .mockRejectedValueOnce(new TypeError('Malformed xref')),
+        .mockRejectedValueOnce(new PdfProcessorError('Generic PDF parse failure'))
+        .mockRejectedValueOnce(new TypeError('Malformed xref'))
+        .mockRejectedValueOnce(new RangeError('Out-of-bounds offset')),
     };
     const adapter = new DriveFormExtractorAdapter({ driveMediaClient, pdfProcessor });
 
@@ -151,11 +157,19 @@ describe('DriveFormExtractorAdapter', () => {
     ).resolves.toEqual({ status: 'corrupted' });
 
     await expect(
+      adapter.extractFormFields({ id: 'procerr-pdf', mimeType: 'application/pdf' })
+    ).resolves.toEqual({ status: 'corrupted' });
+
+    await expect(
       adapter.extractFormFields({ id: 'typeerr-pdf', mimeType: 'application/pdf' })
+    ).resolves.toEqual({ status: 'corrupted' });
+
+    await expect(
+      adapter.extractFormFields({ id: 'rangeerr-pdf', mimeType: 'application/pdf' })
     ).resolves.toEqual({ status: 'corrupted' });
   });
 
-  it('defaults Google Docs to 0-widget no-op with zero I/O when googleDocsFormReader is omitted, and delegates when injected', async () => {
+  it('defaults Google Docs to 0-widget no-op with zero I/O when googleDocsFormReader is omitted, and delegates/maps outcomes when injected', async () => {
     const driveMediaClient: DriveFormMediaClient = {
       downloadFileMedia: vi.fn(),
     };
@@ -182,7 +196,16 @@ describe('DriveFormExtractorAdapter', () => {
           fields: { 'Submittal Response': 'No Exceptions Taken' },
           ambiguousFields: ['Date'],
         })
+        .mockResolvedValueOnce({
+          status: 'ok',
+          widgetCount: 1,
+          fields: { 'Submittal Response': 'Rejected' },
+          ambiguousFields: [],
+        })
+        .mockResolvedValueOnce({ status: 'source_error' })
         .mockRejectedValueOnce(Object.assign(new Error('Invalid Doc'), { name: 'GoogleDocsCorruptedError' }))
+        .mockRejectedValueOnce(new TypeError('Invalid table shape'))
+        .mockRejectedValueOnce(new RangeError('Invalid cell index'))
         .mockRejectedValueOnce(new Error('Docs 500')),
     };
     const docsAdapter = new DriveFormExtractorAdapter({
@@ -202,9 +225,39 @@ describe('DriveFormExtractorAdapter', () => {
       fields: { 'Submittal Response': 'No Exceptions Taken' },
       ambiguousFields: ['Date'],
     });
+    const emptyAmbiguousOutcome = await docsAdapter.extractFormFields({
+      id: 'gdoc-empty-ambig',
+      mimeType: 'application/vnd.google-apps.document',
+    });
+    expect(emptyAmbiguousOutcome).toEqual({
+      status: 'ok',
+      widgetCount: 1,
+      fields: { 'Submittal Response': 'Rejected' },
+    });
+    expect('ambiguousFields' in emptyAmbiguousOutcome).toBe(false);
+
+    await expect(
+      docsAdapter.extractFormFields({
+        id: 'gdoc-src-err-outcome',
+        mimeType: 'application/vnd.google-apps.document',
+      })
+    ).resolves.toEqual({ status: 'source_error' });
+
     await expect(
       docsAdapter.extractFormFields({
         id: 'gdoc-corrupt',
+        mimeType: 'application/vnd.google-apps.document',
+      })
+    ).resolves.toEqual({ status: 'corrupted' });
+    await expect(
+      docsAdapter.extractFormFields({
+        id: 'gdoc-typeerr',
+        mimeType: 'application/vnd.google-apps.document',
+      })
+    ).resolves.toEqual({ status: 'corrupted' });
+    await expect(
+      docsAdapter.extractFormFields({
+        id: 'gdoc-rangeerr',
         mimeType: 'application/vnd.google-apps.document',
       })
     ).resolves.toEqual({ status: 'corrupted' });

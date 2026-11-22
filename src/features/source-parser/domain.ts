@@ -33,11 +33,13 @@ import {
   extractFormExtractorFields,
   PDF_FORM_ENCRYPTED_ERROR_MESSAGE,
   DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE,
+  formatAmbiguousFormFieldMessage,
 } from './form-field-parser';
 
 export {
   PDF_FORM_ENCRYPTED_ERROR_MESSAGE,
   DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE,
+  formatAmbiguousFormFieldMessage,
 };
 
 export const CSI_SECTION_REGEX =
@@ -59,7 +61,7 @@ export const DRIVE_HIERARCHY_ERROR_MESSAGE =
   'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.';
 
 export const DRIVE_METADATA_EXTRACT_ERROR_MESSAGE =
-  'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.';
+  'Could not read Google Drive file metadata or document form fields to pre-populate fields; you can enter them manually.';
 
 export function extractTextFromHtml(html?: string): string {
   if (!html || typeof html !== 'string') {

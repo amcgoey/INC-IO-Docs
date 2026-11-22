@@ -101,7 +101,7 @@ describe('SourceParser + DriveSourceContextAdapter integration', () => {
     expect(mockClient.getFile).toHaveBeenCalledTimes(2);
     expect(extracted.fields.description).toBe('Weekly Update');
     expect(extracted.statusMessages).toEqual([
-      'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.',
+      'Could not read Google Drive file metadata or document form fields to pre-populate fields; you can enter them manually.',
     ]);
   });
 });

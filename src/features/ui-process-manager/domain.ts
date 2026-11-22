@@ -138,7 +138,7 @@ export const DRIVE_ROUTING_FALLBACK_NOTICE =
   'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.';
 
 export const DRIVE_METADATA_FALLBACK_NOTICE =
-  'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.';
+  'Could not read Google Drive file metadata or document form fields to pre-populate fields; you can enter them manually.';
 
 export const PROPOSAL_OPPORTUNITY_MARKERS_REGEX =
   /\b(?:proposal|proposals|opportunity|opportunities|rfp|rfps)\b/i;

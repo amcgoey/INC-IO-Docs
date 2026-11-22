@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import jsonLogic from 'json-logic-js';
 import {
   SourceParserService,
   extractTextFromHtml,
@@ -15,6 +16,7 @@ import {
   PDF_FORM_ENCRYPTED_ERROR_MESSAGE,
   DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE,
   DRIVE_METADATA_EXTRACT_ERROR_MESSAGE,
+  formatAmbiguousFormFieldMessage,
 } from './domain';
 import type {
   DriveSourceContextPort,
@@ -23,6 +25,7 @@ import type {
   DriveItemHierarchy,
   FormExtractorPort,
   FormTemplateParserPort,
+  PredicateEvaluatorPort,
 } from './ports';
 import { HandlebarsAdapter } from '../../infrastructure/template-engine/handlebars-adapter';
 
@@ -3833,7 +3836,7 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
         });
 
         expect(res.statusMessages).toEqual([
-          'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.',
+          'Could not read Google Drive file metadata or document form fields to pre-populate fields; you can enter them manually.',
         ]);
         expect(res.fields.contact).toBe('ACM');
       });
@@ -3916,7 +3919,7 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
 
         expect(extracted.fields.description).toBe('Weekly Update');
         expect(extracted.statusMessages).toEqual([
-          'Could not read Google Drive file metadata to pre-populate fields; you can enter them manually.',
+          'Could not read Google Drive file metadata or document form fields to pre-populate fields; you can enter them manually.',
         ]);
       });
 
@@ -5308,6 +5311,518 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
         expect(res.fields.action).toBeUndefined();
         expect(res.statusMessages).toEqual([expectedMessages[status]]);
       }
+    });
+  });
+
+  describe('Ticket #319: Recursive JsonLogic form matching, ambiguous widgets, and per-item resilience', () => {
+    const formTemplateParser: FormTemplateParserPort = new HandlebarsAdapter();
+    const realPredicateEvaluator: PredicateEvaluatorPort = {
+      evaluate: (rule, data) => {
+        if (rule === undefined || rule === null) {
+          return true;
+        }
+        return Boolean(jsonLogic.apply(rule as jsonLogic.RulesLogic, data));
+      },
+    };
+
+    const submittalActions = [
+      { key: 'REC', name: 'Received', suffix: '', order: '1' },
+      { key: 'NR', name: 'Not Reviewed', suffix: '_NR', order: '3' },
+      { key: 'REJ', name: 'Rejected', suffix: '_REJ', order: '4' },
+      { key: 'RR', name: 'Revise & Resubmit', suffix: '_RR', order: '5' },
+      { key: 'NOC', name: 'No Objections As Corrected', suffix: '_NOC', order: '6' },
+      { key: 'NET', name: 'No Exceptions Taken', suffix: '_NET', order: '7' },
+    ];
+
+    function makeFormMatchRegistry(matchRule: unknown, extraFields?: Record<string, { template: string }>) {
+      return {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockResolvedValue({
+          extractors: [{ source: 'form' as const, match: matchRule }],
+        }),
+        getDocumentFormSchema: vi.fn().mockResolvedValue({
+          fields: {
+            'Submittal Response': {
+              template: '{{action.name}}',
+              valueMap: { RR: 'Revise and Resubmit' },
+            },
+            ...(extraFields ?? {}),
+          },
+        }),
+        getTargetSchema: vi.fn().mockResolvedValue({
+          fields: [
+            {
+              key: 'action',
+              type: 'string',
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+            { key: 'notes', type: 'string' },
+          ],
+          options: { actions: submittalActions },
+        }),
+      };
+    }
+
+    it('evaluates non-form extractor.match against { ...jsonLogicContext, drive } BEFORE calling formExtractor and skips form I/O when false', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockImplementation(async (id: string) => ({
+          item: { id, name: `${id}.pdf`, mimeType: 'application/pdf' },
+          ancestors: [{ id: 'folder-1', name: id === 'skip-me' ? 'Drafts' : 'Submittals' }],
+        })),
+      };
+
+      const nonFormMatches = [
+        { '==': [{ var: 'drive.parentName' }, 'Submittals'] },
+        { '!!': { missing: ['drive.fileName'] } },
+        { '!!': { missing_some: [1, ['drive.fileName', 'email.subject']] } },
+        { '==': [{ var: 'formData' }, 'Submittals'] },
+      ];
+
+      for (const matchRule of nonFormMatches) {
+        const formExtractor: FormExtractorPort = {
+          extractFormFields: vi.fn().mockResolvedValue({
+            status: 'ok',
+            widgetCount: 1,
+            fields: { 'Submittal Response': 'No Exceptions Taken' },
+          }),
+        };
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: makeFormMatchRegistry(matchRule),
+          predicateEvaluator: realPredicateEvaluator,
+          formExtractor,
+          formTemplateParser,
+        });
+
+        const skipRes = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          context: { items: [{ id: 'skip-me' }] },
+        });
+        expect(skipRes.fields.action).toBeUndefined();
+        expect(formExtractor.extractFormFields).not.toHaveBeenCalled();
+      }
+
+      // When non-form predicate evaluates true, formExtractor IS invoked
+      const formExtractorTrue: FormExtractorPort = {
+        extractFormFields: vi.fn().mockResolvedValue({
+          status: 'ok',
+          widgetCount: 1,
+          fields: { 'Submittal Response': 'No Exceptions Taken' },
+        }),
+      };
+      const serviceTrue = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: makeFormMatchRegistry({ '==': [{ var: 'drive.parentName' }, 'Submittals'] }),
+        predicateEvaluator: realPredicateEvaluator,
+        formExtractor: formExtractorTrue,
+        formTemplateParser,
+      });
+      const hitRes = await serviceTrue.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: { items: [{ id: 'submittal-pdf' }] },
+      });
+      expect(hitRes.fields.action).toBe('NET');
+      expect(formExtractorTrue.extractFormFields).toHaveBeenCalledTimes(1);
+    });
+
+    it('detects form references across recursive JsonLogic AST (string var, array var, root var, computed var, missing, missing_some), skips widgetCount === 0 silently, and evaluates blank forms & raw booleans post-read', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockImplementation(async (id: string) => ({
+          item: { id, name: `${id}.pdf`, mimeType: 'application/pdf' },
+          ancestors: [{ id: 'f-1', name: 'Submittals' }],
+        })),
+      };
+
+      const formReferencingRules: Array<{ label: string; rule: unknown; formFields: Record<string, string | boolean>; shouldMatch: boolean }> = [
+        {
+          label: 'string var form.IsCover',
+          rule: { '===': [{ var: 'form.IsCover' }, true] },
+          formFields: { IsCover: true, 'Submittal Response': 'Rejected' },
+          shouldMatch: true,
+        },
+        {
+          label: 'raw boolean false in form does not coerce to truthy',
+          rule: { '===': [{ var: 'form.IsCover' }, true] },
+          formFields: { IsCover: false, 'Submittal Response': 'Rejected' },
+          shouldMatch: false,
+        },
+        {
+          label: 'string var bare form',
+          rule: { '!!': { var: 'form' } },
+          formFields: { 'Submittal Response': 'Rejected' },
+          shouldMatch: true,
+        },
+        {
+          label: 'array var ["form.Kind", default]',
+          rule: { '==': [{ var: ['form.Kind', 'other'] }, 'cover'] },
+          formFields: { Kind: 'cover', 'Submittal Response': 'Rejected' },
+          shouldMatch: true,
+        },
+        {
+          label: 'array var with form in default expr',
+          rule: { '==': [{ var: ['drive.missingProp', { var: 'form.Kind' }] }, 'cover'] },
+          formFields: { Kind: 'cover', 'Submittal Response': 'Rejected' },
+          shouldMatch: true,
+        },
+        {
+          label: 'root var ""',
+          rule: { '==': [{ var: ['', 'none'] }, 'none'] },
+          formFields: { 'Submittal Response': 'Rejected' },
+          shouldMatch: false,
+        },
+        {
+          label: 'root var null',
+          rule: { '!=': [{ var: null }, null] },
+          formFields: { 'Submittal Response': 'Rejected' },
+          shouldMatch: true,
+        },
+        {
+          label: 'root var []',
+          rule: { '!=': [{ var: [] }, null] },
+          formFields: { 'Submittal Response': 'Rejected' },
+          shouldMatch: true,
+        },
+        {
+          label: 'computed non-literal var',
+          rule: { '==': [{ var: { cat: ['form.', 'Kind'] } }, 'cover'] },
+          formFields: { Kind: 'cover', 'Submittal Response': 'Rejected' },
+          shouldMatch: true,
+        },
+        {
+          label: 'missing form.RequiredField on blank form (widgetCount > 0, fields: {})',
+          rule: { 'in': ['form.RequiredField', { missing: ['drive.fileName', 'form.RequiredField'] }] },
+          formFields: {},
+          shouldMatch: false, // missing returns ["form.RequiredField"], not matching unless 'in' or '!!'
+        },
+        {
+          label: 'missing_some referencing form.Marker combined with drive.parentName',
+          rule: {
+            and: [
+              { '==': [{ var: 'drive.parentName' }, 'Submittals'] },
+              { '!': { in: ['form.Marker', { missing_some: [2, ['drive.fileName', 'form.Marker']] }] } },
+            ],
+          },
+          formFields: { Marker: 'ok', 'Submittal Response': 'Rejected' },
+          shouldMatch: true,
+        },
+      ];
+
+      for (const tc of formReferencingRules) {
+        const formExtractor: FormExtractorPort = {
+          extractFormFields: vi.fn().mockImplementation(async ({ id }: { id: string }) => {
+            if (id === 'flat-doc') {
+              return { status: 'ok', widgetCount: 0, fields: {} };
+            }
+            return {
+              status: 'ok',
+              widgetCount: 2,
+              fields: tc.formFields,
+            };
+          }),
+        };
+
+        const evalSpy = vi.fn((rule: unknown, data: Record<string, unknown>) =>
+          realPredicateEvaluator.evaluate(rule, data)
+        );
+        const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+          parseSchemaRegistry: makeFormMatchRegistry(tc.rule),
+          predicateEvaluator: { evaluate: evalSpy },
+          formExtractor,
+          formTemplateParser,
+        });
+
+        // 1. Flat 0-widget doc must be skipped silently WITHOUT evaluating match
+        const flatRes = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          context: { items: [{ id: 'flat-doc' }] },
+        });
+        expect(flatRes.fields.action, tc.label).toBeUndefined();
+        expect(evalSpy, tc.label).not.toHaveBeenCalled();
+
+        // 2. Non-zero widget doc evaluates match post-read with { ..., drive, form }
+        evalSpy.mockClear();
+        const formRes = await service.extractFields({
+          documentTypeKey: 'submittal-arch',
+          context: { items: [{ id: 'widget-doc' }] },
+        });
+        expect(evalSpy, tc.label).toHaveBeenCalledTimes(1);
+        const passedContext = evalSpy.mock.calls[0][1];
+        expect(passedContext.form, tc.label).toEqual(tc.formFields);
+        expect((passedContext.drive as Record<string, unknown>).parentName, tc.label).toBe('Submittals');
+        if (tc.shouldMatch && tc.formFields['Submittal Response']) {
+          expect(formRes.fields.action, tc.label).toBe('REJ');
+        } else {
+          expect(formRes.fields.action, tc.label).toBeUndefined();
+        }
+      }
+
+      // Blank form (widgetCount > 0, fields: {}) triggers { "!!": { "missing": ["form.Date"] } } while flat 0-widget skips it
+      const blankEvalSpy = vi.fn((rule: unknown, data: Record<string, unknown>) =>
+        realPredicateEvaluator.evaluate(rule, data)
+      );
+      const blankFormExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockImplementation(async ({ id }: { id: string }) =>
+          id === 'flat-doc'
+            ? { status: 'ok', widgetCount: 0, fields: {} }
+            : { status: 'ok', widgetCount: 3, fields: {} }
+        ),
+      };
+      const blankService = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: makeFormMatchRegistry({ '!!': { missing: ['form.Date'] } }),
+        predicateEvaluator: { evaluate: blankEvalSpy },
+        formExtractor: blankFormExtractor,
+        formTemplateParser,
+      });
+
+      await blankService.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: { items: [{ id: 'flat-doc' }] },
+      });
+      expect(blankEvalSpy).not.toHaveBeenCalled();
+
+      await blankService.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: { items: [{ id: 'blank-form' }] },
+      });
+      expect(blankEvalSpy).toHaveBeenCalledTimes(1);
+      expect(blankEvalSpy.mock.calls[0][1].form).toEqual({});
+    });
+
+    it('emits formatAmbiguousFormFieldMessage for ambiguous bound widgets, skips populating them, still populates non-ambiguous widgets on the same form, and breaks out of validItemIds', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockImplementation(async (id: string) => ({
+          item: { id, name: `${id}.pdf`, mimeType: 'application/vnd.google-apps.document' },
+          ancestors: [],
+        })),
+      };
+
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockImplementation(async ({ id }: { id: string }) => {
+          if (id === 'doc-1') {
+            return {
+              status: 'ok',
+              widgetCount: 3,
+              fields: {
+                'Submittal Response': 'No Exceptions Taken', // even if present, must NOT be used when ambiguous
+                Notes: 'Verify sealant color',
+                'Unmapped Checkboxes': 'Option A',
+              },
+              ambiguousFields: ['Submittal Response', 'Unmapped Checkboxes'],
+            };
+          }
+          return {
+            status: 'ok',
+            widgetCount: 1,
+            fields: { 'Submittal Response': 'Rejected' },
+          };
+        }),
+      };
+
+      const registry = makeFormMatchRegistry(undefined, {
+        Notes: { template: '{{notes}}' },
+      });
+      // Replace matchRule with undefined so extractor runs unconditionally
+      registry.getParseSchema = vi.fn().mockResolvedValue({
+        extractors: [{ source: 'form' as const }],
+      });
+
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: registry,
+        formExtractor,
+        formTemplateParser,
+      });
+
+      const res = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: { items: [{ id: 'doc-1' }, { id: 'doc-2' }] },
+      });
+
+      expect(res.fields.action).toBeUndefined();
+      expect(res.fields.notes).toBe('Verify sealant color');
+      expect(res.statusMessages).toEqual([
+        formatAmbiguousFormFieldMessage('Submittal Response'),
+      ]);
+      expect(res.statusMessages?.[0]).toBe(
+        'Could not pre-populate from "Submittal Response" because multiple options are selected; please verify manually.'
+      );
+      expect(formExtractor.extractFormFields).toHaveBeenCalledTimes(1);
+    });
+
+    it('breaks out of validItemIds on ambiguous bound widget even when no other fields are populated, and suppresses notice when target fields are already in populatedFields', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockImplementation(async (id: string) => ({
+          item: { id, name: `${id}.pdf`, mimeType: 'application/vnd.google-apps.document' },
+          ancestors: [],
+        })),
+      };
+
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockImplementation(async ({ id }: { id: string }) => {
+          if (id === 'doc-1') {
+            return {
+              status: 'ok',
+              widgetCount: 2,
+              fields: {},
+              ambiguousFields: ['Submittal Response'],
+            };
+          }
+          return {
+            status: 'ok',
+            widgetCount: 2,
+            fields: {
+              'Submittal Response': 'No Exceptions Taken',
+              Notes: 'From second doc',
+            },
+          };
+        }),
+      };
+
+      const registry = makeFormMatchRegistry(undefined, {
+        Notes: { template: '{{notes}}' },
+      });
+      registry.getParseSchema = vi.fn().mockResolvedValue({
+        extractors: [
+          { source: 'form' as const },
+        ],
+      });
+
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: registry,
+        formExtractor,
+        formTemplateParser,
+      });
+
+      // 1. Ambiguous bound widget with no other fields populated on doc-1 still breaks out of validItemIds
+      const res1 = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: { items: [{ id: 'doc-1' }, { id: 'doc-2' }] },
+      });
+      expect(res1.fields.action).toBeUndefined();
+      expect(res1.fields.notes).toBeUndefined();
+      expect(res1.statusMessages).toEqual([
+        formatAmbiguousFormFieldMessage('Submittal Response'),
+      ]);
+      expect(formExtractor.extractFormFields).toHaveBeenCalledTimes(1);
+
+      // 2. When action is already in existingData (user edit), ambiguous notice for Submittal Response is skipped and continues to doc-2 for unpopulated Notes
+      (formExtractor.extractFormFields as ReturnType<typeof vi.fn>).mockClear();
+      const res2 = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        existingData: { action: 'REC' },
+        context: { items: [{ id: 'doc-1' }, { id: 'doc-2' }] },
+      });
+      expect(res2.fields.action).toBe('REC');
+      expect(res2.fields.notes).toBe('From second doc');
+      expect(res2.statusMessages).toBeUndefined();
+      expect(formExtractor.extractFormFields).toHaveBeenCalledTimes(2);
+
+      // 3. When action is already populated by earlier gmail extractor, ambiguous notice is also skipped
+      (formExtractor.extractFormFields as ReturnType<typeof vi.fn>).mockClear();
+      registry.getParseSchema = vi.fn().mockResolvedValue({
+        extractors: [
+          { source: 'gmail' as const, fields: { action: { set: 'REC' } } },
+          { source: 'form' as const },
+        ],
+      });
+      const res3 = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: {
+          isDriveUrl: true,
+          email: { id: 'msg-1', subject: 'Submittal' },
+          items: [{ id: 'doc-1' }, { id: 'doc-2' }],
+        },
+      });
+      expect(res3.fields.action).toBe('REC');
+      expect(res3.fields.notes).toBe('From second doc');
+      expect(res3.statusMessages).toBeUndefined();
+      expect(formExtractor.extractFormFields).toHaveBeenCalledTimes(2);
+    });
+
+    it('continues past per-item getHydratedDriveItem failures in [Forbidden.pdf, Stamped_Cover.pdf], populates from Stamped_Cover.pdf, and emits generalized Drive fallback notice', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockImplementation(async (id: string) => {
+          if (id === 'forbidden-pdf') {
+            throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
+          }
+          return {
+            item: {
+              id: 'stamped-cover',
+              name: '071200-001_Stamped_Cover.pdf',
+              mimeType: 'application/pdf',
+              modifiedTime: '2026-11-18T15:00:00Z',
+            },
+            ancestors: [],
+          };
+        }),
+      };
+
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockResolvedValue({
+          status: 'ok',
+          widgetCount: 2,
+          fields: { 'Submittal Response': 'Revise and Resubmit' },
+        }),
+      };
+
+      const registry = makeFormMatchRegistry(undefined);
+      registry.getParseSchema = vi.fn().mockResolvedValue({
+        extractors: [{ source: 'form' as const }],
+      });
+
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: registry,
+        formExtractor,
+        formTemplateParser,
+      });
+
+      const res = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: {
+          items: [{ id: 'forbidden-pdf' }, { id: 'stamped-cover' }],
+        },
+      });
+
+      expect(res.fields.action).toBe('RR');
+      expect(res.statusMessages).toEqual([
+        DRIVE_METADATA_EXTRACT_ERROR_MESSAGE,
+      ]);
+      expect(DRIVE_METADATA_EXTRACT_ERROR_MESSAGE).toBe(
+        'Could not read Google Drive file metadata or document form fields to pre-populate fields; you can enter them manually.'
+      );
+      expect(formExtractor.extractFormFields).toHaveBeenCalledTimes(1);
+      expect(formExtractor.extractFormFields).toHaveBeenCalledWith({
+        id: 'stamped-cover',
+        mimeType: 'application/pdf',
+      });
+    });
+
+    it('does not emit ambiguousFields notice when post-read form extractor.match evaluates to false', async () => {
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockResolvedValue({
+          item: { id: 'doc-1', name: 'Draft.pdf', mimeType: 'application/pdf' },
+          ancestors: [],
+        }),
+      };
+      const formExtractor: FormExtractorPort = {
+        extractFormFields: vi.fn().mockResolvedValue({
+          status: 'ok',
+          widgetCount: 2,
+          fields: { IsCover: false },
+          ambiguousFields: ['Submittal Response'],
+        }),
+      };
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: makeFormMatchRegistry({ '===': [{ var: 'form.IsCover' }, true] }),
+        predicateEvaluator: realPredicateEvaluator,
+        formExtractor,
+        formTemplateParser,
+      });
+
+      const res = await service.extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: { items: [{ id: 'doc-1' }] },
+      });
+
+      expect(res.fields.action).toBeUndefined();
+      expect(res.statusMessages).toBeUndefined();
     });
   });
 });

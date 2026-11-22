@@ -22,6 +22,73 @@ export const PDF_FORM_ENCRYPTED_ERROR_MESSAGE =
 export const DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE =
   'Could not read document form fields because the file could not be parsed; you can enter them manually.';
 
+export function formatAmbiguousFormFieldMessage(fieldName: string): string {
+  return `Could not pre-populate from "${fieldName}" because multiple options are selected; please verify manually.`;
+}
+
+function isFormVarKey(key: unknown): boolean {
+  if (typeof key !== 'string') {
+    return true;
+  }
+  return key === '' || key === 'form' || key.startsWith('form.');
+}
+
+function referencesFormInJsonLogic(rule: unknown): boolean {
+  if (rule === null || rule === undefined || typeof rule !== 'object') {
+    return false;
+  }
+  if (Array.isArray(rule)) {
+    return rule.some((entry) => referencesFormInJsonLogic(entry));
+  }
+
+  for (const [op, operand] of Object.entries(rule)) {
+    if (op === 'var') {
+      if (Array.isArray(operand)) {
+        const pathExpr = operand.length > 0 ? operand[0] : undefined;
+        if (isFormVarKey(pathExpr)) {
+          return true;
+        }
+        if (operand.length > 1 && referencesFormInJsonLogic(operand[1])) {
+          return true;
+        }
+        continue;
+      }
+      if (isFormVarKey(operand)) {
+        return true;
+      }
+      continue;
+    }
+
+    if (op === 'missing') {
+      const keys = Array.isArray(operand) ? operand : [operand];
+      if (keys.some((key) => isFormVarKey(key))) {
+        return true;
+      }
+      continue;
+    }
+
+    if (op === 'missing_some') {
+      if (!Array.isArray(operand)) {
+        return true;
+      }
+      if (referencesFormInJsonLogic(operand[0])) {
+        return true;
+      }
+      const keys = operand[1];
+      if (!Array.isArray(keys) || keys.some((key) => isFormVarKey(key))) {
+        return true;
+      }
+      continue;
+    }
+
+    if (referencesFormInJsonLogic(operand)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 interface HydratedDriveFormItemContext {
   hierarchy: DriveItemHierarchy;
   driveContext: Record<string, unknown>;
@@ -242,6 +309,9 @@ export async function extractFormExtractorFields(params: {
     return;
   }
 
+  const matchReferencesForm =
+    extractor.match !== undefined && referencesFormInJsonLogic(extractor.match);
+
   for (const candidateItemId of validItemIds) {
     let hydrated: HydratedDriveFormItemContext;
     try {
@@ -258,7 +328,11 @@ export async function extractFormExtractorFields(params: {
     }
 
     const itemJsonLogicContext = { ...jsonLogicContext, drive: driveContext };
-    if (extractor.match !== undefined && !helpers.evaluateCondition(extractor.match, itemJsonLogicContext)) {
+    if (
+      extractor.match !== undefined &&
+      !matchReferencesForm &&
+      !helpers.evaluateCondition(extractor.match, itemJsonLogicContext)
+    ) {
       continue;
     }
 
@@ -284,10 +358,34 @@ export async function extractFormExtractorFields(params: {
       continue;
     }
 
+    if (
+      extractor.match !== undefined &&
+      matchReferencesForm &&
+      !helpers.evaluateCondition(extractor.match, {
+        ...itemJsonLogicContext,
+        form: outcome.fields,
+      })
+    ) {
+      continue;
+    }
+
     let populatedAnyInItem = false;
+    let encounteredAmbiguousBoundWidget = false;
 
     for (const { formFieldName, binding, parsed } of parsedBindings) {
       if (outcome.ambiguousFields?.includes(formFieldName)) {
+        const hasUnpopulatedTarget = parsed.tokens.some((token) => {
+          const targetField = targetSchema?.fields.find((f) => f.key === token.fieldKey);
+          return (
+            targetField !== undefined &&
+            !targetField.linkedField &&
+            !(token.fieldKey in populatedFields)
+          );
+        });
+        if (hasUnpopulatedTarget) {
+          statusMessages.push(formatAmbiguousFormFieldMessage(formFieldName));
+          encounteredAmbiguousBoundWidget = true;
+        }
         continue;
       }
 
@@ -350,7 +448,7 @@ export async function extractFormExtractorFields(params: {
       }
     }
 
-    if (populatedAnyInItem) {
+    if (populatedAnyInItem || encounteredAmbiguousBoundWidget) {
       break;
     }
   }
