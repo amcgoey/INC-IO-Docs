@@ -87,6 +87,18 @@ function isRateLimitOrQuotaError(error: unknown): boolean {
 }
 const PURE_HANDLEBARS_PLACEHOLDER_REGEX = /^(?:\{\{[^{}]*\}\}[\s\-_./]*)+$/;
 const DIVIDER_PUNCTUATION_REGEX = /^[–—-]+$/;
+const ISO_DATE_PREFIX_REGEX = /^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}/;
+const SLASH_OR_DASH_DATE_PREFIX_REGEX = /^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}/;
+const MONTH_NAME_ALTERNATION =
+  '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
+const WRITTEN_MONTH_DATE_REGEX = new RegExp(
+  `^(?:${MONTH_NAME_ALTERNATION}\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?(?:\\s*,\\s*|\\s+)\\d{2,4}|\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH_NAME_ALTERNATION}\\.?(?:\\s*,\\s*|\\s+)\\d{2,4})$`,
+  'i'
+);
+const SUBMITTAL_SIX_DIGIT_PREFIX_REGEX = /^\d{6}/;
+const SPEC_TAG_PREFIX_REGEX = /^[A-Za-z]{2}\s*\d{3}/;
+const PURE_NUMERIC_REGEX = /^\d+$/;
+const PURE_ALPHABETIC_CAPTION_REGEX = /^[A-Za-z][A-Za-z\s/&'-]*$/;
 
 type GoogleDocsTable = NonNullable<GoogleDocsStructuralElement['table']>;
 type GoogleDocsTableRow = NonNullable<GoogleDocsTable['tableRows']>[number];
@@ -180,7 +192,19 @@ function isUnsetDropdownOption(
   return isFirstOrAbsent && UNSET_DROPDOWN_PROMPT_REGEX.test(trimmed);
 }
 
-function extractStaticLabel(cell: GoogleDocsTableCell): string | undefined {
+function isDateLikeText(text: string): boolean {
+  return (
+    ISO_DATE_PREFIX_REGEX.test(text) ||
+    SLASH_OR_DASH_DATE_PREFIX_REGEX.test(text) ||
+    WRITTEN_MONTH_DATE_REGEX.test(text)
+  );
+}
+
+function isSubmittalOrSpecCodeText(text: string): boolean {
+  return SUBMITTAL_SIX_DIGIT_PREFIX_REGEX.test(text) || SPEC_TAG_PREFIX_REGEX.test(text);
+}
+
+function extractRawStaticSingleLineText(cell: GoogleDocsTableCell): string | undefined {
   const lines: string[] = [];
   for (const contentEl of cell.content ?? []) {
     if (!contentEl.paragraph) {
@@ -209,8 +233,46 @@ function extractStaticLabel(cell: GoogleDocsTableCell): string | undefined {
     return undefined;
   }
 
-  const normalized = normalizeFormLabelKey(lines[0]!);
+  return lines[0]!.trim();
+}
+
+function extractStaticLabel(cell: GoogleDocsTableCell): string | undefined {
+  const raw = extractRawStaticSingleLineText(cell);
+  if (raw === undefined) return undefined;
+  const normalized = normalizeFormLabelKey(raw);
   return isPlausibleFieldLabel(normalized) ? normalized : undefined;
+}
+
+function formatDateElement(
+  dateElement: NonNullable<GoogleDocsParagraphElement['dateElement']>
+): string | undefined {
+  const props = dateElement.dateElementProperties;
+  const rawTimestamp = props?.timestamp;
+  if (rawTimestamp) {
+    const d = new Date(rawTimestamp);
+    if (!Number.isNaN(d.getTime())) {
+      const timeZone = props?.timeZoneId || 'UTC';
+      try {
+        const parts = new Intl.DateTimeFormat('en-CA', {
+          timeZone,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).formatToParts(d);
+        const y = parts.find((p) => p.type === 'year')?.value;
+        const m = parts.find((p) => p.type === 'month')?.value;
+        const day = parts.find((p) => p.type === 'day')?.value;
+        if (y && m && day) {
+          return `${y}-${m}-${day}`;
+        }
+      } catch {
+        // Unrecognized timeZoneId -> fall back to UTC ISO date
+      }
+      return d.toISOString().slice(0, 10);
+    }
+  }
+  const fallback = props?.displayText?.replace(/\ue907/g, '').trim();
+  return fallback || undefined;
 }
 
 function serializeCellElements(
@@ -230,6 +292,15 @@ function serializeCellElements(
         if (!isUnsetDropdownOption(def, props?.selectedOptionId, display)) {
           paraStr += display.trim();
         }
+      } else if (pe.dateElement) {
+        const formatted = formatDateElement(pe.dateElement);
+        if (formatted) {
+          paraStr += formatted;
+        }
+      } else if (pe.person) {
+        const personName = pe.person.personProperties?.name?.trim();
+        const personEmail = pe.person.personProperties?.email?.trim();
+        paraStr += personName || personEmail || '';
       } else if (pe.textRun?.content) {
         paraStr += pe.textRun.content.replace(/\ue907/g, '').replace(/\n$/, '');
       }
@@ -406,6 +477,111 @@ function parseKeyValueTable(
     parsedRows.push({ label, valueCell: col1 });
   }
   return parsedRows;
+}
+
+function cellContainsSmartChipOrDatePlaceholder(cell: GoogleDocsTableCell): boolean {
+  for (const contentEl of cell.content ?? []) {
+    if (contentEl.paragraph) {
+      for (const pe of contentEl.paragraph.elements ?? []) {
+        if (pe.dateElement || pe.person || pe.dropdown) {
+          return true;
+        }
+        if (pe.textRun?.content?.includes('\ue907')) {
+          return true;
+        }
+      }
+    } else if (contentEl.table) {
+      for (const row of contentEl.table.tableRows ?? []) {
+        for (const nestedCell of row.tableCells ?? []) {
+          if (cellContainsSmartChipOrDatePlaceholder(nestedCell)) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+interface ParsedBottomCaptionColumn {
+  label: string;
+  valueCell: GoogleDocsTableCell;
+  value: string | undefined;
+}
+
+function parseBottomCaptionTable(
+  rows: GoogleDocsTableRow[],
+  colCount: number,
+  dropdownDefs: Record<string, GoogleDocsDropdownDefinition>
+): ParsedBottomCaptionColumn[] | undefined {
+  const row0Cells = rows[0]?.tableCells ?? [];
+  const row1Cells = rows[1]?.tableCells ?? [];
+  if (row0Cells.length !== colCount || row1Cells.length !== colCount) {
+    return undefined;
+  }
+
+  for (let c = 0; c < colCount; c++) {
+    if (!isUnmergedCell(row0Cells[c]) || !isUnmergedCell(row1Cells[c])) {
+      return undefined;
+    }
+  }
+
+  const row1Labels: string[] = [];
+  const row1RawTexts: string[] = [];
+  for (let c = 0; c < colCount; c++) {
+    const rawText = extractRawStaticSingleLineText(row1Cells[c]!);
+    if (rawText === undefined) return undefined;
+    const label = normalizeFormLabelKey(rawText);
+    if (!isPlausibleFieldLabel(label)) return undefined;
+    if (isDateLikeText(label) || isSubmittalOrSpecCodeText(label) || PURE_NUMERIC_REGEX.test(label)) {
+      return undefined;
+    }
+    row1Labels.push(label);
+    row1RawTexts.push(rawText);
+  }
+
+  const row0Values: Array<string | undefined> = [];
+  let hasExplicitValueSignal = false;
+  let hasDateOrCodeValue = false;
+
+  for (let c = 0; c < colCount; c++) {
+    const valueCell = row0Cells[c]!;
+    const val = serializeCellElements(valueCell, dropdownDefs);
+    row0Values.push(val);
+
+    if (
+      val === undefined ||
+      cellContainsSmartChipOrDatePlaceholder(valueCell) ||
+      val.includes('\n') ||
+      val.length > 40
+    ) {
+      hasExplicitValueSignal = true;
+    } else if (isDateLikeText(val) || isSubmittalOrSpecCodeText(val)) {
+      hasDateOrCodeValue = true;
+    }
+  }
+
+  const allRow1PureAlphabetic = row1RawTexts.every((raw) => PURE_ALPHABETIC_CAPTION_REGEX.test(raw));
+  if (!hasExplicitValueSignal && !(hasDateOrCodeValue && allRow1PureAlphabetic)) {
+    return undefined;
+  }
+
+  return row1Labels.map((label, c) => ({
+    label,
+    valueCell: row0Cells[c]!,
+    value: row0Values[c],
+  }));
+}
+
+function setFieldIfUnclaimed(
+  fieldMap: Map<string, GoogleDocsFormFieldValue>,
+  ambiguousSet: ReadonlySet<string>,
+  label: string,
+  value: GoogleDocsFormFieldValue | undefined
+): void {
+  if (value !== undefined && !fieldMap.has(label) && !ambiguousSet.has(label)) {
+    fieldMap.set(label, value);
+  }
 }
 
 function validateGoogleDocsDocument(input: unknown): GoogleDocsDocument {
@@ -601,6 +777,44 @@ export class GoogleDocsClient {
           }
         }
 
+        // Pattern 2: 2 x 1 Stacked Field Box (e.g. "REMARKS")
+        if (rowCount === 2 && colCount === 1) {
+          const r0Cells = rows[0]?.tableCells ?? [];
+          const r1Cells = rows[1]?.tableCells ?? [];
+          if (
+            r0Cells.length === 1 &&
+            r1Cells.length === 1 &&
+            isUnmergedCell(r0Cells[0]) &&
+            isUnmergedCell(r1Cells[0])
+          ) {
+            const label = extractStaticLabel(r0Cells[0]);
+            if (label !== undefined) {
+              widgetCount += 1;
+              markCellDropdownsCaptured(r1Cells[0]);
+              setFieldIfUnclaimed(
+                fieldMap,
+                ambiguousSet,
+                label,
+                serializeCellElements(r1Cells[0], dropdownDefs)
+              );
+              continue;
+            }
+          }
+        }
+
+        // Pattern 3: 2 x N Signature / Bottom-Caption Table (e.g. 2x2 "Reviewed By | Date")
+        if (rowCount === 2 && colCount >= 2) {
+          const parsedCols = parseBottomCaptionTable(rows, colCount, dropdownDefs);
+          if (parsedCols) {
+            for (const { label, valueCell, value } of parsedCols) {
+              widgetCount += 1;
+              markCellDropdownsCaptured(valueCell);
+              setFieldIfUnclaimed(fieldMap, ambiguousSet, label, value);
+            }
+            continue;
+          }
+        }
+
         // Pattern 4: N x 2 Key/Value Form Tables (e.g. 1x2 "Submittal No.")
         if (colCount === 2 && rowCount >= 1) {
           const parsedRows = parseKeyValueTable(rows);
@@ -608,10 +822,12 @@ export class GoogleDocsClient {
             for (const { label, valueCell } of parsedRows) {
               widgetCount += 1;
               markCellDropdownsCaptured(valueCell);
-              const val = serializeCellElements(valueCell, dropdownDefs);
-              if (val !== undefined && !fieldMap.has(label) && !ambiguousSet.has(label)) {
-                fieldMap.set(label, val);
-              }
+              setFieldIfUnclaimed(
+                fieldMap,
+                ambiguousSet,
+                label,
+                serializeCellElements(valueCell, dropdownDefs)
+              );
             }
           }
         }
@@ -630,10 +846,7 @@ export class GoogleDocsClient {
         widgetCount += 1;
         const displayText = resolveDropdownDisplayText(dropdown, dropdownDefs);
         if (!isUnsetDropdownOption(def, props?.selectedOptionId, displayText)) {
-          const trimmedVal = displayText.trim();
-          if (!fieldMap.has(label) && !ambiguousSet.has(label)) {
-            fieldMap.set(label, trimmedVal);
-          }
+          setFieldIfUnclaimed(fieldMap, ambiguousSet, label, displayText.trim());
         }
       });
     }

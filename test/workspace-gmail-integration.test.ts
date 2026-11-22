@@ -7332,6 +7332,365 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(attRes.statusCode).toBe(200);
       });
     });
+
+    describe('Ticket #323: Full stamped Google Doc cover-sheet gmail -> form -> drive pipeline in Gmail Google Drive URL mode via gmail.accessToken fallback', () => {
+      const RESPONSE_LABELS = [
+        'NO EXCEPTIONS TAKEN',
+        'NO OBJECTIONS AS CORRECTED',
+        'REVISE AND RESUBMIT',
+        'REJECTED',
+        'NOT REVIEWED',
+      ] as const;
+
+      beforeEach(() => {
+        nock.disableNetConnect();
+      });
+
+      afterEach(() => {
+        nock.enableNetConnect();
+      });
+
+      function buildStampedCoverSheetDoc(options: {
+        documentId: string;
+        submittalNo: string;
+        checkedIndex: number;
+        remarks: string;
+        reviewerName: string;
+        dateElementOrText: Record<string, unknown>;
+      }) {
+        const cell = (text: string, style?: { columnSpan?: number; rowSpan?: number }) => ({
+          content: [{ paragraph: { elements: [{ textRun: { content: text } }] } }],
+          ...(style ? { tableCellStyle: style } : {}),
+        });
+
+        return {
+          documentId: options.documentId,
+          body: null,
+          tabs: [
+            {
+              documentTab: {
+                dropdownDefinitions: {
+                  'kix.cb': {
+                    dropdownDefinitionId: 'kix.cb',
+                    dropdownDefinitionProperties: {
+                      title: 'Checkbox',
+                      options: [
+                        { optionId: 'opt.off', displayValue: '☐' },
+                        { optionId: 'opt.on', displayValue: '☑' },
+                      ],
+                    },
+                  },
+                },
+                body: {
+                  content: [
+                    { sectionBreak: {} },
+                    {
+                      table: {
+                        rows: 1,
+                        columns: 2,
+                        tableRows: [
+                          {
+                            tableCells: [
+                              cell('Submittal No.\n', { columnSpan: 1, rowSpan: 1 }),
+                              cell(`${options.submittalNo}\n`, { columnSpan: 1, rowSpan: 1 }),
+                            ],
+                          },
+                        ],
+                      },
+                    },
+                    { paragraph: { elements: [{ textRun: { content: '––––\n' } }] } },
+                    { paragraph: { elements: [{ textRun: { content: 'Submittal Response\n' } }] } },
+                    {
+                      table: {
+                        rows: 6,
+                        columns: 3,
+                        tableRows: [
+                          ...RESPONSE_LABELS.map((label, idx) => {
+                            const isChecked = options.checkedIndex === idx;
+                            return {
+                              tableCells: [
+                                {
+                                  tableCellStyle: { columnSpan: 1, rowSpan: 1 },
+                                  content: [
+                                    {
+                                      paragraph: {
+                                        elements: [
+                                          {
+                                            dropdown: {
+                                              dropdownId: `kix.dd.${idx}`,
+                                              dropdownProperties: {
+                                                dropdownDefinitionId: 'kix.cb',
+                                                selectedOptionId: isChecked ? 'opt.on' : 'opt.off',
+                                                displayValue: isChecked ? '☑' : '☐',
+                                              },
+                                            },
+                                          },
+                                        ],
+                                      },
+                                    },
+                                  ],
+                                },
+                                cell(`${label}\n`, { columnSpan: 1, rowSpan: 1 }),
+                                cell(idx === 0 || idx === 2 ? 'Legend\n' : '\n', idx === 0 || idx === 2 ? { rowSpan: 2 } : undefined),
+                              ],
+                            };
+                          }),
+                          {
+                            tableCells: [
+                              cell('Disclaimer banner.\n', { columnSpan: 3, rowSpan: 1 }),
+                              cell('\n'),
+                              cell('\n'),
+                            ],
+                          },
+                        ],
+                      },
+                    },
+                    { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+                    { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+                    {
+                      table: {
+                        rows: 2,
+                        columns: 1,
+                        tableRows: [
+                          { tableCells: [cell('REMARKS\n', { columnSpan: 1, rowSpan: 1 })] },
+                          { tableCells: [cell(`${options.remarks}\n`, { columnSpan: 1, rowSpan: 1 })] },
+                        ],
+                      },
+                    },
+                    { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+                    {
+                      table: {
+                        rows: 2,
+                        columns: 2,
+                        tableRows: [
+                          {
+                            tableCells: [
+                              {
+                                tableCellStyle: { columnSpan: 1, rowSpan: 1 },
+                                content: [
+                                  {
+                                    paragraph: {
+                                      elements: [{ person: { personProperties: { name: options.reviewerName } } }],
+                                    },
+                                  },
+                                ],
+                              },
+                              {
+                                tableCellStyle: { columnSpan: 1, rowSpan: 1 },
+                                content: [{ paragraph: { elements: [options.dateElementOrText] } }],
+                              },
+                            ],
+                          },
+                          {
+                            tableCells: [
+                              cell('Reviewed By\n', { columnSpan: 1, rowSpan: 1 }),
+                              cell('Date\n', { columnSpan: 1, rowSpan: 1 }),
+                            ],
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        };
+      }
+
+      it('executes gmail -> form -> drive for Submittal Arch and Submittal FF&E Google Doc cover sheets using gmail.accessToken without userOAuthToken', async () => {
+        vi.spyOn(GoogleDriveClient.prototype, 'listSharedDrives').mockResolvedValue({
+          drives: [{ id: 'space-projects-1', name: 'Active Projects' }],
+        });
+
+        // 1. Submittal Arch cover sheet
+        const getFileSpy = vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
+          id: 'drive-url-gdoc-arch-323',
+          name: '071200-001_Waterproofing_Stamped',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['folder-unfiled'],
+          driveId: 'space-projects-1',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+        const getThreadSpy = vi.spyOn(mockGmailClient, 'getThread').mockResolvedValue({
+          id: 'th-arch-323',
+          messages: [
+            {
+              id: 'msg-th-arch-323',
+              threadId: 'th-arch-323',
+              subject: '071200-001',
+              date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+              from: 'Reviewer <pm@inc.nyc>',
+              to: 'James McGovern <jmcgovern@pavarini.com>',
+              labels: ['INBOX', 'SENT', 'Active Projects'],
+              plainTextBody: 'See reviewed Google Doc cover sheet.',
+              inlineImages: [],
+              attachments: [],
+            },
+          ],
+        });
+
+        const archDocsScope = nock('https://docs.googleapis.com', {
+          reqheaders: { authorization: 'Bearer ya29.gmail-only-cred-323' },
+        })
+          .get('/v1/documents/drive-url-gdoc-arch-323')
+          .query({
+            includeTabsContent: 'true',
+            suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+          })
+          .reply(
+            200,
+            buildStampedCoverSheetDoc({
+              documentId: 'drive-url-gdoc-arch-323',
+              submittalNo: '081100-002-Rev. B',
+              checkedIndex: 1,
+              remarks: 'See shop drawing markups.',
+              reviewerName: 'Jane Architect',
+              dateElementOrText: {
+                dateElement: {
+                  dateElementProperties: {
+                    timestamp: '2026-11-21T00:00:00Z',
+                    timeZoneId: 'UTC',
+                  },
+                },
+              },
+            })
+          );
+
+        const archRes = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: { action: 'onFormChange', previousDriveUrl: '' },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: {
+                  stringInputs: { value: ['https://docs.google.com/document/d/drive-url-gdoc-arch-323/edit'] },
+                },
+              },
+            },
+            gmail: {
+              messageId: 'msg-th-arch-323',
+              threadId: 'th-arch-323',
+              accessToken: 'ya29.gmail-only-cred-323',
+            },
+          },
+        });
+
+        expect(archRes.statusCode).toBe(200);
+        const archCard = (JSON.parse(archRes.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.updateCard;
+        const archSec = archCard?.sections.find((s) => s.header === 'Document Data');
+        const getArchText = (fieldKey: string) =>
+          archSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-arch'))
+            ?.textInput?.value;
+
+        expect(getArchText('contact')).toBe('PMG');
+        expect(getArchText('date')).toBe('261117');
+        expect(getArchText('section')).toBe('071200');
+        expect(getArchText('number')).toBe('001');
+        expect(getArchText('revision')).toBe('B');
+        expect(getArchText('title')).toBe('Waterproofing Stamped');
+        expect(
+          archSec?.widgets
+            .find((w) => w.selectionInput?.name === getDocumentInfoWidgetName('action', 'submittal-arch'))
+            ?.selectionInput?.items.find((i) => i.selected)?.value
+        ).toBe('NOC');
+        expect(archDocsScope.isDone()).toBe(true);
+
+        // 2. Submittal FF&E cover sheet
+        getFileSpy.mockResolvedValue({
+          id: 'drive-url-gdoc-ffe-323',
+          name: 'CG104_Berman_Falk_Stamped',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['folder-unfiled'],
+          driveId: 'space-projects-1',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+        getThreadSpy.mockResolvedValue({
+          id: 'th-ffe-323',
+          messages: [
+            {
+              id: 'msg-th-ffe-323',
+              threadId: 'th-ffe-323',
+              subject: 'CG104 Submittal Review',
+              date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+              from: 'Designer <designer@inc.nyc>',
+              to: 'Benjamin West <procurement@benjaminwest.com>',
+              labels: ['INBOX', 'SENT', 'Active Projects'],
+              plainTextBody: 'See stamped FF&E Google Doc cover sheet.',
+              inlineImages: [],
+              attachments: [],
+            },
+          ],
+        });
+
+        const ffeDocsScope = nock('https://docs.googleapis.com', {
+          reqheaders: { authorization: 'Bearer ya29.gmail-only-cred-323' },
+        })
+          .get('/v1/documents/drive-url-gdoc-ffe-323')
+          .query({
+            includeTabsContent: 'true',
+            suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+          })
+          .reply(
+            200,
+            buildStampedCoverSheetDoc({
+              documentId: 'drive-url-gdoc-ffe-323',
+              submittalNo: 'LT 159A - B',
+              checkedIndex: 2,
+              remarks: 'Match veneer sample.',
+              reviewerName: 'Jane Designer',
+              dateElementOrText: { textRun: { content: '5/8/26\n' } },
+            })
+          );
+
+        const ffeRes = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: { action: 'onFormChange', previousDriveUrl: '' },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: {
+                  stringInputs: { value: ['https://docs.google.com/document/d/drive-url-gdoc-ffe-323/edit'] },
+                },
+              },
+            },
+            gmail: {
+              messageId: 'msg-th-ffe-323',
+              threadId: 'th-ffe-323',
+              accessToken: 'ya29.gmail-only-cred-323',
+            },
+          },
+        });
+
+        expect(ffeRes.statusCode).toBe(200);
+        const ffeCard = (JSON.parse(ffeRes.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.updateCard;
+        const ffeSec = ffeCard?.sections.find((s) => s.header === 'Document Data');
+        const getFfeText = (fieldKey: string) =>
+          ffeSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-ffe'))
+            ?.textInput?.value;
+
+        expect(getFfeText('contact')).toBe('BW');
+        expect(getFfeText('date')).toBe('261117');
+        expect(getFfeText('specTag')).toBe('CG104');
+        expect(getFfeText('specTitle')).toBe('BED - KING');
+        expect(getFfeText('revision')).toBe('B');
+        expect(getFfeText('vendor')).toBe('BM');
+        expect(
+          ffeSec?.widgets
+            .find((w) => w.selectionInput?.name === getDocumentInfoWidgetName('action', 'submittal-ffe'))
+            ?.selectionInput?.items.find((i) => i.selected)?.value
+        ).toBe('RR');
+        expect(ffeDocsScope.isDone()).toBe(true);
+      });
+    });
   });
 });
 

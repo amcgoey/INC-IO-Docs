@@ -5935,4 +5935,568 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(nock.isDone()).toBe(true);
     });
   });
+
+  describe('Ticket #323: Full 5-pattern live Google Docs cover-sheet pre-population, DateElement/typed dates, and multi-item memoization', () => {
+    const RESPONSE_LABELS = [
+      'NO EXCEPTIONS TAKEN',
+      'NO OBJECTIONS AS CORRECTED',
+      'REVISE AND RESUBMIT',
+      'REJECTED',
+      'NOT REVIEWED',
+    ] as const;
+
+    beforeEach(() => {
+      nock.disableNetConnect();
+    });
+
+    afterEach(() => {
+      nock.enableNetConnect();
+    });
+
+    function buildFullCoverSheetDoc(options: {
+      documentId: string;
+      submittalNo?: string;
+      checkedIndex?: number;
+      remarks?: string;
+      reviewerName?: string;
+      dateCellElements?: Array<Record<string, unknown>>;
+    }) {
+      const cell = (text: string, style?: { columnSpan?: number; rowSpan?: number }) => ({
+        content: [{ paragraph: { elements: [{ textRun: { content: text } }] } }],
+        ...(style ? { tableCellStyle: style } : {}),
+      });
+
+      return {
+        documentId: options.documentId,
+        body: null,
+        tabs: [
+          {
+            documentTab: {
+              dropdownDefinitions: {
+                'kix.cb': {
+                  dropdownDefinitionId: 'kix.cb',
+                  dropdownDefinitionProperties: {
+                    title: 'Checkbox',
+                    options: [
+                      { optionId: 'opt.off', displayValue: '☐' },
+                      { optionId: 'opt.on', displayValue: '☑' },
+                    ],
+                  },
+                },
+              },
+              body: {
+                content: [
+                  { sectionBreak: {} },
+                  { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+                  {
+                    table: {
+                      rows: 1,
+                      columns: 2,
+                      tableRows: [
+                        {
+                          tableCells: [
+                            cell('Submittal No.\n', { columnSpan: 1, rowSpan: 1 }),
+                            cell(`${options.submittalNo ?? ''}\n`, { columnSpan: 1, rowSpan: 1 }),
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                  { paragraph: { elements: [{ textRun: { content: '––––\n' } }] } },
+                  { paragraph: { elements: [{ textRun: { content: 'Submittal Response\n' } }] } },
+                  {
+                    table: {
+                      rows: 6,
+                      columns: 3,
+                      tableRows: [
+                        ...RESPONSE_LABELS.map((label, idx) => {
+                          const isChecked = options.checkedIndex === idx;
+                          const col2 =
+                            idx === 0
+                              ? cell('NET/NOC Legend\n', { rowSpan: 2 })
+                              : idx === 2
+                                ? cell('RR/REJ Legend\n', { rowSpan: 2 })
+                                : cell('\n');
+                          return {
+                            tableCells: [
+                              {
+                                tableCellStyle: { columnSpan: 1, rowSpan: 1 },
+                                content: [
+                                  {
+                                    paragraph: {
+                                      elements: [
+                                        {
+                                          dropdown: {
+                                            dropdownId: `kix.dd.${idx}`,
+                                            dropdownProperties: {
+                                              dropdownDefinitionId: 'kix.cb',
+                                              selectedOptionId: isChecked ? 'opt.on' : 'opt.off',
+                                              displayValue: isChecked ? '☑' : '☐',
+                                            },
+                                          },
+                                        },
+                                      ],
+                                    },
+                                  },
+                                ],
+                              },
+                              cell(`${label}\n`, { columnSpan: 1, rowSpan: 1 }),
+                              col2,
+                            ],
+                          };
+                        }),
+                        {
+                          tableCells: [
+                            cell('Disclaimer banner.\n', { columnSpan: 3, rowSpan: 1 }),
+                            cell('\n'),
+                            cell('\n'),
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                  { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+                  { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+                  {
+                    table: {
+                      rows: 2,
+                      columns: 1,
+                      tableRows: [
+                        { tableCells: [cell('REMARKS\n', { columnSpan: 1, rowSpan: 1 })] },
+                        { tableCells: [cell(`${options.remarks ?? ''}\n`, { columnSpan: 1, rowSpan: 1 })] },
+                      ],
+                    },
+                  },
+                  { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+                  {
+                    table: {
+                      rows: 2,
+                      columns: 2,
+                      tableRows: [
+                        {
+                          tableCells: [
+                            options.reviewerName
+                              ? {
+                                  tableCellStyle: { columnSpan: 1, rowSpan: 1 },
+                                  content: [
+                                    {
+                                      paragraph: {
+                                        elements: [
+                                          { person: { personProperties: { name: options.reviewerName } } },
+                                        ],
+                                      },
+                                    },
+                                  ],
+                                }
+                              : cell('\n', { columnSpan: 1, rowSpan: 1 }),
+                            {
+                              tableCellStyle: { columnSpan: 1, rowSpan: 1 },
+                              content: [
+                                {
+                                  paragraph: {
+                                    elements: options.dateCellElements ?? [{ textRun: { content: '\uE907\n' } }],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                        {
+                          tableCells: [
+                            cell('Reviewed By\n', { columnSpan: 1, rowSpan: 1 }),
+                            cell('Date\n', { columnSpan: 1, rowSpan: 1 }),
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                  { paragraph: { elements: [{ textRun: { content: '\n' } }] } },
+                ],
+              },
+            },
+          },
+        ],
+      };
+    }
+
+    function mockDriveAndDocsForCoverSheet(options: {
+      docId: string;
+      fileName: string;
+      folderName: '6 Construction' | '3 FFE';
+      modifiedTime?: string;
+      docPayload: Record<string, unknown>;
+    }) {
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/folder-${options.docId}`)
+        .query(true)
+        .reply(200, {
+          id: `folder-${options.docId}`,
+          name: options.folderName,
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+      nock('https://www.googleapis.com')
+        .get(`/drive/v3/files/${options.docId}`)
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: options.docId,
+          name: options.fileName,
+          mimeType: 'application/vnd.google-apps.document',
+          parents: [`folder-${options.docId}`],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: options.modifiedTime ?? '2026-11-18T15:00:00Z',
+        });
+      nock('https://docs.googleapis.com', {
+        reqheaders: { authorization: 'Bearer ya29.valid-oauth-token' },
+      })
+        .get(`/v1/documents/${options.docId}`)
+        .query({
+          includeTabsContent: 'true',
+          suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+        })
+        .reply(200, options.docPayload);
+    }
+
+    const readText = (
+      card: { sections: Array<{ header?: string; widgets: Array<Record<string, unknown>> }> },
+      fieldKey: string,
+      docTypeKey: string
+    ) => {
+      const docSec = card.sections.find((s) => s.header === 'Document Data');
+      const widget = docSec?.widgets.find(
+        (w) =>
+          (w.textInput as { name?: string } | undefined)?.name ===
+          getDocumentInfoWidgetName(fieldKey, docTypeKey)
+      ) as { textInput?: { value?: string } } | undefined;
+      return widget?.textInput?.value;
+    };
+
+    const readSelected = (
+      card: { sections: Array<{ header?: string; widgets: Array<Record<string, unknown>> }> },
+      fieldKey: string,
+      docTypeKey: string
+    ) => {
+      const docSec = card.sections.find((s) => s.header === 'Document Data');
+      const widget = docSec?.widgets.find(
+        (w) =>
+          (w.selectionInput as { name?: string } | undefined)?.name ===
+          getDocumentInfoWidgetName(fieldKey, docTypeKey)
+      ) as { selectionInput?: { items: Array<{ value: string; selected?: boolean }> } } | undefined;
+      return widget?.selectionInput?.items.find((i) => i.selected)?.value;
+    };
+
+    it('pre-populates stamped Submittal Arch cover sheet (DateElement, Submittal No, NOC action, title from drive, REMARKS/Reviewed By unmapped, single documents.get call)', async () => {
+      const docId = 'gdoc-323-stamped-arch';
+      mockDriveAndDocsForCoverSheet({
+        docId,
+        fileName: '071200-001_Waterproofing_Cover_Sheet',
+        folderName: '6 Construction',
+        modifiedTime: '2026-11-18T15:00:00Z',
+        docPayload: buildFullCoverSheetDoc({
+          documentId: docId,
+          submittalNo: '071200-001-1',
+          checkedIndex: 1,
+          remarks: 'Confirm membrane overlap at parapet.',
+          reviewerName: 'Jane Architect',
+          dateCellElements: [
+            {
+              dateElement: {
+                dateElementProperties: {
+                  timestamp: '2026-11-21T00:00:00Z',
+                  timeZoneId: 'UTC',
+                },
+              },
+            },
+          ],
+        }),
+      });
+
+      const res = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: { selectedItems: [{ id: docId, title: '071200-001_Waterproofing_Cover_Sheet' }] },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const card = JSON.parse(res.payload).action.navigations[0].pushCard;
+      expect(readText(card, 'section', 'submittal-arch')).toBe('071200');
+      expect(readText(card, 'number', 'submittal-arch')).toBe('001');
+      expect(readText(card, 'revision', 'submittal-arch')).toBe('1');
+      expect(readSelected(card, 'action', 'submittal-arch')).toBe('NOC');
+      expect(readText(card, 'date', 'submittal-arch')).toBe('261121');
+      expect(readText(card, 'title', 'submittal-arch')).toBe('Waterproofing Cover Sheet');
+      expect(readSelected(card, 'status', 'submittal-arch')).toBe('Open');
+      expect(readText(card, 'notes', 'submittal-arch') ?? '').toBe('');
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('pre-populates stamped Submittal FF&E cover sheet across typed date formats and preserves action: REC + drive.modifiedTime on unreviewed template', async () => {
+      const ffeDateCases = [
+        { rawDate: '5/8/26', expectedYymmdd: '260508' },
+        { rawDate: '11/21/2026', expectedYymmdd: '261121' },
+        { rawDate: 'Sept 8, 2026', expectedYymmdd: '260908' },
+        { rawDate: '2026-11-21', expectedYymmdd: '261121' },
+      ];
+
+      for (const [idx, tc] of ffeDateCases.entries()) {
+        const docId = `gdoc-323-stamped-ffe-${idx}`;
+        mockDriveAndDocsForCoverSheet({
+          docId,
+          fileName: 'Berman_Falk',
+          folderName: '3 FFE',
+          modifiedTime: '2026-11-18T15:00:00Z',
+          docPayload: buildFullCoverSheetDoc({
+            documentId: docId,
+            submittalNo: 'CG104-A',
+            checkedIndex: 2,
+            remarks: 'Submit walnut finish sample.',
+            reviewerName: 'Sam Designer',
+            dateCellElements: [{ textRun: { content: `${tc.rawDate}\n` } }],
+          }),
+        });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/drive-items-selected',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+            drive: { selectedItems: [{ id: docId, title: 'Berman_Falk' }] },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const card = JSON.parse(res.payload).action.navigations[0].pushCard;
+        expect(readText(card, 'specTag', 'submittal-ffe'), tc.rawDate).toBe('CG104');
+        expect(readText(card, 'specTitle', 'submittal-ffe'), tc.rawDate).toBe('BED - KING');
+        expect(readText(card, 'revision', 'submittal-ffe'), tc.rawDate).toBe('A');
+        expect(readSelected(card, 'action', 'submittal-ffe'), tc.rawDate).toBe('RR');
+        expect(readText(card, 'date', 'submittal-ffe'), tc.rawDate).toBe(tc.expectedYymmdd);
+        expect(readText(card, 'vendor', 'submittal-ffe'), tc.rawDate).toBe('BM');
+      }
+
+      // Unreviewed template (0 checked ☐ + \uE907 Date Placeholder) keeps action: "REC" and falls through date to drive.modifiedTime
+      const unreviewedId = 'gdoc-323-unreviewed-ffe';
+      mockDriveAndDocsForCoverSheet({
+        docId: unreviewedId,
+        fileName: 'Berman_Falk',
+        folderName: '3 FFE',
+        modifiedTime: '2026-11-18T15:00:00Z',
+        docPayload: buildFullCoverSheetDoc({
+          documentId: unreviewedId,
+          submittalNo: 'CG104-A',
+        }),
+      });
+
+      const unreviewedRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: { selectedItems: [{ id: unreviewedId, title: 'Berman_Falk' }] },
+        },
+      });
+
+      expect(unreviewedRes.statusCode).toBe(200);
+      const unreviewedCard = JSON.parse(unreviewedRes.payload).action.navigations[0].pushCard;
+      expect(readSelected(unreviewedCard, 'action', 'submittal-ffe')).toBe('REC');
+      expect(readText(unreviewedCard, 'date', 'submittal-ffe')).toBe('261118');
+      expect(readText(unreviewedCard, 'specTag', 'submittal-ffe')).toBe('CG104');
+      expect(readText(unreviewedCard, 'specTitle', 'submittal-ffe')).toBe('BED - KING');
+      expect(readText(unreviewedCard, 'vendor', 'submittal-ffe')).toBe('BM');
+      expect(nock.isDone()).toBe(true);
+    });
+
+    it('skips 0-widget candidates in [Plain_Narrative_Doc, Stamped_Cover_Doc] and [Flat_Drawing.pdf, Stamped_Cover_Doc] with per-mimeType:id memoization', async () => {
+      // 1. [Plain_Narrative_Doc, Stamped_Cover_Doc]
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/plain-narrative-323')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'plain-narrative-323',
+          name: 'Plain_Narrative_Doc',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://docs.googleapis.com')
+        .get('/v1/documents/plain-narrative-323')
+        .query({
+          includeTabsContent: 'true',
+          suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+        })
+        .reply(200, {
+          documentId: 'plain-narrative-323',
+          body: null,
+          tabs: [
+            {
+              documentTab: {
+                body: {
+                  content: [{ paragraph: { elements: [{ textRun: { content: 'Narrative only.\n' } }] } }],
+                },
+              },
+            },
+          ],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/stamped-cover-doc-323a')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'stamped-cover-doc-323a',
+          name: 'Stamped_Cover_Doc',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['folder-const-323a'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/folder-const-323a')
+        .query(true)
+        .reply(200, {
+          id: 'folder-const-323a',
+          name: '6 Construction',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          mimeType: 'application/vnd.google-apps.folder',
+        });
+      nock('https://docs.googleapis.com')
+        .get('/v1/documents/stamped-cover-doc-323a')
+        .query({
+          includeTabsContent: 'true',
+          suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+        })
+        .reply(
+          200,
+          buildFullCoverSheetDoc({
+            documentId: 'stamped-cover-doc-323a',
+            submittalNo: '071200-004-2',
+            checkedIndex: 1,
+            dateCellElements: [{ textRun: { content: '2026-11-21\n' } }],
+          })
+        );
+
+      const docPairRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [
+              { id: 'plain-narrative-323', title: 'Plain_Narrative_Doc' },
+              { id: 'stamped-cover-doc-323a', title: 'Stamped_Cover_Doc' },
+            ],
+          },
+        },
+      });
+      expect(docPairRes.statusCode).toBe(200);
+      const docPairCard = JSON.parse(docPairRes.payload).action.navigations[0].pushCard;
+      expect(readText(docPairCard, 'section', 'submittal-arch')).toBe('071200');
+      expect(readText(docPairCard, 'number', 'submittal-arch')).toBe('004');
+      expect(readText(docPairCard, 'revision', 'submittal-arch')).toBe('2');
+      expect(readSelected(docPairCard, 'action', 'submittal-arch')).toBe('NOC');
+      expect(readText(docPairCard, 'date', 'submittal-arch')).toBe('261121');
+
+      // 2. [Flat_Drawing.pdf, Stamped_Cover_Doc]
+      const flatPdfBytes = Buffer.from(await (await PDFDocument.create()).save());
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/flat-drawing-323')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'flat-drawing-323',
+          name: '071200-001_Flat_Drawing.pdf',
+          mimeType: 'application/pdf',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/flat-drawing-323')
+        .query((q) => q.alt === 'media')
+        .reply(200, flatPdfBytes, { 'content-type': 'application/pdf' });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/stamped-cover-doc-323b')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'stamped-cover-doc-323b',
+          name: 'Stamped_Cover_Doc',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://docs.googleapis.com')
+        .get('/v1/documents/stamped-cover-doc-323b')
+        .query({
+          includeTabsContent: 'true',
+          suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+        })
+        .reply(
+          200,
+          buildFullCoverSheetDoc({
+            documentId: 'stamped-cover-doc-323b',
+            submittalNo: '081100-012-A',
+            checkedIndex: 0,
+            dateCellElements: [
+              {
+                dateElement: {
+                  dateElementProperties: {
+                    timestamp: '2026-11-22T02:00:00Z',
+                    timeZoneId: 'America/New_York',
+                  },
+                },
+              },
+            ],
+          })
+        );
+
+      const mixedPairRes = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [
+              { id: 'flat-drawing-323', title: '071200-001_Flat_Drawing.pdf' },
+              { id: 'stamped-cover-doc-323b', title: 'Stamped_Cover_Doc' },
+            ],
+          },
+        },
+      });
+      expect(mixedPairRes.statusCode).toBe(200);
+      const mixedPairCard = JSON.parse(mixedPairRes.payload).action.navigations[0].pushCard;
+      expect(readText(mixedPairCard, 'section', 'submittal-arch')).toBe('081100');
+      expect(readText(mixedPairCard, 'number', 'submittal-arch')).toBe('012');
+      expect(readText(mixedPairCard, 'revision', 'submittal-arch')).toBe('A');
+      expect(readSelected(mixedPairCard, 'action', 'submittal-arch')).toBe('NET');
+      expect(readText(mixedPairCard, 'date', 'submittal-arch')).toBe('261121');
+      expect(nock.isDone()).toBe(true);
+    });
+  });
 });
