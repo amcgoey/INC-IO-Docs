@@ -26,10 +26,57 @@ describe('GoogleDocsClient', () => {
         { tabs: null, body: null },
         { tabs: 'not-an-array' },
         { body: {} },
+        { body: { content: null } },
         { body: { content: 'not-an-array' } },
+        { tabs: [{ documentTab: { body: { content: null } } }] },
         { tabs: [{ documentTab: { body: { content: 'not-an-array' } } }] },
       ]) {
         expect(() => client.extractFormData(bad)).toThrow(GoogleDocsCorruptedError);
+      }
+    });
+
+    it('converts unexpected TypeError or RangeError during structural traversal into GoogleDocsCorruptedError', () => {
+      const client = new GoogleDocsClient();
+
+      const getterTypeErrorDoc = {
+        body: {
+          content: [
+            {
+              get table() {
+                throw new TypeError('Unexpected getter failure');
+              },
+            },
+          ],
+        },
+      };
+
+      const getterRangeErrorDoc = {
+        tabs: [
+          {
+            documentTab: {
+              body: {
+                content: [
+                  {
+                    get table() {
+                      throw new RangeError('Invalid index range');
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      };
+
+      for (const doc of [getterTypeErrorDoc, getterRangeErrorDoc]) {
+        let caught: unknown;
+        try {
+          client.extractFormData(doc);
+        } catch (err) {
+          caught = err;
+        }
+        expect(caught).toBeInstanceOf(GoogleDocsCorruptedError);
+        expect((caught as Error).name).toBe('GoogleDocsCorruptedError');
       }
     });
 
@@ -473,12 +520,16 @@ describe('GoogleDocsClient', () => {
       });
     });
 
-    it('respects custom requestTimeoutMs on constructor and per-call options', async () => {
+    it('respects custom requestTimeoutMs on constructor, retryOptions.requestTimeoutMs fallback, and per-call options', async () => {
       const mockGet = vi.fn().mockResolvedValue({
         data: { body: { content: [] } },
       });
       const mockDocs = { documents: { get: mockGet } } as unknown as docs_v1.Docs;
-      const client = new GoogleDocsClient({ docs: mockDocs, requestTimeoutMs: 4500 });
+      const client = new GoogleDocsClient({
+        docs: mockDocs,
+        requestTimeoutMs: 4500,
+        retryOptions: { requestTimeoutMs: 7000 },
+      });
 
       await client.extractDocumentFormFields('doc-a');
       expect(mockGet).toHaveBeenLastCalledWith(
@@ -490,6 +541,16 @@ describe('GoogleDocsClient', () => {
       expect(mockGet).toHaveBeenLastCalledWith(
         expect.objectContaining({ documentId: 'doc-b' }),
         { timeout: 2500 }
+      );
+
+      const retryTimeoutClient = new GoogleDocsClient({
+        docs: mockDocs,
+        retryOptions: { requestTimeoutMs: 6500 },
+      });
+      await retryTimeoutClient.extractDocumentFormFields('doc-c');
+      expect(mockGet).toHaveBeenLastCalledWith(
+        expect.objectContaining({ documentId: 'doc-c' }),
+        { timeout: 6500 }
       );
     });
 
@@ -552,6 +613,8 @@ describe('GoogleDocsClient', () => {
         .fn()
         .mockResolvedValueOnce({ data: {} })
         .mockResolvedValueOnce({ data: { body: { content: 'bad' } } })
+        .mockResolvedValueOnce({ data: { body: { content: null } } })
+        .mockResolvedValueOnce({ data: { tabs: 'not-array' } })
         .mockResolvedValueOnce({ data: null });
       const client = new GoogleDocsClient({
         docs: { documents: { get: mockGet } } as unknown as docs_v1.Docs,
@@ -559,6 +622,8 @@ describe('GoogleDocsClient', () => {
 
       await expect(client.extractDocumentFormFields('doc-empty')).rejects.toThrow(GoogleDocsCorruptedError);
       await expect(client.extractDocumentFormFields('doc-bad-content')).rejects.toThrow(GoogleDocsCorruptedError);
+      await expect(client.extractDocumentFormFields('doc-null-content')).rejects.toThrow(GoogleDocsCorruptedError);
+      await expect(client.extractDocumentFormFields('doc-bad-tabs')).rejects.toThrow(GoogleDocsCorruptedError);
       await expect(client.extractDocumentFormFields('doc-null')).rejects.toThrow(GoogleDocsCorruptedError);
     });
 
@@ -589,6 +654,213 @@ describe('GoogleDocsClient', () => {
       const errTimeout = await client.extractDocumentFormFields('doc-timeout').catch((e: unknown) => e);
       expect(errTimeout).toBeInstanceOf(GoogleDocsApiError);
       expect((errTimeout as GoogleDocsApiError).statusCode).toBeUndefined();
+    });
+  });
+
+  describe('extractDocumentFormFields — Exponential Backoff Retries (429 / 403 Quota)', () => {
+    it('retries on HTTP 429 with jittered exponential backoff and succeeds on recovery', async () => {
+      const error429 = { status: 429, message: 'Too Many Requests' };
+      const mockGet = vi
+        .fn()
+        .mockRejectedValueOnce(error429)
+        .mockRejectedValueOnce(error429)
+        .mockResolvedValueOnce({
+          data: {
+            documentId: 'doc-429-ok',
+            body: { content: [] },
+          },
+        });
+      const mockSleep = vi.fn().mockResolvedValue(undefined);
+
+      const client = new GoogleDocsClient({
+        docs: { documents: { get: mockGet } } as unknown as docs_v1.Docs,
+        retryOptions: {
+          maxRetries: 3,
+          initialDelayMs: 100,
+          backoffFactor: 2,
+          sleep: mockSleep,
+        },
+      });
+
+      const result = await client.extractDocumentFormFields('doc-429-ok');
+      expect(result).toEqual({ widgetCount: 0, fields: {} });
+      expect(mockGet).toHaveBeenCalledTimes(3);
+      expect(mockSleep).toHaveBeenCalledTimes(2);
+
+      const delay0 = mockSleep.mock.calls[0]?.[0] as number;
+      expect(delay0).toBeGreaterThanOrEqual(75);
+      expect(delay0).toBeLessThanOrEqual(125);
+
+      const delay1 = mockSleep.mock.calls[1]?.[0] as number;
+      expect(delay1).toBeGreaterThanOrEqual(150);
+      expect(delay1).toBeLessThanOrEqual(250);
+    });
+
+    it('honors default retry options (maxRetries: 3, initialDelayMs: 1000, backoffFactor: 2) when only sleep is provided', async () => {
+      const error429 = { code: '429', message: 'Too Many Requests' };
+      const mockGet = vi
+        .fn()
+        .mockRejectedValueOnce(error429)
+        .mockRejectedValueOnce(error429)
+        .mockRejectedValueOnce(error429)
+        .mockResolvedValueOnce({ data: { body: { content: [] } } });
+      const mockSleep = vi.fn().mockResolvedValue(undefined);
+
+      const client = new GoogleDocsClient({
+        docs: { documents: { get: mockGet } } as unknown as docs_v1.Docs,
+        retryOptions: { sleep: mockSleep },
+      });
+
+      const result = await client.extractDocumentFormFields('doc-default-retry');
+      expect(result).toEqual({ widgetCount: 0, fields: {} });
+      expect(mockGet).toHaveBeenCalledTimes(4);
+      expect(mockSleep).toHaveBeenCalledTimes(3);
+
+      const delay0 = mockSleep.mock.calls[0]?.[0] as number;
+      expect(delay0).toBeGreaterThanOrEqual(750);
+      expect(delay0).toBeLessThanOrEqual(1250);
+
+      const delay1 = mockSleep.mock.calls[1]?.[0] as number;
+      expect(delay1).toBeGreaterThanOrEqual(1500);
+      expect(delay1).toBeLessThanOrEqual(2500);
+
+      const delay2 = mockSleep.mock.calls[2]?.[0] as number;
+      expect(delay2).toBeGreaterThanOrEqual(3000);
+      expect(delay2).toBeLessThanOrEqual(5000);
+    });
+
+    it.each([
+      {
+        reason: 'userRateLimitExceeded',
+        error: {
+          status: 403,
+          response: {
+            status: 403,
+            data: {
+              error: {
+                errors: [{ reason: 'userRateLimitExceeded', message: 'User Rate Limit Exceeded' }],
+              },
+            },
+          },
+        },
+      },
+      {
+        reason: 'rateLimitExceeded (string code 403)',
+        error: {
+          code: '403',
+          message: 'rateLimitExceeded: Rate limit exceeded',
+        },
+      },
+      {
+        reason: 'quotaExceeded',
+        error: {
+          code: 403,
+          errors: [{ reason: 'quotaExceeded', message: 'Quota exceeded' }],
+        },
+      },
+      {
+        reason: 'user rate limit message substring',
+        error: {
+          status: 403,
+          message: 'User rate limit exceeded for Google Docs API',
+        },
+      },
+    ])('retries on HTTP 403 with $reason quota error and recovers', async ({ error }) => {
+      const mockGet = vi
+        .fn()
+        .mockRejectedValueOnce(error)
+        .mockResolvedValueOnce({ data: { body: { content: [] } } });
+      const mockSleep = vi.fn().mockResolvedValue(undefined);
+
+      const client = new GoogleDocsClient({
+        docs: { documents: { get: mockGet } } as unknown as docs_v1.Docs,
+        retryOptions: {
+          maxRetries: 2,
+          initialDelayMs: 100,
+          sleep: mockSleep,
+        },
+      });
+
+      const result = await client.extractDocumentFormFields('doc-403-quota');
+      expect(result).toEqual({ widgetCount: 0, fields: {} });
+      expect(mockGet).toHaveBeenCalledTimes(2);
+      expect(mockSleep).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws wrapped GoogleDocsApiError with statusCode and cause when maxRetries is exhausted on 429 or 403 quota', async () => {
+      const error429 = Object.assign(new Error('Too Many Requests'), { code: '429' });
+      const mockGet429 = vi.fn().mockRejectedValue(error429);
+      const mockSleep429 = vi.fn().mockResolvedValue(undefined);
+
+      const client429 = new GoogleDocsClient({
+        docs: { documents: { get: mockGet429 } } as unknown as docs_v1.Docs,
+        retryOptions: { maxRetries: 2, initialDelayMs: 10, sleep: mockSleep429 },
+      });
+
+      const caught429 = await client429.extractDocumentFormFields('doc-exhausted-429').catch((e: unknown) => e);
+      expect(caught429).toBeInstanceOf(GoogleDocsApiError);
+      expect((caught429 as GoogleDocsApiError).statusCode).toBe(429);
+      expect((caught429 as GoogleDocsApiError).cause).toBe(error429);
+      expect(mockGet429).toHaveBeenCalledTimes(3);
+      expect(mockSleep429).toHaveBeenCalledTimes(2);
+
+      const error403Quota = Object.assign(new Error('Quota exceeded'), { code: '403' });
+      const mockGet403 = vi.fn().mockRejectedValue(error403Quota);
+      const mockSleep403 = vi.fn().mockResolvedValue(undefined);
+
+      const client403 = new GoogleDocsClient({
+        docs: { documents: { get: mockGet403 } } as unknown as docs_v1.Docs,
+        retryOptions: { maxRetries: 1, initialDelayMs: 10, sleep: mockSleep403 },
+      });
+
+      const caught403 = await client403.extractDocumentFormFields('doc-exhausted-403').catch((e: unknown) => e);
+      expect(caught403).toBeInstanceOf(GoogleDocsApiError);
+      expect((caught403 as GoogleDocsApiError).statusCode).toBe(403);
+      expect((caught403 as GoogleDocsApiError).cause).toBe(error403Quota);
+      expect(mockGet403).toHaveBeenCalledTimes(2);
+      expect(mockSleep403).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails immediately without retry on non-quota 403, SERVICE_DISABLED, 404, 503, and timeout errors', async () => {
+      const nonQuota403 = Object.assign(new Error('The caller does not have permission'), {
+        code: '403',
+        response: {
+          status: 403,
+          data: { error: { errors: [{ reason: 'forbidden', message: 'Forbidden' }] } },
+        },
+      });
+      const serviceDisabled403 = {
+        status: 403,
+        message: 'Google Docs API has not been used in project 123 or it is disabled.',
+        response: {
+          status: 403,
+          data: { error: { details: [{ reason: 'SERVICE_DISABLED' }] } },
+        },
+      };
+      const notFound404 = Object.assign(new Error('Not Found'), { code: '404' });
+      const unavailable503 = Object.assign(new Error('Service Unavailable'), { status: 503 });
+      const timeoutErr = new Error('ETIMEDOUT');
+
+      for (const [err, ExpectedError, expectedStatus] of [
+        [nonQuota403, GoogleDocsApiError, 403],
+        [serviceDisabled403, GoogleDocsApiError, 403],
+        [notFound404, GoogleDocsNotFoundError, 404],
+        [unavailable503, GoogleDocsApiError, 503],
+        [timeoutErr, GoogleDocsApiError, undefined],
+      ] as const) {
+        const mockGet = vi.fn().mockRejectedValue(err);
+        const mockSleep = vi.fn().mockResolvedValue(undefined);
+        const client = new GoogleDocsClient({
+          docs: { documents: { get: mockGet } } as unknown as docs_v1.Docs,
+          retryOptions: { maxRetries: 3, initialDelayMs: 10, sleep: mockSleep },
+        });
+
+        const caught = await client.extractDocumentFormFields('doc-perm-fail').catch((e: unknown) => e);
+        expect(caught).toBeInstanceOf(ExpectedError);
+        expect((caught as GoogleDocsApiError).statusCode).toBe(expectedStatus);
+        expect(mockGet).toHaveBeenCalledTimes(1);
+        expect(mockSleep).not.toHaveBeenCalled();
+      }
     });
   });
 });

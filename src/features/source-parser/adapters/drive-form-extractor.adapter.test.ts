@@ -12,6 +12,11 @@ import {
   PdfEncryptionError,
   PdfCorruptedError,
 } from '../../../infrastructure/pdf/errors';
+import {
+  GoogleDocsApiError,
+  GoogleDocsCorruptedError,
+  GoogleDocsNotFoundError,
+} from '../../../infrastructure/docs/errors';
 
 async function createStampedSubmittalPdf(options?: {
   response?: string;
@@ -258,6 +263,57 @@ describe('DriveFormExtractorAdapter', () => {
       })
     ).resolves.toEqual({ status: 'source_error' });
     expect(driveMediaClient.downloadFileMedia).not.toHaveBeenCalled();
+  });
+
+  it('classifies real GoogleDocsCorruptedError as corrupted and GoogleDocsApiError / GoogleDocsNotFoundError as source_error', async () => {
+    const driveMediaClient: DriveFormMediaClientPort = {
+      downloadFileMedia: vi.fn(),
+    };
+    const pdfProcessor: PdfFormExtractorPort = {
+      extractFormData: vi.fn(),
+    };
+    const googleDocsFormReader: GoogleDocsFormReaderPort = {
+      extractDocumentFormFields: vi
+        .fn()
+        .mockRejectedValueOnce(new GoogleDocsCorruptedError('Invalid body'))
+        .mockRejectedValueOnce(new GoogleDocsApiError('Rate limit exhausted', { statusCode: 429 }))
+        .mockRejectedValueOnce(new GoogleDocsApiError('Permission denied', { statusCode: 403 }))
+        .mockRejectedValueOnce(new GoogleDocsNotFoundError('Document not found')),
+    };
+
+    const adapter = new DriveFormExtractorAdapter({
+      driveMediaClient,
+      pdfProcessor,
+      googleDocsFormReader,
+    });
+
+    await expect(
+      adapter.extractFormFields({
+        id: 'gdoc-real-corrupt',
+        mimeType: 'application/vnd.google-apps.document',
+      })
+    ).resolves.toEqual({ status: 'corrupted' });
+
+    await expect(
+      adapter.extractFormFields({
+        id: 'gdoc-real-429',
+        mimeType: 'application/vnd.google-apps.document',
+      })
+    ).resolves.toEqual({ status: 'source_error' });
+
+    await expect(
+      adapter.extractFormFields({
+        id: 'gdoc-real-403',
+        mimeType: 'application/vnd.google-apps.document',
+      })
+    ).resolves.toEqual({ status: 'source_error' });
+
+    await expect(
+      adapter.extractFormFields({
+        id: 'gdoc-real-404',
+        mimeType: 'application/vnd.google-apps.document',
+      })
+    ).resolves.toEqual({ status: 'source_error' });
   });
 
   it('returns 0-widget no-op with zero I/O for unsupported MIME types', async () => {

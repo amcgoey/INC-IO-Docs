@@ -7,6 +7,7 @@ export {
 export type {
   GoogleDocsFormFieldValue,
   GoogleDocsFormExtractResult,
+  DocsRetryOptions,
   DocsOperationOptions,
   GoogleDocsClientOptions,
 } from './types';
