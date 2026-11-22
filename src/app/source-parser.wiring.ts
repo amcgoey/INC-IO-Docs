@@ -1,4 +1,5 @@
 import jsonLogic from 'json-logic-js';
+import { OAuth2Client } from 'google-auth-library';
 import {
   SourceParserService,
   DriveSourceContextAdapter,
@@ -19,6 +20,7 @@ import {
   type GoogleDocsFormReaderPort,
 } from '../features/source-parser';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
+import { GoogleDocsClient } from '../infrastructure/docs';
 import { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
@@ -50,6 +52,7 @@ export interface SourceParserWiringOptions {
   templateEvaluator?: unknown;
   formExtractor?: FormExtractorPort | undefined;
   googleDocsFormReader?: GoogleDocsFormReaderPort | undefined;
+  docsClient?: GoogleDocsClient | undefined;
 }
 
 function resolveFormTemplateParser(candidate: unknown): FormTemplateParserPort | undefined {
@@ -69,18 +72,24 @@ export interface SourceParserWiring {
   parseSchemaRegistry: ParseSchemaRegistryPort;
 }
 
+function createOAuth2Client(oauthCred: string): OAuth2Client {
+  const oauth2Client = new OAuth2Client();
+  oauth2Client.setCredentials({ access_token: oauthCred });
+  return oauth2Client;
+}
+
 function createGoogleDriveClient(
   options: SourceParserWiringOptions,
-  token?: string
+  auth?: OAuth2Client | string
 ): GoogleDriveClient {
   const driveAppConfigProvider: AppConfigurationProviderPort | undefined =
     options.configProvider && typeof options.configProvider.getDriveConfig === 'function'
       ? (options.configProvider as AppConfigurationProviderPort)
       : undefined;
 
-  if (token) {
+  if (auth) {
     return new GoogleDriveClient({
-      auth: token,
+      auth,
       configProvider: driveAppConfigProvider,
     });
   }
@@ -94,7 +103,7 @@ function createGoogleDriveClient(
 
 function resolveDriveClients(
   options: SourceParserWiringOptions,
-  token?: string
+  auth?: OAuth2Client | string
 ): {
   contextClient: DriveSourceContextClientPort;
   mediaClient: GoogleDriveClient | undefined;
@@ -102,14 +111,27 @@ function resolveDriveClients(
   if (options.driveContextClient) {
     return {
       contextClient: options.driveContextClient,
-      mediaClient: options.formExtractor ? undefined : createGoogleDriveClient(options, token),
+      mediaClient: options.formExtractor ? undefined : createGoogleDriveClient(options, auth),
     };
   }
-  const sharedDriveClient = createGoogleDriveClient(options, token);
+  const sharedDriveClient = createGoogleDriveClient(options, auth);
   return {
     contextClient: sharedDriveClient,
     mediaClient: sharedDriveClient,
   };
+}
+
+function resolveDocsFormReader(
+  options: SourceParserWiringOptions,
+  auth?: OAuth2Client | string
+): GoogleDocsFormReaderPort {
+  if (options.googleDocsFormReader) {
+    return options.googleDocsFormReader;
+  }
+  if (options.docsClient) {
+    return options.docsClient;
+  }
+  return new GoogleDocsClient(auth ? { auth } : {});
 }
 
 export function createSourceParserWiring(
@@ -161,16 +183,18 @@ export function createSourceParserWiring(
     },
   };
 
-  const buildFormExtractor = (mediaClient: GoogleDriveClient | undefined): FormExtractorPort => {
+  const buildFormExtractor = (
+    mediaClient: GoogleDriveClient | undefined,
+    auth?: OAuth2Client | string
+  ): FormExtractorPort => {
     if (options.formExtractor) {
       return options.formExtractor;
     }
+    const googleDocsFormReader = resolveDocsFormReader(options, auth);
     return new DriveFormExtractorAdapter({
       driveMediaClient: mediaClient!,
       pdfProcessor,
-      ...(options.googleDocsFormReader !== undefined
-        ? { googleDocsFormReader: options.googleDocsFormReader }
-        : {}),
+      googleDocsFormReader,
     });
   };
 
@@ -189,8 +213,9 @@ export function createSourceParserWiring(
     context: WorkspaceExecutionContext,
     overrides?: { canonicalOptionsProvider?: CanonicalOptionsProviderPort | undefined }
   ): SourceParserPort => {
-    const token = context.userOAuthToken;
-    const clients = resolveDriveClients(options, token);
+    const rawCredential = context.userOAuthToken ?? context.gmail?.accessToken;
+    const requestAuth = rawCredential ? createOAuth2Client(rawCredential) : undefined;
+    const clients = resolveDriveClients(options, requestAuth);
     const contextAdapter = new DriveSourceContextAdapter(clients.contextClient);
     const canonicalOptionsProvider =
       overrides?.canonicalOptionsProvider ??
@@ -199,7 +224,7 @@ export function createSourceParserWiring(
       parseSchemaRegistry,
       predicateEvaluator,
       formTemplateParser,
-      formExtractor: buildFormExtractor(clients.mediaClient),
+      formExtractor: buildFormExtractor(clients.mediaClient, requestAuth),
       ...(configPort !== undefined ? { configPort } : {}),
       ...(canonicalOptionsProvider !== undefined ? { canonicalOptionsProvider } : {}),
     });

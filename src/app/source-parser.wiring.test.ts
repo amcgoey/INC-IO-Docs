@@ -1,11 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
+import { google } from 'googleapis';
+import { OAuth2Client } from 'google-auth-library';
 import {
   createSourceParserWiring,
 } from './source-parser.wiring';
 import { SourceParserService } from '../features/source-parser/domain';
 import type { DriveSourceContextClientPort, FormExtractorPort } from '../features/source-parser';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
+import { GoogleDocsClient } from '../infrastructure/docs';
 
 describe('source-parser.wiring', () => {
   const dummySpaceType = {
@@ -340,5 +343,96 @@ describe('source-parser.wiring', () => {
     });
 
     await expect(fallbackWiring.parseSchemaRegistry.initialize()).resolves.toBeUndefined();
+  });
+
+  it('wires docsClient override and shares one per-request OAuth2Client across GoogleDriveClient and GoogleDocsClient from userOAuthToken ?? gmail.accessToken (#321)', async () => {
+    const mockManifestProvider = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./types/submittal-arch.json'],
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        key: 'submittal-arch',
+        documentSchema: {
+          fields: [
+            { key: 'section', type: 'string', pattern: '^\\d{6}$' },
+            { key: 'number', type: 'string', pattern: '^\\d{3,}$' },
+            { key: 'revision', type: 'string', minLength: 1, pattern: '^.*\\S+.*$' },
+          ],
+        },
+        documentFormSchema: {
+          fields: {
+            'Submittal No': { template: '{{section}}-{{number}}-{{revision}}' },
+          },
+        },
+        documentParseSchema: {
+          extractors: [{ source: 'form' }],
+        },
+      }),
+    };
+
+    // 1. docsClient override takes precedence even when per-request context has userOAuthToken
+    const mockDocsClient = {
+      extractDocumentFormFields: vi.fn().mockResolvedValue({
+        widgetCount: 1,
+        fields: { 'Submittal No': '071200-001-1' },
+      }),
+    } as unknown as GoogleDocsClient;
+    const driveContextMock: DriveSourceContextClientPort = {
+      getFile: vi.fn().mockResolvedValue({
+        id: 'gdoc-override-1',
+        name: 'Cover Sheet',
+        mimeType: 'application/vnd.google-apps.document',
+        parents: [],
+      }),
+    };
+    const overrideWiring = createSourceParserWiring({
+      spaceTypesProvider: mockSpaceTypesProvider,
+      manifestProvider: mockManifestProvider,
+      driveContextClient: driveContextMock,
+      docsClient: mockDocsClient,
+    });
+    await overrideWiring.parseSchemaRegistry.initialize();
+
+    const overrideRes = await overrideWiring
+      .createSourceParser({ userOAuthToken: 'ya29.override-cred' })
+      .extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: { items: [{ id: 'gdoc-override-1' }] },
+      });
+    expect(overrideRes.fields).toEqual({
+      section: '071200',
+      number: '001',
+      revision: '1',
+    });
+    expect(mockDocsClient.extractDocumentFormFields).toHaveBeenCalledWith('gdoc-override-1');
+
+    // 2. Without docsClient/driveContextClient overrides, createSourceParser builds ONE shared OAuth2Client per request
+    //    using userOAuthToken ?? gmail.accessToken
+    const driveSpy = vi.spyOn(google, 'drive');
+    const docsSpy = vi.spyOn(google, 'docs');
+    try {
+      const prodWiring = createSourceParserWiring({
+        spaceTypesProvider: mockSpaceTypesProvider,
+        manifestProvider: mockManifestProvider,
+      });
+      await prodWiring.parseSchemaRegistry.initialize();
+
+      driveSpy.mockClear();
+      docsSpy.mockClear();
+      prodWiring.createSourceParser({
+        gmail: { accessToken: 'ya29.gmail-fallback-cred' },
+      });
+
+      expect(driveSpy).toHaveBeenCalledTimes(1);
+      expect(docsSpy).toHaveBeenCalledTimes(1);
+      const driveAuth = driveSpy.mock.calls[0]?.[0]?.auth as unknown;
+      const docsAuth = docsSpy.mock.calls[0]?.[0]?.auth as unknown;
+      expect(driveAuth).toBeInstanceOf(OAuth2Client);
+      expect(docsAuth).toBe(driveAuth);
+      expect((docsAuth as OAuth2Client).credentials.access_token).toBe('ya29.gmail-fallback-cred');
+    } finally {
+      driveSpy.mockRestore();
+      docsSpy.mockRestore();
+    }
   });
 });

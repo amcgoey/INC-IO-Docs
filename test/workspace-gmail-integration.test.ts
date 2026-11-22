@@ -7190,6 +7190,148 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         ).toBe('RR');
       });
     });
+
+    describe('Ticket #321: Submittal Arch Google Doc N×2 pre-population in Gmail Google Drive URL vs Email Attachments mode', () => {
+      beforeEach(() => {
+        nock.disableNetConnect();
+      });
+
+      afterEach(() => {
+        nock.enableNetConnect();
+      });
+
+      it('authenticates via gmail.accessToken in Google Drive URL mode to extract N×2 Submittal No while making zero Docs calls in Email Attachments mode', async () => {
+        vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
+          id: 'drive-url-gdoc-321',
+          name: 'Waterproofing_Cover_Doc',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['folder-unfiled'],
+          driveId: 'space-projects-1',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+        vi.spyOn(GoogleDriveClient.prototype, 'listSharedDrives').mockResolvedValue({
+          drives: [{ id: 'space-projects-1', name: 'Active Projects' }],
+        });
+
+        vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string) => ({
+          id: threadId,
+          messages: [
+            {
+              id: `msg-${threadId}`,
+              threadId,
+              subject: '071200-001 Waterproofing Submittal',
+              date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+              from: 'Reviewer <pm@inc.nyc>',
+              to: 'James McGovern <jmcgovern@pavarini.com>',
+              labels: ['INBOX', 'SENT', 'Active Projects'],
+              plainTextBody: 'See linked Google Doc.',
+              inlineImages: [],
+              attachments: [
+                {
+                  partId: 'part-gdoc-321',
+                  attachmentId: 'att-gdoc-321',
+                  filename: '071200-001_Attachment.pdf',
+                  mimeType: 'application/pdf',
+                  size: 1024,
+                },
+              ],
+            },
+          ],
+        }));
+
+        const docsScope = nock('https://docs.googleapis.com', {
+          reqheaders: { authorization: 'Bearer ya29.gmail-only-cred' },
+        })
+          .get('/v1/documents/drive-url-gdoc-321')
+          .query({
+            includeTabsContent: 'true',
+            suggestionsViewMode: 'PREVIEW_WITHOUT_SUGGESTIONS',
+          })
+          .reply(200, {
+            documentId: 'drive-url-gdoc-321',
+            body: null,
+            tabs: [
+              {
+                documentTab: {
+                  body: {
+                    content: [
+                      {
+                        table: {
+                          rows: 1,
+                          columns: 2,
+                          tableRows: [
+                            {
+                              tableCells: [
+                                { content: [{ paragraph: { elements: [{ textRun: { content: 'Submittal No.\n' } }] } }] },
+                                { content: [{ paragraph: { elements: [{ textRun: { content: '071200-001-2\n' } }] } }] },
+                              ],
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            ],
+          });
+
+        // 1. Google Drive URL mode -> gmail populates contact/date/section/number; form advances to revision "2"
+        const urlRes = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/on-form-change',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            commonEventObject: {
+              hostApp: 'GMAIL',
+              parameters: { action: 'onFormChange', previousDriveUrl: '' },
+              formInputs: {
+                SelectFileSource: { stringInputs: { value: ['Google Drive URL'] } },
+                InputDriveURL: {
+                  stringInputs: { value: ['https://docs.google.com/document/d/drive-url-gdoc-321/edit'] },
+                },
+              },
+            },
+            gmail: {
+              messageId: 'msg-th-drive-url-321',
+              threadId: 'th-drive-url-321',
+              accessToken: 'ya29.gmail-only-cred',
+            },
+          },
+        });
+
+        expect(urlRes.statusCode).toBe(200);
+        const urlCard = (JSON.parse(urlRes.payload) as GoogleWorkspaceActionResponse).action?.navigations?.[0]?.updateCard;
+        const urlDocSec = urlCard?.sections.find((s) => s.header === 'Document Data');
+        const getText = (fieldKey: string) =>
+          urlDocSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName(fieldKey, 'submittal-arch'))
+            ?.textInput?.value;
+
+        expect(getText('contact')).toBe('PMG');
+        expect(getText('date')).toBe('261117');
+        expect(getText('section')).toBe('071200');
+        expect(getText('number')).toBe('001');
+        expect(getText('revision')).toBe('2');
+        expect(getText('title')).toBe('Waterproofing Submittal');
+        expect(docsScope.isDone()).toBe(true);
+
+        // 2. Email Attachments mode -> makes zero docs.googleapis.com calls (enforced by nock.disableNetConnect)
+        const attRes = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/gmail-contextual',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            gmail: {
+              messageId: 'msg-th-att-321',
+              threadId: 'th-att-321',
+              accessToken: 'ya29.gmail-only-cred',
+            },
+          },
+        });
+
+        expect(attRes.statusCode).toBe(200);
+      });
+    });
   });
 });
 
