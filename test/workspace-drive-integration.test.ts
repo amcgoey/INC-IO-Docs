@@ -3498,4 +3498,183 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(nock.isDone()).toBe(true);
     });
   });
+
+  describe('Ticket #316: Stamped Submittal Arch Date pre-population via formDate (format: "date")', () => {
+    async function buildArchPdfWithDate(options: {
+      dateText?: string | undefined;
+      selectedAction?: string | undefined;
+    }): Promise<Buffer> {
+      const doc = await PDFDocument.create();
+      doc.addPage([600, 400]);
+      const form = doc.getForm();
+      const radio = form.createRadioGroup('Submittal Response');
+      for (const [idx, label] of [
+        'No Exceptions Taken',
+        'No Objections As Corrected',
+        'Revise and Resubmit',
+        'Rejected',
+        'Not Reviewed',
+      ].entries()) {
+        radio.addOptionToPage(label, doc.getPage(0), {
+          x: 50,
+          y: 300 - idx * 20,
+          width: 12,
+          height: 12,
+        });
+      }
+      if (options.selectedAction !== undefined) {
+        radio.select(options.selectedAction);
+      }
+      if (options.dateText !== undefined) {
+        const dateField = form.createTextField('Date');
+        dateField.addToPage(doc.getPage(0), { x: 200, y: 300, width: 120, height: 20 });
+        dateField.setText(options.dateText);
+      }
+      return Buffer.from(await doc.save());
+    }
+
+    it('pre-populates date from stamped Date widget in varied human/ISO formats ahead of drive.modifiedTime and falls back to drive.modifiedTime for "DATE"', async () => {
+      const cases = [
+        { id: 'arch-316-iso', rawDate: '2026-11-21', expectedDate: '261121' },
+        { id: 'arch-316-us2', rawDate: '5/8/26', expectedDate: '260508' },
+        { id: 'arch-316-sept', rawDate: 'Sept 8, 2026', expectedDate: '260908' },
+        { id: 'arch-316-ord', rawDate: 'May 8th, 2026', expectedDate: '260508' },
+        { id: 'arch-316-dmy', rawDate: '8 May 2026', expectedDate: '260508' },
+        { id: 'arch-316-arch', rawDate: '2023-09-13', expectedDate: '230913' },
+        { id: 'arch-316-yymmdd', rawDate: '261121', expectedDate: '261121' },
+        { id: 'arch-316-placeholder', rawDate: 'DATE', expectedDate: '261118' },
+      ];
+
+      for (const tc of cases) {
+        const pdfBuffer = await buildArchPdfWithDate({
+          dateText: tc.rawDate,
+          selectedAction: tc.rawDate === 'DATE' ? undefined : 'No Exceptions Taken',
+        });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/drives')
+          .query(true)
+          .reply(200, {
+            drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+          });
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${tc.id}`)
+          .query((q) => q.alt !== 'media')
+          .reply(200, {
+            id: tc.id,
+            name: '071200-001_Waterproofing.pdf',
+            mimeType: 'application/pdf',
+            parents: ['projects-shared-drive-001'],
+            driveId: 'projects-shared-drive-001',
+            modifiedTime: '2026-11-18T15:00:00Z',
+          });
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${tc.id}`)
+          .query((q) => q.alt === 'media')
+          .reply(200, pdfBuffer, { 'content-type': 'application/pdf' });
+
+        const res = await app.server.inject({
+          method: 'POST',
+          url: '/workspace/drive-items-selected',
+          headers: { authorization: 'Bearer valid-jwt-token' },
+          payload: {
+            authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+            drive: { selectedItems: [{ id: tc.id, title: '071200-001_Waterproofing.pdf' }] },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const card = JSON.parse(res.payload).action.navigations[0].pushCard;
+        const docDataSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+        const dateValue = docDataSec.widgets
+          .find(
+            (w: { textInput?: { name: string } }) =>
+              w.textInput?.name === getDocumentInfoWidgetName('date', 'submittal-arch')
+          )
+          ?.textInput?.value;
+        expect(dateValue, tc.rawDate).toBe(tc.expectedDate);
+        expect(nock.isDone()).toBe(true);
+      }
+    });
+
+    it('falls through [Unfillable_DATE.pdf, Stamped_Cover.pdf] when first PDF has placeholder "DATE"', async () => {
+      const unfillableBuffer = await buildArchPdfWithDate({ dateText: 'DATE' });
+      const stampedBuffer = await buildArchPdfWithDate({
+        dateText: 'Sept 8, 2026',
+        selectedAction: 'Revise and Resubmit',
+      });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/drives')
+        .query(true)
+        .reply(200, {
+          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/unfillable-316')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'unfillable-316',
+          name: '071200-001_Waterproofing.pdf',
+          mimeType: 'application/pdf',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/unfillable-316')
+        .query((q) => q.alt === 'media')
+        .reply(200, unfillableBuffer, { 'content-type': 'application/pdf' });
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/stamped-316')
+        .query((q) => q.alt !== 'media')
+        .reply(200, {
+          id: 'stamped-316',
+          name: 'Stamped_Cover.pdf',
+          mimeType: 'application/pdf',
+          parents: ['projects-shared-drive-001'],
+          driveId: 'projects-shared-drive-001',
+          modifiedTime: '2026-11-18T15:00:00Z',
+        });
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/stamped-316')
+        .query((q) => q.alt === 'media')
+        .reply(200, stampedBuffer, { 'content-type': 'application/pdf' });
+
+      const res = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [
+              { id: 'unfillable-316', title: '071200-001_Waterproofing.pdf' },
+              { id: 'stamped-316', title: 'Stamped_Cover.pdf' },
+            ],
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const card = JSON.parse(res.payload).action.navigations[0].pushCard;
+      const docDataSec = card.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      const dateValue = docDataSec.widgets
+        .find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('date', 'submittal-arch')
+        )
+        ?.textInput?.value;
+      const selectedAction = docDataSec.widgets
+        .find(
+          (w: { selectionInput?: { name: string } }) =>
+            w.selectionInput?.name === getDocumentInfoWidgetName('action', 'submittal-arch')
+        )
+        ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
+      expect(dateValue).toBe('260908');
+      expect(selectedAction).toBe('RR');
+      expect(nock.isDone()).toBe(true);
+    });
+  });
 });

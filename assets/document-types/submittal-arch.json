@@ -228,6 +228,10 @@
         "valueMap": {
           "RR": "Revise and Resubmit"
         }
+      },
+      "Date": {
+        "template": "{{date}}",
+        "format": "date"
       }
     }
   },

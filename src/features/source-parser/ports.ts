@@ -143,6 +143,7 @@ export const FieldCandidateNormalizeSchema = Type.Union([
   Type.Literal('compactAlnum'),
   Type.Literal('revision'),
   Type.Literal('yymmdd'),
+  Type.Literal('formDate'),
   Type.Literal('cleanFilenameText'),
 ]);
 export type FieldCandidateNormalize = Static<typeof FieldCandidateNormalizeSchema>;

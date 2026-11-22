@@ -1163,6 +1163,10 @@ describe('ParseSchemaRegistryAdapter', () => {
             'Submittal Response': {
               template: '{{action.suffix}}',
             },
+            Date: {
+              template: '{{date}}',
+              format: 'date',
+            },
           },
         },
         documentParseSchema: {
