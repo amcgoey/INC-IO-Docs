@@ -360,6 +360,9 @@ describe('DocumentType JSON files schema validation', () => {
 
       expect(registry.getDocumentFormSchema('submittal-arch')).toEqual({
         fields: {
+          'Submittal No': {
+            template: '{{section}}-{{number}}-{{revision}}',
+          },
           'Submittal Response': {
             template: '{{action.name}}',
             valueMap: { RR: 'Revise and Resubmit' },

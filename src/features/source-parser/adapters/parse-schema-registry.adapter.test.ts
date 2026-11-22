@@ -1221,6 +1221,7 @@ describe('ParseSchemaRegistryAdapter', () => {
       ['format: date on multi-token template', { fields: { Foo: { template: '{{section}}-{{number}}', format: 'date' } } }],
       ['valueMap on multi-token template', { fields: { Foo: { template: '{{specTag.key}}-{{revision}}', valueMap: { CG104: 'Chair' } } } }],
       ['unsupported multi-token field type (title)', { fields: { Foo: { template: '{{section}}-{{title}}' } } }],
+      ['unsupported multi-token field type (date)', { fields: { Foo: { template: '{{section}}-{{date}}' } } }],
       ['valueMap on non-LookupField', { fields: { Foo: { template: '{{title}}', valueMap: { A: 'Alpha' } } } }],
       ['whitespace-only valueMap key', { fields: { Foo: { template: '{{action.name}}', valueMap: { '   ': 'Alpha' } } } }],
       ['whitespace-only valueMap value', { fields: { Foo: { template: '{{action.name}}', valueMap: { RR: '   ' } } } }],
@@ -1307,6 +1308,52 @@ describe('ParseSchemaRegistryAdapter', () => {
         },
       });
       await expect(adapter.initialize()).rejects.toThrow(/Invalid JsonLogic AST/i);
+    });
+
+    it('accepts number.pattern "^\\\\d{3,}$" and rejects fixed 4-digit "^\\\\d{4}$" in multi-token templates (#317)', async () => {
+      const validAdapter = new ParseSchemaRegistryAdapter(
+        {
+          getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-doc.json'] }),
+          readParsedSchema: vi.fn().mockResolvedValue({
+            key: 'test-doc',
+            documentSchema: {
+              ...baseDocSchema,
+              fields: baseDocSchema.fields.map((f) =>
+                f.key === 'number' ? { ...f, pattern: '^\\d{3,}$' } : f
+              ),
+            },
+            documentFormSchema: {
+              fields: {
+                'Submittal No': { template: '{{section}}-{{number}}-{{revision}}' },
+              },
+            },
+          }),
+        },
+        formTemplateParser
+      );
+      await expect(validAdapter.initialize()).resolves.toBeUndefined();
+
+      const invalidAdapter = new ParseSchemaRegistryAdapter(
+        {
+          getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-doc.json'] }),
+          readParsedSchema: vi.fn().mockResolvedValue({
+            key: 'test-doc',
+            documentSchema: {
+              ...baseDocSchema,
+              fields: baseDocSchema.fields.map((f) =>
+                f.key === 'number' ? { ...f, pattern: '^\\d{4}$' } : f
+              ),
+            },
+            documentFormSchema: {
+              fields: {
+                'Submittal No': { template: '{{section}}-{{number}}-{{revision}}' },
+              },
+            },
+          }),
+        },
+        formTemplateParser
+      );
+      await expect(invalidAdapter.initialize()).rejects.toThrow(/unsupported field "number"/i);
     });
   });
 });

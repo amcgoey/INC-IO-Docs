@@ -123,6 +123,185 @@ interface FormFieldEvaluatorHelpers {
   now?: (() => Date) | undefined;
 }
 
+const SIX_DIGIT_CODE_TOKEN_REGEX = /^(?:\d{6}|\d{2}([\s._-])\d{2}\1\d{2})(?=$|[\s_./-])/;
+const LEADING_FORM_SEPARATOR_REGEX = /^[\s_./-]+/;
+const EXPLICIT_REVISION_PREFIX_REGEX =
+  /^(?:(?:v|ver\.?|version)[\s_.-]*\d|rev(?:ision)?\.?(?:[\s_.-]*\d|[\s_.-]+[A-Za-z]\b)|r(?:[\s_.]*\d|[\s_.-]+[A-Za-z]\b))/i;
+const OPTIONAL_SUBMITTAL_NUMBER_REGEX =
+  /^(?:(?:submittal(?:[\s_.-]+no\.?)?|sub\.?|no\.?)[\s_.:-]*#?[\s_.-]*|#[\s_.-]*)?(\d+)(?=$|[\s_./-])/i;
+
+function consumeSixDigitCodeToken(
+  remaining: string,
+  targetField: ParseTargetDocumentField,
+  targetSchema: ParseTargetDocumentSchema | undefined,
+  timeZone: string | undefined,
+  helpers: FormFieldEvaluatorHelpers
+): { value: string; nextRemaining: string } | undefined {
+  const match = remaining.match(SIX_DIGIT_CODE_TOKEN_REGEX);
+  if (!match) {
+    return undefined;
+  }
+  const normalized = helpers.applyFieldCandidateNormalize(
+    match[0],
+    'digits6',
+    timeZone,
+    helpers.now
+  );
+  const validated = helpers.validateCandidateWithTuple(normalized, targetField, targetSchema);
+  if (!validated) {
+    return undefined;
+  }
+  const nextRemaining = remaining
+    .slice(match[0].length)
+    .replace(LEADING_FORM_SEPARATOR_REGEX, '');
+  return { value: validated.value, nextRemaining };
+}
+
+function consumeNumericSequenceToken(
+  remaining: string,
+  matchedSixDigitInField: boolean,
+  targetField: ParseTargetDocumentField,
+  targetSchema: ParseTargetDocumentSchema | undefined,
+  timeZone: string | undefined,
+  helpers: FormFieldEvaluatorHelpers
+): { value: string; nextRemaining: string } | undefined {
+  if (matchedSixDigitInField && EXPLICIT_REVISION_PREFIX_REGEX.test(remaining)) {
+    return undefined;
+  }
+  const match = remaining.match(OPTIONAL_SUBMITTAL_NUMBER_REGEX);
+  if (!match || match[1] === undefined) {
+    return undefined;
+  }
+  const afterNum = remaining
+    .slice(match[0].length)
+    .replace(LEADING_FORM_SEPARATOR_REGEX, '');
+  if (!matchedSixDigitInField && afterNum.length > 0) {
+    const trailingRevision = helpers.applyFieldCandidateNormalize(
+      afterNum,
+      'revision',
+      timeZone,
+      helpers.now
+    );
+    if (trailingRevision === undefined) {
+      return undefined;
+    }
+  }
+  const normalized = helpers.applyFieldCandidateNormalize(
+    match[1],
+    'pad3',
+    timeZone,
+    helpers.now
+  );
+  const validated = helpers.validateCandidateWithTuple(normalized, targetField, targetSchema);
+  if (!validated) {
+    return undefined;
+  }
+  return { value: validated.value, nextRemaining: afterNum };
+}
+
+function resolveRevisionToken(
+  remaining: string,
+  targetField: ParseTargetDocumentField,
+  targetSchema: ParseTargetDocumentSchema | undefined,
+  timeZone: string | undefined,
+  helpers: FormFieldEvaluatorHelpers
+): string | undefined {
+  const stripped = remaining.replace(LEADING_FORM_SEPARATOR_REGEX, '');
+  if (stripped.length === 0) {
+    return undefined;
+  }
+  const normalized = helpers.applyFieldCandidateNormalize(
+    stripped,
+    'revision',
+    timeZone,
+    helpers.now
+  );
+  const validated = helpers.validateCandidateWithTuple(normalized, targetField, targetSchema);
+  return validated?.value;
+}
+
+function evaluateMultiTokenBinding(params: {
+  parsed: ParsedFormTemplate;
+  rawCandidate: string;
+  targetSchema: ParseTargetDocumentSchema | undefined;
+  populatedFields: Record<string, unknown>;
+  timeZone: string | undefined;
+  helpers: FormFieldEvaluatorHelpers;
+}): boolean {
+  const { parsed, rawCandidate, targetSchema, populatedFields, timeZone, helpers } = params;
+  let remaining = rawCandidate.trim();
+  let matchedSixDigitInField = false;
+  let populatedAny = false;
+
+  for (const token of parsed.tokens) {
+    if (remaining.length === 0) {
+      break;
+    }
+
+    const targetField = targetSchema?.fields.find((f) => f.key === token.fieldKey);
+    if (!targetField || targetField.linkedField) {
+      continue;
+    }
+
+    if (targetField.pattern === '^\\d{6}$') {
+      const matched = consumeSixDigitCodeToken(
+        remaining,
+        targetField,
+        targetSchema,
+        timeZone,
+        helpers
+      );
+      if (matched) {
+        matchedSixDigitInField = true;
+        remaining = matched.nextRemaining;
+        if (!(token.fieldKey in populatedFields)) {
+          populatedFields[token.fieldKey] = matched.value;
+          populatedAny = true;
+        }
+      }
+      continue;
+    }
+
+    if (/^\^\\d\{3,?\}\$$/.test(targetField.pattern ?? '')) {
+      const matched = consumeNumericSequenceToken(
+        remaining,
+        matchedSixDigitInField,
+        targetField,
+        targetSchema,
+        timeZone,
+        helpers
+      );
+      if (matched) {
+        remaining = matched.nextRemaining;
+        if (!(token.fieldKey in populatedFields)) {
+          populatedFields[token.fieldKey] = matched.value;
+          populatedAny = true;
+        }
+      }
+      continue;
+    }
+
+    if (token.fieldKey === 'revision') {
+      const revValue = resolveRevisionToken(
+        remaining,
+        targetField,
+        targetSchema,
+        timeZone,
+        helpers
+      );
+      if (revValue !== undefined) {
+        if (!(token.fieldKey in populatedFields)) {
+          populatedFields[token.fieldKey] = revValue;
+          populatedAny = true;
+        }
+        remaining = '';
+      }
+    }
+  }
+
+  return populatedAny;
+}
+
 function coerceFormFieldValue(raw: FormFieldValue | undefined): string[] {
   if (raw === undefined || raw === false) {
     return [];
@@ -413,7 +592,30 @@ export async function extractFormExtractorFields(params: {
         continue;
       }
 
-      if (parsed.tokens.length !== 1) {
+      if (parsed.tokens.length > 1) {
+        const hasUnpopulatedToken = parsed.tokens.some((t) => {
+          const fld = targetSchema?.fields.find((f) => f.key === t.fieldKey);
+          return fld && !fld.linkedField && !(t.fieldKey in populatedFields);
+        });
+        if (!hasUnpopulatedToken) {
+          continue;
+        }
+
+        for (const rawCandidate of candidates) {
+          if (
+            evaluateMultiTokenBinding({
+              parsed,
+              rawCandidate,
+              targetSchema,
+              populatedFields,
+              timeZone,
+              helpers,
+            })
+          ) {
+            populatedAnyInItem = true;
+            break;
+          }
+        }
         continue;
       }
 
