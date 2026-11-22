@@ -58,6 +58,35 @@ const DIVIDER_PUNCTUATION_REGEX = /^[–—-]+$/;
 type GoogleDocsTable = NonNullable<GoogleDocsStructuralElement['table']>;
 type GoogleDocsTableRow = NonNullable<GoogleDocsTable['tableRows']>[number];
 type GoogleDocsTableCell = NonNullable<GoogleDocsTableRow['tableCells']>[number];
+type GoogleDocsParagraph = NonNullable<GoogleDocsStructuralElement['paragraph']>;
+type GoogleDocsParagraphElement = NonNullable<GoogleDocsParagraph['elements']>[number];
+type GoogleDocsDropdownElement = NonNullable<GoogleDocsParagraphElement['dropdown']>;
+type GoogleDocsDropdownDefinition = NonNullable<GoogleDocsDocumentTab['dropdownDefinitions']>[string];
+
+const UNSET_DROPDOWN_GLYPH_REGEX = /^(?:☐|⬚|□|\[\s*\])$/;
+const UNSET_DROPDOWN_PROMPT_REGEX = /^(?:select\b|choose\b|[-—–]+$)/i;
+
+const UNCHECKED_TOKENS = new Set(['', '☐', '⬚', '□', '[ ]', '[  ]', '()', '( )']);
+const CHECKED_TOKENS = new Set(['☑', '☒', '✓', '✔', '✕', '✖', 'x', 'X', '[x]', '[X]', '(x)', '(X)']);
+const EXPLICIT_CHECKBOX_MARKERS = new Set([
+  '☐',
+  '⬚',
+  '□',
+  '[ ]',
+  '[  ]',
+  '()',
+  '( )',
+  '☑',
+  '☒',
+  '✓',
+  '✔',
+  '✕',
+  '✖',
+  '[x]',
+  '[X]',
+  '(x)',
+  '(X)',
+]);
 
 export function normalizeFormLabelKey(raw: string): string {
   return raw.replace(/\s+/g, ' ').trim().replace(/[.:]+$/, '').trim();
@@ -70,6 +99,52 @@ function isPlausibleFieldLabel(key: string): boolean {
     !PURE_HANDLEBARS_PLACEHOLDER_REGEX.test(key) &&
     !DIVIDER_PUNCTUATION_REGEX.test(key)
   );
+}
+
+function normalizeStaticSingleLineLabel(raw: string | null | undefined): string | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  if (raw.includes('\ue907') || /[\r\n]/.test(raw)) return undefined;
+  const normalized = normalizeFormLabelKey(raw);
+  return isPlausibleFieldLabel(normalized) ? normalized : undefined;
+}
+
+function resolveDropdownDisplayText(
+  dropdown: GoogleDocsDropdownElement,
+  dropdownDefs: Record<string, GoogleDocsDropdownDefinition>
+): string {
+  const props = dropdown.dropdownProperties;
+  const rawDisplay = props?.displayValue;
+  if (rawDisplay !== null && rawDisplay !== undefined && rawDisplay !== '') {
+    return rawDisplay;
+  }
+  const def = props?.dropdownDefinitionId ? dropdownDefs[props.dropdownDefinitionId] : undefined;
+  if (props?.selectedOptionId && def?.dropdownDefinitionProperties?.options) {
+    const matchedOption = def.dropdownDefinitionProperties.options.find(
+      (opt) => opt.optionId === props.selectedOptionId
+    );
+    if (matchedOption?.displayValue !== null && matchedOption?.displayValue !== undefined) {
+      return matchedOption.displayValue;
+    }
+  }
+  return '';
+}
+
+function isUnsetDropdownOption(
+  def: GoogleDocsDropdownDefinition | undefined,
+  selectedOptionId: string | null | undefined,
+  displayValue: string
+): boolean {
+  const trimmed = displayValue.trim();
+  if (!trimmed) return true;
+  if (UNSET_DROPDOWN_GLYPH_REGEX.test(trimmed)) {
+    return true;
+  }
+  const firstOptId = def?.dropdownDefinitionProperties?.options?.[0]?.optionId;
+  const isFirstOrAbsent =
+    !def ||
+    !selectedOptionId ||
+    (firstOptId !== null && firstOptId !== undefined && selectedOptionId === firstOptId);
+  return isFirstOrAbsent && UNSET_DROPDOWN_PROMPT_REGEX.test(trimmed);
 }
 
 function extractStaticLabel(cell: GoogleDocsTableCell): string | undefined {
@@ -105,14 +180,24 @@ function extractStaticLabel(cell: GoogleDocsTableCell): string | undefined {
   return isPlausibleFieldLabel(normalized) ? normalized : undefined;
 }
 
-function serializeCellText(cell: GoogleDocsTableCell): string | undefined {
+function serializeCellElements(
+  cell: GoogleDocsTableCell,
+  dropdownDefs: Record<string, GoogleDocsDropdownDefinition>
+): string | undefined {
   const lines: string[] = [];
 
   for (const contentEl of cell.content ?? []) {
     if (!contentEl.paragraph) continue;
     let paraStr = '';
     for (const pe of contentEl.paragraph.elements ?? []) {
-      if (pe.textRun?.content) {
+      if (pe.dropdown) {
+        const props = pe.dropdown.dropdownProperties;
+        const def = props?.dropdownDefinitionId ? dropdownDefs[props.dropdownDefinitionId] : undefined;
+        const display = resolveDropdownDisplayText(pe.dropdown, dropdownDefs);
+        if (!isUnsetDropdownOption(def, props?.selectedOptionId, display)) {
+          paraStr += display.trim();
+        }
+      } else if (pe.textRun?.content) {
         paraStr += pe.textRun.content.replace(/\ue907/g, '').replace(/\n$/, '');
       }
     }
@@ -126,9 +211,168 @@ function serializeCellText(cell: GoogleDocsTableCell): string | undefined {
   return joined;
 }
 
+function classifyParagraphHeading(
+  paragraph: GoogleDocsParagraph
+): { kind: 'blank' } | { kind: 'heading'; label: string } | { kind: 'reset' } {
+  let rawParaText = '';
+  for (const pe of paragraph.elements ?? []) {
+    if (pe.dropdown || pe.dateElement || pe.person) {
+      return { kind: 'reset' };
+    }
+    if (pe.textRun?.content) {
+      if (pe.textRun.content.includes('\ue907')) {
+        return { kind: 'reset' };
+      }
+      rawParaText += pe.textRun.content;
+    }
+  }
+
+  const strippedPara = rawParaText.replace(/\n$/, '');
+  if (/[\r\n]/.test(strippedPara)) {
+    return { kind: 'reset' };
+  }
+  if (strippedPara.trim() === '') {
+    return { kind: 'blank' };
+  }
+
+  const normalized = normalizeFormLabelKey(strippedPara);
+  return isPlausibleFieldLabel(normalized)
+    ? { kind: 'heading', label: normalized }
+    : { kind: 'reset' };
+}
+
+function classifyCheckboxCell(
+  cell: GoogleDocsTableCell,
+  dropdownDefs: Record<string, GoogleDocsDropdownDefinition>
+): { state: 'checked' | 'unchecked' | 'not_checkbox'; hasExplicitMarkerOrDropdown: boolean } {
+  let hasDropdown = false;
+  const lines: string[] = [];
+
+  for (const contentEl of cell.content ?? []) {
+    if (!contentEl.paragraph) {
+      return { state: 'not_checkbox', hasExplicitMarkerOrDropdown: false };
+    }
+    let paraStr = '';
+    for (const pe of contentEl.paragraph.elements ?? []) {
+      if (pe.dateElement || pe.person) {
+        return { state: 'not_checkbox', hasExplicitMarkerOrDropdown: false };
+      }
+      if (pe.dropdown) {
+        hasDropdown = true;
+        paraStr += resolveDropdownDisplayText(pe.dropdown, dropdownDefs).trim();
+      } else if (pe.textRun?.content) {
+        if (pe.textRun.content.includes('\ue907')) {
+          return { state: 'not_checkbox', hasExplicitMarkerOrDropdown: false };
+        }
+        paraStr += pe.textRun.content.replace(/\n$/, '');
+      }
+    }
+    lines.push(paraStr);
+  }
+
+  const trimmed = lines.join('\n').trim();
+  const hasExplicitMarkerOrDropdown = hasDropdown || EXPLICIT_CHECKBOX_MARKERS.has(trimmed);
+
+  if (UNCHECKED_TOKENS.has(trimmed)) {
+    return { state: 'unchecked', hasExplicitMarkerOrDropdown };
+  }
+  if (CHECKED_TOKENS.has(trimmed)) {
+    return { state: 'checked', hasExplicitMarkerOrDropdown };
+  }
+  return { state: 'not_checkbox', hasExplicitMarkerOrDropdown: false };
+}
+
+function walkStructuralElementsForDropdowns(
+  elements: GoogleDocsStructuralElement[] | null | undefined,
+  visit: (dropdown: GoogleDocsDropdownElement) => void
+): void {
+  for (const el of elements ?? []) {
+    if (el.paragraph) {
+      for (const pe of el.paragraph.elements ?? []) {
+        if (pe.dropdown) {
+          visit(pe.dropdown);
+        }
+      }
+    }
+    if (el.table) {
+      for (const row of el.table.tableRows ?? []) {
+        for (const cell of row.tableCells ?? []) {
+          walkStructuralElementsForDropdowns(cell.content, visit);
+        }
+      }
+    }
+  }
+}
+
 function isUnmergedCell(cell: GoogleDocsTableCell | undefined): cell is GoogleDocsTableCell {
   if (!cell) return false;
   return (cell.tableCellStyle?.columnSpan ?? 1) === 1 && (cell.tableCellStyle?.rowSpan ?? 1) === 1;
+}
+
+interface ParsedCheckboxOptionRow {
+  state: 'checked' | 'unchecked';
+  optionLabel: string;
+  c0: GoogleDocsTableCell;
+}
+
+function parseCheckboxOptionTable(
+  rows: GoogleDocsTableRow[],
+  dropdownDefs: Record<string, GoogleDocsDropdownDefinition>
+): ParsedCheckboxOptionRow[] | undefined {
+  const optionRows: ParsedCheckboxOptionRow[] = [];
+  let hasExplicitMarkerOrDropdown = false;
+
+  for (const row of rows) {
+    const cells = row.tableCells ?? [];
+    const c0 = cells[0];
+    if (!c0) return undefined;
+
+    if ((c0.tableCellStyle?.columnSpan ?? 1) > 1) {
+      // Ignore full-row merged disclaimer banners
+      continue;
+    }
+
+    const c1 = cells[1];
+    if (
+      !c1 ||
+      (c0.tableCellStyle?.columnSpan ?? 1) !== 1 ||
+      (c0.tableCellStyle?.rowSpan ?? 1) !== 1 ||
+      (c1.tableCellStyle?.columnSpan ?? 1) !== 1
+    ) {
+      return undefined;
+    }
+
+    const optionLabel = extractStaticLabel(c1);
+    if (optionLabel === undefined) return undefined;
+
+    const classification = classifyCheckboxCell(c0, dropdownDefs);
+    if (classification.state === 'not_checkbox') return undefined;
+
+    if (classification.hasExplicitMarkerOrDropdown) {
+      hasExplicitMarkerOrDropdown = true;
+    }
+    optionRows.push({ state: classification.state, optionLabel, c0 });
+  }
+
+  return optionRows.length >= 2 && hasExplicitMarkerOrDropdown ? optionRows : undefined;
+}
+
+function parseKeyValueTable(
+  rows: GoogleDocsTableRow[]
+): Array<{ label: string; valueCell: GoogleDocsTableCell }> | undefined {
+  const parsedRows: Array<{ label: string; valueCell: GoogleDocsTableCell }> = [];
+  for (const row of rows) {
+    const cells = row.tableCells ?? [];
+    const col0 = cells[0];
+    const col1 = cells[1];
+    if (cells.length !== 2 || !isUnmergedCell(col0) || !isUnmergedCell(col1)) {
+      return undefined;
+    }
+    const label = extractStaticLabel(col0);
+    if (label === undefined) return undefined;
+    parsedRows.push({ label, valueCell: col1 });
+  }
+  return parsedRows;
 }
 
 function validateGoogleDocsDocument(input: unknown): GoogleDocsDocument {
@@ -205,39 +449,113 @@ export class GoogleDocsClient {
 
     const fieldMap = new Map<string, GoogleDocsFormFieldValue>();
     const ambiguousSet = new Set<string>();
+    const capturedDropdownIds = new Set<string>();
+    const capturedDropdowns = new WeakSet<GoogleDocsDropdownElement>();
     let widgetCount = 0;
 
+    const markDropdownCaptured = (dropdown: GoogleDocsDropdownElement): void => {
+      capturedDropdowns.add(dropdown);
+      if (dropdown.dropdownId) {
+        capturedDropdownIds.add(dropdown.dropdownId);
+      }
+    };
+
+    const isDropdownCaptured = (dropdown: GoogleDocsDropdownElement): boolean => {
+      if (capturedDropdowns.has(dropdown)) return true;
+      if (dropdown.dropdownId && capturedDropdownIds.has(dropdown.dropdownId)) return true;
+      return false;
+    };
+
+    const markCellDropdownsCaptured = (cell: GoogleDocsTableCell): void => {
+      walkStructuralElementsForDropdowns(cell.content, markDropdownCaptured);
+    };
+
     for (const tab of docTabs) {
+      const dropdownDefs = tab.dropdownDefinitions ?? {};
+      let precedingHeadingLabel: string | undefined;
+      let blankSpacerCount = 0;
+
       for (const el of tab.body?.content ?? []) {
-        if (!el.table) continue;
+        if (el.sectionBreak || el.tableOfContents) {
+          precedingHeadingLabel = undefined;
+          blankSpacerCount = 0;
+          continue;
+        }
+
+        if (el.paragraph) {
+          const state = classifyParagraphHeading(el.paragraph);
+          if (state.kind === 'heading') {
+            precedingHeadingLabel = state.label;
+            blankSpacerCount = 0;
+          } else if (state.kind === 'blank') {
+            if (precedingHeadingLabel !== undefined) {
+              blankSpacerCount += 1;
+              if (blankSpacerCount > 2) {
+                precedingHeadingLabel = undefined;
+                blankSpacerCount = 0;
+              }
+            }
+          } else {
+            precedingHeadingLabel = undefined;
+            blankSpacerCount = 0;
+          }
+          continue;
+        }
+
+        if (!el.table) {
+          precedingHeadingLabel = undefined;
+          blankSpacerCount = 0;
+          continue;
+        }
+
+        const activeHeadingLabel = precedingHeadingLabel;
+        precedingHeadingLabel = undefined;
+        blankSpacerCount = 0;
+
         const rows = el.table.tableRows ?? [];
         const rowCount = rows.length;
         const colCount = el.table.columns ?? rows[0]?.tableCells?.length ?? 0;
 
+        // Pattern 1: Heading + Checkbox Option Table (evaluated ahead of Pattern 4)
+        if (activeHeadingLabel !== undefined && rowCount >= 2 && colCount >= 2) {
+          const optionRows = parseCheckboxOptionTable(rows, dropdownDefs);
+          if (optionRows) {
+            for (const optRow of optionRows) {
+              markCellDropdownsCaptured(optRow.c0);
+            }
+            widgetCount += 1;
+            const checkedLabels = optionRows
+              .filter((optRow) => optRow.state === 'checked')
+              .map((optRow) => optRow.optionLabel);
+
+            if (checkedLabels.length === 1) {
+              const checkedLabel = checkedLabels[0]!;
+              if (!ambiguousSet.has(activeHeadingLabel)) {
+                if (fieldMap.has(activeHeadingLabel)) {
+                  if (fieldMap.get(activeHeadingLabel) !== checkedLabel) {
+                    fieldMap.delete(activeHeadingLabel);
+                    ambiguousSet.add(activeHeadingLabel);
+                  }
+                } else {
+                  fieldMap.set(activeHeadingLabel, checkedLabel);
+                }
+              }
+            } else if (checkedLabels.length >= 2) {
+              fieldMap.delete(activeHeadingLabel);
+              ambiguousSet.add(activeHeadingLabel);
+            }
+            continue;
+          }
+        }
+
         // Pattern 4: N x 2 Key/Value Form Tables (e.g. 1x2 "Submittal No.")
         if (colCount === 2 && rowCount >= 1) {
-          const parsedRows: Array<{ label: string; valueCell: GoogleDocsTableCell }> = [];
-          let validKvTable = true;
-          for (const row of rows) {
-            const cells = row.tableCells ?? [];
-            const col0 = cells[0];
-            const col1 = cells[1];
-            if (cells.length !== 2 || !isUnmergedCell(col0) || !isUnmergedCell(col1)) {
-              validKvTable = false;
-              break;
-            }
-            const label = extractStaticLabel(col0);
-            if (label === undefined) {
-              validKvTable = false;
-              break;
-            }
-            parsedRows.push({ label, valueCell: col1 });
-          }
-
-          if (validKvTable) {
+          const parsedRows = parseKeyValueTable(rows);
+          if (parsedRows) {
             for (const { label, valueCell } of parsedRows) {
               widgetCount += 1;
-              const val = serializeCellText(valueCell);
+              markCellDropdownsCaptured(valueCell);
+              const val = serializeCellElements(valueCell, dropdownDefs);
               if (val !== undefined && !fieldMap.has(label) && !ambiguousSet.has(label)) {
                 fieldMap.set(label, val);
               }
@@ -245,6 +563,26 @@ export class GoogleDocsClient {
           }
         }
       }
+
+      // Pattern 5: Standalone Dropdown Smart Chips (outside captured table cells)
+      walkStructuralElementsForDropdowns(tab.body?.content, (dropdown) => {
+        if (isDropdownCaptured(dropdown)) return;
+        const props = dropdown.dropdownProperties;
+        const def = props?.dropdownDefinitionId
+          ? dropdownDefs[props.dropdownDefinitionId]
+          : undefined;
+        const label = normalizeStaticSingleLineLabel(def?.dropdownDefinitionProperties?.title);
+        if (label === undefined) return;
+        markDropdownCaptured(dropdown);
+        widgetCount += 1;
+        const displayText = resolveDropdownDisplayText(dropdown, dropdownDefs);
+        if (!isUnsetDropdownOption(def, props?.selectedOptionId, displayText)) {
+          const trimmedVal = displayText.trim();
+          if (!fieldMap.has(label) && !ambiguousSet.has(label)) {
+            fieldMap.set(label, trimmedVal);
+          }
+        }
+      });
     }
 
     const fields: Record<string, GoogleDocsFormFieldValue> = {};
