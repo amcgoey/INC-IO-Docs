@@ -3689,6 +3689,100 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         expect(renderResult.formData?.SelectDocumentType).toBe('submittal-arch');
       });
 
+      it('renders all selectionState.files with selected: true on Drive initial load when Pass 1 infers spaceType + space + documentType without synthetically populating formData.SelectFiles', async () => {
+        const mockSourceParser: UiProcessSourceParserPort = {
+          inferRouting: vi.fn().mockResolvedValue({
+            spaceTypeId: 'projects',
+            spaceIdOrName: 'drive-alpha-id',
+            documentTypeKey: 'submittal-arch',
+          }),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: multiSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          sourceParser: mockSourceParser,
+        });
+
+        const context: UiProcessEventContext = {
+          selectedItems: [
+            { id: 'file-1', title: '071200-001_Waterproofing.pdf', mimeType: 'application/pdf' },
+            { id: 'file-2', title: 'Notes.pdf', mimeType: 'application/pdf' },
+          ],
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('render');
+        const renderResult = response as UiProcessRenderResult;
+
+        expect(renderResult.formData?.SelectDocumentSpaceType).toBe('projects');
+        expect(renderResult.formData?.SelectDocumentSpace).toBe('Project Alpha');
+        expect(renderResult.formData?.SelectDocumentType).toBe('submittal-arch');
+        expect(renderResult.formData?.SelectFiles).toBeUndefined();
+        expect(renderResult.selectionState?.files).toEqual([
+          { text: '071200-001_Waterproofing.pdf', value: 'file-1', selected: true },
+          { text: 'Notes.pdf', value: 'file-2', selected: true },
+        ]);
+      });
+
+      it('renders all selectionState.files with selected: true on Gmail initial load when Pass 1 infers spaceType + space + documentType', async () => {
+        const mockSourceParser: UiProcessSourceParserPort = {
+          inferRouting: vi.fn().mockResolvedValue({
+            spaceTypeId: 'projects',
+            spaceIdOrName: 'drive-alpha-id',
+            documentTypeKey: 'submittal-arch',
+          }),
+        };
+
+        const mockGmailPort: UiProcessGmailPort = {
+          getMessageAttachments: vi.fn(),
+          getThreadMessages: vi.fn().mockResolvedValue([
+            {
+              id: 'msg-1',
+              threadId: 'th-1',
+              subject: 'Submittal 071200-001 Waterproofing',
+              from: 'Bob <bob@example.com>',
+              date: 'Mon, 19 Oct 2026 11:00:00 +0000',
+              plainTextBody: 'Attached submittal.',
+              attachments: [
+                { id: 'att-1', title: '071200-001_Waterproofing.pdf', mimeType: 'application/pdf' },
+                { id: 'att-2', title: 'CoverSheet.pdf', mimeType: 'application/pdf' },
+              ],
+            },
+          ]),
+        };
+
+        const adapter = new WorkspaceAddonAdapter({
+          spaceProvider: multiSpaceProvider,
+          configProvider: mockConfigProvider,
+          manifestPort: mockManifestPort,
+          gmailPort: mockGmailPort,
+          sourceParser: mockSourceParser,
+        });
+
+        const context: UiProcessEventContext = {
+          hostApp: 'GMAIL',
+          gmail: {
+            messageId: 'msg-1',
+            threadId: 'th-1',
+            accessToken: 'ya29.valid-token',
+          },
+        };
+
+        const response = await adapter.processUiEvent(context);
+        expect(response.type).toBe('render');
+        const renderResult = response as UiProcessRenderResult;
+
+        expect(renderResult.formData?.SelectDocumentSpaceType).toBe('projects');
+        expect(renderResult.formData?.SelectDocumentSpace).toBe('Project Alpha');
+        expect(renderResult.formData?.SelectDocumentType).toBe('submittal-arch');
+        expect(renderResult.selectionState?.files).toEqual([
+          { text: '071200-001_Waterproofing.pdf', value: 'att-1', selected: true },
+          { text: 'CoverSheet.pdf', value: 'att-2', selected: true },
+        ]);
+      });
+
       describe('Gmail Pass 1 routing triggers and active message resolution (Ticket #292)', () => {
         const gmailThread: UiProcessGmailMessageDescriptor[] = [
           {

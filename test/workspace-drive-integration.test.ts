@@ -6537,4 +6537,163 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(nock.isDone()).toBe(true);
     });
   });
+
+  describe('Initial-load SelectFiles preservation across Pass 1 routing mutations', () => {
+    it('keeps SelectFiles checked on initial Shared Drive load when Pass 1 infers projects + space, and extracts Submittal Arch fields on follow-up onDocumentTypeChange', async () => {
+      const flatPdfBuffer = Buffer.from(await (await PDFDocument.create()).save());
+
+      function mockDriveHierarchy() {
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/drives')
+          .query(true)
+          .reply(200, {
+            drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files/file-initial-submittal-1')
+          .query((q) => q.alt !== 'media')
+          .reply(200, {
+            id: 'file-initial-submittal-1',
+            name: '07 12 00 - 1_v1_Waterproofing.pdf',
+            mimeType: 'application/pdf',
+            parents: ['folder-comm-initial-1'],
+            driveId: 'projects-shared-drive-001',
+            modifiedTime: '2026-11-18T15:00:00Z',
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files/folder-comm-initial-1')
+          .query(true)
+          .reply(200, {
+            id: 'folder-comm-initial-1',
+            name: 'Communication',
+            parents: ['folder-admin-initial-1'],
+            driveId: 'projects-shared-drive-001',
+            mimeType: 'application/vnd.google-apps.folder',
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files/folder-admin-initial-1')
+          .query(true)
+          .reply(200, {
+            id: 'folder-admin-initial-1',
+            name: '1 Admin',
+            parents: ['projects-shared-drive-001'],
+            driveId: 'projects-shared-drive-001',
+            mimeType: 'application/vnd.google-apps.folder',
+          });
+      }
+
+      // Step 1 mocks: Pass 1 infers projects + Projects Shared Drive 001 + communication-project from 1 Admin/Communication hierarchy
+      mockDriveHierarchy();
+
+      const step1Res = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/drive-items-selected',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [
+              { id: 'file-initial-submittal-1', title: '07 12 00 - 1_v1_Waterproofing.pdf' },
+            ],
+          },
+        },
+      });
+
+      expect(step1Res.statusCode).toBe(200);
+      const pushCard = JSON.parse(step1Res.payload).action.navigations[0].pushCard;
+      const docTypeSec1 = pushCard.sections.find((s: { header?: string }) => s.header === 'Document Type');
+      expect(
+        docTypeSec1.widgets
+          .find((w: { selectionInput?: { name?: string } }) => w.selectionInput?.name === 'SelectDocumentSpaceType')
+          ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value
+      ).toBe('projects');
+      expect(
+        docTypeSec1.widgets.find(
+          (w: { textInput?: { name?: string } }) => w.textInput?.name === getDocumentSpaceWidgetName('projects')
+        )?.textInput?.value
+      ).toBe('Projects Shared Drive 001');
+      expect(
+        docTypeSec1.widgets
+          .find(
+            (w: { selectionInput?: { name?: string } }) =>
+              w.selectionInput?.name === getDocumentTypeWidgetName('projects')
+          )
+          ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value
+      ).toBe('communication-project');
+
+      const fileSelSec1 = pushCard.sections.find((s: { header?: string }) => s.header === 'File Selection');
+      const selectFiles1 = fileSelSec1.widgets.find(
+        (w: { selectionInput?: { name?: string } }) => w.selectionInput?.name === 'SelectFiles'
+      )?.selectionInput;
+      expect(selectFiles1?.items).toEqual([
+        { text: '07 12 00 - 1_v1_Waterproofing.pdf', value: 'file-initial-submittal-1', selected: true },
+      ]);
+
+      // Step 2 mocks: Follow-up onDocumentTypeChange to submittal-arch runs Pass 2 (form ?alt=media + drive hierarchy/metadata)
+      mockDriveHierarchy();
+
+      nock('https://www.googleapis.com')
+        .get('/drive/v3/files/file-initial-submittal-1')
+        .query((q) => q.alt === 'media')
+        .reply(200, flatPdfBuffer, { 'content-type': 'application/pdf' });
+
+      const checkedIds = selectFiles1.items
+        .filter((i: { selected?: boolean }) => i.selected)
+        .map((i: { value: string }) => i.value);
+
+      const step2Res = await app.server.inject({
+        method: 'POST',
+        url: '/workspace/action',
+        headers: { authorization: 'Bearer valid-jwt-token' },
+        payload: {
+          authorizationEventObject: { userOAuthToken: 'ya29.valid-oauth-token' },
+          drive: {
+            selectedItems: [
+              { id: 'file-initial-submittal-1', title: '07 12 00 - 1_v1_Waterproofing.pdf' },
+            ],
+          },
+          commonEventObject: {
+            parameters: { action: 'onDocumentTypeChange' },
+            formInputs: {
+              SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+              [getDocumentSpaceWidgetName('projects')]: {
+                stringInputs: { value: ['Projects Shared Drive 001'] },
+              },
+              [getDocumentTypeWidgetName('projects')]: {
+                stringInputs: { value: ['submittal-arch'] },
+              },
+              SelectFiles: { stringInputs: { value: checkedIds } },
+            },
+          },
+        },
+      });
+
+      expect(step2Res.statusCode).toBe(200);
+      const updateCard = JSON.parse(step2Res.payload).action.navigations[0].updateCard;
+      const fileSelSec2 = updateCard.sections.find((s: { header?: string }) => s.header === 'File Selection');
+      const selectFiles2 = fileSelSec2.widgets.find(
+        (w: { selectionInput?: { name?: string } }) => w.selectionInput?.name === 'SelectFiles'
+      )?.selectionInput;
+      expect(selectFiles2?.items).toEqual([
+        { text: '07 12 00 - 1_v1_Waterproofing.pdf', value: 'file-initial-submittal-1', selected: true },
+      ]);
+
+      const docDataSec2 = updateCard.sections.find((s: { header?: string }) => s.header === 'Document Data');
+      const getTextVal = (field: string) =>
+        docDataSec2.widgets.find(
+          (w: { textInput?: { name?: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName(field, 'submittal-arch')
+        )?.textInput?.value;
+
+      expect(getTextVal('section')).toBe('071200');
+      expect(getTextVal('number')).toBe('001');
+      expect(getTextVal('revision')).toBe('0');
+      expect(getTextVal('title')).toBe('Waterproofing');
+      expect(getTextVal('date')).toBe('261118');
+      expect(nock.isDone()).toBe(true);
+    });
+  });
 });
