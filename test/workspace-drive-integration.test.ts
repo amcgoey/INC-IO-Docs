@@ -6542,47 +6542,51 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     it('keeps SelectFiles checked on initial Shared Drive load when Pass 1 infers projects + space, and extracts Submittal Arch fields on follow-up onDocumentTypeChange', async () => {
       const flatPdfBuffer = Buffer.from(await (await PDFDocument.create()).save());
 
+      function mockDriveHierarchy() {
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/drives')
+          .query(true)
+          .reply(200, {
+            drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files/file-initial-submittal-1')
+          .query((q) => q.alt !== 'media')
+          .reply(200, {
+            id: 'file-initial-submittal-1',
+            name: '07 12 00 - 1_v1_Waterproofing.pdf',
+            mimeType: 'application/pdf',
+            parents: ['folder-comm-initial-1'],
+            driveId: 'projects-shared-drive-001',
+            modifiedTime: '2026-11-18T15:00:00Z',
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files/folder-comm-initial-1')
+          .query(true)
+          .reply(200, {
+            id: 'folder-comm-initial-1',
+            name: 'Communication',
+            parents: ['folder-admin-initial-1'],
+            driveId: 'projects-shared-drive-001',
+            mimeType: 'application/vnd.google-apps.folder',
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files/folder-admin-initial-1')
+          .query(true)
+          .reply(200, {
+            id: 'folder-admin-initial-1',
+            name: '1 Admin',
+            parents: ['projects-shared-drive-001'],
+            driveId: 'projects-shared-drive-001',
+            mimeType: 'application/vnd.google-apps.folder',
+          });
+      }
+
       // Step 1 mocks: Pass 1 infers projects + Projects Shared Drive 001 + communication-project from 1 Admin/Communication hierarchy
-      nock('https://www.googleapis.com')
-        .get('/drive/v3/drives')
-        .query(true)
-        .reply(200, {
-          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
-        });
-
-      nock('https://www.googleapis.com')
-        .get('/drive/v3/files/file-initial-submittal-1')
-        .query((q) => q.alt !== 'media')
-        .reply(200, {
-          id: 'file-initial-submittal-1',
-          name: '07 12 00 - 1_v1_Waterproofing.pdf',
-          mimeType: 'application/pdf',
-          parents: ['folder-comm-initial-1'],
-          driveId: 'projects-shared-drive-001',
-          modifiedTime: '2026-11-18T15:00:00Z',
-        });
-
-      nock('https://www.googleapis.com')
-        .get('/drive/v3/files/folder-comm-initial-1')
-        .query(true)
-        .reply(200, {
-          id: 'folder-comm-initial-1',
-          name: 'Communication',
-          parents: ['folder-admin-initial-1'],
-          driveId: 'projects-shared-drive-001',
-          mimeType: 'application/vnd.google-apps.folder',
-        });
-
-      nock('https://www.googleapis.com')
-        .get('/drive/v3/files/folder-admin-initial-1')
-        .query(true)
-        .reply(200, {
-          id: 'folder-admin-initial-1',
-          name: '1 Admin',
-          parents: ['projects-shared-drive-001'],
-          driveId: 'projects-shared-drive-001',
-          mimeType: 'application/vnd.google-apps.folder',
-        });
+      mockDriveHierarchy();
 
       const step1Res = await app.server.inject({
         method: 'POST',
@@ -6629,46 +6633,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       ]);
 
       // Step 2 mocks: Follow-up onDocumentTypeChange to submittal-arch runs Pass 2 (form ?alt=media + drive hierarchy/metadata)
-      nock('https://www.googleapis.com')
-        .get('/drive/v3/drives')
-        .query(true)
-        .reply(200, {
-          drives: [{ id: 'projects-shared-drive-001', name: 'Projects Shared Drive 001' }],
-        });
-
-      nock('https://www.googleapis.com')
-        .get('/drive/v3/files/file-initial-submittal-1')
-        .query((q) => q.alt !== 'media')
-        .reply(200, {
-          id: 'file-initial-submittal-1',
-          name: '07 12 00 - 1_v1_Waterproofing.pdf',
-          mimeType: 'application/pdf',
-          parents: ['folder-comm-initial-1'],
-          driveId: 'projects-shared-drive-001',
-          modifiedTime: '2026-11-18T15:00:00Z',
-        });
-
-      nock('https://www.googleapis.com')
-        .get('/drive/v3/files/folder-comm-initial-1')
-        .query(true)
-        .reply(200, {
-          id: 'folder-comm-initial-1',
-          name: 'Communication',
-          parents: ['folder-admin-initial-1'],
-          driveId: 'projects-shared-drive-001',
-          mimeType: 'application/vnd.google-apps.folder',
-        });
-
-      nock('https://www.googleapis.com')
-        .get('/drive/v3/files/folder-admin-initial-1')
-        .query(true)
-        .reply(200, {
-          id: 'folder-admin-initial-1',
-          name: '1 Admin',
-          parents: ['projects-shared-drive-001'],
-          driveId: 'projects-shared-drive-001',
-          mimeType: 'application/vnd.google-apps.folder',
-        });
+      mockDriveHierarchy();
 
       nock('https://www.googleapis.com')
         .get('/drive/v3/files/file-initial-submittal-1')

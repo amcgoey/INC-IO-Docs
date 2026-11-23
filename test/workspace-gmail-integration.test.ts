@@ -7695,6 +7695,23 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
   describe('Initial-load SelectAttachments preservation across Pass 1 routing mutations', () => {
     it('renders SelectAttachments checkboxes selected: true and populates previousAttachments on dropdown onChangeAction parameters when Pass 1 infers projects + space + submittal-arch', async () => {
+      const attachments = [
+        {
+          partId: 'part-init-1',
+          attachmentId: 'att-init-1',
+          filename: '071200-001-A Waterproofing Specs.pdf',
+          mimeType: 'application/pdf',
+          size: 2048,
+        },
+        {
+          partId: 'part-init-2',
+          attachmentId: 'att-init-2',
+          filename: 'Cover_Notes.pdf',
+          mimeType: 'application/pdf',
+          size: 1024,
+        },
+      ];
+
       vi.spyOn(mockGmailClient, 'getThread').mockResolvedValue({
         id: 'th-initial-pass1-sel',
         messages: [
@@ -7708,22 +7725,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
             labels: ['INBOX', 'Active Projects'],
             plainTextBody: 'Please find the waterproofing submittal attached.',
             inlineImages: [],
-            attachments: [
-              {
-                partId: 'part-init-1',
-                attachmentId: 'att-init-1',
-                filename: '071200-001-A Waterproofing Specs.pdf',
-                mimeType: 'application/pdf',
-                size: 2048,
-              },
-              {
-                partId: 'part-init-2',
-                attachmentId: 'att-init-2',
-                filename: 'Cover_Notes.pdf',
-                mimeType: 'application/pdf',
-                size: 1024,
-              },
-            ],
+            attachments,
           },
         ],
       });
@@ -7732,22 +7734,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         id: 'msg-initial-pass1-sel',
         messageId: 'msg-initial-pass1-sel',
         inlineImages: [],
-        attachments: [
-          {
-            partId: 'part-init-1',
-            attachmentId: 'att-init-1',
-            filename: '071200-001-A Waterproofing Specs.pdf',
-            mimeType: 'application/pdf',
-            size: 2048,
-          },
-          {
-            partId: 'part-init-2',
-            attachmentId: 'att-init-2',
-            filename: 'Cover_Notes.pdf',
-            mimeType: 'application/pdf',
-            size: 1024,
-          },
-        ],
+        attachments,
       });
 
       const res = await app.server.inject({
