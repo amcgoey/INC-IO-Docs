@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
+import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import {
   SchemaDrivenUiService,
   UiFieldSchema,
@@ -157,6 +158,454 @@ describe('schema-driven-ui domain schemas', () => {
         evaluationOrder: ['fieldA'],
       };
       expect(Value.Check(UiViewModel, view)).toBe(true);
+    });
+
+    it('accepts textParagraph.maxLines as a positive integer on UiViewWidgetSchema and UiViewModel', () => {
+      const widget = { textParagraph: { text: 'Summary', maxLines: 2 } };
+      const view = {
+        id: 'view-with-max-lines',
+        sections: [
+          {
+            widgets: [widget],
+          },
+        ],
+      };
+
+      expect(Value.Check(UiViewWidgetSchema, widget)).toBe(true);
+      expect(Value.Check(UiViewModel, view)).toBe(true);
+    });
+
+    it('accepts undefined or omitted textParagraph.maxLines under ExactOptionalPropertyTypes = true', () => {
+      const prev = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        expect(
+          Value.Check(UiViewWidgetSchema, {
+            textParagraph: { text: 'Summary', maxLines: undefined },
+          })
+        ).toBe(true);
+        expect(
+          Value.Check(UiViewWidgetSchema, {
+            textParagraph: { text: 'Summary' },
+          })
+        ).toBe(true);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prev;
+      }
+    });
+
+    it('rejects invalid textParagraph.maxLines values (0, negative, float, string)', () => {
+      expect(Value.Check(UiViewWidgetSchema, { textParagraph: { text: 'Summary', maxLines: 0 } })).toBe(false);
+      expect(Value.Check(UiViewWidgetSchema, { textParagraph: { text: 'Summary', maxLines: -1 } })).toBe(false);
+      expect(Value.Check(UiViewWidgetSchema, { textParagraph: { text: 'Summary', maxLines: 1.5 } })).toBe(false);
+      expect(Value.Check(UiViewWidgetSchema, { textParagraph: { text: 'Summary', maxLines: '2' } })).toBe(false);
+    });
+
+    it('accepts buttonList.buttons[] with valid color (with/without alpha) and disabled boolean', () => {
+      const widget = {
+        buttonList: {
+          buttons: [
+            {
+              text: 'Primary',
+              color: { red: 0.1, green: 0.45, blue: 0.91 },
+              disabled: false,
+            },
+            {
+              text: 'Translucent Disabled',
+              color: { red: 0, green: 1, blue: 0.5, alpha: 0.8 },
+              disabled: true,
+            },
+          ],
+        },
+      };
+
+      expect(Value.Check(UiViewWidgetSchema, widget)).toBe(true);
+      expect(
+        Value.Check(UiViewModel, {
+          id: 'button-colors-view',
+          sections: [{ widgets: [widget] }],
+        })
+      ).toBe(true);
+    });
+
+    it('accepts buttonList.buttons[] optional color, alpha, disabled, and onClick as undefined under ExactOptionalPropertyTypes = true', () => {
+      const prev = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        expect(
+          Value.Check(UiViewWidgetSchema, {
+            buttonList: {
+              buttons: [
+                {
+                  text: 'Alpha Undefined',
+                  color: { red: 0.1, green: 0.2, blue: 0.3, alpha: undefined },
+                  disabled: undefined,
+                  onClick: undefined,
+                },
+                {
+                  text: 'Color Undefined',
+                  color: undefined,
+                  disabled: undefined,
+                  onClick: undefined,
+                },
+              ],
+            },
+          })
+        ).toBe(true);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prev;
+      }
+    });
+
+    it('rejects out-of-bounds color channels, missing channel, extra color property, and non-boolean disabled on buttonList.buttons[]', () => {
+      const makeButtonWidget = (button: Record<string, unknown>) => ({
+        buttonList: { buttons: [button] },
+      });
+
+      expect(
+        Value.Check(
+          UiViewWidgetSchema,
+          makeButtonWidget({ text: 'Btn', color: { red: -0.1, green: 0.5, blue: 0.5 } })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          UiViewWidgetSchema,
+          makeButtonWidget({ text: 'Btn', color: { red: 0.5, green: 1.1, blue: 0.5 } })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          UiViewWidgetSchema,
+          makeButtonWidget({ text: 'Btn', color: { red: 0.5, green: 0.5, blue: -1 } })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          UiViewWidgetSchema,
+          makeButtonWidget({ text: 'Btn', color: { red: 0.5, green: 0.5, blue: 0.5, alpha: 1.5 } })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          UiViewWidgetSchema,
+          makeButtonWidget({ text: 'Btn', color: { red: 0.5, green: 0.5, blue: 0.5, alpha: -0.01 } })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          UiViewWidgetSchema,
+          makeButtonWidget({ text: 'Btn', color: { red: 0.5, green: 0.5 } })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          UiViewWidgetSchema,
+          makeButtonWidget({ text: 'Btn', color: { red: 0.5, green: 0.5, blue: 0.5, extra: 1 } })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(UiViewWidgetSchema, makeButtonWidget({ text: 'Btn', disabled: 'true' }))
+      ).toBe(false);
+    });
+
+    it('accepts buttonList.buttons[].onClick as openLink intent with optional openAs and onClose', () => {
+      const widget = {
+        buttonList: {
+          buttons: [
+            {
+              text: 'Open Sheet',
+              onClick: { openLink: { url: 'https://docs.google.com/spreadsheets/d/123/edit' } },
+            },
+            {
+              text: 'Open Full',
+              onClick: {
+                openLink: { url: 'https://example.com', openAs: 'FULL_SIZE', onClose: 'NOTHING' },
+              },
+            },
+            {
+              text: 'Open Overlay',
+              onClick: {
+                openLink: { url: 'https://example.com', openAs: 'OVERLAY', onClose: 'RELOAD' },
+              },
+            },
+          ],
+        },
+      };
+
+      expect(Value.Check(UiViewWidgetSchema, widget)).toBe(true);
+      expect(
+        Value.Check(UiViewModel, {
+          id: 'open-link-view',
+          sections: [{ widgets: [widget] }],
+        })
+      ).toBe(true);
+    });
+
+    it('accepts buttonList.buttons[].onClick openLink and action with undefined optional properties under ExactOptionalPropertyTypes = true', () => {
+      const prev = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        expect(
+          Value.Check(UiViewWidgetSchema, {
+            buttonList: {
+              buttons: [
+                {
+                  text: 'Open Link',
+                  onClick: {
+                    openLink: {
+                      url: 'https://example.com',
+                      openAs: undefined,
+                      onClose: undefined,
+                    },
+                  },
+                },
+                {
+                  text: 'Submit Action',
+                  onClick: {
+                    action: 'submit',
+                    parameters: undefined,
+                  },
+                },
+              ],
+            },
+          })
+        ).toBe(true);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prev;
+      }
+    });
+
+    it('rejects malformed openLink and mixed action/openLink values on buttonList.buttons[].onClick', () => {
+      const makeOnClickWidget = (onClick: unknown) => ({
+        buttonList: { buttons: [{ text: 'Btn', onClick }] },
+      });
+
+      expect(
+        Value.Check(UiViewWidgetSchema, makeOnClickWidget({ openLink: { url: '' } }))
+      ).toBe(false);
+      expect(
+        Value.Check(
+          UiViewWidgetSchema,
+          makeOnClickWidget({ openLink: { url: 'https://example.com', openAs: 'POPUP' } })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          UiViewWidgetSchema,
+          makeOnClickWidget({ openLink: { url: 'https://example.com', onClose: 'CLOSE' } })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          UiViewWidgetSchema,
+          makeOnClickWidget({ openLink: { url: 'https://example.com', extra: true } })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          UiViewWidgetSchema,
+          makeOnClickWidget({ openLink: { url: 'https://example.com' }, extra: true })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          UiViewWidgetSchema,
+          makeOnClickWidget({ action: 'a', openLink: { url: 'https://example.com' } })
+        )
+      ).toBe(false);
+    });
+
+    it('accepts minimal and full decoratedText widgets on UiViewWidgetSchema and UiViewModel', () => {
+      const minimalWidget = { decoratedText: { text: '071200-001' } };
+      const fullWidgetWithOpenLinkButtonAndActionClick = {
+        decoratedText: {
+          topLabel: 'Submittal',
+          text: '071200-001 Waterproofing',
+          wrapText: true,
+          bottomLabel: '2026-11-24 • Project Alpha',
+          button: {
+            text: 'Open',
+            color: { red: 0.1, green: 0.45, blue: 0.91, alpha: 1 },
+            disabled: false,
+            onClick: {
+              openLink: {
+                url: 'https://docs.google.com/spreadsheets/d/123/edit',
+                openAs: 'FULL_SIZE',
+                onClose: 'NOTHING',
+              },
+            },
+          },
+          onClick: {
+            action: 'selectHistoryRow',
+            parameters: { rowId: 'row-1' },
+          },
+        },
+      };
+      const fullWidgetWithActionButtonAndOpenLinkClick = {
+        decoratedText: {
+          topLabel: 'RFI',
+          text: 'RFI-042',
+          wrapText: false,
+          bottomLabel: 'Pending review',
+          button: {
+            text: 'Approve',
+            disabled: true,
+            onClick: {
+              action: 'approveItem',
+            },
+          },
+          onClick: {
+            openLink: {
+              url: 'https://example.com/rfi/42',
+              openAs: 'OVERLAY',
+              onClose: 'RELOAD',
+            },
+          },
+        },
+      };
+
+      expect(Value.Check(UiViewWidgetSchema, minimalWidget)).toBe(true);
+      expect(Value.Check(UiViewWidgetSchema, fullWidgetWithOpenLinkButtonAndActionClick)).toBe(true);
+      expect(Value.Check(UiViewWidgetSchema, fullWidgetWithActionButtonAndOpenLinkClick)).toBe(true);
+      expect(
+        Value.Check(UiViewModel, {
+          id: 'decorated-text-view',
+          sections: [
+            {
+              widgets: [
+                minimalWidget,
+                fullWidgetWithOpenLinkButtonAndActionClick,
+                fullWidgetWithActionButtonAndOpenLinkClick,
+              ],
+            },
+          ],
+        })
+      ).toBe(true);
+    });
+
+    it('accepts decoratedText with undefined optional properties under ExactOptionalPropertyTypes = true', () => {
+      const prev = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        expect(
+          Value.Check(UiViewWidgetSchema, {
+            decoratedText: undefined,
+            textParagraph: { text: 'Fallback' },
+          })
+        ).toBe(true);
+        expect(
+          Value.Check(UiViewWidgetSchema, {
+            decoratedText: {
+              text: 'Entry',
+              topLabel: undefined,
+              wrapText: undefined,
+              bottomLabel: undefined,
+              button: undefined,
+              onClick: undefined,
+            },
+          })
+        ).toBe(true);
+        expect(
+          Value.Check(UiViewWidgetSchema, {
+            decoratedText: {
+              text: 'Entry With Button',
+              button: {
+                text: 'Open',
+                color: { red: 0.1, green: 0.2, blue: 0.3, alpha: undefined },
+                disabled: undefined,
+                onClick: {
+                  openLink: {
+                    url: 'https://example.com',
+                    openAs: undefined,
+                    onClose: undefined,
+                  },
+                },
+              },
+            },
+          })
+        ).toBe(true);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prev;
+      }
+    });
+
+    it('rejects columns, divider, Chat-only decoratedText/button fields, invalid button color, and malformed onClick on decoratedText', () => {
+      expect(Value.Check(UiViewWidgetSchema, { columns: { columnItems: [] } })).toBe(false);
+      expect(Value.Check(UiViewWidgetSchema, { divider: {} })).toBe(false);
+
+      expect(
+        Value.Check(UiViewWidgetSchema, {
+          decoratedText: { text: 'Entry', startIcon: { knownIcon: 'STAR' } },
+        })
+      ).toBe(false);
+      expect(
+        Value.Check(UiViewWidgetSchema, {
+          decoratedText: { text: 'Entry', endIcon: { knownIcon: 'STAR' } },
+        })
+      ).toBe(false);
+      expect(
+        Value.Check(UiViewWidgetSchema, {
+          decoratedText: { text: 'Entry', switchControl: { name: 'sw', value: '1' } },
+        })
+      ).toBe(false);
+      expect(
+        Value.Check(UiViewWidgetSchema, {
+          decoratedText: { text: 'Entry', contentText: 'legacy' },
+        })
+      ).toBe(false);
+
+      expect(
+        Value.Check(UiViewWidgetSchema, {
+          decoratedText: { text: 'Entry', button: { text: 'Btn', type: 'FILLED' } },
+        })
+      ).toBe(false);
+      expect(
+        Value.Check(UiViewWidgetSchema, {
+          decoratedText: { text: 'Entry', button: { text: 'Btn', icon: { knownIcon: 'STAR' } } },
+        })
+      ).toBe(false);
+      expect(
+        Value.Check(UiViewWidgetSchema, {
+          decoratedText: {
+            text: 'Entry',
+            button: { text: 'Btn', color: { red: -0.1, green: 0.5, blue: 0.5 } },
+          },
+        })
+      ).toBe(false);
+
+      expect(
+        Value.Check(UiViewWidgetSchema, {
+          decoratedText: {
+            text: 'Entry',
+            button: { text: 'Btn', onClick: { openLink: { url: '' } } },
+          },
+        })
+      ).toBe(false);
+      expect(
+        Value.Check(UiViewWidgetSchema, {
+          decoratedText: {
+            text: 'Entry',
+            button: {
+              text: 'Btn',
+              onClick: { action: 'a', openLink: { url: 'https://example.com' } },
+            },
+          },
+        })
+      ).toBe(false);
+      expect(
+        Value.Check(UiViewWidgetSchema, {
+          decoratedText: { text: 'Entry', onClick: { openLink: { url: '' } } },
+        })
+      ).toBe(false);
+      expect(
+        Value.Check(UiViewWidgetSchema, {
+          decoratedText: {
+            text: 'Entry',
+            onClick: { action: 'a', openLink: { url: 'https://example.com' } },
+          },
+        })
+      ).toBe(false);
     });
   });
 });

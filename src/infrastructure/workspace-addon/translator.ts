@@ -11,6 +11,10 @@ import {
   type GoogleWorkspaceActionResponse,
   type GoogleWorkspaceAction,
   type GoogleWorkspaceActionParameter,
+  type GoogleWorkspaceButton,
+  type GoogleWorkspaceColor,
+  type GoogleWorkspaceOnClick,
+  type GoogleWorkspaceOpenLink,
   type GoogleWorkspaceTextInput,
   type GoogleWorkspaceSelectionInput,
   type GoogleWorkspaceSelectionItem,
@@ -50,22 +54,75 @@ export const UiActionSchema = Type.Object(
   {
     action: Type.String(),
     route: Type.String(),
-    parameters: Type.Optional(Type.Record(Type.String(), Type.String())),
+    parameters: Type.Optional(
+      Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])
+    ),
   },
   { additionalProperties: false }
 );
 
 export type UiAction = Static<typeof UiActionSchema>;
 
-export const UiOnClickSchema = UiActionSchema;
+export const UiOpenLinkTargetSchema = Type.Object(
+  {
+    url: Type.String({ minLength: 1 }),
+    openAs: Type.Optional(
+      Type.Union([Type.Literal('FULL_SIZE'), Type.Literal('OVERLAY'), Type.Undefined()])
+    ),
+    onClose: Type.Optional(
+      Type.Union([Type.Literal('NOTHING'), Type.Literal('RELOAD'), Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export const UiOpenLinkSchema = Type.Object(
+  {
+    openLink: UiOpenLinkTargetSchema,
+  },
+  { additionalProperties: false }
+);
+
+export type UiOpenLink = Static<typeof UiOpenLinkSchema>;
+
+export const UiOnClickSchema = Type.Union([UiActionSchema, UiOpenLinkSchema]);
 
 export type UiOnClick = Static<typeof UiOnClickSchema>;
+
+export const UiColorSchema = Type.Object(
+  {
+    red: Type.Number({ minimum: 0, maximum: 1 }),
+    green: Type.Number({ minimum: 0, maximum: 1 }),
+    blue: Type.Number({ minimum: 0, maximum: 1 }),
+    alpha: Type.Optional(
+      Type.Union([Type.Number({ minimum: 0, maximum: 1 }), Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export type UiColor = Static<typeof UiColorSchema>;
+
+export const UiButtonSchema = Type.Object(
+  {
+    text: Type.String(),
+    onClick: Type.Optional(Type.Union([UiOnClickSchema, Type.Undefined()])),
+    color: Type.Optional(Type.Union([UiColorSchema, Type.Undefined()])),
+    disabled: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+
+export type UiButton = Static<typeof UiButtonSchema>;
 
 export const UiViewTextParagraphWidgetSchema = Type.Object(
   {
     textParagraph: Type.Object(
       {
         text: Type.String(),
+        maxLines: Type.Optional(
+          Type.Union([Type.Integer({ minimum: 1 }), Type.Undefined()])
+        ),
       },
       { additionalProperties: false }
     ),
@@ -118,15 +175,24 @@ export const UiViewButtonListWidgetSchema = Type.Object(
   {
     buttonList: Type.Object(
       {
-        buttons: Type.Array(
-          Type.Object(
-            {
-              text: Type.String(),
-              onClick: Type.Optional(UiOnClickSchema),
-            },
-            { additionalProperties: false }
-          )
-        ),
+        buttons: Type.Array(UiButtonSchema),
+      },
+      { additionalProperties: false }
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export const UiViewDecoratedTextWidgetSchema = Type.Object(
+  {
+    decoratedText: Type.Object(
+      {
+        topLabel: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+        text: Type.String(),
+        wrapText: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+        bottomLabel: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+        button: Type.Optional(Type.Union([UiButtonSchema, Type.Undefined()])),
+        onClick: Type.Optional(Type.Union([UiOnClickSchema, Type.Undefined()])),
       },
       { additionalProperties: false }
     ),
@@ -139,6 +205,7 @@ export const UiViewWidgetSchema = Type.Union([
   UiViewTextInputWidgetSchema,
   UiViewSelectionInputWidgetSchema,
   UiViewButtonListWidgetSchema,
+  UiViewDecoratedTextWidgetSchema,
 ]);
 
 export type UiViewWidget = Static<typeof UiViewWidgetSchema>;
@@ -212,14 +279,44 @@ function normalizeAction(
   };
 }
 
-function normalizeButtonOnClick(
+function normalizeOpenLink(openLink: UiOpenLink): GoogleWorkspaceOpenLink {
+  return {
+    url: openLink.openLink.url,
+    ...(openLink.openLink.openAs !== undefined ? { openAs: openLink.openLink.openAs } : {}),
+    ...(openLink.openLink.onClose !== undefined ? { onClose: openLink.openLink.onClose } : {}),
+  };
+}
+
+function normalizeOnClick(
   onClick: UiOnClick | undefined
-): { action?: GoogleWorkspaceAction } | undefined {
+): GoogleWorkspaceOnClick | undefined {
   if (!onClick) {
     return undefined;
   }
+  if ('openLink' in onClick) {
+    return { openLink: normalizeOpenLink(onClick) };
+  }
   const action = normalizeAction(onClick);
   return action ? { action } : undefined;
+}
+
+function normalizeColor(color: UiColor): GoogleWorkspaceColor {
+  return {
+    red: color.red,
+    green: color.green,
+    blue: color.blue,
+    ...(color.alpha !== undefined ? { alpha: color.alpha } : {}),
+  };
+}
+
+function normalizeButton(btn: UiButton): GoogleWorkspaceButton {
+  const normalizedOnClick = normalizeOnClick(btn.onClick);
+  return {
+    text: btn.text,
+    ...(normalizedOnClick !== undefined ? { onClick: normalizedOnClick } : {}),
+    ...(btn.color !== undefined ? { color: normalizeColor(btn.color) } : {}),
+    ...(btn.disabled !== undefined ? { disabled: btn.disabled } : {}),
+  };
 }
 
 function applyCommonInputProps<T extends { label?: string; onChangeAction?: GoogleWorkspaceAction }>(
@@ -271,6 +368,7 @@ export function translateUiViewToWorkspaceCard(
       if ('textParagraph' in w) {
         widget.textParagraph = {
           text: w.textParagraph.text,
+          ...(w.textParagraph.maxLines !== undefined ? { maxLines: w.textParagraph.maxLines } : {}),
         };
       }
 
@@ -325,18 +423,20 @@ export function translateUiViewToWorkspaceCard(
 
       if ('buttonList' in w) {
         widget.buttonList = {
-          buttons: w.buttonList.buttons.map((btn) => {
-            const buttonObj: { text: string; onClick?: { action?: GoogleWorkspaceAction } } = {
-              text: btn.text,
-            };
-            if (btn.onClick !== undefined) {
-              const normalizedOnClick = normalizeButtonOnClick(btn.onClick);
-              if (normalizedOnClick !== undefined) {
-                buttonObj.onClick = normalizedOnClick;
-              }
-            }
-            return buttonObj;
-          }),
+          buttons: w.buttonList.buttons.map(normalizeButton),
+        };
+      }
+
+      if ('decoratedText' in w) {
+        const dt = w.decoratedText;
+        const normalizedOnClick = normalizeOnClick(dt.onClick);
+        widget.decoratedText = {
+          text: dt.text,
+          ...(dt.topLabel !== undefined ? { topLabel: dt.topLabel } : {}),
+          ...(dt.wrapText !== undefined ? { wrapText: dt.wrapText } : {}),
+          ...(dt.bottomLabel !== undefined ? { bottomLabel: dt.bottomLabel } : {}),
+          ...(dt.button !== undefined ? { button: normalizeButton(dt.button) } : {}),
+          ...(normalizedOnClick !== undefined ? { onClick: normalizedOnClick } : {}),
         };
       }
 

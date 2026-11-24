@@ -148,12 +148,80 @@ export type UiViewHeader = Static<typeof UiViewHeaderSchema>;
 export const UiViewActionSchema = Type.Object(
   {
     action: Type.String(),
-    parameters: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+    parameters: Type.Optional(
+      Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])
+    ),
   },
   { additionalProperties: false }
 );
 
 export type UiViewAction = Static<typeof UiViewActionSchema>;
+
+export const UiViewOpenLinkTargetSchema = Type.Object(
+  {
+    url: Type.String({ minLength: 1 }),
+    openAs: Type.Optional(
+      Type.Union([Type.Literal('FULL_SIZE'), Type.Literal('OVERLAY'), Type.Undefined()])
+    ),
+    onClose: Type.Optional(
+      Type.Union([Type.Literal('NOTHING'), Type.Literal('RELOAD'), Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export const UiViewOpenLinkSchema = Type.Object(
+  {
+    openLink: UiViewOpenLinkTargetSchema,
+  },
+  { additionalProperties: false }
+);
+
+export type UiViewOpenLink = Static<typeof UiViewOpenLinkSchema>;
+
+export const UiViewOnClickSchema = Type.Union([UiViewActionSchema, UiViewOpenLinkSchema]);
+
+export type UiViewOnClick = Static<typeof UiViewOnClickSchema>;
+
+export const UiViewColorSchema = Type.Object(
+  {
+    red: Type.Number({ minimum: 0, maximum: 1 }),
+    green: Type.Number({ minimum: 0, maximum: 1 }),
+    blue: Type.Number({ minimum: 0, maximum: 1 }),
+    alpha: Type.Optional(
+      Type.Union([Type.Number({ minimum: 0, maximum: 1 }), Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export type UiViewColor = Static<typeof UiViewColorSchema>;
+
+export const UiViewButtonSchema = Type.Object(
+  {
+    text: Type.String(),
+    onClick: Type.Optional(Type.Union([UiViewOnClickSchema, Type.Undefined()])),
+    color: Type.Optional(Type.Union([UiViewColorSchema, Type.Undefined()])),
+    disabled: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+
+export type UiViewButton = Static<typeof UiViewButtonSchema>;
+
+export const UiViewDecoratedTextSchema = Type.Object(
+  {
+    topLabel: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    text: Type.String(),
+    wrapText: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+    bottomLabel: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    button: Type.Optional(Type.Union([UiViewButtonSchema, Type.Undefined()])),
+    onClick: Type.Optional(Type.Union([UiViewOnClickSchema, Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+
+export type UiViewDecoratedText = Static<typeof UiViewDecoratedTextSchema>;
 
 const BaseInputWidgetProps = {
   name: Type.String(),
@@ -168,6 +236,9 @@ export const UiViewWidgetSchema = Type.Object(
       Type.Object(
         {
           text: Type.String(),
+          maxLines: Type.Optional(
+            Type.Union([Type.Integer({ minimum: 1 }), Type.Undefined()])
+          ),
         },
         { additionalProperties: false }
       )
@@ -203,18 +274,13 @@ export const UiViewWidgetSchema = Type.Object(
     buttonList: Type.Optional(
       Type.Object(
         {
-          buttons: Type.Array(
-            Type.Object(
-              {
-                text: Type.String(),
-                onClick: Type.Optional(UiViewActionSchema),
-              },
-              { additionalProperties: false }
-            )
-          ),
+          buttons: Type.Array(UiViewButtonSchema),
         },
         { additionalProperties: false }
       )
+    ),
+    decoratedText: Type.Optional(
+      Type.Union([UiViewDecoratedTextSchema, Type.Undefined()])
     ),
   },
   { additionalProperties: false }
