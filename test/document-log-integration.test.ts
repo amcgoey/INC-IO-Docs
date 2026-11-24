@@ -47,6 +47,14 @@ interface FixtureWriteScenario extends FixtureSubmittalEntry {
   fileUri: string;
 }
 
+interface FixturePartialHydrationRow {
+  scenario: string;
+  description: string;
+  rowCells: Record<string, string>;
+  linkFormula: string;
+  expectedIssues: string[];
+}
+
 const sampleFixture = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, 'fixtures/document-log-sample-data.json'), 'utf-8')
 ) as {
@@ -63,6 +71,7 @@ const sampleFixture = JSON.parse(
     headers: string[];
     seedEntries: FixtureSubmittalEntry[];
     writeScenarios: FixtureWriteScenario[];
+    partialHydrationRows: FixturePartialHydrationRow[];
   };
   submittalFfe: {
     sheetName: string;
@@ -2185,5 +2194,336 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       });
       expect(readRes.formulaColumns).toEqual(['Custom Calc', 'Spec Title']);
     });
+  });
+
+  function partialRowToSimCells(row: FixturePartialHydrationRow): SimCellValue[] {
+    return sampleFixture.submittalArch.headers.map((header) => {
+      if (header === 'Calc Link') {
+        return row.linkFormula.length > 0 ? row.linkFormula : null;
+      }
+      const val = row.rowCells[header];
+      return typeof val === 'string' && val.length > 0 ? val : null;
+    });
+  }
+
+  function seedEntryToSimCells(entry: FixtureSubmittalEntry): SimCellValue[] {
+    const d = entry.documentData;
+    return [
+      String(d.status ?? ''),
+      String(d.section ?? ''),
+      String(d.number ?? ''),
+      String(d.revision ?? ''),
+      String(d.title ?? ''),
+      String(d.date ?? ''),
+      String(d.contact ?? ''),
+      entry.actionName,
+      typeof d.notes === 'string' && d.notes.length > 0 ? d.notes : null,
+      entry.fileUri ? `=HYPERLINK("${entry.fileUri}", "Link")` : null,
+    ];
+  }
+
+  it('preserves partialHydrationRows and unkeyable malformed rows while applying localized boundary/internal healing without disturbing unrelated messy gaps', async () => {
+    const driveState: MockDriveState = {
+      searchResults: [
+        {
+          id: 'harborview-log-1',
+          name: sampleFixture.space.expectedLogFileName,
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ],
+    };
+    const space = {
+      id: sampleFixture.space.id,
+      typeId: sampleFixture.space.typeId,
+      name: sampleFixture.space.name,
+      abstractStorageId: sampleFixture.space.abstractStorageId,
+    };
+
+    const [partialShortSec, partialUnknownAction, partialMissingDate] =
+      sampleFixture.submittalArch.partialHydrationRows;
+    const seeds = sampleFixture.submittalArch.seedEntries;
+
+    const messyGrid: SimCellValue[][] = [
+      [], // Row 1
+      [], // Row 2
+      [...sampleFixture.submittalArch.headers], // Row 3 Headers
+      [], // Row 4 Formula Row
+      ['<--->'], // idx 4 (Row 5 Top Anchor)
+      ['---'], // idx 5: stray top divider (unrelated during 071200-001 edit)
+      [], // idx 6: stray top blank (unrelated during 071200-001 edit)
+      ['Open', '', '', '', 'Unkeyable top human note row', '', '', '', 'Follow up', null], // idx 7: null-keyed top row
+      seedEntryToSimCells(seeds[0]), // idx 8: 033000-001-0-260115-1
+      seedEntryToSimCells(seeds[1]), // idx 9: 033000-001-0-260122-7 (missing divider below!)
+      seedEntryToSimCells(seeds[2]), // idx 10: 071200-001-0-260204-1
+      [], // idx 11: accidental blank trapped inside 071200-001
+      ['---'], // idx 12: accidental divider trapped inside 071200-001
+      ['Open', '', '', '', 'Unkeyable trapped note inside 071200-001', '', '', '', '', null], // idx 13: null-keyed trapped row
+      seedEntryToSimCells(seeds[3]), // idx 14: 071200-001-0-260205-2
+      partialRowToSimCells(partialMissingDate), // idx 15: 071200-001-1--2 (partialHydrationRow)
+      seedEntryToSimCells(seeds[6]), // idx 16: 071200-001-1-260224-6
+      partialRowToSimCells(partialUnknownAction), // idx 17: 071200-001-1-260226- (partialHydrationRow)
+      [], // idx 18: excess blank in 071200-001..071200-002 gap
+      ['---'], // idx 19: divider 1 in 071200-001..071200-002 gap
+      ['---'], // idx 20: duplicate divider 2 in 071200-001..071200-002 gap
+      seedEntryToSimCells(seeds[7]), // idx 21: 071200-002-0-260218-1
+      seedEntryToSimCells(seeds[8]), // idx 22: 071200-002-0-260219-2
+      ['---'], // idx 23: unrelated messy gap divider 1
+      ['---'], // idx 24: unrelated messy gap divider 2
+      [], // idx 25: unrelated messy gap blank
+      seedEntryToSimCells(seeds[9]), // idx 26: 087100-001-0-260303-1
+      ['---'], // idx 27: divider before 7120-001
+      partialRowToSimCells(partialShortSec), // idx 28: 7120-001 (partialHydrationRow)
+      ['---'], // idx 29: unrelated stray bottom divider
+      ['<--->'], // idx 30 Bottom Anchor
+    ];
+
+    const sheetsState: MockSheetsState = {
+      tableValues: [],
+      batchUpdates: [],
+      grid: messyGrid,
+      namedRange: {
+        namedRangeId: 'nr-arch',
+        name: sampleFixture.submittalArch.rangeName,
+        range: {
+          sheetId: 101,
+          startRowIndex: 2,
+          endRowIndex: messyGrid.length,
+          startColumnIndex: 0,
+          endColumnIndex: 10,
+        },
+      },
+    };
+
+    const runScenario = async (scenario: FixtureWriteScenario) => {
+      const fileId = /\/d\/([^/]+)\//.exec(scenario.fileUri)?.[1] ?? 'file-default';
+      const { documentService, sheetsClient } = await buildWiredDocumentService({
+        driveState,
+        sheetsState,
+        primaryTargetId: fileId,
+      });
+      const result = await documentService.processDocument(
+        {
+          type: 'submittal-arch',
+          space,
+          data: scenario.documentData,
+        },
+        'onSubmit'
+      );
+      expect(result.success, `Scenario ${scenario.scenario} failed`).toBe(true);
+      if (!result.success) {
+        throw new Error(result.errors.join('; '));
+      }
+      return { result, sheetsClient };
+    };
+
+    // 1) Insert into existing messy group 071200-001 (scenario: insertChronologicalMiddleInExistingGroup)
+    const chronScenario = sampleFixture.submittalArch.writeScenarios[3];
+    const step1 = await runScenario(chronScenario);
+    // 16 - 2 (deleted idx 11, 12) + 1 (inserted upper divider) = abs 15 -> rowNumber 16
+    expect(step1.result.contextVariables?.documentLogWrite).toEqual({
+      spreadsheetId: 'harborview-log-1',
+      sheetName: 'Submittal Arch',
+      rowNumber: 16,
+      action: 'inserted',
+    });
+
+    // Verify top edge (idx 5..7) and lower unrelated messy gap (idx 22..24 after -2 net delta) were NOT disturbed!
+    expect(sheetsState.grid![5]).toEqual(['---']);
+    expect(sheetsState.grid![6]).toEqual([]);
+    expect(sheetsState.grid![7][4]).toBe('Unkeyable top human note row');
+    expect(sheetsState.grid![10]).toEqual(['---']); // healed upper divider between 033000-001 and 071200-001
+    expect(sheetsState.grid![12][4]).toBe('Unkeyable trapped note inside 071200-001'); // preserved!
+    expect(sheetsState.grid![15][5]).toBe('260220'); // newly inserted at rowNumber 16
+    expect(sheetsState.grid![18]).toEqual(['---']); // healed single divider before 071200-002
+    expect(sheetsState.grid![21]).toEqual(['---']); // untouched unrelated messy gap
+    expect(sheetsState.grid![22]).toEqual(['---']); // untouched unrelated messy gap
+    expect(sheetsState.grid![23]).toEqual([]); // untouched unrelated messy gap
+    expect(sheetsState.grid![27]).toEqual(['---']); // untouched bottom stray divider
+    expect(sheetsState.grid![28]).toEqual(['<--->']);
+
+    // 2) Insert top new group 013300-001: heals top edge stray divider/blank, preserves null-keyed top row
+    const topScenario = sampleFixture.submittalArch.writeScenarios[0];
+    const step2 = await runScenario(topScenario);
+    expect(step2.result.contextVariables?.documentLogWrite).toEqual({
+      spreadsheetId: 'harborview-log-1',
+      sheetName: 'Submittal Arch',
+      rowNumber: 6,
+      action: 'inserted',
+    });
+    expect(sheetsState.grid![4]).toEqual(['<--->']);
+    expect(sheetsState.grid![5][1]).toBe('013300');
+    expect(sheetsState.grid![6]).toEqual(['---']);
+    expect(sheetsState.grid![7][4]).toBe('Unkeyable top human note row');
+
+    // 3) Insert middle new group 075100-001: heals messy ['---', '---', blank] gap between 071200-002 and 087100-001
+    const midScenario = sampleFixture.submittalArch.writeScenarios[1];
+    const step3 = await runScenario(midScenario);
+    expect(step3.result.contextVariables?.documentLogWrite).toEqual({
+      spreadsheetId: 'harborview-log-1',
+      sheetName: 'Submittal Arch',
+      rowNumber: 23,
+      action: 'inserted',
+    });
+    expect(sheetsState.grid![21]).toEqual(['---']);
+    expect(sheetsState.grid![22][1]).toBe('075100');
+    expect(sheetsState.grid![23]).toEqual(['---']);
+    expect(sheetsState.grid![24][1]).toBe('087100');
+
+    // 4) Insert at bottom past 7120-001 (using section "900000" > "7120"): heals bottom stray divider at <--->
+    const bottomRes = await step3.sheetsClient.readTable({
+      target: {
+        spreadsheetId: 'harborview-log-1',
+        sheetName: sampleFixture.submittalArch.sheetName,
+        rangeName: sampleFixture.submittalArch.rangeName,
+        extentMarker: '<--->',
+        groupDividerMarker: '---',
+      },
+    });
+    expect(bottomRes.rows.some((r) => r.values.Section === '7120')).toBe(true);
+    expect(bottomRes.rows.some((r) => r.values.Action === 'Approved')).toBe(true);
+    expect(bottomRes.rows.some((r) => r.values.Title === 'Unkeyable trapped note inside 071200-001')).toBe(true);
+
+    // Log a submittal with section "900000" sorting after "7120-001" to verify bottom <---> edge healing
+    const bottomDocResult = await (
+      await buildWiredDocumentService({
+        driveState,
+        sheetsState,
+        primaryTargetId: 'bottom-900000-file',
+      })
+    ).documentService.processDocument(
+      {
+        type: 'submittal-arch',
+        space,
+        data: {
+          status: 'Open',
+          section: '900000',
+          number: '001',
+          revision: '0',
+          title: 'Commissioning Closeout',
+          date: '260320',
+          contact: 'MB',
+          action: 'REC',
+          notes: 'Final group past 7120',
+        },
+      },
+      'onSubmit'
+    );
+    expect(bottomDocResult.success).toBe(true);
+    if (!bottomDocResult.success) return;
+    expect(bottomDocResult.contextVariables?.documentLogWrite).toEqual({
+      spreadsheetId: 'harborview-log-1',
+      sheetName: 'Submittal Arch',
+      rowNumber: 29,
+      action: 'inserted',
+    });
+    const finalGrid = sheetsState.grid!;
+    expect(finalGrid[finalGrid.length - 1]).toEqual(['<--->']);
+    expect(finalGrid[finalGrid.length - 2][1]).toBe('900000');
+    expect(finalGrid[finalGrid.length - 3]).toEqual(['---']);
+    expect(finalGrid[finalGrid.length - 4][1]).toBe('7120');
+  });
+
+  it('heals trapped blanks/dividers and immediate boundaries during duplicatePolicy upsert on a messy group', async () => {
+    const driveState: MockDriveState = {
+      searchResults: [
+        {
+          id: 'harborview-log-1',
+          name: sampleFixture.space.expectedLogFileName,
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ],
+    };
+    const space = {
+      id: sampleFixture.space.id,
+      typeId: sampleFixture.space.typeId,
+      name: sampleFixture.space.name,
+      abstractStorageId: sampleFixture.space.abstractStorageId,
+    };
+    const seeds = sampleFixture.submittalArch.seedEntries;
+    const upsertTarget = seeds[6]; // 071200-001-1-260224-6
+
+    const messyGrid: SimCellValue[][] = [
+      [],
+      [],
+      [...sampleFixture.submittalArch.headers],
+      [],
+      ['<--->'], // idx 4
+      seedEntryToSimCells(seeds[0]), // idx 5: 033000-001 (missing divider below!)
+      seedEntryToSimCells(seeds[2]), // idx 6: 071200-001-0-260204-1
+      ['---'], // idx 7: accidental divider trapped inside 071200-001
+      ['Open', '', '', '', 'Unkeyable trapped note', '', '', '', '', null], // idx 8: null-keyed trapped row
+      [], // idx 9: accidental blank trapped inside 071200-001
+      seedEntryToSimCells(upsertTarget), // idx 10: 071200-001-1-260224-6 (upsert target!)
+      ['---'], // idx 11: divider 1 before 087100-001
+      ['---'], // idx 12: duplicate divider 2 before 087100-001
+      seedEntryToSimCells(seeds[9]), // idx 13: 087100-001
+      ['---'], // idx 14: unrelated bottom stray divider
+      ['<--->'], // idx 15
+    ];
+
+    const sheetsState: MockSheetsState = {
+      tableValues: [],
+      batchUpdates: [],
+      grid: messyGrid,
+      namedRange: {
+        namedRangeId: 'nr-arch',
+        name: sampleFixture.submittalArch.rangeName,
+        range: {
+          sheetId: 101,
+          startRowIndex: 2,
+          endRowIndex: messyGrid.length,
+          startColumnIndex: 0,
+          endColumnIndex: 10,
+        },
+      },
+    };
+
+    const { documentService, sheetsClient } = await buildWiredDocumentService({
+      driveState,
+      sheetsState,
+      primaryTargetId: 'upsert-healed-file-1',
+      manifestProviderOverride: createDuplicatePolicyManifestProvider(manifestProvider, 'upsert'),
+    });
+
+    const res = await documentService.processDocument(
+      {
+        type: 'submittal-arch',
+        space,
+        data: {
+          ...upsertTarget.documentData,
+          status: 'Closed',
+          notes: 'Upserted with healing',
+        },
+      },
+      'onSubmit'
+    );
+
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    // idx 10 - 2 (deleted idx 7, 9) + 1 (inserted upper divider) = abs 9 -> rowNumber 10
+    expect(res.contextVariables?.documentLogWrite).toEqual({
+      spreadsheetId: 'harborview-log-1',
+      sheetName: 'Submittal Arch',
+      rowNumber: 10,
+      action: 'updated',
+    });
+
+    expect(sheetsState.grid![6]).toEqual(['---']); // healed upper divider
+    expect(sheetsState.grid![8][4]).toBe('Unkeyable trapped note'); // preserved
+    expect(sheetsState.grid![9][0]).toBe('Closed');
+    expect(sheetsState.grid![9][8]).toBe('Upserted with healing');
+    expect(sheetsState.grid![10]).toEqual(['---']); // healed single lower divider
+    expect(sheetsState.grid![12]).toEqual(['---']); // untouched unrelated bottom stray divider
+
+    const readAfter = await sheetsClient.readTable({
+      target: {
+        spreadsheetId: 'harborview-log-1',
+        sheetName: sampleFixture.submittalArch.sheetName,
+        rangeName: sampleFixture.submittalArch.rangeName,
+        extentMarker: '<--->',
+        groupDividerMarker: '---',
+      },
+    });
+    expect(readAfter.rows.find((r) => r.rowNumber === 10)?.values.Notes).toBe('Upserted with healing');
   });
 });

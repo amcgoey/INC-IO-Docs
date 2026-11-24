@@ -613,6 +613,554 @@ function partitionKeyedGroups(
   return { groups, groupMap };
 }
 
+function isCleanColumnZeroDivider(row: ParsedPositiveRow, groupDividerMarker: string): boolean {
+  return (
+    row.kind === 'divider' &&
+    row.rawRow[0] === groupDividerMarker &&
+    row.rawRow.slice(1).every((cell) => isCellEmpty(cell))
+  );
+}
+
+function collectBlankAndDividerAbsIndices(
+  betweenRows: readonly ParsedPositiveRow[],
+  rangeStartRowIndex: number,
+  startRelExclusive: number,
+  endRelExclusive: number
+): number[] {
+  if (startRelExclusive >= endRelExclusive) {
+    return [];
+  }
+  const indices: number[] = [];
+  for (const row of betweenRows) {
+    if (row.relIndex <= startRelExclusive || row.relIndex >= endRelExclusive) {
+      continue;
+    }
+    if (row.kind === 'blank' || row.kind === 'divider') {
+      indices.push(rangeStartRowIndex + row.relIndex);
+    }
+  }
+  return indices;
+}
+
+/**
+ * Heals a group-to-group boundary gap strictly between `startRelExclusive` and `endRelExclusive`,
+ * keeping at most one clean Column-0-only divider while preserving any null-keyed data rows.
+ */
+function planInterGroupGapHealing(params: {
+  betweenRows: readonly ParsedPositiveRow[];
+  rangeStartRowIndex: number;
+  startRelExclusive: number;
+  endRelExclusive: number;
+  groupDividerMarker: string;
+}): {
+  deleteAbsIndices: number[];
+  keptCleanDividerAbsIndex?: number | undefined;
+} {
+  const {
+    betweenRows,
+    rangeStartRowIndex,
+    startRelExclusive,
+    endRelExclusive,
+    groupDividerMarker,
+  } = params;
+
+  if (startRelExclusive >= endRelExclusive) {
+    return { deleteAbsIndices: [] };
+  }
+
+  const gapRows = betweenRows.filter(
+    (r) => r.relIndex > startRelExclusive && r.relIndex < endRelExclusive
+  );
+  const keptDivider = gapRows.find((r) => isCleanColumnZeroDivider(r, groupDividerMarker));
+  const deleteAbsIndices: number[] = [];
+
+  for (const row of gapRows) {
+    if (row.kind === 'blank') {
+      deleteAbsIndices.push(rangeStartRowIndex + row.relIndex);
+    } else if (row.kind === 'divider' && row !== keptDivider) {
+      deleteAbsIndices.push(rangeStartRowIndex + row.relIndex);
+    }
+  }
+
+  return {
+    deleteAbsIndices,
+    ...(keptDivider ? { keptCleanDividerAbsIndex: rangeStartRowIndex + keptDivider.relIndex } : {}),
+  };
+}
+
+type PlannedInsertedRowKind = 'data' | 'divider';
+
+interface PlannedInsertion {
+  postDeleteAbsIndex: number;
+  orderRank: number;
+  inheritFromBefore: boolean;
+  rows: PlannedInsertedRowKind[];
+}
+
+function buildPostDeleteMapper(deleteAbsIndices: readonly number[]): {
+  sortedUniqueDeletesDesc: number[];
+  postDeleteIndex: (origAbsIndex: number) => number;
+} {
+  const sortedUniqueDeletesDesc = Array.from(new Set(deleteAbsIndices)).sort((a, b) => b - a);
+  const postDeleteIndex = (origAbsIndex: number): number => {
+    let deletedBefore = 0;
+    for (const delIdx of sortedUniqueDeletesDesc) {
+      if (delIdx < origAbsIndex) {
+        deletedBefore++;
+      }
+    }
+    return origAbsIndex - deletedBefore;
+  };
+  return { sortedUniqueDeletesDesc, postDeleteIndex };
+}
+
+function makeCoalescedDeleteRequests(
+  sheetId: number,
+  sortedUniqueDeletesDesc: readonly number[]
+): sheets_v4.Schema$Request[] {
+  const requests: sheets_v4.Schema$Request[] = [];
+  let i = 0;
+  while (i < sortedUniqueDeletesDesc.length) {
+    const endInclusive = sortedUniqueDeletesDesc[i];
+    let startInclusive = endInclusive;
+    while (
+      i + 1 < sortedUniqueDeletesDesc.length &&
+      sortedUniqueDeletesDesc[i + 1] === startInclusive - 1
+    ) {
+      i++;
+      startInclusive = sortedUniqueDeletesDesc[i];
+    }
+    requests.push(makeDeleteRowsRequest(sheetId, startInclusive, endInclusive - startInclusive + 1));
+    i++;
+  }
+  return requests;
+}
+
+function coalesceInsertions(insertions: readonly PlannedInsertion[]): PlannedInsertion[] {
+  const sorted = [...insertions].sort(
+    (a, b) => a.postDeleteAbsIndex - b.postDeleteAbsIndex || a.orderRank - b.orderRank
+  );
+  const coalesced: PlannedInsertion[] = [];
+  for (const ins of sorted) {
+    const prev = coalesced[coalesced.length - 1];
+    if (prev && prev.postDeleteAbsIndex === ins.postDeleteAbsIndex) {
+      prev.rows.push(...ins.rows);
+      prev.inheritFromBefore = prev.inheritFromBefore && ins.inheritFromBefore;
+    } else {
+      coalesced.push({
+        postDeleteAbsIndex: ins.postDeleteAbsIndex,
+        orderRank: ins.orderRank,
+        inheritFromBefore: ins.inheritFromBefore,
+        rows: [...ins.rows],
+      });
+    }
+  }
+  return coalesced;
+}
+
+/**
+ * Compiles deletions (executed descending so upper indices stay stable), coalesced insertions
+ * (executed ascending with running offset), and optional upsert updates into one atomic batchUpdate.
+ */
+function compileAtomicMutationPlan(params: {
+  sheetId: number;
+  rangeStartColumnIndex: number;
+  groupDividerMarker: string;
+  writableRuns: WritableColumnRun[];
+  sortedUniqueDeletesDesc: readonly number[];
+  postDeleteIndex: (origAbsIndex: number) => number;
+  insertions: readonly PlannedInsertion[];
+  upsertOrigAbsIndex?: number | undefined;
+}): {
+  requests: sheets_v4.Schema$Request[];
+  rowNumber: number;
+  action: 'inserted' | 'updated';
+} {
+  const {
+    sheetId,
+    rangeStartColumnIndex,
+    groupDividerMarker,
+    writableRuns,
+    sortedUniqueDeletesDesc,
+    postDeleteIndex,
+    insertions,
+    upsertOrigAbsIndex,
+  } = params;
+
+  const requests: sheets_v4.Schema$Request[] = makeCoalescedDeleteRequests(
+    sheetId,
+    sortedUniqueDeletesDesc
+  );
+  const coalescedInsertions = coalesceInsertions(insertions);
+
+  let insertedOffset = 0;
+  let insertedDataAbsRow: number | undefined;
+
+  for (const ins of coalescedInsertions) {
+    const insertAt = ins.postDeleteAbsIndex + insertedOffset;
+    requests.push(makeInsertRowRequest(sheetId, insertAt, ins.rows.length, ins.inheritFromBefore));
+    for (let offset = 0; offset < ins.rows.length; offset++) {
+      const targetRow = insertAt + offset;
+      if (ins.rows[offset] === 'divider') {
+        requests.push(
+          makeDividerUpdateRequest(sheetId, targetRow, rangeStartColumnIndex, groupDividerMarker)
+        );
+      } else {
+        requests.push(...makeUpdateCellsForRuns(sheetId, targetRow, writableRuns));
+        insertedDataAbsRow = targetRow;
+      }
+    }
+    insertedOffset += ins.rows.length;
+  }
+
+  if (upsertOrigAbsIndex !== undefined) {
+    const postDelUpsert = postDeleteIndex(upsertOrigAbsIndex);
+    let priorInsertions = 0;
+    for (const ins of coalescedInsertions) {
+      if (ins.postDeleteAbsIndex <= postDelUpsert) {
+        priorInsertions += ins.rows.length;
+      }
+    }
+    const finalUpsertAbsRow = postDelUpsert + priorInsertions;
+    requests.push(...makeUpdateCellsForRuns(sheetId, finalUpsertAbsRow, writableRuns));
+    return {
+      requests,
+      rowNumber: finalUpsertAbsRow + 1,
+      action: 'updated',
+    };
+  }
+
+  if (insertedDataAbsRow === undefined) {
+    throw new GoogleSheetsApiError('Internal planner error: missing inserted data row index.');
+  }
+
+  return {
+    requests,
+    rowNumber: insertedDataAbsRow + 1,
+    action: 'inserted',
+  };
+}
+
+/**
+ * Plans an insert or upsert inside an existing group while cleaning trapped blanks/dividers
+ * and healing only that group's immediate upper and lower boundaries.
+ */
+function planExistingGroupMutation(params: {
+  sheetId: number;
+  parsed: ParsedPositiveTable;
+  rangeStartRowIndex: number;
+  rangeStartColumnIndex: number;
+  target: PositiveTableTarget;
+  writableRuns: WritableColumnRun[];
+  targetKeys: RowKey;
+  groups: readonly PartitionedGroup[];
+  existingGroup: PartitionedGroup;
+  rowSortOrder: 'asc' | 'desc';
+  duplicatePolicy: 'insert' | 'upsert' | 'reject';
+}): {
+  requests: sheets_v4.Schema$Request[];
+  rowNumber: number;
+  action: 'inserted' | 'updated';
+} {
+  const {
+    sheetId,
+    parsed,
+    rangeStartRowIndex,
+    rangeStartColumnIndex,
+    target,
+    writableRuns,
+    targetKeys,
+    groups,
+    existingGroup,
+    rowSortOrder,
+    duplicatePolicy,
+  } = params;
+
+  const absTopAnchor = rangeStartRowIndex + parsed.topAnchorIndex;
+  const targetGroupIdx = groups.indexOf(existingGroup);
+  const prevGroup = targetGroupIdx > 0 ? groups[targetGroupIdx - 1] : undefined;
+  const nextGroup = targetGroupIdx < groups.length - 1 ? groups[targetGroupIdx + 1] : undefined;
+
+  const deleteAbsIndices: number[] = [];
+
+  // 1. Heal upper boundary strictly adjacent to existingGroup
+  let needsUpperDivider = false;
+  if (prevGroup) {
+    const upperGap = planInterGroupGapHealing({
+      betweenRows: parsed.betweenRows,
+      rangeStartRowIndex,
+      startRelExclusive: prevGroup.lastDataRelIndex,
+      endRelExclusive: existingGroup.firstDataRelIndex,
+      groupDividerMarker: target.groupDividerMarker,
+    });
+    deleteAbsIndices.push(...upperGap.deleteAbsIndices);
+    needsUpperDivider = upperGap.keptCleanDividerAbsIndex === undefined;
+  } else {
+    deleteAbsIndices.push(
+      ...collectBlankAndDividerAbsIndices(
+        parsed.betweenRows,
+        rangeStartRowIndex,
+        parsed.topAnchorIndex,
+        existingGroup.firstDataRelIndex
+      )
+    );
+  }
+
+  // 2. Delete accidental blanks/dividers trapped inside existingGroup while preserving null-keyed rows
+  deleteAbsIndices.push(
+    ...collectBlankAndDividerAbsIndices(
+      parsed.betweenRows,
+      rangeStartRowIndex,
+      existingGroup.firstDataRelIndex,
+      existingGroup.lastDataRelIndex
+    )
+  );
+
+  // 3. Heal lower boundary strictly adjacent to existingGroup
+  let needsLowerDivider = false;
+  if (nextGroup) {
+    const lowerGap = planInterGroupGapHealing({
+      betweenRows: parsed.betweenRows,
+      rangeStartRowIndex,
+      startRelExclusive: existingGroup.lastDataRelIndex,
+      endRelExclusive: nextGroup.firstDataRelIndex,
+      groupDividerMarker: target.groupDividerMarker,
+    });
+    deleteAbsIndices.push(...lowerGap.deleteAbsIndices);
+    needsLowerDivider = lowerGap.keptCleanDividerAbsIndex === undefined;
+  } else {
+    deleteAbsIndices.push(
+      ...collectBlankAndDividerAbsIndices(
+        parsed.betweenRows,
+        rangeStartRowIndex,
+        existingGroup.lastDataRelIndex,
+        parsed.bottomAnchorIndex
+      )
+    );
+  }
+
+  const { sortedUniqueDeletesDesc, postDeleteIndex } = buildPostDeleteMapper(deleteAbsIndices);
+  const insertions: PlannedInsertion[] = [];
+
+  if (needsUpperDivider) {
+    insertions.push({
+      postDeleteAbsIndex: postDeleteIndex(existingGroup.firstDataAbsIndex),
+      orderRank: 0,
+      inheritFromBefore: true,
+      rows: ['divider'],
+    });
+  }
+
+  const matchingRow = existingGroup.rows.find((r) => r.keys.sortKey === targetKeys.sortKey);
+  const isUpsert = duplicatePolicy === 'upsert' && matchingRow !== undefined;
+
+  if (!isUpsert) {
+    const nextRow = existingGroup.rows.find(
+      (r) => compareSortKeys(r.keys.sortKey, targetKeys.sortKey, rowSortOrder) > 0
+    );
+    const postDeleteInsertIndex = nextRow
+      ? postDeleteIndex(nextRow.absRowIndex)
+      : postDeleteIndex(existingGroup.lastDataAbsIndex) + 1;
+
+    insertions.push({
+      postDeleteAbsIndex: postDeleteInsertIndex,
+      orderRank: 1,
+      inheritFromBefore: postDeleteInsertIndex !== absTopAnchor + 1,
+      rows: ['data'],
+    });
+  }
+
+  if (needsLowerDivider && nextGroup) {
+    insertions.push({
+      postDeleteAbsIndex: postDeleteIndex(nextGroup.firstDataAbsIndex),
+      orderRank: 2,
+      inheritFromBefore: true,
+      rows: ['divider'],
+    });
+  }
+
+  return compileAtomicMutationPlan({
+    sheetId,
+    rangeStartColumnIndex,
+    groupDividerMarker: target.groupDividerMarker,
+    writableRuns,
+    sortedUniqueDeletesDesc,
+    postDeleteIndex,
+    insertions,
+    ...(isUpsert ? { upsertOrigAbsIndex: matchingRow.absRowIndex } : {}),
+  });
+}
+
+/**
+ * Plans insertion of a new group at the top, middle, or bottom while healing only
+ * the affected insertion boundary and preserving any null-keyed rows.
+ */
+function planNewGroupMutation(params: {
+  sheetId: number;
+  parsed: ParsedPositiveTable;
+  rangeStartRowIndex: number;
+  rangeStartColumnIndex: number;
+  target: PositiveTableTarget;
+  writableRuns: WritableColumnRun[];
+  targetKeys: RowKey;
+  groups: readonly PartitionedGroup[];
+  groupSortOrder: 'asc' | 'desc';
+}): {
+  requests: sheets_v4.Schema$Request[];
+  rowNumber: number;
+  action: 'inserted' | 'updated';
+} {
+  const {
+    sheetId,
+    parsed,
+    rangeStartRowIndex,
+    rangeStartColumnIndex,
+    target,
+    writableRuns,
+    targetKeys,
+    groups,
+    groupSortOrder,
+  } = params;
+
+  const absTopAnchor = rangeStartRowIndex + parsed.topAnchorIndex;
+  const absBottomAnchor = rangeStartRowIndex + parsed.bottomAnchorIndex;
+  const deleteAbsIndices: number[] = [];
+  const insertions: PlannedInsertion[] = [];
+
+  if (groups.length === 0) {
+    let lastDataRelIndex = parsed.topAnchorIndex;
+    for (const row of parsed.betweenRows) {
+      if (row.kind === 'data') {
+        lastDataRelIndex = row.relIndex;
+      }
+    }
+    deleteAbsIndices.push(
+      ...collectBlankAndDividerAbsIndices(
+        parsed.betweenRows,
+        rangeStartRowIndex,
+        lastDataRelIndex,
+        parsed.bottomAnchorIndex
+      )
+    );
+    const { sortedUniqueDeletesDesc, postDeleteIndex } = buildPostDeleteMapper(deleteAbsIndices);
+    const postDeleteInsertIndex = postDeleteIndex(absBottomAnchor);
+    insertions.push({
+      postDeleteAbsIndex: postDeleteInsertIndex,
+      orderRank: 0,
+      inheritFromBefore: postDeleteInsertIndex !== absTopAnchor + 1,
+      rows: ['data'],
+    });
+    return compileAtomicMutationPlan({
+      sheetId,
+      rangeStartColumnIndex,
+      groupDividerMarker: target.groupDividerMarker,
+      writableRuns,
+      sortedUniqueDeletesDesc,
+      postDeleteIndex,
+      insertions,
+    });
+  }
+
+  const nextGroupIdx = groups.findIndex(
+    (g) => compareSortKeys(g.groupKey, targetKeys.groupKey, groupSortOrder) > 0
+  );
+
+  if (nextGroupIdx === 0) {
+    const nextGroup = groups[0];
+    deleteAbsIndices.push(
+      ...collectBlankAndDividerAbsIndices(
+        parsed.betweenRows,
+        rangeStartRowIndex,
+        parsed.topAnchorIndex,
+        nextGroup.firstDataRelIndex
+      )
+    );
+    const { sortedUniqueDeletesDesc, postDeleteIndex } = buildPostDeleteMapper(deleteAbsIndices);
+    insertions.push({
+      postDeleteAbsIndex: absTopAnchor + 1,
+      orderRank: 0,
+      inheritFromBefore: false,
+      rows: ['data', 'divider'],
+    });
+    return compileAtomicMutationPlan({
+      sheetId,
+      rangeStartColumnIndex,
+      groupDividerMarker: target.groupDividerMarker,
+      writableRuns,
+      sortedUniqueDeletesDesc,
+      postDeleteIndex,
+      insertions,
+    });
+  }
+
+  if (nextGroupIdx > 0) {
+    const prevGroup = groups[nextGroupIdx - 1];
+    const nextGroup = groups[nextGroupIdx];
+    const middleGap = planInterGroupGapHealing({
+      betweenRows: parsed.betweenRows,
+      rangeStartRowIndex,
+      startRelExclusive: prevGroup.lastDataRelIndex,
+      endRelExclusive: nextGroup.firstDataRelIndex,
+      groupDividerMarker: target.groupDividerMarker,
+    });
+    deleteAbsIndices.push(...middleGap.deleteAbsIndices);
+    const { sortedUniqueDeletesDesc, postDeleteIndex } = buildPostDeleteMapper(deleteAbsIndices);
+
+    if (middleGap.keptCleanDividerAbsIndex !== undefined) {
+      insertions.push({
+        postDeleteAbsIndex: postDeleteIndex(middleGap.keptCleanDividerAbsIndex),
+        orderRank: 0,
+        inheritFromBefore: true,
+        rows: ['divider', 'data'],
+      });
+    } else {
+      insertions.push({
+        postDeleteAbsIndex: postDeleteIndex(prevGroup.lastDataAbsIndex) + 1,
+        orderRank: 0,
+        inheritFromBefore: true,
+        rows: ['divider', 'data', 'divider'],
+      });
+    }
+
+    return compileAtomicMutationPlan({
+      sheetId,
+      rangeStartColumnIndex,
+      groupDividerMarker: target.groupDividerMarker,
+      writableRuns,
+      sortedUniqueDeletesDesc,
+      postDeleteIndex,
+      insertions,
+    });
+  }
+
+  const prevGroup = groups[groups.length - 1];
+  deleteAbsIndices.push(
+    ...collectBlankAndDividerAbsIndices(
+      parsed.betweenRows,
+      rangeStartRowIndex,
+      prevGroup.lastDataRelIndex,
+      parsed.bottomAnchorIndex
+    )
+  );
+  const { sortedUniqueDeletesDesc, postDeleteIndex } = buildPostDeleteMapper(deleteAbsIndices);
+  insertions.push({
+    postDeleteAbsIndex: postDeleteIndex(absBottomAnchor),
+    orderRank: 0,
+    inheritFromBefore: true,
+    rows: ['divider', 'data'],
+  });
+
+  return compileAtomicMutationPlan({
+    sheetId,
+    rangeStartColumnIndex,
+    groupDividerMarker: target.groupDividerMarker,
+    writableRuns,
+    sortedUniqueDeletesDesc,
+    postDeleteIndex,
+    insertions,
+  });
+}
+
 function planGroupedRowMutation(params: {
   sheetId: number;
   parsed: ParsedPositiveTable;
@@ -646,8 +1194,6 @@ function planGroupedRowMutation(params: {
     duplicatePolicy,
   } = params;
 
-  const absTopAnchor = rangeStartRowIndex + parsed.topAnchorIndex;
-  const absBottomAnchor = rangeStartRowIndex + parsed.bottomAnchorIndex;
   const { groups, groupMap } = partitionKeyedGroups(
     parsed.betweenRows,
     rangeStartRowIndex,
@@ -662,37 +1208,6 @@ function planGroupedRowMutation(params: {
         `Duplicate key "${targetKeys.sortKey}" in group "${targetKeys.groupKey}" on sheet "${target.sheetName}" (${target.rangeName}).`
       );
     }
-
-    const writableRuns = buildWritableRuns({
-      rowData,
-      columnIndexMap: parsed.columnIndexMap,
-      protectedColumns,
-      rangeStartColumnIndex,
-      target,
-    });
-
-    if (duplicatePolicy === 'upsert' && matchingRow) {
-      return {
-        requests: makeUpdateCellsForRuns(sheetId, matchingRow.absRowIndex, writableRuns),
-        rowNumber: matchingRow.rowNumber,
-        action: 'updated',
-      };
-    }
-
-    const nextRow = existingGroup.rows.find(
-      (r) => compareSortKeys(r.keys.sortKey, targetKeys.sortKey, rowSortOrder) > 0
-    );
-    const absInsertIndex = nextRow ? nextRow.absRowIndex : existingGroup.lastDataAbsIndex + 1;
-    const inheritFromBefore = absInsertIndex !== absTopAnchor + 1;
-
-    return {
-      requests: [
-        makeInsertRowRequest(sheetId, absInsertIndex, 1, inheritFromBefore),
-        ...makeUpdateCellsForRuns(sheetId, absInsertIndex, writableRuns),
-      ],
-      rowNumber: absInsertIndex + 1,
-      action: 'inserted',
-    };
   }
 
   const writableRuns = buildWritableRuns({
@@ -703,125 +1218,33 @@ function planGroupedRowMutation(params: {
     target,
   });
 
-  if (groups.length === 0) {
-    const absInsertIndex = absBottomAnchor;
-    const inheritFromBefore = absInsertIndex !== absTopAnchor + 1;
-    return {
-      requests: [
-        makeInsertRowRequest(sheetId, absInsertIndex, 1, inheritFromBefore),
-        ...makeUpdateCellsForRuns(sheetId, absInsertIndex, writableRuns),
-      ],
-      rowNumber: absInsertIndex + 1,
-      action: 'inserted',
-    };
+  if (existingGroup) {
+    return planExistingGroupMutation({
+      sheetId,
+      parsed,
+      rangeStartRowIndex,
+      rangeStartColumnIndex,
+      target,
+      writableRuns,
+      targetKeys,
+      groups,
+      existingGroup,
+      rowSortOrder,
+      duplicatePolicy,
+    });
   }
 
-  const nextGroupIdx = groups.findIndex(
-    (g) => compareSortKeys(g.groupKey, targetKeys.groupKey, groupSortOrder) > 0
-  );
-
-  if (nextGroupIdx === 0) {
-    const nextGroup = groups[0];
-    const hasDividerAboveNext = parsed.betweenRows.some(
-      (r) =>
-        r.kind === 'divider' &&
-        r.relIndex > parsed.topAnchorIndex &&
-        r.relIndex < nextGroup.firstDataRelIndex
-    );
-    const absInsertIndex = absTopAnchor + 1;
-    if (!hasDividerAboveNext) {
-      return {
-        requests: [
-          makeInsertRowRequest(sheetId, absInsertIndex, 2, false),
-          ...makeUpdateCellsForRuns(sheetId, absInsertIndex, writableRuns),
-          makeDividerUpdateRequest(
-            sheetId,
-            absInsertIndex + 1,
-            rangeStartColumnIndex,
-            target.groupDividerMarker
-          ),
-        ],
-        rowNumber: absInsertIndex + 1,
-        action: 'inserted',
-      };
-    }
-
-    return {
-      requests: [
-        makeInsertRowRequest(sheetId, absInsertIndex, 1, false),
-        ...makeUpdateCellsForRuns(sheetId, absInsertIndex, writableRuns),
-      ],
-      rowNumber: absInsertIndex + 1,
-      action: 'inserted',
-    };
-  }
-
-  if (nextGroupIdx > 0) {
-    const prevGroup = groups[nextGroupIdx - 1];
-    const nextGroup = groups[nextGroupIdx];
-    const absInsertIndex = prevGroup.lastDataAbsIndex + 1;
-    const hasDividerBetween = parsed.betweenRows.some(
-      (r) =>
-        r.kind === 'divider' &&
-        r.relIndex > prevGroup.lastDataRelIndex &&
-        r.relIndex < nextGroup.firstDataRelIndex
-    );
-
-    if (hasDividerBetween) {
-      return {
-        requests: [
-          makeInsertRowRequest(sheetId, absInsertIndex, 2, true),
-          makeDividerUpdateRequest(
-            sheetId,
-            absInsertIndex,
-            rangeStartColumnIndex,
-            target.groupDividerMarker
-          ),
-          ...makeUpdateCellsForRuns(sheetId, absInsertIndex + 1, writableRuns),
-        ],
-        rowNumber: absInsertIndex + 2,
-        action: 'inserted',
-      };
-    }
-
-    return {
-      requests: [
-        makeInsertRowRequest(sheetId, absInsertIndex, 3, true),
-        makeDividerUpdateRequest(
-          sheetId,
-          absInsertIndex,
-          rangeStartColumnIndex,
-          target.groupDividerMarker
-        ),
-        ...makeUpdateCellsForRuns(sheetId, absInsertIndex + 1, writableRuns),
-        makeDividerUpdateRequest(
-          sheetId,
-          absInsertIndex + 2,
-          rangeStartColumnIndex,
-          target.groupDividerMarker
-        ),
-      ],
-      rowNumber: absInsertIndex + 2,
-      action: 'inserted',
-    };
-  }
-
-  const prevGroup = groups[groups.length - 1];
-  const absInsertIndex = prevGroup.lastDataAbsIndex + 1;
-  return {
-    requests: [
-      makeInsertRowRequest(sheetId, absInsertIndex, 2, true),
-      makeDividerUpdateRequest(
-        sheetId,
-        absInsertIndex,
-        rangeStartColumnIndex,
-        target.groupDividerMarker
-      ),
-      ...makeUpdateCellsForRuns(sheetId, absInsertIndex + 1, writableRuns),
-    ],
-    rowNumber: absInsertIndex + 2,
-    action: 'inserted',
-  };
+  return planNewGroupMutation({
+    sheetId,
+    parsed,
+    rangeStartRowIndex,
+    rangeStartColumnIndex,
+    target,
+    writableRuns,
+    targetKeys,
+    groups,
+    groupSortOrder,
+  });
 }
 
 export class GoogleSheetsClient implements SheetsClient {
