@@ -158,6 +158,11 @@ function createSheetsStorageAdapter(sheetsClient: SheetsClient): LogStoragePort 
           ? { readOnlyColumns: request.readOnlyColumns }
           : {}),
       }),
+    readRows: async (request) =>
+      sheetsClient.readTable({
+        target: request.target,
+        ...(request.linkColumns !== undefined ? { linkColumns: request.linkColumns } : {}),
+      }),
   };
 }
 

@@ -1,6 +1,7 @@
 import {
   DocumentLogConfigurationError,
   type DocumentLogDocument,
+  type DocumentLogEntry,
   type DocumentLogSchema,
   type LogCellInput,
   type LogFormulaCell,
@@ -10,6 +11,8 @@ import {
   type LogTargetDocumentOptionTuple,
   type LogTargetDocumentSchema,
   type LogTemplateEvaluatorPort,
+  type ReadLogRow,
+  type RowHydrationWarning,
 } from './ports';
 
 function escapeSheetsFormulaLiteral(value: string): string {
@@ -268,29 +271,29 @@ export interface BuildRowKeyExtractorParams {
   templateEvaluator: LogTemplateEvaluatorPort;
 }
 
-/**
- * Builds a row-key extraction callback that reverse-maps sheet cells through single-token
- * `documentLogSchema.columns` bindings (with case-insensitive `LookupField` option resolution)
- * and evaluates `grouping.groupBy` / `grouping.sortBy` `Identity` templates in-app.
- * Returns `null` when all `DocumentField` tokens referenced by `grouping.groupBy` are blank.
- */
-export function buildRowKeyExtractor(
-  params: BuildRowKeyExtractorParams
-): (row: LogRowValues) => LogRowKey | null {
-  const { logSchema, targetSchema, templateEvaluator } = params;
-  const { groupByTemplate, sortByTemplate, groupByTokens } = resolveGroupingTemplates(
-    logSchema,
-    targetSchema
-  );
+interface ReconstructedRowFields {
+  data: Record<string, unknown>;
+  invalidLookupValues: Map<string, string>;
+  rawStrings: Map<string, string>;
+}
 
+function collectColumnReverseMappings(
+  logSchema: DocumentLogSchema,
+  targetSchema: LogTargetDocumentSchema
+): { mappings: ColumnReverseMapping[]; fileLinkHeaders: string[] } {
   const fieldsByKey = new Map<string, LogTargetDocumentField>();
   for (const field of targetSchema.fields) {
     fieldsByKey.set(field.key, field);
   }
 
   const mappings: ColumnReverseMapping[] = [];
+  const fileLinkHeaders: string[] = [];
+
   for (const [header, binding] of Object.entries(logSchema.columns)) {
     if (!('template' in binding)) {
+      if (binding.source === 'fileLink') {
+        fileLinkHeaders.push(header);
+      }
       continue;
     }
     const parsed = parseSingleTokenTemplate(binding.template);
@@ -305,44 +308,58 @@ export function buildRowKeyExtractor(
     });
   }
 
-  return (row: LogRowValues): LogRowKey | null => {
-    const reconstructed: Record<string, unknown> = {};
-    const matchedLookupFields = new Set<string>();
+  return { mappings, fileLinkHeaders };
+}
 
-    for (const mapping of mappings) {
-      const rawCell = row[mapping.header];
-      if (rawCell === null || rawCell === undefined) {
-        continue;
-      }
-      const rawStr = typeof rawCell === 'string' ? rawCell : String(rawCell);
-      const trimmedStr = rawStr.trim();
-      if (trimmedStr.length === 0) {
-        continue;
-      }
+function reconstructFieldsFromRow(
+  row: LogRowValues,
+  mappings: readonly ColumnReverseMapping[],
+  targetSchema: LogTargetDocumentSchema,
+  options: { synthesizeInvalidLookupFallback: boolean }
+): ReconstructedRowFields {
+  const data: Record<string, unknown> = {};
+  const matchedLookupFields = new Set<string>();
+  const invalidLookupValues = new Map<string, string>();
+  const rawStrings = new Map<string, string>();
 
-      if (mapping.field?.options) {
-        const optionTuples = targetSchema.options?.[mapping.field.options.source] ?? [];
-        const keyProp = mapping.field.options.key;
-        const nameProp = mapping.field.options.name;
-        const normalizedTarget = trimmedStr.toLowerCase();
+  for (const mapping of mappings) {
+    const rawCell = row[mapping.header];
+    if (rawCell === null || rawCell === undefined) {
+      continue;
+    }
+    const rawStr = typeof rawCell === 'string' ? rawCell : String(rawCell);
+    const trimmedStr = rawStr.trim();
+    if (trimmedStr.length === 0) {
+      continue;
+    }
 
-        const matchedTuple =
-          (mapping.property !== undefined
-            ? matchOptionTupleCaseInsensitive(optionTuples, mapping.property, normalizedTarget)
-            : undefined) ??
-          matchOptionTupleCaseInsensitive(optionTuples, keyProp, normalizedTarget) ??
-          (nameProp !== undefined
-            ? matchOptionTupleCaseInsensitive(optionTuples, nameProp, normalizedTarget)
-            : undefined);
+    if (mapping.field?.options) {
+      const optionTuples = targetSchema.options?.[mapping.field.options.source] ?? [];
+      const keyProp = mapping.field.options.key;
+      const nameProp = mapping.field.options.name;
+      const normalizedTarget = trimmedStr.toLowerCase();
 
-        if (matchedTuple) {
-          reconstructed[mapping.fieldKey] = { ...matchedTuple };
-          matchedLookupFields.add(mapping.fieldKey);
-        } else if (
-          mapping.field.options.allowUserInput &&
-          !matchedLookupFields.has(mapping.fieldKey)
-        ) {
-          const existing = reconstructed[mapping.fieldKey];
+      const matchedTuple =
+        (mapping.property !== undefined
+          ? matchOptionTupleCaseInsensitive(optionTuples, mapping.property, normalizedTarget)
+          : undefined) ??
+        matchOptionTupleCaseInsensitive(optionTuples, keyProp, normalizedTarget) ??
+        (nameProp !== undefined
+          ? matchOptionTupleCaseInsensitive(optionTuples, nameProp, normalizedTarget)
+          : undefined);
+
+      if (matchedTuple) {
+        data[mapping.fieldKey] = { ...matchedTuple };
+        matchedLookupFields.add(mapping.fieldKey);
+        invalidLookupValues.delete(mapping.fieldKey);
+        rawStrings.set(mapping.fieldKey, trimmedStr);
+      } else if (!matchedLookupFields.has(mapping.fieldKey)) {
+        const isDynamicOrUserInput =
+          Boolean(mapping.field.options.allowUserInput) ||
+          mapping.field.options.dynamicConfig !== undefined;
+
+        if (isDynamicOrUserInput) {
+          const existing = data[mapping.fieldKey];
           const fallback: Record<string, unknown> =
             existing && typeof existing === 'object'
               ? { ...(existing as Record<string, unknown>) }
@@ -353,21 +370,256 @@ export function buildRowKeyExtractor(
           if (mapping.property !== undefined) {
             fallback[mapping.property] = trimmedStr;
           }
-          reconstructed[mapping.fieldKey] = fallback;
+          data[mapping.fieldKey] = fallback;
+          rawStrings.set(mapping.fieldKey, trimmedStr);
+        } else {
+          invalidLookupValues.set(mapping.fieldKey, trimmedStr);
+          rawStrings.set(mapping.fieldKey, trimmedStr);
+          if (options.synthesizeInvalidLookupFallback) {
+            data[mapping.fieldKey] = {
+              [keyProp]: trimmedStr,
+              ...(nameProp ? { [nameProp]: trimmedStr } : {}),
+            };
+          }
         }
-      } else if (reconstructed[mapping.fieldKey] === undefined) {
-        reconstructed[mapping.fieldKey] = trimmedStr;
       }
+    } else if (data[mapping.fieldKey] === undefined) {
+      data[mapping.fieldKey] = trimmedStr;
+      rawStrings.set(mapping.fieldKey, trimmedStr);
     }
+  }
+
+  return { data, invalidLookupValues, rawStrings };
+}
+
+/**
+ * Builds a row-key extraction callback that reverse-maps sheet cells through single-token
+ * `documentLogSchema.columns` bindings (with case-insensitive `LookupField` option resolution)
+ * and evaluates `grouping.groupBy` / `grouping.sortBy` `Identity` templates in-app.
+ * Returns `null` when all `DocumentField` tokens referenced by `grouping.groupBy` are blank.
+ */
+export function buildRowKeyExtractor(
+  params: BuildRowKeyExtractorParams
+): (row: LogRowValues) => LogRowKey | null {
+  const { logSchema, targetSchema, templateEvaluator } = params;
+  const { groupByTemplate, sortByTemplate, groupByTokens } = resolveGroupingTemplates(
+    logSchema,
+    targetSchema
+  );
+  const { mappings } = collectColumnReverseMappings(logSchema, targetSchema);
+
+  return (row: LogRowValues): LogRowKey | null => {
+    const { data } = reconstructFieldsFromRow(row, mappings, targetSchema, {
+      synthesizeInvalidLookupFallback: false,
+    });
 
     return evaluateRowKeysFromData({
-      data: reconstructed,
+      data,
       groupByTemplate,
       sortByTemplate,
       groupByTokens,
       templateEvaluator,
     });
   };
+}
+
+export interface BuildLogRowHydratorParams {
+  documentTypeKey: string;
+  logSchema: DocumentLogSchema;
+  targetSchema: LogTargetDocumentSchema;
+  templateEvaluator: LogTemplateEvaluatorPort;
+}
+
+export interface MapLogRowToDocumentParams extends BuildLogRowHydratorParams {
+  rowNumber: number;
+  values: LogRowValues;
+  links?: Record<string, string | null> | undefined;
+}
+
+export interface MappedHydratedLogRow {
+  entry: DocumentLogEntry;
+  warnings: RowHydrationWarning[];
+}
+
+const IDENTITY_KEYS = ['idGroup', 'idDocument', 'id'] as const;
+
+function resolveRowFileUri(
+  links: Readonly<Record<string, string | null>> | undefined,
+  fileLinkHeaders: readonly string[]
+): string | undefined {
+  if (!links) {
+    return undefined;
+  }
+  for (const header of fileLinkHeaders) {
+    const link = links[header];
+    if (typeof link === 'string') {
+      const trimmed = link.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
+    }
+  }
+  return undefined;
+}
+
+function compileFieldPatterns(targetSchema: LogTargetDocumentSchema): Map<string, RegExp> {
+  const patterns = new Map<string, RegExp>();
+  for (const field of targetSchema.fields) {
+    if (field.pattern === undefined) {
+      continue;
+    }
+    try {
+      patterns.set(field.key, new RegExp(field.pattern));
+    } catch (error) {
+      throw new DocumentLogConfigurationError(
+        `Invalid regex pattern "${field.pattern}" on field "${field.key}".`,
+        { cause: error }
+      );
+    }
+  }
+  return patterns;
+}
+
+function validateHydratedRowFields(params: {
+  rowNumber: number;
+  targetSchema: LogTargetDocumentSchema;
+  reconstructed: ReconstructedRowFields;
+  compiledPatterns: ReadonlyMap<string, RegExp>;
+}): { validationErrors: string[]; warnings: RowHydrationWarning[] } {
+  const { rowNumber, targetSchema, reconstructed, compiledPatterns } = params;
+  const { data, invalidLookupValues, rawStrings } = reconstructed;
+  const validationErrors: string[] = [];
+  const warnings: RowHydrationWarning[] = [];
+
+  for (const field of targetSchema.fields) {
+    const fieldLabel = field.name ?? field.key;
+    const value = data[field.key];
+    if (value === undefined) {
+      if (field.required) {
+        const message = `Field "${field.key}" (${fieldLabel}) is required.`;
+        validationErrors.push(message);
+        warnings.push({ rowNumber, field: field.key, message });
+      }
+      continue;
+    }
+
+    const reasons: string[] = [];
+    const isStaticRestrictedLookup = Boolean(
+      field.options &&
+        field.options.dynamicConfig === undefined &&
+        !field.options.allowUserInput
+    );
+
+    if (isStaticRestrictedLookup) {
+      if (invalidLookupValues.has(field.key)) {
+        reasons.push(
+          `value "${invalidLookupValues.get(field.key)}" is not a valid option in "${field.options!.source}"`
+        );
+      }
+    } else {
+      const strVal = typeof value === 'string' ? value : (rawStrings.get(field.key) ?? '');
+      if (field.minLength !== undefined && strVal.length < field.minLength) {
+        reasons.push(`must have length >= ${field.minLength}`);
+      }
+      const regex = compiledPatterns.get(field.key);
+      if (regex && !regex.test(strVal)) {
+        reasons.push(`does not match pattern "${field.pattern}"`);
+      }
+    }
+
+    if (reasons.length > 0) {
+      const message = `Field "${field.key}" (${fieldLabel}): ${reasons.join('; ')}.`;
+      validationErrors.push(message);
+      warnings.push({ rowNumber, field: field.key, message });
+    }
+  }
+
+  return { validationErrors, warnings };
+}
+
+/**
+ * Builds a compiled row hydrator for `READ_LOG` that reverse-maps sheet rows into enriched
+ * Stage-1 `DocumentLogEntry` records, evaluates in-app `Identity` templates, and emits
+ * structured `RowHydrationWarning` entries without dropping invalid hand-edited rows.
+ */
+export function buildLogRowHydrator(
+  params: BuildLogRowHydratorParams
+): (row: ReadLogRow) => MappedHydratedLogRow {
+  const { documentTypeKey, logSchema, targetSchema, templateEvaluator } = params;
+  const { mappings, fileLinkHeaders } = collectColumnReverseMappings(logSchema, targetSchema);
+  const compiledPatterns = compileFieldPatterns(targetSchema);
+
+  const identitySpecs = IDENTITY_KEYS.flatMap((key) => {
+    const template = targetSchema.identity?.[key];
+    if (typeof template !== 'string' || template.trim().length === 0) {
+      return [];
+    }
+    return [{ key, template, tokens: extractTemplateFieldTokens(template) }];
+  });
+
+  return (row: ReadLogRow): MappedHydratedLogRow => {
+    const reconstructed = reconstructFieldsFromRow(row.values, mappings, targetSchema, {
+      synthesizeInvalidLookupFallback: true,
+    });
+    const { data } = reconstructed;
+
+    const { validationErrors, warnings } = validateHydratedRowFields({
+      rowNumber: row.rowNumber,
+      targetSchema,
+      reconstructed,
+      compiledPatterns,
+    });
+
+    const identityValues: Partial<Record<(typeof IDENTITY_KEYS)[number], string>> = {};
+    for (const spec of identitySpecs) {
+      if (
+        spec.tokens.length > 0 &&
+        spec.tokens.every((parts) => !isTokenPresent(data, parts))
+      ) {
+        continue;
+      }
+      const evaluated = templateEvaluator.evaluate(spec.template, data);
+      if (evaluated.trim().length > 0) {
+        identityValues[spec.key] = evaluated;
+      }
+    }
+
+    const fileUri = resolveRowFileUri(row.links, fileLinkHeaders);
+    const document: DocumentLogDocument = {
+      ...(identityValues.id !== undefined ? { id: identityValues.id } : {}),
+      ...(identityValues.idDocument !== undefined ? { idDocument: identityValues.idDocument } : {}),
+      ...(identityValues.idGroup !== undefined ? { idGroup: identityValues.idGroup } : {}),
+      type: documentTypeKey,
+      data,
+    };
+
+    const entry: DocumentLogEntry = {
+      document,
+      valid: validationErrors.length === 0,
+      ...(fileUri !== undefined ? { fileUri } : {}),
+      rowNumber: row.rowNumber,
+      ...(validationErrors.length > 0 ? { validationErrors } : {}),
+    };
+
+    return { entry, warnings };
+  };
+}
+
+/**
+ * Convenience single-row wrapper over `buildLogRowHydrator`.
+ */
+export function mapLogRowToDocument(params: MapLogRowToDocumentParams): MappedHydratedLogRow {
+  const hydrate = buildLogRowHydrator({
+    documentTypeKey: params.documentTypeKey,
+    logSchema: params.logSchema,
+    targetSchema: params.targetSchema,
+    templateEvaluator: params.templateEvaluator,
+  });
+  return hydrate({
+    rowNumber: params.rowNumber,
+    values: params.values,
+    ...(params.links !== undefined ? { links: params.links } : {}),
+  });
 }
 
 export interface ComputeTargetRowKeysParams {

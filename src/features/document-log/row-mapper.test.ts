@@ -1,10 +1,14 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
+  buildLogRowHydrator,
   buildRowKeyExtractor,
   computeTargetRowKeys,
   enrichDocumentData,
   formatFileLinkFormula,
   mapDocumentToLogRow,
+  mapLogRowToDocument,
 } from './row-mapper';
 import type {
   DocumentLogSchema,
@@ -860,6 +864,433 @@ describe('document-log row-mapper', () => {
           Action: 'Received',
         })
       ).toBeNull();
+    });
+  });
+
+  describe('mapLogRowToDocument / buildLogRowHydrator (bidirectional hydration)', () => {
+    it('hydrates valid Submittal Arch and Submittal FF&E rows (including readOnly Spec Title), omits blank cells and calculated, computes Identity, and attaches fileUri & rowNumber', () => {
+      const archHydrated = mapLogRowToDocument({
+        rowNumber: 6,
+        values: {
+          Status: ' open ',
+          Section: ' 071200 ',
+          Number: ' 001 ',
+          Revision: '0',
+          Title: 'Fluid-Applied Waterproofing',
+          Date: '260204',
+          Contact: 'Pavarini McGovern',
+          Action: 'received',
+          Notes: '   ',
+          'Calc Link': 'Link',
+        },
+        links: {
+          'Calc Link': 'https://drive.google.com/file/d/arch-row-6/view',
+        },
+        documentTypeKey: 'submittal-arch',
+        logSchema,
+        targetSchema,
+        templateEvaluator: evaluator,
+      });
+
+      expect(archHydrated.warnings).toEqual([]);
+      expect(archHydrated.entry).toEqual({
+        rowNumber: 6,
+        valid: true,
+        fileUri: 'https://drive.google.com/file/d/arch-row-6/view',
+        document: {
+          id: '071200-001-0-260204-1',
+          idDocument: '071200-001-0',
+          idGroup: '071200-001',
+          type: 'submittal-arch',
+          data: {
+            status: { key: 'Open' },
+            section: '071200',
+            number: '001',
+            revision: '0',
+            title: 'Fluid-Applied Waterproofing',
+            date: '260204',
+            contact: { key: 'PMG', name: 'Pavarini McGovern', type: 'Contractor' },
+            action: { key: 'REC', name: 'Received', order: '1' },
+          },
+        },
+      });
+      expect('notes' in archHydrated.entry.document.data).toBe(false);
+      expect('calculated' in archHydrated.entry.document).toBe(false);
+
+      const ffeTarget: LogTargetDocumentSchema = {
+        fields: [
+          { key: 'status', name: 'Status', type: 'string', required: true, options: { source: 'statuses', key: 'key' } },
+          { key: 'specTag', name: 'Spec Tag', type: 'string', required: true, options: { source: 'specs', key: 'key', allowUserInput: true } },
+          { key: 'relatedTag', name: 'Related Tag', type: 'string', required: false, minLength: 3, pattern: '^[A-Z]{2}\\d{3}', options: { source: 'specs', key: 'key', allowUserInput: true } },
+          { key: 'revision', name: 'Revision', type: 'string', required: true, minLength: 1, pattern: '^.*\\S+.*$' },
+          { key: 'specTitle', name: 'Spec Title', type: 'string', required: true, minLength: 1, pattern: '^.*\\S+.*$', linkedField: { sourceField: 'specTag', sourceProperty: 'name' } },
+          { key: 'vendor', name: 'Vendor', type: 'string', required: true, options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'date', name: 'Date', type: 'string', required: true },
+          { key: 'contact', name: 'Contact', type: 'string', required: true, options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'action', name: 'Action', type: 'string', required: true, options: { source: 'actions', key: 'key', name: 'name' } },
+          { key: 'notes', name: 'Notes', type: 'string', required: false, minLength: 2, pattern: '^.*\\S+.*$' },
+        ],
+        options: {
+          statuses: [{ key: 'Open' }],
+          specs: [{ key: 'CG104', name: 'BED - KING' }],
+          vendors: [{ key: 'FDT', name: 'Fil Doux Textiles', type: 'Fabric' }],
+          contacts: [{ key: 'BW', name: 'Benjamin West', type: 'Procurement' }],
+          actions: [{ key: 'REC', name: 'Received', order: '1' }],
+        },
+        identity: {
+          idGroup: '{{specTag.key}}',
+          idDocument: '{{specTag.key}}-{{revision}}',
+          id: '{{specTag.key}}-{{revision}}-{{date}}-{{action.order}}',
+        },
+      };
+
+      const ffeLog: DocumentLogSchema = {
+        ...logSchema,
+        target: {
+          sheetName: 'Submittal FF&E',
+          rangeName: 'Log_Submittal_FFE',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        columns: {
+          Status: { template: '{{status.key}}' },
+          'Spec Tag': { template: '{{specTag.key}}' },
+          'Related Tag': { template: '{{relatedTag.key}}' },
+          Revision: { template: '{{revision}}' },
+          'Spec Title': { template: '{{specTitle}}', readOnly: true },
+          Vendor: { template: '{{vendor.name}}' },
+          Date: { template: '{{date}}' },
+          Contact: { template: '{{contact.key}}' },
+          Action: { template: '{{action.name}}' },
+          Notes: { template: '{{notes}}' },
+          'Calc Link': { source: 'fileLink', label: 'Link' },
+        },
+      };
+
+      const hydrateFfe = buildLogRowHydrator({
+        documentTypeKey: 'submittal-ffe',
+        logSchema: ffeLog,
+        targetSchema: ffeTarget,
+        templateEvaluator: evaluator,
+      });
+
+      const ffeHydrated = hydrateFfe({
+        rowNumber: 9,
+        values: {
+          Status: 'Open',
+          'Spec Tag': 'cg104',
+          'Related Tag': '',
+          Revision: '0',
+          'Spec Title': 'BED - KING',
+          Vendor: 'Fil Doux Textiles',
+          Date: '260120',
+          Contact: 'bw',
+          Action: 'REC',
+          Notes: '',
+          'Calc Link': '',
+        },
+        links: { 'Calc Link': null },
+      });
+
+      expect(ffeHydrated.warnings).toEqual([]);
+      expect(ffeHydrated.entry).toEqual({
+        rowNumber: 9,
+        valid: true,
+        document: {
+          id: 'CG104-0-260120-1',
+          idDocument: 'CG104-0',
+          idGroup: 'CG104',
+          type: 'submittal-ffe',
+          data: {
+            status: { key: 'Open' },
+            specTag: { key: 'CG104', name: 'BED - KING' },
+            revision: '0',
+            specTitle: 'BED - KING',
+            vendor: { key: 'FDT', name: 'Fil Doux Textiles', type: 'Fabric' },
+            date: '260120',
+            contact: { key: 'BW', name: 'Benjamin West', type: 'Procurement' },
+            action: { key: 'REC', name: 'Received', order: '1' },
+          },
+        },
+      });
+      expect('fileUri' in ffeHydrated.entry).toBe(false);
+      expect('relatedTag' in ffeHydrated.entry.document.data).toBe(false);
+      expect('notes' in ffeHydrated.entry.document.data).toBe(false);
+    });
+
+    it('resiliently hydrates all 5 partialHydrationRows from document-log-sample-data.json with best-effort LookupField fallback tuples, single required errors without minLength/pattern noise, and multi-field error collection', () => {
+      interface FixturePartialRow {
+        scenario: string;
+        rowCells: Record<string, string>;
+        linkFormula: string;
+        expectedIssues: string[];
+      }
+      const fixture = JSON.parse(
+        fs.readFileSync(
+          path.resolve(__dirname, '../../../test/fixtures/document-log-sample-data.json'),
+          'utf-8'
+        )
+      ) as {
+        anonymizedEntities: {
+          contacts: Array<{ key: string; name: string; type: string }>;
+          vendors: Array<{ key: string; name: string; type: string }>;
+        };
+        submittalArch: { partialHydrationRows: FixturePartialRow[] };
+        submittalFfe: { partialHydrationRows: FixturePartialRow[] };
+      };
+
+      const archFullTarget: LogTargetDocumentSchema = {
+        fields: [
+          { key: 'status', name: 'Status', type: 'string', required: true, options: { source: 'statuses', key: 'key' } },
+          { key: 'section', name: 'Section', type: 'string', required: true, pattern: '^\\d{6}$' },
+          { key: 'number', name: 'Number', type: 'string', required: true, pattern: '^\\d{3,}$' },
+          { key: 'revision', name: 'Revision', type: 'string', required: true, minLength: 1, pattern: '^.*\\S+.*$' },
+          { key: 'title', name: 'Title', type: 'string', required: true, minLength: 1, pattern: '^.*\\S+.*$' },
+          { key: 'date', name: 'Date', type: 'string', required: true },
+          { key: 'contact', name: 'Contact', type: 'string', required: true, minLength: 1, pattern: '^.*\\S+.*$', options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'action', name: 'Action', type: 'string', required: true, options: { source: 'actions', key: 'key', name: 'name' } },
+          { key: 'notes', name: 'Notes', type: 'string', required: false },
+        ],
+        options: {
+          statuses: [{ key: 'Open' }, { key: 'Closed' }, { key: 'Waiting' }],
+          actions: [
+            { key: 'REC', name: 'Received', order: '1' },
+            { key: 'REF', name: 'Referred', order: '2' },
+          ],
+          contacts: fixture.anonymizedEntities.contacts,
+        },
+        identity: {
+          idGroup: '{{section}}-{{number}}',
+          idDocument: '{{section}}-{{number}}-{{revision}}',
+          id: '{{section}}-{{number}}-{{revision}}-{{date}}-{{action.order}}',
+        },
+      };
+
+      const hydrateArch = buildLogRowHydrator({
+        documentTypeKey: 'submittal-arch',
+        logSchema,
+        targetSchema: archFullTarget,
+        templateEvaluator: evaluator,
+      });
+
+      const extractFixtureUri = (formula: string): string | undefined => {
+        const hyper = /^=HYPERLINK\("([^"]+)"/.exec(formula);
+        if (hyper) return hyper[1];
+        return formula.startsWith('http') ? formula : undefined;
+      };
+
+      // 1) invalidSectionPattern
+      const archRow0 = fixture.submittalArch.partialHydrationRows[0];
+      const resArch0 = hydrateArch({
+        rowNumber: 10,
+        values: archRow0.rowCells,
+        links: { 'Calc Link': extractFixtureUri(archRow0.linkFormula) ?? null },
+      });
+      expect(resArch0.entry.valid).toBe(false);
+      expect(resArch0.entry.fileUri).toBe('https://drive.google.com/file/d/fixture-arch-partial-sec/view');
+      expect(resArch0.entry.document.idGroup).toBe('7120-001');
+      expect(resArch0.entry.document.data.section).toBe('7120');
+      expect(resArch0.warnings.map((w) => w.field)).toEqual(archRow0.expectedIssues);
+      expect(resArch0.entry.validationErrors).toHaveLength(1);
+
+      // 2) unknownActionAndRawUrl
+      const archRow1 = fixture.submittalArch.partialHydrationRows[1];
+      const resArch1 = hydrateArch({
+        rowNumber: 11,
+        values: archRow1.rowCells,
+        links: { 'Calc Link': extractFixtureUri(archRow1.linkFormula) ?? null },
+      });
+      expect(resArch1.entry.valid).toBe(false);
+      expect(resArch1.entry.fileUri).toBe('https://drive.google.com/file/d/fixture-arch-raw-url/view');
+      expect(resArch1.entry.document.data.action).toEqual({ key: 'Approved', name: 'Approved' });
+      expect(resArch1.entry.document.idGroup).toBe('071200-001');
+      expect(resArch1.warnings.map((w) => w.field)).toEqual(archRow1.expectedIssues);
+      expect(resArch1.entry.validationErrors).toHaveLength(1);
+
+      // 3) missingRequiredDate
+      const archRow2 = fixture.submittalArch.partialHydrationRows[2];
+      const resArch2 = hydrateArch({
+        rowNumber: 12,
+        values: archRow2.rowCells,
+        links: { 'Calc Link': extractFixtureUri(archRow2.linkFormula) ?? null },
+      });
+      expect(resArch2.entry.valid).toBe(false);
+      expect('fileUri' in resArch2.entry).toBe(false);
+      expect('date' in resArch2.entry.document.data).toBe(false);
+      expect(resArch2.entry.document.idGroup).toBe('071200-001');
+      expect(resArch2.warnings.map((w) => w.field)).toEqual(archRow2.expectedIssues);
+      expect(resArch2.entry.validationErrors).toHaveLength(1);
+
+      // Submittal FF&E partialHydrationRows
+      const ffeFullTarget: LogTargetDocumentSchema = {
+        fields: [
+          { key: 'status', name: 'Status', type: 'string', required: true, options: { source: 'statuses', key: 'key' } },
+          { key: 'specTag', name: 'Spec Tag', type: 'string', required: true, minLength: 1, pattern: '^.*\\S+.*$', options: { source: 'specs', key: 'key', allowUserInput: true } },
+          { key: 'relatedTag', name: 'Related Tag', type: 'string', required: false, options: { source: 'specs', key: 'key', allowUserInput: true } },
+          { key: 'revision', name: 'Revision', type: 'string', required: true, minLength: 1, pattern: '^.*\\S+.*$' },
+          { key: 'specTitle', name: 'Spec Title', type: 'string', required: true, minLength: 1, pattern: '^.*\\S+.*$', linkedField: { sourceField: 'specTag', sourceProperty: 'name' } },
+          { key: 'vendor', name: 'Vendor', type: 'string', required: true, minLength: 1, pattern: '^.*\\S+.*$', options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'date', name: 'Date', type: 'string', required: true },
+          { key: 'contact', name: 'Contact', type: 'string', required: true, minLength: 1, pattern: '^.*\\S+.*$', options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'action', name: 'Action', type: 'string', required: true, options: { source: 'actions', key: 'key', name: 'name' } },
+          { key: 'notes', name: 'Notes', type: 'string', required: false },
+        ],
+        options: {
+          statuses: [{ key: 'Open' }, { key: 'Closed' }, { key: 'Waiting' }],
+          specs: [
+            { key: 'CG104', name: 'BED - KING' },
+            { key: 'LT108', name: 'SCONCE' },
+          ],
+          vendors: fixture.anonymizedEntities.vendors,
+          contacts: fixture.anonymizedEntities.contacts,
+          actions: [
+            { key: 'REC', name: 'Received', order: '1' },
+            { key: 'REF', name: 'Referred', order: '2' },
+          ],
+        },
+        identity: {
+          idGroup: '{{specTag.key}}',
+          idDocument: '{{specTag.key}}-{{revision}}',
+          id: '{{specTag.key}}-{{revision}}-{{date}}-{{action.order}}',
+        },
+      };
+
+      const ffeLog: DocumentLogSchema = {
+        ...logSchema,
+        target: {
+          sheetName: 'Submittal FF&E',
+          rangeName: 'Log_Submittal_FFE',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        columns: {
+          Status: { template: '{{status.key}}' },
+          'Spec Tag': { template: '{{specTag.key}}' },
+          'Related Tag': { template: '{{relatedTag.key}}' },
+          Revision: { template: '{{revision}}' },
+          'Spec Title': { template: '{{specTitle}}', readOnly: true },
+          Vendor: { template: '{{vendor.name}}' },
+          Date: { template: '{{date}}' },
+          Contact: { template: '{{contact.key}}' },
+          Action: { template: '{{action.name}}' },
+          Notes: { template: '{{notes}}' },
+          'Calc Link': { source: 'fileLink', label: 'Link' },
+        },
+      };
+
+      const hydrateFfe = buildLogRowHydrator({
+        documentTypeKey: 'submittal-ffe',
+        logSchema: ffeLog,
+        targetSchema: ffeFullTarget,
+        templateEvaluator: evaluator,
+      });
+
+      // 4) invalidStatusAndMissingVendor
+      const ffeRow0 = fixture.submittalFfe.partialHydrationRows[0];
+      const resFfe0 = hydrateFfe({
+        rowNumber: 13,
+        values: ffeRow0.rowCells,
+        links: { 'Calc Link': extractFixtureUri(ffeRow0.linkFormula) ?? null },
+      });
+      expect(resFfe0.entry.valid).toBe(false);
+      expect(resFfe0.entry.fileUri).toBe('https://drive.google.com/file/d/fixture-ffe-partial-vendor/view');
+      expect(resFfe0.entry.document.data.status).toEqual({ key: 'In Review' });
+      expect('vendor' in resFfe0.entry.document.data).toBe(false);
+      expect(resFfe0.entry.document.data.specTitle).toBe('SCONCE');
+      expect(resFfe0.warnings.map((w) => w.field)).toEqual(ffeRow0.expectedIssues);
+      // Vendor emits 1 required error only (no minLength / pattern noise)
+      expect(resFfe0.entry.validationErrors).toHaveLength(2);
+
+      // 5) missingRevisionAndRawUrl
+      const ffeRow1 = fixture.submittalFfe.partialHydrationRows[1];
+      const resFfe1 = hydrateFfe({
+        rowNumber: 14,
+        values: ffeRow1.rowCells,
+        links: { 'Calc Link': extractFixtureUri(ffeRow1.linkFormula) ?? null },
+      });
+      expect(resFfe1.entry.valid).toBe(false);
+      expect(resFfe1.entry.fileUri).toBe('https://drive.google.com/file/d/fixture-ffe-raw-url/view');
+      expect('revision' in resFfe1.entry.document.data).toBe(false);
+      expect(resFfe1.warnings.map((w) => w.field)).toEqual(ffeRow1.expectedIssues);
+      expect(resFfe1.entry.validationErrors).toHaveLength(1);
+    });
+
+    it('validates non-blank minLength and pattern (including allowUserInput LookupFields), leaves unkeyable row identities undefined, and lets canonical multi-column matches win', () => {
+      const customTarget: LogTargetDocumentSchema = {
+        fields: [
+          { key: 'code', name: 'Code', type: 'string', required: true, minLength: 4, pattern: '^[A-Z0-9]+$' },
+          { key: 'optionalCode', name: 'Optional Code', type: 'string', required: false, minLength: 4, pattern: '^[A-Z]+$' },
+          { key: 'contact', name: 'Contact', type: 'string', required: true, minLength: 2, options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'action', name: 'Action', type: 'string', required: true, options: { source: 'actions', key: 'key', name: 'name' } },
+        ],
+        options: {
+          contacts: [{ key: 'MB', name: 'Meridian Builders' }],
+          actions: [{ key: 'REC', name: 'Received', order: '1' }],
+        },
+        identity: {
+          idGroup: '{{code}}-{{contact.key}}',
+          idDocument: '{{code}}-{{action.order}}',
+          id: '{{code}}-{{contact.key}}-{{action.order}}',
+        },
+      };
+
+      const customLog: DocumentLogSchema = {
+        ...logSchema,
+        columns: {
+          Code: { template: '{{code}}' },
+          'Optional Code': { template: '{{optionalCode}}' },
+          Contact: { template: '{{contact.key}}' },
+          'Action Key': { template: '{{action.key}}' },
+          'Action Name': { template: '{{action.name}}' },
+        },
+      };
+
+      const hydrate = buildLogRowHydrator({
+        documentTypeKey: 'custom-type',
+        logSchema: customLog,
+        targetSchema: customTarget,
+        templateEvaluator: evaluator,
+      });
+
+      // Unkeyable note row: all identity tokens blank -> idGroup, idDocument, id all undefined (never '-')
+      const unkeyable = hydrate({
+        rowNumber: 7,
+        values: {
+          Code: '',
+          'Optional Code': '',
+          Contact: '',
+          'Action Key': '',
+          'Action Name': '',
+        },
+      });
+      expect(unkeyable.entry.valid).toBe(false);
+      expect(unkeyable.entry.document.idGroup).toBeUndefined();
+      expect(unkeyable.entry.document.idDocument).toBeUndefined();
+      expect(unkeyable.entry.document.id).toBeUndefined();
+      expect('idGroup' in unkeyable.entry.document).toBe(false);
+      expect(unkeyable.warnings.map((w) => w.field)).toEqual(['code', 'contact', 'action']);
+
+      // Non-blank minLength/pattern failures + allowUserInput minLength failure + blank optionalCode omitted safely
+      const invalidLengths = hydrate({
+        rowNumber: 8,
+        values: {
+          Code: 'ab',
+          'Optional Code': '',
+          Contact: 'X',
+          'Action Key': 'BAD',
+          'Action Name': 'Received', // canonical match in second column overrides invalid 'BAD' in first column!
+        },
+      });
+      expect(invalidLengths.entry.valid).toBe(false);
+      expect(invalidLengths.warnings.map((w) => w.field)).toEqual(['code', 'contact']);
+      expect(invalidLengths.entry.validationErrors?.[0]).toContain('length >= 4');
+      expect(invalidLengths.entry.validationErrors?.[0]).toContain('pattern');
+      expect(invalidLengths.entry.validationErrors?.[1]).toContain('length >= 2');
+      expect(invalidLengths.entry.document.data.action).toEqual({
+        key: 'REC',
+        name: 'Received',
+        order: '1',
+      });
     });
   });
 });

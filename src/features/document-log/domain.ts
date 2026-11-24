@@ -2,21 +2,29 @@ import {
   DocumentLogAmbiguousError,
   DocumentLogConfigurationError,
   DocumentLogMissingError,
+  type DocumentLogEntry,
   type DocumentLogPort,
+  type DocumentLogSchema,
   type DocumentLogSpace,
   type DocumentLogUiContextResult,
   type LogDiscoveryFileMetadata,
   type LogDiscoveryPort,
+  type LogFilterBy,
   type LogResolutionCandidate,
   type LogResolutionResult,
   type LogSchemaRegistryPort,
   type LogStoragePort,
+  type LogTargetDocumentSchema,
   type LogTemplateEvaluatorPort,
   type QueryDocumentLogUiContextRequest,
+  type ReadDocumentLogRequest,
+  type ReadDocumentLogResult,
+  type RowHydrationWarning,
   type WriteDocumentLogRequest,
   type WriteDocumentLogResult,
 } from './ports';
 import {
+  buildLogRowHydrator,
   buildRowKeyExtractor,
   computeTargetRowKeys,
   enrichDocumentData,
@@ -426,8 +434,29 @@ export class DocumentLogService implements DocumentLogPort {
     };
   }
 
+  private requireSchemasForDocumentType(documentTypeKey: string): {
+    logSchema: DocumentLogSchema;
+    targetSchema: LogTargetDocumentSchema;
+  } {
+    const logSchema = this.schemaRegistry.getDocumentLogSchema(documentTypeKey);
+    if (!logSchema) {
+      throw new DocumentLogConfigurationError(
+        `No documentLogSchema configured for DocumentType "${documentTypeKey}".`
+      );
+    }
+
+    const targetSchema = this.schemaRegistry.getTargetSchema(documentTypeKey);
+    if (!targetSchema) {
+      throw new DocumentLogConfigurationError(
+        `No target DocumentSchema metadata found for DocumentType "${documentTypeKey}".`
+      );
+    }
+
+    return { logSchema, targetSchema };
+  }
+
   private async resolveSpreadsheetId(
-    document: WriteDocumentLogRequest['document'],
+    space: DocumentLogSpace | undefined,
     selectedLogId?: string
   ): Promise<string> {
     const trimmedSelectedLogId = selectedLogId?.trim();
@@ -435,40 +464,150 @@ export class DocumentLogService implements DocumentLogPort {
       return trimmedSelectedLogId;
     }
 
-    if (!document.space) {
+    if (!space) {
       throw new DocumentLogConfigurationError(
         'Document.space is required to resolve a DocumentLog when selectedLogId is not provided.'
       );
     }
 
-    const resolution = await this.resolveLog(document.space);
+    const resolution = await this.resolveLog(space);
     if (resolution.status === 'missing') {
-      throw new DocumentLogMissingError(document.space.name, resolution.expectedFolderPath);
+      throw new DocumentLogMissingError(space.name, resolution.expectedFolderPath);
     }
     if (resolution.status === 'ambiguous') {
-      throw new DocumentLogAmbiguousError(document.space.name, resolution.candidates);
+      throw new DocumentLogAmbiguousError(space.name, resolution.candidates);
     }
     return resolution.candidate.id;
   }
 
+  private parseReadFilter(
+    filterBy: LogFilterBy | undefined,
+    values: string | string[] | undefined
+  ): { filterBy: LogFilterBy; normalizedTargets: Set<string> } | { shortCircuit: true } | undefined {
+    if (
+      filterBy !== undefined &&
+      filterBy !== 'idGroup' &&
+      filterBy !== 'idDocument' &&
+      filterBy !== 'id'
+    ) {
+      throw new DocumentLogConfigurationError(
+        `Unsupported readLog filterBy "${String(filterBy)}". Expected "idGroup", "idDocument", or "id".`
+      );
+    }
+
+    const hasFilterBy = filterBy !== undefined;
+    const hasValues = values !== undefined;
+    if (hasFilterBy !== hasValues) {
+      throw new DocumentLogConfigurationError(
+        'readLog requires filterBy and values to either both be provided or both be omitted.'
+      );
+    }
+
+    if (!hasFilterBy || !hasValues) {
+      return undefined;
+    }
+
+    const rawList = Array.isArray(values) ? values : [values];
+    const normalizedTargets = new Set<string>();
+    for (const item of rawList) {
+      if (typeof item !== 'string') {
+        throw new DocumentLogConfigurationError('readLog values must be a string or string[].');
+      }
+      const trimmed = item.trim();
+      if (trimmed.length > 0) {
+        normalizedTargets.add(trimmed.toLowerCase());
+      }
+    }
+
+    if (normalizedTargets.size === 0) {
+      return { shortCircuit: true };
+    }
+
+    return { filterBy, normalizedTargets };
+  }
+
+  async readLog(request: ReadDocumentLogRequest): Promise<ReadDocumentLogResult> {
+    const { logSchema, targetSchema } = this.requireSchemasForDocumentType(request.documentTypeKey);
+    const parsedFilter = this.parseReadFilter(request.filterBy, request.values);
+
+    if (parsedFilter && 'shortCircuit' in parsedFilter) {
+      return {
+        spreadsheetId: '',
+        sheetName: logSchema.target.sheetName,
+        entries: [],
+        warnings: [],
+      };
+    }
+
+    const spreadsheetId = await this.resolveSpreadsheetId(request.space, request.selectedLogId);
+
+    const linkColumns: string[] = [];
+    for (const [header, binding] of Object.entries(logSchema.columns)) {
+      if (!('template' in binding) && binding.source === 'fileLink') {
+        linkColumns.push(header);
+      }
+    }
+
+    const tableResult = await this.logStorage.readRows({
+      target: {
+        spreadsheetId,
+        sheetName: logSchema.target.sheetName,
+        rangeName: logSchema.target.rangeName,
+        extentMarker: logSchema.target.extentMarker,
+        groupDividerMarker: logSchema.target.groupDividerMarker,
+      },
+      ...(linkColumns.length > 0 ? { linkColumns } : {}),
+    });
+
+    const hydrateRow = buildLogRowHydrator({
+      documentTypeKey: request.documentTypeKey,
+      logSchema,
+      targetSchema,
+      templateEvaluator: this.templateEvaluator,
+    });
+
+    const allEntries: DocumentLogEntry[] = [];
+    const allWarnings: RowHydrationWarning[] = [];
+    for (const row of tableResult.rows) {
+      const hydrated = hydrateRow(row);
+      allEntries.push(hydrated.entry);
+      allWarnings.push(...hydrated.warnings);
+    }
+
+    if (!parsedFilter) {
+      return {
+        spreadsheetId,
+        sheetName: logSchema.target.sheetName,
+        entries: allEntries,
+        warnings: allWarnings,
+      };
+    }
+
+    const matchedEntries = allEntries.filter((entry) => {
+      const candidateKey = entry.document[parsedFilter.filterBy];
+      return (
+        typeof candidateKey === 'string' &&
+        parsedFilter.normalizedTargets.has(candidateKey.trim().toLowerCase())
+      );
+    });
+    const matchedRowNumbers = new Set(matchedEntries.map((entry) => entry.rowNumber));
+    const scopedWarnings = allWarnings.filter((warning) =>
+      matchedRowNumbers.has(warning.rowNumber)
+    );
+
+    return {
+      spreadsheetId,
+      sheetName: logSchema.target.sheetName,
+      entries: matchedEntries,
+      warnings: scopedWarnings,
+    };
+  }
+
   async writeLog(request: WriteDocumentLogRequest): Promise<WriteDocumentLogResult> {
     const { document, fileUri, selectedLogId } = request;
+    const { logSchema, targetSchema } = this.requireSchemasForDocumentType(document.type);
 
-    const logSchema = this.schemaRegistry.getDocumentLogSchema(document.type);
-    if (!logSchema) {
-      throw new DocumentLogConfigurationError(
-        `No documentLogSchema configured for DocumentType "${document.type}".`
-      );
-    }
-
-    const targetSchema = this.schemaRegistry.getTargetSchema(document.type);
-    if (!targetSchema) {
-      throw new DocumentLogConfigurationError(
-        `No target DocumentSchema metadata found for DocumentType "${document.type}".`
-      );
-    }
-
-    const spreadsheetId = await this.resolveSpreadsheetId(document, selectedLogId);
+    const spreadsheetId = await this.resolveSpreadsheetId(document.space, selectedLogId);
     const enrichedData = enrichDocumentData(document.data, targetSchema);
 
     const { rowData, readOnlyColumns } = mapDocumentToLogRow({
