@@ -30,7 +30,7 @@ describe('document-log.wiring', () => {
           storageConfig: { provider: 'google_drive', fetchMethod: 'folders' },
           documentLog: {
             preferredFolderPath: '00 Admin',
-            copyNameTemplate: '{{DocumentSpace.name}} Proposal Log',
+            copyNameTemplate: '{{DocumentSpace.name}} Proposal Document Log',
           },
         },
       ],
@@ -655,7 +655,7 @@ describe('document-log.wiring', () => {
           },
           {
             id: 'prop-exact-older',
-            name: 'summit proposal log',
+            name: 'summit proposal document log',
             parents: ['opp-folder-2'],
             mimeType: 'application/vnd.google-apps.spreadsheet',
             modifiedTime: '2026-01-01T10:00:00.000Z',
