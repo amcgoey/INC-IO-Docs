@@ -13,6 +13,7 @@ const EXPECTED_REQUIRED_APIS = [
   "gsuiteaddons.googleapis.com",
   "gmail.googleapis.com",
   "docs.googleapis.com",
+  "sheets.googleapis.com",
 ];
 
 function promiseOf<T>(output: pulumi.Output<T>): Promise<T> {
@@ -100,7 +101,7 @@ describe("AppInfrastructure ComponentResource", () => {
     expect(invokerIamId).toBeDefined();
     expect(workspaceIamId).toBeDefined();
 
-    // Check all 8 required GCP APIs are enabled with disableOnDestroy: false
+    // Check all 9 required GCP APIs are enabled with disableOnDestroy: false
     const devApiResources = Object.values(resources).filter(
       (r) => r.type === "gcp:projects/service:Service"
     );
@@ -239,7 +240,7 @@ describe("AppInfrastructure ComponentResource", () => {
     expect(invokerIamId).toBeDefined();
     expect(workspaceIamId).toBeDefined();
 
-    // Check all 8 required GCP APIs are enabled with disableOnDestroy: false
+    // Check all 9 required GCP APIs are enabled with disableOnDestroy: false
     const prodApiResources = Object.values(resources).filter(
       (r) => r.type === "gcp:projects/service:Service"
     );
