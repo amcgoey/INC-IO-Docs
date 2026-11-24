@@ -1,30 +1,39 @@
 import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import { DocumentService, type Document, type Activity, type ActivityOutput } from '../src/features/document/domain';
+import {
+  DocumentService,
+  type Document,
+  type Activity,
+  type ActivityExecutionContext,
+  type ActivityOutput,
+  type DocumentType,
+} from '../src/features/document/domain';
 import { HandlebarsAdapter } from '../src/infrastructure/template-engine/handlebars-adapter';
 import { ActivityEngine } from '../src/features/document/adapters/activity-engine';
 import { DocumentSchemaRegistryAdapter } from '../src/features/document/adapters/document-schema-registry';
 import { CompiledSchemaRegistry } from '../src/features/document/adapters/compiled-schema-registry';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import { ensureEvaluationOrder } from '../src/infrastructure/validation/json-logic-graph';
-import type { ActivityHandler } from '../src/features/document/ports';
+import type { ActivityHandler, DocumentSchemaRegistryPort } from '../src/features/document/ports';
 
 describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schemas)', () => {
   let documentService: DocumentService;
   let handlebarsAdapter: HandlebarsAdapter;
   let activityEngine: ActivityEngine;
   let mockMoveHandler: ActivityHandler;
-  let moveHandleSpy: Mock<(activity: Activity) => Promise<ActivityOutput>>;
+  let moveHandleSpy: Mock<(activity: Activity, context?: ActivityExecutionContext) => Promise<ActivityOutput>>;
 
   beforeEach(async () => {
-    moveHandleSpy = vi.fn<(activity: Activity) => Promise<ActivityOutput>>().mockResolvedValue({
-      success: true,
-      files: [{ id: 'moved-file-123', name: 'Original.pdf', parentName: '260826 OT - ASR 06 Design Changes' }],
-    });
+    moveHandleSpy = vi
+      .fn<(activity: Activity, context?: ActivityExecutionContext) => Promise<ActivityOutput>>()
+      .mockResolvedValue({
+        success: true,
+        files: [{ id: 'moved-file-123', name: 'Original.pdf', parentName: '260826 OT - ASR 06 Design Changes' }],
+      });
 
     mockMoveHandler = {
       canHandle: vi.fn((activity: Activity) => activity.type === 'MOVE_FILE'),
-      handle: (activity: Activity) => moveHandleSpy(activity),
+      handle: (activity: Activity, context?: ActivityExecutionContext) => moveHandleSpy(activity, context),
     };
 
     handlebarsAdapter = new HandlebarsAdapter();
@@ -115,7 +124,15 @@ describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schem
 
     expect(result.activities).toEqual([expectedActivity]);
     expect(mockMoveHandler.canHandle).toHaveBeenCalledWith(expectedActivity);
-    expect(moveHandleSpy).toHaveBeenCalledWith(expectedActivity);
+    expect(moveHandleSpy).toHaveBeenCalledWith(
+      expectedActivity,
+      expect.objectContaining({
+        document: result.data,
+        files: [],
+        stepOutputs: {},
+        contextVariables: {},
+      })
+    );
   });
 
   it('routes and executes communication-proposal: enriches options, evaluates commFolderName, synthesizes identity, resolves basePath, and dispatches MOVE_FILE', async () => {
@@ -182,7 +199,15 @@ describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schem
 
     expect(result.activities).toEqual([expectedActivity]);
     expect(mockMoveHandler.canHandle).toHaveBeenCalledWith(expectedActivity);
-    expect(moveHandleSpy).toHaveBeenCalledWith(expectedActivity);
+    expect(moveHandleSpy).toHaveBeenCalledWith(
+      expectedActivity,
+      expect.objectContaining({
+        document: result.data,
+        files: [],
+        stepOutputs: {},
+        contextVariables: {},
+      })
+    );
   });
 
   it('sanitizes disallowed file-path characters in contact and description, evaluates commFolderName, synthesizes identity, and dispatches sanitized MOVE_FILE activity', async () => {
@@ -252,6 +277,220 @@ describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schem
 
     expect(result.activities).toEqual([expectedActivity]);
     expect(mockMoveHandler.canHandle).toHaveBeenCalledWith(expectedActivity);
-    expect(moveHandleSpy).toHaveBeenCalledWith(expectedActivity);
+    expect(moveHandleSpy).toHaveBeenCalledWith(
+      expectedActivity,
+      expect.objectContaining({
+        document: result.data,
+        files: [],
+        stepOutputs: {},
+        contextVariables: {},
+      })
+    );
+  });
+
+  it('chains multi-step workflow with Activity.id through ActivityEngine and HandlebarsAdapter, evolving frozen ActivityExecutionContext snapshots immutably', async () => {
+    const primaryFile = {
+      id: 'drive-file-primary-1',
+      name: 'ASR-06.pdf',
+      uri: 'https://drive.google.com/file/d/drive-file-primary-1/view',
+    };
+
+    const multiStepDocumentType: DocumentType = {
+      key: 'multi-step-chain-doc',
+      name: 'Multi-Step Chain Doc',
+      documentSchema: {
+        fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+      },
+      documentUiSchema: {
+        events: {
+          onSubmit: {
+            catchAllWorkflow: 'ChainedExecutionWorkflow',
+          },
+        },
+      },
+      documentWorkflowConfig: {
+        workflows: [
+          {
+            name: 'ChainedExecutionWorkflow',
+            activitySequence: [
+              {
+                id: 'movePrimary',
+                type: 'MOVE_FILE',
+                payload: {
+                  title: '{{Document.data.title}}',
+                },
+              },
+              {
+                id: 'auditStep',
+                type: 'AUDIT_STEP',
+                payload: {
+                  folder: '{{Context.archiveFolder}}',
+                },
+              },
+              {
+                id: 'writeLog',
+                type: 'WRITE_LOG',
+                payload: {
+                  movedUri: '{{Context.movePrimary.files.0.uri}}',
+                  archiveFolder: '{{Context.archiveFolder}}',
+                  auditStatus: '{{Context.auditStatus}}',
+                },
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const capturedContexts: Array<{
+      activityType: string;
+      context: ActivityExecutionContext;
+    }> = [];
+
+    const captureContextHandler = (
+      type: string,
+      output?: ActivityOutput
+    ): ActivityHandler => ({
+      canHandle: (activity: Activity) => activity.type === type,
+      handle: (activity: Activity, context?: ActivityExecutionContext) => {
+        expect(context).toBeDefined();
+        capturedContexts.push({
+          activityType: activity.type,
+          context: context!,
+        });
+        return output;
+      },
+    });
+
+    const engine = new ActivityEngine([
+      captureContextHandler('MOVE_FILE', {
+        success: true,
+        files: [primaryFile],
+        contextVariables: { archiveFolder: 'Archive/2026' },
+      }),
+      captureContextHandler('AUDIT_STEP', {
+        success: true,
+        contextVariables: { auditStatus: 'VERIFIED' },
+      }),
+      captureContextHandler('WRITE_LOG', {
+        success: true,
+      }),
+    ]);
+
+    const realHandlebars = new HandlebarsAdapter();
+    const customRegistry: DocumentSchemaRegistryPort = {
+      loadAll: vi.fn().mockResolvedValue([multiStepDocumentType]),
+    };
+    const compiledRegistry = new CompiledSchemaRegistry(customRegistry);
+    await compiledRegistry.initialize();
+
+    const service = new DocumentService(
+      engine,
+      customRegistry,
+      realHandlebars,
+      compiledRegistry
+    );
+    await service.initialize();
+
+    const inputDocument: Document = {
+      type: 'multi-step-chain-doc',
+      data: { title: 'Design Package' },
+    };
+
+    const result = await service.processDocument(inputDocument, 'onSubmit');
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    // Handlebars evaluated downstream WRITE_LOG templates using Context.<id>.files.0.uri and Context.<var>
+    expect(result.activities).toEqual([
+      {
+        id: 'movePrimary',
+        type: 'MOVE_FILE',
+        payload: { title: 'Design Package' },
+      },
+      {
+        id: 'auditStep',
+        type: 'AUDIT_STEP',
+        payload: { folder: 'Archive/2026' },
+      },
+      {
+        id: 'writeLog',
+        type: 'WRITE_LOG',
+        payload: {
+          movedUri: 'https://drive.google.com/file/d/drive-file-primary-1/view',
+          archiveFolder: 'Archive/2026',
+          auditStatus: 'VERIFIED',
+        },
+      },
+    ]);
+    expect(result.contextVariables).toEqual({
+      archiveFolder: 'Archive/2026',
+      auditStatus: 'VERIFIED',
+    });
+
+    // Verify ActivityHandler.handle received frozen, evolving ActivityExecutionContext snapshots
+    expect(capturedContexts).toHaveLength(3);
+    const [step1Snap, step2Snap, step3Snap] = capturedContexts;
+
+    expect(step1Snap.activityType).toBe('MOVE_FILE');
+    expect(step1Snap.context).toEqual({
+      document: inputDocument,
+      files: [],
+      stepOutputs: {},
+      contextVariables: {},
+    });
+
+    expect(step2Snap.activityType).toBe('AUDIT_STEP');
+    expect(step2Snap.context).toEqual({
+      document: inputDocument,
+      files: [primaryFile],
+      stepOutputs: {
+        movePrimary: {
+          success: true,
+          files: [primaryFile],
+          contextVariables: { archiveFolder: 'Archive/2026' },
+        },
+      },
+      contextVariables: { archiveFolder: 'Archive/2026' },
+    });
+
+    // Middle step omitted `files`; `files` from movePrimary is preserved and contextVariables merged
+    expect(step3Snap.activityType).toBe('WRITE_LOG');
+    expect(step3Snap.context).toEqual({
+      document: inputDocument,
+      files: [primaryFile],
+      stepOutputs: {
+        movePrimary: {
+          success: true,
+          files: [primaryFile],
+          contextVariables: { archiveFolder: 'Archive/2026' },
+        },
+        auditStep: {
+          success: true,
+          contextVariables: { auditStatus: 'VERIFIED' },
+        },
+      },
+      contextVariables: {
+        archiveFolder: 'Archive/2026',
+        auditStatus: 'VERIFIED',
+      },
+    });
+
+    // All captured snapshots and their nested fields remain frozen and earlier snapshots were not mutated
+    for (const { context } of capturedContexts) {
+      expect(Object.isFrozen(context)).toBe(true);
+      expect(Object.isFrozen(context.document)).toBe(true);
+      expect(Object.isFrozen(context.files)).toBe(true);
+      expect(Object.isFrozen(context.stepOutputs)).toBe(true);
+      expect(Object.isFrozen(context.contextVariables)).toBe(true);
+    }
+
+    expect(Object.keys(step1Snap.context.stepOutputs)).toEqual([]);
+    expect(Object.keys(step1Snap.context.contextVariables)).toEqual([]);
+    expect(Object.keys(step2Snap.context.stepOutputs)).toEqual(['movePrimary']);
+    expect(step2Snap.context.contextVariables).toEqual({ archiveFolder: 'Archive/2026' });
+    expect(Object.isFrozen(step2Snap.context.stepOutputs.movePrimary)).toBe(true);
+    expect(Object.isFrozen(step2Snap.context.stepOutputs.movePrimary.files)).toBe(true);
   });
 });
