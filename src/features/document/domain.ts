@@ -45,7 +45,11 @@ export const DocumentModel = Type.Object({
 export type Document = Static<typeof DocumentModel>;
 export type DocumentModel = Document;
 
+const ACTIVITY_ID_PATTERN = '^[A-Za-z_][A-Za-z0-9_-]*$';
+const ACTIVITY_ID_REGEX = new RegExp(ACTIVITY_ID_PATTERN);
+
 export const ActivityType = Type.Object({
+  id: Type.Optional(Type.String({ pattern: ACTIVITY_ID_PATTERN })),
   type: Type.String(),
   payload: Type.Record(Type.String(), Type.Unknown()),
 });
@@ -82,6 +86,13 @@ export const ActivityOutputType = Type.Object({
 });
 
 export type ActivityOutput = Static<typeof ActivityOutputType>;
+
+export interface ActivityExecutionContext {
+  readonly document: Document;
+  readonly files: readonly FileLocator[];
+  readonly stepOutputs: Readonly<Record<string, ActivityOutput>>;
+  readonly contextVariables: Readonly<Record<string, unknown>>;
+}
 
 
 export const DynamicOptionsConfigSchema = Type.Record(Type.String(), Type.Unknown());
@@ -387,6 +398,38 @@ export function buildDocumentTypeSchema(documentType: DocumentType): TSchema {
 }
 
 const validatedDataObjects = new WeakSet<object>();
+
+function cloneAndFreezePlainValue<T>(value: T): T {
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return Object.freeze(value.map((item) => cloneAndFreezePlainValue(item))) as unknown as T;
+  }
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) {
+    return value;
+  }
+  const cloned: Record<string, unknown> = {};
+  for (const [key, entryValue] of Object.entries(value as Record<string, unknown>)) {
+    cloned[key] = cloneAndFreezePlainValue(entryValue);
+  }
+  return Object.freeze(cloned) as T;
+}
+
+function createActivityExecutionContext(
+  document: Document,
+  files: readonly FileLocator[],
+  stepOutputs: Record<string, ActivityOutput>,
+  contextVariables: Record<string, unknown>
+): ActivityExecutionContext {
+  return Object.freeze({
+    document: cloneAndFreezePlainValue(document),
+    files,
+    stepOutputs: Object.freeze({ ...stepOutputs }),
+    contextVariables: Object.freeze({ ...contextVariables }),
+  });
+}
 
 export class DocumentService implements DocumentServicePort {
   private documentTypes: DocumentType[] = [];
@@ -694,10 +737,20 @@ export class DocumentService implements DocumentServicePort {
     const evaluationContext: TemplateEvaluationContext = {
       Document: enrichedDocument,
       documentSchema: documentType.documentSchema,
+      Context: {},
       ...(storageContext !== undefined ? { StorageContext: storageContext } : {}),
     };
 
+    let currentFiles: readonly FileLocator[] = Object.freeze([]);
+    const stepOutputs: Record<string, ActivityOutput> = {};
     const accumulatedContextVariables: { [key: string]: unknown } = {};
+    let currentContext: ActivityExecutionContext = createActivityExecutionContext(
+      enrichedDocument,
+      currentFiles,
+      stepOutputs,
+      accumulatedContextVariables
+    );
+
     const resolvedActivities: Activity[] = [];
     const collectedOutputs: ActivityOutput[] = [];
     for (const activity of activities) {
@@ -708,15 +761,19 @@ export class DocumentService implements DocumentServicePort {
       ) ?? {}) as { [key: string]: unknown };
 
       const resolvedActivity: Activity = {
+        ...(activity.id !== undefined ? { id: activity.id } : {}),
         type: activity.type,
         payload: resolvedPayload,
       };
 
-      const output = (await this.dispatcher.dispatch(resolvedActivity)) as ActivityOutput | void;
+      const output = (await this.dispatcher.dispatch(
+        resolvedActivity,
+        currentContext
+      )) as ActivityOutput | void;
 
       resolvedActivities.push(resolvedActivity);
 
-      if (output) {
+      if (output !== undefined) {
         collectedOutputs.push(output);
         if (output.success === false) {
           return {
@@ -732,12 +789,28 @@ export class DocumentService implements DocumentServicePort {
               ...output.documentDataPatch,
             },
           };
-          evaluationContext.Document = enrichedDocument;
+        }
+        if (output.files !== undefined) {
+          currentFiles = Object.freeze([...output.files]);
+        }
+        if (activity.id !== undefined) {
+          stepOutputs[activity.id] = cloneAndFreezePlainValue(output);
         }
         if (output.contextVariables) {
           Object.assign(evaluationContext, output.contextVariables);
           Object.assign(accumulatedContextVariables, output.contextVariables);
         }
+        evaluationContext.Document = enrichedDocument;
+        evaluationContext.Context = {
+          ...accumulatedContextVariables,
+          ...stepOutputs,
+        };
+        currentContext = createActivityExecutionContext(
+          enrichedDocument,
+          currentFiles,
+          stepOutputs,
+          accumulatedContextVariables
+        );
       }
     }
 
@@ -895,6 +968,54 @@ function getExecutionVariables(manifest: DocumentType, baseVariables: string[]):
   return Array.from(new Set(vars));
 }
 
+function validateWorkflowSteps(workflows: Workflow[], errors: string[]): void {
+  workflows.forEach((workflow, workflowIndex) => {
+    const seenStepIds = new Set<string>();
+    const activitySequence = workflow.activitySequence ?? [];
+    activitySequence.forEach((activity, activityIndex) => {
+      const activityPath = `documentWorkflowConfig.workflows[${workflowIndex}].activitySequence[${activityIndex}]`;
+      const hasValidId =
+        activity.id !== undefined &&
+        typeof activity.id === 'string' &&
+        ACTIVITY_ID_REGEX.test(activity.id);
+
+      if (activity.id !== undefined) {
+        if (!hasValidId) {
+          errors.push(
+            `Invalid Activity id "${String(activity.id)}" at "${activityPath}.id": must match ${ACTIVITY_ID_PATTERN}.`
+          );
+        } else if (seenStepIds.has(activity.id)) {
+          errors.push(
+            `Duplicate Activity id "${activity.id}" at "${activityPath}.id" within workflow "${workflow.name}".`
+          );
+        }
+      }
+
+      if (
+        activity.payload &&
+        typeof activity.payload === 'object' &&
+        !Array.isArray(activity.payload) &&
+        activity.payload['fileSourceStepId'] !== undefined
+      ) {
+        const fileSourceStepId = activity.payload['fileSourceStepId'];
+        if (typeof fileSourceStepId !== 'string') {
+          errors.push(
+            `Invalid fileSourceStepId at "${activityPath}.payload.fileSourceStepId": must be a string referencing an earlier Activity.id.`
+          );
+        } else if (!seenStepIds.has(fileSourceStepId)) {
+          errors.push(
+            `Invalid fileSourceStepId "${fileSourceStepId}" at "${activityPath}.payload.fileSourceStepId": must match an earlier Activity.id in workflow "${workflow.name}".`
+          );
+        }
+      }
+
+      if (hasValidId && activity.id !== undefined) {
+        seenStepIds.add(activity.id);
+      }
+    });
+  });
+}
+
 /**
  * Pure domain function to statically validate all Handlebars templates within a DocumentType manifest.
  * Returns an array of formatted error strings using exact dot-notation paths.
@@ -978,6 +1099,8 @@ export function validateManifestTemplates(
   }
 
   if (manifest.documentWorkflowConfig) {
+    validateWorkflowSteps(manifest.documentWorkflowConfig.workflows, errors);
+
     walkTemplates(manifest.documentWorkflowConfig, 'documentWorkflowConfig', (path, template) => {
       if (!evaluator.validate(template, executionVariables)) {
         errors.push(`Invalid template at "${path}": references unknown fields or is malformed.`);

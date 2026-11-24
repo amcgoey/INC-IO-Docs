@@ -26,6 +26,7 @@ import { DynamicOptionsAdapter } from './dynamic-options.adapter';
 import type { RawManifestProviderPort } from '../features/ui-process-manager';
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
 import type {
+  ActivityHandler,
   CompiledSchemaRegistryPort,
   DocumentSchemaRegistryPort,
   TemplateEvaluatorPort,
@@ -45,6 +46,9 @@ import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 import type { UiProcessGmailPort } from '../features/ui-process-manager';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import type { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
+import type { SheetsClient } from '../infrastructure/sheets';
+import type { DocumentLogPort } from '../features/document-log';
+import { createDocumentLogWiring } from './document-log.wiring';
 
 export interface WorkspaceAddonWiringOptions {
   server: HttpServer;
@@ -77,6 +81,26 @@ export interface WorkspaceAddonWiringOptions {
     | undefined;
   driveContextClient?: DriveSourceContextClientPort | undefined;
   docsClient?: GoogleDocsClient | undefined;
+  sheetsClient?: SheetsClient | undefined;
+  documentLogService?: DocumentLogPort | undefined;
+  createAdditionalActivityHandlers?:
+    | ((
+        context: WorkspaceExecutionContext
+      ) => readonly ActivityHandler[] | Promise<readonly ActivityHandler[]>)
+    | undefined;
+}
+
+function createRetryableInitializer(init: () => Promise<void>): () => Promise<void> {
+  let initPromise: Promise<void> | undefined;
+  return async (): Promise<void> => {
+    if (!initPromise) {
+      initPromise = init().catch((err) => {
+        initPromise = undefined;
+        throw err;
+      });
+    }
+    await initPromise;
+  };
 }
 
 export function wireWorkspaceAddonRoutes(
@@ -114,6 +138,28 @@ export function wireWorkspaceAddonRoutes(
       }
     }
 
+    let createAdditionalActivityHandlers = options.createAdditionalActivityHandlers;
+    if (
+      !createAdditionalActivityHandlers &&
+      (options.manifestProvider || options.sheetsClient || options.documentLogService)
+    ) {
+      const documentLogWiring = createDocumentLogWiring({
+        manifestProvider,
+        configProvider: appConfigProvider,
+        driveClient: options.driveClient,
+        sheetsClient: options.sheetsClient,
+        templateEvaluator: options.templateEvaluator,
+        documentLogService: options.documentLogService,
+      });
+      const ensureLogRegistryInitialized = createRetryableInitializer(() =>
+        documentLogWiring.logSchemaRegistry.initialize()
+      );
+      createAdditionalActivityHandlers = async (context: WorkspaceExecutionContext) => {
+        await ensureLogRegistryInitialized();
+        return [documentLogWiring.createPerRequestActivityHandler(context)];
+      };
+    }
+
     let createDocumentService = options.createDocumentService;
     if (!createDocumentService) {
       if (options.documentService) {
@@ -127,6 +173,9 @@ export function wireWorkspaceAddonRoutes(
           driveClient: options.driveClient,
           gmailClient,
           pdfProcessor: options.pdfProcessor,
+          ...(createAdditionalActivityHandlers !== undefined
+            ? { createAdditionalActivityHandlers }
+            : {}),
         });
       }
     }
@@ -196,18 +245,9 @@ export function wireWorkspaceAddonRoutes(
         getCanonicalOptionsProvider: (ctx) => getDynamicOptionsAdapter(ctx),
       });
       sourceParser = sourceParserWiring.sourceParser;
-      let parseRegistryInitPromise: Promise<void> | undefined;
-      const ensureParseRegistryInitialized = async (): Promise<void> => {
-        if (!parseRegistryInitPromise) {
-          parseRegistryInitPromise = sourceParserWiring.parseSchemaRegistry
-            .initialize()
-            .catch((err) => {
-              parseRegistryInitPromise = undefined;
-              throw err;
-            });
-        }
-        await parseRegistryInitPromise;
-      };
+      const ensureParseRegistryInitialized = createRetryableInitializer(() =>
+        sourceParserWiring.parseSchemaRegistry.initialize()
+      );
       createSourceParser = async (context: WorkspaceExecutionContext) => {
         await ensureParseRegistryInitialized();
         const adapter = getDynamicOptionsAdapter(context);

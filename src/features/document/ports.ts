@@ -11,6 +11,7 @@ import {
   VALIDATION_TIMEOUT_MSG,
   LinkedFieldSchema,
   type Activity,
+  type ActivityExecutionContext,
   type ActivityOutput,
   type FileLocator,
   type SourceFile,
@@ -107,6 +108,7 @@ export const FormSchemaType = Type.Object({
 export type FormSchema = Static<typeof FormSchemaType>;
 
 export type {
+  ActivityExecutionContext,
   FileLocator,
   ActivityOutput,
   ProcessDocumentResult,
@@ -118,7 +120,8 @@ export type {
 export interface ActivityHandler {
   canHandle(activity: Activity): boolean;
   handle(
-    activity: Activity
+    activity: Activity,
+    context?: ActivityExecutionContext
   ): Promise<ActivityOutput | void> | ActivityOutput | void;
 }
 
@@ -128,7 +131,8 @@ export interface SourceFileHydratorPort {
 
 export interface ActivityDispatcherPort {
   dispatch(
-    activity: Activity
+    activity: Activity,
+    context?: ActivityExecutionContext
   ): Promise<ActivityOutput | void> | ActivityOutput | void;
 }
 
@@ -257,6 +261,7 @@ export interface DriveFileResult {
   parents?: string[] | undefined;
   mimeType?: string | undefined;
   webViewLink?: string | undefined;
+  modifiedTime?: string | undefined;
 }
 
 export type DriveFile = DriveFileResult;

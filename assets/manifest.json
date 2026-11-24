@@ -17,9 +17,13 @@
       "initialDelayMs": 1000,
       "backoffFactor": 2
     },
-    "sheets": {
-      "defaultHeaderRangeName": "Headers",
-      "defaultDataRangeName": "Data"
+    "documentLog": {
+      "preferredFolderPath": "1 Admin",
+      "fileNameContains": "Document Log",
+      "excludePrefixes": ["Copy of "],
+      "excludeSubstrings": ["Template"],
+      "templateSpreadsheetId": "1Ops-suWgiqs-_PbaEvdx1WIdUWdVCctJkjS2rPjB42I",
+      "copyNameTemplate": "{{DocumentSpace.name}} Document Log"
     }
   },
   "DocumentSpaceTypes": [

@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream';
 import { google, type drive_v3 } from 'googleapis';
-import { OAuth2Client } from 'google-auth-library';
+import { GoogleAuth, OAuth2Client } from 'google-auth-library';
 import { Type } from '@sinclair/typebox';
 
 export interface DriveShortcutDetails {
@@ -151,7 +151,7 @@ export interface DriveOperationOptions {
 }
 
 export interface GoogleDriveClientOptions {
-  auth?: OAuth2Client | string | undefined;
+  auth?: OAuth2Client | GoogleAuth | string | undefined;
   drive?: drive_v3.Drive | undefined;
   retryOptions?: DriveRetryOptions | undefined;
   configProvider?: DriveConfigProvider | undefined;
@@ -731,7 +731,7 @@ export class GoogleDriveClient {
 
       const listParams: drive_v3.Params$Resource$Files$List = {
         q,
-        fields: 'files(id, name, parents, mimeType, webViewLink)',
+        fields: 'files(id, name, parents, mimeType, webViewLink, modifiedTime)',
         includeItemsFromAllDrives: true,
         supportsAllDrives: true,
       };
@@ -757,6 +757,7 @@ export class GoogleDriveClient {
           parents: file.parents ?? undefined,
           mimeType: file.mimeType ?? undefined,
           webViewLink: file.webViewLink ?? undefined,
+          modifiedTime: file.modifiedTime ?? undefined,
         }));
     } catch (error) {
       this.wrapApiError('searchFiles', error);
@@ -1078,6 +1079,24 @@ export class GoogleDriveClient {
       };
     } catch (error) {
       this.wrapApiError('listFolders', error);
+    }
+  }
+
+  /**
+   * Moves a Drive file or folder to the trash.
+   */
+  async trash(fileId: string, options?: DriveOperationOptions): Promise<void> {
+    const drive = this.getDrive(options?.auth);
+    try {
+      await this.executeWithRetry(() =>
+        drive.files.update({
+          fileId,
+          requestBody: { trashed: true },
+          supportsAllDrives: true,
+        })
+      );
+    } catch (error) {
+      this.wrapApiError('trash', error);
     }
   }
 }

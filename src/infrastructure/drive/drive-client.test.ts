@@ -6,6 +6,7 @@ import {
   GoogleDriveNotFoundError,
 } from './drive-client';
 import { google, type drive_v3 } from 'googleapis';
+import { GoogleAuth } from 'google-auth-library';
 
 describe('GoogleDriveClient', () => {
   let mockDrive: drive_v3.Drive;
@@ -27,6 +28,24 @@ describe('GoogleDriveClient', () => {
     } as unknown as drive_v3.Drive;
 
     client = new GoogleDriveClient({ drive: mockDrive });
+  });
+
+  describe('constructor', () => {
+    it('accepts GoogleAuth option without making network calls', () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        throw new Error('Unexpected network call during GoogleDriveClient construction');
+      });
+      try {
+        const googleAuth = new GoogleAuth({
+          scopes: ['https://www.googleapis.com/auth/drive'],
+        });
+        const driveClient = new GoogleDriveClient({ auth: googleAuth });
+        expect(driveClient).toBeInstanceOf(GoogleDriveClient);
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
   });
 
   describe('getFile', () => {
@@ -816,7 +835,7 @@ describe('GoogleDriveClient', () => {
       ]);
       expect(mockDrive.files.list).toHaveBeenCalledWith({
         q: "name contains 'Invoice' and trashed = false",
-        fields: 'files(id, name, parents, mimeType, webViewLink)',
+        fields: 'files(id, name, parents, mimeType, webViewLink, modifiedTime)',
         corpora: 'user',
         spaces: 'drive',
         includeItemsFromAllDrives: true,
@@ -881,7 +900,7 @@ describe('GoogleDriveClient', () => {
         // Target query
         expect(mockDrive.files.list).toHaveBeenNthCalledWith(2, {
           q: "name contains 'Invoice' and 'folder-p1' in parents and trashed = false",
-          fields: 'files(id, name, parents, mimeType, webViewLink)',
+          fields: 'files(id, name, parents, mimeType, webViewLink, modifiedTime)',
           corpora: 'user',
           spaces: 'drive',
           includeItemsFromAllDrives: true,
@@ -948,7 +967,7 @@ describe('GoogleDriveClient', () => {
         const expectedParentOrClause = twentyFolders.map((f) => `'${f.id}' in parents`).join(' or ');
         expect(mockDrive.files.list).toHaveBeenNthCalledWith(2, {
           q: `name = 'Target.pdf' and (${expectedParentOrClause}) and trashed = false`,
-          fields: 'files(id, name, parents, mimeType, webViewLink)',
+          fields: 'files(id, name, parents, mimeType, webViewLink, modifiedTime)',
           corpora: 'user',
           spaces: 'drive',
           includeItemsFromAllDrives: true,
@@ -1132,7 +1151,7 @@ describe('GoogleDriveClient', () => {
         // Target: Scoped to inv-id
         expect(mockDrive.files.list).toHaveBeenNthCalledWith(3, {
           q: "name = 'Log_Sheet.xlsx' and 'inv-id' in parents and trashed = false",
-          fields: 'files(id, name, parents, mimeType, webViewLink)',
+          fields: 'files(id, name, parents, mimeType, webViewLink, modifiedTime)',
           corpora: 'user',
           spaces: 'drive',
           includeItemsFromAllDrives: true,
@@ -1549,6 +1568,58 @@ describe('GoogleDriveClient', () => {
       expect(results[0].id).toBe('retry-file-id');
       expect(mockDrive.files.list).toHaveBeenCalledTimes(2);
       expect(sleepMock).toHaveBeenCalledWith(50);
+    });
+
+    it('propagates modifiedTime when present and leaves it undefined when omitted or null', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          files: [
+            {
+              id: 'file-with-mtime',
+              name: 'WithTime.pdf',
+              modifiedTime: '2026-11-24T06:00:00.000Z',
+            },
+            {
+              id: 'file-null-mtime',
+              name: 'NullTime.pdf',
+              modifiedTime: null,
+            },
+            {
+              id: 'file-omitted-mtime',
+              name: 'OmittedTime.pdf',
+            },
+          ],
+        },
+      });
+
+      const results = await client.searchFiles({ targetName: 'Time' });
+
+      expect(results).toEqual([
+        {
+          id: 'file-with-mtime',
+          name: 'WithTime.pdf',
+          parents: undefined,
+          mimeType: undefined,
+          webViewLink: undefined,
+          modifiedTime: '2026-11-24T06:00:00.000Z',
+        },
+        {
+          id: 'file-null-mtime',
+          name: 'NullTime.pdf',
+          parents: undefined,
+          mimeType: undefined,
+          webViewLink: undefined,
+          modifiedTime: undefined,
+        },
+        {
+          id: 'file-omitted-mtime',
+          name: 'OmittedTime.pdf',
+          parents: undefined,
+          mimeType: undefined,
+          webViewLink: undefined,
+          modifiedTime: undefined,
+        },
+      ]);
     });
   });
 
@@ -2753,6 +2824,102 @@ describe('GoogleDriveClient', () => {
       await expect(client.listFolders()).rejects.toThrow(
         /Google Drive API error in listFolders: Internal Error/
       );
+    });
+  });
+
+  describe('trash', () => {
+    it('moves a file to trash via drive.files.update and resolves void', async () => {
+      (mockDrive.files.update as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: { id: 'file-trash-123', trashed: true },
+      });
+
+      const result = await client.trash('file-trash-123');
+
+      expect(result).toBeUndefined();
+      expect(mockDrive.files.update).toHaveBeenCalledWith({
+        fileId: 'file-trash-123',
+        requestBody: { trashed: true },
+        supportsAllDrives: true,
+      });
+    });
+
+    it('respects options.auth override when trashing a file', async () => {
+      const customDriveMock = {
+        files: {
+          update: vi.fn().mockResolvedValueOnce({
+            data: { id: 'file-trash-auth', trashed: true },
+          }),
+        },
+      };
+      const driveSpy = vi
+        .spyOn(google, 'drive')
+        .mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
+
+      try {
+        await client.trash('file-trash-auth', { auth: 'ya29.custom-cred' });
+
+        expect(driveSpy).toHaveBeenCalled();
+        expect(customDriveMock.files.update).toHaveBeenCalledWith({
+          fileId: 'file-trash-auth',
+          requestBody: { trashed: true },
+          supportsAllDrives: true,
+        });
+      } finally {
+        driveSpy.mockRestore();
+      }
+    });
+
+    it('retries HTTP 429 errors with exponential backoff', async () => {
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      const retryClient = new GoogleDriveClient({
+        drive: mockDrive,
+        retryOptions: {
+          maxRetries: 2,
+          initialDelayMs: 10,
+          backoffFactor: 2,
+          sleep: sleepMock,
+        },
+      });
+
+      (mockDrive.files.update as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce({ status: 429, message: 'Rate limit exceeded' })
+        .mockRejectedValueOnce({ status: 429, message: 'Rate limit exceeded' })
+        .mockResolvedValueOnce({ data: { id: 'file-trash-123', trashed: true } });
+
+      await expect(retryClient.trash('file-trash-123')).resolves.toBeUndefined();
+
+      expect(mockDrive.files.update).toHaveBeenCalledTimes(3);
+      expect(sleepMock).toHaveBeenCalledTimes(2);
+      expect(sleepMock).toHaveBeenNthCalledWith(1, 10);
+      expect(sleepMock).toHaveBeenNthCalledWith(2, 20);
+    });
+
+    it('does not retry non-429 errors and wraps them in GoogleDriveApiError', async () => {
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      const retryClient = new GoogleDriveClient({
+        drive: mockDrive,
+        retryOptions: {
+          maxRetries: 2,
+          initialDelayMs: 10,
+          backoffFactor: 2,
+          sleep: sleepMock,
+        },
+      });
+
+      (mockDrive.files.update as ReturnType<typeof vi.fn>).mockRejectedValueOnce({
+        status: 404,
+        message: 'File not found',
+      });
+
+      const err = await retryClient.trash('missing-file').catch((e) => e);
+
+      expect(err).toBeInstanceOf(GoogleDriveApiError);
+      expect((err as GoogleDriveApiError).statusCode).toBe(404);
+      expect((err as GoogleDriveApiError).message).toMatch(
+        /Google Drive API error in trash: File not found/
+      );
+      expect(mockDrive.files.update).toHaveBeenCalledTimes(1);
+      expect(sleepMock).not.toHaveBeenCalled();
     });
   });
 

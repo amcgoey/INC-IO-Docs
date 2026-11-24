@@ -13,7 +13,10 @@ import {
 import { createDocumentSpaceFeatureWiring } from './document-space.wiring';
 import { wireWorkspaceAddonRoutes } from './workspace-addon.wiring';
 import { createSourceParserWiring } from './source-parser.wiring';
+import { createDocumentLogWiring } from './document-log.wiring';
 import type { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
+import type { SheetsClient, SheetsConfigProvider } from '../infrastructure/sheets';
+import type { DocumentLogPort, LogSchemaRegistryPort } from '../features/document-log/ports';
 
 import type { DocumentSpaceService } from '../features/document-space/domain';
 import type {
@@ -40,7 +43,8 @@ export type CompositeManifestProvider =
   AppConfigurationProviderPort &
   WorkspaceConfigProviderPort &
   RawManifestProviderPort &
-  SpaceRawManifestProviderPort;
+  SpaceRawManifestProviderPort &
+  Partial<SheetsConfigProvider>;
 
 export interface AppOptions {
   manifestProvider?: CompositeManifestProvider | undefined;
@@ -57,6 +61,8 @@ export interface AppOptions {
   documentSpaceStoragePort?: DocumentSpaceStoragePort | undefined;
   documentSpaceService?: DocumentSpaceService | undefined;
   documentService?: InjectedDocumentService | undefined;
+  sheetsClient?: SheetsClient | undefined;
+  documentLogService?: DocumentLogPort | undefined;
   authorizationUrl?: string | undefined;
   logger?: boolean | undefined;
   skipSpaceValidation?: boolean | undefined;
@@ -72,6 +78,8 @@ export interface AppInstance {
   documentSchemaRegistry: DocumentSchemaRegistryPort;
   compiledSchemaRegistry?: CompiledSchemaRegistryPort | undefined;
   documentSpaceUiSchemaQuery?: DocumentSpaceUiSchemaQueryPort | undefined;
+  documentLogService?: DocumentLogPort | undefined;
+  logSchemaRegistry?: LogSchemaRegistryPort | undefined;
   initialize: () => Promise<void>;
   start: (port?: number, host?: string) => Promise<void>;
 }
@@ -125,6 +133,15 @@ export function createApp(options?: AppOptions): AppInstance {
     getRawManifest: async () => ({}),
   };
 
+  const documentLogWiring = createDocumentLogWiring({
+    manifestProvider,
+    driveClient,
+    sheetsClient: options?.sheetsClient,
+    configProvider: manifestProvider ?? defaultAppConfigProvider,
+    templateEvaluator,
+    documentLogService: options?.documentLogService,
+  });
+
   const documentService = wireDocumentServicesAndRoutes({
     server,
     driveClient,
@@ -135,6 +152,7 @@ export function createApp(options?: AppOptions): AppInstance {
     activityEngine: options?.activityEngine,
     documentService: options?.documentService,
     compiledSchemaRegistry,
+    additionalActivityHandlers: [documentLogWiring.createActivityHandler()],
   });
 
   const storageAdapter = options?.storageAdapter ?? options?.documentSpaceStoragePort;
@@ -187,12 +205,20 @@ export function createApp(options?: AppOptions): AppInstance {
     pdfProcessor: options?.pdfProcessor,
     driveContextClient: options?.driveContextClient,
     ...(options?.docsClient !== undefined ? { docsClient: options.docsClient } : {}),
+    ...(options?.sheetsClient !== undefined ? { sheetsClient: options.sheetsClient } : {}),
+    ...(options?.documentLogService !== undefined
+      ? { documentLogService: options.documentLogService }
+      : {}),
+    createAdditionalActivityHandlers: (context) => [
+      documentLogWiring.createPerRequestActivityHandler(context),
+    ],
     sourceParser: sourceParserWiring.sourceParser,
     createSourceParser: sourceParserWiring.createSourceParser,
   });
 
   const initialize = async () => {
     await sourceParserWiring.parseSchemaRegistry.initialize();
+    await documentLogWiring.logSchemaRegistry.initialize();
     if (compiledSchemaRegistry) {
       await compiledSchemaRegistry.initialize();
     }
@@ -224,6 +250,8 @@ export function createApp(options?: AppOptions): AppInstance {
     documentSchemaRegistry,
     compiledSchemaRegistry,
     documentSpaceUiSchemaQuery: documentSpaceWiring.documentSpaceUiSchemaQuery,
+    documentLogService: documentLogWiring.documentLogService,
+    logSchemaRegistry: documentLogWiring.logSchemaRegistry,
     initialize,
     start,
   };

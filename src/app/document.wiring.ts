@@ -4,6 +4,7 @@ import type {
   TemplateEvaluatorPort,
   DriveServicePort,
   ActivityDispatcherPort,
+  ActivityHandler,
   AppConfigurationProviderPort,
   RawManifestProviderPort,
   DocumentServicePort,
@@ -88,6 +89,12 @@ export interface CreateDocumentServiceFactoryOptions {
   pdfProcessor?: PdfProcessor | undefined;
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
   validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
+  additionalActivityHandlers?: readonly ActivityHandler[] | undefined;
+  createAdditionalActivityHandlers?:
+    | ((
+        context: WorkspaceExecutionContext
+      ) => readonly ActivityHandler[] | Promise<readonly ActivityHandler[]>)
+    | undefined;
 }
 
 export function createDocumentServiceFactory(
@@ -161,7 +168,16 @@ export function createDocumentServiceFactory(
       isFileSourceEmailAttachments,
     });
 
-    const activityEngine = new ActivityEngine([driveActivityHandler]);
+    const perRequestHandlers = options.createAdditionalActivityHandlers
+      ? await options.createAdditionalActivityHandlers(context)
+      : [];
+    const handlers: ActivityHandler[] = [
+      driveActivityHandler,
+      ...(options.additionalActivityHandlers ?? []),
+      ...perRequestHandlers,
+    ];
+
+    const activityEngine = new ActivityEngine(handlers);
 
     const dynamicValidator =
       options.dynamicValidator ?? new DynamicOptionsAdapter(driveClient);
@@ -199,6 +215,7 @@ export interface WireDocumentServicesOptions {
   primaryTargetId?: string | undefined;
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
   validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
+  additionalActivityHandlers?: readonly ActivityHandler[] | undefined;
 }
 
 export function wireDocumentServicesAndRoutes(
@@ -214,9 +231,14 @@ export function wireDocumentServicesAndRoutes(
       primaryTargetId: options.primaryTargetId,
     });
 
+    const handlers: ActivityHandler[] = [
+      driveActivityHandler,
+      ...(options.additionalActivityHandlers ?? []),
+    ];
+
     const activityEngine =
       options.activityEngine ??
-      new ActivityEngine([driveActivityHandler]);
+      new ActivityEngine(handlers);
 
     const compiledSchemaRegistry = resolveCompiledSchemaRegistry(
       options.documentSchemaRegistry,
