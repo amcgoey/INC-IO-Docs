@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { AppManifestProvider, WorkspaceConfigurationSchema } from './app-manifest-provider';
+import {
+  AppManifestProvider,
+  SheetsConfigurationSchema,
+  WorkspaceConfigurationSchema,
+} from './app-manifest-provider';
 
 describe('AppManifestProvider', () => {
   let tempDir: string;
@@ -138,6 +142,11 @@ describe('AppManifestProvider', () => {
       expect(keys.sort()).toEqual(['defaultDocumentSpaceType', 'defaultDocumentType', 'timeZone']);
     });
 
+    it('exposes only maxRetries, initialDelayMs, and backoffFactor on SheetsConfigurationSchema', () => {
+      const keys = Object.keys(SheetsConfigurationSchema.properties);
+      expect(keys.sort()).toEqual(['backoffFactor', 'initialDelayMs', 'maxRetries']);
+    });
+
     it('loads and returns drive and workspace configuration when defined in manifest', async () => {
       const manifestPath = path.join(tempDir, 'manifest.json');
       await fs.writeFile(
@@ -187,8 +196,6 @@ describe('AppManifestProvider', () => {
           documentTypes: [],
           configuration: {
             sheets: {
-              defaultHeaderRangeName: 'MyHeaders',
-              defaultDataRangeName: 'MyData',
               maxRetries: 4,
               initialDelayMs: 500,
               backoffFactor: 2,
@@ -202,12 +209,62 @@ describe('AppManifestProvider', () => {
 
       const sheetsConfig = await provider.getSheetsConfig();
       expect(sheetsConfig).toEqual({
-        defaultHeaderRangeName: 'MyHeaders',
-        defaultDataRangeName: 'MyData',
         maxRetries: 4,
         initialDelayMs: 500,
         backoffFactor: 2,
       });
+    });
+
+    it('preserves configuration.documentLog and DocumentSpaceTypes[].documentLog in getRawManifest()', async () => {
+      const manifestPath = path.join(tempDir, 'document-log-manifest.json');
+      const rawData = {
+        documentTypes: ['./document-types/submittal-arch.json'],
+        configuration: {
+          sheets: {
+            maxRetries: 3,
+          },
+          documentLog: {
+            preferredFolderPath: '1 Admin',
+            fileNameContains: 'Document Log',
+            excludePrefixes: ['Copy of '],
+            excludeSubstrings: ['Template'],
+            templateSpreadsheetId: 'template-123',
+            copyNameTemplate: '{{DocumentSpace.name}} Document Log',
+          },
+        },
+        DocumentSpaceTypes: [
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            documentLog: {
+              preferredFolderPath: '00 Admin',
+            },
+          },
+        ],
+      };
+      await fs.writeFile(manifestPath, JSON.stringify(rawData), 'utf-8');
+
+      const provider = new AppManifestProvider({ manifestPath });
+
+      expect(await provider.getSheetsConfig()).toEqual({ maxRetries: 3 });
+      expect(await provider.getRawManifest()).toEqual(rawData);
+    });
+
+    it('loads production assets/manifest.json without legacy sheets defaultHeaderRangeName or defaultDataRangeName keys', async () => {
+      const prodManifestPath = path.resolve(__dirname, '../../../assets/manifest.json');
+      const provider = new AppManifestProvider({ manifestPath: prodManifestPath });
+      const rawManifest = (await provider.getRawManifest()) as {
+        configuration?: { sheets?: Record<string, unknown> };
+      };
+      if (rawManifest.configuration?.sheets !== undefined) {
+        expect(rawManifest.configuration.sheets).not.toHaveProperty('defaultHeaderRangeName');
+        expect(rawManifest.configuration.sheets).not.toHaveProperty('defaultDataRangeName');
+      }
+      const sheetsConfig = await provider.getSheetsConfig();
+      if (sheetsConfig !== undefined) {
+        expect(sheetsConfig).not.toHaveProperty('defaultHeaderRangeName');
+        expect(sheetsConfig).not.toHaveProperty('defaultDataRangeName');
+      }
     });
 
     it('returns undefined for drive/workspace/sheets configs when configuration block is absent in manifest', async () => {

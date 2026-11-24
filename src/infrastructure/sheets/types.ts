@@ -10,6 +10,17 @@ export const CellValueSchema = Type.Union([
 ]);
 export type CellValue = Static<typeof CellValueSchema>;
 
+export const SheetFormulaCellSchema = Type.Object({
+  formula: Type.String(),
+});
+export type SheetFormulaCell = Static<typeof SheetFormulaCellSchema>;
+
+export const SheetCellInputSchema = Type.Union([
+  CellValueSchema,
+  SheetFormulaCellSchema,
+]);
+export type SheetCellInput = Static<typeof SheetCellInputSchema>;
+
 export const RowRecordSchema = Type.Record(Type.String(), CellValueSchema);
 export type RowRecord = Static<typeof RowRecordSchema>;
 
@@ -20,34 +31,55 @@ export const NamedRangeTargetSchema = Type.Object({
 });
 export type NamedRangeTarget = Static<typeof NamedRangeTargetSchema>;
 
-export const SheetTargetConfigSchema = Type.Object({
+export const PositiveTableTargetSchema = Type.Object({
   spreadsheetId: Type.String({ minLength: 1 }),
   sheetName: Type.String({ minLength: 1 }),
-  headerRangeName: Type.String({ minLength: 1 }),
-  dataRangeName: Type.String({ minLength: 1 }),
+  rangeName: Type.String({ minLength: 1 }),
+  extentMarker: Type.String({ minLength: 1 }),
+  groupDividerMarker: Type.String({ minLength: 1 }),
 });
-export type SheetTargetConfig = Static<typeof SheetTargetConfigSchema>;
+export type PositiveTableTarget = Static<typeof PositiveTableTargetSchema>;
 
-export const InsertGroupedRowRequestSchema = Type.Object({
-  target: SheetTargetConfigSchema,
-  rowData: RowRecordSchema,
-  groupConfig: Type.Object({
-    columnName: Type.String({ minLength: 1 }),
-    value: CellValueSchema,
-  }),
-  sortConfig: Type.Object({
-    columnName: Type.String({ minLength: 1 }),
-    value: CellValueSchema,
-  }),
+export const ReadPositiveTableRequestSchema = Type.Object({
+  target: PositiveTableTargetSchema,
 });
-export type InsertGroupedRowRequest = Static<typeof InsertGroupedRowRequestSchema>;
+export type ReadPositiveTableRequest = Static<typeof ReadPositiveTableRequestSchema>;
 
-export const FindRowsRequestSchema = Type.Object({
-  target: SheetTargetConfigSchema,
-  columnName: Type.String({ minLength: 1 }),
-  value: CellValueSchema,
+export const PositiveTableRowSchema = Type.Object({
+  rowNumber: Type.Number(),
+  values: RowRecordSchema,
 });
-export type FindRowsRequest = Static<typeof FindRowsRequestSchema>;
+export type PositiveTableRow = Static<typeof PositiveTableRowSchema>;
+
+export const PositiveTableReadResultSchema = Type.Object({
+  headers: Type.Array(Type.String()),
+  formulaColumns: Type.Array(Type.String()),
+  rows: Type.Array(PositiveTableRowSchema),
+});
+export type PositiveTableReadResult = Static<typeof PositiveTableReadResultSchema>;
+
+export const RowKeySchema = Type.Object({
+  groupKey: Type.String(),
+  sortKey: Type.String(),
+});
+export type RowKey = Static<typeof RowKeySchema>;
+
+export const InsertGroupedRowResultSchema = Type.Object({
+  rowNumber: Type.Number(),
+  action: Type.Union([Type.Literal('inserted'), Type.Literal('updated')]),
+});
+export type InsertGroupedRowResult = Static<typeof InsertGroupedRowResultSchema>;
+
+export interface InsertPositiveGroupedRowRequest {
+  target: PositiveTableTarget;
+  rowData: Record<string, SheetCellInput>;
+  rowKeyExtractor?: ((row: RowRecord) => RowKey | null) | undefined;
+  targetKeys?: RowKey | undefined;
+  groupSortOrder?: 'asc' | 'desc' | undefined;
+  rowSortOrder?: 'asc' | 'desc' | undefined;
+  duplicatePolicy?: 'insert' | 'upsert' | 'reject' | undefined;
+  readOnlyColumns?: string[] | undefined;
+}
 
 export const ReadNamedRangeRequestSchema = NamedRangeTargetSchema;
 export type ReadNamedRangeRequest = Static<typeof ReadNamedRangeRequestSchema>;
@@ -84,8 +116,8 @@ export interface GoogleSheetsClientOptions {
 }
 
 export interface SheetsClient {
-  insertIntoGroupedList(request: InsertGroupedRowRequest): Promise<void>;
-  findRowsByValue(request: FindRowsRequest): Promise<RowRecord[]>;
+  readTable(request: ReadPositiveTableRequest): Promise<PositiveTableReadResult>;
+  insertIntoGroupedList(request: InsertPositiveGroupedRowRequest): Promise<InsertGroupedRowResult>;
   readNamedRange(request: ReadNamedRangeRequest): Promise<CellValue[][]>;
   writeNamedRange(request: WriteNamedRangeRequest): Promise<void>;
 }

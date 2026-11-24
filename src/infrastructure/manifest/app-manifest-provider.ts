@@ -17,8 +17,6 @@ export const DriveConfigurationSchema = Type.Object({
 });
 
 export const SheetsConfigurationSchema = Type.Object({
-  defaultHeaderRangeName: Type.Optional(Type.String({ default: 'Headers' })),
-  defaultDataRangeName: Type.Optional(Type.String({ default: 'Data' })),
   maxRetries: Type.Optional(Type.Number()),
   initialDelayMs: Type.Optional(Type.Number()),
   backoffFactor: Type.Optional(Type.Number()),

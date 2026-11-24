@@ -16,10 +16,6 @@
       "maxRetries": 3,
       "initialDelayMs": 1000,
       "backoffFactor": 2
-    },
-    "sheets": {
-      "defaultHeaderRangeName": "Headers",
-      "defaultDataRangeName": "Data"
     }
   },
   "DocumentSpaceTypes": [

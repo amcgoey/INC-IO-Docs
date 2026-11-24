@@ -31,13 +31,23 @@ export class GoogleSheetsColumnNotFoundError extends GoogleSheetsApiError {
   }
 }
 
-export class GoogleSheetsRangeMisalignedError extends GoogleSheetsApiError {
+export class GoogleSheetsExtentAnchorNotFoundError extends GoogleSheetsApiError {
   constructor(
     message: string,
     options?: { cause?: unknown; statusCode?: number | undefined }
   ) {
     super(message, options);
-    this.name = 'GoogleSheetsRangeMisalignedError';
+    this.name = 'GoogleSheetsExtentAnchorNotFoundError';
+  }
+}
+
+export class GoogleSheetsDuplicateKeyError extends GoogleSheetsApiError {
+  constructor(
+    message: string,
+    options?: { cause?: unknown; statusCode?: number | undefined }
+  ) {
+    super(message, options);
+    this.name = 'GoogleSheetsDuplicateKeyError';
   }
 }
 
