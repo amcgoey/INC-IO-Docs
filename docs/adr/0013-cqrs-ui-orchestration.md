@@ -27,3 +27,7 @@ The workflow:
 
 - **Pros**: Perfectly isolates `schema-driven-ui` as a generic rendering engine. Keeps infrastructure (`api.ts`) pure. Maintains feature isolation by defining explicit ports for cross-domain orchestration.
 - **Cons**: Increases structural complexity by requiring a new feature slice and additional port definitions for the round-trip CQRS flow.
+
+## Amendment (2026-11-24 — Paired Render and Notification Intents)
+
+`UiProcessManager` render intents (`UiProcessRenderResult`) may include an optional `notification` message string alongside `isUpdateCard: true`. When present, the `src/app/` wiring layer and `workspace-addon` translator emit `action.navigations: [{ updateCard }]` paired with `action.notification: { text }` in a single response. This allows commands such as `copyDocumentLog` to refresh the active card in place and display confirmation feedback in one round-trip while keeping `UiProcessManager` decoupled from infrastructure card payloads.

@@ -35,3 +35,7 @@ Sequential workflows such as `MOVE_FILE` followed by `WRITE_LOG`, multi-artifact
 - `Activity` stays serializable (`type`, optional `id`, `payload`), and adapters remain decoupled behind unified `ActivityOutput` ([0004-unified-activity-output.md](0004-unified-activity-output.md)).
 - Linear pipelines read `context.files` implicitly while branching multi-artifact pipelines bind `Context.<id>`, keeping `Document.data` restricted to validated document fields.
 - `SchemaDrivenUi` stays feature-agnostic; new pre-submit read panels plug into `UiContextQueryPort` in `src/app/` without touching `UiProcessManager` or `SchemaDrivenUiService` signatures.
+
+## Amendment (2026-11-24 — `READ_LOG` `contextVariables` Output Shape)
+
+Reconciling Decision #1 with [0021-document-log-schema-and-resilient-hydration.md](0021-document-log-schema-and-resilient-hydration.md), workflow-invoked `READ_LOG` steps store `DocumentLogEntry[]` (wrapping hydrated `Document` payloads with `valid`, `fileUri`, `rowNumber`, and `validationErrors`) at `contextVariables[outputVariable ?? 'logEntries']`, paired with `RowHydrationWarning[]` at ``contextVariables[`${outputVariable ?? 'logEntries'}Warnings`]`` and summary metadata `{ spreadsheetId, sheetName, entryCount, warningCount }` at `contextVariables.documentLogRead`.
