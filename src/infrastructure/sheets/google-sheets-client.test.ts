@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { type sheets_v4 } from 'googleapis';
 import { GoogleAuth, OAuth2Client } from 'google-auth-library';
+import { TypeSystemPolicy } from '@sinclair/typebox/system';
+import { Value } from '@sinclair/typebox/value';
 import {
   GoogleSheetsClient,
   formatScopedRange,
@@ -17,7 +19,13 @@ import {
   GoogleSheetsExtentAnchorNotFoundError,
   GoogleSheetsNamedRangeNotFoundError,
 } from './errors';
-import type { CellValue, PositiveTableTarget, SheetsConfigProvider } from './types';
+import {
+  ReadPositiveTableRequestSchema,
+  PositiveTableRowSchema,
+  type CellValue,
+  type PositiveTableTarget,
+  type SheetsConfigProvider,
+} from './types';
 
 describe('GoogleSheetsClient', () => {
   let mockSheetsApi: {
@@ -26,6 +34,7 @@ describe('GoogleSheetsClient', () => {
       batchUpdate: ReturnType<typeof vi.fn>;
       values: {
         get: ReturnType<typeof vi.fn>;
+        batchGet: ReturnType<typeof vi.fn>;
         update: ReturnType<typeof vi.fn>;
       };
     };
@@ -84,6 +93,11 @@ describe('GoogleSheetsClient', () => {
                 ['ID', 'Name', 'Score', 'Active'],
                 ['1', 'Alice', 95.5, true],
               ],
+            },
+          }),
+          batchGet: vi.fn().mockResolvedValue({
+            data: {
+              valueRanges: [],
             },
           }),
           update: vi.fn().mockResolvedValue({ data: {} }),
@@ -291,43 +305,59 @@ describe('GoogleSheetsClient', () => {
       },
     }));
 
-    mockSheetsApi.spreadsheets.values.get.mockImplementation(
-      async (params?: { range?: string; valueRenderOption?: string }) => {
-        const nr = state.namedRange;
-        const bounds = params?.range
-          ? parseSimA1Range(params.range, nr.endRowIndex, nr.endColumnIndex)
-          : {
-              startRowIndex: nr.startRowIndex,
-              endRowIndex: nr.endRowIndex,
-              startColumnIndex: nr.startColumnIndex,
-              endColumnIndex: nr.endColumnIndex,
-            };
-        const slice: CellValue[][] = [];
-        const rowLimit = Math.min(bounds.endRowIndex, state.grid.length);
-        for (let r = bounds.startRowIndex; r < rowLimit; r++) {
-          const row = state.grid[r];
-          if (!row) {
-            slice.push([]);
-            continue;
-          }
-          const vals: CellValue[] = [];
-          for (let c = bounds.startColumnIndex; c < bounds.endColumnIndex; c++) {
-            const cell = row.cells[c];
-            if (!cell) {
-              vals.push('');
-            } else if (params?.valueRenderOption === 'FORMULA') {
-              vals.push(cell.value);
-            } else {
-              vals.push(cell.formattedValue ?? cell.value);
-            }
-          }
-          while (vals.length > 0 && vals[vals.length - 1] === '') {
-            vals.pop();
-          }
-          slice.push(vals);
+    const sliceSimValues = (range: string | undefined, valueRenderOption: string | undefined): CellValue[][] => {
+      const nr = state.namedRange;
+      const bounds = range
+        ? parseSimA1Range(range, nr.endRowIndex, nr.endColumnIndex)
+        : {
+            startRowIndex: nr.startRowIndex,
+            endRowIndex: nr.endRowIndex,
+            startColumnIndex: nr.startColumnIndex,
+            endColumnIndex: nr.endColumnIndex,
+          };
+      const slice: CellValue[][] = [];
+      const rowLimit = Math.min(bounds.endRowIndex, state.grid.length);
+      for (let r = bounds.startRowIndex; r < rowLimit; r++) {
+        const row = state.grid[r];
+        if (!row) {
+          slice.push([]);
+          continue;
         }
-        return { data: { values: slice } };
+        const vals: CellValue[] = [];
+        for (let c = bounds.startColumnIndex; c < bounds.endColumnIndex; c++) {
+          const cell = row.cells[c];
+          if (!cell) {
+            vals.push('');
+          } else if (valueRenderOption === 'FORMULA') {
+            vals.push(cell.value);
+          } else {
+            vals.push(cell.formattedValue ?? cell.value);
+          }
+        }
+        while (vals.length > 0 && vals[vals.length - 1] === '') {
+          vals.pop();
+        }
+        slice.push(vals);
       }
+      return slice;
+    };
+
+    mockSheetsApi.spreadsheets.values.get.mockImplementation(
+      async (params?: { range?: string; valueRenderOption?: string }) => ({
+        data: { values: sliceSimValues(params?.range, params?.valueRenderOption) },
+      })
+    );
+
+    mockSheetsApi.spreadsheets.values.batchGet.mockImplementation(
+      async (params?: { ranges?: string[]; valueRenderOption?: string }) => ({
+        data: {
+          spreadsheetId,
+          valueRanges: (params?.ranges ?? []).map((range) => ({
+            range,
+            values: sliceSimValues(range, params?.valueRenderOption),
+          })),
+        },
+      })
     );
 
     mockSheetsApi.spreadsheets.batchUpdate.mockImplementation(
@@ -931,26 +961,30 @@ describe('GoogleSheetsClient', () => {
 
     it('reads positive-terminated table with FORMATTED_VALUE preserving leading zeros and exact 1-based rowNumbers', async () => {
       mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({ data: createArchMetadata() });
-      mockSheetsApi.spreadsheets.values.get
-        .mockResolvedValueOnce({
-          data: {
-            values: [
-              ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link'], // Row 3 (rel 0)
-              ['Formula Row', '', '', '', '', '', '', '', '', ''], // Row 4 (rel 1)
-              ['<--->'], // Row 5 (rel 2 = topAnchor)
-              ['Closed', '033000', '001', '0', 'Concrete Mix', '260115', 'MB', 'Received', 'Podium slab', 'Link'], // Row 6 (rel 3)
-              ['---'], // Row 7 (rel 4 = divider)
-              [], // Row 8 (rel 5 = blank)
-              ['Open', '071200', '001', '0', 'Waterproofing', '260204', 'ARC', 'Referred', 'See --- note'], // Row 9 (rel 6, trailing null Calc Link + '---' in Notes)
-              ['<--->'], // Row 10 (rel 7 = bottomAnchor)
-            ],
-          },
-        })
-        .mockResolvedValueOnce({
-          data: {
-            values: [['Formula Row', '', '', '', '', '', '', '', '', '']],
-          },
-        });
+      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
+        data: {
+          values: [
+            ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link'], // Row 3 (rel 0)
+            ['Formula Row', '', '', '', '', '', '', '', '', ''], // Row 4 (rel 1)
+            ['<--->'], // Row 5 (rel 2 = topAnchor)
+            ['Closed', '033000', '001', '0', 'Concrete Mix', '260115', 'MB', 'Received', 'Podium slab', 'Link'], // Row 6 (rel 3)
+            ['---'], // Row 7 (rel 4 = divider)
+            [], // Row 8 (rel 5 = blank)
+            ['Open', '071200', '001', '0', 'Waterproofing', '260204', 'ARC', 'Referred', 'See --- note'], // Row 9 (rel 6, trailing null Calc Link + '---' in Notes)
+            ['<--->'], // Row 10 (rel 7 = bottomAnchor)
+          ],
+        },
+      });
+      mockSheetsApi.spreadsheets.values.batchGet.mockResolvedValueOnce({
+        data: {
+          valueRanges: [
+            {
+              range: "'Submittal Arch'!A4:J4",
+              values: [['Formula Row', '', '', '', '', '', '', '', '', '']],
+            },
+          ],
+        },
+      });
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
       const result = await client.readTable({
@@ -1068,23 +1102,27 @@ describe('GoogleSheetsClient', () => {
 
     it('returns empty rows array when cleared template has only placeholder blank row(s) between anchors', async () => {
       mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({ data: createArchMetadata() });
-      mockSheetsApi.spreadsheets.values.get
-        .mockResolvedValueOnce({
-          data: {
-            values: [
-              ['Status', 'Section', 'Number'],
-              ['Formula Row'],
-              ['<--->'],
-              ['', '', ''],
-              ['<--->'],
-            ],
-          },
-        })
-        .mockResolvedValueOnce({
-          data: {
-            values: [['Formula Row']],
-          },
-        });
+      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
+        data: {
+          values: [
+            ['Status', 'Section', 'Number'],
+            ['Formula Row'],
+            ['<--->'],
+            ['', '', ''],
+            ['<--->'],
+          ],
+        },
+      });
+      mockSheetsApi.spreadsheets.values.batchGet.mockResolvedValueOnce({
+        data: {
+          valueRanges: [
+            {
+              range: "'Submittal Arch'!A4:J4",
+              values: [['Formula Row']],
+            },
+          ],
+        },
+      });
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
       const result = await client.readTable({
@@ -1169,34 +1207,38 @@ describe('GoogleSheetsClient', () => {
         },
       });
 
-      mockSheetsApi.spreadsheets.values.get
-        .mockResolvedValueOnce({
-          data: {
-            values: [
-              ['Status', 'Spec Tag', 'Spec Title', 'Helper', 'Custom Formula', 'Notes'], // Row 3 (rel 0)
-              ['Note row', '', '', '', '', ''], // Row 4 (rel 1)
-              ['Formula Row', '', 'BED - KING', '', 'calc-1', ''], // Row 5 (rel 2) — formatted preview
-              ['<--->'], // Row 6 (rel 3 = topAnchor)
-              ['Open', 'CG104', 'BED - KING', 'user', 'calc-1', 'Sample note'], // Row 7 (rel 4)
-              ['<--->'], // Row 8 (rel 5 = bottomAnchor)
-            ],
-          },
-        })
-        .mockResolvedValueOnce({
-          data: {
-            values: [
-              ['Note row', '', '', '', '', ''], // Row 4
-              [
-                'Formula Row',
-                '',
-                '=ARRAYFORMULA(IF(B7:B="","",VLOOKUP(B7:B,Options_Specs,2,FALSE)))',
-                'non-formula-label',
-                '  =ARRAYFORMULA(IF(B7:B="","",B7:B&"-X"))',
-                '',
-              ], // Row 5
-            ],
-          },
-        });
+      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
+        data: {
+          values: [
+            ['Status', 'Spec Tag', 'Spec Title', 'Helper', 'Custom Formula', 'Notes'], // Row 3 (rel 0)
+            ['Note row', '', '', '', '', ''], // Row 4 (rel 1)
+            ['Formula Row', '', 'BED - KING', '', 'calc-1', ''], // Row 5 (rel 2) — formatted preview
+            ['<--->'], // Row 6 (rel 3 = topAnchor)
+            ['Open', 'CG104', 'BED - KING', 'user', 'calc-1', 'Sample note'], // Row 7 (rel 4)
+            ['<--->'], // Row 8 (rel 5 = bottomAnchor)
+          ],
+        },
+      });
+      mockSheetsApi.spreadsheets.values.batchGet.mockResolvedValueOnce({
+        data: {
+          valueRanges: [
+            {
+              range: "'Submittal FF&E'!A4:F5",
+              values: [
+                ['Note row', '', '', '', '', ''], // Row 4
+                [
+                  'Formula Row',
+                  '',
+                  '=ARRAYFORMULA(IF(B7:B="","",VLOOKUP(B7:B,Options_Specs,2,FALSE)))',
+                  'non-formula-label',
+                  '  =ARRAYFORMULA(IF(B7:B="","",B7:B&"-X"))',
+                  '',
+                ], // Row 5
+              ],
+            },
+          ],
+        },
+      });
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
       const result = await client.readTable({
@@ -1209,14 +1251,16 @@ describe('GoogleSheetsClient', () => {
         },
       });
 
-      expect(mockSheetsApi.spreadsheets.values.get).toHaveBeenNthCalledWith(1, {
+      expect(mockSheetsApi.spreadsheets.values.get).toHaveBeenCalledTimes(1);
+      expect(mockSheetsApi.spreadsheets.values.get).toHaveBeenCalledWith({
         spreadsheetId: 'log-sheet-ffe',
         range: "'Submittal FF&E'!A3:F12",
         valueRenderOption: 'FORMATTED_VALUE',
       });
-      expect(mockSheetsApi.spreadsheets.values.get).toHaveBeenNthCalledWith(2, {
+      expect(mockSheetsApi.spreadsheets.values.batchGet).toHaveBeenCalledTimes(1);
+      expect(mockSheetsApi.spreadsheets.values.batchGet).toHaveBeenCalledWith({
         spreadsheetId: 'log-sheet-ffe',
-        range: "'Submittal FF&E'!A4:F5",
+        ranges: ["'Submittal FF&E'!A4:F5"],
         valueRenderOption: 'FORMULA',
       });
       expect(result.formulaColumns).toEqual(['Spec Title', 'Custom Formula']);
@@ -1247,7 +1291,671 @@ describe('GoogleSheetsClient', () => {
       });
 
       expect(mockSheetsApi.spreadsheets.values.get).toHaveBeenCalledTimes(1);
+      expect(mockSheetsApi.spreadsheets.values.batchGet).not.toHaveBeenCalled();
       expect(result.formulaColumns).toEqual([]);
+      expect('links' in result.rows[0]).toBe(false);
+    });
+
+    it('omits row.links when linkColumns is empty array and skips FORMULA batchGet when topAnchor === 1', async () => {
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({ data: createArchMetadata() });
+      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
+        data: {
+          values: [
+            ['Status', 'Section', 'Calc Link'],
+            ['<--->'],
+            ['Open', '071200', 'Link'],
+            ['<--->'],
+          ],
+        },
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+      const result = await client.readTable({
+        target: {
+          spreadsheetId: 'log-sheet-1',
+          sheetName: 'Submittal Arch',
+          rangeName: 'Log_Submittal_Arch',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        linkColumns: [],
+      });
+
+      expect(mockSheetsApi.spreadsheets.values.batchGet).not.toHaveBeenCalled();
+      expect(result.rows).toHaveLength(1);
+      expect('links' in result.rows[0]).toBe(false);
+    });
+
+    it('fetches pre-<---> Formula Row and deduplicated linkColumns in one batchGet FORMULA call, skipping missing headers and handling truncated/missing valueRanges', async () => {
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({
+        data: {
+          spreadsheetId: 'log-sheet-ffe',
+          sheets: [{ properties: { sheetId: 22, title: 'Submittal FF&E' } }],
+          namedRanges: [
+            {
+              namedRangeId: 'nr-ffe',
+              name: 'Log_Submittal_FFE',
+              range: {
+                sheetId: 22,
+                startRowIndex: 2, // Row 3
+                endRowIndex: 14,
+                startColumnIndex: 2, // Col C (offset Named Range!)
+                endColumnIndex: 8, // Col H
+              },
+            },
+          ],
+        },
+      });
+
+      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
+        data: {
+          values: [
+            ['Status', 'Spec Tag', 'Spec Title', 'Calc Link', 'Secondary Link'], // Row 3 (rel 0)
+            ['Formula Row', '', 'BED - KING', '', ''], // Row 4 (rel 1)
+            ['<--->'], // Row 5 (rel 2 = topAnchor)
+            ['Open', 'CG104', 'BED - KING', 'Link', 'Alt'], // Row 6 (rel 3) -> slice offset 0
+            ['---'], // Row 7 (rel 4 = divider) -> slice offset 1
+            [], // Row 8 (rel 5 = blank) -> slice offset 2
+            ['Closed', 'FB127', 'FABRIC', 'Link', ''], // Row 9 (rel 6) -> slice offset 3
+            ['Open', 'LT108', 'LAMP', '', ''], // Row 10 (rel 7) -> slice offset 4 (truncated in response!)
+            ['<--->'], // Row 11 (rel 8 = bottomAnchor)
+          ],
+        },
+      });
+
+      mockSheetsApi.spreadsheets.values.batchGet.mockResolvedValueOnce({
+        data: {
+          valueRanges: [
+            {
+              range: "'Submittal FF&E'!C4:H4",
+              values: [['Formula Row', '', '=ARRAYFORMULA(D6:D)', '', '']],
+            },
+            {
+              // Calc Link (col C + 3 = F, rows 6..10): truncated at row 9 (omitting trailing row 10!)
+              range: "'Submittal FF&E'!F6:F10",
+              values: [
+                ['=HYPERLINK("https://drive.google.com/file/d/cg104/view", "Link")'],
+                [''],
+                [],
+                ['https://drive.google.com/file/d/fb127/view'],
+              ],
+            },
+            {
+              // Secondary Link (col C + 4 = G, rows 6..10): Google omitted values property altogether
+              range: "'Submittal FF&E'!G6:G10",
+            },
+          ],
+        },
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+      const result = await client.readTable({
+        target: {
+          spreadsheetId: 'log-sheet-ffe',
+          sheetName: 'Submittal FF&E',
+          rangeName: 'Log_Submittal_FFE',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        linkColumns: ['Calc Link', 'Missing Header', 'Calc Link', 'Secondary Link'],
+      });
+
+      expect(mockSheetsApi.spreadsheets.values.get).toHaveBeenCalledTimes(1);
+      expect(mockSheetsApi.spreadsheets.values.batchGet).toHaveBeenCalledTimes(1);
+      expect(mockSheetsApi.spreadsheets.values.batchGet).toHaveBeenCalledWith({
+        spreadsheetId: 'log-sheet-ffe',
+        ranges: [
+          "'Submittal FF&E'!C4:H4",
+          "'Submittal FF&E'!F6:F10",
+          "'Submittal FF&E'!G6:G10",
+        ],
+        valueRenderOption: 'FORMULA',
+      });
+
+      expect(result.formulaColumns).toEqual(['Spec Title']);
+      expect(result.rows).toEqual([
+        {
+          rowNumber: 6,
+          values: {
+            Status: 'Open',
+            'Spec Tag': 'CG104',
+            'Spec Title': 'BED - KING',
+            'Calc Link': 'Link',
+            'Secondary Link': 'Alt',
+          },
+          links: {
+            'Calc Link': 'https://drive.google.com/file/d/cg104/view',
+            'Secondary Link': null,
+          },
+        },
+        {
+          rowNumber: 9,
+          values: {
+            Status: 'Closed',
+            'Spec Tag': 'FB127',
+            'Spec Title': 'FABRIC',
+            'Calc Link': 'Link',
+            'Secondary Link': '',
+          },
+          links: {
+            'Calc Link': 'https://drive.google.com/file/d/fb127/view',
+            'Secondary Link': null,
+          },
+        },
+        {
+          rowNumber: 10,
+          values: {
+            Status: 'Open',
+            'Spec Tag': 'LT108',
+            'Spec Title': 'LAMP',
+            'Calc Link': '',
+            'Secondary Link': '',
+          },
+          links: {
+            'Calc Link': null,
+            'Secondary Link': null,
+          },
+        },
+      ]);
+    });
+
+    it('guards against Invalid GridRange when anchors are adjacent or table has zero data rows with linkColumns', async () => {
+      const target: PositiveTableTarget = {
+        spreadsheetId: 'log-sheet-1',
+        sheetName: 'Submittal Arch',
+        rangeName: 'Log_Submittal_Arch',
+        extentMarker: '<--->',
+        groupDividerMarker: '---',
+      };
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      // Case A: topAnchor === 1, adjacent <---> markers at rows 4 and 5
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({ data: createArchMetadata() });
+      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
+        data: {
+          values: [
+            ['Status', 'Section', 'Calc Link'], // Row 3 (rel 0)
+            ['<--->'], // Row 4 (rel 1 = topAnchor)
+            ['<--->'], // Row 5 (rel 2 = bottomAnchor)
+          ],
+        },
+      });
+
+      const caseAResult = await client.readTable({ target, linkColumns: ['Calc Link'] });
+      expect(mockSheetsApi.spreadsheets.values.batchGet).not.toHaveBeenCalled();
+      expect(caseAResult.headers).toEqual(['Status', 'Section', 'Calc Link']);
+      expect(caseAResult.formulaColumns).toEqual([]);
+      expect(caseAResult.rows).toEqual([]);
+
+      // Case B1: topAnchor > 1 with Formula Row + adjacent <---> markers
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({ data: createArchMetadata() });
+      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
+        data: {
+          values: [
+            ['Status', 'Section', 'Calc Link'], // Row 3 (rel 0)
+            ['Formula Row', '', ''], // Row 4 (rel 1)
+            ['<--->'], // Row 5 (rel 2 = topAnchor)
+            ['<--->'], // Row 6 (rel 3 = bottomAnchor)
+          ],
+        },
+      });
+      mockSheetsApi.spreadsheets.values.batchGet.mockResolvedValueOnce({
+        data: {
+          valueRanges: [
+            {
+              range: "'Submittal Arch'!A4:J4",
+              values: [['Formula Row', '', '']],
+            },
+          ],
+        },
+      });
+
+      const caseB1Result = await client.readTable({ target, linkColumns: ['Calc Link'] });
+      expect(mockSheetsApi.spreadsheets.values.batchGet).toHaveBeenCalledTimes(1);
+      expect(mockSheetsApi.spreadsheets.values.batchGet).toHaveBeenCalledWith({
+        spreadsheetId: 'log-sheet-1',
+        ranges: ["'Submittal Arch'!A4:J4"],
+        valueRenderOption: 'FORMULA',
+      });
+      expect(caseB1Result.rows).toEqual([]);
+
+      // Case B2: topAnchor > 1 with Formula Row + only blank/divider rows between anchors
+      mockSheetsApi.spreadsheets.values.batchGet.mockClear();
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({ data: createArchMetadata() });
+      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
+        data: {
+          values: [
+            ['Status', 'Section', 'Calc Link'], // Row 3 (rel 0)
+            ['Formula Row', '', ''], // Row 4 (rel 1)
+            ['<--->'], // Row 5 (rel 2 = topAnchor)
+            ['---'], // Row 6 (rel 3 = divider)
+            ['', '', ''], // Row 7 (rel 4 = blank)
+            ['<--->'], // Row 8 (rel 5 = bottomAnchor)
+          ],
+        },
+      });
+      mockSheetsApi.spreadsheets.values.batchGet.mockResolvedValueOnce({
+        data: {
+          valueRanges: [
+            {
+              range: "'Submittal Arch'!A4:J4",
+              values: [['Formula Row', '', '']],
+            },
+          ],
+        },
+      });
+
+      const caseB2Result = await client.readTable({ target, linkColumns: ['Calc Link'] });
+      expect(mockSheetsApi.spreadsheets.values.batchGet).toHaveBeenCalledTimes(1);
+      expect(mockSheetsApi.spreadsheets.values.batchGet).toHaveBeenCalledWith({
+        spreadsheetId: 'log-sheet-1',
+        ranges: ["'Submittal Arch'!A4:J4"],
+        valueRenderOption: 'FORMULA',
+      });
+      expect(caseB2Result.rows).toEqual([]);
+    });
+
+    it('skips batchGet when all requested linkColumns are missing from headers (topAnchor === 1) and returns empty links object on data rows', async () => {
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({ data: createArchMetadata() });
+      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
+        data: {
+          values: [
+            ['Status', 'Section', 'Title'], // Row 3 (rel 0)
+            ['<--->'], // Row 4 (rel 1 = topAnchor)
+            ['Open', '071200', 'Waterproofing'], // Row 5 (rel 2)
+            ['Closed', '033000', 'Concrete'], // Row 6 (rel 3)
+            ['<--->'], // Row 7 (rel 4 = bottomAnchor)
+          ],
+        },
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+      const result = await client.readTable({
+        target: {
+          spreadsheetId: 'log-sheet-1',
+          sheetName: 'Submittal Arch',
+          rangeName: 'Log_Submittal_Arch',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        linkColumns: ['MissingCol'],
+      });
+
+      expect(mockSheetsApi.spreadsheets.values.batchGet).not.toHaveBeenCalled();
+      expect(result.rows).toEqual([
+        {
+          rowNumber: 5,
+          values: { Status: 'Open', Section: '071200', Title: 'Waterproofing' },
+          links: {},
+        },
+        {
+          rowNumber: 6,
+          values: { Status: 'Closed', Section: '033000', Title: 'Concrete' },
+          links: {},
+        },
+      ]);
+    });
+
+    it('validates ReadPositiveTableRequestSchema and PositiveTableRowSchema under ExactOptionalPropertyTypes = true', async () => {
+      const target: PositiveTableTarget = {
+        spreadsheetId: 'log-sheet-1',
+        sheetName: 'Submittal Arch',
+        rangeName: 'Log_Submittal_Arch',
+        extentMarker: '<--->',
+        groupDividerMarker: '---',
+      };
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      // Read 1: links omitted
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({ data: createArchMetadata() });
+      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
+        data: {
+          values: [
+            ['Status', 'Calc Link'],
+            ['<--->'],
+            ['Open', 'Link'],
+            ['<--->'],
+          ],
+        },
+      });
+      const omittedResult = await client.readTable({ target });
+
+      // Read 2: links populated (both string and null values)
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({ data: createArchMetadata() });
+      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
+        data: {
+          values: [
+            ['Status', 'Calc Link'],
+            ['<--->'],
+            ['Open', 'Link'],
+            ['Closed', ''],
+            ['<--->'],
+          ],
+        },
+      });
+      mockSheetsApi.spreadsheets.values.batchGet.mockResolvedValueOnce({
+        data: {
+          valueRanges: [
+            {
+              range: "'Submittal Arch'!B5:B6",
+              values: [['=HYPERLINK("https://example.com/doc", "Link")'], ['']],
+            },
+          ],
+        },
+      });
+      const populatedResult = await client.readTable({ target, linkColumns: ['Calc Link'] });
+
+      const prevPolicy = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        expect(Value.Check(ReadPositiveTableRequestSchema, { target })).toBe(true);
+        expect(Value.Check(ReadPositiveTableRequestSchema, { target, linkColumns: undefined })).toBe(
+          true
+        );
+        expect(
+          Value.Check(ReadPositiveTableRequestSchema, { target, linkColumns: ['Calc Link'] })
+        ).toBe(true);
+
+        expect(omittedResult.rows).toHaveLength(1);
+        expect('links' in omittedResult.rows[0]!).toBe(false);
+        expect(Value.Check(PositiveTableRowSchema, omittedResult.rows[0])).toBe(true);
+
+        expect(populatedResult.rows).toHaveLength(2);
+        expect(populatedResult.rows[0]!.links).toEqual({
+          'Calc Link': 'https://example.com/doc',
+        });
+        expect(populatedResult.rows[1]!.links).toEqual({ 'Calc Link': null });
+        for (const row of populatedResult.rows) {
+          expect(Value.Check(PositiveTableRowSchema, row)).toBe(true);
+        }
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prevPolicy;
+      }
+    });
+
+    it('retries HTTP 429 with exponential backoff on values.batchGet during readTable', async () => {
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      const initialDelayMs = 75;
+
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({ data: createArchMetadata() });
+      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
+        data: {
+          values: [
+            ['Status', 'Calc Link'], // Row 3
+            ['<--->'], // Row 4
+            ['Open', 'Link'], // Row 5
+            ['<--->'], // Row 6
+          ],
+        },
+      });
+      mockSheetsApi.spreadsheets.values.batchGet
+        .mockRejectedValueOnce({ statusCode: 429, message: 'Rate limit' })
+        .mockResolvedValueOnce({
+          data: {
+            valueRanges: [
+              {
+                range: "'Submittal Arch'!B5:B5",
+                values: [['=HYPERLINK("https://drive.google.com/file/d/retry/view", "Link")']],
+              },
+            ],
+          },
+        });
+
+      const client = new GoogleSheetsClient({
+        sheets: mockSheetsApi as unknown as sheets_v4.Sheets,
+        retryOptions: {
+          maxRetries: 3,
+          initialDelayMs,
+          backoffFactor: 2,
+          sleep: sleepMock,
+        },
+      });
+
+      const result = await client.readTable({
+        target: {
+          spreadsheetId: 'log-sheet-1',
+          sheetName: 'Submittal Arch',
+          rangeName: 'Log_Submittal_Arch',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        linkColumns: ['Calc Link'],
+      });
+
+      expect(mockSheetsApi.spreadsheets.values.batchGet).toHaveBeenCalledTimes(2);
+      expect(sleepMock).toHaveBeenCalledTimes(1);
+      expect(sleepMock).toHaveBeenCalledWith(initialDelayMs);
+      expect(result.rows).toEqual([
+        {
+          rowNumber: 5,
+          values: { Status: 'Open', 'Calc Link': 'Link' },
+          links: { 'Calc Link': 'https://drive.google.com/file/d/retry/view' },
+        },
+      ]);
+    });
+
+    it('extracts and validates all =HYPERLINK(...) and raw URL edge cases via readTable', async () => {
+      const cases: Array<{ label: string; cell: CellValue; expected: string | null }> = [
+        {
+          label: 'standard HYPERLINK formula',
+          cell: '=HYPERLINK("https://drive.google.com/file/d/abc/view", "Link")',
+          expected: 'https://drive.google.com/file/d/abc/view',
+        },
+        {
+          label: 'lowercase hyperlink function name',
+          cell: '=hyperlink("https://example.com/a", "A")',
+          expected: 'https://example.com/a',
+        },
+        {
+          label: 'mixed-case HyPeRlInK function name',
+          cell: '=HyPeRlInK("http://example.com/b", "B")',
+          expected: 'http://example.com/b',
+        },
+        {
+          label: 'escaped double quotes inside URL',
+          cell: '=HYPERLINK("https://example.com/q=""hello""", "Link")',
+          expected: 'https://example.com/q="hello"',
+        },
+        {
+          label: 'semicolon argument separator',
+          cell: '=HYPERLINK("https://example.com/semi"; "Link")',
+          expected: 'https://example.com/semi',
+        },
+        {
+          label: 'URI containing semicolon and comma inside quotes',
+          cell: '=HYPERLINK("https://example.com/a;b,c", "Link")',
+          expected: 'https://example.com/a;b,c',
+        },
+        {
+          label: 'single-argument HYPERLINK',
+          cell: '=HYPERLINK("https://example.com/single")',
+          expected: 'https://example.com/single',
+        },
+        {
+          label: 'cell-reference 2nd argument',
+          cell: '=HYPERLINK("https://example.com/cellref", B6)',
+          expected: 'https://example.com/cellref',
+        },
+        {
+          label: 'cross-sheet cell-reference 2nd argument',
+          cell: '=HYPERLINK("https://example.com/sheetref", \'Submittal Arch\'!B6)',
+          expected: 'https://example.com/sheetref',
+        },
+        {
+          label: 'nested formula 2nd argument',
+          cell: '=HYPERLINK("https://example.com/nested", IF(A6="", "Empty", A6))',
+          expected: 'https://example.com/nested',
+        },
+        {
+          label: 'non-literal 1st argument (cell reference)',
+          cell: '=HYPERLINK(Z6, "Link")',
+          expected: null,
+        },
+        {
+          label: 'non-literal 1st argument (string concatenation)',
+          cell: '=HYPERLINK("https://example.com/" & Z6, "Link")',
+          expected: null,
+        },
+        {
+          label: 'raw https URL with surrounding whitespace',
+          cell: '  https://example.com/raw  ',
+          expected: 'https://example.com/raw',
+        },
+        {
+          label: 'raw http URL',
+          cell: 'http://example.com/plain',
+          expected: 'http://example.com/plain',
+        },
+        {
+          label: 'HYPERLINK containing LF newline',
+          cell: '=HYPERLINK("https://example.com/a\nb", "NL")',
+          expected: null,
+        },
+        {
+          label: 'HYPERLINK containing CR',
+          cell: '=HYPERLINK("https://example.com/a\rb", "CR")',
+          expected: null,
+        },
+        {
+          label: 'raw URL containing LF newline',
+          cell: 'https://example.com/a\nb',
+          expected: null,
+        },
+        {
+          label: 'raw URL with trailing LF newline',
+          cell: 'https://example.com/trailing\n',
+          expected: null,
+        },
+        {
+          label: 'HYPERLINK with trailing CR inside URI',
+          cell: '=HYPERLINK("https://example.com/trailing\r", "CR")',
+          expected: null,
+        },
+        {
+          label: 'sheet-quoted 2nd arg with unbalanced paren inside sheet title',
+          cell: '=HYPERLINK("https://example.com/sheetparen", \'Sheet )1\'!B6)',
+          expected: 'https://example.com/sheetparen',
+        },
+        {
+          label: 'HYPERLINK javascript protocol',
+          cell: '=HYPERLINK("javascript:alert(1)", "XSS")',
+          expected: null,
+        },
+        {
+          label: 'HYPERLINK ftp protocol',
+          cell: '=HYPERLINK("ftp://example.com/a.pdf", "FTP")',
+          expected: null,
+        },
+        {
+          label: 'HYPERLINK file protocol',
+          cell: '=HYPERLINK("file:///etc/passwd", "File")',
+          expected: null,
+        },
+        {
+          label: 'HYPERLINK data protocol',
+          cell: '=HYPERLINK("data:text/html,hi", "Data")',
+          expected: null,
+        },
+        {
+          label: 'raw javascript protocol',
+          cell: 'javascript:alert(1)',
+          expected: null,
+        },
+        {
+          label: 'raw mailto protocol',
+          cell: 'mailto:a@b.com',
+          expected: null,
+        },
+        {
+          label: 'non-HYPERLINK formula cell reference',
+          cell: '=A6',
+          expected: null,
+        },
+        {
+          label: 'non-HYPERLINK string literal formula',
+          cell: '="https://example.com"',
+          expected: null,
+        },
+        {
+          label: 'HYPERLINK with trailing concatenation token',
+          cell: '=HYPERLINK("https://a.com", "b") & "c"',
+          expected: null,
+        },
+        {
+          label: 'HYPERLINK with empty 2nd argument',
+          cell: '=HYPERLINK("https://a.com", )',
+          expected: null,
+        },
+        {
+          label: 'plain display text',
+          cell: 'Link',
+          expected: null,
+        },
+        {
+          label: 'empty string',
+          cell: '',
+          expected: null,
+        },
+        {
+          label: 'null value',
+          cell: null,
+          expected: null,
+        },
+        {
+          label: 'number value',
+          cell: 42,
+          expected: null,
+        },
+        {
+          label: 'boolean value',
+          cell: true,
+          expected: null,
+        },
+      ];
+
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({ data: createArchMetadata() });
+      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
+        data: {
+          values: [
+            ['Status', 'Calc Link'], // Row 3 (rel 0)
+            ['<--->'], // Row 4 (rel 1 = topAnchor)
+            ...cases.map((c, idx) => [
+              `Row ${idx + 1}`,
+              typeof c.cell === 'string' ? 'Link' : c.cell,
+            ]),
+            ['<--->'], // bottomAnchor
+          ],
+        },
+      });
+      mockSheetsApi.spreadsheets.values.batchGet.mockResolvedValueOnce({
+        data: {
+          valueRanges: [
+            {
+              range: `'Submittal Arch'!B5:B${4 + cases.length}`,
+              values: cases.map((c) => [c.cell]),
+            },
+          ],
+        },
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+      const result = await client.readTable({
+        target: {
+          spreadsheetId: 'log-sheet-1',
+          sheetName: 'Submittal Arch',
+          rangeName: 'Log_Submittal_Arch',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        linkColumns: ['Calc Link'],
+      });
+
+      expect(result.rows).toHaveLength(cases.length);
+      for (const [idx, testCase] of cases.entries()) {
+        expect(result.rows[idx]?.links, testCase.label).toEqual({
+          'Calc Link': testCase.expected,
+        });
+      }
     });
   });
 

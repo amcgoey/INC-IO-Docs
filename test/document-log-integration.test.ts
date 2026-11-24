@@ -442,59 +442,66 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
     },
   }));
 
-  const valuesGet = vi.fn().mockImplementation(
-    async (params?: { range?: string; valueRenderOption?: string }) => {
-      if (state.grid) {
-        const bounds = parseA1RangeBounds(
-          params?.range ?? '',
-          state.grid.length,
-          state.namedRange?.range.endColumnIndex ?? 10
-        );
-        const slicedRows = state.grid
-          .slice(bounds.startRowIndex, bounds.endRowIndex)
-          .map((row) => {
-            const formatted: SimCellValue[] = [];
-            const colLimit = Math.min(row.length, bounds.endColumnIndex);
-            for (let c = bounds.startColumnIndex; c < colLimit; c++) {
-              formatted.push(formatCellForValuesGet(row[c], params?.valueRenderOption));
-            }
-            while (formatted.length > 0 && formatted[formatted.length - 1] === '') {
-              formatted.pop();
-            }
-            return formatted;
-          });
-        return {
-          data: {
-            values: slicedRows,
-          },
-        };
-      }
-
-      const nrStartRow = state.namedRange?.range.startRowIndex ?? 2;
-      const nrStartCol = state.namedRange?.range.startColumnIndex ?? 0;
+  const sliceRowsForRange = (range: string, valueRenderOption?: string): SimCellValue[][] => {
+    if (state.grid) {
       const bounds = parseA1RangeBounds(
-        params?.range ?? '',
-        nrStartRow + state.tableValues.length,
-        nrStartCol + 15
+        range,
+        state.grid.length,
+        state.namedRange?.range.endColumnIndex ?? 10
       );
-      const relStartRow = Math.max(0, bounds.startRowIndex - nrStartRow);
-      const relEndRow = Math.max(relStartRow, bounds.endRowIndex - nrStartRow);
-      const relStartCol = Math.max(0, bounds.startColumnIndex - nrStartCol);
-      const relEndCol = Math.max(relStartCol, bounds.endColumnIndex - nrStartCol);
-      const slicedTableValues = state.tableValues
-        .slice(relStartRow, relEndRow)
-        .map((row) =>
-          row
-            .slice(relStartCol, relEndCol)
-            .map((cell) => formatCellForValuesGet(cell, params?.valueRenderOption))
-        );
-
-      return {
-        data: {
-          values: slicedTableValues,
-        },
-      };
+      return state.grid
+        .slice(bounds.startRowIndex, bounds.endRowIndex)
+        .map((row) => {
+          const formatted: SimCellValue[] = [];
+          const colLimit = Math.min(row.length, bounds.endColumnIndex);
+          for (let c = bounds.startColumnIndex; c < colLimit; c++) {
+            formatted.push(formatCellForValuesGet(row[c], valueRenderOption));
+          }
+          while (formatted.length > 0 && formatted[formatted.length - 1] === '') {
+            formatted.pop();
+          }
+          return formatted;
+        });
     }
+
+    const nrStartRow = state.namedRange?.range.startRowIndex ?? 2;
+    const nrStartCol = state.namedRange?.range.startColumnIndex ?? 0;
+    const bounds = parseA1RangeBounds(
+      range,
+      nrStartRow + state.tableValues.length,
+      nrStartCol + 15
+    );
+    const relStartRow = Math.max(0, bounds.startRowIndex - nrStartRow);
+    const relEndRow = Math.max(relStartRow, bounds.endRowIndex - nrStartRow);
+    const relStartCol = Math.max(0, bounds.startColumnIndex - nrStartCol);
+    const relEndCol = Math.max(relStartCol, bounds.endColumnIndex - nrStartCol);
+    return state.tableValues
+      .slice(relStartRow, relEndRow)
+      .map((row) =>
+        row
+          .slice(relStartCol, relEndCol)
+          .map((cell) => formatCellForValuesGet(cell, valueRenderOption))
+      );
+  };
+
+  const valuesGet = vi.fn().mockImplementation(
+    async (params?: { range?: string; valueRenderOption?: string }) => ({
+      data: {
+        values: sliceRowsForRange(params?.range ?? '', params?.valueRenderOption),
+      },
+    })
+  );
+
+  const valuesBatchGet = vi.fn().mockImplementation(
+    async (params?: { ranges?: string[]; valueRenderOption?: string }) => ({
+      data: {
+        spreadsheetId: 'mock-spreadsheet-id',
+        valueRanges: (params?.ranges ?? []).map((range) => ({
+          range,
+          values: sliceRowsForRange(range, params?.valueRenderOption),
+        })),
+      },
+    })
   );
 
   const batchUpdate = vi.fn().mockImplementation(
@@ -523,6 +530,7 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
       batchUpdate,
       values: {
         get: valuesGet,
+        batchGet: valuesBatchGet,
         update: vi.fn().mockResolvedValue({ data: {} }),
       },
     },
