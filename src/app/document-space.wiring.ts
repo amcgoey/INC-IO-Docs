@@ -72,9 +72,10 @@ export function createDocumentSpaceServiceFactory(
   return async (context: WorkspaceExecutionContext): Promise<DocumentSpaceService> => {
     let storageAdapter = options.storageAdapter;
     if (!storageAdapter) {
-      const driveClient = context.userOAuthToken
+      const oauthCredential = context.userOAuthToken ?? context.gmail?.accessToken;
+      const driveClient = oauthCredential
         ? new GoogleDriveClient({
-            auth: context.userOAuthToken,
+            auth: oauthCredential,
             configProvider: options.configProvider,
           })
         : options.driveClient ??

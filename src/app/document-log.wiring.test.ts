@@ -188,6 +188,8 @@ describe('document-log.wiring', () => {
 
   it('honors options.documentLogService override across default and per-request factory', () => {
     const overrideService = {
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
       resolveLog: vi.fn(),
       readLog: vi.fn(),
       writeLog: vi.fn(),
@@ -723,6 +725,8 @@ describe('document-log.wiring', () => {
       warnings: [],
     });
     const defaultService = {
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
       resolveLog: vi.fn(),
       readLog: defaultReadLog,
       writeLog: defaultWriteLog,
@@ -797,7 +801,15 @@ describe('document-log.wiring', () => {
     });
     const overrideHandler = wiring.createPerRequestActivityHandler(
       { selectedLogId: 'override-ctx-3' },
-      { documentLogService: { resolveLog: vi.fn(), readLog: vi.fn(), writeLog: overrideWriteLog } }
+      {
+        documentLogService: {
+          requiresDocumentLog: vi.fn().mockReturnValue(true),
+          queryUiContext: vi.fn().mockResolvedValue(undefined),
+          resolveLog: vi.fn(),
+          readLog: vi.fn(),
+          writeLog: overrideWriteLog,
+        },
+      }
     );
     const overrideOutput = await overrideHandler.handle(sampleActivity, sampleContext);
     expect(overrideOutput).toEqual({

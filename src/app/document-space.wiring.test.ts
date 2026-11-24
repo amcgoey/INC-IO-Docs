@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import nock from 'nock';
 import {
   createDocumentSpaceFeatureWiring,
   createDocumentSpaceServiceFactory,
@@ -81,6 +82,42 @@ describe('document-space.wiring', () => {
 
       expect(service).toBeInstanceOf(DocumentSpaceService);
       expect(service.hasType('projects')).toBe(true);
+    });
+
+    it('authenticates GoogleDriveClient with context.gmail?.accessToken when userOAuthToken is absent', async () => {
+      nock.disableNetConnect();
+      try {
+        const registry = new DocumentSpaceManifestRegistryAdapter(mockManifestProvider);
+        const factory = createDocumentSpaceServiceFactory({
+          documentSpaceRegistry: registry,
+        });
+
+        const scope = nock('https://www.googleapis.com', {
+          reqheaders: {
+            authorization: 'Bearer ya29.gmail-only-token',
+          },
+        })
+          .get('/drive/v3/drives')
+          .query(true)
+          .reply(200, {
+            drives: [{ id: 'drive-gmail-1', name: 'Harborview Hotel' }],
+          });
+
+        const service = await factory({
+          gmail: {
+            messageId: 'msg-1',
+            accessToken: 'ya29.gmail-only-token',
+          },
+        });
+
+        const collection = await service.getCollection('projects');
+        expect(collection.spaces).toHaveLength(1);
+        expect(collection.spaces[0].name).toBe('Harborview Hotel');
+        expect(scope.isDone()).toBe(true);
+      } finally {
+        nock.enableNetConnect();
+        nock.cleanAll();
+      }
     });
   });
 });

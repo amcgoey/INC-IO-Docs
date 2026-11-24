@@ -19,6 +19,7 @@ import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
 import type {
   UiProcessOrchestratorPort,
   UiProcessGmailPort,
+  UiProcessDocumentLogPort,
 } from '../features/ui-process-manager/ports';
 import type { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 
@@ -2168,6 +2169,138 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       expect(
         'onClose' in ((mappedButton!.onClick as { openLink: Record<string, unknown> }).openLink)
       ).toBe(false);
+    });
+  });
+
+  describe('selectedLogId exclusive injection seam in reqDocumentRunner (ADR 0020)', () => {
+    it('assigns WorkspaceExecutionContext.selectedLogId exclusively from pre-flight resolved selectedLogId and overwrites untrusted context values', async () => {
+      const mockSpaceService = {
+        getAllTypes: () => [
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: {
+              allowedDocumentTypes: ['communication-project'],
+              defaultDocumentType: 'communication-project',
+            },
+            storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+          },
+        ],
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [
+            {
+              id: 'proj-1',
+              typeId: 'projects',
+              name: 'Project Main',
+              abstractStorageId: 'drive-proj-1',
+            },
+          ],
+        }),
+      } as unknown as DocumentSpaceService;
+
+      const capturedContexts: WorkspaceExecutionContext[] = [];
+      const mockDocService = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      } as unknown as DocumentService;
+
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(true),
+        resolveLog: vi.fn().mockResolvedValue({
+          status: 'resolved',
+          candidate: { id: 'validated-log-id', name: 'Project Main Document Log' },
+        }),
+      };
+
+      const wiring = createUiProcessManagerWiring({
+        manifestProvider: mockManifestProvider,
+        createDocumentSpaceService: () => mockSpaceService,
+        createDocumentService: (ctx) => {
+          capturedContexts.push(ctx);
+          return mockDocService;
+        },
+        createDocumentLogPort: () => documentLogPort,
+      });
+
+      const response = await wiring.requestScopedWrapper.processUiEvent({
+        selectedLogId: 'spoofed-incoming-id',
+        actionName: 'processDocument',
+        selectedItems: [{ id: 'file-1', title: 'Submittal.pdf' }],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          [getDocumentSpaceWidgetName('projects')]: 'Project Main',
+          [getDocumentTypeWidgetName('projects')]: 'communication-project',
+          SelectFiles: ['file-1'],
+        },
+      });
+
+      expect(response).toEqual({
+        action: {
+          notification: { text: 'Document processed successfully' },
+        },
+      });
+      expect(capturedContexts).toHaveLength(1);
+      expect(capturedContexts[0].selectedLogId).toBe('validated-log-id');
+    });
+
+    it('clears untrusted incoming context.selectedLogId when document type does not require DocumentLog', async () => {
+      const mockSpaceService = {
+        getAllTypes: () => [
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: {
+              allowedDocumentTypes: ['communication-project'],
+              defaultDocumentType: 'communication-project',
+            },
+            storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+          },
+        ],
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [
+            {
+              id: 'proj-1',
+              typeId: 'projects',
+              name: 'Project Main',
+              abstractStorageId: 'drive-proj-1',
+            },
+          ],
+        }),
+      } as unknown as DocumentSpaceService;
+
+      const capturedContexts: WorkspaceExecutionContext[] = [];
+      const mockDocService = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      } as unknown as DocumentService;
+
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(false),
+        resolveLog: vi.fn(),
+      };
+
+      const wiring = createUiProcessManagerWiring({
+        manifestProvider: mockManifestProvider,
+        createDocumentSpaceService: () => mockSpaceService,
+        createDocumentService: (ctx) => {
+          capturedContexts.push(ctx);
+          return mockDocService;
+        },
+        createDocumentLogPort: () => documentLogPort,
+      });
+
+      await wiring.requestScopedWrapper.processUiEvent({
+        selectedLogId: 'spoofed-incoming-id',
+        actionName: 'processDocument',
+        selectedItems: [{ id: 'file-1', title: 'Notes.pdf' }],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          [getDocumentSpaceWidgetName('projects')]: 'Project Main',
+          [getDocumentTypeWidgetName('projects')]: 'communication-project',
+          SelectFiles: ['file-1'],
+        },
+      });
+
+      expect(capturedContexts).toHaveLength(1);
+      expect(capturedContexts[0].selectedLogId).toBeUndefined();
     });
   });
 });
