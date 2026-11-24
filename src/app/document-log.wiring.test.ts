@@ -189,6 +189,7 @@ describe('document-log.wiring', () => {
   it('honors options.documentLogService override across default and per-request factory', () => {
     const overrideService = {
       resolveLog: vi.fn(),
+      readLog: vi.fn(),
       writeLog: vi.fn(),
     };
     const wiring = createDocumentLogWiring({
@@ -715,8 +716,15 @@ describe('document-log.wiring', () => {
       rowNumber: 6,
       action: 'inserted',
     });
+    const defaultReadLog = vi.fn().mockResolvedValue({
+      spreadsheetId: 'default-sheet',
+      sheetName: 'Submittal Arch',
+      entries: [],
+      warnings: [],
+    });
     const defaultService = {
       resolveLog: vi.fn(),
+      readLog: defaultReadLog,
       writeLog: defaultWriteLog,
     };
     const wiring = createDocumentLogWiring({
@@ -725,6 +733,7 @@ describe('document-log.wiring', () => {
     });
 
     const sampleActivity = { type: 'WRITE_LOG', payload: {} };
+    const sampleReadActivity = { type: 'READ_LOG', payload: {} };
     const sampleContext = {
       document: {
         type: 'submittal-arch',
@@ -737,6 +746,7 @@ describe('document-log.wiring', () => {
 
     const defaultHandler = wiring.createActivityHandler({ selectedLogId: 'static-selected-1' });
     expect(defaultHandler.canHandle(sampleActivity)).toBe(true);
+    expect(defaultHandler.canHandle(sampleReadActivity)).toBe(true);
     const defaultOutput = await defaultHandler.handle(sampleActivity, sampleContext);
     expect(defaultOutput).toEqual(expect.objectContaining({ success: true }));
     expect(defaultWriteLog).toHaveBeenCalledWith(
@@ -757,6 +767,27 @@ describe('document-log.wiring', () => {
       expect.objectContaining({ selectedLogId: 'ctx-selected-2' })
     );
 
+    const perReqReadOutput = await perReqWithDefaultOverride.handle(sampleReadActivity, sampleContext);
+    expect(perReqReadOutput).toEqual({
+      success: true,
+      contextVariables: {
+        logEntries: [],
+        logEntriesWarnings: [],
+        documentLogRead: {
+          spreadsheetId: 'default-sheet',
+          sheetName: 'Submittal Arch',
+          entryCount: 0,
+          warningCount: 0,
+        },
+      },
+    });
+    expect(defaultReadLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: 'ctx-selected-2',
+      })
+    );
+
     // Honors per-request overrides.documentLogService over options.documentLogService
     const overrideWriteLog = vi.fn().mockResolvedValue({
       spreadsheetId: 'override-req-sheet',
@@ -766,7 +797,7 @@ describe('document-log.wiring', () => {
     });
     const overrideHandler = wiring.createPerRequestActivityHandler(
       { selectedLogId: 'override-ctx-3' },
-      { documentLogService: { resolveLog: vi.fn(), writeLog: overrideWriteLog } }
+      { documentLogService: { resolveLog: vi.fn(), readLog: vi.fn(), writeLog: overrideWriteLog } }
     );
     const overrideOutput = await overrideHandler.handle(sampleActivity, sampleContext);
     expect(overrideOutput).toEqual({
@@ -895,5 +926,173 @@ describe('document-log.wiring', () => {
 
     expect(result.rowNumber).toBe(7);
     expect(evaluateOnly).toHaveBeenCalled();
+  });
+
+  it('wires readRows to sheetsClient.readTable with linkColumns and hydrates FORMULA =HYPERLINK cells over nock', async () => {
+    const mockSheetsClient: SheetsClient = {
+      readTable: vi.fn().mockResolvedValue({
+        headers: ['Status', 'Section', 'Calc Link'],
+        formulaColumns: [],
+        rows: [
+          {
+            rowNumber: 6,
+            values: { Status: 'Open', Section: '071200', 'Calc Link': 'Link' },
+            links: { 'Calc Link': 'https://drive.google.com/file/d/mock-read-1/view' },
+          },
+        ],
+      }),
+      insertIntoGroupedList: vi.fn(),
+      readNamedRange: vi.fn(),
+      writeNamedRange: vi.fn(),
+    };
+
+    const mockWiring = createDocumentLogWiring({
+      manifestProvider: createManifestProvider(),
+      sheetsClient: mockSheetsClient,
+    });
+    await mockWiring.logSchemaRegistry.initialize();
+
+    const mockReadResult = await mockWiring.documentLogService.readLog({
+      documentTypeKey: 'submittal-arch',
+      selectedLogId: 'sheet-read-1',
+    });
+
+    expect(mockSheetsClient.readTable).toHaveBeenCalledWith({
+      target: {
+        spreadsheetId: 'sheet-read-1',
+        sheetName: 'Submittal Arch',
+        rangeName: 'Log_Submittal_Arch',
+        extentMarker: '<--->',
+        groupDividerMarker: '---',
+      },
+      linkColumns: ['Calc Link'],
+    });
+    expect(mockReadResult.spreadsheetId).toBe('sheet-read-1');
+    expect(mockReadResult.sheetName).toBe('Submittal Arch');
+    expect(mockReadResult.entries).toHaveLength(1);
+    expect(mockReadResult.entries[0]).toEqual(
+      expect.objectContaining({
+        rowNumber: 6,
+        fileUri: 'https://drive.google.com/file/d/mock-read-1/view',
+        document: expect.objectContaining({
+          type: 'submittal-arch',
+          data: expect.objectContaining({
+            status: { key: 'Open' },
+            section: '071200',
+          }),
+        }),
+      })
+    );
+
+    const nockWiring = createDocumentLogWiring({
+      manifestProvider: createManifestProvider(),
+    });
+    await nockWiring.logSchemaRegistry.initialize();
+
+    const perReqCredential = 'ya29.per-request-read-cred';
+    nock('https://www.googleapis.com', {
+      reqheaders: { authorization: `Bearer ${perReqCredential}` },
+    })
+      .get('/drive/v3/files')
+      .query(true)
+      .reply(200, {
+        files: [
+          {
+            id: 'nock-read-log-1',
+            name: 'Harborview Hotel Document Log',
+            mimeType: 'application/vnd.google-apps.spreadsheet',
+          },
+        ],
+      });
+
+    nock('https://sheets.googleapis.com', {
+      reqheaders: { authorization: `Bearer ${perReqCredential}` },
+    })
+      .get('/v4/spreadsheets/nock-read-log-1')
+      .query(true)
+      .reply(200, {
+        spreadsheetId: 'nock-read-log-1',
+        sheets: [{ properties: { sheetId: 1, title: 'Submittal Arch' } }],
+        namedRanges: [
+          {
+            namedRangeId: 'nr-1',
+            name: 'Log_Submittal_Arch',
+            range: {
+              sheetId: 1,
+              startRowIndex: 2,
+              endRowIndex: 10,
+              startColumnIndex: 0,
+              endColumnIndex: 3,
+            },
+          },
+        ],
+      });
+
+    nock('https://sheets.googleapis.com', {
+      reqheaders: { authorization: `Bearer ${perReqCredential}` },
+    })
+      .get(/\/v4\/spreadsheets\/nock-read-log-1\/values\/.*/)
+      .query((q) => q.valueRenderOption === 'FORMATTED_VALUE')
+      .reply(200, {
+        values: [
+          ['Status', 'Section', 'Calc Link'],
+          [],
+          ['<--->'],
+          ['Open', '071200', 'Link'],
+          ['<--->'],
+        ],
+      });
+
+    nock('https://sheets.googleapis.com', {
+      reqheaders: { authorization: `Bearer ${perReqCredential}` },
+    })
+      .get('/v4/spreadsheets/nock-read-log-1/values:batchGet')
+      .query(
+        (q) =>
+          q.valueRenderOption === 'FORMULA' &&
+          Array.isArray(q.ranges) &&
+          q.ranges.length === 2
+      )
+      .reply(200, {
+        valueRanges: [
+          { values: [[]] },
+          {
+            values: [
+              ['=HYPERLINK("https://drive.google.com/file/d/nock-read-file-1/view", "Link")'],
+            ],
+          },
+        ],
+      });
+
+    const perRequestService = nockWiring.createDocumentLogService({
+      userOAuthToken: perReqCredential,
+    });
+    const nockResult = await perRequestService.readLog({
+      documentTypeKey: 'submittal-arch',
+      space: {
+        id: 'space-1',
+        typeId: 'projects',
+        name: 'Harborview Hotel',
+        abstractStorageId: 'drive-1',
+      },
+    });
+
+    expect(nockResult.spreadsheetId).toBe('nock-read-log-1');
+    expect(nockResult.sheetName).toBe('Submittal Arch');
+    expect(nockResult.entries).toHaveLength(1);
+    expect(nockResult.entries[0]).toEqual(
+      expect.objectContaining({
+        rowNumber: 6,
+        fileUri: 'https://drive.google.com/file/d/nock-read-file-1/view',
+        document: expect.objectContaining({
+          type: 'submittal-arch',
+          data: expect.objectContaining({
+            status: { key: 'Open' },
+            section: '071200',
+          }),
+        }),
+      })
+    );
+    expect(nock.isDone()).toBe(true);
   });
 });
