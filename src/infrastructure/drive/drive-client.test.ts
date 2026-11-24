@@ -816,7 +816,7 @@ describe('GoogleDriveClient', () => {
       ]);
       expect(mockDrive.files.list).toHaveBeenCalledWith({
         q: "name contains 'Invoice' and trashed = false",
-        fields: 'files(id, name, parents, mimeType, webViewLink)',
+        fields: 'files(id, name, parents, mimeType, webViewLink, modifiedTime)',
         corpora: 'user',
         spaces: 'drive',
         includeItemsFromAllDrives: true,
@@ -881,7 +881,7 @@ describe('GoogleDriveClient', () => {
         // Target query
         expect(mockDrive.files.list).toHaveBeenNthCalledWith(2, {
           q: "name contains 'Invoice' and 'folder-p1' in parents and trashed = false",
-          fields: 'files(id, name, parents, mimeType, webViewLink)',
+          fields: 'files(id, name, parents, mimeType, webViewLink, modifiedTime)',
           corpora: 'user',
           spaces: 'drive',
           includeItemsFromAllDrives: true,
@@ -948,7 +948,7 @@ describe('GoogleDriveClient', () => {
         const expectedParentOrClause = twentyFolders.map((f) => `'${f.id}' in parents`).join(' or ');
         expect(mockDrive.files.list).toHaveBeenNthCalledWith(2, {
           q: `name = 'Target.pdf' and (${expectedParentOrClause}) and trashed = false`,
-          fields: 'files(id, name, parents, mimeType, webViewLink)',
+          fields: 'files(id, name, parents, mimeType, webViewLink, modifiedTime)',
           corpora: 'user',
           spaces: 'drive',
           includeItemsFromAllDrives: true,
@@ -1132,7 +1132,7 @@ describe('GoogleDriveClient', () => {
         // Target: Scoped to inv-id
         expect(mockDrive.files.list).toHaveBeenNthCalledWith(3, {
           q: "name = 'Log_Sheet.xlsx' and 'inv-id' in parents and trashed = false",
-          fields: 'files(id, name, parents, mimeType, webViewLink)',
+          fields: 'files(id, name, parents, mimeType, webViewLink, modifiedTime)',
           corpora: 'user',
           spaces: 'drive',
           includeItemsFromAllDrives: true,
@@ -1549,6 +1549,58 @@ describe('GoogleDriveClient', () => {
       expect(results[0].id).toBe('retry-file-id');
       expect(mockDrive.files.list).toHaveBeenCalledTimes(2);
       expect(sleepMock).toHaveBeenCalledWith(50);
+    });
+
+    it('propagates modifiedTime when present and leaves it undefined when omitted or null', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          files: [
+            {
+              id: 'file-with-mtime',
+              name: 'WithTime.pdf',
+              modifiedTime: '2026-11-24T06:00:00.000Z',
+            },
+            {
+              id: 'file-null-mtime',
+              name: 'NullTime.pdf',
+              modifiedTime: null,
+            },
+            {
+              id: 'file-omitted-mtime',
+              name: 'OmittedTime.pdf',
+            },
+          ],
+        },
+      });
+
+      const results = await client.searchFiles({ targetName: 'Time' });
+
+      expect(results).toEqual([
+        {
+          id: 'file-with-mtime',
+          name: 'WithTime.pdf',
+          parents: undefined,
+          mimeType: undefined,
+          webViewLink: undefined,
+          modifiedTime: '2026-11-24T06:00:00.000Z',
+        },
+        {
+          id: 'file-null-mtime',
+          name: 'NullTime.pdf',
+          parents: undefined,
+          mimeType: undefined,
+          webViewLink: undefined,
+          modifiedTime: undefined,
+        },
+        {
+          id: 'file-omitted-mtime',
+          name: 'OmittedTime.pdf',
+          parents: undefined,
+          mimeType: undefined,
+          webViewLink: undefined,
+          modifiedTime: undefined,
+        },
+      ]);
     });
   });
 

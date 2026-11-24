@@ -2,14 +2,18 @@ import * as path from 'node:path';
 import { Value } from '@sinclair/typebox/value';
 import {
   DocumentLogConfigurationError,
+  DocumentLogDiscoveryConfigOverrideSchema,
   DocumentLogDiscoveryConfigSchema,
   DocumentLogSchemaSchema,
+  DocumentSpaceFetchMethodSchema,
   LogTargetCalculatedFieldSchema,
   LogTargetDocumentFieldSchema,
   LogTargetDocumentOptionTupleSchema,
   LogTargetDocumentSchemaSchema,
   type DocumentLogDiscoveryConfig,
+  type DocumentLogDiscoveryConfigOverride,
   type DocumentLogSchema,
+  type DocumentSpaceFetchMethod,
   type LogParsedMustacheTemplate,
   type LogSchemaRegistryPort,
   type LogTargetCalculatedField,
@@ -65,37 +69,44 @@ function parseTemplateOrThrow(
   }
 }
 
+const DISCOVERY_STRING_FIELDS = [
+  'preferredFolderPath',
+  'fileNameContains',
+  'templateSpreadsheetId',
+  'copyNameTemplate',
+] as const;
+
+const DISCOVERY_ARRAY_FIELDS = [
+  'excludePrefixes',
+  'excludeSubstrings',
+] as const;
+
 function validateDiscoveryConfig(
   rawConfig: unknown,
-  parser: LogTemplateParserPort | undefined
+  parser: LogTemplateParserPort | undefined,
+  configLabel = 'configuration.documentLog'
 ): DocumentLogDiscoveryConfig {
   if (!Value.Check(DocumentLogDiscoveryConfigSchema, rawConfig)) {
     const details = formatTypeboxErrors(Value.Errors(DocumentLogDiscoveryConfigSchema, rawConfig));
     throw new DocumentLogConfigurationError(
-      `Invalid configuration.documentLog structure: ${details}`
+      `Invalid ${configLabel} structure: ${details}`
     );
   }
 
   const config = rawConfig as DocumentLogDiscoveryConfig;
-  assertNonBlankString(config.preferredFolderPath, 'configuration.documentLog.preferredFolderPath');
-  assertNonBlankString(config.fileNameContains, 'configuration.documentLog.fileNameContains');
-  assertNonBlankString(
-    config.templateSpreadsheetId,
-    'configuration.documentLog.templateSpreadsheetId'
-  );
-  assertNonBlankString(config.copyNameTemplate, 'configuration.documentLog.copyNameTemplate');
-
-  for (const prefix of config.excludePrefixes) {
-    assertNonBlankString(prefix, 'configuration.documentLog.excludePrefixes[]');
+  for (const field of DISCOVERY_STRING_FIELDS) {
+    assertNonBlankString(config[field], `${configLabel}.${field}`);
   }
-  for (const substring of config.excludeSubstrings) {
-    assertNonBlankString(substring, 'configuration.documentLog.excludeSubstrings[]');
+  for (const field of DISCOVERY_ARRAY_FIELDS) {
+    for (const item of config[field]) {
+      assertNonBlankString(item, `${configLabel}.${field}[]`);
+    }
   }
 
   const parsedCopyName = parseTemplateOrThrow(
     parser,
     config.copyNameTemplate,
-    'configuration.documentLog.copyNameTemplate'
+    `${configLabel}.copyNameTemplate`
   );
   for (const token of parsedCopyName.tokens) {
     if (
@@ -104,12 +115,57 @@ function validateDiscoveryConfig(
       !DOCUMENT_SPACE_ALLOWED_PROPERTIES.has(token.parts[1] ?? '')
     ) {
       throw new DocumentLogConfigurationError(
-        `configuration.documentLog.copyNameTemplate references unsupported variable "{{${token.original}}}" (only DocumentSpace.* properties are allowed)`
+        `${configLabel}.copyNameTemplate references unsupported variable "{{${token.original}}}" (only DocumentSpace.* properties are allowed)`
       );
     }
   }
 
   return structuredClone(config);
+}
+
+function validateDiscoveryConfigOverride(
+  rawOverride: unknown,
+  configLabel: string
+): DocumentLogDiscoveryConfigOverride {
+  if (!Value.Check(DocumentLogDiscoveryConfigOverrideSchema, rawOverride)) {
+    const details = formatTypeboxErrors(
+      Value.Errors(DocumentLogDiscoveryConfigOverrideSchema, rawOverride)
+    );
+    throw new DocumentLogConfigurationError(`Invalid ${configLabel} structure: ${details}`);
+  }
+
+  const override = rawOverride as DocumentLogDiscoveryConfigOverride;
+  for (const field of DISCOVERY_STRING_FIELDS) {
+    const value = override[field];
+    if (value !== undefined) {
+      assertNonBlankString(value, `${configLabel}.${field}`);
+    }
+  }
+  for (const field of DISCOVERY_ARRAY_FIELDS) {
+    const items = override[field];
+    if (items !== undefined) {
+      for (const item of items) {
+        assertNonBlankString(item, `${configLabel}.${field}[]`);
+      }
+    }
+  }
+
+  return override;
+}
+
+function mergeDiscoveryConfig(
+  baseConfig: DocumentLogDiscoveryConfig | undefined,
+  override: DocumentLogDiscoveryConfigOverride,
+  parser: LogTemplateParserPort | undefined,
+  configLabel: string
+): DocumentLogDiscoveryConfig {
+  const merged: Record<string, unknown> = baseConfig ? structuredClone(baseConfig) : {};
+  for (const [key, value] of Object.entries(override)) {
+    if (value !== undefined) {
+      merged[key] = structuredClone(value);
+    }
+  }
+  return validateDiscoveryConfig(merged, parser, configLabel);
 }
 
 function buildTargetDocumentSchema(
@@ -435,11 +491,14 @@ function validateWriteLogWorkflowSteps(params: {
 }
 
 /**
- * Hydrates and fail-fast validates `configuration.documentLog`, per-`DocumentType`
- * `documentLogSchema`, and minimal target `DocumentSchema` metadata from `RawManifestProviderPort`.
+ * Hydrates and fail-fast validates `configuration.documentLog`, per-`DocumentSpaceType`
+ * `documentLog` overrides / `fetchMethod`, per-`DocumentType` `documentLogSchema`,
+ * and minimal target `DocumentSchema` metadata from `RawManifestProviderPort`.
  */
 export class LogSchemaRegistryAdapter implements LogSchemaRegistryPort {
   private discoveryConfig: DocumentLogDiscoveryConfig | undefined;
+  private readonly spaceDiscoveryConfigs = new Map<string, DocumentLogDiscoveryConfig>();
+  private readonly spaceFetchMethods = new Map<string, DocumentSpaceFetchMethod>();
   private readonly logSchemas = new Map<string, DocumentLogSchema>();
   private readonly targetSchemas = new Map<string, LogTargetDocumentSchema>();
   private initialized = false;
@@ -467,6 +526,7 @@ export class LogSchemaRegistryAdapter implements LogSchemaRegistryPort {
     const manifest = rawManifest as {
       documentTypes?: unknown[];
       configuration?: { documentLog?: unknown };
+      DocumentSpaceTypes?: unknown[];
     };
 
     const rawDiscovery = manifest.configuration?.documentLog;
@@ -474,6 +534,52 @@ export class LogSchemaRegistryAdapter implements LogSchemaRegistryPort {
       rawDiscovery !== undefined
         ? validateDiscoveryConfig(rawDiscovery, this.templateParser)
         : undefined;
+
+    const nextSpaceDiscoveryConfigs = new Map<string, DocumentLogDiscoveryConfig>();
+    const nextSpaceFetchMethods = new Map<string, DocumentSpaceFetchMethod>();
+    const spaceTypes = Array.isArray(manifest.DocumentSpaceTypes)
+      ? manifest.DocumentSpaceTypes
+      : [];
+
+    for (const rawSpaceType of spaceTypes) {
+      if (!rawSpaceType || typeof rawSpaceType !== 'object') {
+        continue;
+      }
+      const spaceType = rawSpaceType as {
+        id?: unknown;
+        storageConfig?: unknown;
+        documentLog?: unknown;
+      };
+      const spaceTypeId = typeof spaceType.id === 'string' ? spaceType.id.trim() : '';
+      const hasId = spaceTypeId.length > 0;
+
+      if (spaceType.documentLog !== undefined) {
+        if (!hasId) {
+          throw new DocumentLogConfigurationError(
+            'DocumentSpaceTypes entry declaring documentLog must have a non-empty id'
+          );
+        }
+        const configLabel = `DocumentSpaceTypes["${spaceTypeId}"].documentLog`;
+        const validatedOverride = validateDiscoveryConfigOverride(
+          spaceType.documentLog,
+          configLabel
+        );
+        const mergedConfig = mergeDiscoveryConfig(
+          nextDiscoveryConfig,
+          validatedOverride,
+          this.templateParser,
+          configLabel
+        );
+        nextSpaceDiscoveryConfigs.set(spaceTypeId, mergedConfig);
+      }
+
+      if (hasId && spaceType.storageConfig && typeof spaceType.storageConfig === 'object') {
+        const rawFetchMethod = (spaceType.storageConfig as { fetchMethod?: unknown }).fetchMethod;
+        if (Value.Check(DocumentSpaceFetchMethodSchema, rawFetchMethod)) {
+          nextSpaceFetchMethods.set(spaceTypeId, rawFetchMethod);
+        }
+      }
+    }
 
     const nextLogSchemas = new Map<string, DocumentLogSchema>();
     const nextTargetSchemas = new Map<string, LogTargetDocumentSchema>();
@@ -539,6 +645,14 @@ export class LogSchemaRegistryAdapter implements LogSchemaRegistryPort {
     }
 
     this.discoveryConfig = nextDiscoveryConfig;
+    this.spaceDiscoveryConfigs.clear();
+    for (const [k, v] of nextSpaceDiscoveryConfigs.entries()) {
+      this.spaceDiscoveryConfigs.set(k, v);
+    }
+    this.spaceFetchMethods.clear();
+    for (const [k, v] of nextSpaceFetchMethods.entries()) {
+      this.spaceFetchMethods.set(k, v);
+    }
     this.logSchemas.clear();
     for (const [k, v] of nextLogSchemas.entries()) {
       this.logSchemas.set(k, v);
@@ -551,8 +665,17 @@ export class LogSchemaRegistryAdapter implements LogSchemaRegistryPort {
   }
 
   getDiscoveryConfig(spaceTypeId?: string): DocumentLogDiscoveryConfig | undefined {
-    void spaceTypeId;
+    if (spaceTypeId !== undefined) {
+      const override = this.spaceDiscoveryConfigs.get(spaceTypeId);
+      if (override !== undefined) {
+        return override;
+      }
+    }
     return this.discoveryConfig;
+  }
+
+  getSpaceFetchMethod(spaceTypeId: string): DocumentSpaceFetchMethod | undefined {
+    return this.spaceFetchMethods.get(spaceTypeId);
   }
 
   getDocumentLogSchema(documentTypeKey: string): DocumentLogSchema | undefined {

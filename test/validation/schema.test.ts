@@ -441,6 +441,9 @@ describe('DocumentType JSON files schema validation', () => {
         copyNameTemplate: '{{DocumentSpace.name}} Document Log',
       });
 
+      expect(logRegistry.getSpaceFetchMethod('projects')).toBe('shared_drives');
+      expect(logRegistry.getSpaceFetchMethod('proposals')).toBe('folders');
+
       const archLogSchema = logRegistry.getDocumentLogSchema('submittal-arch');
       expect(archLogSchema).toEqual({
         provider: 'google_sheets',

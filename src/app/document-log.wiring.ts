@@ -97,6 +97,33 @@ function createDriveDiscoveryAdapter(driveClient: GoogleDriveClient): LogDiscove
         ...(file.modifiedTime !== undefined ? { modifiedTime: file.modifiedTime } : {}),
       }));
     },
+    ...(typeof driveClient.getFile === 'function'
+      ? {
+          getFile: async (fileId) => {
+            const file = await driveClient.getFile(fileId);
+            return {
+              id: file.id,
+              name: file.name,
+              ...(file.parents !== undefined ? { parents: file.parents } : {}),
+              ...(file.driveId !== undefined ? { driveId: file.driveId } : {}),
+              ...(file.mimeType !== undefined ? { mimeType: file.mimeType } : {}),
+              ...(file.webViewLink !== undefined ? { webViewLink: file.webViewLink } : {}),
+              ...(file.modifiedTime !== undefined ? { modifiedTime: file.modifiedTime } : {}),
+            };
+          },
+        }
+      : {}),
+    ...(typeof driveClient.resolveFolderPath === 'function'
+      ? {
+          resolveFolderPath: async (rootFolderId, pathSegments) => {
+            const folder = await driveClient.resolveFolderPath(rootFolderId, pathSegments);
+            return {
+              id: folder.id,
+              name: folder.name,
+            };
+          },
+        }
+      : {}),
   };
 }
 

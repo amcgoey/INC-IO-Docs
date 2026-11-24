@@ -13,6 +13,25 @@ export const DocumentLogDiscoveryConfigSchema = Type.Object(
 );
 export type DocumentLogDiscoveryConfig = Static<typeof DocumentLogDiscoveryConfigSchema>;
 
+export const DocumentLogDiscoveryConfigOverrideSchema = Type.Object(
+  {
+    preferredFolderPath: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+    fileNameContains: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+    excludePrefixes: Type.Optional(Type.Union([Type.Array(Type.String({ minLength: 1 })), Type.Undefined()])),
+    excludeSubstrings: Type.Optional(Type.Union([Type.Array(Type.String({ minLength: 1 })), Type.Undefined()])),
+    templateSpreadsheetId: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+    copyNameTemplate: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+export type DocumentLogDiscoveryConfigOverride = Static<typeof DocumentLogDiscoveryConfigOverrideSchema>;
+
+export const DocumentSpaceFetchMethodSchema = Type.Union([
+  Type.Literal('shared_drives'),
+  Type.Literal('folders'),
+]);
+export type DocumentSpaceFetchMethod = Static<typeof DocumentSpaceFetchMethodSchema>;
+
 export const DocumentLogTargetSchema = Type.Object(
   {
     sheetName: Type.String({ minLength: 1 }),
@@ -319,6 +338,7 @@ export interface LogTemplateEvaluatorPort {
 export interface LogSchemaRegistryPort {
   initialize(): Promise<void>;
   getDiscoveryConfig(spaceTypeId?: string): DocumentLogDiscoveryConfig | undefined;
+  getSpaceFetchMethod?(spaceTypeId: string): DocumentSpaceFetchMethod | undefined;
   getDocumentLogSchema(documentTypeKey: string): DocumentLogSchema | undefined;
   getTargetSchema(documentTypeKey: string): LogTargetDocumentSchema | undefined;
 }
@@ -330,8 +350,25 @@ export interface LogDiscoveryQuery {
   mimeTypes?: string[] | undefined;
 }
 
+export interface LogDiscoveryFileMetadata {
+  id: string;
+  name: string;
+  parents?: string[] | undefined;
+  driveId?: string | undefined;
+  mimeType?: string | undefined;
+  webViewLink?: string | undefined;
+  modifiedTime?: string | undefined;
+}
+
+export interface LogDiscoveryFolderMetadata {
+  id: string;
+  name: string;
+}
+
 export interface LogDiscoveryPort {
   searchSpreadsheets(query: LogDiscoveryQuery): Promise<LogResolutionCandidate[]>;
+  getFile?(fileId: string): Promise<LogDiscoveryFileMetadata>;
+  resolveFolderPath?(rootFolderId: string, pathSegments: string[]): Promise<LogDiscoveryFolderMetadata>;
 }
 
 export interface LogStorageTarget {
