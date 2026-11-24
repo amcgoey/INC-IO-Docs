@@ -2,7 +2,6 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { drive_v3, sheets_v4 } from 'googleapis';
 import { createApp, type AppOptions } from '../src/app/server';
 import { DocumentLogActivityHandler } from '../src/app/document-log-activity-handler';
 import { createDocumentLogWiring } from '../src/app/document-log.wiring';
@@ -18,9 +17,9 @@ import { DriveActivityHandler } from '../src/features/document/adapters/drive-ac
 import { DocumentService, type Document, type DocumentType } from '../src/features/document/domain';
 import type { ActivityHandler, DocumentSchemaRegistryPort } from '../src/features/document/ports';
 import type { DocumentLogPort } from '../src/features/document-log';
-import { GoogleDriveClient } from '../src/infrastructure/drive/drive-client';
+import { GoogleDriveClient, type GoogleDriveClientOptions } from '../src/infrastructure/drive/drive-client';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
-import { GoogleSheetsClient } from '../src/infrastructure/sheets';
+import { GoogleSheetsClient, type GoogleSheetsClientOptions } from '../src/infrastructure/sheets';
 import { HandlebarsAdapter } from '../src/infrastructure/template-engine/handlebars-adapter';
 import { ensureEvaluationOrder } from '../src/infrastructure/validation/json-logic-graph';
 import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
@@ -64,7 +63,7 @@ interface MockDriveState {
   }>;
 }
 
-function createMockDriveSdk(state: MockDriveState): drive_v3.Drive {
+function createMockDriveSdk(state: MockDriveState): NonNullable<GoogleDriveClientOptions['drive']> {
   const list = vi.fn().mockImplementation(async (params: { q?: string }) => {
     const q = params.q ?? '';
     // Folder resolution for MOVE_FILE ("6 Construction" -> "Submittals")
@@ -134,15 +133,23 @@ function createMockDriveSdk(state: MockDriveState): drive_v3.Drive {
 
   return {
     files: { list, get, update },
-  } as unknown as drive_v3.Drive;
+  } as unknown as NonNullable<GoogleDriveClientOptions['drive']>;
+}
+
+interface MockBatchRequest {
+  insertDimension?: { range?: { startIndex?: number } };
+  updateCells?: {
+    range?: { startRowIndex?: number };
+    rows?: Array<{ values?: unknown[] }>;
+  };
 }
 
 interface MockSheetsState {
   tableValues: Array<Array<string | number | boolean | null>>;
-  batchUpdates: Array<{ spreadsheetId: string; requests: sheets_v4.Schema$Request[] }>;
+  batchUpdates: Array<{ spreadsheetId: string; requests: MockBatchRequest[] }>;
 }
 
-function createMockSheetsSdk(state: MockSheetsState): sheets_v4.Sheets {
+function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsClientOptions['sheets']> {
   const getMetadata = vi.fn().mockImplementation(async ({ spreadsheetId }: { spreadsheetId: string }) => ({
     data: {
       spreadsheetId,
@@ -175,7 +182,7 @@ function createMockSheetsSdk(state: MockSheetsState): sheets_v4.Sheets {
       requestBody,
     }: {
       spreadsheetId: string;
-      requestBody: { requests?: sheets_v4.Schema$Request[] };
+      requestBody: { requests?: MockBatchRequest[] };
     }) => {
       state.batchUpdates.push({
         spreadsheetId,
@@ -194,7 +201,7 @@ function createMockSheetsSdk(state: MockSheetsState): sheets_v4.Sheets {
         update: vi.fn().mockResolvedValue({ data: {} }),
       },
     },
-  } as unknown as sheets_v4.Sheets;
+  } as unknown as NonNullable<GoogleSheetsClientOptions['sheets']>;
 }
 
 describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {

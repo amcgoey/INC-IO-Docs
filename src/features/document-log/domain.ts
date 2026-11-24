@@ -102,6 +102,31 @@ export class DocumentLogService implements DocumentLogPort {
     };
   }
 
+  private async resolveSpreadsheetId(
+    document: WriteDocumentLogRequest['document'],
+    selectedLogId?: string
+  ): Promise<string> {
+    const trimmedSelectedLogId = selectedLogId?.trim();
+    if (trimmedSelectedLogId && trimmedSelectedLogId.length > 0) {
+      return trimmedSelectedLogId;
+    }
+
+    if (!document.space) {
+      throw new DocumentLogConfigurationError(
+        'Document.space is required to resolve a DocumentLog when selectedLogId is not provided.'
+      );
+    }
+
+    const resolution = await this.resolveLog(document.space);
+    if (resolution.status === 'missing') {
+      throw new DocumentLogMissingError(document.space.name, resolution.expectedFolderPath);
+    }
+    if (resolution.status === 'ambiguous') {
+      throw new DocumentLogAmbiguousError(document.space.name, resolution.candidates);
+    }
+    return resolution.candidate.id;
+  }
+
   async writeLog(request: WriteDocumentLogRequest): Promise<WriteDocumentLogResult> {
     const { document, fileUri, selectedLogId } = request;
 
@@ -119,26 +144,7 @@ export class DocumentLogService implements DocumentLogPort {
       );
     }
 
-    let spreadsheetId: string;
-    const trimmedSelectedLogId = selectedLogId?.trim();
-    if (trimmedSelectedLogId && trimmedSelectedLogId.length > 0) {
-      spreadsheetId = trimmedSelectedLogId;
-    } else {
-      if (!document.space) {
-        throw new DocumentLogConfigurationError(
-          'Document.space is required to resolve a DocumentLog when selectedLogId is not provided.'
-        );
-      }
-
-      const resolution = await this.resolveLog(document.space);
-      if (resolution.status === 'missing') {
-        throw new DocumentLogMissingError(document.space.name, resolution.expectedFolderPath);
-      }
-      if (resolution.status === 'ambiguous') {
-        throw new DocumentLogAmbiguousError(document.space.name, resolution.candidates);
-      }
-      spreadsheetId = resolution.candidate.id;
-    }
+    const spreadsheetId = await this.resolveSpreadsheetId(document, selectedLogId);
 
     const { rowData, readOnlyColumns } = mapDocumentToLogRow({
       document,
