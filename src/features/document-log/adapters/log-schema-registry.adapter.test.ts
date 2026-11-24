@@ -395,4 +395,256 @@ describe('LogSchemaRegistryAdapter', () => {
       await expect(invalidAdapter.initialize()).rejects.toThrow(/fileSourceStepId/i);
     }
   });
+
+  it('records storageConfig.fetchMethod per DocumentSpaceType.id and returns undefined for unregistered spaceTypeIds', async () => {
+    const manifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: [],
+        configuration: { documentLog: createValidDiscoveryConfig() },
+        DocumentSpaceTypes: [
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+          },
+          {
+            id: 'proposals',
+            displayName: 'Proposals',
+            storageConfig: { provider: 'google_drive', fetchMethod: 'folders' },
+          },
+        ],
+      }),
+      readParsedSchema: vi.fn(),
+    };
+
+    const adapter = new LogSchemaRegistryAdapter(manifestProvider, parser);
+    await adapter.initialize();
+
+    expect(adapter.getSpaceFetchMethod('projects')).toBe('shared_drives');
+    expect(adapter.getSpaceFetchMethod('proposals')).toBe('folders');
+    expect(adapter.getSpaceFetchMethod('unregistered')).toBeUndefined();
+  });
+
+  it('deep-merges partial DocumentSpaceTypes[].documentLog overrides over configuration.documentLog per spaceTypeId', async () => {
+    const baseDiscovery = createValidDiscoveryConfig();
+    const manifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: [],
+        configuration: { documentLog: baseDiscovery },
+        DocumentSpaceTypes: [
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+          },
+          {
+            id: 'proposals',
+            displayName: 'Proposals',
+            storageConfig: { provider: 'google_drive', fetchMethod: 'folders' },
+            documentLog: {
+              preferredFolderPath: '01 Admin/Logs',
+              excludePrefixes: ['OLD_', 'Copy of '],
+              copyNameTemplate: '{{DocumentSpace.id}} - {{DocumentSpace.name}} Log',
+            },
+          },
+        ],
+      }),
+      readParsedSchema: vi.fn(),
+    };
+
+    const adapter = new LogSchemaRegistryAdapter(manifestProvider, parser);
+    await adapter.initialize();
+
+    expect(adapter.getDiscoveryConfig('proposals')).toEqual({
+      preferredFolderPath: '01 Admin/Logs',
+      fileNameContains: baseDiscovery.fileNameContains,
+      excludePrefixes: ['OLD_', 'Copy of '],
+      excludeSubstrings: baseDiscovery.excludeSubstrings,
+      templateSpreadsheetId: baseDiscovery.templateSpreadsheetId,
+      copyNameTemplate: '{{DocumentSpace.id}} - {{DocumentSpace.name}} Log',
+    });
+    expect(adapter.getDiscoveryConfig('projects')).toEqual(baseDiscovery);
+    expect(adapter.getDiscoveryConfig()).toEqual(baseDiscovery);
+  });
+
+  it('validates overridden copyNameTemplate on DocumentSpaceTypes[].documentLog strictly against DocumentSpace.* variables', async () => {
+    for (const badTemplate of [
+      '{{DocumentSpace.unknown}} Log',
+      '{{Document.name}} Log',
+      '{{#if DocumentSpace.name}}Log{{/if}}',
+      '{{{DocumentSpace.name}}} Log',
+    ]) {
+      const manifestProvider: RawManifestProviderPort = {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: [],
+          configuration: { documentLog: createValidDiscoveryConfig() },
+          DocumentSpaceTypes: [
+            {
+              id: 'proposals',
+              displayName: 'Proposals',
+              documentLog: {
+                copyNameTemplate: badTemplate,
+              },
+            },
+          ],
+        }),
+        readParsedSchema: vi.fn(),
+      };
+
+      const adapter = new LogSchemaRegistryAdapter(manifestProvider, parser);
+      await expect(adapter.initialize(), badTemplate).rejects.toThrow(DocumentLogConfigurationError);
+    }
+  });
+
+  it('fails fast on invalid DocumentSpaceTypes[].documentLog overrides without leaving stale state', async () => {
+    const invalidCases: Array<{ label: string; rawManifest: Record<string, unknown> }> = [
+      {
+        label: 'unknown property on override (additionalProperties: false)',
+        rawManifest: {
+          documentTypes: [],
+          configuration: { documentLog: createValidDiscoveryConfig() },
+          DocumentSpaceTypes: [
+            {
+              id: 'projects',
+              storageConfig: { fetchMethod: 'shared_drives' },
+            },
+            {
+              id: 'proposals',
+              storageConfig: { fetchMethod: 'folders' },
+              documentLog: {
+                preferredFolderPath: '01 Admin',
+                extraUnknownField: 'bad',
+              },
+            },
+          ],
+        },
+      },
+      {
+        label: 'blank string in override field',
+        rawManifest: {
+          documentTypes: [],
+          configuration: { documentLog: createValidDiscoveryConfig() },
+          DocumentSpaceTypes: [
+            {
+              id: 'projects',
+              storageConfig: { fetchMethod: 'shared_drives' },
+            },
+            {
+              id: 'proposals',
+              documentLog: {
+                preferredFolderPath: '   ',
+              },
+            },
+          ],
+        },
+      },
+      {
+        label: 'blank string element in override array',
+        rawManifest: {
+          documentTypes: [],
+          configuration: { documentLog: createValidDiscoveryConfig() },
+          DocumentSpaceTypes: [
+            {
+              id: 'proposals',
+              documentLog: {
+                excludePrefixes: ['Valid', '   '],
+              },
+            },
+          ],
+        },
+      },
+      {
+        label: 'partial override while configuration.documentLog is omitted',
+        rawManifest: {
+          documentTypes: [],
+          DocumentSpaceTypes: [
+            {
+              id: 'projects',
+              storageConfig: { fetchMethod: 'shared_drives' },
+            },
+            {
+              id: 'proposals',
+              documentLog: {
+                preferredFolderPath: '01 Admin',
+              },
+            },
+          ],
+        },
+      },
+      {
+        label: 'documentLog override declared on entry with missing id',
+        rawManifest: {
+          documentTypes: [],
+          configuration: { documentLog: createValidDiscoveryConfig() },
+          DocumentSpaceTypes: [
+            {
+              id: 'projects',
+              storageConfig: { fetchMethod: 'shared_drives' },
+            },
+            {
+              displayName: 'Missing ID',
+              documentLog: {
+                preferredFolderPath: '01 Admin',
+              },
+            },
+          ],
+        },
+      },
+      {
+        label: 'documentLog override declared on entry with blank id',
+        rawManifest: {
+          documentTypes: [],
+          configuration: { documentLog: createValidDiscoveryConfig() },
+          DocumentSpaceTypes: [
+            {
+              id: '   ',
+              displayName: 'Blank ID',
+              documentLog: {
+                preferredFolderPath: '01 Admin',
+              },
+            },
+          ],
+        },
+      },
+    ];
+
+    for (const testCase of invalidCases) {
+      const manifestProvider: RawManifestProviderPort = {
+        getRawManifest: vi.fn().mockResolvedValue(testCase.rawManifest),
+        readParsedSchema: vi.fn(),
+      };
+      const adapter = new LogSchemaRegistryAdapter(manifestProvider, parser);
+      await expect(adapter.initialize(), testCase.label).rejects.toThrow(DocumentLogConfigurationError);
+      expect(adapter.getDiscoveryConfig(), `${testCase.label}: no stale base discoveryConfig`).toBeUndefined();
+      expect(adapter.getDiscoveryConfig('projects'), `${testCase.label}: no stale projects discoveryConfig`).toBeUndefined();
+      expect(adapter.getDiscoveryConfig('proposals'), `${testCase.label}: no stale proposals discoveryConfig`).toBeUndefined();
+      expect(adapter.getSpaceFetchMethod('projects'), `${testCase.label}: no stale fetchMethod`).toBeUndefined();
+    }
+  });
+
+  it('allows a complete DocumentSpaceTypes[].documentLog without configuration.documentLog when no DocumentType requires configuration.documentLog', async () => {
+    const completeOverride = createValidDiscoveryConfig({
+      preferredFolderPath: 'Proposals Admin',
+    });
+    const manifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: [],
+        DocumentSpaceTypes: [
+          {
+            id: 'proposals',
+            displayName: 'Proposals',
+            storageConfig: { fetchMethod: 'folders' },
+            documentLog: completeOverride,
+          },
+        ],
+      }),
+      readParsedSchema: vi.fn(),
+    };
+
+    const adapter = new LogSchemaRegistryAdapter(manifestProvider, parser);
+    await expect(adapter.initialize()).resolves.toBeUndefined();
+    expect(adapter.getDiscoveryConfig()).toBeUndefined();
+    expect(adapter.getDiscoveryConfig('proposals')).toEqual(completeOverride);
+    expect(adapter.getSpaceFetchMethod('proposals')).toBe('folders');
+  });
 });

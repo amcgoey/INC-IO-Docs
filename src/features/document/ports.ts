@@ -261,6 +261,7 @@ export interface DriveFileResult {
   parents?: string[] | undefined;
   mimeType?: string | undefined;
   webViewLink?: string | undefined;
+  modifiedTime?: string | undefined;
 }
 
 export type DriveFile = DriveFileResult;

@@ -42,6 +42,27 @@ describe('DriveServiceAdapter', () => {
       });
     });
 
+    it('propagates modifiedTime onto DriveFileResult when present', async () => {
+      (mockDriveClient.getFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'file-1',
+        name: 'test.pdf',
+        parents: ['p1'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link',
+        modifiedTime: '2026-11-24T06:00:00.000Z',
+      });
+
+      const res = await adapter.getFile('file-1');
+      expect(res).toEqual({
+        id: 'file-1',
+        name: 'test.pdf',
+        parents: ['p1'],
+        mimeType: 'application/pdf',
+        webViewLink: 'https://link',
+        modifiedTime: '2026-11-24T06:00:00.000Z',
+      });
+    });
+
     it('translates external errors to DriveServiceError', async () => {
       (mockDriveClient.getFile as ReturnType<typeof vi.fn>).mockRejectedValue(
         new Error('Network failure')
@@ -196,6 +217,35 @@ describe('DriveServiceAdapter', () => {
           parents: ['p-1'],
           mimeType: 'application/pdf',
           webViewLink: 'https://drive/view',
+        },
+      ]);
+    });
+
+    it('propagates modifiedTime onto DriveFileResult when present', async () => {
+      (mockDriveClient.searchFiles as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: 'f-1',
+          name: 'Target.pdf',
+          parents: ['p-1'],
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive/view',
+          modifiedTime: '2026-11-24T06:00:00.000Z',
+        },
+      ]);
+
+      const results = await adapter.searchFiles({
+        targetName: 'Target',
+        exactMatch: true,
+      });
+
+      expect(results).toEqual([
+        {
+          id: 'f-1',
+          name: 'Target.pdf',
+          parents: ['p-1'],
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive/view',
+          modifiedTime: '2026-11-24T06:00:00.000Z',
         },
       ]);
     });

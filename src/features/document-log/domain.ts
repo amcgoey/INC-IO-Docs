@@ -4,6 +4,7 @@ import {
   DocumentLogMissingError,
   type DocumentLogPort,
   type DocumentLogSpace,
+  type LogDiscoveryFileMetadata,
   type LogDiscoveryPort,
   type LogResolutionCandidate,
   type LogResolutionResult,
@@ -16,6 +17,67 @@ import {
 import { mapDocumentToLogRow } from './row-mapper';
 
 const GOOGLE_SPREADSHEET_MIME_TYPE = 'application/vnd.google-apps.spreadsheet';
+const GOOGLE_FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
+const MAX_PARENT_CHAIN_DEPTH = 10;
+
+function splitFolderPath(preferredFolderPath: string): string[] {
+  return preferredFolderPath
+    .split(/[/\\]+/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+}
+
+function parseTimestampMs(modifiedTime?: string): number | undefined {
+  if (!modifiedTime || modifiedTime.trim().length === 0) {
+    return undefined;
+  }
+  const parsed = Date.parse(modifiedTime);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * Ranks ambiguous DocumentLog candidates by:
+ * 1) Membership in preferredFolderId,
+ * 2) Case-insensitive exact match against rendered copyNameTemplate,
+ * 3) Newest valid modifiedTime descending (missing/unparseable timestamps last),
+ * 4) Deterministic candidate id.localeCompare tiebreak.
+ */
+function rankAmbiguousCandidates(params: {
+  candidates: readonly LogResolutionCandidate[];
+  preferredFolderId: string | undefined;
+  expectedCopyName: string;
+}): LogResolutionCandidate[] {
+  const { candidates, preferredFolderId, expectedCopyName } = params;
+  const expectedLower = expectedCopyName.toLowerCase();
+
+  return [...candidates].sort((a, b) => {
+    const aInPreferred = preferredFolderId !== undefined && (a.parents?.includes(preferredFolderId) ?? false);
+    const bInPreferred = preferredFolderId !== undefined && (b.parents?.includes(preferredFolderId) ?? false);
+    if (aInPreferred !== bInPreferred) {
+      return aInPreferred ? -1 : 1;
+    }
+
+    const aExactName = a.name.toLowerCase() === expectedLower;
+    const bExactName = b.name.toLowerCase() === expectedLower;
+    if (aExactName !== bExactName) {
+      return aExactName ? -1 : 1;
+    }
+
+    const aTime = parseTimestampMs(a.modifiedTime);
+    const bTime = parseTimestampMs(b.modifiedTime);
+    if (aTime !== undefined && bTime !== undefined) {
+      if (aTime !== bTime) {
+        return bTime - aTime;
+      }
+    } else if (aTime !== undefined) {
+      return -1;
+    } else if (bTime !== undefined) {
+      return 1;
+    }
+
+    return a.id.localeCompare(b.id);
+  });
+}
 
 function filterCandidatesByConfig(
   candidates: readonly LogResolutionCandidate[],
@@ -43,6 +105,81 @@ function filterCandidatesByConfig(
 }
 
 /**
+ * Creates a per-resolveLog-call memoized metadata lookup that treats unreadable ancestors as null.
+ */
+function createPerCallGetFileMemo(
+  getFile: (fileId: string) => Promise<LogDiscoveryFileMetadata>
+): (fileId: string) => Promise<LogDiscoveryFileMetadata | null> {
+  const cache = new Map<string, Promise<LogDiscoveryFileMetadata | null>>();
+  return (fileId: string): Promise<LogDiscoveryFileMetadata | null> => {
+    const existing = cache.get(fileId);
+    if (existing) {
+      return existing;
+    }
+    const pending = Promise.resolve()
+      .then(() => getFile(fileId))
+      .catch(() => null);
+    cache.set(fileId, pending);
+    return pending;
+  };
+}
+
+/**
+ * Walks parent folder IDs via bounded BFS (up to MAX_PARENT_CHAIN_DEPTH intermediate folders)
+ * to determine whether a candidate belongs under rootFolderId.
+ */
+async function isDescendantOfRoot(
+  initialParents: readonly string[] | undefined,
+  rootFolderId: string,
+  getFile: (fileId: string) => Promise<LogDiscoveryFileMetadata | null>
+): Promise<boolean> {
+  if (!initialParents || initialParents.length === 0) {
+    return false;
+  }
+
+  const visited = new Set<string>();
+  const queue: Array<{ folderId: string; depth: number }> = [];
+
+  for (const parentId of initialParents) {
+    if (parentId === rootFolderId) {
+      return true;
+    }
+    // 'root' is My Drive's terminal root and has no parents above it.
+    if (parentId === 'root' || visited.has(parentId)) {
+      continue;
+    }
+    visited.add(parentId);
+    queue.push({ folderId: parentId, depth: 1 });
+  }
+
+  let head = 0;
+  while (head < queue.length) {
+    const { folderId, depth } = queue[head++];
+    if (depth > MAX_PARENT_CHAIN_DEPTH) {
+      continue;
+    }
+
+    const folderMeta = await getFile(folderId);
+    if (!folderMeta?.parents || folderMeta.parents.length === 0) {
+      continue;
+    }
+
+    for (const parentId of folderMeta.parents) {
+      if (parentId === rootFolderId) {
+        return true;
+      }
+      if (parentId === 'root' || visited.has(parentId) || depth >= MAX_PARENT_CHAIN_DEPTH) {
+        continue;
+      }
+      visited.add(parentId);
+      queue.push({ folderId: parentId, depth: depth + 1 });
+    }
+  }
+
+  return false;
+}
+
+/**
  * Core domain service managing live DocumentLog discovery and Document dehydration/write orchestration.
  */
 export class DocumentLogService implements DocumentLogPort {
@@ -52,6 +189,66 @@ export class DocumentLogService implements DocumentLogPort {
     private readonly logStorage: LogStoragePort,
     private readonly templateEvaluator: LogTemplateEvaluatorPort
   ) {}
+
+  private async resolveDiscoveryScope(
+    space: DocumentLogSpace
+  ): Promise<{ searchSharedDriveId: string | undefined; useFolderDescendantWalk: boolean }> {
+    const fetchMethod = this.schemaRegistry.getSpaceFetchMethod?.(space.typeId);
+
+    if (fetchMethod === 'shared_drives') {
+      return {
+        searchSharedDriveId: space.abstractStorageId,
+        useFolderDescendantWalk: false,
+      };
+    }
+
+    if (fetchMethod === 'folders') {
+      if (!this.logDiscovery.getFile) {
+        throw new DocumentLogConfigurationError(
+          'Folder-backed DocumentLog discovery requires LogDiscoveryPort.getFile to be implemented.'
+        );
+      }
+      const containerMeta = await this.logDiscovery.getFile(space.abstractStorageId);
+      return {
+        searchSharedDriveId: containerMeta.driveId,
+        useFolderDescendantWalk: true,
+      };
+    }
+
+    if (!this.logDiscovery.getFile) {
+      return {
+        searchSharedDriveId: space.abstractStorageId,
+        useFolderDescendantWalk: false,
+      };
+    }
+
+    const containerMeta = await this.logDiscovery.getFile(space.abstractStorageId);
+    const isFolderContainer =
+      (containerMeta.driveId !== undefined && containerMeta.driveId !== space.abstractStorageId) ||
+      (containerMeta.driveId === undefined && containerMeta.mimeType === GOOGLE_FOLDER_MIME_TYPE);
+
+    return {
+      searchSharedDriveId: isFolderContainer ? containerMeta.driveId : space.abstractStorageId,
+      useFolderDescendantWalk: isFolderContainer,
+    };
+  }
+
+  private async resolvePreferredFolderId(
+    rootFolderId: string,
+    preferredFolderPath: string
+  ): Promise<string | undefined> {
+    const pathSegments = splitFolderPath(preferredFolderPath);
+    if (!this.logDiscovery.resolveFolderPath || pathSegments.length === 0) {
+      return undefined;
+    }
+
+    try {
+      const { id } = await this.logDiscovery.resolveFolderPath(rootFolderId, pathSegments);
+      return id;
+    } catch {
+      return undefined;
+    }
+  }
 
   async resolveLog(space: DocumentLogSpace): Promise<LogResolutionResult> {
     const discoveryConfig = this.schemaRegistry.getDiscoveryConfig(space.typeId);
@@ -66,19 +263,36 @@ export class DocumentLogService implements DocumentLogPort {
       );
     }
 
+    const { searchSharedDriveId, useFolderDescendantWalk } = await this.resolveDiscoveryScope(space);
+
     const rawMatches = await this.logDiscovery.searchSpreadsheets({
       targetName: discoveryConfig.fileNameContains,
-      sharedDriveId: space.abstractStorageId,
+      ...(searchSharedDriveId !== undefined ? { sharedDriveId: searchSharedDriveId } : {}),
       mimeTypes: [GOOGLE_SPREADSHEET_MIME_TYPE],
       exactMatch: false,
     });
 
-    const filtered = filterCandidatesByConfig(
+    let filtered = filterCandidatesByConfig(
       rawMatches,
       discoveryConfig.fileNameContains,
       discoveryConfig.excludePrefixes,
       discoveryConfig.excludeSubstrings
     );
+
+    if (useFolderDescendantWalk && filtered.length > 0) {
+      const getFileMemo = createPerCallGetFileMemo(this.logDiscovery.getFile!);
+      const checked = await Promise.all(
+        filtered.map(async (candidate) => ({
+          candidate,
+          isDescendant: await isDescendantOfRoot(
+            candidate.parents,
+            space.abstractStorageId,
+            getFileMemo
+          ),
+        }))
+      );
+      filtered = checked.filter((entry) => entry.isDescendant).map((entry) => entry.candidate);
+    }
 
     if (filtered.length === 0) {
       return {
@@ -96,9 +310,23 @@ export class DocumentLogService implements DocumentLogPort {
       };
     }
 
+    const preferredFolderId = await this.resolvePreferredFolderId(
+      space.abstractStorageId,
+      discoveryConfig.preferredFolderPath
+    );
+
+    const expectedCopyName = this.templateEvaluator.evaluate(discoveryConfig.copyNameTemplate, {
+      DocumentSpace: space,
+    });
+    const ranked = rankAmbiguousCandidates({
+      candidates: filtered,
+      preferredFolderId,
+      expectedCopyName,
+    });
+
     return {
       status: 'ambiguous',
-      candidates: filtered,
+      candidates: ranked,
     };
   }
 

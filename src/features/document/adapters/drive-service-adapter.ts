@@ -15,6 +15,7 @@ interface DriveClientFileMetadata {
   parents?: string[] | undefined;
   mimeType?: string | undefined;
   webViewLink?: string | undefined;
+  modifiedTime?: string | undefined;
 }
 
 interface DriveClientSearchParams {
@@ -86,6 +87,7 @@ function mapMetadataToResult(metadata: DriveClientFileMetadata): DriveFileResult
     parents: metadata.parents,
     mimeType: metadata.mimeType,
     webViewLink: metadata.webViewLink,
+    modifiedTime: metadata.modifiedTime,
   };
 }
 
