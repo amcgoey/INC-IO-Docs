@@ -2,9 +2,12 @@ import type { UiViewSection, UiViewWidget } from '../domain';
 import type { DocumentLogPanelContext } from '../ports';
 import { escapeCardHtml } from './common';
 
+export const SELECT_DOCUMENT_LOG_KEY = 'SelectDocumentLog';
+
 export interface DocumentLogSectionOptions {
   sectionHeader?: string | undefined;
   maxWidgets?: number | undefined;
+  onChangeActionParameters?: Record<string, unknown> | undefined;
 }
 
 function buildOpenLogButton(url: string) {
@@ -99,22 +102,41 @@ export function buildDocumentLogSection(
     }
 
     case 'ambiguous': {
+      const candidateOptions = context.candidateOptions ?? [];
+      const onChangeParams =
+        options?.onChangeActionParameters && Object.keys(options.onChangeActionParameters).length > 0
+          ? options.onChangeActionParameters
+          : undefined;
+      if (candidateOptions.length > 0) {
+        widgets.push({
+          selectionInput: {
+            name: SELECT_DOCUMENT_LOG_KEY,
+            label: `Document Log (${candidateOptions.length} found)`,
+            type: 'DROPDOWN',
+            items: candidateOptions,
+            onChangeAction: {
+              action: 'onFormChange',
+              ...(onChangeParams !== undefined ? { parameters: onChangeParams } : {}),
+            },
+          },
+        });
+      }
       const active = context.activeCandidate;
-      widgets.push({
-        textParagraph: {
-          text: escapedSpace
-            ? `<font color="#b06000"><b>Multiple Document Logs found</b></font> in <b>${escapedSpace}</b>.`
-            : '<font color="#b06000"><b>Multiple Document Logs found.</b></font>',
-        },
-      });
       if (active) {
         widgets.push({
           decoratedText: {
-            topLabel: 'Top Ranked Candidate',
+            topLabel: plainSpace ? `Active Document Log · ${plainSpace}` : 'Active Document Log',
             text: `<b>${escapeCardHtml(active.name)}</b>`,
             wrapText: true,
-            ...(plainFolder !== undefined ? { bottomLabel: `Folder: ${plainFolder}` } : {}),
             button: buildOpenLogButton(active.url),
+          },
+        });
+      } else if (candidateOptions.length === 0) {
+        widgets.push({
+          textParagraph: {
+            text: escapedSpace
+              ? `<font color="#b06000"><b>Multiple Document Logs found</b></font> in <b>${escapedSpace}</b>.`
+              : '<font color="#b06000"><b>Multiple Document Logs found.</b></font>',
           },
         });
       }

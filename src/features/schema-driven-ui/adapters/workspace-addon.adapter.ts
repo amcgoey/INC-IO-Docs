@@ -15,6 +15,7 @@ import {
   buildDocumentLogSection,
   buildDocumentInfoSection,
   buildDocumentAdminSection,
+  SELECT_DOCUMENT_LOG_KEY,
 } from '../blocks';
 
 export const WORKSPACE_ADDON_VIEW_ID = 'drive-document-process-card';
@@ -50,6 +51,34 @@ function extractDocumentLogPanelContext(
   return raw;
 }
 
+export function extractSharedActionParameters(
+  ctx: UiViewAdapterContext
+): Record<string, string> {
+  const previousSpaceId =
+    typeof ctx.spaceId === 'string' && ctx.spaceId.trim().length > 0
+      ? ctx.spaceId.trim()
+      : undefined;
+  const rawSelectedLogId = ctx.formData?.[SELECT_DOCUMENT_LOG_KEY];
+  const previousSelectedLogId =
+    typeof rawSelectedLogId === 'string' && rawSelectedLogId.trim().length > 0
+      ? rawSelectedLogId.trim()
+      : undefined;
+
+  return {
+    ...(previousSpaceId !== undefined ? { previousSpaceId } : {}),
+    ...(previousSelectedLogId !== undefined ? { previousSelectedLogId } : {}),
+  };
+}
+
+function toOptionalActionParameters(
+  params: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!params || Object.keys(params).length === 0) {
+    return undefined;
+  }
+  return params;
+}
+
 function buildViewFromSections(
   viewId: string,
   fixedProducers: {
@@ -59,7 +88,8 @@ function buildViewFromSections(
     docInfo: (ctx: UiViewAdapterContext, processDisabled: boolean) => UiViewSection | undefined;
     admin: SectionProducer;
   },
-  context: UiViewAdapterContext
+  context: UiViewAdapterContext,
+  getActionParameters?: (context: UiViewAdapterContext) => Record<string, unknown> | undefined
 ): UiView {
   const logContext = extractDocumentLogPanelContext(context.uiContext);
   const processDisabled =
@@ -78,8 +108,10 @@ function buildViewFromSections(
     (docInfoSection?.widgets.length ?? 0) +
     (adminSection?.widgets.length ?? 0);
 
+  const actionParams = getActionParameters ? getActionParameters(context) : undefined;
   const documentLogSection = buildDocumentLogSection(logContext, {
     maxWidgets: MAX_GOOGLE_WORKSPACE_CARD_WIDGETS - fixedWidgetCount,
+    ...(actionParams ? { onChangeActionParameters: actionParams } : {}),
   });
 
   const sections: UiViewSection[] = [
@@ -114,7 +146,8 @@ async function resolveAndBuildView(
     admin: SectionProducer;
   },
   context: UiViewAdapterContext,
-  displayNameResolver: DocumentTypeDisplayNameResolverPort
+  displayNameResolver: DocumentTypeDisplayNameResolverPort,
+  getActionParameters?: (context: UiViewAdapterContext) => Record<string, unknown> | undefined
 ): Promise<UiView> {
   const resolvedDocTypes = await Promise.all(
     context.selectionState!.documentTypes.map(async (docType) => {
@@ -134,7 +167,7 @@ async function resolveAndBuildView(
     },
   };
 
-  return buildViewFromSections(viewId, fixedProducers, effectiveContext);
+  return buildViewFromSections(viewId, fixedProducers, effectiveContext, getActionParameters);
 }
 
 export function createWorkspaceAddonViewSchema(
@@ -150,6 +183,17 @@ export function createWorkspaceAddonViewSchema(
   context?: UiViewAdapterContext,
   displayNameResolver?: DocumentTypeDisplayNameResolverPort
 ): WorkspaceAddonViewComposer | Promise<UiView> | UiView {
+  const getMergedActionParameters = (
+    ctx: UiViewAdapterContext
+  ): Record<string, unknown> | undefined => {
+    const shared = extractSharedActionParameters(ctx);
+    const custom = config.getActionParameters ? config.getActionParameters(ctx) : undefined;
+    return toOptionalActionParameters({
+      ...shared,
+      ...(custom ?? {}),
+    });
+  };
+
   const fileSelectionProducer: SectionProducer =
     config.fileSelectionConfig ??
     ((ctx) =>
@@ -172,7 +216,7 @@ export function createWorkspaceAddonViewSchema(
       if (!ctx.selectionState) {
         return undefined;
       }
-      const actionParams = config.getActionParameters ? config.getActionParameters(ctx) : undefined;
+      const actionParams = getMergedActionParameters(ctx);
       return buildDocumentTypeSelectionSection(ctx.selectionState, {
         onSpaceTypeChangeAction: {
           action: 'onSpaceTypeChange',
@@ -198,7 +242,7 @@ export function createWorkspaceAddonViewSchema(
       if (!ctx.documentSchema) {
         return undefined;
       }
-      const actionParams = config.getActionParameters ? config.getActionParameters(ctx) : undefined;
+      const actionParams = getMergedActionParameters(ctx);
       return buildDocumentInfoSection(ctx.documentSchema, ctx.uiSchema, {
         sectionHeader: 'Document Data',
         formData: ctx.formData,
@@ -206,7 +250,14 @@ export function createWorkspaceAddonViewSchema(
         documentTypeKey: ctx.documentTypeKey,
         dynamicOptions: ctx.dynamicOptions,
         ...(actionParams ? { onChangeActionParameters: actionParams } : {}),
-        ...(ctx.documentTypeKey ? { onProcessAction: { action: 'processDocument' } } : {}),
+        ...(ctx.documentTypeKey
+          ? {
+              onProcessAction: {
+                action: 'processDocument',
+                ...(actionParams ? { parameters: actionParams } : {}),
+              },
+            }
+          : {}),
         ...(processDisabled ? { processDisabled: true } : {}),
       });
     },
@@ -220,9 +271,15 @@ export function createWorkspaceAddonViewSchema(
     resolver?: DocumentTypeDisplayNameResolverPort
   ): Promise<UiView> | UiView => {
     if (!resolver || !ctx.selectionState?.documentTypes) {
-      return buildViewFromSections(config.viewId, fixedProducers, ctx);
+      return buildViewFromSections(config.viewId, fixedProducers, ctx, getMergedActionParameters);
     }
-    return resolveAndBuildView(config.viewId, fixedProducers, ctx, resolver);
+    return resolveAndBuildView(
+      config.viewId,
+      fixedProducers,
+      ctx,
+      resolver,
+      getMergedActionParameters
+    );
   };
 
   if (context !== undefined) {
@@ -286,6 +343,7 @@ export function extractGmailActionParameters(ctx: UiViewAdapterContext): Record<
     ...(previousMessageId !== undefined && previousMessageId.trim().length > 0
       ? { previousMessageId: previousMessageId.trim() }
       : {}),
+    ...extractSharedActionParameters(ctx),
   };
 }
 

@@ -16,6 +16,7 @@ import {
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
   SELECT_EMAIL_MESSAGE_KEY,
+  SELECT_DOCUMENT_LOG_KEY,
   SELECT_DOCUMENT_SPACE_TYPE_KEY,
   SELECT_DOCUMENT_TYPE_KEY,
   EPHEMERAL_UI_SELECTION_KEYS,
@@ -91,13 +92,14 @@ describe('ui-process-manager domain', () => {
   });
 
   describe('isSelectionKey and EPHEMERAL_UI_SELECTION_KEYS', () => {
-    it('defines EPHEMERAL_UI_SELECTION_KEYS containing all six ephemeral selection keys', () => {
+    it('defines EPHEMERAL_UI_SELECTION_KEYS containing all seven ephemeral selection keys', () => {
       expect(SELECT_FILES_KEY).toBe('SelectFiles');
       expect(SELECT_FILE_SOURCE_KEY).toBe('SelectFileSource');
       expect(SELECT_ATTACHMENTS_KEY).toBe('SelectAttachments');
       expect(INPUT_DRIVE_URL_KEY).toBe('InputDriveURL');
       expect(SAVE_EMAIL_TO_PDF_KEY).toBe('SaveEmailToPdf');
       expect(SELECT_EMAIL_MESSAGE_KEY).toBe('SelectEmailMessage');
+      expect(SELECT_DOCUMENT_LOG_KEY).toBe('SelectDocumentLog');
 
       expect(EPHEMERAL_UI_SELECTION_KEYS).toEqual(
         new Set([
@@ -107,6 +109,7 @@ describe('ui-process-manager domain', () => {
           'InputDriveURL',
           'SaveEmailToPdf',
           'SelectEmailMessage',
+          'SelectDocumentLog',
         ])
       );
     });
@@ -118,6 +121,7 @@ describe('ui-process-manager domain', () => {
       expect(isSelectionKey('InputDriveURL')).toBe(true);
       expect(isSelectionKey('SaveEmailToPdf')).toBe(true);
       expect(isSelectionKey('SelectEmailMessage')).toBe(true);
+      expect(isSelectionKey('SelectDocumentLog')).toBe(true);
 
       expect(isSelectionKey('SelectDocumentSpaceType')).toBe(true);
       expect(isSelectionKey('SelectDocumentSpace')).toBe(true);
@@ -132,7 +136,7 @@ describe('ui-process-manager domain', () => {
   });
 
   describe('extractDocumentData', () => {
-    it('extracts only non-SelectDocument keys from formData and strips all six ephemeral keys', () => {
+    it('extracts only non-SelectDocument keys from formData and strips all seven ephemeral keys', () => {
       const formData = {
         SelectDocumentSpaceType: 'projects',
         SelectDocumentSpace: 'Project Alpha',
@@ -143,6 +147,7 @@ describe('ui-process-manager domain', () => {
         InputDriveURL: 'https://drive.google.com/open?id=123',
         SaveEmailToPdf: true,
         SelectEmailMessage: 'msg-123',
+        SelectDocumentLog: 'log-sheet-123',
         contact: 'John Doe',
         date: '260920',
         direction: 'IN',
@@ -164,6 +169,7 @@ describe('ui-process-manager domain', () => {
       expect(result).not.toHaveProperty('InputDriveURL');
       expect(result).not.toHaveProperty('SaveEmailToPdf');
       expect(result).not.toHaveProperty('SelectEmailMessage');
+      expect(result).not.toHaveProperty('SelectDocumentLog');
     });
 
     it('returns empty object when formData is undefined or empty', () => {
@@ -3677,12 +3683,13 @@ describe('ui-process-manager domain', () => {
   });
 
   describe('Form-cleansing & pruning helpers (S6b, Spec #2)', () => {
-    it('sanitizeFormDataForSourceReset retains selection keys and spaceId while purging data keys', () => {
+    it('sanitizeFormDataForSourceReset retains other selection keys and spaceId while purging data keys and SelectDocumentLog', () => {
       const cleaned = sanitizeFormDataForSourceReset({
         SelectDocumentSpaceType: 'projects',
         SelectDocumentSpace_projects: 'Project Main',
         SelectDocumentType_projects: 'communication-project',
         SelectFileSource: 'Email Attachments',
+        SelectDocumentLog: 'log-sheet-123',
         spaceId: 'proj-1',
         description: 'Stale desc',
         'description_communication-proposal': 'Stale suffixed desc',
@@ -3695,6 +3702,7 @@ describe('ui-process-manager domain', () => {
         SelectFileSource: 'Email Attachments',
         spaceId: 'proj-1',
       });
+      expect(cleaned).not.toHaveProperty('SelectDocumentLog');
     });
 
     it('isInactiveDocTypeFieldKey identifies inactive docType-suffixed keys', () => {
@@ -3747,6 +3755,184 @@ describe('ui-process-manager domain', () => {
       expect(existing).toEqual({
         section: '071200',
       });
+    });
+  });
+
+  describe('SelectDocumentLog selection lifecycle in evaluateProcessUiState (#351)', () => {
+    const spaceTypes = [
+      {
+        id: 'projects',
+        displayName: 'Projects',
+        spaceSchema: {
+          allowedDocumentTypes: ['submittal-arch', 'submittal-ffe', 'communication-project'],
+          defaultDocumentType: 'submittal-arch',
+        },
+      },
+      {
+        id: 'proposals',
+        displayName: 'Proposals',
+        spaceSchema: {
+          allowedDocumentTypes: ['communication-proposal'],
+          defaultDocumentType: 'communication-proposal',
+        },
+      },
+    ];
+    const spaces = [
+      { id: 'space-a', name: 'Project A', typeId: 'projects', abstractStorageId: 'drive-a' },
+      { id: 'space-b', name: 'Project B', typeId: 'projects', abstractStorageId: 'drive-b' },
+    ];
+
+    it.each([
+      { actionName: 'onSpaceTypeChange', label: 'onSpaceTypeChange' },
+      { actionName: 'refresh', label: 'refresh' },
+      { actionName: 'onFileSourceChange', label: 'onFileSourceChange' },
+      { actionName: 'onEmailMessageChange', label: 'onEmailMessageChange' },
+    ])(
+      'clears SelectDocumentLog and does not restore previousSelectedLogId on $label',
+      ({ actionName }) => {
+        const result = evaluateProcessUiState({
+          context: {
+            actionName,
+            parameters: {
+              action: actionName,
+              previousSpaceId: 'space-a',
+              previousSelectedLogId: 'log-a2',
+            },
+            formData: {
+              SelectDocumentSpaceType: 'projects',
+              SelectDocumentSpace_projects: 'Project A',
+              SelectDocumentType_projects: 'submittal-arch',
+              SelectDocumentLog: 'log-a2',
+            },
+          },
+          resolvedSpaceType: 'projects',
+          resolvedDocumentTypeKey: 'submittal-arch',
+          spaceTypes,
+          spaces,
+        });
+
+        expect(result.formData).not.toHaveProperty('SelectDocumentLog');
+      }
+    );
+
+    it('clears SelectDocumentLog when previousSpaceId differs from newly resolved spaceId or when spaceId becomes undefined', () => {
+      // Space A -> Space B
+      const switched = evaluateProcessUiState({
+        context: {
+          actionName: 'onFormChange',
+          parameters: {
+            action: 'onFormChange',
+            previousSpaceId: 'space-a',
+            previousSelectedLogId: 'log-a2',
+          },
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project B',
+            SelectDocumentType_projects: 'submittal-arch',
+            SelectDocumentLog: 'log-a2',
+          },
+        },
+        resolvedSpaceType: 'projects',
+        resolvedDocumentTypeKey: 'submittal-arch',
+        spaceTypes,
+        spaces,
+      });
+      expect(switched.spaceId).toBe('space-b');
+      expect(switched.formData).not.toHaveProperty('SelectDocumentLog');
+
+      // Space A -> cleared (spaceId becomes undefined)
+      const cleared = evaluateProcessUiState({
+        context: {
+          actionName: 'onFormChange',
+          parameters: {
+            action: 'onFormChange',
+            previousSpaceId: 'space-a',
+            previousSelectedLogId: 'log-a2',
+          },
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: '',
+            SelectDocumentType_projects: 'submittal-arch',
+            SelectDocumentLog: 'log-a2',
+          },
+        },
+        resolvedSpaceType: 'projects',
+        resolvedDocumentTypeKey: 'submittal-arch',
+        spaceTypes,
+        spaces,
+      });
+      expect(cleared.spaceId).toBeUndefined();
+      expect(cleared.formData).not.toHaveProperty('SelectDocumentLog');
+    });
+
+    it('preserves explicit SelectDocumentLog on same-space onFormChange and restores from previousSelectedLogId when absent on same-space onDocumentTypeChange', () => {
+      // Explicit dropdown change overrides previousSelectedLogId
+      const switchedLog = evaluateProcessUiState({
+        context: {
+          actionName: 'onFormChange',
+          parameters: {
+            action: 'onFormChange',
+            previousSpaceId: 'space-a',
+            previousSelectedLogId: 'log-a1',
+          },
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project A',
+            SelectDocumentType_projects: 'submittal-arch',
+            SelectDocumentLog: 'log-a2',
+          },
+        },
+        resolvedSpaceType: 'projects',
+        resolvedDocumentTypeKey: 'submittal-arch',
+        spaceTypes,
+        spaces,
+      });
+      expect(switchedLog.formData.SelectDocumentLog).toBe('log-a2');
+
+      // Round-trip from non-logging type: SelectDocumentLog absent in formData, restored from previousSelectedLogId
+      const restored = evaluateProcessUiState({
+        context: {
+          actionName: 'onDocumentTypeChange',
+          parameters: {
+            action: 'onDocumentTypeChange',
+            previousSpaceId: 'space-a',
+            previousSelectedLogId: 'log-a2',
+          },
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project A',
+            SelectDocumentType_projects: 'submittal-ffe',
+          },
+        },
+        resolvedSpaceType: 'projects',
+        resolvedDocumentTypeKey: 'submittal-ffe',
+        spaceTypes,
+        spaces,
+      });
+      expect(restored.spaceId).toBe('space-a');
+      expect(restored.formData.SelectDocumentLog).toBe('log-a2');
+
+      // Blank previousSelectedLogId is not restored
+      const blankPrev = evaluateProcessUiState({
+        context: {
+          actionName: 'onDocumentTypeChange',
+          parameters: {
+            action: 'onDocumentTypeChange',
+            previousSpaceId: 'space-a',
+            previousSelectedLogId: '   ',
+          },
+          formData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace_projects: 'Project A',
+            SelectDocumentType_projects: 'submittal-ffe',
+          },
+        },
+        resolvedSpaceType: 'projects',
+        resolvedDocumentTypeKey: 'submittal-ffe',
+        spaceTypes,
+        spaces,
+      });
+      expect(blankPrev.formData).not.toHaveProperty('SelectDocumentLog');
     });
   });
 });

@@ -2302,6 +2302,89 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       expect(capturedContexts).toHaveLength(1);
       expect(capturedContexts[0].selectedLogId).toBeUndefined();
     });
+
+    it('forwards validated ambiguous SelectDocumentLog exclusively through reqDocumentRunner onto WorkspaceExecutionContext.selectedLogId while stripping it from Document.data (#351)', async () => {
+      const mockSpaceService = {
+        getAllTypes: () => [
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: {
+              allowedDocumentTypes: ['communication-project'],
+              defaultDocumentType: 'communication-project',
+            },
+            storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+          },
+        ],
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [
+            {
+              id: 'proj-1',
+              typeId: 'projects',
+              name: 'Project Main',
+              abstractStorageId: 'drive-proj-1',
+            },
+          ],
+        }),
+      } as unknown as DocumentSpaceService;
+
+      const capturedContexts: WorkspaceExecutionContext[] = [];
+      const mockProcessDocument = vi.fn().mockResolvedValue({ success: true });
+      const mockDocService = {
+        processDocument: mockProcessDocument,
+      } as unknown as DocumentService;
+
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(true),
+        resolveLog: vi.fn().mockResolvedValue({
+          status: 'ambiguous',
+          candidates: [
+            { id: 'log-1', name: 'Project Main Document Log' },
+            { id: 'log-2', name: 'Project Main Document Log Archive' },
+          ],
+        }),
+      };
+
+      const wiring = createUiProcessManagerWiring({
+        manifestProvider: mockManifestProvider,
+        createDocumentSpaceService: () => mockSpaceService,
+        createDocumentService: (ctx) => {
+          capturedContexts.push(ctx);
+          return mockDocService;
+        },
+        createDocumentLogPort: () => documentLogPort,
+      });
+
+      const response = await wiring.requestScopedWrapper.processUiEvent({
+        selectedLogId: 'spoofed-incoming-id',
+        actionName: 'processDocument',
+        parameters: {
+          action: 'processDocument',
+          previousSpaceId: 'proj-1',
+          previousSelectedLogId: 'log-2',
+        },
+        selectedItems: [{ id: 'file-1', title: 'Submittal.pdf' }],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          [getDocumentSpaceWidgetName('projects')]: 'Project Main',
+          [getDocumentTypeWidgetName('projects')]: 'communication-project',
+          SelectFiles: ['file-1'],
+          SelectDocumentLog: 'log-2',
+          contact_communication_project: 'PMG',
+        },
+      });
+
+      expect(response).toEqual({
+        action: {
+          notification: { text: 'Document processed successfully' },
+        },
+      });
+      expect(capturedContexts).toHaveLength(1);
+      expect(capturedContexts[0].selectedLogId).toBe('log-2');
+      expect(mockProcessDocument).toHaveBeenCalledTimes(1);
+      const passedDoc = mockProcessDocument.mock.calls[0][0] as { data: Record<string, unknown> };
+      expect(passedDoc.data).not.toHaveProperty('SelectDocumentLog');
+    });
   });
 });
 

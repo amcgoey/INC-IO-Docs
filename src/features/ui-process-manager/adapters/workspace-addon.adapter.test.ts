@@ -6142,6 +6142,356 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         'onSubmit'
       );
     });
+
+    it('forwards live selected candidate as selectedLogId on ambiguous pre-flight check while stripping SelectDocumentLog from Document.data (#351)', async () => {
+      const documentRunner: UiProcessDocumentRunnerPort = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(true),
+        resolveLog: vi.fn().mockResolvedValue({
+          status: 'ambiguous',
+          candidates: [
+            { id: 'log-1', name: 'Project Main Document Log' },
+            { id: 'log-2', name: 'Project Main Document Log v2' },
+          ],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner,
+        documentLogPort,
+      });
+
+      const baseEvent = buildSubmitEvent('invoice-project');
+      const result = await adapter.processUiEvent({
+        ...baseEvent,
+        parameters: {
+          action: 'processDocument',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+        },
+        formData: {
+          ...baseEvent.formData,
+          SelectDocumentLog: 'log-2',
+        },
+      });
+
+      expect(result).toEqual({ type: 'notification', text: 'Document processed successfully' });
+      expect(documentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'invoice-project',
+          selectedLogId: 'log-2',
+        }),
+        'onSubmit'
+      );
+      const passedPayload = (documentRunner.processDocument as ReturnType<typeof vi.fn>).mock
+        .calls[0][0] as { data: Record<string, unknown> };
+      expect(passedPayload.data).not.toHaveProperty('SelectDocumentLog');
+    });
+
+    it('blocks stale or cross-space SelectDocumentLog on ambiguous pre-flight check, deletes SelectDocumentLog from formData, and returns updateCard error before documentRunner runs (#351)', async () => {
+      const documentRunner: UiProcessDocumentRunnerPort = {
+        processDocument: vi.fn(),
+      };
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(true),
+        resolveLog: vi.fn().mockResolvedValue({
+          status: 'ambiguous',
+          candidates: [
+            { id: 'log-1', name: 'Project Main Document Log' },
+            { id: 'log-2', name: 'Project Main Document Log v2' },
+          ],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner,
+        documentLogPort,
+      });
+
+      // 1. Stale selection (not in live candidates) with previousSelectedLogId also pointing to stale ID
+      const baseEvent = buildSubmitEvent('invoice-project');
+      const staleRes = (await adapter.processUiEvent({
+        ...baseEvent,
+        parameters: {
+          action: 'processDocument',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-deleted',
+        },
+        formData: {
+          ...baseEvent.formData,
+          SelectDocumentLog: 'log-deleted',
+        },
+      })) as UiProcessRenderResult;
+      expect(staleRes.type).toBe('render');
+      expect(staleRes.isUpdateCard).toBe(true);
+      expect(staleRes.validationErrors?.[0]).toContain('Multiple DocumentLog spreadsheets found');
+      expect(staleRes.formData).not.toHaveProperty('SelectDocumentLog');
+      expect(staleRes.formData?.title).toBe('Waterproofing');
+      expect(documentRunner.processDocument).not.toHaveBeenCalled();
+
+      // 2. Unblurred cross-space edit (previousSpaceId differs from resolved proj1) clears SelectDocumentLog even if ID collides
+      const crossSpaceRes = (await adapter.processUiEvent({
+        ...baseEvent,
+        parameters: {
+          action: 'processDocument',
+          previousSpaceId: 'proj-previous',
+          previousSelectedLogId: 'log-1',
+        },
+        formData: {
+          ...baseEvent.formData,
+          SelectDocumentLog: 'log-1',
+        },
+      })) as UiProcessRenderResult;
+      expect(crossSpaceRes.type).toBe('render');
+      expect(crossSpaceRes.isUpdateCard).toBe(true);
+      expect(crossSpaceRes.validationErrors?.[0]).toContain('Multiple DocumentLog spreadsheets found');
+      expect(crossSpaceRes.formData).not.toHaveProperty('SelectDocumentLog');
+      expect(crossSpaceRes.formData?.title).toBe('Waterproofing');
+      expect(documentRunner.processDocument).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('SelectDocumentLog lifecycle clearing & round-trip restoration (#351)', () => {
+    it('preserves SelectDocumentLog on direct onDocumentTypeChange and restores from previousSelectedLogId when absent on same-space round-trip', async () => {
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+      });
+
+      // Direct switch with SelectDocumentLog present
+      const directSwitch = (await adapter.processUiEvent({
+        actionName: 'onDocumentTypeChange',
+        parameters: {
+          action: 'onDocumentTypeChange',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectDocumentLog: 'log-2',
+        },
+      })) as UiProcessRenderResult;
+      expect(directSwitch.type).toBe('render');
+      expect(directSwitch.spaceId).toBe('proj1');
+      expect(directSwitch.formData?.SelectDocumentLog).toBe('log-2');
+
+      // Round-trip from non-logging type: SelectDocumentLog omitted from formData, restored via previousSelectedLogId
+      const roundTrip = (await adapter.processUiEvent({
+        actionName: 'onDocumentTypeChange',
+        parameters: {
+          action: 'onDocumentTypeChange',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'invoice-project',
+        },
+      })) as UiProcessRenderResult;
+      expect(roundTrip.type).toBe('render');
+      expect(roundTrip.spaceId).toBe('proj1');
+      expect(roundTrip.formData?.SelectDocumentLog).toBe('log-2');
+    });
+
+    it('clears SelectDocumentLog on onSpaceTypeChange, refresh, onFileSourceChange, onEmailMessageChange, Gmail Pass 1 Drive URL reset (even same space), and space change/clear', async () => {
+      const twoSpaceProvider: UiProcessSpaceProviderPort = {
+        getAllTypes: () => [
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: {
+              allowedDocumentTypes: ['communication-project', 'invoice-project'],
+              defaultDocumentType: 'communication-project',
+            },
+          },
+          {
+            id: 'proposals',
+            displayName: 'Proposals',
+            spaceSchema: {
+              allowedDocumentTypes: ['communication-proposal'],
+              defaultDocumentType: 'communication-proposal',
+            },
+          },
+        ],
+        getCollection: vi.fn().mockImplementation(async (typeId: string) => {
+          if (typeId === 'projects') {
+            return {
+              spaces: [
+                { id: 'proj1', name: 'Project Main', typeId: 'projects', abstractStorageId: 'proj1' },
+                { id: 'proj2', name: 'Project Two', typeId: 'projects', abstractStorageId: 'proj2' },
+              ],
+            };
+          }
+          return {
+            spaces: [
+              { id: 'prop1', name: 'Proposal One', typeId: 'proposals', abstractStorageId: 'prop1' },
+            ],
+          };
+        }),
+      };
+
+      const sourceParser: UiProcessSourceParserPort = {
+        inferRouting: vi.fn().mockResolvedValue({
+          spaceTypeId: 'projects',
+          spaceIdOrName: 'proj1',
+          documentTypeKey: 'invoice-project',
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: twoSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        sourceParser,
+      });
+
+      // 1. onSpaceTypeChange clears SelectDocumentLog
+      const spaceTypeRes = (await adapter.processUiEvent({
+        actionName: 'onSpaceTypeChange',
+        parameters: {
+          action: 'onSpaceTypeChange',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'proposals',
+          SelectDocumentLog: 'log-2',
+        },
+      })) as UiProcessRenderResult;
+      expect(spaceTypeRes.formData).not.toHaveProperty('SelectDocumentLog');
+
+      // 2. refresh clears SelectDocumentLog even when Pass 1 infers same space proj1
+      const refreshRes = (await adapter.processUiEvent({
+        actionName: 'refresh',
+        selectedItems: [{ id: 'file-1', title: 'doc.pdf' }],
+        parameters: {
+          action: 'refresh',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectDocumentLog: 'log-2',
+        },
+      })) as UiProcessRenderResult;
+      expect(refreshRes.formData).not.toHaveProperty('SelectDocumentLog');
+
+      // 3. onFileSourceChange clears SelectDocumentLog even when switching to empty Google Drive URL
+      const fileSourceRes = (await adapter.processUiEvent({
+        hostApp: 'GMAIL',
+        gmail: { messageId: 'msg-1', threadId: 'th-1' },
+        actionName: 'onFileSourceChange',
+        parameters: {
+          action: 'onFileSourceChange',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+          previousDriveUrl: '',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: '',
+          SelectDocumentLog: 'log-2',
+        },
+      })) as UiProcessRenderResult;
+      expect(fileSourceRes.formData).not.toHaveProperty('SelectDocumentLog');
+
+      // 4. onEmailMessageChange clears SelectDocumentLog
+      const emailChangeRes = (await adapter.processUiEvent({
+        hostApp: 'GMAIL',
+        gmail: { messageId: 'msg-1', threadId: 'th-1' },
+        actionName: 'onEmailMessageChange',
+        parameters: {
+          action: 'onEmailMessageChange',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+          previousMessageId: 'msg-1',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectEmailMessage: 'msg-2',
+          SelectDocumentLog: 'log-2',
+        },
+      })) as UiProcessRenderResult;
+      expect(emailChangeRes.formData).not.toHaveProperty('SelectDocumentLog');
+
+      // 5. Gmail Pass 1 Drive URL change clears SelectDocumentLog EVEN WHEN Pass 1 infers same space proj1
+      const driveUrlPass1Res = (await adapter.processUiEvent({
+        hostApp: 'GMAIL',
+        gmail: { messageId: 'msg-1', threadId: 'th-1' },
+        actionName: 'onFormChange',
+        parameters: {
+          action: 'onFormChange',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+          previousDriveUrl: '',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: 'https://drive.google.com/file/d/new-file-123/view',
+          SelectDocumentLog: 'log-2',
+        },
+      })) as UiProcessRenderResult;
+      expect(driveUrlPass1Res.spaceId).toBe('proj1');
+      expect(driveUrlPass1Res.formData).not.toHaveProperty('SelectDocumentLog');
+
+      // 6. Space switch (proj1 -> proj2) clears SelectDocumentLog
+      const spaceSwitchRes = (await adapter.processUiEvent({
+        actionName: 'onFormChange',
+        parameters: {
+          action: 'onFormChange',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Two',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectDocumentLog: 'log-2',
+        },
+      })) as UiProcessRenderResult;
+      expect(spaceSwitchRes.spaceId).toBe('proj2');
+      expect(spaceSwitchRes.formData).not.toHaveProperty('SelectDocumentLog');
+
+      // 7. Clearing space to blank (currentSpaceId becomes undefined) clears SelectDocumentLog
+      const spaceClearRes = (await adapter.processUiEvent({
+        actionName: 'onFormChange',
+        parameters: {
+          action: 'onFormChange',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: '',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectDocumentLog: 'log-2',
+        },
+      })) as UiProcessRenderResult;
+      expect(spaceClearRes.spaceId).toBeUndefined();
+      expect(spaceClearRes.formData).not.toHaveProperty('SelectDocumentLog');
+    });
   });
 });
 
