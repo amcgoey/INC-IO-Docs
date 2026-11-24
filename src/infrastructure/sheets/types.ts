@@ -42,12 +42,19 @@ export type PositiveTableTarget = Static<typeof PositiveTableTargetSchema>;
 
 export const ReadPositiveTableRequestSchema = Type.Object({
   target: PositiveTableTargetSchema,
+  linkColumns: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
 });
 export type ReadPositiveTableRequest = Static<typeof ReadPositiveTableRequestSchema>;
 
 export const PositiveTableRowSchema = Type.Object({
   rowNumber: Type.Number(),
   values: RowRecordSchema,
+  links: Type.Optional(
+    Type.Union([
+      Type.Record(Type.String(), Type.Union([Type.String(), Type.Null()])),
+      Type.Undefined(),
+    ])
+  ),
 });
 export type PositiveTableRow = Static<typeof PositiveTableRowSchema>;
 

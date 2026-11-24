@@ -5736,10 +5736,10 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           });
 
         nock('https://sheets.googleapis.com')
-          .get(/\/v4\/spreadsheets\/doc-log-proj-1\/values\/.*/)
+          .get('/v4/spreadsheets/doc-log-proj-1/values:batchGet')
           .query((q) => q.valueRenderOption === 'FORMULA')
           .reply(200, {
-            values: [[]],
+            valueRanges: [{ values: [[]] }],
           });
 
         let capturedBatchUpdate: Record<string, unknown> | undefined;
@@ -5942,17 +5942,21 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           });
 
         nock('https://sheets.googleapis.com')
-          .get(/\/v4\/spreadsheets\/doc-log-proj-1\/values\/.*/)
+          .get('/v4/spreadsheets/doc-log-proj-1/values:batchGet')
           .query((q) => q.valueRenderOption === 'FORMULA')
           .reply(200, {
-            values: [
-              [
-                'Formula Row',
-                '',
-                '',
-                '',
-                '=ARRAYFORMULA(IF(B6:B="","",VLOOKUP(B6:B,Options_Submittal_FFE_Specs,2,FALSE)))',
-              ],
+            valueRanges: [
+              {
+                values: [
+                  [
+                    'Formula Row',
+                    '',
+                    '',
+                    '',
+                    '=ARRAYFORMULA(IF(B6:B="","",VLOOKUP(B6:B,Options_Submittal_FFE_Specs,2,FALSE)))',
+                  ],
+                ],
+              },
             ],
           });
 

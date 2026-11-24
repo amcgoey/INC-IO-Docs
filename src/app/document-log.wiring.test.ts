@@ -257,10 +257,10 @@ describe('document-log.wiring', () => {
     nock('https://sheets.googleapis.com', {
       reqheaders: { authorization: `Bearer ${perReqCredential}` },
     })
-      .get(/\/v4\/spreadsheets\/auth-log-1\/values\/.*/)
+      .get('/v4/spreadsheets/auth-log-1/values:batchGet')
       .query((q) => q.valueRenderOption === 'FORMULA')
       .reply(200, {
-        values: [[]],
+        valueRanges: [{ values: [[]] }],
       });
 
     nock('https://sheets.googleapis.com', {
