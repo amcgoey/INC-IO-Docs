@@ -7,6 +7,7 @@ import {
   type DocumentLogPort,
   type DocumentLogSchema,
   type DocumentLogSpace,
+  type DocumentLogUiCandidateOption,
   type DocumentLogUiContextResult,
   type LogDiscoveryFileMetadata,
   type LogDiscoveryPort,
@@ -202,6 +203,27 @@ function buildCandidateUrl(candidate: LogResolutionCandidate): string {
     : `https://docs.google.com/spreadsheets/d/${candidate.id}/edit`;
 }
 
+function formatCandidateDate(modifiedTime?: string): string | undefined {
+  const ms = parseTimestampMs(modifiedTime);
+  if (ms === undefined) {
+    return undefined;
+  }
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function formatCandidateOptionLabel(candidate: LogResolutionCandidate): string {
+  const folder = candidate.parentFolderName?.trim();
+  const date = formatCandidateDate(candidate.modifiedTime);
+  const metaParts: string[] = [];
+  if (folder && folder.length > 0) {
+    metaParts.push(folder);
+  }
+  if (date) {
+    metaParts.push(date);
+  }
+  return metaParts.length > 0 ? `${candidate.name} (${metaParts.join(' · ')})` : candidate.name;
+}
+
 /**
  * Core domain service managing live DocumentLog discovery and Document dehydration/write orchestration.
  */
@@ -282,12 +304,21 @@ export class DocumentLogService implements DocumentLogPort {
         ? resolution.candidates.find((c) => c.id === trimmedSelectedId)
         : undefined) ?? resolution.candidates[0];
 
+    const candidateOptions: DocumentLogUiCandidateOption[] = resolution.candidates.map(
+      (candidate) => ({
+        text: formatCandidateOptionLabel(candidate),
+        value: candidate.id,
+        selected: candidate.id === active.id,
+      })
+    );
+
     return {
       status: 'ambiguous',
       spaceName: request.space.name,
       ...(discoveryConfig?.preferredFolderPath !== undefined
         ? { targetFolderPath: discoveryConfig.preferredFolderPath }
         : {}),
+      candidateOptions,
       activeCandidate: {
         name: active.name,
         url: buildCandidateUrl(active),
@@ -384,15 +415,16 @@ export class DocumentLogService implements DocumentLogPort {
       discoveryConfig.excludeSubstrings
     );
 
+    let getFileMemo: ((fileId: string) => Promise<LogDiscoveryFileMetadata | null>) | undefined;
     if (useFolderDescendantWalk && filtered.length > 0) {
-      const getFileMemo = createPerCallGetFileMemo(this.logDiscovery.getFile!);
+      getFileMemo = createPerCallGetFileMemo(this.logDiscovery.getFile!);
       const checked = await Promise.all(
         filtered.map(async (candidate) => ({
           candidate,
           isDescendant: await isDescendantOfRoot(
             candidate.parents,
             space.abstractStorageId,
-            getFileMemo
+            getFileMemo!
           ),
         }))
       );
@@ -429,9 +461,32 @@ export class DocumentLogService implements DocumentLogPort {
       expectedCopyName,
     });
 
+    const candidatesWithParents = this.logDiscovery.getFile
+      ? await (async () => {
+          const memo = getFileMemo ?? createPerCallGetFileMemo(this.logDiscovery.getFile!);
+          return Promise.all(
+            ranked.map(async (candidate): Promise<LogResolutionCandidate> => {
+              const parentId = candidate.parents?.[0]?.trim();
+              if (!parentId || parentId === space.abstractStorageId) {
+                return candidate;
+              }
+              const parentMeta = await memo(parentId);
+              const folderName = parentMeta?.name?.trim();
+              if (!folderName) {
+                return candidate;
+              }
+              return {
+                ...candidate,
+                parentFolderName: folderName,
+              };
+            })
+          );
+        })()
+      : ranked;
+
     return {
       status: 'ambiguous',
-      candidates: ranked,
+      candidates: candidatesWithParents,
     };
   }
 

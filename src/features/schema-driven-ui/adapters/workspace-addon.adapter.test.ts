@@ -7,6 +7,7 @@ import {
   GmailWorkspaceAddonAdapter,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
   createWorkspaceAddonViewSchema,
+  extractGmailActionParameters,
 } from './workspace-addon.adapter';
 import type { DocumentLogPanelContext, UiViewAdapterContext } from '../ports';
 import { PRIMARY_ACTION_BUTTON_COLOR } from '../blocks/common';
@@ -1332,7 +1333,16 @@ describe('WorkspaceAddonAdapter', () => {
           expect(PRIMARY_ACTION_BUTTON_COLOR).toBeDefined();
           expect(processButton).toEqual({
             text: 'Process Document',
-            onClick: { action: 'processDocument' },
+            onClick:
+              viewId === GMAIL_WORKSPACE_ADDON_VIEW_ID
+                ? {
+                    action: 'processDocument',
+                    parameters: {
+                      previousAttachments: JSON.stringify(['file-1']),
+                      previousDriveUrl: '',
+                    },
+                  }
+                : { action: 'processDocument' },
             color: PRIMARY_ACTION_BUTTON_COLOR,
           });
           expect('disabled' in (processButton ?? {})).toBe(false);
@@ -1468,6 +1478,208 @@ describe('WorkspaceAddonAdapter', () => {
         }
       }
     );
+
+    it('attaches previousSpaceId and previousSelectedLogId across all Drive and Gmail in-card actions (including SelectDocumentLog and extractGmailActionParameters) and omits them when absent', async () => {
+      const ambiguousPanel: DocumentLogPanelContext = {
+        status: 'ambiguous',
+        spaceName: 'Harborview Hotel',
+        candidateOptions: [
+          { text: 'Harborview Document Log (1 Admin · 2026-10-19)', value: 'log-1', selected: false },
+          { text: 'Harborview Document Log (6 Construction · 2026-10-12)', value: 'log-2', selected: true },
+        ],
+        activeCandidate: {
+          name: 'Harborview Document Log',
+          url: 'https://docs.google.com/spreadsheets/d/log-2/edit',
+        },
+      };
+
+      // 1. Drive adapter with spaceId + non-blank SelectDocumentLog
+      const driveAdapter = new WorkspaceAddonAdapter();
+      const driveView = await driveAdapter.composeView({
+        viewId: WORKSPACE_ADDON_VIEW_ID,
+        spaceId: 'space-harbor',
+        documentTypeKey: 'submittal-arch',
+        formData: {
+          SelectDocumentLog: 'log-2',
+        },
+        selectionState: {
+          spaceTypes: [{ text: 'Projects', value: 'projects', selected: true }],
+          spaces: ['Harborview Hotel'],
+          documentTypes: [{ text: 'Submittal Arch', value: 'submittal-arch', selected: true }],
+          files: [{ text: 'submittal.pdf', value: 'file-1', selected: true }],
+        },
+        documentSchema: {
+          fields: [{ key: 'section', type: 'string' }],
+        },
+        uiSchema: {
+          fields: {
+            section: { onChange: true },
+          },
+        },
+        uiContext: { 'document-log': ambiguousPanel },
+      });
+      assertValidUiView(driveView);
+
+      const expectedDriveParams = {
+        previousSpaceId: 'space-harbor',
+        previousSelectedLogId: 'log-2',
+      };
+      const driveDocType = driveView.sections.find((s) => s.header === 'Document Type');
+      expect(driveDocType?.widgets[0].selectionInput?.onChangeAction).toEqual({
+        action: 'onSpaceTypeChange',
+        parameters: expectedDriveParams,
+      });
+      expect(driveDocType?.widgets[1].textInput?.onChangeAction).toEqual({
+        action: 'onFormChange',
+        parameters: expectedDriveParams,
+      });
+      expect(driveDocType?.widgets[2].selectionInput?.onChangeAction).toEqual({
+        action: 'onDocumentTypeChange',
+        parameters: expectedDriveParams,
+      });
+
+      const driveLogSec = driveView.sections.find((s) => s.header === 'Document Log');
+      expect(driveLogSec?.widgets).toHaveLength(2);
+      expect(driveLogSec?.widgets[0].selectionInput?.name).toBe('SelectDocumentLog');
+      expect(driveLogSec?.widgets[0].selectionInput?.label).toBe('Document Log (2 found)');
+      expect(driveLogSec?.widgets[0].selectionInput?.onChangeAction).toEqual({
+        action: 'onFormChange',
+        parameters: expectedDriveParams,
+      });
+
+      const driveDataSec = driveView.sections.find((s) => s.header === 'Document Data');
+      expect(driveDataSec?.widgets[0].textInput?.onChangeAction).toEqual({
+        action: 'onFormChange',
+        parameters: expectedDriveParams,
+      });
+      const driveProcessBtn = getProcessButton(driveView);
+      expect(driveProcessBtn?.disabled).toBeUndefined();
+      expect(driveProcessBtn?.onClick).toEqual({
+        action: 'processDocument',
+        parameters: expectedDriveParams,
+      });
+
+      // 2. Drive adapter omits previousSpaceId / previousSelectedLogId when absent or blank
+      const driveNoLogView = await driveAdapter.composeView({
+        viewId: WORKSPACE_ADDON_VIEW_ID,
+        spaceId: 'space-harbor',
+        documentTypeKey: 'submittal-arch',
+        formData: {
+          SelectDocumentLog: '   ',
+        },
+        selectionState: {
+          spaceTypes: [{ text: 'Projects', value: 'projects', selected: true }],
+          spaces: ['Harborview Hotel'],
+          documentTypes: [{ text: 'Submittal Arch', value: 'submittal-arch', selected: true }],
+          files: [{ text: 'submittal.pdf', value: 'file-1', selected: true }],
+        },
+        documentSchema: { fields: [{ key: 'section', type: 'string' }] },
+      });
+      const driveNoLogDocType = driveNoLogView.sections.find((s) => s.header === 'Document Type');
+      expect(driveNoLogDocType?.widgets[2].selectionInput?.onChangeAction).toEqual({
+        action: 'onDocumentTypeChange',
+        parameters: { previousSpaceId: 'space-harbor' },
+      });
+      expect(getProcessButton(driveNoLogView)?.onClick).toEqual({
+        action: 'processDocument',
+        parameters: { previousSpaceId: 'space-harbor' },
+      });
+
+      // 3. Gmail adapter + extractGmailActionParameters includes previousSpaceId & previousSelectedLogId on all File Selection, Document Type, Document Log, Document Data, and Process Document actions
+      const gmailCtx: UiViewAdapterContext = {
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        spaceId: 'space-harbor',
+        documentTypeKey: 'submittal-arch',
+        formData: {
+          SelectEmailMessage: 'msg-1',
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: 'https://drive.google.com/file/d/abc/view',
+          SelectDocumentLog: 'log-2',
+        },
+        selectionState: {
+          spaceTypes: [{ text: 'Projects', value: 'projects', selected: true }],
+          spaces: ['Harborview Hotel'],
+          documentTypes: [{ text: 'Submittal Arch', value: 'submittal-arch', selected: true }],
+          fileSources: [
+            { text: 'Email Attachments', value: 'Email Attachments', selected: false },
+            { text: 'Google Drive URL', value: 'Google Drive URL', selected: true },
+          ],
+          files: [{ text: 'att-1.pdf', value: 'att-1', selected: true }],
+          threadMessages: [{ text: '(1) Alice | 261019', value: 'msg-1', selected: true }],
+        },
+        documentSchema: { fields: [{ key: 'section', type: 'string' }] },
+        uiSchema: { fields: { section: { onChange: true } } },
+        uiContext: { 'document-log': ambiguousPanel },
+      };
+
+      const expectedGmailParams = {
+        previousAttachments: JSON.stringify(['att-1']),
+        previousDriveUrl: 'https://drive.google.com/file/d/abc/view',
+        previousMessageId: 'msg-1',
+        previousSpaceId: 'space-harbor',
+        previousSelectedLogId: 'log-2',
+      };
+      expect(extractGmailActionParameters(gmailCtx)).toEqual(expectedGmailParams);
+
+      // Omitted when spaceId is undefined and SelectDocumentLog is absent
+      const { spaceId: _omittedSpaceId, ...gmailCtxWithoutSpace } = gmailCtx;
+      void _omittedSpaceId;
+      const gmailNoSpaceParams = extractGmailActionParameters({
+        ...gmailCtxWithoutSpace,
+        formData: {
+          SelectEmailMessage: 'msg-1',
+          InputDriveURL: '',
+        },
+      });
+      expect(gmailNoSpaceParams).toEqual({
+        previousAttachments: JSON.stringify(['att-1']),
+        previousDriveUrl: '',
+        previousMessageId: 'msg-1',
+      });
+      expect('previousSpaceId' in gmailNoSpaceParams).toBe(false);
+      expect('previousSelectedLogId' in gmailNoSpaceParams).toBe(false);
+
+      const gmailAdapter = new GmailWorkspaceAddonAdapter();
+      const gmailView = await gmailAdapter.composeView(gmailCtx);
+      assertValidUiView(gmailView);
+
+      const gmailFileSec = gmailView.sections.find((s) => s.header === 'File Selection');
+      expect(
+        gmailFileSec?.widgets.find((w) => w.selectionInput?.name === 'SelectEmailMessage')
+          ?.selectionInput?.onChangeAction
+      ).toEqual({
+        action: 'onEmailMessageChange',
+        parameters: expectedGmailParams,
+      });
+      expect(
+        gmailFileSec?.widgets.find((w) => w.selectionInput?.name === 'SelectFileSource')
+          ?.selectionInput?.onChangeAction
+      ).toEqual({
+        action: 'onFileSourceChange',
+        parameters: expectedGmailParams,
+      });
+      expect(
+        gmailFileSec?.widgets.find((w) => w.textInput?.name === 'InputDriveURL')?.textInput
+          ?.onChangeAction
+      ).toEqual({
+        action: 'onFormChange',
+        parameters: expectedGmailParams,
+      });
+
+      const gmailLogSec = gmailView.sections.find((s) => s.header === 'Document Log');
+      expect(gmailLogSec?.widgets[0].selectionInput?.name).toBe('SelectDocumentLog');
+      expect(gmailLogSec?.widgets[0].selectionInput?.onChangeAction).toEqual({
+        action: 'onFormChange',
+        parameters: expectedGmailParams,
+      });
+
+      const gmailProcessBtn = getProcessButton(gmailView);
+      expect(gmailProcessBtn?.disabled).toBeUndefined();
+      expect(gmailProcessBtn?.onClick).toEqual({
+        action: 'processDocument',
+        parameters: expectedGmailParams,
+      });
+    });
   });
 });
 

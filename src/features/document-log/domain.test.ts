@@ -1,9 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
+import { Value } from '@sinclair/typebox/value';
 import { DocumentLogService } from './domain';
 import {
   DocumentLogAmbiguousError,
   DocumentLogConfigurationError,
   DocumentLogMissingError,
+  DocumentLogUiContextResultSchema,
+  LogResolutionCandidateSchema,
   type DocumentLogDiscoveryConfig,
   type DocumentLogDocument,
   type DocumentLogSchema,
@@ -1029,6 +1032,173 @@ describe('DocumentLogService', () => {
         expect(res.status).toBe('ambiguous');
         expect(res.candidates.map((c) => c.id)).toEqual(['log-a', 'log-b', 'log-m', 'log-z']);
       });
+
+      describe('lazy parentFolderName resolution on 2+ ambiguous candidates', () => {
+        it('supports optional parentFolderName on LogResolutionCandidateSchema', () => {
+          expect(
+            Value.Check(LogResolutionCandidateSchema, {
+              id: 'log-1',
+              name: 'Harborview Hotel Document Log',
+              parentFolderName: '1 Admin',
+            })
+          ).toBe(true);
+          expect(
+            Value.Check(LogResolutionCandidateSchema, {
+              id: 'log-1',
+              name: 'Harborview Hotel Document Log',
+              parentFolderName: undefined,
+            })
+          ).toBe(true);
+          expect(
+            Value.Check(LogResolutionCandidateSchema, {
+              id: 'log-1',
+              name: 'Harborview Hotel Document Log',
+              parentFolderName: 123,
+            })
+          ).toBe(false);
+        });
+
+        it('leaves single-match resolved untouched with 0 getFile calls and 1 Drive search call', async () => {
+          const searchSpreadsheets = vi.fn().mockResolvedValue([
+            {
+              id: 'log-single',
+              name: 'Harborview Hotel Document Log',
+              parents: ['folder-admin'],
+              modifiedTime: '2026-10-01T00:00:00Z',
+            },
+          ]);
+          const getFile = vi.fn();
+
+          const { service } = createService({
+            registry: { getSpaceFetchMethod: vi.fn().mockReturnValue('shared_drives') },
+            discovery: { searchSpreadsheets, getFile },
+          });
+
+          const res = await service.resolveLog(sampleSpace);
+          expect(res.status).toBe('resolved');
+          if (res.status === 'resolved') {
+            expect(res.candidate.parentFolderName).toBeUndefined();
+            expect('parentFolderName' in res.candidate).toBe(false);
+          }
+          expect(searchSpreadsheets).toHaveBeenCalledTimes(1);
+          expect(getFile).not.toHaveBeenCalled();
+        });
+
+        it('lazily resolves parents[0] names on 2+ matches reusing per-call getFileMemo, skipping space root, and omitting on lookup failure', async () => {
+          const searchSpreadsheets = vi.fn().mockResolvedValue([
+            {
+              id: 'log-admin-1',
+              name: 'Harborview Hotel Document Log',
+              parents: ['folder-admin'],
+              modifiedTime: '2026-10-15T12:00:00Z',
+            },
+            {
+              id: 'log-admin-2',
+              name: 'Harborview Hotel Document Log Backup',
+              parents: ['folder-admin'],
+              modifiedTime: '2026-10-10T12:00:00Z',
+            },
+            {
+              id: 'log-root',
+              name: 'Harborview Hotel Document Log Root',
+              parents: [sampleSpace.abstractStorageId],
+              modifiedTime: '2026-10-05T12:00:00Z',
+            },
+            {
+              id: 'log-unreadable-parent',
+              name: 'Harborview Hotel Document Log Hidden',
+              parents: ['folder-forbidden'],
+              modifiedTime: '2026-10-01T12:00:00Z',
+            },
+          ]);
+          const getFile = vi.fn().mockImplementation(async (fileId: string) => {
+            if (fileId === 'folder-admin') {
+              return { id: 'folder-admin', name: '1 Admin', parents: [sampleSpace.abstractStorageId] };
+            }
+            throw new Error('403 Forbidden');
+          });
+
+          const { service } = createService({
+            registry: { getSpaceFetchMethod: vi.fn().mockReturnValue('shared_drives') },
+            discovery: {
+              searchSpreadsheets,
+              getFile,
+              resolveFolderPath: vi.fn().mockResolvedValue({ id: 'folder-admin', name: '1 Admin' }),
+            },
+          });
+
+          const res = await service.resolveLog(sampleSpace);
+          expect(res.status).toBe('ambiguous');
+          if (res.status === 'ambiguous') {
+            const byId = new Map(res.candidates.map((c) => [c.id, c]));
+            expect(byId.get('log-admin-1')?.parentFolderName).toBe('1 Admin');
+            expect(byId.get('log-admin-2')?.parentFolderName).toBe('1 Admin');
+            expect(byId.get('log-root')?.parentFolderName).toBeUndefined();
+            expect('parentFolderName' in (byId.get('log-root') ?? {})).toBe(false);
+            expect(byId.get('log-unreadable-parent')?.parentFolderName).toBeUndefined();
+            expect('parentFolderName' in (byId.get('log-unreadable-parent') ?? {})).toBe(false);
+          }
+
+          // folder-admin queried only ONCE across 2 candidates; space root NEVER queried; folder-forbidden queried once
+          expect(getFile).toHaveBeenCalledTimes(2);
+          expect(getFile).toHaveBeenCalledWith('folder-admin');
+          expect(getFile).toHaveBeenCalledWith('folder-forbidden');
+          expect(getFile).not.toHaveBeenCalledWith(sampleSpace.abstractStorageId);
+        });
+
+        it('reuses per-call getFileMemo populated during folder-backed descendant walks without duplicate getFile calls', async () => {
+          const folderSpace: DocumentLogSpace = {
+            id: 'opp-space-1',
+            typeId: 'proposals',
+            name: 'Opportunity Alpha',
+            abstractStorageId: 'folder-opp-root',
+          };
+          const getFile = vi.fn().mockImplementation(async (fileId: string): Promise<LogDiscoveryFileMetadata> => {
+            if (fileId === 'folder-opp-root') {
+              return { id: 'folder-opp-root', name: 'Opportunity Alpha', driveId: 'mkt-drive' };
+            }
+            if (fileId === 'folder-sub-1') {
+              return { id: 'folder-sub-1', name: '1 Admin', parents: ['folder-opp-root'] };
+            }
+            if (fileId === 'folder-sub-2') {
+              return { id: 'folder-sub-2', name: '6 Construction', parents: ['folder-opp-root'] };
+            }
+            throw new Error(`Unexpected fileId: ${fileId}`);
+          });
+          const searchSpreadsheets = vi.fn().mockResolvedValue([
+            {
+              id: 'log-1',
+              name: 'Opportunity Alpha Document Log',
+              parents: ['folder-sub-1'],
+              modifiedTime: '2026-10-15T12:00:00Z',
+            },
+            {
+              id: 'log-2',
+              name: 'Opportunity Alpha Document Log Old',
+              parents: ['folder-sub-2'],
+              modifiedTime: '2026-10-10T12:00:00Z',
+            },
+          ]);
+
+          const { service } = createService({
+            registry: { getSpaceFetchMethod: vi.fn().mockReturnValue('folders') },
+            discovery: { searchSpreadsheets, getFile },
+          });
+
+          const res = await service.resolveLog(folderSpace);
+          expect(res.status).toBe('ambiguous');
+          if (res.status === 'ambiguous') {
+            const byId = new Map(res.candidates.map((c) => [c.id, c]));
+            expect(byId.get('log-1')?.parentFolderName).toBe('1 Admin');
+            expect(byId.get('log-2')?.parentFolderName).toBe('6 Construction');
+          }
+
+          // folder-opp-root (scope check) + folder-sub-1 (once) + folder-sub-2 (once) = 3 total calls
+          expect(getFile).toHaveBeenCalledTimes(3);
+          expect(getFile.mock.calls.filter(([id]) => id === 'folder-sub-1')).toHaveLength(1);
+          expect(getFile.mock.calls.filter(([id]) => id === 'folder-sub-2')).toHaveLength(1);
+        });
+      });
     });
   });
 
@@ -1748,12 +1918,50 @@ describe('DocumentLogService', () => {
       });
     });
 
-    it('queryUiContext returns ambiguous with matching selectedLogId or ranked fallback candidate', async () => {
+    it('queryUiContext returns ambiguous with presentation-ready candidateOptions, matching selectedLogId, or ranked fallback when absent/stale, without leaking raw Drive metadata', async () => {
       const { service } = createService({
+        registry: { getSpaceFetchMethod: vi.fn().mockReturnValue('shared_drives') },
         discovery: {
+          resolveFolderPath: vi.fn().mockResolvedValue({ id: 'folder-admin', name: '1 Admin' }),
+          getFile: vi.fn().mockImplementation(async (fileId: string) => {
+            if (fileId === 'folder-admin') {
+              return { id: 'folder-admin', name: '1 Admin' };
+            }
+            if (fileId === 'folder-const') {
+              return { id: 'folder-const', name: '6 Construction' };
+            }
+            throw new Error('403 Forbidden');
+          }),
           searchSpreadsheets: vi.fn().mockResolvedValue([
-            { id: 'log-1', name: 'Harborview Hotel Document Log' },
-            { id: 'log-2', name: 'Harborview Hotel Document Log Archive' },
+            {
+              id: 'log-1',
+              name: 'Harborview Hotel Document Log',
+              parents: ['folder-admin'],
+              modifiedTime: '2026-10-19T14:30:00.000Z',
+              webViewLink: 'https://docs.google.com/spreadsheets/d/custom-log-1/edit',
+            },
+            {
+              id: 'log-2',
+              name: 'Harborview Hotel Document Log',
+              parents: ['folder-const'],
+              modifiedTime: '2026-10-12T08:00:00Z',
+            },
+            {
+              id: 'log-3',
+              name: 'Harborview Hotel Document Log Root',
+              parents: [sampleSpace.abstractStorageId],
+              modifiedTime: '2026-10-01T00:00:00Z',
+            },
+            {
+              id: 'log-4',
+              name: 'Harborview Hotel Document Log Undated',
+              parents: ['folder-const'],
+            },
+            {
+              id: 'log-5',
+              name: 'Harborview Hotel Document Log Plain',
+              parents: ['folder-forbidden'],
+            },
           ]),
         },
       });
@@ -1762,30 +1970,60 @@ describe('DocumentLogService', () => {
         documentTypeKey: 'submittal-arch',
         space: sampleSpace,
       });
+      expect(Value.Check(DocumentLogUiContextResultSchema, fallbackRes)).toBe(true);
       expect(fallbackRes).toEqual({
         status: 'ambiguous',
         spaceName: 'Harborview Hotel',
         targetFolderPath: '1 Admin',
+        candidateOptions: [
+          { text: 'Harborview Hotel Document Log (1 Admin · 2026-10-19)', value: 'log-1', selected: true },
+          { text: 'Harborview Hotel Document Log (6 Construction · 2026-10-12)', value: 'log-2', selected: false },
+          { text: 'Harborview Hotel Document Log Root (2026-10-01)', value: 'log-3', selected: false },
+          { text: 'Harborview Hotel Document Log Undated (6 Construction)', value: 'log-4', selected: false },
+          { text: 'Harborview Hotel Document Log Plain', value: 'log-5', selected: false },
+        ],
         activeCandidate: {
           name: 'Harborview Hotel Document Log',
-          url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+          url: 'https://docs.google.com/spreadsheets/d/custom-log-1/edit',
         },
       });
 
+      // Raw Drive metadata never leaks onto the presentation-ready UI context DTO
+      const serialized = JSON.stringify(fallbackRes);
+      expect(serialized).not.toContain('parentFolderName');
+      expect(serialized).not.toContain('modifiedTime');
+      expect(serialized).not.toContain('"parents"');
+
+      // Matching selectedLogId switches activeCandidate and selected option
       const chosenRes = await service.queryUiContext({
         documentTypeKey: 'submittal-arch',
         space: sampleSpace,
         selectedLogId: 'log-2',
       });
-      expect(chosenRes).toEqual({
-        status: 'ambiguous',
-        spaceName: 'Harborview Hotel',
-        targetFolderPath: '1 Admin',
-        activeCandidate: {
-          name: 'Harborview Hotel Document Log Archive',
-          url: 'https://docs.google.com/spreadsheets/d/log-2/edit',
-        },
+      expect(chosenRes?.activeCandidate).toEqual({
+        name: 'Harborview Hotel Document Log',
+        url: 'https://docs.google.com/spreadsheets/d/log-2/edit',
       });
+      expect(chosenRes?.candidateOptions).toEqual([
+        { text: 'Harborview Hotel Document Log (1 Admin · 2026-10-19)', value: 'log-1', selected: false },
+        { text: 'Harborview Hotel Document Log (6 Construction · 2026-10-12)', value: 'log-2', selected: true },
+        { text: 'Harborview Hotel Document Log Root (2026-10-01)', value: 'log-3', selected: false },
+        { text: 'Harborview Hotel Document Log Undated (6 Construction)', value: 'log-4', selected: false },
+        { text: 'Harborview Hotel Document Log Plain', value: 'log-5', selected: false },
+      ]);
+
+      // Stale selectedLogId (not in live candidates) falls back to ranked candidates[0]
+      const staleRes = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        selectedLogId: 'log-deleted-stale',
+      });
+      expect(staleRes?.activeCandidate).toEqual({
+        name: 'Harborview Hotel Document Log',
+        url: 'https://docs.google.com/spreadsheets/d/custom-log-1/edit',
+      });
+      expect(staleRes?.candidateOptions?.[0]?.selected).toBe(true);
+      expect(staleRes?.candidateOptions?.slice(1).every((o) => o.selected === false)).toBe(true);
     });
   });
 

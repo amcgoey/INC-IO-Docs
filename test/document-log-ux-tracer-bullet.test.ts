@@ -788,7 +788,7 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
     expect(nock.isDone()).toBe(true);
   });
 
-  it('blocks un-disambiguated ambiguous Document Logs in pre-flight even if SelectDocumentLog is spoofed, and rejects MOVE_FILE', async () => {
+  it('blocks un-disambiguated or stale ambiguous Document Logs in pre-flight even if SelectDocumentLog is spoofed, deletes stale selection, and rejects MOVE_FILE', async () => {
     const driveId = 'drive-ambig-1';
     const spaceName = 'Harbor Hotel';
 
@@ -829,8 +829,8 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
             [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: [spaceName] } },
             [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['submittal-arch'] } },
             SelectFiles: { stringInputs: { value: ['arch-ambig-file'] } },
-            // Spoofing SelectDocumentLog must NOT bypass resolveLog or inject selectedLogId into ExecutionContext
-            SelectDocumentLog: { stringInputs: { value: ['log-a'] } },
+            // Spoofing a non-live/stale SelectDocumentLog must NOT bypass resolveLog or inject selectedLogId into ExecutionContext
+            SelectDocumentLog: { stringInputs: { value: ['log-spoofed-stale'] } },
             [getDocumentInfoWidgetName('section', 'submittal-arch')]: { stringInputs: { value: ['071200'] } },
             [getDocumentInfoWidgetName('number', 'submittal-arch')]: { stringInputs: { value: ['001'] } },
             [getDocumentInfoWidgetName('title', 'submittal-arch')]: { stringInputs: { value: ['Waterproofing'] } },
@@ -844,6 +844,7 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
     expect(res.statusCode).toBe(200);
     const ambigCard = getCard(res.payload, 'updateCard');
     expect(JSON.stringify(ambigCard)).toContain('Multiple DocumentLog spreadsheets found');
+    expect(JSON.stringify(ambigCard)).not.toContain('log-spoofed-stale');
     expect(nock.isDone()).toBe(true);
   });
 

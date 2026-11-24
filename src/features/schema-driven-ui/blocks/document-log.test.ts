@@ -225,37 +225,62 @@ describe('Document Log Block', () => {
     });
   });
 
-  it('renders warning textParagraph and Open Log decoratedText for status: ambiguous and honors maxWidgets clamp', () => {
-    const activeName = 'Log & <1> = \'A\'';
-    const activeUrl = 'https://docs.google.com/spreadsheets/d/log-a/edit';
+  it('renders SelectDocumentLog DROPDOWN followed by only 1 active-log decoratedText bar with Open Log for status: ambiguous and honors maxWidgets clamp', () => {
+    const activeName = 'Log & <1> = \'B\'';
+    const spaceName = 'Harbor & <Bay> Hotel';
+    const activeUrl = 'https://docs.google.com/spreadsheets/d/log-b/edit';
+    const candidateOptions = [
+      { text: 'Log A (1 Admin · 2026-10-19)', value: 'log-a', selected: false },
+      { text: 'Log B (6 Construction · 2026-10-12)', value: 'log-b', selected: true },
+      { text: 'Log C (2026-10-01)', value: 'log-c', selected: false },
+    ];
 
     const context: DocumentLogPanelContext = {
       status: 'ambiguous',
-      spaceName: 'Harborview Hotel',
+      spaceName,
       targetFolderPath: '1 Admin',
-      candidateOptions: [
-        { text: 'Log A', value: 'log-a', selected: true },
-        { text: 'Log B', value: 'log-b', selected: false },
-      ],
+      candidateOptions,
       activeCandidate: {
         name: activeName,
         url: activeUrl,
       },
     };
 
-    const section = buildDocumentLogSection(context);
+    const actionParams = {
+      previousSpaceId: 'space-harbor',
+      previousSelectedLogId: 'log-b',
+    };
+    const section = buildDocumentLogSection(context, {
+      actionParameters: actionParams,
+    });
 
     expect(section).toBeDefined();
     expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
     expect(section?.header).toBe('Document Log');
+    expect(section?.widgets).toHaveLength(2);
 
-    const paragraph = section?.widgets.find((w) => w.textParagraph !== undefined)?.textParagraph;
-    expect(paragraph).toBeDefined();
-    expect(paragraph?.text.trim().length).toBeGreaterThan(0);
+    // Widget 0: SelectDocumentLog dropdown
+    expect(section?.widgets[0].selectionInput).toEqual({
+      name: 'SelectDocumentLog',
+      label: 'Document Log (3 found)',
+      type: 'DROPDOWN',
+      items: candidateOptions,
+      onChangeAction: {
+        action: 'onFormChange',
+        parameters: actionParams,
+      },
+    });
 
-    const decorated = section?.widgets.find((w) => w.decoratedText !== undefined)?.decoratedText;
+    // Widget 1: ONLY 1 active-log decoratedText bar with Open Log
+    const decoratedWidgets = section?.widgets.filter((w) => w.decoratedText !== undefined) ?? [];
+    expect(decoratedWidgets).toHaveLength(1);
+    const decorated = section?.widgets[1].decoratedText;
     expect(decorated).toBeDefined();
+    expect(decorated?.topLabel).toBe(`Active Document Log · ${spaceName}`);
+    expect(decorated?.topLabel).not.toContain('&amp;');
     expect(decorated?.text).toContain(escapeCardHtml(activeName));
+    expect(decorated?.text).not.toContain(activeName);
+    expect(decorated?.wrapText).toBe(true);
     expect(decorated?.button).toEqual({
       text: 'Open Log',
       onClick: {
@@ -266,6 +291,19 @@ describe('Document Log Block', () => {
       },
     });
 
+    // Omits parameters on onChangeAction when onChangeActionParameters is omitted or empty
+    const sectionNoParams = buildDocumentLogSection(context);
+    expect(sectionNoParams?.widgets[0].selectionInput?.onChangeAction).toEqual({
+      action: 'onFormChange',
+    });
+    const sectionEmptyParams = buildDocumentLogSection(context, {
+      actionParameters: {},
+    });
+    expect(sectionEmptyParams?.widgets[0].selectionInput?.onChangeAction).toEqual({
+      action: 'onFormChange',
+    });
+
+    // Honors maxWidgets clamp
     const clamped = buildDocumentLogSection(context, { maxWidgets: 1 });
     expect(clamped).toBeDefined();
     expect(Value.Check(UiViewSectionSchema, clamped)).toBe(true);

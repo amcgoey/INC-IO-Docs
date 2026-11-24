@@ -41,6 +41,7 @@ import {
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
   SELECT_EMAIL_MESSAGE_KEY,
+  SELECT_DOCUMENT_LOG_KEY,
   DRIVE_ROUTING_FALLBACK_NOTICE,
   DRIVE_METADATA_FALLBACK_NOTICE,
   hasProposalOpportunityMarkers,
@@ -52,6 +53,7 @@ import {
   isInCardAction,
   isResetOrInitialLoad,
   sanitizeFormDataForSourceReset,
+  reconcileDocumentLogSelection,
   pruneFormDataForTypeSwitch,
   extractActiveTypeExistingData,
   type UiStateResolutionContext,
@@ -152,6 +154,17 @@ function buildSourceEmailDescriptor(
       ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
     })),
   };
+}
+
+function omitPreviousSelectedLogParam(
+  parameters?: Record<string, string>
+): Record<string, string> | undefined {
+  if (!parameters || !('previousSelectedLogId' in parameters)) {
+    return parameters;
+  }
+  const next = { ...parameters };
+  delete next.previousSelectedLogId;
+  return next;
 }
 
 export interface WorkspaceAddonAdapterOptions {
@@ -579,6 +592,30 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       }
     }
 
+    const postPass1SpaceResolution = resolveSpace(
+      {
+        formData: normalizedFormData,
+        activeSpaceType: currentSpaceType,
+        config,
+      },
+      spaces
+    );
+
+    const logSelectionReconciliation = reconcileDocumentLogSelection({
+      formData: normalizedFormData,
+      actionName,
+      parameters: effectiveContext.parameters,
+      currentSpaceId: postPass1SpaceResolution.spaceId,
+      isSourceReset: isSourceReset || isPass1Reset,
+    });
+    normalizedFormData = logSelectionReconciliation.formData;
+    if (logSelectionReconciliation.cleared && effectiveContext.parameters) {
+      effectiveContext = {
+        ...effectiveContext,
+        parameters: omitPreviousSelectedLogParam(effectiveContext.parameters),
+      };
+    }
+
     const isPass2Event =
       actionName !== 'processDocument' &&
       actionName !== 'copyDocumentLog' &&
@@ -598,15 +635,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           )
         : {};
 
-      const spaceResolution = resolveSpace(
-        {
-          formData: normalizedFormData,
-          activeSpaceType: currentSpaceType,
-          config,
-        },
-        spaces
-      );
-      const pass2SpaceId = spaceResolution.matchedSpace?.id;
+      const pass2SpaceId = postPass1SpaceResolution.matchedSpace?.id;
 
       const isGmailDriveUrlMode =
         isGmail && gmailDriveSelection.effectiveFileSource === 'Google Drive URL';
@@ -691,16 +720,23 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       statusMessages?: string[] | undefined;
       isUpdateCard?: boolean | undefined;
       hiddenFields?: string[] | undefined;
+      clearPreviousSelectedLogId?: boolean | undefined;
       notification?: string | undefined;
     }): UiProcessResult => {
       const combinedValidationErrors = [
         ...(options.validationErrors ?? normalizedContext.validationErrors ?? []),
         ...collectionErrors,
       ];
+      const renderParameters = options.clearPreviousSelectedLogId
+        ? omitPreviousSelectedLogParam(normalizedContext.parameters)
+        : normalizedContext.parameters;
 
       const state = evaluateProcessUiState({
         context: {
           ...normalizedContext,
+          ...(renderParameters !== normalizedContext.parameters
+            ? { parameters: renderParameters }
+            : {}),
           ...(options.formData !== undefined ? { formData: options.formData } : {}),
           ...(combinedValidationErrors.length > 0 ? { validationErrors: combinedValidationErrors } : {}),
           ...(options.statusMessages !== undefined
@@ -1019,14 +1055,36 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
               ]);
             }
             if (logResolution.status === 'ambiguous') {
-              const candidateSummary = logResolution.candidates
-                .map((c) => `"${c.name}" (${c.id})`)
-                .join(', ');
-              return createErrorRenderResult([
-                `Multiple DocumentLog spreadsheets found for space "${space.name}": ${candidateSummary}.`,
-              ]);
+              const rawSelectedLog = normalizedContext.formData?.[SELECT_DOCUMENT_LOG_KEY];
+              const effectiveSelectedLogId =
+                typeof rawSelectedLog === 'string' && rawSelectedLog.trim().length > 0
+                  ? rawSelectedLog.trim()
+                  : undefined;
+
+              const matchedCandidate = effectiveSelectedLogId
+                ? logResolution.candidates.find((c) => c.id === effectiveSelectedLogId)
+                : undefined;
+
+              if (matchedCandidate) {
+                selectedLogId = matchedCandidate.id;
+              } else {
+                const cleanedFormData = { ...(normalizedContext.formData ?? {}) };
+                delete cleanedFormData[SELECT_DOCUMENT_LOG_KEY];
+                const candidateSummary = logResolution.candidates
+                  .map((c) => `"${c.name}" (${c.id})`)
+                  .join(', ');
+                return createRenderResult({
+                  formData: cleanedFormData,
+                  validationErrors: [
+                    `Multiple DocumentLog spreadsheets found for space "${space.name}": ${candidateSummary}. Please select a Document Log and try again.`,
+                  ],
+                  isUpdateCard: true,
+                  clearPreviousSelectedLogId: true,
+                });
+              }
+            } else {
+              selectedLogId = logResolution.candidate.id;
             }
-            selectedLogId = logResolution.candidate.id;
           }
         } catch (error) {
           const message =
