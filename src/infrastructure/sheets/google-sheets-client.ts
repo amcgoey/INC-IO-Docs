@@ -246,6 +246,22 @@ function buildRowRecord(row: CellValue[], columnIndexMap: Map<string, number>): 
   return record;
 }
 
+function collectFormulaColumns(
+  formulaRows: readonly CellValue[][],
+  parsed: ParsedPositiveTable
+): string[] {
+  const formulaColSet = new Set<string>();
+  for (const row of formulaRows) {
+    for (const [colName, colIdx] of parsed.columnIndexMap.entries()) {
+      const cell = colIdx < row.length ? row[colIdx] : undefined;
+      if (typeof cell === 'string' && cell.trim().startsWith('=')) {
+        formulaColSet.add(colName);
+      }
+    }
+  }
+  return parsed.headers.filter((header) => formulaColSet.has(header));
+}
+
 function parsePositiveTable(
   values: CellValue[][],
   target: PositiveTableTarget,
@@ -977,7 +993,7 @@ export class GoogleSheetsClient implements SheetsClient {
   private async readValues(
     spreadsheetId: string,
     a1Range: string,
-    valueRenderOption: 'UNFORMATTED_VALUE' | 'FORMATTED_VALUE'
+    valueRenderOption: 'UNFORMATTED_VALUE' | 'FORMATTED_VALUE' | 'FORMULA'
   ): Promise<CellValue[][]> {
     const response = await this.executeWithRetry(() =>
       this.sheetsApi.spreadsheets.values.get({
@@ -1065,6 +1081,7 @@ export class GoogleSheetsClient implements SheetsClient {
     rangeStartRowIndex: number;
     rangeStartColumnIndex: number;
     parsed: ParsedPositiveTable;
+    formulaColumns: string[];
   }> {
     const { sheetId, sheetTitle, gridRange } = await this.resolveNamedRange(target);
     const a1Range = gridRangeToA1(sheetTitle, gridRange);
@@ -1073,11 +1090,23 @@ export class GoogleSheetsClient implements SheetsClient {
     const rangeStartColumnIndex = gridRange.startColumnIndex ?? 0;
     const parsed = parsePositiveTable(values, target, rangeStartRowIndex);
 
+    let formulaColumns: string[] = [];
+    if (parsed.topAnchorIndex > 1) {
+      const formulaA1Range = gridRangeToA1(sheetTitle, {
+        ...gridRange,
+        startRowIndex: rangeStartRowIndex + 1,
+        endRowIndex: rangeStartRowIndex + parsed.topAnchorIndex,
+      });
+      const formulaRows = await this.readValues(target.spreadsheetId, formulaA1Range, 'FORMULA');
+      formulaColumns = collectFormulaColumns(formulaRows, parsed);
+    }
+
     return {
       sheetId,
       rangeStartRowIndex,
       rangeStartColumnIndex,
       parsed,
+      formulaColumns,
     };
   }
 
@@ -1085,7 +1114,7 @@ export class GoogleSheetsClient implements SheetsClient {
    * Reads a positive-terminated table bounded by `extentMarker` anchors using `FORMATTED_VALUE`.
    */
   async readTable(request: ReadPositiveTableRequest): Promise<PositiveTableReadResult> {
-    const { parsed } = await this.loadParsedPositiveTable(request.target);
+    const { parsed, formulaColumns } = await this.loadParsedPositiveTable(request.target);
 
     const rows: PositiveTableRow[] = parsed.betweenRows
       .filter((row) => row.kind === 'data')
@@ -1096,7 +1125,7 @@ export class GoogleSheetsClient implements SheetsClient {
 
     return {
       headers: parsed.headers,
-      formulaColumns: [],
+      formulaColumns,
       rows,
     };
   }
@@ -1108,10 +1137,13 @@ export class GoogleSheetsClient implements SheetsClient {
     request: InsertPositiveGroupedRowRequest
   ): Promise<InsertGroupedRowResult> {
     return await this.lock.acquire(request.target.spreadsheetId, async () => {
-      const { sheetId, rangeStartRowIndex, rangeStartColumnIndex, parsed } =
+      const { sheetId, rangeStartRowIndex, rangeStartColumnIndex, parsed, formulaColumns } =
         await this.loadParsedPositiveTable(request.target);
 
-      const protectedColumns = new Set(request.readOnlyColumns ?? []);
+      const protectedColumns = new Set([
+        ...formulaColumns,
+        ...(request.readOnlyColumns ?? []),
+      ]);
       const dataRows = parsed.betweenRows.filter((row) => row.kind === 'data');
 
       let requests: sheets_v4.Schema$Request[];

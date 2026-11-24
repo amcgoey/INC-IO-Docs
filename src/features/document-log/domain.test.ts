@@ -391,5 +391,160 @@ describe('DocumentLogService', () => {
         })
       );
     });
+
+    it('writes Submittal FF&E rows skipping readOnly Spec Title, forwarding readOnlyColumns, mapping blank relatedTag to null, and computing identity keys', async () => {
+      const ffeLogSchema: DocumentLogSchema = {
+        provider: 'google_sheets',
+        target: {
+          sheetName: 'Submittal FF&E',
+          rangeName: 'Log_Submittal_FFE',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        grouping: {
+          groupBy: 'idGroup',
+          sortBy: 'id',
+          groupSortOrder: 'asc',
+          rowSortOrder: 'asc',
+          duplicatePolicy: 'insert',
+        },
+        columns: {
+          Status: { template: '{{status.key}}' },
+          'Spec Tag': { template: '{{specTag.key}}' },
+          'Related Tag': { template: '{{relatedTag.key}}' },
+          Revision: { template: '{{revision}}' },
+          'Spec Title': { template: '{{specTitle}}', readOnly: true },
+          Vendor: { template: '{{vendor.name}}' },
+          Date: { template: '{{date}}' },
+          Contact: { template: '{{contact.key}}' },
+          Action: { template: '{{action.name}}' },
+          Notes: { template: '{{notes}}' },
+          'Calc Link': { source: 'fileLink', label: 'Link' },
+        },
+      };
+
+      const ffeTargetSchema: LogTargetDocumentSchema = {
+        fields: [
+          { key: 'status', name: 'Status', type: 'string', required: true, options: { source: 'statuses', key: 'key' } },
+          { key: 'specTag', name: 'Spec Tag', type: 'string', required: true, options: { source: 'specs', key: 'key', allowUserInput: true } },
+          { key: 'relatedTag', name: 'Related Tag', type: 'string', required: false, options: { source: 'specs', key: 'key', allowUserInput: true } },
+          { key: 'revision', name: 'Revision', type: 'string', required: true },
+          { key: 'specTitle', name: 'Spec Title', type: 'string', required: true, linkedField: { sourceField: 'specTag', sourceProperty: 'name' } },
+          { key: 'vendor', name: 'Vendor', type: 'string', required: true, options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'date', name: 'Date', type: 'string', required: true },
+          { key: 'contact', name: 'Contact', type: 'string', required: true, options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'action', name: 'Action', type: 'string', required: true, options: { source: 'actions', key: 'key', name: 'name' } },
+          { key: 'notes', name: 'Notes', type: 'string', required: false },
+        ],
+        identity: {
+          idGroup: '{{specTag.key}}',
+          idDocument: '{{specTag.key}}-{{revision}}',
+          id: '{{specTag.key}}-{{revision}}-{{date}}-{{action.order}}',
+        },
+        options: {
+          statuses: [{ key: 'Open' }, { key: 'Closed' }],
+          specs: [{ key: 'CG104', name: 'BED - KING' }],
+          vendors: [{ key: 'FDT', name: 'Fil Doux Textiles' }],
+          contacts: [{ key: 'BW', name: 'Benjamin West' }],
+          actions: [{ key: 'REC', name: 'Received', order: '1' }],
+        },
+      };
+
+      const insertRow = vi.fn().mockResolvedValue({ rowNumber: 8, action: 'inserted' });
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockImplementation((k) => (k === 'submittal-ffe' ? ffeLogSchema : undefined)),
+          getTargetSchema: vi.fn().mockImplementation((k) => (k === 'submittal-ffe' ? ffeTargetSchema : undefined)),
+        },
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-ffe-1', name: 'Harborview Hotel Document Log' },
+          ]),
+        },
+        storage: { insertRow },
+      });
+
+      const res = await service.writeLog({
+        document: {
+          type: 'submittal-ffe',
+          space: sampleSpace,
+          data: {
+            status: 'Open',
+            specTag: 'CG104',
+            relatedTag: '',
+            revision: '0',
+            specTitle: 'BED - KING',
+            vendor: 'FDT',
+            date: '260120',
+            contact: 'BW',
+            action: 'REC',
+            notes: '',
+          },
+        },
+        fileUri: 'https://drive.google.com/file/d/ffe-doc-1/view',
+      });
+
+      expect(res).toEqual({
+        spreadsheetId: 'log-ffe-1',
+        sheetName: 'Submittal FF&E',
+        rowNumber: 8,
+        action: 'inserted',
+      });
+
+      expect(insertRow).toHaveBeenCalledWith({
+        target: {
+          spreadsheetId: 'log-ffe-1',
+          sheetName: 'Submittal FF&E',
+          rangeName: 'Log_Submittal_FFE',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        rowData: {
+          Status: 'Open',
+          'Spec Tag': 'CG104',
+          'Related Tag': null,
+          Revision: '0',
+          Vendor: 'Fil Doux Textiles',
+          Date: '260120',
+          Contact: 'BW',
+          Action: 'Received',
+          Notes: null,
+          'Calc Link': {
+            formula: '=HYPERLINK("https://drive.google.com/file/d/ffe-doc-1/view", "Link")',
+          },
+        },
+        readOnlyColumns: ['Spec Title'],
+        rowKeyExtractor: expect.any(Function),
+        targetKeys: {
+          groupKey: 'CG104',
+          sortKey: 'CG104-0-260120-1',
+        },
+        groupSortOrder: 'asc',
+        rowSortOrder: 'asc',
+        duplicatePolicy: 'insert',
+      });
+
+      const passedRequest = insertRow.mock.calls[0][0];
+      expect('Spec Title' in passedRequest.rowData).toBe(false);
+      expect(
+        passedRequest.rowKeyExtractor({
+          'Spec Tag': 'CG104',
+          Revision: '0',
+          Date: '260120',
+          Action: 'received',
+        })
+      ).toEqual({
+        groupKey: 'CG104',
+        sortKey: 'CG104-0-260120-1',
+      });
+      expect(
+        passedRequest.rowKeyExtractor({
+          'Spec Tag': '',
+          Revision: '0',
+          Date: '260120',
+          Action: 'Received',
+        })
+      ).toBeNull();
+    });
   });
 });

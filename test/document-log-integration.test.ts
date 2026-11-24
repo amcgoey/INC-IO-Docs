@@ -64,6 +64,14 @@ const sampleFixture = JSON.parse(
     seedEntries: FixtureSubmittalEntry[];
     writeScenarios: FixtureWriteScenario[];
   };
+  submittalFfe: {
+    sheetName: string;
+    rangeName: string;
+    headers: string[];
+    formulaOwnedColumns: string[];
+    seedEntries: FixtureSubmittalEntry[];
+    writeScenarios: FixtureWriteScenario[];
+  };
 };
 
 interface MockDriveState {
@@ -104,6 +112,34 @@ function createMockDriveSdk(state: MockDriveState): NonNullable<GoogleDriveClien
                 name: 'Submittals',
                 mimeType: 'application/vnd.google-apps.folder',
                 parents: ['folder-6-construction'],
+              },
+            ],
+          },
+        };
+      }
+      if (q.includes("name = '3 FFE'")) {
+        return {
+          data: {
+            files: [
+              {
+                id: 'folder-3-ffe',
+                name: '3 FFE',
+                mimeType: 'application/vnd.google-apps.folder',
+                parents: [sampleFixture.space.abstractStorageId],
+              },
+            ],
+          },
+        };
+      }
+      if (q.includes("name = '05 Submittals'")) {
+        return {
+          data: {
+            files: [
+              {
+                id: 'folder-ffe-submittals',
+                name: '05 Submittals',
+                mimeType: 'application/vnd.google-apps.folder',
+                parents: ['folder-3-ffe'],
               },
             ],
           },
@@ -275,6 +311,9 @@ function formatCellForValuesGet(
     return '';
   }
   if (typeof cell === 'string' && valueRenderOption !== 'FORMULA') {
+    if (cell === '=SPILL_EMPTY') {
+      return '';
+    }
     const hyperlinkMatch = /^=HYPERLINK\("([^"]*)",\s*"([^"]*)"\)$/i.exec(cell);
     if (hyperlinkMatch) {
       return hyperlinkMatch[2];
@@ -355,7 +394,10 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
   const getMetadata = vi.fn().mockImplementation(async ({ spreadsheetId }: { spreadsheetId: string }) => ({
     data: {
       spreadsheetId,
-      sheets: [{ properties: { sheetId: 101, title: sampleFixture.submittalArch.sheetName } }],
+      sheets: [
+        { properties: { sheetId: 101, title: sampleFixture.submittalArch.sheetName } },
+        { properties: { sheetId: 102, title: sampleFixture.submittalFfe.sheetName } },
+      ],
       namedRanges: [
         state.namedRange
           ? {
@@ -373,6 +415,21 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
                 endColumnIndex: 10,
               },
             },
+        ...(!state.namedRange
+          ? [
+              {
+                namedRangeId: 'nr-ffe',
+                name: sampleFixture.submittalFfe.rangeName,
+                range: {
+                  sheetId: 102,
+                  startRowIndex: 2,
+                  endRowIndex: 21,
+                  startColumnIndex: 0,
+                  endColumnIndex: 11,
+                },
+              },
+            ]
+          : []),
       ],
     },
   }));
@@ -405,9 +462,28 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
         };
       }
 
+      const nrStartRow = state.namedRange?.range.startRowIndex ?? 2;
+      const nrStartCol = state.namedRange?.range.startColumnIndex ?? 0;
+      const bounds = parseA1RangeBounds(
+        params?.range ?? '',
+        nrStartRow + state.tableValues.length,
+        nrStartCol + 15
+      );
+      const relStartRow = Math.max(0, bounds.startRowIndex - nrStartRow);
+      const relEndRow = Math.max(relStartRow, bounds.endRowIndex - nrStartRow);
+      const relStartCol = Math.max(0, bounds.startColumnIndex - nrStartCol);
+      const relEndCol = Math.max(relStartCol, bounds.endColumnIndex - nrStartCol);
+      const slicedTableValues = state.tableValues
+        .slice(relStartRow, relEndRow)
+        .map((row) =>
+          row
+            .slice(relStartCol, relEndCol)
+            .map((cell) => formatCellForValuesGet(cell, params?.valueRenderOption))
+        );
+
       return {
         data: {
-          values: state.tableValues,
+          values: slicedTableValues,
         },
       };
     }
@@ -1335,13 +1411,14 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
 
   function createDuplicatePolicyManifestProvider(
     baseProvider: AppManifestProvider,
-    duplicatePolicy: DocumentLogDuplicatePolicy
+    duplicatePolicy: DocumentLogDuplicatePolicy,
+    targetFileSubstring = 'submittal-arch'
   ): RawManifestProviderPort {
     return {
       getRawManifest: () => baseProvider.getRawManifest(),
       readParsedSchema: async (relPath: string) => {
         const parsed = await baseProvider.readParsedSchema(relPath);
-        if (relPath.includes('submittal-arch')) {
+        if (relPath.includes(targetFileSubstring)) {
           const cloned = structuredClone(parsed) as Record<string, unknown>;
           const docLogSchema = cloned.documentLogSchema as {
             grouping: { duplicatePolicy: DocumentLogDuplicatePolicy };
@@ -1649,5 +1726,464 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     }
     expect(rejectSheetsState.batchUpdates).toHaveLength(0);
     expect(rejectServiceCtx.sheetsSdk.spreadsheets.batchUpdate).not.toHaveBeenCalled();
+  });
+
+  describe('Submittal FF&E (FileSubmittalFFE) & Formula-Row Protection Integration (Issue #342)', () => {
+    const ffeFormula =
+      '=ARRAYFORMULA(IF(B6:B="","",VLOOKUP(B6:B,Options_Submittal_FFE_Specs,2,FALSE)))';
+
+    function buildSeededSubmittalFfeState(): MockSheetsState {
+      const grid: SimCellValue[][] = [
+        [], // Row 1
+        [], // Row 2
+        [...sampleFixture.submittalFfe.headers], // Row 3 Headers
+        ['Formula Row', null, null, null, ffeFormula], // Row 4 Formula Row
+        ['<--->'], // Row 5 Top Anchor
+      ];
+
+      let previousGroupId: string | undefined;
+      for (let i = 0; i < sampleFixture.submittalFfe.seedEntries.length; i++) {
+        const entry = sampleFixture.submittalFfe.seedEntries[i];
+        if (previousGroupId !== undefined && previousGroupId !== entry.identity.idGroup) {
+          grid.push(['---']);
+        }
+        previousGroupId = entry.identity.idGroup;
+        const d = entry.documentData;
+        grid.push([
+          String(d.status ?? ''),
+          String(d.specTag ?? ''),
+          typeof d.relatedTag === 'string' && d.relatedTag.length > 0 ? d.relatedTag : null,
+          String(d.revision ?? ''),
+          `=SPILL_SPEC_TITLE_${i}`,
+          String(d.vendor ?? ''),
+          String(d.date ?? ''),
+          String(d.contact ?? ''),
+          entry.actionName,
+          typeof d.notes === 'string' && d.notes.length > 0 ? d.notes : null,
+          entry.fileUri ? `=HYPERLINK("${entry.fileUri}", "Link")` : null,
+        ]);
+      }
+      grid.push(['<--->']); // Bottom Anchor
+
+      return {
+        tableValues: [],
+        batchUpdates: [],
+        grid,
+        namedRange: {
+          namedRangeId: 'nr-ffe',
+          name: sampleFixture.submittalFfe.rangeName,
+          range: {
+            sheetId: 102,
+            startRowIndex: 2,
+            endRowIndex: grid.length,
+            startColumnIndex: 0,
+            endColumnIndex: sampleFixture.submittalFfe.headers.length,
+          },
+        },
+      };
+    }
+
+    it('executes FileSubmittalFFE into cleared template protecting Row-4 Spec Title ARRAYFORMULA and keeping optional blank relatedTag empty', async () => {
+      const driveState: MockDriveState = {
+        searchResults: [
+          {
+            id: 'harborview-log-1',
+            name: sampleFixture.space.expectedLogFileName,
+            mimeType: 'application/vnd.google-apps.spreadsheet',
+          },
+        ],
+      };
+      const grid: SimCellValue[][] = [
+        [], // Row 1
+        [], // Row 2
+        [...sampleFixture.submittalFfe.headers], // Row 3 Headers
+        ['Formula Row', null, null, null, ffeFormula], // Row 4 Formula Row
+        ['<--->'], // Row 5 Top Anchor
+        [null, null, null, null, '=SPILL_EMPTY'], // Row 6 Cleared Placeholder Row (empty formatted spill untouched)
+        ['<--->'], // Row 7 Bottom Anchor
+      ];
+      const sheetsState: MockSheetsState = {
+        tableValues: [],
+        batchUpdates: [],
+        grid,
+        namedRange: {
+          namedRangeId: 'nr-ffe',
+          name: sampleFixture.submittalFfe.rangeName,
+          range: {
+            sheetId: 102,
+            startRowIndex: 2,
+            endRowIndex: grid.length,
+            startColumnIndex: 0,
+            endColumnIndex: 11,
+          },
+        },
+      };
+
+      const { documentService, sheetsClient } = await buildWiredDocumentService({
+        driveState,
+        sheetsState,
+        primaryTargetId: 'fixture-ffe-ac102-0-rec',
+      });
+
+      const topScenario = sampleFixture.submittalFfe.writeScenarios[0];
+      const result = await documentService.processDocument(
+        {
+          type: 'submittal-ffe',
+          space: {
+            id: sampleFixture.space.id,
+            typeId: sampleFixture.space.typeId,
+            name: sampleFixture.space.name,
+            abstractStorageId: sampleFixture.space.abstractStorageId,
+          },
+          data: topScenario.documentData,
+        },
+        'onSubmit'
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+      expect(result.contextVariables?.documentLogWrite).toEqual({
+        spreadsheetId: 'harborview-log-1',
+        sheetName: 'Submittal FF&E',
+        rowNumber: 6,
+        action: 'inserted',
+      });
+
+      expect(sheetsState.batchUpdates).toHaveLength(1);
+      const updateReqs = sheetsState.batchUpdates[0].requests.filter((r) => r.updateCells);
+      expect(updateReqs.map((r) => r.updateCells?.range)).toEqual([
+        { sheetId: 102, startRowIndex: 5, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 4 },
+        { sheetId: 102, startRowIndex: 5, endRowIndex: 6, startColumnIndex: 5, endColumnIndex: 11 },
+      ]);
+      // Related Tag (col 2) is blank ({}), Spec Title (col 4) spill is untouched, Calc Link has =HYPERLINK
+      expect(updateReqs[0].updateCells?.rows?.[0]?.values?.[2]).toEqual({});
+      expect(grid[5][4]).toBe('=SPILL_EMPTY');
+      expect(grid[5][10]).toBe(
+        '=HYPERLINK("https://drive.google.com/file/d/fixture-ffe-ac102-0-rec/view", "Link")'
+      );
+
+      const table = await sheetsClient.readTable({
+        target: {
+          spreadsheetId: 'harborview-log-1',
+          sheetName: 'Submittal FF&E',
+          rangeName: 'Log_Submittal_FFE',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+      });
+      expect(table.formulaColumns).toEqual(['Spec Title']);
+      expect(table.rows).toHaveLength(1);
+      expect(table.rows[0].values['Related Tag']).toBe('');
+    });
+
+    it('executes all 3 submittalFfe.writeScenarios sequentially with grouped/sorted placement, dividers, optional relatedTag, and Spec Title ARRAYFORMULA protection', async () => {
+      const driveState: MockDriveState = {
+        searchResults: [
+          {
+            id: 'harborview-log-1',
+            name: sampleFixture.space.expectedLogFileName,
+            mimeType: 'application/vnd.google-apps.spreadsheet',
+          },
+        ],
+      };
+      const sheetsState = buildSeededSubmittalFfeState();
+      const space = {
+        id: sampleFixture.space.id,
+        typeId: sampleFixture.space.typeId,
+        name: sampleFixture.space.name,
+        abstractStorageId: sampleFixture.space.abstractStorageId,
+      };
+
+      const scenarioResults: Array<{
+        scenario: string;
+        rowNumber: number;
+        action: string;
+        requests: MockBatchRequest[];
+      }> = [];
+
+      let lastSheetsClient: GoogleSheetsClient | undefined;
+
+      for (const scenario of sampleFixture.submittalFfe.writeScenarios) {
+        const fileIdMatch = /\/d\/([^/]+)\//.exec(scenario.fileUri);
+        const fileId = fileIdMatch?.[1];
+        if (!fileId) {
+          throw new Error(`Missing Drive fileId in fixture fileUri: ${scenario.fileUri}`);
+        }
+
+        const { documentService, sheetsClient } = await buildWiredDocumentService({
+          driveState,
+          sheetsState,
+          primaryTargetId: fileId,
+        });
+        lastSheetsClient = sheetsClient;
+
+        const result = await documentService.processDocument(
+          {
+            type: 'submittal-ffe',
+            space,
+            data: scenario.documentData,
+          },
+          'onSubmit'
+        );
+
+        expect(result.success, `Scenario ${scenario.scenario} failed`).toBe(true);
+        if (!result.success) return;
+
+        expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+        const writeInfo = result.contextVariables?.documentLogWrite as {
+          rowNumber: number;
+          action: string;
+        };
+        const requests = sheetsState.batchUpdates[sheetsState.batchUpdates.length - 1].requests;
+
+        // Every write emits minimal contiguous runs skipping Column 4 (Spec Title)
+        const dataUpdates = requests.filter(
+          (r) => r.updateCells && (r.updateCells.range?.endColumnIndex ?? 0) > 1
+        );
+        expect(
+          dataUpdates.map((r) => [
+            r.updateCells?.range?.startColumnIndex,
+            r.updateCells?.range?.endColumnIndex,
+          ])
+        ).toEqual([
+          [0, 4],
+          [5, 11],
+        ]);
+
+        scenarioResults.push({
+          scenario: scenario.scenario,
+          rowNumber: writeInfo.rowNumber,
+          action: writeInfo.action,
+          requests,
+        });
+      }
+
+      // 1) insertTopNewGroup (AC102 before CG104): Row 6, inheritFromBefore: false, Column-0 "---" at Row 7
+      expect(scenarioResults[0].scenario).toBe('insertTopNewGroup');
+      expect(scenarioResults[0].rowNumber).toBe(6);
+      expect(scenarioResults[0].requests[0].insertDimension?.inheritFromBefore).toBe(false);
+
+      // 2) insertMiddleNewGroup (CP119 between CG104 and FB127): Row 12
+      expect(scenarioResults[1].scenario).toBe('insertMiddleNewGroup');
+      expect(scenarioResults[1].rowNumber).toBe(12);
+      expect(scenarioResults[1].requests[0].insertDimension?.inheritFromBefore).toBe(true);
+
+      // 3) insertIntoExistingGroupWithRelatedTag (CG104-1-260205-1 between CG104-0-260128-5 and CG104-1-260210-6): Row 10
+      expect(scenarioResults[2].scenario).toBe('insertIntoExistingGroupWithRelatedTag');
+      expect(scenarioResults[2].rowNumber).toBe(10);
+      expect(scenarioResults[2].requests[0].insertDimension?.inheritFromBefore).toBe(true);
+
+      const finalTable = await lastSheetsClient!.readTable({
+        target: {
+          spreadsheetId: 'harborview-log-1',
+          sheetName: sampleFixture.submittalFfe.sheetName,
+          rangeName: sampleFixture.submittalFfe.rangeName,
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+      });
+
+      expect(finalTable.formulaColumns).toEqual(['Spec Title']);
+      expect(finalTable.rows).toHaveLength(12);
+      expect(
+        finalTable.rows.map(
+          (r) =>
+            `${r.values['Spec Tag']}-${r.values.Revision}-${r.values.Date}-${r.values.Contact}|${r.values['Related Tag'] ?? ''}`
+        )
+      ).toEqual([
+        'AC102-0-260112-HPG|',
+        'CG104-0-260120-HPG|FB127',
+        'CG104-0-260128-ARC|FB127',
+        'CG104-1-260205-HPG|FB127',
+        'CG104-1-260210-ARC|FB127',
+        'CP119-0-260201-HPG|',
+        'FB127-0-260118-HPG|',
+        'FB127-0-260125-ARC|',
+        'LT108-0-260214-HPG|',
+        'LT108-0-260215-LMD|',
+        'LT108-0-260215-OBR|',
+        'TA139-0-260301-ARC|',
+      ]);
+
+      // All pre-seeded =SPILL_SPEC_TITLE_* cells and Row-4 ARRAYFORMULA remain completely untouched
+      expect(sheetsState.grid![3][4]).toBe(ffeFormula);
+      const spilledValues = sheetsState.grid!
+        .map((row) => row[4])
+        .filter((cell) => typeof cell === 'string' && cell.startsWith('=SPILL_SPEC_TITLE_'));
+      expect(spilledValues).toHaveLength(9);
+    });
+
+    it('protects reordered headers, custom user helper columns, and custom Row-4 formula columns on both insert and upsert for Submittal FF&E', async () => {
+      const driveState: MockDriveState = {
+        searchResults: [
+          {
+            id: 'harborview-log-1',
+            name: sampleFixture.space.expectedLogFileName,
+            mimeType: 'application/vnd.google-apps.spreadsheet',
+          },
+        ],
+      };
+
+      const customHeaders = [
+        'Status',
+        'User Helper',
+        'Spec Tag',
+        'Revision',
+        'Custom Calc',
+        'Vendor',
+        'Date',
+        'Contact',
+        'Action',
+        'Spec Title',
+        'Related Tag',
+        'Notes',
+        'Calc Link',
+      ];
+      const seedEntry = sampleFixture.submittalFfe.seedEntries[0]; // CG104-0-260120-1
+      const grid: SimCellValue[][] = [
+        [], // Row 1
+        [], // Row 2
+        customHeaders, // Row 3
+        ['Formula Row', null, null, null, '=ARRAYFORMULA(C6:C&"-"&D6:D)', null, null, null, null, ffeFormula], // Row 4
+        ['<--->'], // Row 5
+        [
+          'Open',
+          'user-keep-1',
+          'CG104',
+          '0',
+          '=CUSTOM_CALC_ROW6',
+          'Keystone Casegoods',
+          '260120',
+          'HPG',
+          'Received',
+          '=SPILL_TITLE_ROW6',
+          'FB127',
+          'Original note',
+          `=HYPERLINK("${seedEntry.fileUri}", "Link")`,
+        ], // Row 6
+        ['<--->'], // Row 7
+      ];
+
+      const makeCustomSheetsState = (): MockSheetsState => ({
+        tableValues: [],
+        batchUpdates: [],
+        grid: structuredClone(grid),
+        namedRange: {
+          namedRangeId: 'nr-ffe',
+          name: sampleFixture.submittalFfe.rangeName,
+          range: {
+            sheetId: 102,
+            startRowIndex: 2,
+            endRowIndex: grid.length,
+            startColumnIndex: 0,
+            endColumnIndex: customHeaders.length,
+          },
+        },
+      });
+
+      const space = {
+        id: sampleFixture.space.id,
+        typeId: sampleFixture.space.typeId,
+        name: sampleFixture.space.name,
+        abstractStorageId: sampleFixture.space.abstractStorageId,
+      };
+
+      // 1) insert with reordered headers, User Helper (col 1), Custom Calc (col 4), Spec Title (col 9)
+      const insertSheetsState = makeCustomSheetsState();
+      const insertCtx = await buildWiredDocumentService({
+        driveState,
+        sheetsState: insertSheetsState,
+        primaryTargetId: 'fixture-ffe-cg104-1-rec',
+      });
+      const insertScenario = sampleFixture.submittalFfe.writeScenarios[2];
+      const insertRes = await insertCtx.documentService.processDocument(
+        {
+          type: 'submittal-ffe',
+          space,
+          data: insertScenario.documentData,
+        },
+        'onSubmit'
+      );
+      expect(insertRes.success).toBe(true);
+      const insertUpdates = insertSheetsState.batchUpdates[0].requests.filter((r) => r.updateCells);
+      expect(
+        insertUpdates.map((r) => [
+          r.updateCells?.range?.startColumnIndex,
+          r.updateCells?.range?.endColumnIndex,
+        ])
+      ).toEqual([
+        [0, 1], // Status
+        [2, 4], // Spec Tag, Revision (skips col 1 User Helper)
+        [5, 9], // Vendor, Date, Contact, Action (skips col 4 Custom Calc)
+        [10, 13], // Related Tag, Notes, Calc Link (skips col 9 Spec Title)
+      ]);
+      expect(insertSheetsState.grid![6][1]).toBeNull();
+      expect(insertSheetsState.grid![6][4]).toBeNull();
+      expect(insertSheetsState.grid![6][9]).toBeNull();
+
+      // 2) upsert in place on Row 6 -> preserves User Helper, Custom Calc, and Spec Title
+      const upsertSheetsState = makeCustomSheetsState();
+      const upsertCtx = await buildWiredDocumentService({
+        driveState,
+        sheetsState: upsertSheetsState,
+        primaryTargetId: 'upserted-ffe-file',
+        manifestProviderOverride: createDuplicatePolicyManifestProvider(
+          manifestProvider,
+          'upsert',
+          'submittal-ffe'
+        ),
+      });
+      const upsertRes = await upsertCtx.documentService.processDocument(
+        {
+          type: 'submittal-ffe',
+          space,
+          data: {
+            ...seedEntry.documentData,
+            status: 'Closed',
+            notes: 'Updated notes via upsert',
+          },
+        },
+        'onSubmit'
+      );
+      expect(upsertRes.success).toBe(true);
+      if (!upsertRes.success) return;
+      expect(upsertRes.contextVariables?.documentLogWrite).toEqual({
+        spreadsheetId: 'harborview-log-1',
+        sheetName: 'Submittal FF&E',
+        rowNumber: 6,
+        action: 'updated',
+      });
+
+      const upsertReqs = upsertSheetsState.batchUpdates[0].requests;
+      expect(upsertReqs.some((r) => r.insertDimension)).toBe(false);
+      expect(
+        upsertReqs.map((r) => [
+          r.updateCells?.range?.startColumnIndex,
+          r.updateCells?.range?.endColumnIndex,
+        ])
+      ).toEqual([
+        [0, 1],
+        [2, 4],
+        [5, 9],
+        [10, 13],
+      ]);
+      expect(upsertSheetsState.grid![5][0]).toBe('Closed');
+      expect(upsertSheetsState.grid![5][1]).toBe('user-keep-1');
+      expect(upsertSheetsState.grid![5][4]).toBe('=CUSTOM_CALC_ROW6');
+      expect(upsertSheetsState.grid![5][9]).toBe('=SPILL_TITLE_ROW6');
+      expect(upsertSheetsState.grid![5][11]).toBe('Updated notes via upsert');
+
+      const readRes = await upsertCtx.sheetsClient.readTable({
+        target: {
+          spreadsheetId: 'harborview-log-1',
+          sheetName: 'Submittal FF&E',
+          rangeName: 'Log_Submittal_FFE',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+      });
+      expect(readRes.formulaColumns).toEqual(['Custom Calc', 'Spec Title']);
+    });
   });
 });

@@ -225,6 +225,51 @@ describe('GoogleSheetsClient', () => {
     }
   }
 
+  function parseSimA1Range(
+    a1Range: string,
+    defaultEndRowIndex: number,
+    defaultEndColumnIndex: number
+  ): {
+    startRowIndex: number;
+    endRowIndex: number;
+    startColumnIndex: number;
+    endColumnIndex: number;
+  } {
+    const bangIdx = a1Range.lastIndexOf('!');
+    const cellRange = (bangIdx >= 0 ? a1Range.slice(bangIdx + 1) : a1Range).trim();
+    const colLettersToIdx = (letters: string): number => {
+      let idx = 0;
+      for (let i = 0; i < letters.length; i++) {
+        idx = idx * 26 + (letters.charCodeAt(i) - 64);
+      }
+      return idx - 1;
+    };
+    const boxMatch = /^([A-Z]+)(\d+):([A-Z]+)(\d*)$/i.exec(cellRange);
+    if (boxMatch) {
+      return {
+        startRowIndex: Number(boxMatch[2]) - 1,
+        endRowIndex: boxMatch[4] ? Number(boxMatch[4]) : defaultEndRowIndex,
+        startColumnIndex: colLettersToIdx(boxMatch[1].toUpperCase()),
+        endColumnIndex: colLettersToIdx(boxMatch[3].toUpperCase()) + 1,
+      };
+    }
+    const rowOnlyMatch = /^(\d+):(\d+)$/.exec(cellRange);
+    if (rowOnlyMatch) {
+      return {
+        startRowIndex: Number(rowOnlyMatch[1]) - 1,
+        endRowIndex: Number(rowOnlyMatch[2]),
+        startColumnIndex: 0,
+        endColumnIndex: defaultEndColumnIndex,
+      };
+    }
+    return {
+      startRowIndex: 0,
+      endRowIndex: defaultEndRowIndex,
+      startColumnIndex: 0,
+      endColumnIndex: defaultEndColumnIndex,
+    };
+  }
+
   function wireSimulator(state: SimSheetState, spreadsheetId = 'sim-sheet-id') {
     mockSheetsApi.spreadsheets.get.mockImplementation(async () => ({
       data: {
@@ -246,27 +291,44 @@ describe('GoogleSheetsClient', () => {
       },
     }));
 
-    mockSheetsApi.spreadsheets.values.get.mockImplementation(async () => {
-      const nr = state.namedRange;
-      const slice: CellValue[][] = [];
-      for (let r = nr.startRowIndex; r < nr.endRowIndex; r++) {
-        const row = state.grid[r];
-        if (!row) {
-          slice.push([]);
-          continue;
+    mockSheetsApi.spreadsheets.values.get.mockImplementation(
+      async (params?: { range?: string; valueRenderOption?: string }) => {
+        const nr = state.namedRange;
+        const bounds = params?.range
+          ? parseSimA1Range(params.range, nr.endRowIndex, nr.endColumnIndex)
+          : {
+              startRowIndex: nr.startRowIndex,
+              endRowIndex: nr.endRowIndex,
+              startColumnIndex: nr.startColumnIndex,
+              endColumnIndex: nr.endColumnIndex,
+            };
+        const slice: CellValue[][] = [];
+        const rowLimit = Math.min(bounds.endRowIndex, state.grid.length);
+        for (let r = bounds.startRowIndex; r < rowLimit; r++) {
+          const row = state.grid[r];
+          if (!row) {
+            slice.push([]);
+            continue;
+          }
+          const vals: CellValue[] = [];
+          for (let c = bounds.startColumnIndex; c < bounds.endColumnIndex; c++) {
+            const cell = row.cells[c];
+            if (!cell) {
+              vals.push('');
+            } else if (params?.valueRenderOption === 'FORMULA') {
+              vals.push(cell.value);
+            } else {
+              vals.push(cell.formattedValue ?? cell.value);
+            }
+          }
+          while (vals.length > 0 && vals[vals.length - 1] === '') {
+            vals.pop();
+          }
+          slice.push(vals);
         }
-        const vals: CellValue[] = [];
-        for (let c = nr.startColumnIndex; c < nr.endColumnIndex; c++) {
-          const cell = row.cells[c];
-          vals.push(cell ? (cell.formattedValue ?? cell.value) : '');
-        }
-        while (vals.length > 0 && vals[vals.length - 1] === '') {
-          vals.pop();
-        }
-        slice.push(vals);
+        return { data: { values: slice } };
       }
-      return { data: { values: slice } };
-    });
+    );
 
     mockSheetsApi.spreadsheets.batchUpdate.mockImplementation(
       async ({ requestBody }: { requestBody: sheets_v4.Schema$BatchUpdateSpreadsheetRequest }) => {
@@ -853,20 +915,26 @@ describe('GoogleSheetsClient', () => {
 
     it('reads positive-terminated table with FORMATTED_VALUE preserving leading zeros and exact 1-based rowNumbers', async () => {
       mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({ data: createArchMetadata() });
-      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
-        data: {
-          values: [
-            ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link'], // Row 3 (rel 0)
-            ['Formula Row', '', '', '', '', '', '', '', '', ''], // Row 4 (rel 1)
-            ['<--->'], // Row 5 (rel 2 = topAnchor)
-            ['Closed', '033000', '001', '0', 'Concrete Mix', '260115', 'MB', 'Received', 'Podium slab', 'Link'], // Row 6 (rel 3)
-            ['---'], // Row 7 (rel 4 = divider)
-            [], // Row 8 (rel 5 = blank)
-            ['Open', '071200', '001', '0', 'Waterproofing', '260204', 'ARC', 'Referred', 'See --- note'], // Row 9 (rel 6, trailing null Calc Link + '---' in Notes)
-            ['<--->'], // Row 10 (rel 7 = bottomAnchor)
-          ],
-        },
-      });
+      mockSheetsApi.spreadsheets.values.get
+        .mockResolvedValueOnce({
+          data: {
+            values: [
+              ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link'], // Row 3 (rel 0)
+              ['Formula Row', '', '', '', '', '', '', '', '', ''], // Row 4 (rel 1)
+              ['<--->'], // Row 5 (rel 2 = topAnchor)
+              ['Closed', '033000', '001', '0', 'Concrete Mix', '260115', 'MB', 'Received', 'Podium slab', 'Link'], // Row 6 (rel 3)
+              ['---'], // Row 7 (rel 4 = divider)
+              [], // Row 8 (rel 5 = blank)
+              ['Open', '071200', '001', '0', 'Waterproofing', '260204', 'ARC', 'Referred', 'See --- note'], // Row 9 (rel 6, trailing null Calc Link + '---' in Notes)
+              ['<--->'], // Row 10 (rel 7 = bottomAnchor)
+            ],
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            values: [['Formula Row', '', '', '', '', '', '', '', '', '']],
+          },
+        });
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
       const result = await client.readTable({
@@ -984,17 +1052,23 @@ describe('GoogleSheetsClient', () => {
 
     it('returns empty rows array when cleared template has only placeholder blank row(s) between anchors', async () => {
       mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({ data: createArchMetadata() });
-      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
-        data: {
-          values: [
-            ['Status', 'Section', 'Number'],
-            ['Formula Row'],
-            ['<--->'],
-            ['', '', ''],
-            ['<--->'],
-          ],
-        },
-      });
+      mockSheetsApi.spreadsheets.values.get
+        .mockResolvedValueOnce({
+          data: {
+            values: [
+              ['Status', 'Section', 'Number'],
+              ['Formula Row'],
+              ['<--->'],
+              ['', '', ''],
+              ['<--->'],
+            ],
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            values: [['Formula Row']],
+          },
+        });
 
       const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
       const result = await client.readTable({
@@ -1056,6 +1130,108 @@ describe('GoogleSheetsClient', () => {
       await expect(client.readTable({ target })).rejects.toThrow(
         GoogleSheetsExtentAnchorNotFoundError
       );
+    });
+
+    it('inspects pre-<---> rows with valueRenderOption FORMULA when topAnchor > 1 and returns detected formulaColumns', async () => {
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({
+        data: {
+          spreadsheetId: 'log-sheet-ffe',
+          sheets: [{ properties: { sheetId: 22, title: 'Submittal FF&E' } }],
+          namedRanges: [
+            {
+              namedRangeId: 'nr-ffe',
+              name: 'Log_Submittal_FFE',
+              range: {
+                sheetId: 22,
+                startRowIndex: 2, // Row 3
+                endRowIndex: 12,
+                startColumnIndex: 0,
+                endColumnIndex: 6,
+              },
+            },
+          ],
+        },
+      });
+
+      mockSheetsApi.spreadsheets.values.get
+        .mockResolvedValueOnce({
+          data: {
+            values: [
+              ['Status', 'Spec Tag', 'Spec Title', 'Helper', 'Custom Formula', 'Notes'], // Row 3 (rel 0)
+              ['Note row', '', '', '', '', ''], // Row 4 (rel 1)
+              ['Formula Row', '', 'BED - KING', '', 'calc-1', ''], // Row 5 (rel 2) — formatted preview
+              ['<--->'], // Row 6 (rel 3 = topAnchor)
+              ['Open', 'CG104', 'BED - KING', 'user', 'calc-1', 'Sample note'], // Row 7 (rel 4)
+              ['<--->'], // Row 8 (rel 5 = bottomAnchor)
+            ],
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            values: [
+              ['Note row', '', '', '', '', ''], // Row 4
+              [
+                'Formula Row',
+                '',
+                '=ARRAYFORMULA(IF(B7:B="","",VLOOKUP(B7:B,Options_Specs,2,FALSE)))',
+                'non-formula-label',
+                '  =ARRAYFORMULA(IF(B7:B="","",B7:B&"-X"))',
+                '',
+              ], // Row 5
+            ],
+          },
+        });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+      const result = await client.readTable({
+        target: {
+          spreadsheetId: 'log-sheet-ffe',
+          sheetName: 'Submittal FF&E',
+          rangeName: 'Log_Submittal_FFE',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+      });
+
+      expect(mockSheetsApi.spreadsheets.values.get).toHaveBeenNthCalledWith(1, {
+        spreadsheetId: 'log-sheet-ffe',
+        range: "'Submittal FF&E'!A3:F12",
+        valueRenderOption: 'FORMATTED_VALUE',
+      });
+      expect(mockSheetsApi.spreadsheets.values.get).toHaveBeenNthCalledWith(2, {
+        spreadsheetId: 'log-sheet-ffe',
+        range: "'Submittal FF&E'!A4:F5",
+        valueRenderOption: 'FORMULA',
+      });
+      expect(result.formulaColumns).toEqual(['Spec Title', 'Custom Formula']);
+    });
+
+    it('skips pre-<---> FORMULA read when topAnchor === 1 and returns empty formulaColumns', async () => {
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({ data: createArchMetadata() });
+      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
+        data: {
+          values: [
+            ['Status', 'Section'],
+            ['<--->'],
+            ['Open', '071200'],
+            ['<--->'],
+          ],
+        },
+      });
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+      const result = await client.readTable({
+        target: {
+          spreadsheetId: 'log-sheet-1',
+          sheetName: 'Submittal Arch',
+          rangeName: 'Log_Submittal_Arch',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+      });
+
+      expect(mockSheetsApi.spreadsheets.values.get).toHaveBeenCalledTimes(1);
+      expect(result.formulaColumns).toEqual([]);
     });
   });
 
@@ -1986,6 +2162,140 @@ describe('GoogleSheetsClient', () => {
       expect(allNullRes).toEqual({ rowNumber: 7, action: 'inserted' });
       expect(allNullState.grid[5].cells[5].value).toBe('Only malformed row');
       expect(allNullState.grid[6].cells[5].value).toBe('Appended safely');
+    });
+
+    it('automatically protects pre-<---> formulaColumns without readOnlyColumns on insert and upsert across reordered headers and custom user columns', async () => {
+      const customHeaders = [
+        'Notes',
+        'CustomHelper',
+        'Status',
+        'Spec Title',
+        'CustomFormula',
+        'Group',
+        'SortKey',
+      ];
+      const state: SimSheetState = {
+        sheetId: 44,
+        title: 'Submittal FF&E',
+        grid: [
+          { style: 'title', cells: [toSimCell('Project Log')] }, // Row 1 (idx 0)
+          { style: 'spacer', cells: [] }, // Row 2 (idx 1)
+          { style: 'header', cells: customHeaders.map(toSimCell) }, // Row 3 (idx 2)
+          {
+            style: 'formula',
+            cells: [
+              toSimCell('Formula Row'),
+              toSimCell(''),
+              toSimCell(''),
+              toSimCell('=ARRAYFORMULA(IF(F6:F="","",VLOOKUP(F6:F,Options_Specs,2,FALSE)))'),
+              toSimCell('=ARRAYFORMULA(IF(F6:F="","",F6:F&"-CALC"))'),
+            ],
+          }, // Row 4 (idx 3)
+          { style: 'anchor', cells: [toSimCell(''), toSimCell(''), toSimCell('<--->')] }, // Row 5 (idx 4)
+          {
+            style: 'clean-data-row',
+            cells: [
+              toSimCell('Initial note'),
+              toSimCell('keep-helper-1'),
+              toSimCell('Open'),
+              { kind: 'formula', value: '=SPILL_TITLE_1', formattedValue: 'BED - KING' },
+              { kind: 'formula', value: '=SPILL_CALC_1', formattedValue: 'CG104-CALC' },
+              toSimCell('CG104'),
+              toSimCell('CG104-0-260120-1'),
+            ],
+          }, // Row 6 (idx 5)
+          { style: 'anchor', cells: [toSimCell(''), toSimCell(''), toSimCell('<--->')] }, // Row 7 (idx 6)
+        ],
+        namedRange: {
+          name: 'Log_Submittal_FFE',
+          startRowIndex: 2,
+          endRowIndex: 7,
+          startColumnIndex: 0,
+          endColumnIndex: customHeaders.length,
+        },
+      };
+      wireSimulator(state, 'sim-auto-protect-id');
+
+      const ffeCustomTarget: PositiveTableTarget = {
+        spreadsheetId: 'sim-auto-protect-id',
+        sheetName: 'Submittal FF&E',
+        rangeName: 'Log_Submittal_FFE',
+        extentMarker: '<--->',
+        groupDividerMarker: '---',
+      };
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      // 1. Insert WITHOUT passing readOnlyColumns even when rowData carries Spec Title & CustomFormula keys
+      const insertRes = await client.insertIntoGroupedList({
+        target: ffeCustomTarget,
+        rowData: {
+          Status: 'Open',
+          Group: 'CG104',
+          SortKey: 'CG104-1-260205-1',
+          'Spec Title': 'SHOULD_NOT_WRITE_TITLE',
+          CustomFormula: 'SHOULD_NOT_WRITE_FORMULA',
+          Notes: 'Inserted note',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: 'CG104', sortKey: 'CG104-1-260205-1' },
+      });
+
+      expect(insertRes).toEqual({ rowNumber: 7, action: 'inserted' });
+      const insertReqs = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody
+        .requests as sheets_v4.Schema$Request[];
+      const insertUpdates = insertReqs.filter((r) => r.updateCells);
+      // Minimal contiguous writable runs: [0] (Notes), [2] (Status), [5..6] (Group, SortKey)
+      expect(insertUpdates.map((r) => r.updateCells?.range)).toEqual([
+        { sheetId: 44, startRowIndex: 6, endRowIndex: 7, startColumnIndex: 0, endColumnIndex: 1 },
+        { sheetId: 44, startRowIndex: 6, endRowIndex: 7, startColumnIndex: 2, endColumnIndex: 3 },
+        { sheetId: 44, startRowIndex: 6, endRowIndex: 7, startColumnIndex: 5, endColumnIndex: 7 },
+      ]);
+      expect(state.grid[6].cells[0].value).toBe('Inserted note');
+      expect(state.grid[6].cells[1]).toEqual({ kind: 'empty', value: '' }); // CustomHelper untouched
+      expect(state.grid[6].cells[2].value).toBe('Open');
+      expect(state.grid[6].cells[3]).toEqual({ kind: 'empty', value: '' }); // Spec Title untouched
+      expect(state.grid[6].cells[4]).toEqual({ kind: 'empty', value: '' }); // CustomFormula untouched
+      expect(state.grid[6].cells[5].value).toBe('CG104');
+      expect(state.grid[6].cells[6].value).toBe('CG104-1-260205-1');
+
+      // 2. Upsert WITHOUT passing readOnlyColumns on Row 6 -> protects Spec Title, CustomFormula, CustomHelper
+      const upsertRes = await client.insertIntoGroupedList({
+        target: ffeCustomTarget,
+        rowData: {
+          Status: 'Closed',
+          Group: 'CG104',
+          SortKey: 'CG104-0-260120-1',
+          'Spec Title': 'OVERWRITE_BLOCKED',
+          CustomFormula: 'OVERWRITE_BLOCKED_2',
+          Notes: 'Updated note',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: 'CG104', sortKey: 'CG104-0-260120-1' },
+        duplicatePolicy: 'upsert',
+      });
+
+      expect(upsertRes).toEqual({ rowNumber: 6, action: 'updated' });
+      const upsertReqs = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[1][0].requestBody
+        .requests as sheets_v4.Schema$Request[];
+      expect(upsertReqs.map((r) => r.updateCells?.range)).toEqual([
+        { sheetId: 44, startRowIndex: 5, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
+        { sheetId: 44, startRowIndex: 5, endRowIndex: 6, startColumnIndex: 2, endColumnIndex: 3 },
+        { sheetId: 44, startRowIndex: 5, endRowIndex: 6, startColumnIndex: 5, endColumnIndex: 7 },
+      ]);
+      expect(state.grid[5].cells[0].value).toBe('Updated note');
+      expect(state.grid[5].cells[1].value).toBe('keep-helper-1');
+      expect(state.grid[5].cells[2].value).toBe('Closed');
+      expect(state.grid[5].cells[3]).toEqual({
+        kind: 'formula',
+        value: '=SPILL_TITLE_1',
+        formattedValue: 'BED - KING',
+      });
+      expect(state.grid[5].cells[4]).toEqual({
+        kind: 'formula',
+        value: '=SPILL_CALC_1',
+        formattedValue: 'CG104-CALC',
+      });
     });
   });
 });

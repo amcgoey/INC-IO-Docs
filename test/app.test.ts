@@ -701,8 +701,13 @@ describe('App integration tests', () => {
             folderName: '05 Submittals',
           },
         },
+        {
+          type: 'WRITE_LOG',
+          payload: {},
+        },
       ]);
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+      expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+        1,
         {
           type: 'MOVE_FILE',
           payload: {
@@ -710,6 +715,19 @@ describe('App integration tests', () => {
             parentPath: '3 FFE',
             folderName: '05 Submittals',
           },
+        },
+        {
+          document: body.data,
+          files: [],
+          stepOutputs: {},
+          contextVariables: {},
+        }
+      );
+      expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+        2,
+        {
+          type: 'WRITE_LOG',
+          payload: {},
         },
         {
           document: body.data,
