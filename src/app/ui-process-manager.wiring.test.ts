@@ -685,11 +685,69 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
 
       // Verify updateCard returned and baseUrl applied to action routes
       expect(result.action.navigations?.[0]?.updateCard).toBeDefined();
+      expect('notification' in result.action).toBe(false);
       const updateCard = result.action.navigations![0].updateCard!;
       const widget = updateCard.sections[0].widgets[0];
       expect(widget.textInput?.onChangeAction?.function).toBe(
         'https://my-host.internal/workspace/on-form-change'
       );
+    });
+
+    it('forwards intent.notification when intent.isUpdateCard === true into paired updateCard + notification response', async () => {
+      const notificationText = 'Created "Harborview Document Log" in "1 Admin".';
+      const mockOrchestrator = {
+        processUiEvent: vi.fn().mockResolvedValue({
+          type: 'render',
+          viewId: 'test-view',
+          isUpdateCard: true,
+          notification: notificationText,
+        }),
+      };
+      const mockSchemaDrivenUi = {
+        generateView: vi.fn().mockResolvedValue({
+          id: 'rendered-view',
+          header: { title: 'Updated View' },
+          sections: [
+            {
+              widgets: [{ textParagraph: { text: 'Log created' } }],
+            },
+          ],
+        }),
+      } as unknown as SchemaDrivenUiService;
+
+      const wrapper = createUiProcessRequestWrapper(mockOrchestrator, mockSchemaDrivenUi);
+      const result = (await wrapper({})) as GoogleWorkspaceActionResponse;
+
+      expect(result.action.navigations?.[0]?.updateCard?.header?.title).toBe('Updated View');
+      expect(result.action.notification).toEqual({ text: notificationText });
+    });
+
+    it('omits notification when intent.isUpdateCard === true and intent.notification is undefined', async () => {
+      const mockOrchestrator = {
+        processUiEvent: vi.fn().mockResolvedValue({
+          type: 'render',
+          viewId: 'test-view',
+          isUpdateCard: true,
+          notification: undefined,
+        }),
+      };
+      const mockSchemaDrivenUi = {
+        generateView: vi.fn().mockResolvedValue({
+          id: 'rendered-view',
+          header: { title: 'Updated View' },
+          sections: [
+            {
+              widgets: [{ textParagraph: { text: 'No notification' } }],
+            },
+          ],
+        }),
+      } as unknown as SchemaDrivenUiService;
+
+      const wrapper = createUiProcessRequestWrapper(mockOrchestrator, mockSchemaDrivenUi);
+      const result = (await wrapper({})) as GoogleWorkspaceActionResponse;
+
+      expect(result.action.navigations?.[0]?.updateCard?.header?.title).toBe('Updated View');
+      expect('notification' in result.action).toBe(false);
     });
 
     it('forwards hostApp and gmail context from WorkspaceExecutionContext to UiProcessEventContext', async () => {
@@ -2209,6 +2267,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           status: 'resolved',
           candidate: { id: 'validated-log-id', name: 'Project Main Document Log' },
         }),
+        copyLog: vi.fn(),
       };
 
       const wiring = createUiProcessManagerWiring({
@@ -2275,6 +2334,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       const documentLogPort: UiProcessDocumentLogPort = {
         requiresDocumentLog: vi.fn().mockResolvedValue(false),
         resolveLog: vi.fn(),
+        copyLog: vi.fn(),
       };
 
       const wiring = createUiProcessManagerWiring({

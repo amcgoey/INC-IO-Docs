@@ -339,15 +339,20 @@ export function isGmailContext(context?: {
   return context.hostApp?.toUpperCase() === 'GMAIL' || Boolean(context.gmail?.messageId);
 }
 
-const IN_CARD_ACTIONS = new Set([
+export const IN_CARD_ACTIONS: ReadonlySet<string> = new Set([
   'onSpaceTypeChange',
   'onDocumentTypeChange',
   'onFormChange',
   'onFileSourceChange',
   'onEmailMessageChange',
+  'copyDocumentLog',
   'processDocument',
   'viewJson',
 ]);
+
+export function isInCardAction(actionName: string | undefined): boolean {
+  return actionName !== undefined && IN_CARD_ACTIONS.has(actionName);
+}
 
 /**
  * Determines whether an event represents an initial card open or a refresh event
@@ -359,7 +364,7 @@ export function isResetOrInitialLoad(context?: ProcessUiStateEvent): boolean {
   }
   const action = context.actionName ?? context.parameters?.action;
   const isRefresh = action === 'refresh';
-  const hasInCardAction = action !== undefined && IN_CARD_ACTIONS.has(action);
+  const hasInCardAction = isInCardAction(action);
   const hasSelectionKeysInFormData = Boolean(
     context.formData &&
     Object.keys(context.formData).some((k) => isSelectionKey(k))

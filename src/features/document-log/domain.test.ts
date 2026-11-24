@@ -2295,4 +2295,218 @@ describe('DocumentLogService', () => {
       ).rejects.toThrow(DocumentLogConfigurationError);
     });
   });
+
+  describe('copyLog', () => {
+    it('ensures preferredFolderPath, evaluates copyNameTemplate, copies templateSpreadsheetId, and returns created: true when log is missing', async () => {
+      const ensureFolderPath = vi.fn().mockResolvedValue({
+        id: 'admin-folder-1',
+        name: '1 Admin',
+      });
+      const copiedCandidate = {
+        id: 'copied-log-1',
+        name: 'Harborview Hotel Document Log',
+        parents: ['admin-folder-1'],
+        webViewLink: 'https://docs.google.com/spreadsheets/d/copied-log-1/edit',
+      };
+      const copyFile = vi.fn().mockResolvedValue(copiedCandidate);
+
+      const { service } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([]),
+          ensureFolderPath,
+          copyFile,
+        },
+      });
+
+      const result = await service.copyLog(sampleSpace);
+
+      expect(ensureFolderPath).toHaveBeenCalledWith(sampleSpace.abstractStorageId, ['1 Admin']);
+      expect(copyFile).toHaveBeenCalledWith('template-123', {
+        targetFolderId: 'admin-folder-1',
+        newName: 'Harborview Hotel Document Log',
+      });
+      expect(result).toEqual({
+        created: true,
+        candidate: copiedCandidate,
+        folderPath: '1 Admin',
+      });
+    });
+
+    it('is idempotent when resolveLog returns resolved and does not call ensureFolderPath or copyFile', async () => {
+      const existingCandidate = {
+        id: 'existing-log-1',
+        name: 'Harborview Hotel Document Log',
+        parents: ['admin-folder-1'],
+        webViewLink: 'https://docs.google.com/spreadsheets/d/existing-log-1/edit',
+      };
+      const ensureFolderPath = vi.fn();
+      const copyFile = vi.fn();
+
+      const { service } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([existingCandidate]),
+          ensureFolderPath,
+          copyFile,
+        },
+      });
+
+      const result = await service.copyLog(sampleSpace);
+
+      expect(ensureFolderPath).not.toHaveBeenCalled();
+      expect(copyFile).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        created: false,
+        candidate: existingCandidate,
+        folderPath: '1 Admin',
+      });
+    });
+
+    it('is idempotent when resolveLog returns ambiguous and returns the ranked best candidate without copying', async () => {
+      const preferredFolderId = 'admin-folder-1';
+      const bestCandidate = {
+        id: 'log-best',
+        name: 'Harborview Hotel Document Log',
+        parents: [preferredFolderId],
+        modifiedTime: '2026-03-01T10:00:00.000Z',
+      };
+      const otherCandidate = {
+        id: 'log-other',
+        name: 'Harborview Hotel Document Log (Old)',
+        parents: ['other-folder'],
+        modifiedTime: '2026-04-01T10:00:00.000Z',
+      };
+      const ensureFolderPath = vi.fn();
+      const copyFile = vi.fn();
+
+      const { service } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([otherCandidate, bestCandidate]),
+          resolveFolderPath: vi.fn().mockResolvedValue({
+            id: preferredFolderId,
+            name: '1 Admin',
+          }),
+          ensureFolderPath,
+          copyFile,
+        },
+      });
+
+      const result = await service.copyLog(sampleSpace);
+
+      expect(ensureFolderPath).not.toHaveBeenCalled();
+      expect(copyFile).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        created: false,
+        candidate: bestCandidate,
+        folderPath: '1 Admin',
+      });
+    });
+
+    it('honors space-type preferredFolderPath override with multi-segment path', async () => {
+      const overrideConfig: DocumentLogDiscoveryConfig = {
+        ...discoveryConfig,
+        preferredFolderPath: 'Admin/Logs',
+        copyNameTemplate: '{{DocumentSpace.name}} Proposal Log',
+      };
+      const ensureFolderPath = vi.fn().mockResolvedValue({
+        id: 'nested-logs-folder',
+        name: 'Logs',
+      });
+      const copiedCandidate = {
+        id: 'copied-proposal-log',
+        name: 'Harborview Hotel Proposal Log',
+        parents: ['nested-logs-folder'],
+      };
+      const copyFile = vi.fn().mockResolvedValue(copiedCandidate);
+
+      const { service } = createService({
+        registry: {
+          getDiscoveryConfig: vi.fn().mockReturnValue(overrideConfig),
+        },
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([]),
+          ensureFolderPath,
+          copyFile,
+        },
+      });
+
+      const result = await service.copyLog(sampleSpace);
+
+      expect(ensureFolderPath).toHaveBeenCalledWith(sampleSpace.abstractStorageId, ['Admin', 'Logs']);
+      expect(copyFile).toHaveBeenCalledWith('template-123', {
+        targetFolderId: 'nested-logs-folder',
+        newName: 'Harborview Hotel Proposal Log',
+      });
+      expect(result).toEqual({
+        created: true,
+        candidate: copiedCandidate,
+        folderPath: 'Admin/Logs',
+      });
+    });
+
+    it('throws DocumentLogConfigurationError when discovery config, ensureFolderPath, or copyFile is missing', async () => {
+      const missingConfigService = createService({
+        registry: {
+          getDiscoveryConfig: vi.fn().mockReturnValue(undefined),
+        },
+        discovery: {
+          ensureFolderPath: vi.fn(),
+          copyFile: vi.fn(),
+        },
+      }).service;
+
+      await expect(missingConfigService.copyLog(sampleSpace)).rejects.toThrow(
+        DocumentLogConfigurationError
+      );
+
+      const missingEnsureService = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([]),
+          copyFile: vi.fn(),
+        },
+      }).service;
+
+      await expect(missingEnsureService.copyLog(sampleSpace)).rejects.toThrow(
+        DocumentLogConfigurationError
+      );
+
+      const missingCopyService = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([]),
+          ensureFolderPath: vi.fn(),
+        },
+      }).service;
+
+      await expect(missingCopyService.copyLog(sampleSpace)).rejects.toThrow(
+        DocumentLogConfigurationError
+      );
+    });
+
+    it('propagates Drive 403 errors from ensureFolderPath or copyFile untouched', async () => {
+      const folderForbiddenError = Object.assign(new Error('Insufficient permission for folder'), {
+        statusCode: 403,
+      });
+      const ensureFailureService = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([]),
+          ensureFolderPath: vi.fn().mockRejectedValue(folderForbiddenError),
+          copyFile: vi.fn(),
+        },
+      }).service;
+
+      await expect(ensureFailureService.copyLog(sampleSpace)).rejects.toBe(folderForbiddenError);
+
+      const copyForbiddenError = Object.assign(new Error('Insufficient permission to copy'), {
+        statusCode: 403,
+      });
+      const copyFailureService = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([]),
+          ensureFolderPath: vi.fn().mockResolvedValue({ id: 'admin-folder-1', name: '1 Admin' }),
+          copyFile: vi.fn().mockRejectedValue(copyForbiddenError),
+        },
+      }).service;
+
+      await expect(copyFailureService.copyLog(sampleSpace)).rejects.toBe(copyForbiddenError);
+    });
+  });
 });

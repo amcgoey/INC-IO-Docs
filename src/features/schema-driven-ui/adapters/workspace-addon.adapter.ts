@@ -59,7 +59,8 @@ function buildViewFromSections(
     docInfo: (ctx: UiViewAdapterContext, processDisabled: boolean) => UiViewSection | undefined;
     admin: SectionProducer;
   },
-  context: UiViewAdapterContext
+  context: UiViewAdapterContext,
+  getActionParameters?: ((context: UiViewAdapterContext) => Record<string, unknown> | undefined) | undefined
 ): UiView {
   const logContext = extractDocumentLogPanelContext(context.uiContext);
   const processDisabled =
@@ -78,8 +79,12 @@ function buildViewFromSections(
     (docInfoSection?.widgets.length ?? 0) +
     (adminSection?.widgets.length ?? 0);
 
+  const actionParams = getActionParameters ? getActionParameters(context) : undefined;
   const documentLogSection = buildDocumentLogSection(logContext, {
     maxWidgets: MAX_GOOGLE_WORKSPACE_CARD_WIDGETS - fixedWidgetCount,
+    ...(actionParams && Object.keys(actionParams).length > 0
+      ? { actionParameters: actionParams }
+      : {}),
   });
 
   const sections: UiViewSection[] = [
@@ -114,7 +119,8 @@ async function resolveAndBuildView(
     admin: SectionProducer;
   },
   context: UiViewAdapterContext,
-  displayNameResolver: DocumentTypeDisplayNameResolverPort
+  displayNameResolver: DocumentTypeDisplayNameResolverPort,
+  getActionParameters?: ((context: UiViewAdapterContext) => Record<string, unknown> | undefined) | undefined
 ): Promise<UiView> {
   const resolvedDocTypes = await Promise.all(
     context.selectionState!.documentTypes.map(async (docType) => {
@@ -134,7 +140,7 @@ async function resolveAndBuildView(
     },
   };
 
-  return buildViewFromSections(viewId, fixedProducers, effectiveContext);
+  return buildViewFromSections(viewId, fixedProducers, effectiveContext, getActionParameters);
 }
 
 export function createWorkspaceAddonViewSchema(
@@ -220,9 +226,20 @@ export function createWorkspaceAddonViewSchema(
     resolver?: DocumentTypeDisplayNameResolverPort
   ): Promise<UiView> | UiView => {
     if (!resolver || !ctx.selectionState?.documentTypes) {
-      return buildViewFromSections(config.viewId, fixedProducers, ctx);
+      return buildViewFromSections(
+        config.viewId,
+        fixedProducers,
+        ctx,
+        config.getActionParameters
+      );
     }
-    return resolveAndBuildView(config.viewId, fixedProducers, ctx, resolver);
+    return resolveAndBuildView(
+      config.viewId,
+      fixedProducers,
+      ctx,
+      resolver,
+      config.getActionParameters
+    );
   };
 
   if (context !== undefined) {

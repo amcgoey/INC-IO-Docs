@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
+import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import {
   UiProcessDocumentSpaceDtoSchema,
   type UiProcessDocumentSpaceDto,
+  UiProcessRenderResultSchema,
   UiProcessResultSchema,
   UiSelectionStateSchema,
   ProcessUiStateEventSchema,
@@ -25,6 +27,10 @@ import {
   formatThreadEmailOptionLabel,
   ProcessUiStateInputSchema,
   type UiProcessDocumentRunnerPort,
+  IN_CARD_ACTIONS,
+  isInCardAction,
+  UiProcessCopyDocumentLogResultSchema,
+  type UiProcessCopyDocumentLogResult,
 } from './ports';
 
 describe('UI Process Manager Ports & DTOs', () => {
@@ -93,6 +99,47 @@ describe('UI Process Manager Ports & DTOs', () => {
         viewId: 'root-view',
       };
       expect(Value.Check(UiProcessResultSchema, render)).toBe(true);
+    });
+
+    it('validates render result with isUpdateCard: true and notification string', () => {
+      const renderWithNotification = {
+        type: 'render',
+        viewId: 'root-view',
+        isUpdateCard: true,
+        notification: 'Created "Harborview Document Log" in "1 Admin".',
+      };
+      expect(Value.Check(UiProcessRenderResultSchema, renderWithNotification)).toBe(true);
+      expect(Value.Check(UiProcessResultSchema, renderWithNotification)).toBe(true);
+    });
+
+    it('accepts notification: undefined on render result under ExactOptionalPropertyTypes = true', () => {
+      const prev = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        const renderWithUndefinedNotification = {
+          type: 'render',
+          viewId: 'root-view',
+          isUpdateCard: true,
+          notification: undefined,
+        };
+        expect(Value.Check(UiProcessRenderResultSchema, renderWithUndefinedNotification)).toBe(true);
+        expect(Value.Check(UiProcessResultSchema, renderWithUndefinedNotification)).toBe(true);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prev;
+      }
+    });
+
+    it('rejects non-string notification on render result', () => {
+      for (const badNotification of [123, true, { text: 'Created' }]) {
+        const invalidRender = {
+          type: 'render',
+          viewId: 'root-view',
+          isUpdateCard: true,
+          notification: badNotification,
+        };
+        expect(Value.Check(UiProcessRenderResultSchema, invalidRender)).toBe(false);
+        expect(Value.Check(UiProcessResultSchema, invalidRender)).toBe(false);
+      }
     });
 
     it('validates notification result', () => {
@@ -317,6 +364,57 @@ describe('UI Process Manager Ports & DTOs', () => {
     it('rejects non-boolean values for isResetOrInitial', () => {
       expect(
         Value.Check(ProcessUiStateInputSchema, { ...baseInput, isResetOrInitial: 'true' })
+      ).toBe(false);
+    });
+  });
+
+  describe('IN_CARD_ACTIONS, isInCardAction, and UiProcessCopyDocumentLogResultSchema', () => {
+    it('re-exports IN_CARD_ACTIONS and isInCardAction from domain', () => {
+      expect(IN_CARD_ACTIONS).toBeInstanceOf(Set);
+      expect(IN_CARD_ACTIONS.has('copyDocumentLog')).toBe(true);
+      expect(isInCardAction('copyDocumentLog')).toBe(true);
+      expect(isInCardAction('refresh')).toBe(false);
+      expect(isInCardAction(undefined)).toBe(false);
+    });
+
+    it('validates valid UiProcessCopyDocumentLogResult payloads and rejects invalid ones', () => {
+      const createdResult: UiProcessCopyDocumentLogResult = {
+        created: true,
+        candidate: { id: 'log-123', name: 'Project Main Document Log' },
+        folderPath: '1 Admin',
+      };
+      expect(Value.Check(UiProcessCopyDocumentLogResultSchema, createdResult)).toBe(true);
+
+      const existingResult: UiProcessCopyDocumentLogResult = {
+        created: false,
+        candidate: { id: 'log-123', name: 'Project Main Document Log' },
+        folderPath: '1 Admin',
+      };
+      expect(Value.Check(UiProcessCopyDocumentLogResultSchema, existingResult)).toBe(true);
+
+      // Rejects missing fields
+      expect(
+        Value.Check(UiProcessCopyDocumentLogResultSchema, {
+          created: true,
+          candidate: { id: 'log-123', name: 'Project Main Document Log' },
+        })
+      ).toBe(false);
+
+      // Rejects additionalProperties
+      expect(
+        Value.Check(UiProcessCopyDocumentLogResultSchema, {
+          ...createdResult,
+          extra: 'nope',
+        })
+      ).toBe(false);
+
+      // Rejects empty candidate id/name
+      expect(
+        Value.Check(UiProcessCopyDocumentLogResultSchema, {
+          created: true,
+          candidate: { id: '', name: 'Log' },
+          folderPath: '1 Admin',
+        })
       ).toBe(false);
     });
   });

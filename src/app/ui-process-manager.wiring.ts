@@ -379,7 +379,7 @@ export function createUiProcessRequestWrapper(
 
     const mappedView = mapUiViewToWorkspaceUiView(view, context.baseUrl);
     if (intent.isUpdateCard) {
-      return translateUiViewToUpdateCardAction(mappedView);
+      return translateUiViewToUpdateCardAction(mappedView, intent.notification);
     }
     return translateUiViewToNavigationAction(mappedView);
   };

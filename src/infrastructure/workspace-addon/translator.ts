@@ -476,8 +476,9 @@ export function translateUiViewToNavigationAction(
  * Translates an adapter UiView model into a GoogleWorkspaceActionResponse updateCard navigation action.
  */
 export function translateUiViewToUpdateCardAction(
-  payload: unknown
+  payload: unknown,
+  notification?: string | undefined
 ): GoogleWorkspaceActionResponse {
   const card = translateUiViewToWorkspaceCard(payload);
-  return buildUpdateCardNavigationAction(card);
+  return buildUpdateCardNavigationAction(card, notification);
 }

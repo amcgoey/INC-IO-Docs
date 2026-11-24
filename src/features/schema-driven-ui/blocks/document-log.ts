@@ -1,10 +1,11 @@
 import type { UiViewSection, UiViewWidget } from '../domain';
 import type { DocumentLogPanelContext } from '../ports';
-import { escapeCardHtml } from './common';
+import { PRIMARY_ACTION_BUTTON_COLOR, escapeCardHtml } from './common';
 
 export interface DocumentLogSectionOptions {
   sectionHeader?: string | undefined;
   maxWidgets?: number | undefined;
+  actionParameters?: Record<string, unknown> | undefined;
 }
 
 function buildOpenLogButton(url: string) {
@@ -79,6 +80,23 @@ export function buildDocumentLogSection(
           text: `<b>${escapedFile}</b>`,
           wrapText: true,
           ...(plainFolder !== undefined ? { bottomLabel: `Folder: ${plainFolder}` } : {}),
+        },
+      });
+      const hasActionParams =
+        options?.actionParameters !== undefined &&
+        Object.keys(options.actionParameters).length > 0;
+      widgets.push({
+        buttonList: {
+          buttons: [
+            {
+              text: 'Copy Log',
+              color: PRIMARY_ACTION_BUTTON_COLOR,
+              onClick: {
+                action: 'copyDocumentLog',
+                ...(hasActionParams ? { parameters: options.actionParameters } : {}),
+              },
+            },
+          ],
         },
       });
       break;

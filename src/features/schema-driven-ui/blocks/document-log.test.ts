@@ -90,6 +90,80 @@ describe('Document Log Block', () => {
     expect(decorated?.bottomLabel).not.toContain('&#x3D;');
   });
 
+  it('renders primary-blue Copy Log buttonList for status: missing and forwards actionParameters only when non-empty', () => {
+    const context: DocumentLogPanelContext = {
+      status: 'missing',
+      spaceName: 'Harborview Hotel',
+      targetFolderPath: '1 Admin',
+      targetFileName: 'Harborview Hotel Document Log',
+    };
+
+    const defaultSection = buildDocumentLogSection(context);
+    expect(defaultSection).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, defaultSection)).toBe(true);
+    expect(defaultSection?.widgets).toHaveLength(3);
+    expect(defaultSection?.widgets[0].textParagraph).toBeDefined();
+    expect(defaultSection?.widgets[1].decoratedText).toBeDefined();
+    expect(defaultSection?.widgets[2]).toEqual({
+      buttonList: {
+        buttons: [
+          {
+            text: 'Copy Log',
+            color: PRIMARY_ACTION_BUTTON_COLOR,
+            onClick: {
+              action: 'copyDocumentLog',
+            },
+          },
+        ],
+      },
+    });
+    expect('parameters' in (defaultSection?.widgets[2].buttonList?.buttons[0].onClick ?? {})).toBe(
+      false
+    );
+
+    const emptyParamsSection = buildDocumentLogSection(context, { actionParameters: {} });
+    expect(emptyParamsSection).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, emptyParamsSection)).toBe(true);
+    expect(emptyParamsSection?.widgets[2]).toEqual({
+      buttonList: {
+        buttons: [
+          {
+            text: 'Copy Log',
+            color: PRIMARY_ACTION_BUTTON_COLOR,
+            onClick: {
+              action: 'copyDocumentLog',
+            },
+          },
+        ],
+      },
+    });
+    expect(
+      'parameters' in (emptyParamsSection?.widgets[2].buttonList?.buttons[0].onClick ?? {})
+    ).toBe(false);
+
+    const actionParameters = {
+      previousAttachments: '["att-1"]',
+      previousDriveUrl: 'https://drive.google.com/file/d/123/view',
+    };
+    const withParamsSection = buildDocumentLogSection(context, { actionParameters });
+    expect(withParamsSection).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, withParamsSection)).toBe(true);
+    expect(withParamsSection?.widgets[2]).toEqual({
+      buttonList: {
+        buttons: [
+          {
+            text: 'Copy Log',
+            color: PRIMARY_ACTION_BUTTON_COLOR,
+            onClick: {
+              action: 'copyDocumentLog',
+              parameters: actionParameters,
+            },
+          },
+        ],
+      },
+    });
+  });
+
   it('renders non-blocking HTML-escaped textParagraph for status: discovery_error', () => {
     const rawError = 'Drive API <500> & "Quota" = \'Exceeded\'';
     const context: DocumentLogPanelContext = {

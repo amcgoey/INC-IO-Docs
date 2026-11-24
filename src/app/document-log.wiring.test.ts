@@ -191,6 +191,7 @@ describe('document-log.wiring', () => {
       requiresDocumentLog: vi.fn().mockReturnValue(true),
       queryUiContext: vi.fn().mockResolvedValue(undefined),
       resolveLog: vi.fn(),
+      copyLog: vi.fn(),
       readLog: vi.fn(),
       writeLog: vi.fn(),
     };
@@ -728,6 +729,7 @@ describe('document-log.wiring', () => {
       requiresDocumentLog: vi.fn().mockReturnValue(true),
       queryUiContext: vi.fn().mockResolvedValue(undefined),
       resolveLog: vi.fn(),
+      copyLog: vi.fn(),
       readLog: defaultReadLog,
       writeLog: defaultWriteLog,
     };
@@ -806,6 +808,7 @@ describe('document-log.wiring', () => {
           requiresDocumentLog: vi.fn().mockReturnValue(true),
           queryUiContext: vi.fn().mockResolvedValue(undefined),
           resolveLog: vi.fn(),
+          copyLog: vi.fn(),
           readLog: vi.fn(),
           writeLog: overrideWriteLog,
         },
@@ -1105,6 +1108,184 @@ describe('document-log.wiring', () => {
         }),
       })
     );
+    expect(nock.isDone()).toBe(true);
+  });
+
+  it('wires ensureFolderPath and copyFile to GoogleDriveClient.ensureFolderPath and GoogleDriveClient.duplicate', async () => {
+    const mockDriveClient = {
+      searchFiles: vi.fn().mockResolvedValue([]),
+      ensureFolderPath: vi.fn().mockResolvedValue({
+        id: 'ensured-admin-1',
+        name: '1 Admin',
+        parents: ['drive-1'],
+      }),
+      duplicate: vi.fn().mockResolvedValue({
+        id: 'copied-log-99',
+        name: 'Harborview Hotel Document Log',
+        parents: ['ensured-admin-1'],
+        webViewLink: 'https://docs.google.com/spreadsheets/d/copied-log-99/edit',
+        modifiedTime: '2026-03-05T12:00:00.000Z',
+      }),
+    } as unknown as GoogleDriveClient;
+
+    const wiring = createDocumentLogWiring({
+      manifestProvider: createManifestProvider(),
+      driveClient: mockDriveClient,
+    });
+    await wiring.logSchemaRegistry.initialize();
+
+    const result = await wiring.documentLogService.copyLog({
+      id: 'space-1',
+      typeId: 'projects',
+      name: 'Harborview Hotel',
+      abstractStorageId: 'drive-1',
+    });
+
+    expect(mockDriveClient.ensureFolderPath).toHaveBeenCalledWith('drive-1', ['1 Admin']);
+    expect(mockDriveClient.duplicate).toHaveBeenCalledWith('tmpl-1', {
+      targetFolderId: 'ensured-admin-1',
+      newName: 'Harborview Hotel Document Log',
+    });
+    expect(result).toEqual({
+      created: true,
+      folderPath: '1 Admin',
+      candidate: {
+        id: 'copied-log-99',
+        name: 'Harborview Hotel Document Log',
+        parents: ['ensured-admin-1'],
+        webViewLink: 'https://docs.google.com/spreadsheets/d/copied-log-99/edit',
+        modifiedTime: '2026-03-05T12:00:00.000Z',
+      },
+    });
+  });
+
+  it('creates missing folder and copies template over nock, and stays idempotent when spreadsheet already exists', async () => {
+    const wiring = createDocumentLogWiring({
+      manifestProvider: createManifestProvider(),
+    });
+    await wiring.logSchemaRegistry.initialize();
+
+    const perReqCredential = 'ya29.copy-log-cred';
+    const driveScope = nock('https://www.googleapis.com', {
+      reqheaders: { authorization: `Bearer ${perReqCredential}` },
+    });
+
+    // 1. resolveLog spreadsheet search returns empty
+    driveScope
+      .get('/drive/v3/files')
+      .query(
+        (q) =>
+          q.driveId === 'drive-1' &&
+          q.corpora === 'drive' &&
+          typeof q.q === 'string' &&
+          q.q.includes('application/vnd.google-apps.spreadsheet')
+      )
+      .reply(200, { files: [] });
+
+    // 2. ensureFolderPath -> findOrCreateFolder checks existing folder '1 Admin'
+    driveScope
+      .get('/drive/v3/files')
+      .query(
+        (q) =>
+          typeof q.q === 'string' &&
+          q.q.includes("'drive-1' in parents") &&
+          q.q.includes("name = '1 Admin'") &&
+          q.q.includes("mimeType = 'application/vnd.google-apps.folder'")
+      )
+      .reply(200, { files: [] });
+
+    // 3. ensureFolderPath -> creates '1 Admin' folder via POST /drive/v3/files
+    driveScope
+      .post(
+        '/drive/v3/files',
+        (body: Record<string, unknown>) =>
+          body.name === '1 Admin' &&
+          body.mimeType === 'application/vnd.google-apps.folder' &&
+          Array.isArray(body.parents) &&
+          body.parents[0] === 'drive-1'
+      )
+      .query((q) => q.supportsAllDrives === 'true')
+      .reply(200, {
+        id: 'created-admin-folder-1',
+        name: '1 Admin',
+        parents: ['drive-1'],
+        mimeType: 'application/vnd.google-apps.folder',
+      });
+
+    // 4. duplicate -> copies template via POST /drive/v3/files/tmpl-1/copy
+    driveScope
+      .post(
+        '/drive/v3/files/tmpl-1/copy',
+        (body: Record<string, unknown>) =>
+          body.name === 'Harborview Hotel Document Log' &&
+          Array.isArray(body.parents) &&
+          body.parents[0] === 'created-admin-folder-1'
+      )
+      .query((q) => q.supportsAllDrives === 'true')
+      .reply(200, {
+        id: 'copied-sheet-1',
+        name: 'Harborview Hotel Document Log',
+        parents: ['created-admin-folder-1'],
+        mimeType: 'application/vnd.google-apps.spreadsheet',
+        webViewLink: 'https://docs.google.com/spreadsheets/d/copied-sheet-1/edit',
+      });
+
+    const perRequestService = wiring.createDocumentLogService({
+      userOAuthToken: perReqCredential,
+    });
+    const space = {
+      id: 'space-1',
+      typeId: 'projects',
+      name: 'Harborview Hotel',
+      abstractStorageId: 'drive-1',
+    };
+
+    const createdResult = await perRequestService.copyLog(space);
+    expect(createdResult).toEqual({
+      created: true,
+      folderPath: '1 Admin',
+      candidate: {
+        id: 'copied-sheet-1',
+        name: 'Harborview Hotel Document Log',
+        parents: ['created-admin-folder-1'],
+        webViewLink: 'https://docs.google.com/spreadsheets/d/copied-sheet-1/edit',
+      },
+    });
+    expect(nock.isDone()).toBe(true);
+
+    // 5. Idempotency: second call finds existing spreadsheet and performs no POST folder/copy calls
+    driveScope
+      .get('/drive/v3/files')
+      .query(
+        (q) =>
+          q.driveId === 'drive-1' &&
+          q.corpora === 'drive' &&
+          typeof q.q === 'string' &&
+          q.q.includes('application/vnd.google-apps.spreadsheet')
+      )
+      .reply(200, {
+        files: [
+          {
+            id: 'copied-sheet-1',
+            name: 'Harborview Hotel Document Log',
+            parents: ['created-admin-folder-1'],
+            mimeType: 'application/vnd.google-apps.spreadsheet',
+            webViewLink: 'https://docs.google.com/spreadsheets/d/copied-sheet-1/edit',
+          },
+        ],
+      });
+
+    const idempotentResult = await perRequestService.copyLog(space);
+    expect(idempotentResult).toEqual({
+      created: false,
+      folderPath: '1 Admin',
+      candidate: {
+        id: 'copied-sheet-1',
+        name: 'Harborview Hotel Document Log',
+        parents: ['created-admin-folder-1'],
+        webViewLink: 'https://docs.google.com/spreadsheets/d/copied-sheet-1/edit',
+      },
+    });
     expect(nock.isDone()).toBe(true);
   });
 });
