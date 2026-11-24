@@ -16,6 +16,7 @@ import {
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
   SELECT_EMAIL_MESSAGE_KEY,
+  SELECT_DOCUMENT_LOG_KEY,
   EPHEMERAL_UI_SELECTION_KEYS,
   isSelectionKey,
   parseGoogleDriveUrl,
@@ -269,8 +270,10 @@ describe('UI Process Manager Ports & DTOs', () => {
       expect(INPUT_DRIVE_URL_KEY).toBe('InputDriveURL');
       expect(SAVE_EMAIL_TO_PDF_KEY).toBe('SaveEmailToPdf');
       expect(SELECT_EMAIL_MESSAGE_KEY).toBe('SelectEmailMessage');
+      expect(SELECT_DOCUMENT_LOG_KEY).toBe('SelectDocumentLog');
       expect(EPHEMERAL_UI_SELECTION_KEYS).toBeInstanceOf(Set);
-      expect(EPHEMERAL_UI_SELECTION_KEYS.size).toBe(6);
+      expect(EPHEMERAL_UI_SELECTION_KEYS.size).toBe(7);
+      expect(EPHEMERAL_UI_SELECTION_KEYS.has(SELECT_DOCUMENT_LOG_KEY)).toBe(true);
       expect(typeof isSelectionKey).toBe('function');
       expect(typeof parseGoogleDriveUrl).toBe('function');
       expect(typeof extractSelectFilesSet).toBe('function');

@@ -15,6 +15,7 @@ import {
   buildDocumentLogSection,
   buildDocumentInfoSection,
   buildDocumentAdminSection,
+  SELECT_DOCUMENT_LOG_KEY,
 } from '../blocks';
 
 export const WORKSPACE_ADDON_VIEW_ID = 'drive-document-process-card';
@@ -48,6 +49,34 @@ function extractDocumentLogPanelContext(
     throw new Error(`Invalid uiContext["${DOCUMENT_LOG_CONTEXT_KEY}"]: ${details}`);
   }
   return raw;
+}
+
+export function extractSharedActionParameters(
+  ctx: UiViewAdapterContext
+): Record<string, string> {
+  const previousSpaceId =
+    typeof ctx.spaceId === 'string' && ctx.spaceId.trim().length > 0
+      ? ctx.spaceId.trim()
+      : undefined;
+  const rawSelectedLogId = ctx.formData?.[SELECT_DOCUMENT_LOG_KEY];
+  const previousSelectedLogId =
+    typeof rawSelectedLogId === 'string' && rawSelectedLogId.trim().length > 0
+      ? rawSelectedLogId.trim()
+      : undefined;
+
+  return {
+    ...(previousSpaceId !== undefined ? { previousSpaceId } : {}),
+    ...(previousSelectedLogId !== undefined ? { previousSelectedLogId } : {}),
+  };
+}
+
+function toOptionalActionParameters(
+  params: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!params || Object.keys(params).length === 0) {
+    return undefined;
+  }
+  return params;
 }
 
 function buildViewFromSections(
@@ -156,6 +185,17 @@ export function createWorkspaceAddonViewSchema(
   context?: UiViewAdapterContext,
   displayNameResolver?: DocumentTypeDisplayNameResolverPort
 ): WorkspaceAddonViewComposer | Promise<UiView> | UiView {
+  const getMergedActionParameters = (
+    ctx: UiViewAdapterContext
+  ): Record<string, unknown> | undefined => {
+    const shared = extractSharedActionParameters(ctx);
+    const custom = config.getActionParameters ? config.getActionParameters(ctx) : undefined;
+    return toOptionalActionParameters({
+      ...shared,
+      ...(custom ?? {}),
+    });
+  };
+
   const fileSelectionProducer: SectionProducer =
     config.fileSelectionConfig ??
     ((ctx) =>
@@ -178,7 +218,7 @@ export function createWorkspaceAddonViewSchema(
       if (!ctx.selectionState) {
         return undefined;
       }
-      const actionParams = config.getActionParameters ? config.getActionParameters(ctx) : undefined;
+      const actionParams = getMergedActionParameters(ctx);
       return buildDocumentTypeSelectionSection(ctx.selectionState, {
         onSpaceTypeChangeAction: {
           action: 'onSpaceTypeChange',
@@ -204,7 +244,7 @@ export function createWorkspaceAddonViewSchema(
       if (!ctx.documentSchema) {
         return undefined;
       }
-      const actionParams = config.getActionParameters ? config.getActionParameters(ctx) : undefined;
+      const actionParams = getMergedActionParameters(ctx);
       return buildDocumentInfoSection(ctx.documentSchema, ctx.uiSchema, {
         sectionHeader: 'Document Data',
         formData: ctx.formData,
@@ -212,7 +252,14 @@ export function createWorkspaceAddonViewSchema(
         documentTypeKey: ctx.documentTypeKey,
         dynamicOptions: ctx.dynamicOptions,
         ...(actionParams ? { onChangeActionParameters: actionParams } : {}),
-        ...(ctx.documentTypeKey ? { onProcessAction: { action: 'processDocument' } } : {}),
+        ...(ctx.documentTypeKey
+          ? {
+              onProcessAction: {
+                action: 'processDocument',
+                ...(actionParams ? { parameters: actionParams } : {}),
+              },
+            }
+          : {}),
         ...(processDisabled ? { processDisabled: true } : {}),
       });
     },
@@ -226,19 +273,14 @@ export function createWorkspaceAddonViewSchema(
     resolver?: DocumentTypeDisplayNameResolverPort
   ): Promise<UiView> | UiView => {
     if (!resolver || !ctx.selectionState?.documentTypes) {
-      return buildViewFromSections(
-        config.viewId,
-        fixedProducers,
-        ctx,
-        config.getActionParameters
-      );
+      return buildViewFromSections(config.viewId, fixedProducers, ctx, getMergedActionParameters);
     }
     return resolveAndBuildView(
       config.viewId,
       fixedProducers,
       ctx,
       resolver,
-      config.getActionParameters
+      getMergedActionParameters
     );
   };
 
@@ -303,6 +345,7 @@ export function extractGmailActionParameters(ctx: UiViewAdapterContext): Record<
     ...(previousMessageId !== undefined && previousMessageId.trim().length > 0
       ? { previousMessageId: previousMessageId.trim() }
       : {}),
+    ...extractSharedActionParameters(ctx),
   };
 }
 

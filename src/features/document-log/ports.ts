@@ -128,6 +128,7 @@ export const LogResolutionCandidateSchema = Type.Object({
   id: Type.String({ minLength: 1 }),
   name: Type.String({ minLength: 1 }),
   parents: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  parentFolderName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   webViewLink: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   modifiedTime: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
 });
