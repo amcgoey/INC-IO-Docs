@@ -262,6 +262,188 @@ function collectFormulaColumns(
   return parsed.headers.filter((header) => formulaColSet.has(header));
 }
 
+function validateHttpUrl(candidate: string): string | null {
+  if (/[\r\n]/.test(candidate)) {
+    return null;
+  }
+  const trimmed = candidate.trim();
+  if (!trimmed || !/^https?:\/\//i.test(trimmed)) {
+    return null;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    return trimmed;
+  } catch {
+    return null;
+  }
+}
+
+function extractHyperlinkFirstArg(formula: string): string | null {
+  const openMatch = /^=\s*HYPERLINK\s*\(/i.exec(formula);
+  if (!openMatch) {
+    return null;
+  }
+
+  let idx = openMatch[0].length;
+  while (idx < formula.length && /\s/.test(formula[idx]!)) {
+    idx++;
+  }
+  if (idx >= formula.length || formula[idx] !== '"') {
+    return null;
+  }
+
+  idx++;
+  let uri = '';
+  let closed = false;
+  while (idx < formula.length) {
+    const ch = formula[idx]!;
+    if (ch === '"') {
+      if (formula[idx + 1] === '"') {
+        uri += '"';
+        idx += 2;
+        continue;
+      }
+      idx++;
+      closed = true;
+      break;
+    }
+    uri += ch;
+    idx++;
+  }
+  if (!closed) {
+    return null;
+  }
+
+  while (idx < formula.length && /\s/.test(formula[idx]!)) {
+    idx++;
+  }
+  if (idx >= formula.length) {
+    return null;
+  }
+
+  const separator = formula[idx]!;
+  if (separator === ')') {
+    return idx === formula.length - 1 ? uri : null;
+  }
+  if (separator !== ',' && separator !== ';') {
+    return null;
+  }
+
+  idx++;
+  let parenDepth = 1;
+  let inDoubleQuote = false;
+  let inSingleQuote = false;
+  let hasSecondArgToken = false;
+
+  while (idx < formula.length) {
+    const ch = formula[idx]!;
+    if (inDoubleQuote) {
+      if (ch === '"') {
+        if (formula[idx + 1] === '"') {
+          idx += 2;
+          continue;
+        }
+        inDoubleQuote = false;
+      }
+      hasSecondArgToken = true;
+    } else if (inSingleQuote) {
+      if (ch === "'") {
+        if (formula[idx + 1] === "'") {
+          idx += 2;
+          continue;
+        }
+        inSingleQuote = false;
+      }
+      hasSecondArgToken = true;
+    } else if (ch === '"') {
+      inDoubleQuote = true;
+      hasSecondArgToken = true;
+    } else if (ch === "'") {
+      inSingleQuote = true;
+      hasSecondArgToken = true;
+    } else if (ch === '(') {
+      parenDepth++;
+      hasSecondArgToken = true;
+    } else if (ch === ')') {
+      parenDepth--;
+      if (parenDepth === 0) {
+        return hasSecondArgToken && idx === formula.length - 1 ? uri : null;
+      }
+      hasSecondArgToken = true;
+    } else if (parenDepth === 1 && (ch === ',' || ch === ';')) {
+      return null;
+    } else if (!/\s/.test(ch)) {
+      hasSecondArgToken = true;
+    }
+    idx++;
+  }
+
+  return null;
+}
+
+function extractLinkTarget(cellValue: CellValue | undefined): string | null {
+  if (typeof cellValue !== 'string') {
+    return null;
+  }
+  const trimmed = cellValue.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.startsWith('=')) {
+    const formulaUri = extractHyperlinkFirstArg(trimmed);
+    return formulaUri !== null ? validateHttpUrl(formulaUri) : null;
+  }
+  return validateHttpUrl(cellValue);
+}
+
+function resolveRequestedLinkColumns(
+  linkColumns: readonly string[] | undefined,
+  columnIndexMap: ReadonlyMap<string, number>
+): Array<{ colName: string; colRelIdx: number }> {
+  if (!linkColumns || linkColumns.length === 0) {
+    return [];
+  }
+  const resolved: Array<{ colName: string; colRelIdx: number }> = [];
+  const seen = new Set<string>();
+  for (const colName of linkColumns) {
+    if (seen.has(colName)) {
+      continue;
+    }
+    seen.add(colName);
+    const colRelIdx = columnIndexMap.get(colName);
+    if (colRelIdx !== undefined) {
+      resolved.push({ colName, colRelIdx });
+    }
+  }
+  return resolved;
+}
+
+function extractLinksByRowNumber(
+  parsed: ParsedPositiveTable,
+  dataRows: readonly ParsedPositiveRow[],
+  linkRangeSlices: ReadonlyArray<{ colName: string; rangeIndex: number }>,
+  valueRanges: readonly sheets_v4.Schema$ValueRange[]
+): Map<number, Record<string, string | null>> {
+  const linksByRow = new Map<number, Record<string, string | null>>();
+  for (const row of dataRows) {
+    const rowLinks: Record<string, string | null> = {};
+    const sliceRowOffset = row.relIndex - (parsed.topAnchorIndex + 1);
+    for (const { colName, rangeIndex } of linkRangeSlices) {
+      const colValues = (valueRanges[rangeIndex]?.values as CellValue[][] | undefined) ?? [];
+      const rawCell =
+        sliceRowOffset >= 0 && sliceRowOffset < colValues.length
+          ? colValues[sliceRowOffset]?.[0]
+          : undefined;
+      rowLinks[colName] = extractLinkTarget(rawCell);
+    }
+    linksByRow.set(row.rowNumber, rowLinks);
+  }
+  return linksByRow;
+}
+
 function parsePositiveTable(
   values: CellValue[][],
   target: PositiveTableTarget,
@@ -1380,6 +1562,25 @@ export class GoogleSheetsClient implements SheetsClient {
     return (response.data.values as CellValue[][]) ?? [];
   }
 
+  private async readBatchValues(
+    spreadsheetId: string,
+    ranges: string[],
+    valueRenderOption: 'UNFORMATTED_VALUE' | 'FORMATTED_VALUE' | 'FORMULA'
+  ): Promise<sheets_v4.Schema$ValueRange[]> {
+    if (ranges.length === 0) {
+      return [];
+    }
+    const response = await this.executeWithRetry(() =>
+      this.sheetsApi.spreadsheets.values.batchGet({
+        spreadsheetId,
+        ranges,
+        valueRenderOption,
+      })
+    );
+
+    return response.data.valueRanges ?? [];
+  }
+
   async readNamedRange(request: ReadNamedRangeRequest): Promise<CellValue[][]> {
     const { sheetTitle, gridRange } = await this.resolveNamedRange(request);
     const a1Range = gridRangeToA1(sheetTitle, gridRange);
@@ -1450,12 +1651,16 @@ export class GoogleSheetsClient implements SheetsClient {
     });
   }
 
-  private async loadParsedPositiveTable(target: PositiveTableTarget): Promise<{
+  private async loadParsedPositiveTable(
+    target: PositiveTableTarget,
+    linkColumns?: readonly string[]
+  ): Promise<{
     sheetId: number;
     rangeStartRowIndex: number;
     rangeStartColumnIndex: number;
     parsed: ParsedPositiveTable;
     formulaColumns: string[];
+    linksByRowNumber?: Map<number, Record<string, string | null>>;
   }> {
     const { sheetId, sheetTitle, gridRange } = await this.resolveNamedRange(target);
     const a1Range = gridRangeToA1(sheetTitle, gridRange);
@@ -1464,16 +1669,54 @@ export class GoogleSheetsClient implements SheetsClient {
     const rangeStartColumnIndex = gridRange.startColumnIndex ?? 0;
     const parsed = parsePositiveTable(values, target, rangeStartRowIndex);
 
-    let formulaColumns: string[] = [];
+    const formulaRanges: string[] = [];
+    let formulaZoneRangeIndex: number | undefined;
     if (parsed.topAnchorIndex > 1) {
       const formulaA1Range = gridRangeToA1(sheetTitle, {
         ...gridRange,
         startRowIndex: rangeStartRowIndex + 1,
         endRowIndex: rangeStartRowIndex + parsed.topAnchorIndex,
       });
-      const formulaRows = await this.readValues(target.spreadsheetId, formulaA1Range, 'FORMULA');
+      formulaZoneRangeIndex = formulaRanges.length;
+      formulaRanges.push(formulaA1Range);
+    }
+
+    const hasRequestedLinkColumns = linkColumns !== undefined && linkColumns.length > 0;
+    const dataRows = parsed.betweenRows.filter((row) => row.kind === 'data');
+    const resolvedLinkColumns = resolveRequestedLinkColumns(linkColumns, parsed.columnIndexMap);
+    const linkRangeSlices: Array<{ colName: string; rangeIndex: number }> = [];
+
+    if (
+      resolvedLinkColumns.length > 0 &&
+      parsed.bottomAnchorIndex > parsed.topAnchorIndex + 1 &&
+      dataRows.length > 0
+    ) {
+      const startRowIndex = rangeStartRowIndex + parsed.topAnchorIndex + 1;
+      const endRowIndex = rangeStartRowIndex + parsed.bottomAnchorIndex;
+      for (const { colName, colRelIdx } of resolvedLinkColumns) {
+        const absColIdx = rangeStartColumnIndex + colRelIdx;
+        const colA1Range = gridRangeToA1(sheetTitle, {
+          sheetId,
+          startRowIndex,
+          endRowIndex,
+          startColumnIndex: absColIdx,
+          endColumnIndex: absColIdx + 1,
+        });
+        linkRangeSlices.push({ colName, rangeIndex: formulaRanges.length });
+        formulaRanges.push(colA1Range);
+      }
+    }
+
+    const valueRanges = await this.readBatchValues(target.spreadsheetId, formulaRanges, 'FORMULA');
+    let formulaColumns: string[] = [];
+    if (formulaZoneRangeIndex !== undefined) {
+      const formulaRows = (valueRanges[formulaZoneRangeIndex]?.values as CellValue[][] | undefined) ?? [];
       formulaColumns = collectFormulaColumns(formulaRows, parsed);
     }
+
+    const linksByRowNumber = hasRequestedLinkColumns
+      ? extractLinksByRowNumber(parsed, dataRows, linkRangeSlices, valueRanges)
+      : undefined;
 
     return {
       sheetId,
@@ -1481,21 +1724,30 @@ export class GoogleSheetsClient implements SheetsClient {
       rangeStartColumnIndex,
       parsed,
       formulaColumns,
+      ...(linksByRowNumber !== undefined ? { linksByRowNumber } : {}),
     };
   }
 
   /**
-   * Reads a positive-terminated table bounded by `extentMarker` anchors using `FORMATTED_VALUE`.
+   * Reads a positive-terminated table bounded by `extentMarker` anchors using `FORMATTED_VALUE`,
+   * optionally extracting `=HYPERLINK(...)` / raw URL targets for `linkColumns` in one `FORMULA` batchGet pass.
    */
   async readTable(request: ReadPositiveTableRequest): Promise<PositiveTableReadResult> {
-    const { parsed, formulaColumns } = await this.loadParsedPositiveTable(request.target);
+    const { parsed, formulaColumns, linksByRowNumber } = await this.loadParsedPositiveTable(
+      request.target,
+      request.linkColumns
+    );
 
     const rows: PositiveTableRow[] = parsed.betweenRows
       .filter((row) => row.kind === 'data')
-      .map((row) => ({
-        rowNumber: row.rowNumber,
-        values: row.values,
-      }));
+      .map((row) => {
+        const links = linksByRowNumber?.get(row.rowNumber);
+        return {
+          rowNumber: row.rowNumber,
+          values: row.values,
+          ...(links !== undefined ? { links } : {}),
+        };
+      });
 
     return {
       headers: parsed.headers,
