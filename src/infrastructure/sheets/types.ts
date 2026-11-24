@@ -1,4 +1,4 @@
-import type { OAuth2Client } from 'google-auth-library';
+import type { GoogleAuth, OAuth2Client } from 'google-auth-library';
 import type { sheets_v4 } from 'googleapis';
 import { Type, type Static } from '@sinclair/typebox';
 
@@ -109,7 +109,7 @@ export interface SheetsConfigProvider {
 }
 
 export interface GoogleSheetsClientOptions {
-  auth?: OAuth2Client | string | undefined;
+  auth?: OAuth2Client | GoogleAuth | string | undefined;
   sheets?: sheets_v4.Sheets | undefined;
   retryOptions?: SheetsRetryOptions | undefined;
   configProvider?: SheetsConfigProvider | undefined;
