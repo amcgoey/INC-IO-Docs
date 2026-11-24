@@ -758,6 +758,53 @@ describe('WorkspaceAddonAdapter', () => {
       expect(docTypeWidget?.items?.[0].text).toBe('Resolved Form');
       assertValidUiView(view);
     });
+
+    it('forwards custom getActionParameters onto the missing Document Log Copy Log button', async () => {
+      const customParams = {
+        customKey: 'custom-value',
+        spaceMode: 'projects',
+      };
+      const getActionParameters = vi.fn(() => customParams);
+
+      const composer = createWorkspaceAddonViewSchema({
+        viewId: 'custom-card',
+        getActionParameters,
+      });
+
+      const context: UiViewAdapterContext = {
+        viewId: 'custom-card',
+        uiContext: {
+          'document-log': {
+            status: 'missing',
+            spaceName: 'Harborview Hotel',
+            targetFolderPath: '1 Admin',
+            targetFileName: 'Harborview Hotel Document Log',
+          },
+        },
+      };
+
+      const view = await composer(context);
+      assertValidUiView(view);
+      expect(getActionParameters).toHaveBeenCalledWith(context);
+
+      const logSection = view.sections.find((s) => s.header === 'Document Log');
+      expect(logSection).toBeDefined();
+      const buttonListWidget = logSection?.widgets.find((w) => w.buttonList !== undefined);
+      expect(buttonListWidget).toEqual({
+        buttonList: {
+          buttons: [
+            {
+              text: 'Copy Log',
+              color: PRIMARY_ACTION_BUTTON_COLOR,
+              onClick: {
+                action: 'copyDocumentLog',
+                parameters: customParams,
+              },
+            },
+          ],
+        },
+      });
+    });
   });
 
   describe('GmailWorkspaceAddonAdapter', () => {
@@ -1375,7 +1422,50 @@ describe('WorkspaceAddonAdapter', () => {
         const driveLogSection = driveView.sections.find((s) => s.header === 'Document Log');
         const gmailLogSection = gmailView.sections.find((s) => s.header === 'Document Log');
         expect(driveLogSection).toBeDefined();
-        expect(driveLogSection).toEqual(gmailLogSection);
+        expect(gmailLogSection).toBeDefined();
+
+        if (panel.status === 'missing') {
+          expect(driveLogSection?.widgets.slice(0, 2)).toEqual(
+            gmailLogSection?.widgets.slice(0, 2)
+          );
+          expect(driveLogSection?.widgets[2]).toEqual({
+            buttonList: {
+              buttons: [
+                {
+                  text: 'Copy Log',
+                  color: PRIMARY_ACTION_BUTTON_COLOR,
+                  onClick: {
+                    action: 'copyDocumentLog',
+                  },
+                },
+              ],
+            },
+          });
+          expect(
+            'parameters' in
+              (driveLogSection?.widgets[2].buttonList?.buttons[0].onClick ?? {})
+          ).toBe(false);
+
+          expect(gmailLogSection?.widgets[2]).toEqual({
+            buttonList: {
+              buttons: [
+                {
+                  text: 'Copy Log',
+                  color: PRIMARY_ACTION_BUTTON_COLOR,
+                  onClick: {
+                    action: 'copyDocumentLog',
+                    parameters: {
+                      previousAttachments: '["file-1"]',
+                      previousDriveUrl: '',
+                    },
+                  },
+                },
+              ],
+            },
+          });
+        } else {
+          expect(driveLogSection).toEqual(gmailLogSection);
+        }
       }
     );
   });

@@ -369,6 +369,23 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
     const updateAction = translateUiViewToUpdateCardAction(view);
     expect(updateAction.action?.navigations).toBeDefined();
     expect(updateAction.action.navigations?.[0]?.updateCard?.header?.title).toBe('Update Card');
+    expect('notification' in updateAction.action).toBe(false);
+  });
+
+  it('translates abstract UiView to paired updateCard + notification when notification is provided', () => {
+    const validView = {
+      header: { title: 'Update Card' },
+      sections: [
+        {
+          widgets: [{ textParagraph: { text: 'Updated content' } }],
+        },
+      ],
+    };
+    const message = 'Document Log already exists: "Harborview Document Log".';
+
+    const updateAction = translateUiViewToUpdateCardAction(validView, message);
+    expect(updateAction.action.navigations?.[0]?.updateCard?.header?.title).toBe('Update Card');
+    expect(updateAction.action.notification).toEqual({ text: message });
   });
 
   it('throws descriptive error if input is invalid according to AdapterUiViewSchema', () => {

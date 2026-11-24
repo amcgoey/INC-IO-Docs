@@ -506,6 +506,33 @@ export class GoogleDriveClient {
     }
   }
 
+  /**
+   * Ensures a nested folder path exists under rootFolderId, creating missing segments sequentially.
+   */
+  async ensureFolderPath(
+    rootFolderId: string,
+    pathSegments: string[],
+    options?: DriveOperationOptions
+  ): Promise<DriveFileMetadata> {
+    if (pathSegments.length === 0) {
+      return await this.getFile(rootFolderId, options);
+    }
+
+    let currentFolderId = rootFolderId;
+    let currentFolder: DriveFileMetadata | undefined;
+
+    for (const segment of pathSegments) {
+      currentFolder = await this.findOrCreateFolder(currentFolderId, segment, options);
+      currentFolderId = currentFolder.id;
+    }
+
+    if (!currentFolder) {
+      return await this.getFile(rootFolderId, options);
+    }
+
+    return currentFolder;
+  }
+
   async move(
     fileId: string,
     targetFolderId: string,

@@ -36,6 +36,9 @@ import {
   isInactiveDocTypeFieldKey,
   pruneFormDataForTypeSwitch,
   extractActiveTypeExistingData,
+  IN_CARD_ACTIONS,
+  isInCardAction,
+  isResetOrInitialLoad,
   type ProcessUiStateInput,
 } from './domain';
 import {
@@ -1985,6 +1988,9 @@ describe('ui-process-manager domain', () => {
             'onSpaceTypeChange',
             'onDocumentTypeChange',
             'onFormChange',
+            'onFileSourceChange',
+            'onEmailMessageChange',
+            'copyDocumentLog',
             'processDocument',
             'viewJson',
           ])('retains partial file selection on in-card action: %s', (actionName) => {
@@ -2411,7 +2417,13 @@ describe('ui-process-manager domain', () => {
           });
 
           it('persists checked and unchecked attachments across in-card actions', () => {
-            const inCardActions = ['onFormChange', 'onSpaceTypeChange', 'onDocumentTypeChange'];
+            const inCardActions = [
+              'onFormChange',
+              'onSpaceTypeChange',
+              'onDocumentTypeChange',
+              'onFileSourceChange',
+              'copyDocumentLog',
+            ];
 
             for (const action of inCardActions) {
               const input: ProcessUiStateInput = {
@@ -3747,6 +3759,38 @@ describe('ui-process-manager domain', () => {
       expect(existing).toEqual({
         section: '071200',
       });
+    });
+  });
+
+  describe('IN_CARD_ACTIONS and isInCardAction', () => {
+    it('exports unified IN_CARD_ACTIONS containing all 8 in-card actions including copyDocumentLog', () => {
+      expect(IN_CARD_ACTIONS).toBeInstanceOf(Set);
+      expect(IN_CARD_ACTIONS.size).toBe(8);
+      for (const action of [
+        'onSpaceTypeChange',
+        'onDocumentTypeChange',
+        'onFormChange',
+        'onFileSourceChange',
+        'onEmailMessageChange',
+        'copyDocumentLog',
+        'processDocument',
+        'viewJson',
+      ]) {
+        expect(IN_CARD_ACTIONS.has(action)).toBe(true);
+        expect(isInCardAction(action)).toBe(true);
+      }
+    });
+
+    it('returns false from isInCardAction for refresh, undefined, and unknown actions', () => {
+      expect(isInCardAction('refresh')).toBe(false);
+      expect(isInCardAction(undefined)).toBe(false);
+      expect(isInCardAction('unknownAction')).toBe(false);
+    });
+
+    it('treats copyDocumentLog as non-reset in isResetOrInitialLoad', () => {
+      expect(isResetOrInitialLoad({ actionName: 'copyDocumentLog' })).toBe(false);
+      expect(isResetOrInitialLoad({ parameters: { action: 'copyDocumentLog' } })).toBe(false);
+      expect(isResetOrInitialLoad({ actionName: 'refresh' })).toBe(true);
     });
   });
 });

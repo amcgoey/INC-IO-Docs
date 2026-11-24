@@ -318,7 +318,10 @@ export function buildNavigationAction(card: GoogleWorkspaceCard): GoogleWorkspac
   };
 }
 
-export function buildUpdateCardNavigationAction(card: GoogleWorkspaceCard): GoogleWorkspaceActionResponse {
+export function buildUpdateCardNavigationAction(
+  card: GoogleWorkspaceCard,
+  notification?: string | undefined
+): GoogleWorkspaceActionResponse {
   return {
     action: {
       navigations: [
@@ -326,6 +329,9 @@ export function buildUpdateCardNavigationAction(card: GoogleWorkspaceCard): Goog
           updateCard: card,
         },
       ],
+      ...(notification && notification.trim().length > 0
+        ? { notification: { text: notification } }
+        : {}),
     },
   };
 }

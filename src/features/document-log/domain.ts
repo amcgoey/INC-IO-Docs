@@ -2,6 +2,7 @@ import {
   DocumentLogAmbiguousError,
   DocumentLogConfigurationError,
   DocumentLogMissingError,
+  type CopyDocumentLogResult,
   type DocumentLogEntry,
   type DocumentLogPort,
   type DocumentLogSchema,
@@ -431,6 +432,66 @@ export class DocumentLogService implements DocumentLogPort {
     return {
       status: 'ambiguous',
       candidates: ranked,
+    };
+  }
+
+  async copyLog(space: DocumentLogSpace): Promise<CopyDocumentLogResult> {
+    const discoveryConfig = this.schemaRegistry.getDiscoveryConfig(space.typeId);
+    if (!discoveryConfig) {
+      throw new DocumentLogConfigurationError(
+        'DocumentLog discovery configuration (configuration.documentLog) is not initialized.'
+      );
+    }
+
+    const { preferredFolderPath, copyNameTemplate, templateSpreadsheetId } = discoveryConfig;
+    const resolution = await this.resolveLog(space);
+
+    if (resolution.status === 'resolved') {
+      return {
+        created: false,
+        candidate: resolution.candidate,
+        folderPath: preferredFolderPath,
+      };
+    }
+
+    if (resolution.status === 'ambiguous') {
+      return {
+        created: false,
+        candidate: resolution.candidates[0],
+        folderPath: preferredFolderPath,
+      };
+    }
+
+    if (!this.logDiscovery.ensureFolderPath || !this.logDiscovery.copyFile) {
+      throw new DocumentLogConfigurationError(
+        'DocumentLog provisioning requires LogDiscoveryPort.ensureFolderPath and LogDiscoveryPort.copyFile to be implemented.'
+      );
+    }
+
+    const preferredFolderSegments = splitFolderPath(preferredFolderPath);
+    const targetFolder = await this.logDiscovery.ensureFolderPath(
+      space.abstractStorageId,
+      preferredFolderSegments
+    );
+
+    const newName = this.templateEvaluator
+      .evaluate(copyNameTemplate, { DocumentSpace: space })
+      .trim();
+    if (newName.length === 0) {
+      throw new DocumentLogConfigurationError(
+        `Evaluated DocumentLog copyNameTemplate "${copyNameTemplate}" is empty for space "${space.name}".`
+      );
+    }
+
+    const candidate = await this.logDiscovery.copyFile(templateSpreadsheetId, {
+      targetFolderId: targetFolder.id,
+      newName,
+    });
+
+    return {
+      created: true,
+      candidate,
+      folderPath: preferredFolderPath,
     };
   }
 
