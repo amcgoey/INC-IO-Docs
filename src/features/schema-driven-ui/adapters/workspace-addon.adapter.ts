@@ -89,7 +89,7 @@ function buildViewFromSections(
     admin: SectionProducer;
   },
   context: UiViewAdapterContext,
-  getActionParameters?: (context: UiViewAdapterContext) => Record<string, unknown> | undefined
+  getActionParameters?: ((context: UiViewAdapterContext) => Record<string, unknown> | undefined) | undefined
 ): UiView {
   const logContext = extractDocumentLogPanelContext(context.uiContext);
   const processDisabled =
@@ -111,7 +111,9 @@ function buildViewFromSections(
   const actionParams = getActionParameters ? getActionParameters(context) : undefined;
   const documentLogSection = buildDocumentLogSection(logContext, {
     maxWidgets: MAX_GOOGLE_WORKSPACE_CARD_WIDGETS - fixedWidgetCount,
-    ...(actionParams ? { onChangeActionParameters: actionParams } : {}),
+    ...(actionParams && Object.keys(actionParams).length > 0
+      ? { actionParameters: actionParams }
+      : {}),
   });
 
   const sections: UiViewSection[] = [
@@ -147,7 +149,7 @@ async function resolveAndBuildView(
   },
   context: UiViewAdapterContext,
   displayNameResolver: DocumentTypeDisplayNameResolverPort,
-  getActionParameters?: (context: UiViewAdapterContext) => Record<string, unknown> | undefined
+  getActionParameters?: ((context: UiViewAdapterContext) => Record<string, unknown> | undefined) | undefined
 ): Promise<UiView> {
   const resolvedDocTypes = await Promise.all(
     context.selectionState!.documentTypes.map(async (docType) => {

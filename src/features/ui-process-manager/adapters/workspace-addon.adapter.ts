@@ -50,6 +50,7 @@ import {
   resolveAttachmentId,
   parseGoogleDriveUrl,
   isGmailContext,
+  isInCardAction,
   isResetOrInitialLoad,
   sanitizeFormDataForSourceReset,
   reconcileDocumentLogSelection,
@@ -248,6 +249,35 @@ export function normalizeFormData(
   return normalized;
 }
 
+function extractErrorStatusCode(error: unknown, depth = 0): number | undefined {
+  if (!error || typeof error !== 'object') {
+    return undefined;
+  }
+  const err = error as {
+    statusCode?: unknown;
+    status?: unknown;
+    code?: unknown;
+    response?: { status?: unknown } | undefined;
+    cause?: unknown;
+  };
+  if (typeof err.statusCode === 'number') {
+    return err.statusCode;
+  }
+  if (typeof err.status === 'number') {
+    return err.status;
+  }
+  if (err.response && typeof err.response === 'object' && typeof err.response.status === 'number') {
+    return err.response.status;
+  }
+  if (typeof err.code === 'number') {
+    return err.code;
+  }
+  if (depth < 3 && err.cause !== undefined) {
+    return extractErrorStatusCode(err.cause, depth + 1);
+  }
+  return undefined;
+}
+
 export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
   private readonly gmailPort?: UiProcessGmailPort | undefined;
 
@@ -266,21 +296,14 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     let threadMessages: UiProcessGmailMessageDescriptor[] | undefined;
     let activeMsg: UiProcessGmailMessageDescriptor | undefined;
 
-    const inCardActions = new Set([
-      'onSpaceTypeChange',
-      'onDocumentTypeChange',
-      'onFormChange',
-      'onFileSourceChange',
-      'onEmailMessageChange',
-    ]);
-    const isInCardAction = actionName !== undefined && inCardActions.has(actionName);
+    const isInCard = isInCardAction(actionName);
 
     if (isGmail && this.gmailPort) {
       const gmailResolution = await this.resolveActiveGmailMessage({
         context,
         effectiveContext,
         actionName,
-        isInCardAction,
+        isInCardAction: isInCard,
       });
       threadMessages = gmailResolution.threadMessages;
       activeMsg = gmailResolution.activeMsg;
@@ -595,6 +618,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
     const isPass2Event =
       actionName !== 'processDocument' &&
+      actionName !== 'copyDocumentLog' &&
       actionName !== 'viewJson' &&
       (isSourceReset || isManualTypeSwitch);
 
@@ -697,6 +721,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       isUpdateCard?: boolean | undefined;
       hiddenFields?: string[] | undefined;
       clearPreviousSelectedLogId?: boolean | undefined;
+      notification?: string | undefined;
     }): UiProcessResult => {
       const combinedValidationErrors = [
         ...(options.validationErrors ?? normalizedContext.validationErrors ?? []),
@@ -739,11 +764,89 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         ...(options.hiddenFields !== undefined ? { hiddenFields: options.hiddenFields } : {}),
         ...(state.validationErrors ? { validationErrors: state.validationErrors } : {}),
         ...(state.statusMessages ? { statusMessages: state.statusMessages } : {}),
+        ...(options.notification !== undefined ? { notification: options.notification } : {}),
       };
     };
 
     const createErrorRenderResult = (validationErrors: string[]): UiProcessResult =>
       createRenderResult({ validationErrors, isUpdateCard: true });
+
+    if (actionName === 'copyDocumentLog') {
+      if (!this.options.documentLogPort) {
+        return createErrorRenderResult([
+          'Document Log provisioning is not configured for this workspace.',
+        ]);
+      }
+
+      const spaceResolution = resolveSpace(
+        {
+          formData: normalizedContext.formData,
+          activeSpaceType: currentSpaceType,
+          config,
+        },
+        spaces
+      );
+
+      if (spaceResolution.collisionError) {
+        return createErrorRenderResult([spaceResolution.collisionError]);
+      }
+
+      if (spaceResolution.notFoundError) {
+        return createErrorRenderResult([spaceResolution.notFoundError]);
+      }
+
+      if (!spaceResolution.matchedSpace) {
+        return createErrorRenderResult([
+          'Please select a Document Space before copying a Document Log.',
+        ]);
+      }
+
+      const matchedSpace = spaceResolution.matchedSpace;
+      const space: UiProcessDocumentSpaceDto = {
+        id: matchedSpace.id,
+        name: matchedSpace.name,
+        typeId: matchedSpace.typeId ?? currentSpaceType,
+        abstractStorageId: matchedSpace.abstractStorageId ?? matchedSpace.id,
+      };
+
+      try {
+        const copyResult = await this.options.documentLogPort.copyLog(space);
+        const notification = copyResult.created
+          ? `Created "${copyResult.candidate.name}" in "${copyResult.folderPath}".`
+          : `Document Log already exists: "${copyResult.candidate.name}".`;
+
+        let evaluatedFormData = normalizedContext.formData;
+        let hiddenFields: string[] | undefined;
+        if (formEvaluator) {
+          try {
+            const evaluation = await formEvaluator.evaluate(
+              normalizedContext.formData ?? {},
+              resolvedDocumentTypeKey
+            );
+            evaluatedFormData = evaluation.computedData;
+            hiddenFields = evaluation.hiddenFields;
+          } catch (e) {
+            console.warn('Form evaluation failed after copyDocumentLog:', e);
+          }
+        }
+
+        return createRenderResult({
+          formData: evaluatedFormData,
+          hiddenFields,
+          isUpdateCard: true,
+          notification,
+        });
+      } catch (error) {
+        if (extractErrorStatusCode(error) === 403) {
+          return createErrorRenderResult([
+            `Permission denied (403) while copying the Document Log template into "${space.name}". Ensure you have Contributor (or higher) access to the Shared Drive and permission to copy the Document Log template spreadsheet, then try again.`,
+          ]);
+        }
+        return createErrorRenderResult([
+          error instanceof Error ? error.message : 'Failed to copy Document Log',
+        ]);
+      }
+    }
 
     if (actionName === 'processDocument') {
       const currentUiState = evaluateProcessUiState({

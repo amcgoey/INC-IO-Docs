@@ -46,6 +46,7 @@ describe('DocumentLogActivityHandler', () => {
     const mockService: DocumentLogPort = {
       requiresDocumentLog: vi.fn().mockReturnValue(true),
       resolveLog: vi.fn(),
+      copyLog: vi.fn(),
       queryUiContext: vi.fn().mockResolvedValue(undefined),
       readLog: vi.fn(),
       writeLog: vi.fn(),
@@ -68,6 +69,7 @@ describe('DocumentLogActivityHandler', () => {
       {
         requiresDocumentLog: vi.fn().mockReturnValue(true),
         resolveLog: vi.fn(),
+        copyLog: vi.fn(),
         queryUiContext: vi.fn().mockResolvedValue(undefined),
         readLog: vi.fn(),
         writeLog,
@@ -108,6 +110,7 @@ describe('DocumentLogActivityHandler', () => {
     const handler = new DocumentLogActivityHandler({
       requiresDocumentLog: vi.fn().mockReturnValue(true),
       resolveLog: vi.fn(),
+      copyLog: vi.fn(),
       queryUiContext: vi.fn().mockResolvedValue(undefined),
       readLog: vi.fn(),
       writeLog,
@@ -149,6 +152,7 @@ describe('DocumentLogActivityHandler', () => {
     const handler = new DocumentLogActivityHandler({
       requiresDocumentLog: vi.fn().mockReturnValue(true),
       resolveLog: vi.fn(),
+      copyLog: vi.fn(),
       queryUiContext: vi.fn().mockResolvedValue(undefined),
       readLog: vi.fn(),
       writeLog,
@@ -171,6 +175,7 @@ describe('DocumentLogActivityHandler', () => {
     const handler = new DocumentLogActivityHandler({
       requiresDocumentLog: vi.fn().mockReturnValue(true),
       resolveLog: vi.fn(),
+      copyLog: vi.fn(),
       queryUiContext: vi.fn().mockResolvedValue(undefined),
       readLog: vi.fn(),
       writeLog,
@@ -194,6 +199,7 @@ describe('DocumentLogActivityHandler', () => {
     const handler = new DocumentLogActivityHandler({
       requiresDocumentLog: vi.fn().mockReturnValue(true),
       resolveLog: vi.fn(),
+      copyLog: vi.fn(),
       queryUiContext: vi.fn().mockResolvedValue(undefined),
       readLog: vi.fn(),
       writeLog: vi.fn().mockRejectedValue(
@@ -237,6 +243,7 @@ describe('DocumentLogActivityHandler', () => {
         {
           requiresDocumentLog: vi.fn().mockReturnValue(true),
           resolveLog: vi.fn(),
+          copyLog: vi.fn(),
           queryUiContext: vi.fn().mockResolvedValue(undefined),
           readLog,
           writeLog: vi.fn(),
@@ -277,6 +284,7 @@ describe('DocumentLogActivityHandler', () => {
       const handler = new DocumentLogActivityHandler({
         requiresDocumentLog: vi.fn().mockReturnValue(true),
         resolveLog: vi.fn(),
+        copyLog: vi.fn(),
         queryUiContext: vi.fn().mockResolvedValue(undefined),
         readLog,
         writeLog: vi.fn(),
@@ -320,6 +328,7 @@ describe('DocumentLogActivityHandler', () => {
       const handler = new DocumentLogActivityHandler({
         requiresDocumentLog: vi.fn().mockReturnValue(true),
         resolveLog: vi.fn(),
+        copyLog: vi.fn(),
         queryUiContext: vi.fn().mockResolvedValue(undefined),
         readLog,
         writeLog: vi.fn(),
@@ -355,6 +364,7 @@ describe('DocumentLogActivityHandler', () => {
       const handler = new DocumentLogActivityHandler({
         requiresDocumentLog: vi.fn().mockReturnValue(true),
         resolveLog: vi.fn(),
+        copyLog: vi.fn(),
         queryUiContext: vi.fn().mockResolvedValue(undefined),
         readLog: vi.fn().mockRejectedValue(
           new DocumentLogMissingError('Harborview Hotel', '1 Admin')

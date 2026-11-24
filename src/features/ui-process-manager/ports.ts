@@ -31,6 +31,8 @@ import {
   extractSelectFilesSet,
   resolveAttachmentId,
   formatThreadEmailOptionLabel,
+  IN_CARD_ACTIONS,
+  isInCardAction,
   isResetOrInitialLoad,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
@@ -74,6 +76,8 @@ export {
   extractSelectFilesSet,
   resolveAttachmentId,
   formatThreadEmailOptionLabel,
+  IN_CARD_ACTIONS,
+  isInCardAction,
   isResetOrInitialLoad,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
@@ -99,6 +103,7 @@ export const UiProcessRenderResultSchema = Type.Object({
   validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   statusMessages: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  notification: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
 });
 export type UiProcessRenderResult = Static<typeof UiProcessRenderResultSchema>;
 
@@ -187,9 +192,20 @@ export type UiProcessLogResolutionResult =
       candidates: UiProcessLogCandidate[];
     };
 
+export const UiProcessCopyDocumentLogResultSchema = Type.Object(
+  {
+    created: Type.Boolean(),
+    candidate: UiProcessLogCandidateSchema,
+    folderPath: Type.String(),
+  },
+  { additionalProperties: false }
+);
+export type UiProcessCopyDocumentLogResult = Static<typeof UiProcessCopyDocumentLogResultSchema>;
+
 export interface UiProcessDocumentLogPort {
   requiresDocumentLog(documentTypeKey: string): Promise<boolean> | boolean;
   resolveLog(space: UiProcessDocumentSpaceDto): Promise<UiProcessLogResolutionResult>;
+  copyLog(space: UiProcessDocumentSpaceDto): Promise<UiProcessCopyDocumentLogResult>;
 }
 
 export interface UiProcessDocumentRunnerPort {

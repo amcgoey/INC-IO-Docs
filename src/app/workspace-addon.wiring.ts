@@ -320,6 +320,19 @@ export function wireWorkspaceAddonRoutes(
                   candidates: res.candidates.map((c) => ({ id: c.id, name: c.name })),
                 };
               },
+              copyLog: async (space) => {
+                const res = await service.copyLog({
+                  id: space.id,
+                  typeId: space.typeId,
+                  name: space.name,
+                  abstractStorageId: space.abstractStorageId,
+                });
+                return {
+                  created: res.created,
+                  candidate: { id: res.candidate.id, name: res.candidate.name },
+                  folderPath: res.folderPath,
+                };
+              },
             };
           }
         : undefined;

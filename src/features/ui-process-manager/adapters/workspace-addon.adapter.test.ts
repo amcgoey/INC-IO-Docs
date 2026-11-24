@@ -2438,6 +2438,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         'onSpaceTypeChange',
         'onDocumentTypeChange',
         'onFileSourceChange',
+        'copyDocumentLog',
       ] as const;
 
       for (const actionName of inCardActions) {
@@ -6001,6 +6002,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       const documentLogPort: UiProcessDocumentLogPort = {
         requiresDocumentLog: vi.fn().mockResolvedValue(false),
         resolveLog: vi.fn(),
+        copyLog: vi.fn(),
       };
 
       const adapter = new WorkspaceAddonAdapter({
@@ -6031,6 +6033,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           status: 'missing',
           expectedFolderPath: '1 Admin',
         }),
+        copyLog: vi.fn(),
       };
 
       const adapter = new WorkspaceAddonAdapter({
@@ -6063,6 +6066,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
             { id: 'log-2', name: 'Project Main Document Log v2' },
           ],
         }),
+        copyLog: vi.fn(),
       };
 
       const adapter = new WorkspaceAddonAdapter({
@@ -6088,6 +6092,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       const documentLogPort: UiProcessDocumentLogPort = {
         requiresDocumentLog: vi.fn().mockResolvedValue(true),
         resolveLog: vi.fn().mockRejectedValue(new Error('Drive 403 Forbidden')),
+        copyLog: vi.fn(),
       };
 
       const adapter = new WorkspaceAddonAdapter({
@@ -6116,6 +6121,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           status: 'resolved',
           candidate: { id: 'log-resolved-1', name: 'Project Main Document Log' },
         }),
+        copyLog: vi.fn(),
       };
 
       const adapter = new WorkspaceAddonAdapter({
@@ -6156,6 +6162,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
             { id: 'log-2', name: 'Project Main Document Log v2' },
           ],
         }),
+        copyLog: vi.fn(),
       };
 
       const adapter = new WorkspaceAddonAdapter({
@@ -6206,6 +6213,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
             { id: 'log-2', name: 'Project Main Document Log v2' },
           ],
         }),
+        copyLog: vi.fn(),
       };
 
       const adapter = new WorkspaceAddonAdapter({
@@ -6491,6 +6499,390 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       })) as UiProcessRenderResult;
       expect(spaceClearRes.spaceId).toBeUndefined();
       expect(spaceClearRes.formData).not.toHaveProperty('SelectDocumentLog');
+    });
+  });
+
+  describe('copyDocumentLog action handling', () => {
+    const buildCopyEvent = (
+      overrides?: Partial<UiProcessEventContext>,
+      formDataOverrides?: Record<string, unknown>
+    ): UiProcessEventContext => ({
+      actionName: 'copyDocumentLog',
+      selectedItems: [{ id: 'file-1', title: 'Invoice.pdf' }],
+      formData: {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentSpace_projects: 'Project Main',
+        SelectDocumentType_projects: 'invoice-project',
+        SelectFiles: ['file-1'],
+        title_invoice_project_placeholder: undefined,
+        'title_invoice-project': 'March Invoice',
+        ...formDataOverrides,
+      },
+      ...overrides,
+    });
+
+    it('returns updateCard error preserving formData when documentLogPort is not configured', async () => {
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+      });
+
+      const result = (await adapter.processUiEvent(buildCopyEvent())) as UiProcessRenderResult;
+      expect(Value.Check(UiProcessResultSchema, result)).toBe(true);
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBeUndefined();
+      expect(result.validationErrors).toEqual([
+        'Document Log provisioning is not configured for this workspace.',
+      ]);
+      expect(result.formData?.title).toBe('March Invoice');
+    });
+
+    it('validates resolveSpace collisionError before calling copyLog and preserves formData', async () => {
+      const collidingSpaceProvider: UiProcessSpaceProviderPort = {
+        getAllTypes: mockSpaceProvider.getAllTypes,
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [
+            { id: 'proj-a', name: 'Duplicate Project' },
+            { id: 'proj-b', name: 'duplicate project' },
+          ],
+        }),
+      };
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: collidingSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(
+        buildCopyEvent({}, { SelectDocumentSpace_projects: 'Duplicate Project' })
+      )) as UiProcessRenderResult;
+
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBeUndefined();
+      expect(result.validationErrors?.[0]).toContain('Multiple spaces match');
+      expect(result.formData?.title).toBe('March Invoice');
+      expect(documentLogPort.copyLog).not.toHaveBeenCalled();
+    });
+
+    it('validates resolveSpace notFoundError before calling copyLog and preserves formData', async () => {
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(
+        buildCopyEvent({}, { SelectDocumentSpace_projects: 'Nonexistent Space' })
+      )) as UiProcessRenderResult;
+
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBeUndefined();
+      expect(result.validationErrors?.[0]).toContain('was not found');
+      expect(result.formData?.title).toBe('March Invoice');
+      expect(documentLogPort.copyLog).not.toHaveBeenCalled();
+    });
+
+    it('validates missing space (!matchedSpace) before calling copyLog and preserves formData', async () => {
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(
+        buildCopyEvent({}, { SelectDocumentSpace_projects: '' })
+      )) as UiProcessRenderResult;
+
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBeUndefined();
+      expect(result.validationErrors).toEqual([
+        'Please select a Document Space before copying a Document Log.',
+      ]);
+      expect(result.formData?.title).toBe('March Invoice');
+      expect(documentLogPort.copyLog).not.toHaveBeenCalled();
+    });
+
+    it('calls copyLog with UiProcessDocumentSpaceDto, returns Created toast, and preserves formData and hiddenFields on created: true', async () => {
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn().mockResolvedValue({
+          created: true,
+          candidate: { id: 'new-log-1', name: 'Project Main Document Log' },
+          folderPath: '1 Admin',
+        }),
+      };
+      const formEvaluator: UiProcessFormEvaluatorPort = {
+        evaluate: vi.fn().mockResolvedValue({
+          computedData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace: 'Project Main',
+            SelectDocumentType: 'invoice-project',
+            SelectFiles: ['file-1'],
+            title: 'March Invoice',
+            computedTag: 'INV-001',
+          },
+          hiddenFields: ['internalNotes'],
+          disabledFields: [],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+        formEvaluator,
+      });
+
+      const result = (await adapter.processUiEvent(buildCopyEvent())) as UiProcessRenderResult;
+
+      expect(Value.Check(UiProcessResultSchema, result)).toBe(true);
+      expect(documentLogPort.copyLog).toHaveBeenCalledTimes(1);
+      expect(documentLogPort.copyLog).toHaveBeenCalledWith({
+        id: 'proj1',
+        name: 'Project Main',
+        typeId: 'projects',
+        abstractStorageId: 'proj1',
+      });
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBe('Created "Project Main Document Log" in "1 Admin".');
+      expect(result.validationErrors).toBeUndefined();
+      expect(result.formData?.title).toBe('March Invoice');
+      expect(result.formData?.computedTag).toBe('INV-001');
+      expect(result.hiddenFields).toEqual(['internalNotes']);
+    });
+
+    it('preserves succeeded copy notification even if formEvaluator throws', async () => {
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn().mockResolvedValue({
+          created: true,
+          candidate: { id: 'new-log-1', name: 'Project Main Document Log' },
+          folderPath: '1 Admin',
+        }),
+      };
+      const formEvaluator: UiProcessFormEvaluatorPort = {
+        evaluate: vi.fn().mockRejectedValue(new Error('Evaluator failure')),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+        formEvaluator,
+      });
+
+      const result = (await adapter.processUiEvent(buildCopyEvent())) as UiProcessRenderResult;
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBe('Created "Project Main Document Log" in "1 Admin".');
+      expect(result.formData?.title).toBe('March Invoice');
+      expect(result.hiddenFields).toBeUndefined();
+    });
+
+    it('returns idempotent notification when copyLog returns created: false while preserving formData', async () => {
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn().mockResolvedValue({
+          created: false,
+          candidate: { id: 'existing-log-1', name: 'Project Main Document Log' },
+          folderPath: '1 Admin',
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(buildCopyEvent())) as UiProcessRenderResult;
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBe('Document Log already exists: "Project Main Document Log".');
+      expect(result.validationErrors).toBeUndefined();
+      expect(result.formData?.title).toBe('March Invoice');
+    });
+
+    it('returns actionable 403 Shared Drive Contributor guidance for direct statusCode: 403 error and preserves formData', async () => {
+      const err403 = Object.assign(new Error('Forbidden'), { statusCode: 403 });
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn().mockRejectedValue(err403),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(buildCopyEvent())) as UiProcessRenderResult;
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBeUndefined();
+      expect(result.validationErrors?.[0]).toContain('403');
+      expect(result.validationErrors?.[0]).toContain('Project Main');
+      expect(result.validationErrors?.[0]).toContain('Contributor');
+      expect(result.validationErrors?.[0]).toContain('template');
+      expect(result.formData?.title).toBe('March Invoice');
+    });
+
+    it('detects nested cause statusCode: 403 and returns Shared Drive Contributor guidance', async () => {
+      const inner = { statusCode: 403 };
+      const outer = new Error('Drive API copy failed', { cause: inner });
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn().mockRejectedValue(outer),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(buildCopyEvent())) as UiProcessRenderResult;
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBeUndefined();
+      expect(result.validationErrors?.[0]).toContain('Permission denied (403)');
+      expect(result.validationErrors?.[0]).toContain('Contributor');
+      expect(result.formData?.title).toBe('March Invoice');
+    });
+
+    it('returns generic error message for non-403 errors while preserving formData', async () => {
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn().mockRejectedValue(new Error('Network timeout while copying template')),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(buildCopyEvent())) as UiProcessRenderResult;
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBeUndefined();
+      expect(result.validationErrors).toEqual(['Network timeout while copying template']);
+      expect(result.formData?.title).toBe('March Invoice');
+    });
+
+    it('fetches Gmail thread messages and preserves Gmail attachments, email selection, and form inputs on copyDocumentLog', async () => {
+      const getThreadMessagesMock = vi.fn().mockResolvedValue([
+        {
+          id: 'msg-1',
+          from: 'Alice <alice@example.com>',
+          date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+          attachments: [{ id: 'att-1', title: 'File1.pdf', mimeType: 'application/pdf' }],
+        },
+        {
+          id: 'msg-2',
+          from: 'Bob <bob@example.com>',
+          date: 'Tue, 20 Oct 2026 11:00:00 +0000',
+          attachments: [
+            { id: 'att-2a', title: 'Invoice.pdf', mimeType: 'application/pdf' },
+            { id: 'att-2b', title: 'Backup.pdf', mimeType: 'application/pdf' },
+          ],
+        },
+      ]);
+      const gmailPort: UiProcessGmailPort = {
+        getMessageAttachments: vi.fn(),
+        getThreadMessages: getThreadMessagesMock,
+      };
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn().mockResolvedValue({
+          created: true,
+          candidate: { id: 'log-gmail-1', name: 'Project Main Document Log' },
+          folderPath: '1 Admin',
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        gmailPort,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent({
+        actionName: 'copyDocumentLog',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-1',
+          threadId: 'th-copy',
+          accessToken: 'ya29.token',
+        },
+        selectedItems: [
+          { id: 'att-2a', title: 'Invoice.pdf', mimeType: 'application/pdf' },
+          { id: 'att-2b', title: 'Backup.pdf', mimeType: 'application/pdf' },
+        ],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectEmailMessage: 'msg-2',
+          SelectFileSource: 'Email Attachments',
+          SelectAttachments: ['att-2a'],
+          'title_invoice-project': 'Gmail Invoice',
+        },
+      })) as UiProcessRenderResult;
+
+      expect(getThreadMessagesMock).toHaveBeenCalledWith('th-copy', { skipCache: false });
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBe('Created "Project Main Document Log" in "1 Admin".');
+      expect(result.selectionState?.threadMessages).toHaveLength(2);
+      expect(result.selectionState?.files).toEqual([
+        { text: 'Invoice.pdf', value: 'att-2a', selected: true },
+        { text: 'Backup.pdf', value: 'att-2b', selected: false },
+      ]);
+      expect(result.formData?.SelectEmailMessage).toBe('msg-2');
+      expect(result.formData?.title).toBe('Gmail Invoice');
     });
   });
 });

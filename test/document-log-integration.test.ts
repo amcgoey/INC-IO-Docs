@@ -1175,6 +1175,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
           },
         ],
       }),
+      copyLog: vi.fn(),
       queryUiContext: vi.fn().mockResolvedValue(undefined),
       readLog: vi.fn(),
       writeLog,

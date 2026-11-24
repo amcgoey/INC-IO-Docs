@@ -1,13 +1,13 @@
 import type { UiViewSection, UiViewWidget } from '../domain';
 import type { DocumentLogPanelContext } from '../ports';
-import { escapeCardHtml } from './common';
+import { PRIMARY_ACTION_BUTTON_COLOR, escapeCardHtml } from './common';
 
 export const SELECT_DOCUMENT_LOG_KEY = 'SelectDocumentLog';
 
 export interface DocumentLogSectionOptions {
   sectionHeader?: string | undefined;
   maxWidgets?: number | undefined;
-  onChangeActionParameters?: Record<string, unknown> | undefined;
+  actionParameters?: Record<string, unknown> | undefined;
 }
 
 function buildOpenLogButton(url: string) {
@@ -84,6 +84,23 @@ export function buildDocumentLogSection(
           ...(plainFolder !== undefined ? { bottomLabel: `Folder: ${plainFolder}` } : {}),
         },
       });
+      const hasActionParams =
+        options?.actionParameters !== undefined &&
+        Object.keys(options.actionParameters).length > 0;
+      widgets.push({
+        buttonList: {
+          buttons: [
+            {
+              text: 'Copy Log',
+              color: PRIMARY_ACTION_BUTTON_COLOR,
+              onClick: {
+                action: 'copyDocumentLog',
+                ...(hasActionParams ? { parameters: options.actionParameters } : {}),
+              },
+            },
+          ],
+        },
+      });
       break;
     }
 
@@ -104,8 +121,8 @@ export function buildDocumentLogSection(
     case 'ambiguous': {
       const candidateOptions = context.candidateOptions ?? [];
       const onChangeParams =
-        options?.onChangeActionParameters && Object.keys(options.onChangeActionParameters).length > 0
-          ? options.onChangeActionParameters
+        options?.actionParameters && Object.keys(options.actionParameters).length > 0
+          ? options.actionParameters
           : undefined;
       if (candidateOptions.length > 0) {
         widgets.push({

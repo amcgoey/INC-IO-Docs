@@ -409,10 +409,23 @@ export interface LogDiscoveryFolderMetadata {
   name: string;
 }
 
+export interface LogDiscoveryCopyFileOptions {
+  targetFolderId: string;
+  newName: string;
+}
+
 export interface LogDiscoveryPort {
   searchSpreadsheets(query: LogDiscoveryQuery): Promise<LogResolutionCandidate[]>;
   getFile?(fileId: string): Promise<LogDiscoveryFileMetadata>;
   resolveFolderPath?(rootFolderId: string, pathSegments: string[]): Promise<LogDiscoveryFolderMetadata>;
+  ensureFolderPath?(
+    rootFolderId: string,
+    pathSegments: string[]
+  ): Promise<LogDiscoveryFolderMetadata>;
+  copyFile?(
+    templateFileId: string,
+    options: LogDiscoveryCopyFileOptions
+  ): Promise<LogResolutionCandidate>;
 }
 
 export interface LogStorageTarget {
@@ -524,11 +537,22 @@ export const DocumentLogUiContextResultSchema = Type.Object(
 );
 export type DocumentLogUiContextResult = Static<typeof DocumentLogUiContextResultSchema>;
 
+export const CopyDocumentLogResultSchema = Type.Object(
+  {
+    created: Type.Boolean(),
+    candidate: LogResolutionCandidateSchema,
+    folderPath: Type.String(),
+  },
+  { additionalProperties: false }
+);
+export type CopyDocumentLogResult = Static<typeof CopyDocumentLogResultSchema>;
+
 // --- Driving Port ---
 
 export interface DocumentLogPort {
   requiresDocumentLog(documentTypeKey: string): boolean;
   resolveLog(space: DocumentLogSpace): Promise<LogResolutionResult>;
+  copyLog(space: DocumentLogSpace): Promise<CopyDocumentLogResult>;
   queryUiContext(
     request: QueryDocumentLogUiContextRequest
   ): Promise<DocumentLogUiContextResult | undefined>;

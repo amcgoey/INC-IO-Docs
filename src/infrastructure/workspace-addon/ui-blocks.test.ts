@@ -12,6 +12,7 @@ import {
   GoogleWorkspaceSectionSchema,
   GoogleWorkspaceWidgetSchema,
   GoogleWorkspaceTextParagraphWidgetSchema,
+  GoogleWorkspaceActionResponseSchema,
 } from './ui-blocks';
 
 describe('Workspace Add-on UI Blocks', () => {
@@ -173,6 +174,45 @@ describe('Workspace Add-on UI Blocks', () => {
           ],
         },
       });
+    });
+
+    it('emits paired updateCard and notification when non-blank notification is provided and passes GoogleWorkspaceActionResponseSchema', () => {
+      const card = { header: { title: 'Card' }, sections: [] };
+      const notificationText = 'Created "Harborview Document Log" in "1 Admin".';
+      const action = buildUpdateCardNavigationAction(card, notificationText);
+
+      expect(action).toEqual({
+        action: {
+          navigations: [
+            {
+              updateCard: card,
+            },
+          ],
+          notification: {
+            text: notificationText,
+          },
+        },
+      });
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, action)).toBe(true);
+    });
+
+    it('omits notification key when notification is omitted, undefined, empty, or whitespace-only', () => {
+      const card = { header: { title: 'Card' }, sections: [] };
+
+      for (const blank of [undefined, '', '   ']) {
+        const action = buildUpdateCardNavigationAction(card, blank);
+        expect(action).toEqual({
+          action: {
+            navigations: [
+              {
+                updateCard: card,
+              },
+            ],
+          },
+        });
+        expect('notification' in action.action).toBe(false);
+        expect(Value.Check(GoogleWorkspaceActionResponseSchema, action)).toBe(true);
+      }
     });
   });
 
