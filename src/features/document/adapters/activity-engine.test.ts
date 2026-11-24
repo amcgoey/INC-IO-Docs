@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ActivityEngine } from './activity-engine';
 import type { Activity } from '../domain';
-import type { ActivityHandler } from '../ports';
+import type { ActivityExecutionContext, ActivityHandler } from '../ports';
 
 describe('ActivityEngine driven adapter', () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -130,5 +130,46 @@ describe('ActivityEngine driven adapter', () => {
 
     const result = await engine.dispatch(activity);
     expect(result).toEqual(expectedOutput);
+  });
+
+  it('forwards optional ActivityExecutionContext to matching handler', async () => {
+    const expectedOutput = { success: true };
+    const handler: ActivityHandler = {
+      canHandle: vi.fn((act: Activity) => act.type === 'WRITE_LOG'),
+      handle: vi.fn().mockResolvedValue(expectedOutput),
+    };
+    const context: ActivityExecutionContext = Object.freeze({
+      document: {
+        type: 'submittal-arch',
+        data: { section: '071200' },
+      },
+      files: Object.freeze([
+        {
+          id: 'file-1',
+          name: 'Submittal.pdf',
+          uri: 'https://drive.google.com/file/d/file-1/view',
+        },
+      ]),
+      stepOutputs: Object.freeze({
+        moveStep: {
+          success: true,
+          files: [{ id: 'file-1', name: 'Submittal.pdf', uri: 'https://drive.google.com/file/d/file-1/view' }],
+        },
+      }),
+      contextVariables: Object.freeze({ folderId: 'folder-99' }),
+    });
+
+    const engine = new ActivityEngine([handler]);
+    const activity: Activity = {
+      id: 'logStep',
+      type: 'WRITE_LOG',
+      payload: {},
+    };
+
+    const result = await engine.dispatch(activity, context);
+
+    expect(result).toEqual(expectedOutput);
+    expect(handler.canHandle).toHaveBeenCalledWith(activity);
+    expect(handler.handle).toHaveBeenCalledWith(activity, context);
   });
 });

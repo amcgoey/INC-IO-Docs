@@ -1,15 +1,18 @@
-import type { Activity, ActivityOutput } from '../domain';
+import type { Activity, ActivityExecutionContext, ActivityOutput } from '../domain';
 import type { ActivityDispatcherPort, ActivityHandler } from '../ports';
 
 export class ActivityEngine implements ActivityDispatcherPort {
   constructor(private readonly handlers: ActivityHandler[] = []) {}
 
   async dispatch(
-    activity: Activity
+    activity: Activity,
+    context?: ActivityExecutionContext
   ): Promise<ActivityOutput | void> {
     const handler = this.handlers.find((h) => h.canHandle(activity));
     if (handler) {
-      return handler.handle(activity);
+      return context !== undefined
+        ? handler.handle(activity, context)
+        : handler.handle(activity);
     }
 
     console.log(`Executing activity: ${activity.type}`, activity.payload);

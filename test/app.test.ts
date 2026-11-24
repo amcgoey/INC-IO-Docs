@@ -103,10 +103,18 @@ describe('App integration tests', () => {
         ],
         outputs: [],
       });
-      expect(mockActivityEngine.dispatch).toHaveBeenCalledWith({
-        type: 'LOG_DOCUMENT',
-        payload: { status: 'submitted' },
-      });
+      expect(mockActivityEngine.dispatch).toHaveBeenCalledWith(
+        {
+          type: 'LOG_DOCUMENT',
+          payload: { status: 'submitted' },
+        },
+        {
+          document: validDocument,
+          files: [],
+          stepOutputs: {},
+          contextVariables: {},
+        }
+      );
     });
 
     it('POST /documents without eventName should return 200 with empty activities and not dispatch', async () => {
@@ -524,14 +532,22 @@ describe('App integration tests', () => {
         },
       ]);
 
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'MOVE_FILE',
-        payload: {
-          rootStorageId: 'space-folder-proposal-id',
-          parentPath: 'Communications',
-          folderName: 'Jane Doe/260825 IN - Quarterly review discussion',
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+        {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'space-folder-proposal-id',
+            parentPath: 'Communications',
+            folderName: 'Jane Doe/260825 IN - Quarterly review discussion',
+          },
         },
-      });
+        {
+          document: expectedDocument,
+          files: [],
+          stepOutputs: {},
+          contextVariables: {},
+        }
+      );
 
       listFoldersSpy.mockRestore();
     });
@@ -593,14 +609,22 @@ describe('App integration tests', () => {
           },
         },
       ]);
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'MOVE_FILE',
-        payload: {
-          rootStorageId: 'space-projects-1',
-          parentPath: '6 Construction',
-          folderName: 'Submittals',
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+        {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'space-projects-1',
+            parentPath: '6 Construction',
+            folderName: 'Submittals',
+          },
         },
-      });
+        {
+          document: body.data,
+          files: [],
+          stepOutputs: {},
+          contextVariables: {},
+        }
+      );
     });
 
     it('submits submittal-ffe Document resolving identity, calculated fields, and workflow activity', async () => {
@@ -660,14 +684,22 @@ describe('App integration tests', () => {
           },
         },
       ]);
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'MOVE_FILE',
-        payload: {
-          rootStorageId: 'space-projects-1',
-          parentPath: '3 FFE',
-          folderName: '05 Submittals',
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+        {
+          type: 'MOVE_FILE',
+          payload: {
+            rootStorageId: 'space-projects-1',
+            parentPath: '3 FFE',
+            folderName: '05 Submittals',
+          },
         },
-      });
+        {
+          document: body.data,
+          files: [],
+          stepOutputs: {},
+          contextVariables: {},
+        }
+      );
     });
 
     it('rejects payload with 400 when lookup field has an invalid option value', async () => {
@@ -791,12 +823,20 @@ describe('App integration tests', () => {
         key: 'NonStandardCategoryXYZ',
         name: 'NonStandardCategoryXYZ',
       });
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'LOG_DOCUMENT',
-        payload: {
-          status: 'combobox_handled',
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+        {
+          type: 'LOG_DOCUMENT',
+          payload: {
+            status: 'combobox_handled',
+          },
         },
-      });
+        {
+          document: body.data,
+          files: [],
+          stepOutputs: {},
+          contextVariables: {},
+        }
+      );
     });
   });
 
@@ -921,10 +961,18 @@ describe('App integration tests', () => {
         },
       ]);
 
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'CONSOLE_LOG',
-        payload: expectedResolvedPayload,
-      });
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+        {
+          type: 'CONSOLE_LOG',
+          payload: expectedResolvedPayload,
+        },
+        {
+          document: body.data,
+          files: [],
+          stepOutputs: {},
+          contextVariables: {},
+        }
+      );
     });
   });
 

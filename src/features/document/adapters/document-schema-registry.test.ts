@@ -493,6 +493,102 @@ describe('DocumentSchemaRegistryAdapter', () => {
         /Invalid template in "storage-invalid": Invalid template at "storageContextConfig\.targetFolder": references unknown fields or is malformed\./
       );
     });
+
+    it('fails fast on loadAll when Activity.id is invalid, duplicated in a workflow, or WRITE_LOG fileSourceStepId is invalid', async () => {
+      const invalidIdDoc = {
+        key: 'invalid-step-id',
+        name: 'Invalid Step Id',
+        documentSchema: { fields: [{ key: 'title', name: 'Title', type: 'string', required: true }] },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'W1',
+              activitySequence: [{ id: '9invalid', type: 'MOVE_FILE', payload: {} }],
+            },
+          ],
+        },
+      };
+      const duplicateIdDoc = {
+        key: 'duplicate-step-id',
+        name: 'Duplicate Step Id',
+        documentSchema: { fields: [{ key: 'title', name: 'Title', type: 'string', required: true }] },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'W1',
+              activitySequence: [
+                { id: 'moveStep', type: 'MOVE_FILE', payload: {} },
+                { id: 'moveStep', type: 'DUPLICATE_FILE', payload: {} },
+              ],
+            },
+          ],
+        },
+      };
+      const badFileSourceDoc = {
+        key: 'bad-file-source',
+        name: 'Bad File Source',
+        documentSchema: { fields: [{ key: 'title', name: 'Title', type: 'string', required: true }] },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'W1',
+              activitySequence: [
+                { type: 'WRITE_LOG', payload: { fileSourceStepId: 'moveStep' } },
+                { id: 'moveStep', type: 'MOVE_FILE', payload: {} },
+              ],
+            },
+          ],
+        },
+      };
+
+      const invalidIdAdapter = new DocumentSchemaRegistryAdapter(
+        createMockManifestProvider({ './schemas/invalid-id.json': invalidIdDoc }),
+        mockEvaluator
+      );
+      await expect(invalidIdAdapter.loadAll()).rejects.toThrow(/Invalid DocumentType schema/i);
+
+      const dupIdAdapter = new DocumentSchemaRegistryAdapter(
+        createMockManifestProvider({ './schemas/dup-id.json': duplicateIdDoc }),
+        mockEvaluator
+      );
+      await expect(dupIdAdapter.loadAll()).rejects.toThrow(/Duplicate Activity id "moveStep"/i);
+
+      const badSourceAdapter = new DocumentSchemaRegistryAdapter(
+        createMockManifestProvider({ './schemas/bad-source.json': badFileSourceDoc }),
+        mockEvaluator
+      );
+      await expect(badSourceAdapter.loadAll()).rejects.toThrow(/fileSourceStepId/i);
+    });
+
+    it('preserves valid Activity.id and WRITE_LOG fileSourceStepId during loadAll', async () => {
+      const validWorkflowDoc = {
+        key: 'valid-chained-workflow',
+        name: 'Valid Chained Workflow',
+        documentSchema: { fields: [{ key: 'title', name: 'Title', type: 'string', required: true }] },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'W1',
+              activitySequence: [
+                { id: 'moveStep', type: 'MOVE_FILE', payload: {} },
+                { id: 'logStep', type: 'WRITE_LOG', payload: { fileSourceStepId: 'moveStep' } },
+              ],
+            },
+          ],
+        },
+      };
+
+      const adapter = new DocumentSchemaRegistryAdapter(
+        createMockManifestProvider({ './schemas/valid-chained.json': validWorkflowDoc }),
+        mockEvaluator
+      );
+      const loaded = await adapter.loadAll();
+      expect(loaded).toHaveLength(1);
+      expect(loaded[0].documentWorkflowConfig?.workflows[0].activitySequence).toEqual([
+        { id: 'moveStep', type: 'MOVE_FILE', payload: {} },
+        { id: 'logStep', type: 'WRITE_LOG', payload: { fileSourceStepId: 'moveStep' } },
+      ]);
+    });
   });
 
   describe('loadAll evaluationOrder and validation', () => {

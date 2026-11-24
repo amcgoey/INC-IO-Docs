@@ -33,6 +33,7 @@ import {
   buildFieldSchema,
   formatEmailPdfFileName,
   type Activity,
+  type ActivityExecutionContext,
   type ActivityOutput,
   type FileLocator,
   type SourceFile,
@@ -181,8 +182,17 @@ describe('Document domain', () => {
     expect(Value.Check(DocumentModel, invalidSpaceTypeDoc)).toBe(false);
   });
 
-  it('should export ActivityType schema', () => {
+  it('should export ActivityType schema with optional validated id', () => {
     expect(ActivityType).toBeDefined();
+    expect(Value.Check(ActivityType, { type: 'MOVE_FILE', payload: {} })).toBe(true);
+    expect(Value.Check(ActivityType, { id: 'move_step-1', type: 'MOVE_FILE', payload: {} })).toBe(true);
+    expect(Value.Check(ActivityType, { id: '_init', type: 'MOVE_FILE', payload: {} })).toBe(true);
+
+    expect(Value.Check(ActivityType, { id: '', type: 'MOVE_FILE', payload: {} })).toBe(false);
+    expect(Value.Check(ActivityType, { id: '1step', type: 'MOVE_FILE', payload: {} })).toBe(false);
+    expect(Value.Check(ActivityType, { id: '-step', type: 'MOVE_FILE', payload: {} })).toBe(false);
+    expect(Value.Check(ActivityType, { id: 'step.one', type: 'MOVE_FILE', payload: {} })).toBe(false);
+    expect(Value.Check(ActivityType, { id: 'step one', type: 'MOVE_FILE', payload: {} })).toBe(false);
   });
 
   it('should export FileLocatorType schema and validate valid and invalid file locators', () => {
@@ -381,10 +391,18 @@ describe('Document domain', () => {
       ]);
     }
 
-    expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-      type: 'LOG_DOCUMENT',
-      payload: { document: { title: 'Foundation Plan' } },
-    });
+    expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+      {
+        type: 'LOG_DOCUMENT',
+        payload: { document: { title: 'Foundation Plan' } },
+      },
+      {
+        document: validDocument,
+        files: [],
+        stepOutputs: {},
+        contextVariables: {},
+      }
+    );
   });
 
   it('processDocument safely ignores unused or inactive keys in data payload', async () => {
@@ -1223,10 +1241,23 @@ describe('Document domain', () => {
         ]);
       }
 
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'LOG_DOCUMENT',
-        payload: { status: 'calculated' },
-      });
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+        {
+          type: 'LOG_DOCUMENT',
+          payload: { status: 'calculated' },
+        },
+        {
+          document: {
+            ...inputDocument,
+            calculated: {
+              testCalculatedField: '260825-Alice',
+            },
+          },
+          files: [],
+          stepOutputs: {},
+          contextVariables: {},
+        }
+      );
     });
 
     it('isolates calculatedFields under Document.calculated preventing property collisions when sharing the same key as a base field', async () => {
@@ -1606,13 +1637,21 @@ describe('Document domain', () => {
         ]);
       }
 
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'MOVE_FILE',
-        payload: {
-          folderId: 'drive-gemini-202',
-          displayName: 'Project Gemini',
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+        {
+          type: 'MOVE_FILE',
+          payload: {
+            folderId: 'drive-gemini-202',
+            displayName: 'Project Gemini',
+          },
         },
-      });
+        {
+          document: inputDocument,
+          files: [],
+          stepOutputs: {},
+          contextVariables: {},
+        }
+      );
     });
 
     it('strictly isolates calculatedFields evaluation context from each other (ADR 0003)', async () => {
@@ -1752,10 +1791,23 @@ describe('Document domain', () => {
         ]);
       }
 
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'LOG_DOCUMENT',
-        payload: { status: 'identified' },
-      });
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+        {
+          type: 'LOG_DOCUMENT',
+          payload: { status: 'identified' },
+        },
+        {
+          document: {
+            ...inputDocument,
+            id: 'Alice-260825-IN-Project discussion',
+            idDocument: 'Alice-260825-IN-Project discussion',
+            idGroup: 'Alice',
+          },
+          files: [],
+          stepOutputs: {},
+          contextVariables: {},
+        }
+      );
     });
 
     it('strictly isolates identity evaluation context from calculatedFields and each other', async () => {
@@ -2328,10 +2380,31 @@ describe('Document domain', () => {
         ]);
       }
 
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'LOG_DOCUMENT',
-        payload: { status: 'submittal_filed' },
-      });
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+        {
+          type: 'LOG_DOCUMENT',
+          payload: { status: 'submittal_filed' },
+        },
+        {
+          document: {
+            id: 'rec-sub-1',
+            type: 'submittal',
+            data: {
+              title: 'Foundation Plan Review',
+              status: {
+                code: 'APP',
+                label: 'Approved',
+                description: 'Fully approved without exceptions',
+                color: '#00FF00',
+                requiresSignature: true,
+              },
+            },
+          },
+          files: [],
+          stepOutputs: {},
+          contextVariables: {},
+        }
+      );
     });
 
     it('synthesizes fallback tuple for combo-boxes mapping custom string to schema key and name', async () => {
@@ -2957,15 +3030,44 @@ describe('Document domain', () => {
         ]);
       }
 
+      const expectedDispatchedContext: ActivityExecutionContext = {
+        document: {
+          type: 'comm-project',
+          id: 'Jane Doe-260825-IN-Inbound message',
+          idDocument: 'Jane Doe-260825-IN-Inbound message',
+          idGroup: 'Jane Doe',
+          data: {
+            contact: 'Jane Doe',
+            date: '260825',
+            direction: { key: 'IN', name: 'Incoming' },
+            description: 'Inbound message',
+          },
+          calculated: {
+            testCalculatedField: '260825-IN-Jane Doe-Inbound message',
+          },
+        },
+        files: [],
+        stepOutputs: {},
+        contextVariables: {},
+      };
+
       expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
-      expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(1, {
-        type: 'LOG_DOCUMENT',
-        payload: { step: 1, action: 'log_incoming' },
-      });
-      expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(2, {
-        type: 'NOTIFY_TEAM',
-        payload: { step: 2, channel: 'inbound-docs' },
-      });
+      expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+        1,
+        {
+          type: 'LOG_DOCUMENT',
+          payload: { step: 1, action: 'log_incoming' },
+        },
+        expectedDispatchedContext
+      );
+      expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+        2,
+        {
+          type: 'NOTIFY_TEAM',
+          payload: { step: 2, channel: 'inbound-docs' },
+        },
+        expectedDispatchedContext
+      );
     });
 
     it('matches multi-field rule (contact + direction) and dispatches activity', async () => {
@@ -2996,10 +3098,32 @@ describe('Document domain', () => {
         ]);
       }
 
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'CLIENT_ACTIVITY',
-        payload: { step: 1, target: 'client' },
-      });
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+        {
+          type: 'CLIENT_ACTIVITY',
+          payload: { step: 1, target: 'client' },
+        },
+        {
+          document: {
+            type: 'comm-project',
+            id: '_Client - AAA-260826-OT-ASR 06 Design Changes',
+            idDocument: '_Client - AAA-260826-OT-ASR 06 Design Changes',
+            idGroup: '_Client - AAA',
+            data: {
+              contact: '_Client - AAA',
+              date: '260826',
+              direction: { key: 'OT', name: 'Outgoing' },
+              description: 'ASR 06 Design Changes',
+            },
+            calculated: {
+              testCalculatedField: '260826-OT-_Client - AAA-ASR 06 Design Changes',
+            },
+          },
+          files: [],
+          stepOutputs: {},
+          contextVariables: {},
+        }
+      );
     });
 
     it('falls back to catchAllWorkflow when no rules match', async () => {
@@ -3030,10 +3154,32 @@ describe('Document domain', () => {
         ]);
       }
 
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'GENERAL_ACTIVITY',
-        payload: { action: 'general' },
-      });
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+        {
+          type: 'GENERAL_ACTIVITY',
+          payload: { action: 'general' },
+        },
+        {
+          document: {
+            type: 'comm-project',
+            id: 'Other Contractor-260826-OT-Outbound to other contractor',
+            idDocument: 'Other Contractor-260826-OT-Outbound to other contractor',
+            idGroup: 'Other Contractor',
+            data: {
+              contact: 'Other Contractor',
+              date: '260826',
+              direction: { key: 'OT', name: 'Outgoing' },
+              description: 'Outbound to other contractor',
+            },
+            calculated: {
+              testCalculatedField: '260826-OT-Other Contractor-Outbound to other contractor',
+            },
+          },
+          files: [],
+          stepOutputs: {},
+          contextVariables: {},
+        }
+      );
     });
 
     it('returns success with activities: [] when no rules match and no catch-all exists', async () => {
@@ -3274,7 +3420,12 @@ describe('Document domain', () => {
       }
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(expectedActivity);
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(expectedActivity, {
+        document: expectedEnrichedDocument,
+        files: [],
+        stepOutputs: {},
+        contextVariables: {},
+      });
 
       // Verify that mockEvaluator was called with the exact required context
       expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
@@ -3425,7 +3576,12 @@ describe('Document domain', () => {
         expect(result.activities).toEqual([expectedActivity]);
       }
 
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(expectedActivity);
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(expectedActivity, {
+        document: expectedEnrichedDocument,
+        files: [],
+        stepOutputs: {},
+        contextVariables: {},
+      });
 
       // Verify that storageContextConfig was pre-evaluated with { Document: enrichedDocument }
       expect(mockEvaluator.evaluate).toHaveBeenCalledWith(
@@ -3540,7 +3696,12 @@ describe('Document domain', () => {
         },
       };
 
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(expectedActivity);
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(expectedActivity, {
+        document: inputDocument,
+        files: [],
+        stepOutputs: {},
+        contextVariables: {},
+      });
     });
 
     it('does not inject StorageContext into evaluation context when storageContextConfig is omitted', async () => {
@@ -3657,7 +3818,7 @@ describe('Document domain', () => {
       },
     };
 
-    it('dispatches Activity to ActivityDispatcherPort.dispatch without context parameter', async () => {
+    it('dispatches Activity with token-free ActivityExecutionContext excluding credentials and resources', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -3702,13 +3863,31 @@ describe('Document domain', () => {
 
       expect(result.success).toBe(true);
       expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({
-        type: 'MOVE_FILE',
-        payload: {
-          folder: 'DynamicFolder-SecretDoc',
-          fileTitle: 'SecretDoc',
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+        {
+          type: 'MOVE_FILE',
+          payload: {
+            folder: 'DynamicFolder-SecretDoc',
+            fileTitle: 'SecretDoc',
+          },
         },
-      });
+        {
+          document: {
+            id: 'ID-SecretDoc',
+            type: 'secureDocument',
+            data: { title: 'SecretDoc' },
+            calculated: { calculatedTitle: 'PREFIX-SecretDoc' },
+          },
+          files: [],
+          stepOutputs: {},
+          contextVariables: {},
+        }
+      );
+
+      const dispatchedContext = vi.mocked(mockDispatcher.dispatch).mock.calls[0]?.[1];
+      expect(dispatchedContext).toBeDefined();
+      expect('credentials' in (dispatchedContext as object)).toBe(false);
+      expect('resources' in (dispatchedContext as object)).toBe(false);
     });
 
     it('isolates TemplateEvaluatorPort evaluation context from external authentication parameters', async () => {
@@ -4207,6 +4386,389 @@ describe('Document domain', () => {
           files: [file3],
         },
       ]);
+    });
+  });
+
+  describe('DocumentService Shared Pipeline Reducer (ActivityExecutionContext)', () => {
+    it('seeds initial frozen ActivityExecutionContext and preserves optional Activity.id on dispatched and returned activities', async () => {
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'single-step-id',
+          name: 'Single Step Id',
+          documentSchema: {
+            fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+          },
+          documentUiSchema: {
+            events: {
+              onSubmit: { catchAllWorkflow: 'SingleStepWorkflow' },
+            },
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'SingleStepWorkflow',
+                activitySequence: [
+                  {
+                    id: 'movePrimary',
+                    type: 'MOVE_FILE',
+                    payload: { title: '{{Document.data.title}}' },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const capturedCalls: Array<{ activity: Activity; context?: ActivityExecutionContext | undefined }> = [];
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity, context?: ActivityExecutionContext) => {
+          capturedCalls.push({ activity, context });
+          return { success: true };
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        createCustomRegistry(mockDocumentTypes),
+        new HandlebarsAdapter()
+      );
+      await service.initialize();
+
+      const result = await service.processDocument(
+        { type: 'single-step-id', data: { title: 'Spec 01' } },
+        'onSubmit'
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.activities).toEqual([
+        {
+          id: 'movePrimary',
+          type: 'MOVE_FILE',
+          payload: { title: 'Spec 01' },
+        },
+      ]);
+
+      expect(capturedCalls).toHaveLength(1);
+      const initialCtx = capturedCalls[0].context;
+      expect(initialCtx).toBeDefined();
+      expect(initialCtx).toEqual({
+        document: {
+          type: 'single-step-id',
+          data: { title: 'Spec 01' },
+        },
+        files: [],
+        stepOutputs: {},
+        contextVariables: {},
+      });
+      expect(Object.isFrozen(initialCtx)).toBe(true);
+      expect(Object.isFrozen(initialCtx?.document)).toBe(true);
+      expect(Object.isFrozen(initialCtx?.document.data)).toBe(true);
+      expect(Object.isFrozen(initialCtx?.files)).toBe(true);
+      expect(Object.isFrozen(initialCtx?.stepOutputs)).toBe(true);
+      expect(Object.isFrozen(initialCtx?.contextVariables)).toBe(true);
+    });
+
+    it('folds files, stepOutputs, contextVariables, and documentDataPatch immutably across steps without mutating earlier snapshots', async () => {
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'pipeline-doc',
+          name: 'Pipeline Doc',
+          documentSchema: {
+            fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+          },
+          documentUiSchema: {
+            events: {
+              onSubmit: { catchAllWorkflow: 'FiveStepPipeline' },
+            },
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'FiveStepPipeline',
+                activitySequence: [
+                  { id: 'moveStep', type: 'STEP_1', payload: {} },
+                  { type: 'STEP_2_NO_FILES', payload: {} },
+                  { id: 'dupStep', type: 'STEP_3_NEW_FILES', payload: {} },
+                  { id: 'clearStep', type: 'STEP_4_CLEAR_FILES', payload: {} },
+                  { type: 'STEP_5_FINAL', payload: {} },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const file1: FileLocator = {
+        id: 'file-1',
+        name: 'Submittal-1.pdf',
+        uri: 'https://drive.google.com/file/d/file-1/view',
+      };
+      const file2: FileLocator = {
+        id: 'file-2',
+        name: 'Submittal-2.pdf',
+        uri: 'https://drive.google.com/file/d/file-2/view',
+      };
+
+      const mutableOutputFiles = [file1];
+      const capturedContexts: ActivityExecutionContext[] = [];
+
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity, context?: ActivityExecutionContext) => {
+          if (context) {
+            capturedContexts.push(context);
+          }
+          if (activity.type === 'STEP_1') {
+            return {
+              success: true,
+              files: mutableOutputFiles,
+              documentDataPatch: { patchedKey: 'v1' },
+              contextVariables: { sharedVar: 'from-1', firstOnly: true },
+            };
+          }
+          if (activity.type === 'STEP_2_NO_FILES') {
+            return {
+              success: true,
+              contextVariables: { sharedVar: 'from-2', secondOnly: 42 },
+            };
+          }
+          if (activity.type === 'STEP_3_NEW_FILES') {
+            return {
+              success: true,
+              files: [file2],
+            };
+          }
+          if (activity.type === 'STEP_4_CLEAR_FILES') {
+            return {
+              success: true,
+              files: [],
+            };
+          }
+          return { success: true };
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        createCustomRegistry(mockDocumentTypes),
+        defaultEvaluator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument(
+        { type: 'pipeline-doc', data: { title: 'Initial' } },
+        'onSubmit'
+      );
+
+      // Mutate original returned array after dispatch to verify shallow-copy isolation
+      mutableOutputFiles.push({ id: 'mutated-extra', name: 'Bad.pdf' });
+
+      expect(result.success).toBe(true);
+      expect(capturedContexts).toHaveLength(5);
+
+      const [ctx0, ctx1, ctx2, ctx3, ctx4] = capturedContexts;
+
+      // Every snapshot and its collections remain frozen
+      for (const ctx of capturedContexts) {
+        expect(Object.isFrozen(ctx)).toBe(true);
+        expect(Object.isFrozen(ctx.document)).toBe(true);
+        expect(Object.isFrozen(ctx.document.data)).toBe(true);
+        expect(Object.isFrozen(ctx.files)).toBe(true);
+        expect(Object.isFrozen(ctx.stepOutputs)).toBe(true);
+        expect(Object.isFrozen(ctx.contextVariables)).toBe(true);
+      }
+
+      // Snapshots captured at earlier steps were never mutated by later steps
+      expect(ctx0.document.data).toEqual({ title: 'Initial' });
+      expect(ctx0.files).toEqual([]);
+      expect(ctx0.stepOutputs).toEqual({});
+      expect(ctx0.contextVariables).toEqual({});
+
+      expect(ctx1.document.data).toEqual({ title: 'Initial', patchedKey: 'v1' });
+      expect(ctx1.files).toEqual([file1]);
+      expect(ctx1.files).toHaveLength(1);
+      expect(Object.keys(ctx1.stepOutputs)).toEqual(['moveStep']);
+      expect(ctx1.contextVariables).toEqual({ sharedVar: 'from-1', firstOnly: true });
+
+      // Step 2 omitted files -> ctx2 preserves ctx1.files unchanged
+      expect(ctx2.files).toBe(ctx1.files);
+      expect(ctx2.files).toEqual([file1]);
+      expect(Object.keys(ctx2.stepOutputs)).toEqual(['moveStep']);
+      expect(ctx2.contextVariables).toEqual({ sharedVar: 'from-2', firstOnly: true, secondOnly: 42 });
+
+      // Step 3 returned files: [file2] -> ctx3 updates files while moveStep remains in stepOutputs
+      expect(ctx3.files).toEqual([file2]);
+      expect(Object.keys(ctx3.stepOutputs)).toEqual(['moveStep', 'dupStep']);
+      expect(ctx3.stepOutputs.dupStep.files).toEqual([file2]);
+
+      // Step 4 returned files: [] -> ctx4 clears files
+      expect(ctx4.files).toEqual([]);
+      expect(Object.keys(ctx4.stepOutputs)).toEqual(['moveStep', 'dupStep', 'clearStep']);
+    });
+
+    it('exposes stepOutputs as Context.<id> alongside Context.<var> and root <var> in Handlebars templates', async () => {
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'template-chain-doc',
+          name: 'Template Chain Doc',
+          documentSchema: {
+            fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+          },
+          documentUiSchema: {
+            events: {
+              onSubmit: { catchAllWorkflow: 'ChainedTemplates' },
+            },
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'ChainedTemplates',
+                activitySequence: [
+                  {
+                    id: 'moveStep',
+                    type: 'MOVE_FILE',
+                    payload: {
+                      initialEmptyContext: '{{Context.moveStep.files.0.uri}}',
+                    },
+                  },
+                  {
+                    id: 'dupStep',
+                    type: 'DUPLICATE_FILE',
+                    payload: {
+                      sourceUri: '{{Context.moveStep.files.0.uri}}',
+                      sourceId: '{{Context.moveStep.files.0.id}}',
+                      nestedCtxVar: '{{Context.folderStatus}}',
+                      rootCtxVar: '{{folderStatus}}',
+                      patchedTitle: '{{Document.data.resolvedTitle}}',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity) => {
+          if (activity.type === 'MOVE_FILE') {
+            return {
+              success: true,
+              files: [
+                {
+                  id: 'drive-file-99',
+                  name: 'Submittal.pdf',
+                  uri: 'https://drive.google.com/file/d/drive-file-99/view',
+                },
+              ],
+              documentDataPatch: { resolvedTitle: 'Updated Title' },
+              contextVariables: { folderStatus: 'CREATED' },
+            };
+          }
+          return { success: true };
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        createCustomRegistry(mockDocumentTypes),
+        new HandlebarsAdapter()
+      );
+      await service.initialize();
+
+      const result = await service.processDocument(
+        { type: 'template-chain-doc', data: { title: 'Original' } },
+        'onSubmit'
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.activities).toEqual([
+        {
+          id: 'moveStep',
+          type: 'MOVE_FILE',
+          payload: {
+            initialEmptyContext: '',
+          },
+        },
+        {
+          id: 'dupStep',
+          type: 'DUPLICATE_FILE',
+          payload: {
+            sourceUri: 'https://drive.google.com/file/d/drive-file-99/view',
+            sourceId: 'drive-file-99',
+            nestedCtxVar: 'CREATED',
+            rootCtxVar: 'CREATED',
+            patchedTitle: 'Updated Title',
+          },
+        },
+      ]);
+      expect(result.contextVariables).toEqual({ folderStatus: 'CREATED' });
+    });
+
+    it('skips recording undefined void outputs in stepOutputs and uses fallback error when output.success is false without error', async () => {
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'void-and-fail-doc',
+          name: 'Void and Fail Doc',
+          documentSchema: {
+            fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+          },
+          documentUiSchema: {
+            events: {
+              onSubmit: { catchAllWorkflow: 'VoidThenFail' },
+            },
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'VoidThenFail',
+                activitySequence: [
+                  { id: 'voidStep', type: 'VOID_STEP', payload: {} },
+                  { id: 'failStep', type: 'FAIL_STEP', payload: {} },
+                  { type: 'NEVER_REACHED', payload: {} },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const capturedContexts: ActivityExecutionContext[] = [];
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity, context?: ActivityExecutionContext) => {
+          if (context) capturedContexts.push(context);
+          if (activity.type === 'VOID_STEP') {
+            return undefined;
+          }
+          if (activity.type === 'FAIL_STEP') {
+            return { success: false };
+          }
+          return { success: true };
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        createCustomRegistry(mockDocumentTypes),
+        defaultEvaluator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument(
+        { type: 'void-and-fail-doc', data: { title: 'Test' } },
+        'onSubmit'
+      );
+
+      expect(result.success).toBe(false);
+      if (result.success) return;
+
+      expect(result.errors).toEqual(['Activity execution failed for FAIL_STEP']);
+      expect(capturedContexts).toHaveLength(2);
+      expect(capturedContexts[1].stepOutputs).toEqual({});
     });
   });
 
@@ -4897,6 +5459,142 @@ describe('Document domain', () => {
             options: {
               specs: [{ key: 'AC102', name: 'HOOK' }],
             },
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toEqual([]);
+      });
+    });
+
+    describe('Activity.id and WRITE_LOG fileSourceStepId validation', () => {
+      it('rejects Activity.id violating ^[A-Za-z_][A-Za-z0-9_-]*$', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'bad-activity-id',
+          name: 'Bad Activity Id',
+          documentSchema: {
+            fields: [{ key: 'title', name: 'Title', type: 'string' }],
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'W1',
+                activitySequence: [
+                  { id: '1bad', type: 'MOVE_FILE', payload: {} },
+                  { id: 'bad.dot', type: 'MOVE_FILE', payload: {} },
+                  { id: '', type: 'MOVE_FILE', payload: {} },
+                ],
+              },
+            ],
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toHaveLength(3);
+        expect(errors[0]).toContain('documentWorkflowConfig.workflows[0].activitySequence[0].id');
+        expect(errors[1]).toContain('documentWorkflowConfig.workflows[0].activitySequence[1].id');
+        expect(errors[2]).toContain('documentWorkflowConfig.workflows[0].activitySequence[2].id');
+      });
+
+      it('rejects duplicate Activity.id within the same workflow.activitySequence while allowing reuse across workflows', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'dup-activity-id',
+          name: 'Dup Activity Id',
+          documentSchema: {
+            fields: [{ key: 'title', name: 'Title', type: 'string' }],
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'W1',
+                activitySequence: [
+                  { id: 'movePrimary', type: 'MOVE_FILE', payload: {} },
+                  { id: 'movePrimary', type: 'DUPLICATE_FILE', payload: {} },
+                ],
+              },
+              {
+                name: 'W2',
+                activitySequence: [
+                  { id: 'movePrimary', type: 'MOVE_FILE', payload: {} },
+                ],
+              },
+            ],
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain('documentWorkflowConfig.workflows[0].activitySequence[1].id');
+        expect(errors[0]).toContain('movePrimary');
+      });
+
+      it('rejects WRITE_LOG fileSourceStepId when non-string, missing, forward-referenced, or self-referenced', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'bad-file-source',
+          name: 'Bad File Source',
+          documentSchema: {
+            fields: [{ key: 'title', name: 'Title', type: 'string' }],
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'MissingRefWorkflow',
+                activitySequence: [
+                  { id: 'moveFirst', type: 'MOVE_FILE', payload: {} },
+                  { type: 'WRITE_LOG', payload: { fileSourceStepId: 'doesNotExist' } },
+                ],
+              },
+              {
+                name: 'ForwardAndSelfRefWorkflow',
+                activitySequence: [
+                  { id: 'selfLog', type: 'WRITE_LOG', payload: { fileSourceStepId: 'selfLog' } },
+                  { type: 'WRITE_LOG', payload: { fileSourceStepId: 'laterStep' } },
+                  { id: 'laterStep', type: 'MOVE_FILE', payload: {} },
+                ],
+              },
+              {
+                name: 'NonStringRefWorkflow',
+                activitySequence: [
+                  { type: 'WRITE_LOG', payload: { fileSourceStepId: 42 } },
+                  { type: 'WRITE_LOG', payload: { fileSourceStepId: null } },
+                ],
+              },
+            ],
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toHaveLength(5);
+        expect(errors[0]).toContain('workflows[0].activitySequence[1].payload.fileSourceStepId');
+        expect(errors[1]).toContain('workflows[1].activitySequence[0].payload.fileSourceStepId');
+        expect(errors[2]).toContain('workflows[1].activitySequence[1].payload.fileSourceStepId');
+        expect(errors[3]).toContain('workflows[2].activitySequence[0].payload.fileSourceStepId');
+        expect(errors[4]).toContain('workflows[2].activitySequence[1].payload.fileSourceStepId');
+      });
+
+      it('accepts WRITE_LOG with omitted fileSourceStepId or valid earlier Activity.id', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'valid-file-source',
+          name: 'Valid File Source',
+          documentSchema: {
+            fields: [{ key: 'title', name: 'Title', type: 'string' }],
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'MultiArtifactWorkflow',
+                activitySequence: [
+                  { id: 'move_1', type: 'MOVE_FILE', payload: {} },
+                  { id: 'dup-2', type: 'DUPLICATE_FILE', payload: { uri: '{{Context.move_1.files.0.uri}}' } },
+                  { type: 'WRITE_LOG', payload: { fileSourceStepId: 'move_1' } },
+                  { type: 'WRITE_LOG', payload: {} },
+                ],
+              },
+            ],
           },
         };
 
