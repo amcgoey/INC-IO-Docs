@@ -16,7 +16,11 @@ import { DocumentSchemaRegistryAdapter } from '../src/features/document/adapters
 import { DriveActivityHandler } from '../src/features/document/adapters/drive-activity-handler';
 import { DocumentService, type Document, type DocumentType } from '../src/features/document/domain';
 import type { ActivityHandler, DocumentSchemaRegistryPort } from '../src/features/document/ports';
-import type { DocumentLogPort } from '../src/features/document-log';
+import type {
+  DocumentLogDuplicatePolicy,
+  DocumentLogPort,
+  RawManifestProviderPort,
+} from '../src/features/document-log';
 import { GoogleDriveClient, type GoogleDriveClientOptions } from '../src/infrastructure/drive/drive-client';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import { GoogleSheetsClient, type GoogleSheetsClientOptions } from '../src/infrastructure/sheets';
@@ -29,6 +33,19 @@ import {
   getDocumentTypeWidgetName,
 } from '../src/features/schema-driven-ui/blocks/document-type-selection';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
+
+interface FixtureSubmittalEntry {
+  documentData: Record<string, unknown>;
+  actionName: string;
+  fileUri: string | null;
+  identity: { idGroup: string; idDocument: string; id: string };
+}
+
+interface FixtureWriteScenario extends FixtureSubmittalEntry {
+  scenario: string;
+  description: string;
+  fileUri: string;
+}
 
 const sampleFixture = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, 'fixtures/document-log-sample-data.json'), 'utf-8')
@@ -44,12 +61,8 @@ const sampleFixture = JSON.parse(
     sheetName: string;
     rangeName: string;
     headers: string[];
-    seedEntries: Array<{
-      documentData: Record<string, unknown>;
-      actionName: string;
-      fileUri: string | null;
-      identity: { idGroup: string; idDocument: string; id: string };
-    }>;
+    seedEntries: FixtureSubmittalEntry[];
+    writeScenarios: FixtureWriteScenario[];
   };
 };
 
@@ -136,17 +149,206 @@ function createMockDriveSdk(state: MockDriveState): NonNullable<GoogleDriveClien
   } as unknown as NonNullable<GoogleDriveClientOptions['drive']>;
 }
 
+type SimCellValue = string | number | boolean | null;
+
+interface MockCellData {
+  userEnteredValue?: {
+    stringValue?: string;
+    numberValue?: number;
+    boolValue?: boolean;
+    formulaValue?: string;
+  };
+}
+
 interface MockBatchRequest {
-  insertDimension?: { range?: { startIndex?: number } };
+  insertDimension?: {
+    range?: {
+      sheetId?: number;
+      dimension?: string;
+      startIndex?: number;
+      endIndex?: number;
+    };
+    inheritFromBefore?: boolean;
+  };
+  deleteDimension?: {
+    range?: {
+      sheetId?: number;
+      dimension?: string;
+      startIndex?: number;
+      endIndex?: number;
+    };
+  };
   updateCells?: {
-    range?: { startRowIndex?: number };
-    rows?: Array<{ values?: unknown[] }>;
+    range?: {
+      sheetId?: number;
+      startRowIndex?: number;
+      endRowIndex?: number;
+      startColumnIndex?: number;
+      endColumnIndex?: number;
+    };
+    rows?: Array<{ values?: MockCellData[] }>;
+    fields?: string;
+  };
+}
+
+interface SimulatedNamedRange {
+  namedRangeId: string;
+  name: string;
+  range: {
+    sheetId: number;
+    startRowIndex: number;
+    endRowIndex: number;
+    startColumnIndex: number;
+    endColumnIndex: number;
   };
 }
 
 interface MockSheetsState {
-  tableValues: Array<Array<string | number | boolean | null>>;
+  tableValues: Array<Array<SimCellValue>>;
   batchUpdates: Array<{ spreadsheetId: string; requests: MockBatchRequest[] }>;
+  grid?: Array<Array<SimCellValue>>;
+  namedRange?: SimulatedNamedRange;
+}
+
+function columnLettersToIndex(letters: string): number {
+  let index = 0;
+  for (let i = 0; i < letters.length; i++) {
+    index = index * 26 + (letters.charCodeAt(i) - 64);
+  }
+  return index - 1;
+}
+
+function parseA1RangeBounds(
+  a1Range: string,
+  defaultEndRowIndex: number,
+  defaultEndColumnIndex: number
+): {
+  startRowIndex: number;
+  endRowIndex: number;
+  startColumnIndex: number;
+  endColumnIndex: number;
+} {
+  const bangIdx = a1Range.lastIndexOf('!');
+  const cellRange = bangIdx >= 0 ? a1Range.slice(bangIdx + 1) : a1Range;
+  const match = /^([A-Z]+)(\d+):([A-Z]+)(\d*)$/i.exec(cellRange.trim());
+  if (!match) {
+    return {
+      startRowIndex: 0,
+      endRowIndex: defaultEndRowIndex,
+      startColumnIndex: 0,
+      endColumnIndex: defaultEndColumnIndex,
+    };
+  }
+  return {
+    startRowIndex: Number(match[2]) - 1,
+    endRowIndex: match[4] ? Number(match[4]) : defaultEndRowIndex,
+    startColumnIndex: columnLettersToIndex(match[1].toUpperCase()),
+    endColumnIndex: columnLettersToIndex(match[3].toUpperCase()) + 1,
+  };
+}
+
+function extractSimCellValue(cell: MockCellData | undefined): SimCellValue {
+  const value = cell?.userEnteredValue;
+  if (!value) {
+    return null;
+  }
+  if (value.stringValue !== undefined) {
+    return value.stringValue;
+  }
+  if (value.numberValue !== undefined) {
+    return value.numberValue;
+  }
+  if (value.boolValue !== undefined) {
+    return value.boolValue;
+  }
+  if (value.formulaValue !== undefined) {
+    return value.formulaValue;
+  }
+  return null;
+}
+
+function formatCellForValuesGet(
+  cell: SimCellValue | undefined,
+  valueRenderOption?: string
+): SimCellValue {
+  if (cell === null || cell === undefined) {
+    return '';
+  }
+  if (typeof cell === 'string' && valueRenderOption !== 'FORMULA') {
+    const hyperlinkMatch = /^=HYPERLINK\("([^"]*)",\s*"([^"]*)"\)$/i.exec(cell);
+    if (hyperlinkMatch) {
+      return hyperlinkMatch[2];
+    }
+  }
+  return cell;
+}
+
+function applyBatchUpdate(
+  state: { grid: SimCellValue[][]; namedRange: SimulatedNamedRange },
+  requests: MockBatchRequest[]
+): void {
+  for (const req of requests) {
+    if (req.insertDimension?.range) {
+      const { dimension, startIndex, endIndex } = req.insertDimension.range;
+      if (dimension === 'ROWS' && startIndex !== undefined && endIndex !== undefined) {
+        const count = endIndex - startIndex;
+        const insertedRows = Array.from({ length: count }, () => [] as SimCellValue[]);
+        state.grid.splice(startIndex, 0, ...insertedRows);
+        if (startIndex < state.namedRange.range.startRowIndex) {
+          state.namedRange.range.startRowIndex += count;
+          state.namedRange.range.endRowIndex += count;
+        } else if (startIndex <= state.namedRange.range.endRowIndex) {
+          state.namedRange.range.endRowIndex += count;
+        }
+      }
+      continue;
+    }
+
+    if (req.deleteDimension?.range) {
+      const { dimension, startIndex, endIndex } = req.deleteDimension.range;
+      if (dimension === 'ROWS' && startIndex !== undefined && endIndex !== undefined) {
+        const count = endIndex - startIndex;
+        state.grid.splice(startIndex, count);
+        const nrStart = state.namedRange.range.startRowIndex;
+        const nrEnd = state.namedRange.range.endRowIndex;
+        if (endIndex <= nrStart) {
+          state.namedRange.range.startRowIndex -= count;
+          state.namedRange.range.endRowIndex -= count;
+        } else if (startIndex < nrEnd) {
+          const overlapStart = Math.max(startIndex, nrStart);
+          const overlapEnd = Math.min(endIndex, nrEnd);
+          const overlapCount = Math.max(0, overlapEnd - overlapStart);
+          if (startIndex < nrStart) {
+            state.namedRange.range.startRowIndex = startIndex;
+          }
+          state.namedRange.range.endRowIndex =
+            nrEnd - overlapCount - Math.max(0, nrStart - startIndex);
+        }
+      }
+      continue;
+    }
+
+    if (req.updateCells) {
+      const startRow = req.updateCells.range?.startRowIndex ?? 0;
+      const startCol = req.updateCells.range?.startColumnIndex ?? 0;
+      const rows = req.updateCells.rows ?? [];
+      for (let rowOffset = 0; rowOffset < rows.length; rowOffset++) {
+        const absRow = startRow + rowOffset;
+        while (state.grid.length <= absRow) {
+          state.grid.push([]);
+        }
+        const gridRow = state.grid[absRow];
+        const rowValues = rows[rowOffset]?.values ?? [];
+        for (let colOffset = 0; colOffset < rowValues.length; colOffset++) {
+          const absCol = startCol + colOffset;
+          while (gridRow.length <= absCol) {
+            gridRow.push(null);
+          }
+          gridRow[absCol] = extractSimCellValue(rowValues[colOffset]);
+        }
+      }
+    }
+  }
 }
 
 function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsClientOptions['sheets']> {
@@ -155,26 +357,61 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
       spreadsheetId,
       sheets: [{ properties: { sheetId: 101, title: sampleFixture.submittalArch.sheetName } }],
       namedRanges: [
-        {
-          namedRangeId: 'nr-arch',
-          name: sampleFixture.submittalArch.rangeName,
-          range: {
-            sheetId: 101,
-            startRowIndex: 2,
-            endRowIndex: 25,
-            startColumnIndex: 0,
-            endColumnIndex: 10,
-          },
-        },
+        state.namedRange
+          ? {
+              ...state.namedRange,
+              range: { ...state.namedRange.range },
+            }
+          : {
+              namedRangeId: 'nr-arch',
+              name: sampleFixture.submittalArch.rangeName,
+              range: {
+                sheetId: 101,
+                startRowIndex: 2,
+                endRowIndex: 25,
+                startColumnIndex: 0,
+                endColumnIndex: 10,
+              },
+            },
       ],
     },
   }));
 
-  const valuesGet = vi.fn().mockImplementation(async () => ({
-    data: {
-      values: state.tableValues,
-    },
-  }));
+  const valuesGet = vi.fn().mockImplementation(
+    async (params?: { range?: string; valueRenderOption?: string }) => {
+      if (state.grid) {
+        const bounds = parseA1RangeBounds(
+          params?.range ?? '',
+          state.grid.length,
+          state.namedRange?.range.endColumnIndex ?? 10
+        );
+        const slicedRows = state.grid
+          .slice(bounds.startRowIndex, bounds.endRowIndex)
+          .map((row) => {
+            const formatted: SimCellValue[] = [];
+            const colLimit = Math.min(row.length, bounds.endColumnIndex);
+            for (let c = bounds.startColumnIndex; c < colLimit; c++) {
+              formatted.push(formatCellForValuesGet(row[c], params?.valueRenderOption));
+            }
+            while (formatted.length > 0 && formatted[formatted.length - 1] === '') {
+              formatted.pop();
+            }
+            return formatted;
+          });
+        return {
+          data: {
+            values: slicedRows,
+          },
+        };
+      }
+
+      return {
+        data: {
+          values: state.tableValues,
+        },
+      };
+    }
+  );
 
   const batchUpdate = vi.fn().mockImplementation(
     async ({
@@ -184,10 +421,14 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
       spreadsheetId: string;
       requestBody: { requests?: MockBatchRequest[] };
     }) => {
+      const requests = requestBody.requests ?? [];
       state.batchUpdates.push({
         spreadsheetId,
-        requests: requestBody.requests ?? [],
+        requests,
       });
+      if (state.grid && state.namedRange) {
+        applyBatchUpdate({ grid: state.grid, namedRange: state.namedRange }, requests);
+      }
       return { data: {} };
     }
   );
@@ -224,6 +465,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     primaryTargetId?: string;
     sourceFiles?: Array<{ id: string; name?: string }>;
     selectedLogId?: string;
+    manifestProviderOverride?: RawManifestProviderPort;
   }) {
     const driveSdk = createMockDriveSdk(params.driveState);
     const sheetsSdk = createMockSheetsSdk(params.sheetsState);
@@ -236,8 +478,11 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       configProvider: manifestProvider,
     });
 
+    const schemaManifestProvider: RawManifestProviderPort =
+      params.manifestProviderOverride ?? manifestProvider;
+
     const docSchemaRegistry = new DocumentSchemaRegistryAdapter(
-      manifestProvider,
+      schemaManifestProvider,
       handlebars,
       ensureEvaluationOrder
     );
@@ -245,7 +490,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     await compiledRegistry.initialize();
 
     const logWiring = createDocumentLogWiring({
-      manifestProvider,
+      manifestProvider: schemaManifestProvider,
       driveClient,
       sheetsClient,
       configProvider: manifestProvider,
@@ -438,13 +683,34 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(result.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'harborview-log-1',
       sheetName: 'Submittal Arch',
-      rowNumber: 7,
+      rowNumber: 8,
       action: 'inserted',
     });
 
     const batchReqs = sheetsState.batchUpdates[0].requests;
-    expect(batchReqs[0].insertDimension?.range?.startIndex).toBe(6); // before bottom anchor row 7
-    const cells = batchReqs[1].updateCells?.rows?.[0]?.values ?? [];
+    expect(batchReqs).toHaveLength(3);
+    expect(batchReqs[0].insertDimension).toEqual({
+      range: {
+        sheetId: 101,
+        dimension: 'ROWS',
+        startIndex: 6,
+        endIndex: 8,
+      },
+      inheritFromBefore: true,
+    });
+    expect(batchReqs[1].updateCells).toEqual({
+      range: {
+        sheetId: 101,
+        startRowIndex: 6,
+        endRowIndex: 7,
+        startColumnIndex: 0,
+        endColumnIndex: 1,
+      },
+      rows: [{ values: [{ userEnteredValue: { stringValue: '---' } }] }],
+      fields: 'userEnteredValue',
+    });
+    expect(batchReqs[2].updateCells?.range?.startRowIndex).toBe(7);
+    const cells = batchReqs[2].updateCells?.rows?.[0]?.values ?? [];
     expect(cells[8]).toEqual({}); // Notes: empty optional -> null -> {}
     expect(cells[9]).toEqual({}); // Calc Link: zero-file -> null -> {}
   });
@@ -1016,5 +1282,372 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  function buildSeededSubmittalArchState(): MockSheetsState {
+    const grid: SimCellValue[][] = [
+      [], // Row 1
+      [], // Row 2
+      [...sampleFixture.submittalArch.headers], // Row 3 Headers
+      [], // Row 4 Formula Row
+      ['<--->'], // Row 5 Top Anchor
+    ];
+
+    let previousGroupId: string | undefined;
+    for (const entry of sampleFixture.submittalArch.seedEntries) {
+      if (previousGroupId !== undefined && previousGroupId !== entry.identity.idGroup) {
+        grid.push(['---']);
+      }
+      previousGroupId = entry.identity.idGroup;
+      const d = entry.documentData;
+      grid.push([
+        String(d.status ?? ''),
+        String(d.section ?? ''),
+        String(d.number ?? ''),
+        String(d.revision ?? ''),
+        String(d.title ?? ''),
+        String(d.date ?? ''),
+        String(d.contact ?? ''),
+        entry.actionName,
+        typeof d.notes === 'string' && d.notes.length > 0 ? d.notes : null,
+        entry.fileUri ? `=HYPERLINK("${entry.fileUri}", "Link")` : null,
+      ]);
+    }
+    grid.push(['<--->']); // Bottom Anchor
+
+    return {
+      tableValues: [],
+      batchUpdates: [],
+      grid,
+      namedRange: {
+        namedRangeId: 'nr-arch',
+        name: sampleFixture.submittalArch.rangeName,
+        range: {
+          sheetId: 101,
+          startRowIndex: 2,
+          endRowIndex: grid.length,
+          startColumnIndex: 0,
+          endColumnIndex: 10,
+        },
+      },
+    };
+  }
+
+  function createDuplicatePolicyManifestProvider(
+    baseProvider: AppManifestProvider,
+    duplicatePolicy: DocumentLogDuplicatePolicy
+  ): RawManifestProviderPort {
+    return {
+      getRawManifest: () => baseProvider.getRawManifest(),
+      readParsedSchema: async (relPath: string) => {
+        const parsed = await baseProvider.readParsedSchema(relPath);
+        if (relPath.includes('submittal-arch')) {
+          const cloned = structuredClone(parsed) as Record<string, unknown>;
+          const docLogSchema = cloned.documentLogSchema as {
+            grouping: { duplicatePolicy: DocumentLogDuplicatePolicy };
+          };
+          docLogSchema.grouping.duplicatePolicy = duplicatePolicy;
+          return cloned;
+        }
+        return parsed;
+      },
+    };
+  }
+
+  it('executes all 5 submittalArch.writeScenarios sequentially with grouped/sorted placement, Column-0 "---" dividers, and leading-zero preservation', async () => {
+    const driveState: MockDriveState = {
+      searchResults: [
+        {
+          id: 'harborview-log-1',
+          name: sampleFixture.space.expectedLogFileName,
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ],
+    };
+    const sheetsState = buildSeededSubmittalArchState();
+    const space = {
+      id: sampleFixture.space.id,
+      typeId: sampleFixture.space.typeId,
+      name: sampleFixture.space.name,
+      abstractStorageId: sampleFixture.space.abstractStorageId,
+    };
+
+    const scenarioResults: Array<{
+      scenario: string;
+      rowNumber: number;
+      action: string;
+      requests: MockBatchRequest[];
+    }> = [];
+
+    let lastSheetsClient: GoogleSheetsClient | undefined;
+
+    for (const scenario of sampleFixture.submittalArch.writeScenarios) {
+      const fileIdMatch = /\/d\/([^/]+)\//.exec(scenario.fileUri);
+      const fileId = fileIdMatch?.[1];
+      if (!fileId) {
+        throw new Error(`Missing Drive fileId in fixture fileUri: ${scenario.fileUri}`);
+      }
+
+      const { documentService, sheetsClient } = await buildWiredDocumentService({
+        driveState,
+        sheetsState,
+        primaryTargetId: fileId,
+      });
+      lastSheetsClient = sheetsClient;
+
+      const batchBefore = sheetsState.batchUpdates.length;
+      const result = await documentService.processDocument(
+        {
+          type: 'submittal-arch',
+          space,
+          data: scenario.documentData,
+        },
+        'onSubmit'
+      );
+
+      expect(result.success, `Scenario ${scenario.scenario} failed`).toBe(true);
+      if (!result.success) return;
+
+      expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+      const writeInfo = result.contextVariables?.documentLogWrite as {
+        rowNumber: number;
+        action: string;
+      };
+      expect(sheetsState.batchUpdates.length).toBe(batchBefore + 1);
+      const requests = sheetsState.batchUpdates[sheetsState.batchUpdates.length - 1].requests;
+
+      // Verify MOVE_FILE -> WRITE_LOG wrote exact =HYPERLINK formula in Calc Link (column 9)
+      const dataUpdate = requests.find(
+        (r) => r.updateCells && (r.updateCells.range?.endColumnIndex ?? 0) === 10
+      );
+      expect(dataUpdate?.updateCells?.rows?.[0]?.values?.[9]).toEqual({
+        userEnteredValue: {
+          formulaValue: `=HYPERLINK("${scenario.fileUri}", "Link")`,
+        },
+      });
+
+      scenarioResults.push({
+        scenario: scenario.scenario,
+        rowNumber: writeInfo.rowNumber,
+        action: writeInfo.action,
+        requests,
+      });
+    }
+
+    // 1) insertTopNewGroup: 013300-001 at Row 6, inheritFromBefore: false, "---" in Col 0 at Row 7, zero dividers adjacent to top <--->
+    const topRes = scenarioResults[0];
+    expect(topRes.scenario).toBe('insertTopNewGroup');
+    expect(topRes.rowNumber).toBe(6);
+    expect(topRes.action).toBe('inserted');
+    expect(topRes.requests[0].insertDimension).toEqual({
+      range: { sheetId: 101, dimension: 'ROWS', startIndex: 5, endIndex: 7 },
+      inheritFromBefore: false,
+    });
+    expect(topRes.requests[2].updateCells).toEqual({
+      range: {
+        sheetId: 101,
+        startRowIndex: 6,
+        endRowIndex: 7,
+        startColumnIndex: 0,
+        endColumnIndex: 1,
+      },
+      rows: [{ values: [{ userEnteredValue: { stringValue: '---' } }] }],
+      fields: 'userEnteredValue',
+    });
+
+    // 2) insertMiddleNewGroup: 075100-001 between 071200-002 and 087100-001 with "---" dividers on both sides (inheritFromBefore: true)
+    const midRes = scenarioResults[1];
+    expect(midRes.scenario).toBe('insertMiddleNewGroup');
+    expect(midRes.rowNumber).toBe(20);
+    expect(midRes.action).toBe('inserted');
+    expect(midRes.requests[0].insertDimension?.inheritFromBefore).toBe(true);
+    expect(midRes.requests[1].updateCells?.range?.startRowIndex).toBe(18);
+    expect(midRes.requests[1].updateCells?.rows?.[0]?.values).toEqual([
+      { userEnteredValue: { stringValue: '---' } },
+    ]);
+
+    // 3) insertBottomNewGroup: 096500-001 after 087100-001 with leading "---" divider and zero dividers adjacent to bottom <--->
+    const botRes = scenarioResults[2];
+    expect(botRes.scenario).toBe('insertBottomNewGroup');
+    expect(botRes.rowNumber).toBe(25);
+    expect(botRes.action).toBe('inserted');
+    expect(botRes.requests[0].insertDimension?.inheritFromBefore).toBe(true);
+    expect(botRes.requests[1].updateCells?.range?.startRowIndex).toBe(23);
+    expect(botRes.requests[1].updateCells?.rows?.[0]?.values).toEqual([
+      { userEnteredValue: { stringValue: '---' } },
+    ]);
+
+    // 4) insertChronologicalMiddleInExistingGroup: 071200-001-1-260220-1 between 260212-5 and 260224-6
+    const chronRes = scenarioResults[3];
+    expect(chronRes.scenario).toBe('insertChronologicalMiddleInExistingGroup');
+    expect(chronRes.rowNumber).toBe(15);
+    expect(chronRes.action).toBe('inserted');
+    expect(chronRes.requests[0].insertDimension?.inheritFromBefore).toBe(true);
+
+    // 5) insertSameDayDuplicateIdReferral: LMD appends after PST & SME inside 071200-001 before 260212-5
+    const dupRes = scenarioResults[4];
+    expect(dupRes.scenario).toBe('insertSameDayDuplicateIdReferral');
+    expect(dupRes.rowNumber).toBe(14);
+    expect(dupRes.action).toBe('inserted');
+
+    // Final readTable check: all 16 entries in exact sorted order, preserving leading zeros
+    const finalTable = await lastSheetsClient!.readTable({
+      target: {
+        spreadsheetId: 'harborview-log-1',
+        sheetName: sampleFixture.submittalArch.sheetName,
+        rangeName: sampleFixture.submittalArch.rangeName,
+        extentMarker: '<--->',
+        groupDividerMarker: '---',
+      },
+    });
+
+    expect(finalTable.rows).toHaveLength(16);
+    const orderedKeys = finalTable.rows.map(
+      (r) => `${r.values.Section}-${r.values.Number}-${r.values.Revision}-${r.values.Date}-${r.values.Contact}`
+    );
+    expect(orderedKeys).toEqual([
+      '013300-001-0-260110-MB',
+      '033000-001-0-260115-MB',
+      '033000-001-0-260122-ARC',
+      '071200-001-0-260204-MB',
+      '071200-001-0-260205-PST',
+      '071200-001-0-260205-SME',
+      '071200-001-0-260205-LMD',
+      '071200-001-0-260212-ARC',
+      '071200-001-1-260220-MB',
+      '071200-001-1-260224-ARC',
+      '071200-002-0-260218-MB',
+      '071200-002-0-260219-PST',
+      '075100-001-0-260220-MB',
+      '087100-001-0-260303-MB',
+      '087100-001-0-260305-ARC',
+      '096500-001-0-260314-MB',
+    ]);
+
+    // Verify raw grid has exact Column-0-only "---" dividers between adjacent groups and none adjacent to <--->
+    const rawGrid = sheetsState.grid!;
+    expect(rawGrid[4]).toEqual(['<--->']); // Row 5 top anchor
+    expect(rawGrid[rawGrid.length - 1]).toEqual(['<--->']); // Row 28 bottom anchor
+    expect(rawGrid[5][0]).not.toBe('---');
+    expect(rawGrid[rawGrid.length - 2][0]).not.toBe('---');
+
+    const dividerIndices = rawGrid
+      .map((row, idx) => ({ row, idx }))
+      .filter(({ row }) => row[0] === '---')
+      .map(({ idx, row }) => {
+        expect(row).toEqual(['---']); // strictly Column 0 only
+        return idx;
+      });
+    expect(dividerIndices).toEqual([6, 9, 17, 20, 22, 25]);
+    // Verify insertMiddleNewGroup (075100-001 at idx 21 / Row 22) is bounded by dividers at idx 20 and idx 22
+    expect(rawGrid[20]).toEqual(['---']);
+    expect(rawGrid[21][1]).toBe('075100');
+    expect(rawGrid[22]).toEqual(['---']);
+  });
+
+  it('enforces duplicatePolicy upsert (in-place update without insertDimension) and reject (error with zero batchUpdate calls)', async () => {
+    const driveState: MockDriveState = {
+      searchResults: [
+        {
+          id: 'harborview-log-1',
+          name: sampleFixture.space.expectedLogFileName,
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ],
+    };
+    const space = {
+      id: sampleFixture.space.id,
+      typeId: sampleFixture.space.typeId,
+      name: sampleFixture.space.name,
+      abstractStorageId: sampleFixture.space.abstractStorageId,
+    };
+    const duplicateTargetSeed = sampleFixture.submittalArch.seedEntries[2]; // 071200-001-0-260204-1 at Row 9
+
+    // 1) duplicatePolicy: 'upsert'
+    const upsertSheetsState = buildSeededSubmittalArchState();
+    const upsertServiceCtx = await buildWiredDocumentService({
+      driveState,
+      sheetsState: upsertSheetsState,
+      primaryTargetId: 'upserted-submittal-file-001',
+      manifestProviderOverride: createDuplicatePolicyManifestProvider(manifestProvider, 'upsert'),
+    });
+
+    const upsertResult = await upsertServiceCtx.documentService.processDocument(
+      {
+        type: 'submittal-arch',
+        space,
+        data: {
+          ...duplicateTargetSeed.documentData,
+          status: 'Closed',
+          notes: 'Updated terrace deck assembly notes',
+        },
+      },
+      'onSubmit'
+    );
+
+    expect(upsertResult.success).toBe(true);
+    if (!upsertResult.success) return;
+    expect(upsertResult.contextVariables?.documentLogWrite).toEqual({
+      spreadsheetId: 'harborview-log-1',
+      sheetName: 'Submittal Arch',
+      rowNumber: 9,
+      action: 'updated',
+    });
+    expect(upsertSheetsState.batchUpdates).toHaveLength(1);
+    const upsertReqs = upsertSheetsState.batchUpdates[0].requests;
+    expect(upsertReqs.some((r) => r.insertDimension !== undefined)).toBe(false);
+    expect(upsertReqs[0].updateCells?.range?.startRowIndex).toBe(8);
+
+    const updatedTable = await upsertServiceCtx.sheetsClient.readTable({
+      target: {
+        spreadsheetId: 'harborview-log-1',
+        sheetName: sampleFixture.submittalArch.sheetName,
+        rangeName: sampleFixture.submittalArch.rangeName,
+        extentMarker: '<--->',
+        groupDividerMarker: '---',
+      },
+    });
+    expect(updatedTable.rows).toHaveLength(11);
+    expect(updatedTable.rows[2]).toEqual({
+      rowNumber: 9,
+      values: {
+        Status: 'Closed',
+        Section: '071200',
+        Number: '001',
+        Revision: '0',
+        Title: 'Fluid-Applied Waterproofing Membrane',
+        Date: '260204',
+        Contact: 'MB',
+        Action: 'Received',
+        Notes: 'Updated terrace deck assembly notes',
+        'Calc Link': 'Link',
+      },
+    });
+
+    // 2) duplicatePolicy: 'reject'
+    const rejectSheetsState = buildSeededSubmittalArchState();
+    const rejectServiceCtx = await buildWiredDocumentService({
+      driveState,
+      sheetsState: rejectSheetsState,
+      primaryTargetId: 'rejected-submittal-file-001',
+      manifestProviderOverride: createDuplicatePolicyManifestProvider(manifestProvider, 'reject'),
+    });
+
+    const rejectResult = await rejectServiceCtx.documentService.processDocument(
+      {
+        type: 'submittal-arch',
+        space,
+        data: duplicateTargetSeed.documentData,
+      },
+      'onSubmit'
+    );
+
+    expect(rejectResult.success).toBe(false);
+    if (!rejectResult.success) {
+      expect(rejectResult.errors[0]).toMatch(/duplicate/i);
+      expect(rejectResult.errors[0]).toContain('071200-001-0-260204-1');
+    }
+    expect(rejectSheetsState.batchUpdates).toHaveLength(0);
+    expect(rejectServiceCtx.sheetsSdk.spreadsheets.batchUpdate).not.toHaveBeenCalled();
   });
 });
