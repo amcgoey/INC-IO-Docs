@@ -1,0 +1,3238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- === CUSTOMIZE HERE: Page Title === -->
+  <title>PROTOTYPE — Sample Workspace Add-on Feature</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --surface: #ffffff;
+      --surface-muted: #f1f3f4;
+      --border: #dadce0;
+      --border-strong: #c4c7c5;
+      --text: #1f1f1f;
+      --text-muted: #5f6368;
+      --accent: #1a73e8;
+      --accent-soft: #e8f0fe;
+      --accent-hover: #1558b0;
+      --warn: #b06000;
+      --warn-bg: #fef7e0;
+      --danger: #c5221f;
+      --danger-bg: #fce8e6;
+      --success: #137333;
+      --success-bg: #e6f4ea;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans: "Google Sans", Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 0 0 84px 0;
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.45;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    /* Throwaway banner */
+    .proto-banner {
+      background: #1f2937;
+      color: #f9fafb;
+      padding: 14px 24px;
+      border-bottom: 3px solid var(--accent);
+    }
+
+    .proto-banner-top {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .proto-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      border-radius: 4px;
+      background: #f59e0b;
+      color: #111827;
+    }
+
+    .proto-title {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .proto-question {
+      margin: 0;
+      font-size: 13px;
+      color: #d1d5db;
+      max-width: 1120px;
+    }
+
+    /* Main workspace layout */
+    .workspace {
+      max-width: 1420px;
+      margin: 20px auto;
+      padding: 0 20px;
+      display: grid;
+      grid-template-columns: 356px minmax(0, 1fr);
+      gap: 24px;
+      align-items: start;
+    }
+
+    @media (max-width: 960px) {
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Left column: Realistic 300px Google Workspace Add-on sidebar frame */
+    .sidebar-stage {
+      position: sticky;
+      top: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .stage-toolbar {
+      width: 332px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 12px;
+    }
+
+    .host-toggle {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .host-toggle button {
+      border: 0;
+      background: var(--surface);
+      color: var(--text-muted);
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .host-toggle button.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .widget-meter {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--success-bg);
+      color: var(--success);
+    }
+
+    .widget-meter.warn {
+      background: var(--warn-bg);
+      color: var(--warn);
+    }
+
+    .widget-meter.over {
+      background: var(--danger-bg);
+      color: var(--danger);
+    }
+
+    /* Simulated Google Add-on Window (strict 300px card body width) */
+    .addon-shell {
+      width: 332px;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+      overflow: hidden;
+      position: relative;
+    }
+
+    .addon-host-chrome {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: #f8f9fa;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .addon-host-pill {
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .addon-card-scroll {
+      width: 330px;
+      max-height: 72vh;
+      overflow-y: auto;
+      background: #fff;
+    }
+
+    /* Card Header */
+    .gcard-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid #e8eaed;
+      background: #fff;
+    }
+
+    .gcard-header-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .gcard-header-subtitle {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* Card Section */
+    .gcard-section {
+      padding: 12px 16px;
+      border-bottom: 1px solid #e8eaed;
+    }
+
+    .gcard-section:last-child {
+      border-bottom: 0;
+    }
+
+    .gcard-section-header {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      letter-spacing: 0.01em;
+    }
+
+    .gcard-widgets {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .gcard-collapse-toggle {
+      margin-top: 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 0;
+      border: 0;
+      background: transparent;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .gcard-collapse-toggle:hover {
+      text-decoration: underline;
+    }
+
+    /* Widgets inside 300px sidebar */
+    .gw-paragraph {
+      font-size: 13px;
+      line-height: 1.4;
+      color: var(--text);
+      white-space: pre-line;
+      word-break: break-word;
+    }
+
+    .gw-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .gw-field label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .gw-input,
+    .gw-select {
+      width: 100%;
+      padding: 7px 9px;
+      font-family: var(--sans);
+      font-size: 13px;
+      color: var(--text);
+      background: #fff;
+      border: 1px solid var(--border-strong);
+      border-radius: 4px;
+    }
+
+    .gw-input:focus,
+    .gw-select:focus {
+      outline: 2px solid var(--accent);
+      border-color: var(--accent);
+    }
+
+    .gw-radio-group,
+    .gw-checkbox-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .gw-choice-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 12.5px;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .gw-choice-item input {
+      margin-top: 3px;
+      flex-shrink: 0;
+    }
+
+    .gw-switch-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 13px;
+    }
+
+    /* DecoratedText modeling truncating topLabel, HTML text, wrapping bottomLabel */
+    .gw-decorated {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      border: 1px solid #eceff1;
+      background: #fafbfc;
+    }
+
+    .gw-decorated.clickable {
+      cursor: pointer;
+    }
+
+    .gw-decorated.clickable:hover {
+      background: var(--accent-soft);
+      border-color: #c2d7fa;
+    }
+
+    .gw-decorated-body {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .gw-decorated-top {
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .gw-decorated-text {
+      font-size: 12.5px;
+      color: var(--text);
+      margin-top: 1px;
+      word-break: break-word;
+    }
+
+    .gw-decorated-text.nowrap {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .gw-decorated-bottom {
+      font-size: 11.5px;
+      color: var(--text-muted);
+      margin-top: 2px;
+      word-break: break-word;
+    }
+
+    .gw-decorated-trailing {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+    }
+
+    .gw-button-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .gw-btn {
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 4px;
+      border: 1px solid var(--border-strong);
+      background: #fff;
+      color: var(--accent);
+      cursor: pointer;
+    }
+
+    .gw-btn:hover:not(:disabled) {
+      background: var(--accent-soft);
+    }
+
+    .gw-btn.filled {
+      border-color: transparent;
+      color: #fff;
+    }
+
+    .gw-btn.filled:hover:not(:disabled) {
+      filter: brightness(0.93);
+    }
+
+    .gw-btn.compact {
+      padding: 4px 9px;
+      font-size: 11.5px;
+    }
+
+    .gw-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .gw-divider {
+      border: 0;
+      border-top: 1px solid #e0e3e7;
+      margin: 2px 0;
+    }
+
+    /* Notification toast at bottom of Add-on card */
+    .addon-toast {
+      position: sticky;
+      bottom: 8px;
+      margin: 8px 10px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: #202124;
+      color: #fff;
+      font-size: 12px;
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .addon-toast.hidden {
+      display: none;
+    }
+
+    /* Right column: Walkthroughs, Free-Play & Inspector */
+    .control-pane {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 18px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    }
+
+    .panel-title {
+      margin: 0 0 10px 0;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    /* Walkthrough tabs */
+    .tab-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    .tab-btn {
+      border: 1px solid var(--border);
+      background: var(--surface-muted);
+      color: var(--text);
+      padding: 6px 11px;
+      border-radius: 6px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .tab-btn.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .scenario-box {
+      background: #f8fafd;
+      border: 1px solid #d2e3fc;
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+
+    .scenario-desc {
+      margin: 0 0 10px 0;
+      font-size: 13px;
+      color: var(--text);
+    }
+
+    .step-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .step-btn {
+      padding: 7px 12px;
+      font-size: 12.5px;
+      font-weight: 600;
+      border-radius: 6px;
+      border: 1px solid var(--border-strong);
+      background: #fff;
+      color: var(--text);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .step-btn.next {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent-hover);
+    }
+
+    .step-btn.done {
+      border-color: #a8dab5;
+      background: var(--success-bg);
+      color: var(--success);
+    }
+
+    /* Free-play toolbar */
+    .freeplay-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .chip-btn {
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 6px;
+      border: 1px solid var(--border-strong);
+      background: #fff;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .chip-btn:hover {
+      background: var(--surface-muted);
+    }
+
+    .chip-btn.active-fault {
+      background: var(--danger-bg);
+      border-color: #f28b82;
+      color: var(--danger);
+    }
+
+    .chip-btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    /* OpenLink preview bar */
+    .openlink-banner {
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: 1px solid #a8c7fa;
+      background: #eef4fe;
+      font-size: 12.5px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .openlink-banner.hidden {
+      display: none;
+    }
+
+    .openlink-banner code {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      word-break: break-all;
+    }
+
+    /* Inspector panels */
+    .inspector-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+    }
+
+    .kv-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: #fafbfc;
+    }
+
+    .kv-card h4 {
+      margin: 0 0 8px 0;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+    }
+
+    .kv-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 3px 0;
+      font-size: 12.5px;
+      border-bottom: 1px dashed #e6e8eb;
+    }
+
+    .kv-row:last-child {
+      border-bottom: 0;
+    }
+
+    .kv-key {
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    .kv-val {
+      font-family: var(--mono);
+      font-size: 12px;
+      text-align: right;
+      word-break: break-word;
+    }
+
+    .status-pill {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      font-family: var(--sans);
+    }
+
+    .pill-resolved { background: var(--success-bg); color: var(--success); }
+    .pill-missing { background: var(--warn-bg); color: var(--warn); }
+    .pill-ambiguous { background: #fef3c7; color: #92400e; }
+    .pill-error { background: var(--danger-bg); color: var(--danger); }
+    .pill-none { background: var(--surface-muted); color: var(--text-muted); }
+
+    pre.json-dump {
+      margin: 0;
+      padding: 12px;
+      background: #111827;
+      color: #e5e7eb;
+      border-radius: 8px;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      max-height: 460px;
+      overflow: auto;
+      line-height: 1.45;
+    }
+
+    table.matrix {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12.5px;
+    }
+
+    table.matrix th,
+    table.matrix td {
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    table.matrix th {
+      background: var(--surface-muted);
+      font-weight: 700;
+    }
+
+    /* Floating bottom-center Variant Switcher Pill */
+    .floating-switcher {
+      position: fixed;
+      left: 50%;
+      bottom: 16px;
+      transform: translateX(-50%);
+      z-index: 999;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #1f2937;
+      color: #fff;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+    }
+
+    .floating-switcher button {
+      border: 0;
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .floating-switcher button:hover {
+      background: var(--accent);
+    }
+
+    .floating-switcher-label {
+      padding: 0 8px;
+      font-size: 12.5px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <!-- === CUSTOMIZE HERE: Prototype Banner Title & Design Question === -->
+  <header class="proto-banner">
+    <div class="proto-banner-top">
+      <span class="proto-badge">Throwaway Prototype</span>
+      <span class="proto-title">[Prototype Title] Sample Workspace Add-on Feature &mdash; Item Review &amp; Filing Helper</span>
+    </div>
+    <p class="proto-question">
+      <strong>Question being prototyped:</strong> [Replace with design question] How should the Workspace Add-on sidebar present resource provisioning (on <code>0</code> matches), multi-candidate disambiguation (on <code>2+</code> matches), and collapsible item history across Drive and Gmail within the 100-widget cap and without <code>Columns</code>, while keeping ephemeral UI selection keys out of the submitted domain payload?
+    </p>
+  </header>
+  <!-- === END CUSTOMIZE HERE === -->
+
+  <main class="workspace">
+    <!-- Left Column: Simulated 300px Google Workspace Add-on Sidebar -->
+    <section class="sidebar-stage" aria-label="Workspace Add-on Card Preview">
+      <div class="stage-toolbar">
+        <div class="host-toggle" role="group" aria-label="Trigger Host">
+          <button id="host-drive-btn" type="button">Drive</button>
+          <button id="host-gmail-btn" type="button">Gmail</button>
+        </div>
+        <span id="widget-meter" class="widget-meter">Widgets: 0 / 100</span>
+      </div>
+
+      <div class="addon-shell">
+        <div class="addon-host-chrome">
+          <span class="addon-host-pill" id="host-chrome-label">Google Drive Sidebar</span>
+          <span id="nav-type-pill">pushCard</span>
+        </div>
+        <div class="addon-card-scroll" id="addon-card-root"></div>
+        <div class="addon-toast hidden" id="addon-toast">
+          <span id="addon-toast-text"></span>
+          <button type="button" id="addon-toast-close" style="background:none;border:0;color:#8ab4f8;cursor:pointer;font-weight:700;">Dismiss</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Column: Guided Walkthroughs, Free-Play Controls, and State Inspector -->
+    <section class="control-pane">
+      <div class="openlink-banner hidden" id="openlink-banner">
+        <div>
+          <strong>openLink Intercepted (no server round-trip):</strong>
+          <code id="openlink-url"></code>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <a id="openlink-launch" href="#" target="_blank" rel="noopener noreferrer" style="color:var(--accent-hover);font-weight:700;text-decoration:none;">Launch in new tab &nearr;</a>
+          <button type="button" class="chip-btn" id="openlink-dismiss">Close</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">
+          <span>Guided Walkthrough Scenarios</span>
+          <button type="button" class="chip-btn" id="reset-scenario-btn">Reset Scenario</button>
+        </div>
+        <div class="tab-row" id="scenario-tabs"></div>
+        <div class="scenario-box">
+          <p class="scenario-desc" id="scenario-desc"></p>
+          <div class="step-list" id="scenario-steps"></div>
+        </div>
+      </div>
+
+      <!-- === CUSTOMIZE HERE: Free-Play Controls & Fault Injection Buttons === -->
+      <div class="panel">
+        <div class="panel-title">
+          <span>Free-Play Controls &amp; Fault Injection</span>
+        </div>
+        <div class="freeplay-grid">
+          <button type="button" class="chip-btn" data-quick-workspace="beta">Workspace: Beta (Missing)</button>
+          <button type="button" class="chip-btn" data-quick-workspace="gamma">Workspace: Gamma (Ambiguous 2+)</button>
+          <button type="button" class="chip-btn" data-quick-workspace="alpha">Workspace: Alpha (Resolved)</button>
+          <button type="button" class="chip-btn" id="fp-stress-btn">Item: ITM-999 (45-Row Cap Test)</button>
+          <span style="color:var(--border-strong);">|</span>
+          <button type="button" class="chip-btn" id="fault-provision-btn">Fault: 403 Provision Denied</button>
+          <button type="button" class="chip-btn" id="fault-read-btn">Fault: 503 Read Error</button>
+          <button type="button" class="chip-btn" id="fault-malformed-btn">Fault: Partial Row Skip</button>
+          <span style="color:var(--border-strong);">|</span>
+          <button type="button" class="chip-btn" id="fp-refresh-btn">Refresh Card</button>
+          <button type="button" class="chip-btn primary" id="fp-submit-btn">Submit Item</button>
+        </div>
+      </div>
+      <!-- === END CUSTOMIZE HERE === -->
+
+      <div class="panel">
+        <div class="panel-title">
+          <span>Live State &amp; Contract Inspector</span>
+          <div class="tab-row" style="margin:0;">
+            <button type="button" class="tab-btn active" data-inspector-tab="state">State &amp; Contracts</button>
+            <button type="button" class="tab-btn" data-inspector-tab="card-json">Google Card JSON</button>
+            <button type="button" class="tab-btn" data-inspector-tab="variants">Variant Differences</button>
+          </div>
+        </div>
+        <div id="inspector-body"></div>
+      </div>
+    </section>
+  </main>
+
+  <nav class="floating-switcher" aria-label="Prototype Variant Switcher">
+    <button type="button" id="var-prev-btn" title="Previous Variant (Left Arrow)">&larr;</button>
+    <span class="floating-switcher-label" id="var-label">A &mdash; Unified Mid-Card</span>
+    <button type="button" id="var-next-btn" title="Next Variant (Right Arrow)">&rarr;</button>
+  </nav>
+
+  <!-- =========================================================================
+       PORTABLE PURE LOGIC MODULE
+       Zero browser/DOM globals. Evaluates cleanly in an isolated Node vm
+       context and can be lifted directly into src/features/.
+       ========================================================================= -->
+  <script id="portable-prototype-module">
+    const PrototypeMachine = (() => {
+      // --- Reusable Core Helpers & Guardrails ---
+      const WIDGET_CAP = 100;
+      const MAX_DYNAMIC_ITEMS_CAP = 20;
+      const PRIMARY_BLUE = { red: 0.102, green: 0.451, blue: 0.910 };
+
+      function escapeHtml(value) {
+        return String(value ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function resolveTemplatePath(obj, path) {
+        const parts = String(path || '').trim().split('.');
+        let cur = obj;
+        for (const p of parts) {
+          if (cur === null || cur === undefined || typeof cur !== 'object') {
+            return undefined;
+          }
+          cur = cur[p];
+        }
+        return cur;
+      }
+
+      function renderTemplate(template, vars, { htmlEscapeValues = true } = {}) {
+        return String(template ?? '').replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, expr) => {
+          const raw = resolveTemplatePath(vars, expr);
+          const str = raw === undefined || raw === null ? '' : String(raw);
+          return htmlEscapeValues ? escapeHtml(str) : str;
+        });
+      }
+
+      function formatIsoDate(iso) {
+        return iso ? String(iso).slice(0, 10) : '';
+      }
+
+      function sliceWithWidgetBudget(items, remainingWidgetSlots, maxCap = MAX_DYNAMIC_ITEMS_CAP) {
+        const budget = Math.max(0, Math.min(maxCap, remainingWidgetSlots));
+        if (items.length <= budget) {
+          return { visible: items, truncatedCount: 0 };
+        }
+        if (budget === 0) {
+          return { visible: [], truncatedCount: 0 };
+        }
+        if (budget === 1) {
+          return { visible: [], truncatedCount: items.length };
+        }
+        const safeCount = budget - 1;
+        return {
+          visible: items.slice(0, safeCount),
+          truncatedCount: items.length - safeCount,
+        };
+      }
+
+      function countCardWidgets(card) {
+        let total = 0;
+        const disallowed = [];
+        const bySection = [];
+
+        for (const sec of card?.sections || []) {
+          const count = (sec.widgets || []).length;
+          total += count;
+          for (const w of sec.widgets || []) {
+            if (w && 'columns' in w) {
+              disallowed.push('columns');
+            }
+          }
+          bySection.push({
+            header: sec.header || '(no header)',
+            widgets: count,
+            collapsible: Boolean(sec.collapsible),
+            uncollapsibleWidgetsCount: sec.uncollapsibleWidgetsCount ?? 0,
+          });
+        }
+
+        return {
+          total,
+          limit: WIDGET_CAP,
+          withinLimit: total <= WIDGET_CAP && disallowed.length === 0,
+          disallowed,
+          bySection,
+        };
+      }
+
+      /* === CUSTOMIZE HERE: Feature Config, Data Model, Variants & Scenarios === */
+
+      const RESOURCE_CONFIG = {
+        preferredFolderPath: '01 Admin',
+        nameContains: 'Review Ledger',
+        excludePrefixes: ['Copy of '],
+        templateTitle: 'Standard Review Ledger Template',
+        nameSuffix: 'Review Ledger',
+      };
+
+      const EPHEMERAL_UI_SELECTION_KEYS = new Set([
+        'SelectWorkspace',
+        'SelectItemType',
+        'SelectTargetResource',
+        'SelectFiles',
+        'SelectFileSource',
+        'SelectAttachments',
+        'InputDriveURL',
+        'IncludeThreadPdf',
+        'SelectEmailMessage',
+      ]);
+
+      const ITEM_CATALOG = [
+        { code: 'ITM-101', title: 'Entrance Lobby Lighting Fixture' },
+        { code: 'ITM-102', title: 'Reception Acoustic Wall Panel' },
+        { code: 'ITM-103', title: 'Elevator Cab Trim Package' },
+        { code: 'ITM-999', title: 'Bulk Stress-Test Package (45 Rows)' },
+      ];
+
+      const ASSIGNEE_CATALOG = [
+        { key: 'AR', name: 'Alex Rivera' },
+        { key: 'SC', name: 'Sam Chen' },
+        { key: 'JL', name: 'Jordan Lee' },
+      ];
+
+      const PRIORITY_OPTIONS = ['Normal', 'High', 'Urgent'];
+
+      const DECISION_OPTIONS = [
+        { key: 'PENDING', name: 'Pending Review' },
+        { key: 'APPROVED', name: 'Approved' },
+        { key: 'REVISE', name: 'Needs Revision' },
+        { key: 'HOLD', name: 'On Hold' },
+      ];
+
+      const ITEM_TYPES = {
+        'review-item': {
+          key: 'review-item',
+          name: 'Review Item',
+          requiresTargetResource: true,
+          rowDisplay: {
+            topLabel: '{{code}} · Rev {{revision}} · {{priority}}',
+            text: '<b>{{decisionName}}</b> — {{date}} ({{assignee}})',
+            bottomLabel: '{{title}}{{notesSuffix}}',
+          },
+          fields: [
+            { key: 'priority', label: 'Priority', widget: 'selectionInput', options: PRIORITY_OPTIONS, defaultValue: 'Normal' },
+            {
+              key: 'code',
+              label: 'Item Code',
+              widget: 'textInput',
+              hintText: 'e.g. ITM-101 or ITM-999',
+              autocomplete: ITEM_CATALOG.map((item) => ({ text: `${item.code} — ${item.title}`, value: item.code })),
+              onChange: true,
+            },
+            { key: 'title', label: 'Title', widget: 'textInput', hintText: 'Item summary title' },
+            { key: 'revision', label: 'Revision', widget: 'textInput', hintText: 'e.g. 1, 2' },
+            {
+              key: 'assignee',
+              label: 'Assignee',
+              widget: 'textInput',
+              autocomplete: ASSIGNEE_CATALOG.map((a) => ({ text: `${a.key} — ${a.name}`, value: a.key })),
+            },
+            {
+              key: 'decision',
+              label: 'Decision',
+              widget: 'selectionInput',
+              options: DECISION_OPTIONS.map((d) => ({ text: d.name, value: d.key })),
+              defaultValue: 'PENDING',
+            },
+            { key: 'notes', label: 'Notes', widget: 'textInput', hintText: 'Optional review notes' },
+          ],
+        },
+        'quick-note': {
+          key: 'quick-note',
+          name: 'Quick Note',
+          requiresTargetResource: false,
+          fields: [
+            { key: 'author', label: 'Author', widget: 'textInput' },
+            {
+              key: 'channel',
+              label: 'Channel',
+              widget: 'selectionInput',
+              options: [{ text: 'Inbound', value: 'IN' }, { text: 'Outbound', value: 'OUT' }],
+              defaultValue: 'IN',
+            },
+            { key: 'summary', label: 'Summary', widget: 'textInput' },
+          ],
+        },
+      };
+
+      const VARIANTS = [
+        {
+          key: 'A',
+          label: 'A — Unified Mid-Card',
+          placement: 'Dedicated Target Resource & History section placed mid-card above Item Details',
+          selector: 'DROPDOWN (N found) + active-resource decoratedText bar',
+          listBehavior: 'Newest-first via renderTemplate; collapsible with uncollapsibleWidgetsCount = 1 (2 when ambiguous)',
+          rowAction: 'Trailing Open button per row; primary Submit disabled when required resource is missing',
+        },
+        {
+          key: 'B',
+          label: 'B — Inline Routing + Bottom Drawer',
+          placement: 'Target binding/provision/selector inline inside Context Routing; Prior History drawer at bottom',
+          selector: 'Inline DROPDOWN + buttonList (Open #1, Open #2)',
+          listBehavior: 'Chronological (oldest-first); fully collapsed drawer (uncollapsibleWidgetsCount = 0)',
+          rowAction: 'Full-width clickable decoratedText row (onClick openLink); Submit disabled when missing',
+        },
+        {
+          key: 'C',
+          label: 'C — Top Alert + Latest-Pinned Feed',
+          placement: 'Missing/ambiguous Action Banner pinned at top; Latest & History Feed above Item Details',
+          selector: 'RADIO_BUTTON candidate list showing folder & date + Open Candidate buttons',
+          listBehavior: 'Newest-first with color-coded HTML status; uncollapsibleWidgetsCount = 2 (resource bar + LATEST)',
+          rowAction: 'Trailing Open button per row; Submit disabled when missing',
+        },
+      ];
+
+      function buildStressRows(code, count) {
+        const decisions = [
+          { key: 'PENDING', name: 'Pending Review', assignee: 'AR' },
+          { key: 'REVISE', name: 'Needs Revision', assignee: 'SC' },
+          { key: 'HOLD', name: 'On Hold', assignee: 'JL' },
+          { key: 'APPROVED', name: 'Approved', assignee: 'AR' },
+        ];
+        const rows = [];
+        for (let i = 0; i < count; i++) {
+          const dec = decisions[i % decisions.length];
+          const day = String(1 + (i % 28)).padStart(2, '0');
+          const month = String(1 + Math.floor(i / 28)).padStart(2, '0');
+          rows.push({
+            id: `${code}-row-${i + 1}`,
+            code,
+            revision: String(Math.floor(i / 4) + 1),
+            priority: i % 5 === 0 ? 'High' : 'Normal',
+            title: 'Bulk Stress-Test Package (45 Rows)',
+            date: `2026-${month}-${day}`,
+            assignee: dec.assignee,
+            decision: dec.key,
+            decisionName: dec.name,
+            notes: i % 3 === 0 ? `Checkpoint #${i + 1}` : '',
+            itemUrl: i % 4 === 2 ? '' : `https://example.invalid/items/${code}/${i + 1}`,
+          });
+        }
+        return rows;
+      }
+
+      function createInitialStore() {
+        return {
+          workspaces: {
+            alpha: {
+              id: 'alpha',
+              storageId: 'ws-alpha-01',
+              name: 'Alpha Workspace',
+              hasPreferredFolder: true,
+              files: [
+                {
+                  id: 'res-alpha-main',
+                  name: 'Alpha Review Ledger',
+                  folderPath: '01 Admin',
+                  modifiedTime: '2026-11-20T10:00:00Z',
+                  trashed: false,
+                  webViewLink: 'https://example.invalid/workspace/alpha/ledger',
+                },
+              ],
+            },
+            beta: {
+              id: 'beta',
+              storageId: 'ws-beta-02',
+              name: 'Beta Workspace',
+              hasPreferredFolder: false,
+              files: [
+                {
+                  id: 'beta-copy',
+                  name: 'Copy of Beta Review Ledger',
+                  folderPath: '01 Admin',
+                  modifiedTime: '2026-11-10T09:00:00Z',
+                  trashed: false,
+                  webViewLink: 'https://example.invalid/workspace/beta/copy',
+                },
+                {
+                  id: 'beta-trashed',
+                  name: 'Beta Review Ledger',
+                  folderPath: '01 Admin',
+                  modifiedTime: '2026-11-01T08:00:00Z',
+                  trashed: true,
+                  webViewLink: 'https://example.invalid/workspace/beta/trashed',
+                },
+              ],
+            },
+            gamma: {
+              id: 'gamma',
+              storageId: 'ws-gamma-03',
+              name: 'Gamma Workspace',
+              hasPreferredFolder: true,
+              files: [
+                {
+                  id: 'res-gamma-primary',
+                  name: 'Gamma Review Ledger',
+                  folderPath: '01 Admin',
+                  modifiedTime: '2026-11-22T14:00:00Z',
+                  trashed: false,
+                  webViewLink: 'https://example.invalid/workspace/gamma/primary',
+                },
+                {
+                  id: 'res-gamma-ops',
+                  name: 'Gamma Review Ledger (Ops)',
+                  folderPath: '02 Operations',
+                  modifiedTime: '2026-11-23T09:30:00Z',
+                  trashed: false,
+                  webViewLink: 'https://example.invalid/workspace/gamma/ops',
+                },
+              ],
+            },
+          },
+          records: {
+            'res-alpha-main': [
+              {
+                id: 'alpha-1',
+                code: 'ITM-101',
+                revision: '1',
+                priority: 'Normal',
+                title: 'Entrance Lobby Lighting Fixture',
+                date: '2026-11-12',
+                assignee: 'AR',
+                decision: 'PENDING',
+                decisionName: 'Pending Review',
+                notes: 'Initial vendor spec',
+                itemUrl: 'https://example.invalid/items/alpha-1',
+              },
+              {
+                id: 'alpha-2',
+                code: 'ITM-101',
+                revision: '1',
+                priority: 'High',
+                title: 'Entrance Lobby Lighting Fixture',
+                date: '2026-11-14',
+                assignee: 'SC',
+                decision: 'REVISE',
+                decisionName: 'Needs Revision',
+                notes: 'Update dimmer compatibility note',
+                itemUrl: '',
+              },
+              {
+                id: 'alpha-3',
+                code: 'ITM-101',
+                revision: '2',
+                priority: 'High',
+                title: 'Entrance Lobby Lighting Fixture',
+                date: '2026-11-18',
+                assignee: 'AR',
+                decision: 'APPROVED',
+                decisionName: 'Approved',
+                notes: 'Signed off for procurement',
+                itemUrl: 'https://example.invalid/items/alpha-3',
+              },
+              {
+                id: 'alpha-4',
+                code: 'ITM-102',
+                revision: '1',
+                priority: 'Normal',
+                title: 'Reception Acoustic Wall Panel',
+                date: '2026-11-19',
+                assignee: 'JL',
+                decision: 'HOLD',
+                decisionName: 'On Hold',
+                notes: 'Awaiting finish sample',
+                itemUrl: 'https://example.invalid/items/alpha-4',
+              },
+              ...buildStressRows('ITM-999', 45),
+            ],
+            'res-gamma-primary': [
+              {
+                id: 'gamma-p-1',
+                code: 'ITM-101',
+                revision: '1',
+                priority: 'Normal',
+                title: 'Entrance Lobby Lighting Fixture',
+                date: '2026-11-15',
+                assignee: 'AR',
+                decision: 'PENDING',
+                decisionName: 'Pending Review',
+                notes: 'Primary Admin Ledger entry',
+                itemUrl: 'https://example.invalid/items/gamma-p-1',
+              },
+              {
+                id: 'gamma-p-2',
+                code: 'ITM-101',
+                revision: '2',
+                priority: 'Urgent',
+                title: 'Entrance Lobby Lighting Fixture',
+                date: '2026-11-20',
+                assignee: 'SC',
+                decision: 'REVISE',
+                decisionName: 'Needs Revision',
+                notes: 'Confirm mounting height',
+                itemUrl: 'https://example.invalid/items/gamma-p-2',
+              },
+              {
+                code: 'ITM-101',
+                malformed: true,
+                rawRowNumber: 7,
+                reason: 'Missing required date token in source row',
+              },
+            ],
+            'res-gamma-ops': [
+              {
+                id: 'gamma-o-1',
+                code: 'ITM-101',
+                revision: '1',
+                priority: 'Normal',
+                title: 'Entrance Lobby Lighting Fixture',
+                date: '2026-11-23',
+                assignee: 'JL',
+                decision: 'APPROVED',
+                decisionName: 'Approved',
+                notes: 'Ops Ledger snapshot',
+                itemUrl: 'https://example.invalid/items/gamma-o-1',
+              },
+            ],
+          },
+        };
+      }
+
+      function isSelectionKey(key) {
+        return key.startsWith('Select') || EPHEMERAL_UI_SELECTION_KEYS.has(key);
+      }
+
+      function extractDocumentData(formData) {
+        const result = {};
+        for (const [key, value] of Object.entries(formData || {})) {
+          if (!isSelectionKey(key) && value !== undefined) {
+            result[key] = value;
+          }
+        }
+        return result;
+      }
+
+      function getTargetResourceName(workspaceName) {
+        return `${workspaceName} ${RESOURCE_CONFIG.nameSuffix}`;
+      }
+
+      function resolveTargetCandidates(files, workspaceName) {
+        const candidates = [];
+        const excludedFiles = [];
+        const exactName = getTargetResourceName(workspaceName);
+
+        for (const file of files || []) {
+          if (file.trashed) {
+            excludedFiles.push({ file, reason: 'trashed' });
+            continue;
+          }
+          if (RESOURCE_CONFIG.excludePrefixes.some((p) => file.name.startsWith(p))) {
+            excludedFiles.push({ file, reason: 'excluded_prefix' });
+            continue;
+          }
+          if (!file.name.includes(RESOURCE_CONFIG.nameContains)) {
+            excludedFiles.push({ file, reason: 'missing_pattern' });
+            continue;
+          }
+          candidates.push({
+            ...file,
+            inPreferredFolder: file.folderPath === RESOURCE_CONFIG.preferredFolderPath,
+            exactNameMatch: file.name === exactName,
+          });
+        }
+
+        candidates.sort((a, b) => {
+          if (a.inPreferredFolder !== b.inPreferredFolder) return a.inPreferredFolder ? -1 : 1;
+          if (a.exactNameMatch !== b.exactNameMatch) return a.exactNameMatch ? -1 : 1;
+          return String(b.modifiedTime).localeCompare(String(a.modifiedTime));
+        });
+
+        const status = candidates.length === 0 ? 'missing' : candidates.length === 1 ? 'resolved' : 'ambiguous';
+        return { status, candidates, excludedFiles };
+      }
+
+      function queryContext(state, store) {
+        const itemType = ITEM_TYPES[state.itemTypeKey];
+        if (!itemType || !itemType.requiresTargetResource) {
+          return undefined;
+        }
+
+        const ws = store.workspaces[state.workspaceId];
+        if (!ws) {
+          return {
+            status: 'missing_workspace',
+            workspaceName: '',
+            targetFolderPath: RESOURCE_CONFIG.preferredFolderPath,
+            targetFileName: RESOURCE_CONFIG.nameSuffix,
+            candidates: [],
+            excludedFiles: [],
+            entries: [],
+            warnings: [],
+          };
+        }
+
+        const resolution = resolveTargetCandidates(ws.files, ws.name);
+        const targetFolderPath = RESOURCE_CONFIG.preferredFolderPath;
+        const targetFileName = getTargetResourceName(ws.name);
+
+        if (resolution.status === 'missing') {
+          return {
+            status: 'missing',
+            workspaceId: ws.id,
+            workspaceName: ws.name,
+            targetFolderPath,
+            targetFileName,
+            candidates: [],
+            excludedFiles: resolution.excludedFiles,
+            entries: [],
+            warnings: [],
+          };
+        }
+
+        const requestedSelection = typeof state.formData?.SelectTargetResource === 'string'
+          ? state.formData.SelectTargetResource
+          : undefined;
+        const activeCandidate =
+          (requestedSelection && resolution.candidates.find((c) => c.id === requestedSelection)) ||
+          resolution.candidates[0];
+
+        const groupKey = String(state.formData?.code || '').trim();
+        const base = {
+          status: resolution.status,
+          workspaceId: ws.id,
+          workspaceName: ws.name,
+          targetFolderPath,
+          targetFileName,
+          candidates: resolution.candidates,
+          excludedFiles: resolution.excludedFiles,
+          activeCandidate,
+          selectedTargetId: activeCandidate?.id,
+          groupKey: groupKey || undefined,
+          missingKeyFields: groupKey ? [] : ['Item Code'],
+          warnings: [],
+        };
+
+        if (!groupKey) {
+          return { ...base, readStatus: 'idle_incomplete_id', entries: [] };
+        }
+
+        if (state.faults?.contextReadError) {
+          return {
+            ...base,
+            readStatus: 'context_api_error',
+            readErrorMessage: `Context Read 503: Unable to fetch rows from "${activeCandidate.name}". Submission remains available.`,
+            entries: [],
+          };
+        }
+
+        const allRows = store.records[activeCandidate.id] || [];
+        const matched = allRows.filter((r) => r.code === groupKey);
+        const entries = [];
+        const warnings = [];
+
+        for (const row of matched) {
+          if (row.malformed) {
+            if (state.faults?.partialHydration !== false) {
+              warnings.push(`Skipped row ${row.rawRowNumber}: ${row.reason}`);
+            }
+            continue;
+          }
+          entries.push(row);
+        }
+
+        return {
+          ...base,
+          readStatus: warnings.length > 0 ? 'partial_hydration' : 'ready',
+          entries,
+          warnings,
+        };
+      }
+
+      function defaultFormDataForType(itemTypeKey, existingFormData) {
+        const it = ITEM_TYPES[itemTypeKey];
+        const next = {};
+        if (existingFormData?.SelectTargetResource) {
+          next.SelectTargetResource = existingFormData.SelectTargetResource;
+        }
+        for (const field of it?.fields || []) {
+          if (existingFormData && existingFormData[field.key] !== undefined && existingFormData[field.key] !== '') {
+            next[field.key] = existingFormData[field.key];
+          } else if (field.defaultValue !== undefined) {
+            next[field.key] = field.defaultValue;
+          }
+        }
+        return next;
+      }
+
+      function createInitialState(overrides = {}) {
+        const workspaceId = overrides.workspaceId !== undefined ? overrides.workspaceId : 'alpha';
+        const itemTypeKey = overrides.itemTypeKey || 'review-item';
+        const baseForm = defaultFormDataForType(itemTypeKey, overrides.formData || {});
+
+        return {
+          hostApp: overrides.hostApp || 'DRIVE',
+          workspaceId,
+          itemTypeKey,
+          formData: {
+            ...baseForm,
+            SelectFiles: overrides.selectedFiles || ['drive-file-1'],
+            SelectEmailMessage: overrides.selectedMessageId || 'msg-1',
+            SelectFileSource: overrides.fileSource || 'Email Attachments',
+            SelectAttachments: overrides.selectedAttachments || ['att-1'],
+            IncludeThreadPdf: Boolean(overrides.includeThreadPdf),
+          },
+          faults: {
+            simulateProvisionForbidden: Boolean(overrides.faults?.simulateProvisionForbidden),
+            contextReadError: Boolean(overrides.faults?.contextReadError),
+            partialHydration: overrides.faults?.partialHydration !== undefined ? Boolean(overrides.faults.partialHydration) : true,
+          },
+          validationErrors: [],
+          statusMessages: [],
+          navigationType: 'pushCard',
+          notification: undefined,
+          lastActionSummary: 'Initialized card',
+          lastSubmission: undefined,
+        };
+      }
+
+      function reduceUiProcessEvent(state, event, store) {
+        const type = event?.type || 'unknown';
+
+        if (type === 'setHost') {
+          return {
+            ...state,
+            hostApp: event.hostApp === 'GMAIL' ? 'GMAIL' : 'DRIVE',
+            navigationType: 'pushCard',
+            notification: undefined,
+            lastActionSummary: `Switched host trigger to ${event.hostApp === 'GMAIL' ? 'Gmail' : 'Drive'}`,
+          };
+        }
+
+        if (type === 'toggleFault') {
+          const faultKey = event.faultKey;
+          const nextVal = event.value !== undefined ? Boolean(event.value) : !state.faults[faultKey];
+          return {
+            ...state,
+            faults: { ...state.faults, [faultKey]: nextVal },
+            validationErrors: [],
+            navigationType: 'updateCard',
+            notification: `${faultKey} ${nextVal ? 'enabled' : 'disabled'}`,
+            lastActionSummary: `Toggled ${faultKey} = ${nextVal}`,
+          };
+        }
+
+        if (type === 'onWorkspaceChange') {
+          const nextWs = store.workspaces[event.workspaceId];
+          const nextForm = { ...state.formData };
+          delete nextForm.SelectTargetResource; // Clear ephemeral target when workspace changes
+          return {
+            ...state,
+            workspaceId: nextWs ? nextWs.id : '',
+            formData: nextForm,
+            validationErrors: [],
+            statusMessages: [],
+            navigationType: 'updateCard',
+            notification: nextWs ? `Workspace: ${nextWs.name}` : 'Cleared Workspace',
+            lastActionSummary: `Changed Workspace to ${nextWs?.name || 'none'} (SelectTargetResource cleared)`,
+          };
+        }
+
+        if (type === 'onItemTypeChange') {
+          const nextTypeKey = ITEM_TYPES[event.itemTypeKey] ? event.itemTypeKey : state.itemTypeKey;
+          const preservedTarget = state.formData.SelectTargetResource;
+          const merged = { ...state.formData, ...(event.presetFields || {}) };
+          const nextForm = defaultFormDataForType(nextTypeKey, merged);
+          if (preservedTarget !== undefined) {
+            nextForm.SelectTargetResource = preservedTarget;
+          }
+          nextForm.SelectFiles = state.formData.SelectFiles;
+          nextForm.SelectEmailMessage = state.formData.SelectEmailMessage;
+          nextForm.SelectFileSource = state.formData.SelectFileSource;
+          nextForm.SelectAttachments = state.formData.SelectAttachments;
+          nextForm.IncludeThreadPdf = state.formData.IncludeThreadPdf;
+          return {
+            ...state,
+            itemTypeKey: nextTypeKey,
+            formData: nextForm,
+            validationErrors: [],
+            statusMessages: [],
+            navigationType: 'updateCard',
+            notification: undefined,
+            lastActionSummary: `Switched Item Type to ${ITEM_TYPES[nextTypeKey].name} (SelectTargetResource ${preservedTarget ? 'preserved' : 'unset'})`,
+          };
+        }
+
+        if (type === 'onSelectTargetChange') {
+          const ws = store.workspaces[state.workspaceId];
+          const picked = ws?.files.find((f) => f.id === event.targetId);
+          return {
+            ...state,
+            formData: { ...state.formData, SelectTargetResource: event.targetId },
+            validationErrors: [],
+            navigationType: 'updateCard',
+            notification: picked ? `Selected "${picked.name}"` : 'Updated target selection',
+            lastActionSummary: `SelectTargetResource set to ${picked?.name || event.targetId}`,
+          };
+        }
+
+        if (type === 'onFormChange') {
+          const nextForm = { ...state.formData, ...(event.fields || {}) };
+          if (state.itemTypeKey === 'review-item' && event.fields && 'code' in event.fields) {
+            const matched = ITEM_CATALOG.find(
+              (item) => item.code.toLowerCase() === String(event.fields.code || '').trim().toLowerCase()
+            );
+            if (matched) {
+              nextForm.code = matched.code;
+              nextForm.title = matched.title;
+            }
+          }
+          return {
+            ...state,
+            formData: nextForm,
+            validationErrors: [],
+            navigationType: 'updateCard',
+            notification: undefined,
+            lastActionSummary: `Form changed (${Object.keys(event.fields || {}).join(', ')}) -> re-queried context`,
+          };
+        }
+
+        if (type === 'provisionResource') {
+          const ws = store.workspaces[state.workspaceId];
+          if (!ws) {
+            return {
+              ...state,
+              validationErrors: ['Select a Workspace before provisioning a target resource.'],
+              navigationType: 'updateCard',
+              notification: 'Select a Workspace first',
+              lastActionSummary: 'Provision blocked: no Workspace selected',
+            };
+          }
+
+          if (state.faults?.simulateProvisionForbidden) {
+            return {
+              ...state,
+              statusMessages: [
+                `Provision failed (403 Forbidden): Contributor access required in "${ws.name}" -> "${RESOURCE_CONFIG.preferredFolderPath}".`,
+              ],
+              navigationType: 'updateCard',
+              notification: `Permission denied (403) provisioning in ${ws.name}`,
+              lastActionSummary: `provisionResource failed with 403 Forbidden in ${ws.name}`,
+            };
+          }
+
+          const newName = getTargetResourceName(ws.name);
+          const newId = `res-${ws.id}-new-${ws.files.length + 1}`;
+          const createdFolder = !ws.hasPreferredFolder;
+          ws.hasPreferredFolder = true;
+          ws.files.push({
+            id: newId,
+            name: newName,
+            folderPath: RESOURCE_CONFIG.preferredFolderPath,
+            modifiedTime: '2026-11-23T15:20:00Z',
+            trashed: false,
+            webViewLink: `https://example.invalid/workspace/${ws.id}/ledger/${newId}`,
+          });
+          store.records[newId] = [];
+
+          const folderNote = createdFolder ? ` (created "${RESOURCE_CONFIG.preferredFolderPath}")` : '';
+          return {
+            ...state,
+            formData: { ...state.formData, SelectTargetResource: newId },
+            validationErrors: [],
+            statusMessages: [],
+            navigationType: 'updateCard',
+            notification: `Created "${newName}" in ${RESOURCE_CONFIG.preferredFolderPath}${folderNote}.`,
+            lastActionSummary: `provisionResource succeeded: "${newName}" created${folderNote}`,
+          };
+        }
+
+        if (type === 'refresh') {
+          const nextForm = defaultFormDataForType(state.itemTypeKey, {});
+          return {
+            ...state,
+            formData: {
+              ...nextForm,
+              SelectFiles: ['drive-file-1'],
+              SelectEmailMessage: 'msg-1',
+              SelectFileSource: 'Email Attachments',
+              SelectAttachments: ['att-1'],
+              IncludeThreadPdf: false,
+            },
+            validationErrors: [],
+            statusMessages: [],
+            navigationType: 'pushCard',
+            notification: 'Refreshed card state',
+            lastActionSummary: 'Refresh Card -> reset form & cleared SelectTargetResource',
+          };
+        }
+
+        if (type === 'submitItem') {
+          const ctx = queryContext(state, store);
+          if (ctx && (ctx.status === 'missing' || ctx.status === 'missing_workspace')) {
+            const msg = ctx.status === 'missing_workspace'
+              ? 'Select a Workspace before submitting this Item Type.'
+              : `Target resource missing in "${ctx.workspaceName}". Provision it before submitting.`;
+            return {
+              ...state,
+              validationErrors: [msg],
+              navigationType: 'updateCard',
+              notification: 'Target resource required before submitting',
+              lastActionSummary: 'submitItem blocked by UiProcessManager guard (missing target resource)',
+            };
+          }
+
+          const submittedDocumentData = extractDocumentData(state.formData);
+          const selectedTargetId = ctx?.selectedTargetId || null;
+          const ws = store.workspaces[state.workspaceId];
+          const sourceFiles = state.hostApp === 'GMAIL'
+            ? (state.formData.SelectAttachments || [])
+            : (state.formData.SelectFiles || []);
+
+          return {
+            ...state,
+            validationErrors: [],
+            navigationType: 'updateCard',
+            notification: selectedTargetId
+              ? `Submitted ${ITEM_TYPES[state.itemTypeKey].name} (target: ${selectedTargetId})`
+              : `Submitted ${ITEM_TYPES[state.itemTypeKey].name} (non-blocking)`,
+            lastActionSummary: 'submitItem executed cleanly (ephemeral Select* keys stripped from payload)',
+            lastSubmission: {
+              timestamp: '2026-11-23T15:20:00Z',
+              itemTypeKey: state.itemTypeKey,
+              workspaceName: ws?.name || '(none)',
+              submittedDocumentData,
+              executionContext: {
+                selectedTargetId,
+                sourceFiles,
+                hostApp: state.hostApp,
+              },
+            },
+          };
+        }
+
+        return state;
+      }
+
+      // --- Card Composition across 3 Structurally Distinct Variants ---
+
+      function decisionColorHex(decision) {
+        if (decision === 'APPROVED') return '#137333';
+        if (decision === 'REVISE') return '#c5221f';
+        if (decision === 'HOLD') return '#b06000';
+        return '#1967d2';
+      }
+
+      function buildStatusSection(state) {
+        const widgets = [];
+        if (state.statusMessages?.length) {
+          widgets.push({
+            textParagraph: {
+              text: `Status:\n${state.statusMessages.map(escapeHtml).join('\n')}`,
+            },
+          });
+        }
+        if (state.validationErrors?.length) {
+          widgets.push({
+            textParagraph: {
+              text: `Validation Errors:\n${state.validationErrors.map(escapeHtml).join('\n')}`,
+            },
+          });
+        }
+        return widgets.length ? { widgets } : null;
+      }
+
+      function buildContextRoutingSection(state, store, extraWidgets = []) {
+        const workspaces = Object.values(store.workspaces);
+        const activeWs = store.workspaces[state.workspaceId];
+
+        return {
+          header: 'Context Routing',
+          widgets: [
+            {
+              selectionInput: {
+                name: 'SelectWorkspace',
+                label: 'Workspace',
+                type: 'DROPDOWN',
+                items: [
+                  { text: '-- Select Workspace --', value: '', selected: !activeWs },
+                  ...workspaces.map((ws) => ({
+                    text: ws.name,
+                    value: ws.id,
+                    selected: ws.id === state.workspaceId,
+                  })),
+                ],
+                onChangeAction: { action: 'onWorkspaceChange' },
+              },
+            },
+            {
+              selectionInput: {
+                name: 'SelectItemType',
+                label: 'Item Type',
+                type: 'DROPDOWN',
+                items: Object.values(ITEM_TYPES).map((it) => ({
+                  text: it.name,
+                  value: it.key,
+                  selected: it.key === state.itemTypeKey,
+                })),
+                onChangeAction: { action: 'onItemTypeChange' },
+              },
+            },
+            ...extraWidgets,
+          ],
+        };
+      }
+
+      function buildSourceItemsSection(state) {
+        if (state.hostApp === 'GMAIL') {
+          const isUrlMode = state.formData.SelectFileSource === 'External URL';
+          const widgets = [
+            {
+              selectionInput: {
+                name: 'SelectEmailMessage',
+                label: 'Email Message',
+                type: 'DROPDOWN',
+                items: [
+                  { text: '(1) Sample Vendor Thread | Today', value: 'msg-1', selected: state.formData.SelectEmailMessage === 'msg-1' },
+                  { text: '(2) Follow-up Review | Yesterday', value: 'msg-2', selected: state.formData.SelectEmailMessage === 'msg-2' },
+                ],
+                onChangeAction: { action: 'onEmailMessageChange' },
+              },
+            },
+            {
+              selectionInput: {
+                name: 'SelectFileSource',
+                label: 'Source Mode',
+                type: 'DROPDOWN',
+                items: [
+                  { text: 'Email Attachments', value: 'Email Attachments', selected: !isUrlMode },
+                  { text: 'External URL', value: 'External URL', selected: isUrlMode },
+                ],
+                onChangeAction: { action: 'onFileSourceChange' },
+              },
+            },
+            isUrlMode
+              ? {
+                  textInput: {
+                    name: 'InputDriveURL',
+                    label: 'Resource URL',
+                    hintText: 'Enter shared file or folder URL',
+                    value: String(state.formData.InputDriveURL || ''),
+                  },
+                }
+              : {
+                  selectionInput: {
+                    name: 'SelectAttachments',
+                    type: 'CHECK_BOX',
+                    items: [
+                      { text: 'ITM-101 Spec Sheet.pdf', value: 'att-1', selected: (state.formData.SelectAttachments || []).includes('att-1') },
+                    ],
+                  },
+                },
+            {
+              selectionInput: {
+                name: 'IncludeThreadPdf',
+                type: 'SWITCH',
+                items: [{ text: 'Save Email Thread to PDF', value: 'true', selected: Boolean(state.formData.IncludeThreadPdf) }],
+              },
+            },
+          ];
+          return { header: 'Source Items', collapsible: false, widgets };
+        }
+
+        return {
+          header: 'Source Items',
+          collapsible: true,
+          uncollapsibleWidgetsCount: 0,
+          widgets: [
+            {
+              selectionInput: {
+                name: 'SelectFiles',
+                type: 'CHECK_BOX',
+                items: [
+                  { text: 'ITM-101 Lighting Package.pdf', value: 'drive-file-1', selected: (state.formData.SelectFiles || []).includes('drive-file-1') },
+                  { text: 'Transmittal Cover Sheet.pdf', value: 'drive-file-2', selected: (state.formData.SelectFiles || []).includes('drive-file-2') },
+                ],
+              },
+            },
+          ],
+        };
+      }
+
+      function buildItemDetailsSection(state, ctx) {
+        const it = ITEM_TYPES[state.itemTypeKey];
+        const isMissingRequired = Boolean(ctx && (ctx.status === 'missing' || ctx.status === 'missing_workspace'));
+        const widgets = [];
+
+        for (const field of it.fields) {
+          const val = state.formData[field.key];
+          if (field.widget === 'selectionInput') {
+            widgets.push({
+              selectionInput: {
+                name: `${field.key}_${it.key}`,
+                label: field.label,
+                type: 'DROPDOWN',
+                items: field.options.map((opt) => {
+                  const text = typeof opt === 'string' ? opt : opt.text;
+                  const value = typeof opt === 'string' ? opt : opt.value;
+                  return {
+                    text,
+                    value,
+                    selected: String(val ?? field.defaultValue ?? '') === String(value),
+                  };
+                }),
+              },
+            });
+          } else {
+            widgets.push({
+              textInput: {
+                name: `${field.key}_${it.key}`,
+                label: field.label,
+                ...(field.hintText ? { hintText: field.hintText } : {}),
+                value: val !== undefined ? String(val) : '',
+                ...(field.autocomplete ? { autocomplete: field.autocomplete } : {}),
+                ...(field.onChange ? { onChangeAction: { action: 'onFormChange', fieldKey: field.key } } : {}),
+              },
+            });
+          }
+        }
+
+        widgets.push({
+          buttonList: {
+            buttons: [
+              {
+                text: 'Submit Item',
+                color: PRIMARY_BLUE,
+                ...(isMissingRequired ? { disabled: true } : {}),
+                onClick: { action: 'submitItem' },
+              },
+            ],
+          },
+        });
+
+        return { header: 'Item Details', widgets };
+      }
+
+      function buildUtilitiesSection() {
+        return {
+          header: 'Utilities',
+          collapsible: true,
+          uncollapsibleWidgetsCount: 0,
+          widgets: [
+            {
+              buttonList: {
+                buttons: [
+                  { text: 'Refresh Card', onClick: { action: 'refresh' } },
+                  { text: 'View Raw JSON', onClick: { action: 'viewJson' } },
+                ],
+              },
+            },
+          ],
+        };
+      }
+
+      function formatItemRow(entry, opts = {}) {
+        const tpl = opts.itemTypeKey ? ITEM_TYPES[opts.itemTypeKey]?.rowDisplay : undefined;
+        const vars = {
+          ...entry,
+          notesSuffix: entry.notes ? ` — ${entry.notes}` : '',
+        };
+
+        const baseTop = tpl?.topLabel
+          ? renderTemplate(tpl.topLabel, vars, { htmlEscapeValues: false })
+          : `${entry.code || ''} · Rev ${entry.revision || '-'}`;
+        const topLabel = opts.prefixTop ? `${opts.prefixTop} · ${baseTop}` : baseTop;
+
+        let text = tpl?.text
+          ? renderTemplate(tpl.text, vars, { htmlEscapeValues: true })
+          : `<b>${escapeHtml(entry.decisionName)}</b> (${escapeHtml(entry.assignee)})`;
+        if (opts.colorCodeDecision) {
+          text = `<font color="${decisionColorHex(entry.decision)}">${text}</font>`;
+        }
+
+        const baseBottom = tpl?.bottomLabel
+          ? renderTemplate(tpl.bottomLabel, vars, { htmlEscapeValues: false })
+          : (entry.notes || '');
+        const bottomLabel = opts.wholeRowClick && !entry.itemUrl
+          ? (baseBottom ? `${baseBottom} (no link)` : '(no link)')
+          : baseBottom;
+
+        const widget = {
+          decoratedText: {
+            topLabel,
+            text,
+            wrapText: true,
+            ...(bottomLabel ? { bottomLabel } : {}),
+          },
+        };
+
+        if (entry.itemUrl) {
+          if (opts.wholeRowClick) {
+            widget.decoratedText.onClick = { openLink: { url: entry.itemUrl, openAs: 'FULL_SIZE' } };
+          } else {
+            widget.decoratedText.button = {
+              text: 'Open',
+              onClick: { openLink: { url: entry.itemUrl, openAs: 'FULL_SIZE' } },
+            };
+          }
+        }
+        return widget;
+      }
+
+      function buildReadStatusWidgets(ctx) {
+        const widgets = [];
+        if (ctx.readStatus === 'context_api_error') {
+          widgets.push({
+            textParagraph: {
+              text: `<font color="#c5221f"><b>Could not read history:</b></font> ${escapeHtml(ctx.readErrorMessage)}`,
+            },
+          });
+          return widgets;
+        }
+        if (ctx.readStatus === 'idle_incomplete_id') {
+          widgets.push({
+            textParagraph: {
+              text: `Enter <b>${escapeHtml((ctx.missingKeyFields || []).join(' & '))}</b> below to load item history.`,
+            },
+          });
+          return widgets;
+        }
+        if (ctx.warnings?.length) {
+          widgets.push({
+            textParagraph: {
+              text: `<font color="#b06000"><b>Partial read:</b></font> ${escapeHtml(ctx.warnings.join('; '))}`,
+            },
+          });
+        }
+        if (ctx.entries.length === 0) {
+          widgets.push({
+            textParagraph: {
+              text: `No prior entries found for <b>${escapeHtml(ctx.groupKey)}</b>.`,
+            },
+          });
+        }
+        return widgets;
+      }
+
+      // --- Variant A: Unified Mid-Card Section ---
+      function buildVariantACard(state, store, ctx) {
+        const statusSec = buildStatusSection(state);
+        const routingSec = buildContextRoutingSection(state, store);
+        const sourceSec = buildSourceItemsSection(state);
+        const detailsSec = buildItemDetailsSection(state, ctx);
+        const utilSec = buildUtilitiesSection();
+
+        const fixedCount =
+          (statusSec ? statusSec.widgets.length : 0) +
+          routingSec.widgets.length +
+          sourceSec.widgets.length +
+          detailsSec.widgets.length +
+          utilSec.widgets.length;
+
+        let targetSec = null;
+        if (ctx) {
+          if (ctx.status === 'missing_workspace') {
+            targetSec = {
+              header: 'Target Resource',
+              widgets: [{ textParagraph: { text: 'Select a <b>Workspace</b> to locate or provision a target resource.' } }],
+            };
+          } else if (ctx.status === 'missing') {
+            targetSec = {
+              header: 'Target Resource',
+              widgets: [
+                {
+                  textParagraph: {
+                    text: `<font color="#b06000"><b>No target resource found</b></font> in <b>${escapeHtml(ctx.workspaceName)}</b>.`,
+                  },
+                },
+                {
+                  decoratedText: {
+                    topLabel: 'Provisioning Target',
+                    text: `<b>${escapeHtml(ctx.targetFileName)}</b>`,
+                    wrapText: true,
+                    bottomLabel: `Folder: ${ctx.targetFolderPath} · From ${RESOURCE_CONFIG.templateTitle}`,
+                  },
+                },
+                {
+                  buttonList: {
+                    buttons: [{ text: 'Provision Resource', color: PRIMARY_BLUE, onClick: { action: 'provisionResource' } }],
+                  },
+                },
+              ],
+            };
+          } else {
+            const widgets = [];
+            let uncollapsibleCount = 0;
+
+            if (ctx.status === 'ambiguous') {
+              widgets.push({
+                selectionInput: {
+                  name: 'SelectTargetResource',
+                  label: `Target Resource (${ctx.candidates.length} found)`,
+                  type: 'DROPDOWN',
+                  items: ctx.candidates.map((c) => ({
+                    text: `${c.name} (${c.folderPath})`,
+                    value: c.id,
+                    selected: c.id === ctx.activeCandidate.id,
+                  })),
+                  onChangeAction: { action: 'onSelectTargetChange' },
+                },
+              });
+            }
+
+            const newestFirst = [...ctx.entries].reverse();
+            const latest = newestFirst[0];
+            widgets.push({
+              decoratedText: {
+                topLabel: `${ctx.activeCandidate.name} · ${ctx.activeCandidate.folderPath}`,
+                text: ctx.groupKey
+                  ? (ctx.readStatus === 'context_api_error'
+                      ? `<b>${escapeHtml(ctx.groupKey)}</b> · History unavailable`
+                      : `<b>${ctx.entries.length} prior ${ctx.entries.length === 1 ? 'entry' : 'entries'}</b> for ${escapeHtml(ctx.groupKey)}`)
+                  : `<b>${escapeHtml(ctx.activeCandidate.name)}</b>`,
+                wrapText: true,
+                bottomLabel: latest
+                  ? `Latest: Rev ${latest.revision} · ${latest.decisionName} (${latest.date})`
+                  : `${ctx.activeCandidate.folderPath} · ${formatIsoDate(ctx.activeCandidate.modifiedTime)}`,
+                button: {
+                  text: 'Open Resource',
+                  onClick: { openLink: { url: ctx.activeCandidate.webViewLink, openAs: 'FULL_SIZE' } },
+                },
+              },
+            });
+            uncollapsibleCount = widgets.length;
+
+            widgets.push(...buildReadStatusWidgets(ctx));
+            if (ctx.warnings?.length) {
+              uncollapsibleCount = widgets.length;
+            }
+
+            const remainingBudget = WIDGET_CAP - fixedCount - widgets.length;
+            const { visible, truncatedCount } = sliceWithWidgetBudget(newestFirst, remainingBudget);
+            for (const entry of visible) {
+              widgets.push(formatItemRow(entry, { itemTypeKey: state.itemTypeKey }));
+            }
+            if (truncatedCount > 0) {
+              widgets.push({
+                decoratedText: {
+                  topLabel: 'Card Widget Cap Guard',
+                  text: `Showing ${visible.length} of ${ctx.entries.length} entries`,
+                  wrapText: true,
+                  bottomLabel: 'Open the full target resource to view remaining rows.',
+                  button: {
+                    text: 'Open Resource',
+                    onClick: { openLink: { url: ctx.activeCandidate.webViewLink, openAs: 'FULL_SIZE' } },
+                  },
+                },
+              });
+            }
+
+            const hasCollapsibleRows = visible.length > 0;
+            if (!hasCollapsibleRows) {
+              uncollapsibleCount = widgets.length;
+            }
+
+            targetSec = {
+              header: 'Target Resource & History',
+              ...(hasCollapsibleRows ? { collapsible: true, uncollapsibleWidgetsCount: uncollapsibleCount } : {}),
+              widgets,
+            };
+          }
+        }
+
+        return {
+          variant: 'A',
+          header: {
+            title: 'Workspace Add-on',
+            subtitle: `${state.hostApp === 'GMAIL' ? 'Gmail' : 'Drive'} · Variant A (Unified Mid-Card)`,
+          },
+          sections: [statusSec, routingSec, sourceSec, targetSec, detailsSec, utilSec].filter(Boolean),
+        };
+      }
+
+      // --- Variant B: Inline Routing + Bottom Drawer ---
+      function buildVariantBCard(state, store, ctx) {
+        const inlineWidgets = [];
+        if (ctx) {
+          inlineWidgets.push({ divider: {} });
+          if (ctx.status === 'missing_workspace') {
+            inlineWidgets.push({ textParagraph: { text: 'Select a Workspace to bind its target resource.' } });
+          } else if (ctx.status === 'missing') {
+            inlineWidgets.push({
+              decoratedText: {
+                topLabel: 'Target Resource Missing',
+                text: `<font color="#b06000"><b>No resource in ${escapeHtml(ctx.workspaceName)}</b></font>`,
+                wrapText: true,
+                bottomLabel: `Creates: ${ctx.targetFolderPath} / ${ctx.targetFileName}`,
+              },
+            });
+            inlineWidgets.push({
+              buttonList: {
+                buttons: [{ text: 'Provision Resource', color: PRIMARY_BLUE, onClick: { action: 'provisionResource' } }],
+              },
+            });
+          } else if (ctx.status === 'ambiguous') {
+            inlineWidgets.push({
+              selectionInput: {
+                name: 'SelectTargetResource',
+                label: `Target Resource (${ctx.candidates.length} matches)`,
+                type: 'DROPDOWN',
+                items: ctx.candidates.map((c, idx) => ({
+                  text: `#${idx + 1} ${c.name} [${c.folderPath}]`,
+                  value: c.id,
+                  selected: c.id === ctx.activeCandidate.id,
+                })),
+                onChangeAction: { action: 'onSelectTargetChange' },
+              },
+            });
+            inlineWidgets.push({
+              buttonList: {
+                buttons: ctx.candidates.map((c, idx) => ({
+                  text: `Open #${idx + 1}`,
+                  onClick: { openLink: { url: c.webViewLink, openAs: 'FULL_SIZE' } },
+                })),
+              },
+            });
+          } else {
+            inlineWidgets.push({
+              decoratedText: {
+                topLabel: `Target · ${ctx.activeCandidate.folderPath}`,
+                text: escapeHtml(ctx.activeCandidate.name),
+                wrapText: true,
+                button: {
+                  text: 'Open',
+                  onClick: { openLink: { url: ctx.activeCandidate.webViewLink, openAs: 'FULL_SIZE' } },
+                },
+              },
+            });
+          }
+        }
+
+        const statusSec = buildStatusSection(state);
+        const routingSec = buildContextRoutingSection(state, store, inlineWidgets);
+        const sourceSec = buildSourceItemsSection(state);
+        const detailsSec = buildItemDetailsSection(state, ctx);
+        const utilSec = buildUtilitiesSection();
+
+        const fixedCount =
+          (statusSec ? statusSec.widgets.length : 0) +
+          routingSec.widgets.length +
+          sourceSec.widgets.length +
+          detailsSec.widgets.length +
+          utilSec.widgets.length;
+
+        let drawerSec = null;
+        if (ctx && (ctx.status === 'resolved' || ctx.status === 'ambiguous')) {
+          const widgets = [...buildReadStatusWidgets(ctx)];
+          const remainingBudget = WIDGET_CAP - fixedCount - widgets.length;
+          const { visible, truncatedCount } = sliceWithWidgetBudget(ctx.entries, remainingBudget);
+
+          for (const entry of visible) {
+            widgets.push(formatItemRow(entry, { itemTypeKey: state.itemTypeKey, wholeRowClick: true }));
+          }
+          if (truncatedCount > 0) {
+            widgets.push({
+              decoratedText: {
+                topLabel: 'Card Widget Cap Guard',
+                text: `Showing ${visible.length} of ${ctx.entries.length} entries`,
+                wrapText: true,
+                bottomLabel: 'Click to open full target resource',
+                onClick: { openLink: { url: ctx.activeCandidate.webViewLink, openAs: 'FULL_SIZE' } },
+              },
+            });
+          }
+
+          drawerSec = {
+            header: `Prior History${ctx.groupKey ? `: ${ctx.groupKey} (${ctx.entries.length})` : ''}`,
+            ...(visible.length > 0
+              ? { collapsible: true, uncollapsibleWidgetsCount: ctx.warnings?.length ? ctx.warnings.length : 0 }
+              : {}),
+            widgets,
+          };
+        }
+
+        return {
+          variant: 'B',
+          header: {
+            title: 'Workspace Add-on',
+            subtitle: `${state.hostApp === 'GMAIL' ? 'Gmail' : 'Drive'} · Variant B (Split Routing + Drawer)`,
+          },
+          sections: [statusSec, routingSec, sourceSec, detailsSec, drawerSec, utilSec].filter(Boolean),
+        };
+      }
+
+      // --- Variant C: Top Action Banner + Latest-Pinned Feed ---
+      function buildVariantCCard(state, store, ctx) {
+        const statusSec = buildStatusSection(state);
+        const routingSec = buildContextRoutingSection(state, store);
+        const sourceSec = buildSourceItemsSection(state);
+        const detailsSec = buildItemDetailsSection(state, ctx);
+        const utilSec = buildUtilitiesSection();
+
+        let topAlertSec = null;
+        if (ctx && (ctx.status === 'missing' || ctx.status === 'ambiguous')) {
+          if (ctx.status === 'missing') {
+            topAlertSec = {
+              header: 'Action Required: Target Resource',
+              widgets: [
+                {
+                  textParagraph: {
+                    text: `<font color="#b06000"><b>Missing Target Resource:</b></font> None found in <b>${escapeHtml(ctx.workspaceName)}</b>.`,
+                  },
+                },
+                {
+                  decoratedText: {
+                    topLabel: 'Provision Destination',
+                    text: `${escapeHtml(ctx.targetFolderPath)} / <b>${escapeHtml(ctx.targetFileName)}</b>`,
+                    wrapText: true,
+                  },
+                },
+                {
+                  buttonList: {
+                    buttons: [{ text: 'Provision Resource', color: PRIMARY_BLUE, onClick: { action: 'provisionResource' } }],
+                  },
+                },
+              ],
+            };
+          } else {
+            topAlertSec = {
+              header: `Confirm Target Resource (${ctx.candidates.length} found)`,
+              widgets: [
+                {
+                  selectionInput: {
+                    name: 'SelectTargetResource',
+                    type: 'RADIO_BUTTON',
+                    items: ctx.candidates.map((c) => ({
+                      text: `${c.name} [${c.folderPath} · ${formatIsoDate(c.modifiedTime)}]`,
+                      value: c.id,
+                      selected: c.id === ctx.activeCandidate.id,
+                    })),
+                    onChangeAction: { action: 'onSelectTargetChange' },
+                  },
+                },
+                {
+                  buttonList: {
+                    buttons: ctx.candidates.map((c, idx) => ({
+                      text: `Open Candidate ${idx + 1}`,
+                      onClick: { openLink: { url: c.webViewLink, openAs: 'FULL_SIZE' } },
+                    })),
+                  },
+                },
+              ],
+            };
+          }
+        }
+
+        const fixedCount =
+          (statusSec ? statusSec.widgets.length : 0) +
+          (topAlertSec ? topAlertSec.widgets.length : 0) +
+          routingSec.widgets.length +
+          sourceSec.widgets.length +
+          detailsSec.widgets.length +
+          utilSec.widgets.length;
+
+        let feedSec = null;
+        if (ctx && (ctx.status === 'resolved' || ctx.status === 'ambiguous')) {
+          const widgets = [
+            {
+              decoratedText: {
+                topLabel: `Active Target · ${ctx.activeCandidate.folderPath}`,
+                text: `<b>${escapeHtml(ctx.activeCandidate.name)}</b>`,
+                wrapText: true,
+                bottomLabel: ctx.groupKey
+                  ? `${ctx.entries.length} ${ctx.entries.length === 1 ? 'entry' : 'entries'} for ${ctx.groupKey}`
+                  : 'Enter Item Code below',
+                button: {
+                  text: 'Open Resource',
+                  onClick: { openLink: { url: ctx.activeCandidate.webViewLink, openAs: 'FULL_SIZE' } },
+                },
+              },
+            },
+          ];
+
+          const newestFirst = [...ctx.entries].reverse();
+          if (newestFirst.length === 0) {
+            widgets.push(...buildReadStatusWidgets(ctx));
+            feedSec = {
+              header: `Latest & History Feed${ctx.groupKey ? ` · ${ctx.groupKey}` : ''}`,
+              widgets,
+            };
+          } else {
+            const [latest, ...older] = newestFirst;
+            widgets.push(formatItemRow(latest, { itemTypeKey: state.itemTypeKey, prefixTop: 'LATEST', colorCodeDecision: true }));
+            const pinnedCount = 2;
+
+            const extraWidgets = [];
+            if (ctx.warnings?.length) {
+              extraWidgets.push({
+                textParagraph: {
+                  text: `<font color="#b06000"><b>Partial read:</b></font> ${escapeHtml(ctx.warnings.join('; '))}`,
+                },
+              });
+            }
+            if (older.length > 0) {
+              extraWidgets.push({ divider: {} });
+              const remainingBudget = WIDGET_CAP - fixedCount - widgets.length - extraWidgets.length;
+              const { visible, truncatedCount } = sliceWithWidgetBudget(older, remainingBudget);
+              for (const entry of visible) {
+                extraWidgets.push(formatItemRow(entry, { itemTypeKey: state.itemTypeKey, colorCodeDecision: true }));
+              }
+              if (truncatedCount > 0) {
+                extraWidgets.push({
+                  decoratedText: {
+                    topLabel: 'Card Widget Cap Guard',
+                    text: `Showing ${1 + visible.length} of ${newestFirst.length} entries`,
+                    wrapText: true,
+                    bottomLabel: 'Open the full target resource to view remaining rows.',
+                    button: {
+                      text: 'Open Resource',
+                      onClick: { openLink: { url: ctx.activeCandidate.webViewLink, openAs: 'FULL_SIZE' } },
+                    },
+                  },
+                });
+              }
+            }
+
+            widgets.push(...extraWidgets);
+            feedSec = {
+              header: `Latest & History Feed${ctx.groupKey ? ` · ${ctx.groupKey}` : ''}`,
+              ...(extraWidgets.length > 0 ? { collapsible: true, uncollapsibleWidgetsCount: pinnedCount } : {}),
+              widgets,
+            };
+          }
+        }
+
+        return {
+          variant: 'C',
+          header: {
+            title: 'Workspace Add-on',
+            subtitle: `${state.hostApp === 'GMAIL' ? 'Gmail' : 'Drive'} · Variant C (Top Alert + Latest-Pinned)`,
+          },
+          sections: [statusSec, topAlertSec, routingSec, sourceSec, feedSec, detailsSec, utilSec].filter(Boolean),
+        };
+      }
+
+      function composeWorkspaceCard(variant, state, store) {
+        const ctx = queryContext(state, store);
+        let card;
+        if (variant === 'B') {
+          card = buildVariantBCard(state, store, ctx);
+        } else if (variant === 'C') {
+          card = buildVariantCCard(state, store, ctx);
+        } else {
+          card = buildVariantACard(state, store, ctx);
+        }
+
+        const actionResponse = {
+          action: {
+            navigations: [
+              state.navigationType === 'updateCard'
+                ? { updateCard: { header: card.header, sections: card.sections } }
+                : { pushCard: { header: card.header, sections: card.sections } },
+            ],
+            ...(state.notification ? { notification: { text: state.notification } } : {}),
+          },
+        };
+
+        return { card, ctx, actionResponse };
+      }
+
+      const SCENARIOS = [
+        {
+          id: 'missing-provision',
+          title: '1. Missing -> Provision & Submit',
+          description:
+            'Workspace "Beta Workspace" has 0 valid target resources (2 excluded files). Primary Submit Item is disabled until provisioned. Simulate a 403 permission error, clear it to provision via updateCard + toast, then submit and inspect the stripped CQRS payload.',
+          initialState: {
+            hostApp: 'DRIVE',
+            workspaceId: 'beta',
+            itemTypeKey: 'review-item',
+            formData: {
+              priority: 'High',
+              code: 'ITM-101',
+              title: 'Entrance Lobby Lighting Fixture',
+              revision: '1',
+              assignee: 'AR',
+              decision: 'PENDING',
+            },
+          },
+          steps: [
+            {
+              label: '1. Simulate 403 Provision Fault',
+              event: { type: 'toggleFault', faultKey: 'simulateProvisionForbidden', value: true },
+            },
+            {
+              label: '2. Attempt Provision (403 Error)',
+              event: { type: 'provisionResource' },
+            },
+            {
+              label: '3. Clear Fault & Provision Resource',
+              events: [
+                { type: 'toggleFault', faultKey: 'simulateProvisionForbidden', value: false },
+                { type: 'provisionResource' },
+              ],
+            },
+            {
+              label: '4. Submit Item (Unlocked & Stripped)',
+              event: { type: 'submitItem' },
+            },
+          ],
+        },
+        {
+          id: 'ambiguous-fault-cap',
+          title: '2. Ambiguous, Faults & 100-Widget Cap',
+          description:
+            'Workspace "Gamma Workspace" in Gmail has 2 valid target candidates plus a malformed row. Switch candidate via SelectTargetResource, clear the 503 read fault, submit cleanly, then load Alpha Workspace (ITM-999, 45 rows) to verify the 100-widget cap guard.',
+          initialState: {
+            hostApp: 'GMAIL',
+            workspaceId: 'gamma',
+            itemTypeKey: 'review-item',
+            formData: {
+              priority: 'Normal',
+              code: 'ITM-101',
+              title: 'Entrance Lobby Lighting Fixture',
+              revision: '2',
+              assignee: 'SC',
+              decision: 'APPROVED',
+            },
+            faults: {
+              contextReadError: true,
+              partialHydration: true,
+              simulateProvisionForbidden: false,
+            },
+          },
+          steps: [
+            {
+              label: '1. Switch Candidate -> Ops Ledger',
+              event: { type: 'onSelectTargetChange', targetId: 'res-gamma-ops' },
+            },
+            {
+              label: '2. Select Primary & Clear 503 Fault',
+              events: [
+                { type: 'onSelectTargetChange', targetId: 'res-gamma-primary' },
+                { type: 'toggleFault', faultKey: 'contextReadError', value: false },
+              ],
+            },
+            {
+              label: '3. Submit Item (Non-Blocking)',
+              event: { type: 'submitItem' },
+            },
+            {
+              label: '4. Load 45-Row Cap Test (Alpha · ITM-999)',
+              events: [
+                { type: 'onWorkspaceChange', workspaceId: 'alpha' },
+                { type: 'onFormChange', fields: { code: 'ITM-999' } },
+              ],
+            },
+          ],
+        },
+      ];
+
+      /* === END CUSTOMIZE HERE === */
+
+      return {
+        WIDGET_CAP,
+        MAX_DYNAMIC_ITEMS_CAP,
+        EPHEMERAL_UI_SELECTION_KEYS,
+        ITEM_TYPES,
+        VARIANTS,
+        SCENARIOS,
+        escapeHtml,
+        renderTemplate,
+        sliceWithWidgetBudget,
+        countCardWidgets,
+        createInitialStore,
+        createInitialState,
+        resolveTargetCandidates,
+        queryContext,
+        isSelectionKey,
+        extractDocumentData,
+        reduceUiProcessEvent,
+        composeWorkspaceCard,
+      };
+    })();
+
+    if (typeof globalThis !== 'undefined') {
+      globalThis.PrototypeMachine = PrototypeMachine;
+    }
+  </script>
+
+  <!-- =========================================================================
+       THROWAWAY INTERACTIVE SHELL (DOM / URL Switcher / Renderer)
+       ========================================================================= -->
+  <script id="prototype-ui-shell">
+    (() => {
+      const M = globalThis.PrototypeMachine;
+      const VARIANTS = M.VARIANTS;
+      const SAFE_FONT_COLOR_RE = /^#[0-9a-fA-F]{3,6}$/;
+
+      function renderSafeCardMarkup(rawHtml) {
+        const str = String(rawHtml ?? '');
+        const frag = document.createDocumentFragment();
+        const tokenRe = /(<\/?(?:b|i|br|code|font)(?:\s+color="([^"]*)")?\s*>)/gi;
+        let lastIndex = 0;
+        let currentParent = frag;
+        const stack = [frag];
+
+        let match;
+        while ((match = tokenRe.exec(str)) !== null) {
+          if (match.index > lastIndex) {
+            currentParent.appendChild(document.createTextNode(str.slice(lastIndex, match.index)));
+          }
+          const tag = match[1].toLowerCase();
+          if (tag === '<br>' || tag === '<br/>') {
+            currentParent.appendChild(document.createElement('br'));
+          } else if (tag.startsWith('</')) {
+            if (stack.length > 1) {
+              stack.pop();
+              currentParent = stack[stack.length - 1];
+            }
+          } else if (tag.startsWith('<b')) {
+            const el = document.createElement('b');
+            currentParent.appendChild(el);
+            stack.push(el);
+            currentParent = el;
+          } else if (tag.startsWith('<i')) {
+            const el = document.createElement('i');
+            currentParent.appendChild(el);
+            stack.push(el);
+            currentParent = el;
+          } else if (tag.startsWith('<code')) {
+            const el = document.createElement('code');
+            el.style.fontFamily = 'var(--mono)';
+            el.style.fontSize = '0.92em';
+            currentParent.appendChild(el);
+            stack.push(el);
+            currentParent = el;
+          } else if (tag.startsWith('<font')) {
+            const el = document.createElement('span');
+            if (match[2] && SAFE_FONT_COLOR_RE.test(match[2])) {
+              el.style.color = match[2];
+            }
+            currentParent.appendChild(el);
+            stack.push(el);
+            currentParent = el;
+          }
+          lastIndex = tokenRe.lastIndex;
+        }
+        if (lastIndex < str.length) {
+          currentParent.appendChild(document.createTextNode(str.slice(lastIndex)));
+        }
+
+        const walker = document.createTreeWalker(frag, NodeFilter.SHOW_TEXT);
+        let node;
+        const decode = (s) =>
+          s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+        while ((node = walker.nextNode())) {
+          node.nodeValue = decode(node.nodeValue);
+        }
+        return frag;
+      }
+
+      function readInitialVariant() {
+        try {
+          const sp = new URLSearchParams(window.location.search);
+          const v = (sp.get('variant') || '').toUpperCase();
+          if (VARIANTS.some((item) => item.key === v)) return v;
+        } catch {
+          // Ignore search parsing error
+        }
+        const hashMatch = window.location.hash.match(/variant=([A-Z0-9_-]+)/i);
+        if (hashMatch) {
+          const candidate = hashMatch[1].toUpperCase();
+          if (VARIANTS.some((item) => item.key === candidate)) return candidate;
+        }
+        return VARIANTS[0].key;
+      }
+
+      function persistVariantInUrl(variantKey) {
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.set('variant', variantKey);
+          window.history.replaceState(null, '', url.toString());
+        } catch {
+          try {
+            window.location.hash = `variant=${variantKey}`;
+          } catch {
+            // Ignore in restricted contexts
+          }
+        }
+      }
+
+      let activeVariant = readInitialVariant();
+      let activeScenarioId = M.SCENARIOS[0].id;
+      let activeInspectorTab = 'state';
+      let store = M.createInitialStore();
+      let appState = M.createInitialState(M.SCENARIOS[0].initialState);
+      let completedSteps = new Set();
+      const expandedSections = new Map();
+      let openLinkIntercepted = null;
+      let toastTimeout = null;
+
+      function loadScenario(scenarioId) {
+        const scenario = M.SCENARIOS.find((s) => s.id === scenarioId) || M.SCENARIOS[0];
+        activeScenarioId = scenario.id;
+        store = M.createInitialStore();
+        appState = M.createInitialState(scenario.initialState);
+        completedSteps = new Set();
+        expandedSections.clear();
+        openLinkIntercepted = null;
+        renderAll();
+      }
+
+      function dispatchEvent(evt) {
+        appState = M.reduceUiProcessEvent(appState, evt, store);
+        if (appState.notification) {
+          showToast(appState.notification);
+        }
+        renderAll();
+      }
+
+      function handleCardClick(onClick) {
+        if (!onClick) return;
+        if (onClick.openLink) {
+          openLinkIntercepted = onClick.openLink;
+          appState = {
+            ...appState,
+            lastActionSummary: `openLink triggered -> ${onClick.openLink.url}`,
+          };
+          renderAll();
+          return;
+        }
+        if (onClick.action === 'viewJson') {
+          activeInspectorTab = 'card-json';
+          renderAll();
+          return;
+        }
+        if (onClick.action) {
+          dispatchEvent({ ...onClick, type: onClick.action });
+        }
+      }
+
+      function showToast(msg) {
+        const toast = document.getElementById('addon-toast');
+        const textEl = document.getElementById('addon-toast-text');
+        textEl.textContent = msg;
+        toast.classList.remove('hidden');
+        if (toastTimeout) clearTimeout(toastTimeout);
+        toastTimeout = setTimeout(() => {
+          toast.classList.add('hidden');
+        }, 4200);
+      }
+
+      function stripTypeSuffix(widgetName) {
+        const suffix = `_${appState.itemTypeKey}`;
+        return widgetName.endsWith(suffix) ? widgetName.slice(0, -suffix.length) : widgetName;
+      }
+
+      function dispatchSelectionChange(si, value) {
+        const action = si.onChangeAction?.action;
+        if (action === 'onWorkspaceChange') {
+          dispatchEvent({ type: 'onWorkspaceChange', workspaceId: value });
+        } else if (action === 'onItemTypeChange') {
+          dispatchEvent({ type: 'onItemTypeChange', itemTypeKey: value });
+        } else if (action === 'onSelectTargetChange' || si.name === 'SelectTargetResource') {
+          dispatchEvent({ type: 'onSelectTargetChange', targetId: value });
+        } else {
+          dispatchEvent({ type: 'onFormChange', fields: { [stripTypeSuffix(si.name)]: value } });
+        }
+      }
+
+      function renderWidget(w) {
+        if (w.divider) {
+          const hr = document.createElement('hr');
+          hr.className = 'gw-divider';
+          return hr;
+        }
+
+        if (w.textParagraph) {
+          const p = document.createElement('div');
+          p.className = 'gw-paragraph';
+          p.appendChild(renderSafeCardMarkup(w.textParagraph.text));
+          return p;
+        }
+
+        if (w.textInput) {
+          const wrap = document.createElement('div');
+          wrap.className = 'gw-field';
+          if (w.textInput.label) {
+            const lbl = document.createElement('label');
+            lbl.textContent = w.textInput.label;
+            wrap.appendChild(lbl);
+          }
+          const inp = document.createElement('input');
+          inp.className = 'gw-input';
+          inp.type = 'text';
+          inp.value = w.textInput.value || '';
+          if (w.textInput.hintText) inp.placeholder = w.textInput.hintText;
+
+          if (w.textInput.autocomplete?.length) {
+            const listId = `dl-${w.textInput.name}`;
+            const dl = document.createElement('datalist');
+            dl.id = listId;
+            for (const item of w.textInput.autocomplete) {
+              const opt = document.createElement('option');
+              opt.value = item.value;
+              opt.textContent = item.text;
+              dl.appendChild(opt);
+            }
+            inp.setAttribute('list', listId);
+            wrap.appendChild(dl);
+          }
+
+          inp.addEventListener('change', (e) => {
+            dispatchEvent({
+              type: 'onFormChange',
+              fields: { [stripTypeSuffix(w.textInput.name)]: e.target.value },
+            });
+          });
+          wrap.appendChild(inp);
+          return wrap;
+        }
+
+        if (w.selectionInput) {
+          const si = w.selectionInput;
+          const wrap = document.createElement('div');
+          wrap.className = 'gw-field';
+
+          if (si.type === 'SWITCH') {
+            const item = si.items[0];
+            const row = document.createElement('label');
+            row.className = 'gw-switch-row';
+            const span = document.createElement('span');
+            span.textContent = item.text;
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = Boolean(item.selected);
+            cb.addEventListener('change', () => {
+              dispatchEvent({ type: 'onFormChange', fields: { [si.name]: cb.checked } });
+            });
+            row.append(span, cb);
+            wrap.appendChild(row);
+            return wrap;
+          }
+
+          if (si.label) {
+            const lbl = document.createElement('label');
+            lbl.textContent = si.label;
+            wrap.appendChild(lbl);
+          }
+
+          if (si.type === 'RADIO_BUTTON' || si.type === 'CHECK_BOX') {
+            const group = document.createElement('div');
+            group.className = si.type === 'RADIO_BUTTON' ? 'gw-radio-group' : 'gw-checkbox-group';
+            for (const item of si.items) {
+              const row = document.createElement('label');
+              row.className = 'gw-choice-item';
+              const inp = document.createElement('input');
+              inp.type = si.type === 'RADIO_BUTTON' ? 'radio' : 'checkbox';
+              inp.name = si.name;
+              inp.value = item.value;
+              inp.checked = Boolean(item.selected);
+              inp.addEventListener('change', () => {
+                if (si.type === 'RADIO_BUTTON') {
+                  dispatchSelectionChange(si, item.value);
+                } else {
+                  const checkedVals = [...group.querySelectorAll('input:checked')].map((n) => n.value);
+                  dispatchEvent({ type: 'onFormChange', fields: { [si.name]: checkedVals } });
+                }
+              });
+              const txt = document.createElement('span');
+              txt.textContent = item.text;
+              row.append(inp, txt);
+              group.appendChild(row);
+            }
+            wrap.appendChild(group);
+            return wrap;
+          }
+
+          const sel = document.createElement('select');
+          sel.className = 'gw-select';
+          for (const item of si.items) {
+            const opt = document.createElement('option');
+            opt.value = item.value;
+            opt.textContent = item.text;
+            opt.selected = Boolean(item.selected);
+            sel.appendChild(opt);
+          }
+          sel.addEventListener('change', (e) => dispatchSelectionChange(si, e.target.value));
+          wrap.appendChild(sel);
+          return wrap;
+        }
+
+        if (w.decoratedText) {
+          const dt = w.decoratedText;
+          const row = document.createElement('div');
+          row.className = `gw-decorated${dt.onClick ? ' clickable' : ''}`;
+          if (dt.onClick) {
+            row.addEventListener('click', () => handleCardClick(dt.onClick));
+          }
+
+          const body = document.createElement('div');
+          body.className = 'gw-decorated-body';
+          if (dt.topLabel) {
+            const top = document.createElement('div');
+            top.className = 'gw-decorated-top';
+            top.textContent = dt.topLabel;
+            top.title = dt.topLabel;
+            body.appendChild(top);
+          }
+          const main = document.createElement('div');
+          main.className = `gw-decorated-text${dt.wrapText ? '' : ' nowrap'}`;
+          main.appendChild(renderSafeCardMarkup(dt.text));
+          body.appendChild(main);
+          if (dt.bottomLabel) {
+            const bot = document.createElement('div');
+            bot.className = 'gw-decorated-bottom';
+            bot.textContent = dt.bottomLabel;
+            body.appendChild(bot);
+          }
+          row.appendChild(body);
+
+          if (dt.button) {
+            const trailing = document.createElement('div');
+            trailing.className = 'gw-decorated-trailing';
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'gw-btn compact';
+            btn.textContent = dt.button.text;
+            btn.disabled = Boolean(dt.button.disabled);
+            if (dt.button.color) {
+              btn.classList.add('filled');
+              btn.style.backgroundColor = `rgb(${Math.round(dt.button.color.red * 255)}, ${Math.round(dt.button.color.green * 255)}, ${Math.round(dt.button.color.blue * 255)})`;
+            }
+            btn.addEventListener('click', (ev) => {
+              ev.stopPropagation();
+              handleCardClick(dt.button.onClick);
+            });
+            trailing.appendChild(btn);
+            row.appendChild(trailing);
+          }
+
+          return row;
+        }
+
+        if (w.buttonList) {
+          const list = document.createElement('div');
+          list.className = 'gw-button-list';
+          for (const b of w.buttonList.buttons) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'gw-btn';
+            btn.textContent = b.text;
+            btn.disabled = Boolean(b.disabled);
+            if (b.color) {
+              btn.classList.add('filled');
+              btn.style.backgroundColor = `rgb(${Math.round(b.color.red * 255)}, ${Math.round(b.color.green * 255)}, ${Math.round(b.color.blue * 255)})`;
+            }
+            btn.addEventListener('click', () => handleCardClick(b.onClick));
+            list.appendChild(btn);
+          }
+          return list;
+        }
+
+        const fallback = document.createElement('div');
+        fallback.textContent = '[Unsupported widget]';
+        return fallback;
+      }
+
+      function renderCard(card, stats) {
+        const root = document.getElementById('addon-card-root');
+        root.innerHTML = '';
+
+        const hdr = document.createElement('div');
+        hdr.className = 'gcard-header';
+        const title = document.createElement('div');
+        title.className = 'gcard-header-title';
+        title.textContent = card.header.title;
+        const sub = document.createElement('div');
+        sub.className = 'gcard-header-subtitle';
+        sub.textContent = card.header.subtitle;
+        hdr.append(title, sub);
+        root.appendChild(hdr);
+
+        card.sections.forEach((sec, idx) => {
+          const secEl = document.createElement('div');
+          secEl.className = 'gcard-section';
+
+          if (sec.header) {
+            const sh = document.createElement('div');
+            sh.className = 'gcard-section-header';
+            sh.textContent = sec.header;
+            secEl.appendChild(sh);
+          }
+
+          const secKey = `${activeVariant}:${sec.header || idx}`;
+          const isExpanded = Boolean(expandedSections.get(secKey));
+          const uncollapsible = sec.collapsible ? (sec.uncollapsibleWidgetsCount ?? 0) : sec.widgets.length;
+          const visibleWidgets = sec.collapsible && !isExpanded
+            ? sec.widgets.slice(0, uncollapsible)
+            : sec.widgets;
+
+          const widgetsWrap = document.createElement('div');
+          widgetsWrap.className = 'gcard-widgets';
+          for (const w of visibleWidgets) {
+            widgetsWrap.appendChild(renderWidget(w));
+          }
+          secEl.appendChild(widgetsWrap);
+
+          if (sec.collapsible && sec.widgets.length > uncollapsible) {
+            const hiddenCount = sec.widgets.length - uncollapsible;
+            const toggleBtn = document.createElement('button');
+            toggleBtn.type = 'button';
+            toggleBtn.className = 'gcard-collapse-toggle';
+            toggleBtn.textContent = isExpanded ? 'Show less' : `Show more (${hiddenCount} hidden)`;
+            toggleBtn.addEventListener('click', () => {
+              expandedSections.set(secKey, !isExpanded);
+              renderAll();
+            });
+            secEl.appendChild(toggleBtn);
+          }
+
+          root.appendChild(secEl);
+        });
+
+        const meter = document.getElementById('widget-meter');
+        meter.textContent = `Widgets: ${stats.total} / ${stats.limit}`;
+        meter.className = 'widget-meter' + (!stats.withinLimit ? ' over' : stats.total >= 80 ? ' warn' : '');
+
+        document.getElementById('host-drive-btn').classList.toggle('active', appState.hostApp === 'DRIVE');
+        document.getElementById('host-gmail-btn').classList.toggle('active', appState.hostApp === 'GMAIL');
+        document.getElementById('host-chrome-label').textContent =
+          appState.hostApp === 'GMAIL' ? 'Gmail Sidebar' : 'Google Drive Sidebar';
+        document.getElementById('nav-type-pill').textContent = appState.navigationType;
+      }
+
+      function renderScenarios() {
+        const tabsEl = document.getElementById('scenario-tabs');
+        tabsEl.innerHTML = '';
+        for (const sc of M.SCENARIOS) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = `tab-btn${sc.id === activeScenarioId ? ' active' : ''}`;
+          btn.textContent = sc.title;
+          btn.addEventListener('click', () => loadScenario(sc.id));
+          tabsEl.appendChild(btn);
+        }
+
+        const activeScenario = M.SCENARIOS.find((s) => s.id === activeScenarioId) || M.SCENARIOS[0];
+        document.getElementById('scenario-desc').textContent = activeScenario.description;
+
+        const stepsEl = document.getElementById('scenario-steps');
+        stepsEl.innerHTML = '';
+        let firstPendingMarked = false;
+        activeScenario.steps.forEach((step, idx) => {
+          const isDone = completedSteps.has(idx);
+          const isNext = !isDone && !firstPendingMarked;
+          if (isNext) firstPendingMarked = true;
+
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = `step-btn${isDone ? ' done' : isNext ? ' next' : ''}`;
+          btn.textContent = (isDone ? '\u2713 ' : '') + step.label;
+          btn.addEventListener('click', () => {
+            completedSteps.add(idx);
+            const evts = step.events || [step.event];
+            for (const e of evts) {
+              appState = M.reduceUiProcessEvent(appState, e, store);
+            }
+            if (appState.notification) showToast(appState.notification);
+            renderAll();
+          });
+          stepsEl.appendChild(btn);
+        });
+      }
+
+      function renderOpenLinkBanner() {
+        const banner = document.getElementById('openlink-banner');
+        if (!openLinkIntercepted) {
+          banner.classList.add('hidden');
+          return;
+        }
+        banner.classList.remove('hidden');
+        document.getElementById('openlink-url').textContent = openLinkIntercepted.url;
+        document.getElementById('openlink-launch').href = openLinkIntercepted.url;
+      }
+
+      /* === CUSTOMIZE HERE: Free-Play Active State & Inspector Fields === */
+      function renderFreePlayFaultButtons() {
+        document.getElementById('fault-provision-btn').classList.toggle('active-fault', appState.faults.simulateProvisionForbidden);
+        document.getElementById('fault-read-btn').classList.toggle('active-fault', appState.faults.contextReadError);
+        document.getElementById('fault-malformed-btn').classList.toggle('active-fault', appState.faults.partialHydration);
+      }
+
+      function renderInspector(card, ctx, actionResponse, stats) {
+        document.querySelectorAll('[data-inspector-tab]').forEach((el) => {
+          el.classList.toggle('active', el.getAttribute('data-inspector-tab') === activeInspectorTab);
+        });
+
+        const body = document.getElementById('inspector-body');
+        body.innerHTML = '';
+        const esc = M.escapeHtml;
+
+        if (activeInspectorTab === 'card-json') {
+          const summary = document.createElement('div');
+          summary.style.marginBottom = '10px';
+          summary.style.fontSize = '12.5px';
+          summary.innerHTML =
+            `<strong>Total widgets:</strong> ${stats.total} / ${stats.limit} &nbsp;|&nbsp; ` +
+            `<strong>Disallowed widgets (Columns):</strong> ${stats.disallowed.length} &nbsp;|&nbsp; ` +
+            `<strong>Sections:</strong> ` +
+            stats.bySection.map((s) => `${esc(s.header)} (${s.widgets}${s.collapsible ? `, uncollapsible=${s.uncollapsibleWidgetsCount}` : ''})`).join(', ');
+
+          const pre = document.createElement('pre');
+          pre.className = 'json-dump';
+          pre.textContent = JSON.stringify(actionResponse, null, 2);
+          body.append(summary, pre);
+          return;
+        }
+
+        if (activeInspectorTab === 'variants') {
+          const headerCells = VARIANTS.map((v) => `<th>${esc(v.label)}</th>`).join('');
+          const rows = [
+            { title: 'Section Placement', key: 'placement' },
+            { title: 'Candidate Selector', key: 'selector' },
+            { title: 'List & Collapse', key: 'listBehavior' },
+            { title: 'Row Action & Gate', key: 'rowAction' },
+          ].map((dim) =>
+            `<tr><td><strong>${esc(dim.title)}</strong></td>${VARIANTS.map((v) => `<td>${esc(v[dim.key] || '')}</td>`).join('')}</tr>`
+          ).join('');
+
+          body.innerHTML = `
+            <table class="matrix">
+              <thead><tr><th>UX Dimension</th>${headerCells}</tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          `;
+          return;
+        }
+
+        const grid = document.createElement('div');
+        grid.className = 'inspector-grid';
+
+        const statusClass = !ctx
+          ? 'pill-none'
+          : ctx.readStatus === 'context_api_error'
+            ? 'pill-error'
+            : `pill-${ctx.status === 'missing_workspace' ? 'none' : ctx.status}`;
+
+        const ws = store.workspaces[appState.workspaceId];
+        const statusLabel = !ctx ? 'skipped (non-blocking)' : ctx.status;
+
+        const c1 = document.createElement('div');
+        c1.className = 'kv-card';
+        c1.innerHTML = `
+          <h4>UiProcessManager State</h4>
+          <div class="kv-row"><span class="kv-key">Last Event</span><span class="kv-val">${esc(appState.lastActionSummary)}</span></div>
+          <div class="kv-row"><span class="kv-key">Navigation</span><span class="kv-val">${esc(appState.navigationType)}</span></div>
+          <div class="kv-row"><span class="kv-key">Workspace</span><span class="kv-val">${ws ? `${esc(ws.name)} (${esc(ws.storageId)})` : 'none'}</span></div>
+          <div class="kv-row"><span class="kv-key">Item Type</span><span class="kv-val">${esc(M.ITEM_TYPES[appState.itemTypeKey].name)}</span></div>
+          <div class="kv-row"><span class="kv-key">SelectTargetResource (ephemeral)</span><span class="kv-val">${appState.formData.SelectTargetResource ? esc(appState.formData.SelectTargetResource) : '(unset — uses ranked default)'}</span></div>
+        `;
+
+        const c2 = document.createElement('div');
+        c2.className = 'kv-card';
+        c2.innerHTML = `
+          <h4>Context Query Output</h4>
+          <div class="kv-row"><span class="kv-key">Resolution Status</span><span class="kv-val"><span class="status-pill ${esc(statusClass)}">${esc(statusLabel)}</span></span></div>
+          <div class="kv-row"><span class="kv-key">Active Resource</span><span class="kv-val">${ctx?.activeCandidate ? `${esc(ctx.activeCandidate.name)} (${esc(ctx.activeCandidate.folderPath)})` : 'none'}</span></div>
+          <div class="kv-row"><span class="kv-key">Evaluated Key</span><span class="kv-val">${ctx?.groupKey ? esc(ctx.groupKey) : (ctx ? `incomplete (${esc((ctx.missingKeyFields || []).join(', '))})` : 'N/A')}</span></div>
+          <div class="kv-row"><span class="kv-key">Read Result</span><span class="kv-val">${ctx ? `${esc(ctx.readStatus || ctx.status)} (${ctx.entries.length} entries)` : 'query skipped'}</span></div>
+          <div class="kv-row"><span class="kv-key">Excluded Files</span><span class="kv-val">${ctx?.excludedFiles?.length ? ctx.excludedFiles.map((e) => `${esc(e.file.name)} [${esc(e.reason)}]`).join('; ') : 'none'}</span></div>
+        `;
+
+        const c3 = document.createElement('div');
+        c3.className = 'kv-card';
+        const sub = appState.lastSubmission;
+        c3.innerHTML = `
+          <h4>CQRS Submission Contract (onSubmit)</h4>
+          ${sub
+            ? `
+              <div class="kv-row"><span class="kv-key">Domain payload keys</span><span class="kv-val">${esc(Object.keys(sub.submittedDocumentData).join(', ') || '(empty)')}</span></div>
+              <div class="kv-row"><span class="kv-key">Select* keys leaked?</span><span class="kv-val" style="color:${Object.keys(sub.submittedDocumentData).some((k) => M.isSelectionKey(k)) ? 'var(--danger)' : 'var(--success)'};font-weight:700;">${Object.keys(sub.submittedDocumentData).some((k) => M.isSelectionKey(k)) ? 'YES (BUG)' : 'NO (stripped)'}</span></div>
+              <div class="kv-row"><span class="kv-key">Context.selectedTargetId</span><span class="kv-val">${esc(sub.executionContext.selectedTargetId || 'null')}</span></div>
+              <div class="kv-row"><span class="kv-key">Payload JSON</span><span class="kv-val">${esc(JSON.stringify(sub.submittedDocumentData))}</span></div>
+            `
+            : `<div class="kv-row"><span class="kv-key">Status</span><span class="kv-val">Click "Submit Item" to inspect clean domain payload vs executionContext.</span></div>`
+          }
+        `;
+
+        grid.append(c1, c2, c3);
+        body.appendChild(grid);
+      }
+      /* === END CUSTOMIZE HERE === */
+
+      function renderVariantPill() {
+        const found = VARIANTS.find((v) => v.key === activeVariant) || VARIANTS[0];
+        document.getElementById('var-label').textContent = found.label;
+      }
+
+      function cycleVariant(delta) {
+        const idx = VARIANTS.findIndex((v) => v.key === activeVariant);
+        const nextIdx = (idx + delta + VARIANTS.length) % VARIANTS.length;
+        activeVariant = VARIANTS[nextIdx].key;
+        persistVariantInUrl(activeVariant);
+        renderAll();
+      }
+
+      function renderAll() {
+        const { card, ctx, actionResponse } = M.composeWorkspaceCard(activeVariant, appState, store);
+        const stats = M.countCardWidgets(card);
+        renderCard(card, stats);
+        renderScenarios();
+        renderFreePlayFaultButtons();
+        renderOpenLinkBanner();
+        renderInspector(card, ctx, actionResponse, stats);
+        renderVariantPill();
+      }
+
+      // Wire UI shell controls
+      document.getElementById('host-drive-btn').addEventListener('click', () => {
+        dispatchEvent({ type: 'setHost', hostApp: 'DRIVE' });
+      });
+      document.getElementById('host-gmail-btn').addEventListener('click', () => {
+        dispatchEvent({ type: 'setHost', hostApp: 'GMAIL' });
+      });
+      document.getElementById('addon-toast-close').addEventListener('click', () => {
+        document.getElementById('addon-toast').classList.add('hidden');
+      });
+      document.getElementById('openlink-dismiss').addEventListener('click', () => {
+        openLinkIntercepted = null;
+        renderOpenLinkBanner();
+      });
+      document.getElementById('reset-scenario-btn').addEventListener('click', () => {
+        loadScenario(activeScenarioId);
+      });
+
+      /* === CUSTOMIZE HERE: Free-Play & Fault Button Handlers === */
+      document.querySelectorAll('[data-quick-workspace]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          dispatchEvent({ type: 'onWorkspaceChange', workspaceId: btn.getAttribute('data-quick-workspace') });
+        });
+      });
+      document.getElementById('fp-stress-btn').addEventListener('click', () => {
+        appState = M.reduceUiProcessEvent(appState, { type: 'onWorkspaceChange', workspaceId: 'alpha' }, store);
+        appState = M.reduceUiProcessEvent(appState, { type: 'onItemTypeChange', itemTypeKey: 'review-item' }, store);
+        dispatchEvent({ type: 'onFormChange', fields: { code: 'ITM-999' } });
+      });
+      document.getElementById('fault-provision-btn').addEventListener('click', () => {
+        dispatchEvent({ type: 'toggleFault', faultKey: 'simulateProvisionForbidden' });
+      });
+      document.getElementById('fault-read-btn').addEventListener('click', () => {
+        dispatchEvent({ type: 'toggleFault', faultKey: 'contextReadError' });
+      });
+      document.getElementById('fault-malformed-btn').addEventListener('click', () => {
+        dispatchEvent({ type: 'toggleFault', faultKey: 'partialHydration' });
+      });
+      document.getElementById('fp-refresh-btn').addEventListener('click', () => {
+        dispatchEvent({ type: 'refresh' });
+      });
+      document.getElementById('fp-submit-btn').addEventListener('click', () => {
+        dispatchEvent({ type: 'submitItem' });
+      });
+      /* === END CUSTOMIZE HERE === */
+
+      document.querySelectorAll('[data-inspector-tab]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          activeInspectorTab = btn.getAttribute('data-inspector-tab');
+          renderAll();
+        });
+      });
+
+      document.getElementById('var-prev-btn').addEventListener('click', () => cycleVariant(-1));
+      document.getElementById('var-next-btn').addEventListener('click', () => cycleVariant(1));
+
+      document.addEventListener('keydown', (e) => {
+        const tag = e.target?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable) {
+          return;
+        }
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          cycleVariant(-1);
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          cycleVariant(1);
+        }
+      });
+
+      // Boot initial scenario
+      loadScenario(activeScenarioId);
+    })();
+  </script>
+</body>
+</html>
