@@ -11,6 +11,7 @@ import type {
   PositiveTableTarget,
   ReadNamedRangeRequest,
   ReadPositiveTableRequest,
+  RowKey,
   RowRecord,
   SheetCellInput,
   SheetFormulaCell,
@@ -22,6 +23,7 @@ import type {
 import {
   GoogleSheetsApiError,
   GoogleSheetsColumnNotFoundError,
+  GoogleSheetsDuplicateKeyError,
   GoogleSheetsExtentAnchorNotFoundError,
   GoogleSheetsNamedRangeNotFoundError,
 } from './errors';
@@ -503,6 +505,309 @@ function planEmptyLogMutation(params: {
   };
 }
 
+function compareSortKeys(a: string, b: string, order: 'asc' | 'desc'): number {
+  if (a === b) return 0;
+  const cmp = a < b ? -1 : 1;
+  return order === 'desc' ? -cmp : cmp;
+}
+
+function makeDividerUpdateRequest(
+  sheetId: number,
+  absRowIndex: number,
+  rangeStartColumnIndex: number,
+  groupDividerMarker: string
+): sheets_v4.Schema$Request {
+  return {
+    updateCells: {
+      range: {
+        sheetId,
+        startRowIndex: absRowIndex,
+        endRowIndex: absRowIndex + 1,
+        startColumnIndex: rangeStartColumnIndex,
+        endColumnIndex: rangeStartColumnIndex + 1,
+      },
+      rows: [{ values: [cellValueToCellData(groupDividerMarker)] }],
+      fields: 'userEnteredValue',
+    },
+  };
+}
+
+interface KeyedDataRow {
+  relIndex: number;
+  absRowIndex: number;
+  rowNumber: number;
+  keys: RowKey;
+}
+
+interface PartitionedGroup {
+  groupKey: string;
+  rows: KeyedDataRow[];
+  firstDataRelIndex: number;
+  lastDataRelIndex: number;
+  firstDataAbsIndex: number;
+  lastDataAbsIndex: number;
+}
+
+function partitionKeyedGroups(
+  betweenRows: readonly ParsedPositiveRow[],
+  rangeStartRowIndex: number,
+  rowKeyExtractor: (row: RowRecord) => RowKey | null
+): {
+  groups: PartitionedGroup[];
+  groupMap: Map<string, PartitionedGroup>;
+} {
+  const groups: PartitionedGroup[] = [];
+  const groupMap = new Map<string, PartitionedGroup>();
+
+  for (const row of betweenRows) {
+    if (row.kind !== 'data') {
+      continue;
+    }
+    const keys = rowKeyExtractor(row.values);
+    if (keys === null) {
+      continue;
+    }
+    const absRowIndex = rangeStartRowIndex + row.relIndex;
+    const entry: KeyedDataRow = {
+      relIndex: row.relIndex,
+      absRowIndex,
+      rowNumber: row.rowNumber,
+      keys,
+    };
+
+    let group = groupMap.get(keys.groupKey);
+    if (!group) {
+      group = {
+        groupKey: keys.groupKey,
+        rows: [entry],
+        firstDataRelIndex: row.relIndex,
+        lastDataRelIndex: row.relIndex,
+        firstDataAbsIndex: absRowIndex,
+        lastDataAbsIndex: absRowIndex,
+      };
+      groupMap.set(keys.groupKey, group);
+      groups.push(group);
+    } else {
+      group.rows.push(entry);
+      group.lastDataRelIndex = row.relIndex;
+      group.lastDataAbsIndex = absRowIndex;
+    }
+  }
+
+  return { groups, groupMap };
+}
+
+function planGroupedRowMutation(params: {
+  sheetId: number;
+  parsed: ParsedPositiveTable;
+  rangeStartRowIndex: number;
+  rangeStartColumnIndex: number;
+  target: PositiveTableTarget;
+  rowData: Record<string, SheetCellInput>;
+  protectedColumns: ReadonlySet<string>;
+  targetKeys: RowKey;
+  rowKeyExtractor: (row: RowRecord) => RowKey | null;
+  groupSortOrder: 'asc' | 'desc';
+  rowSortOrder: 'asc' | 'desc';
+  duplicatePolicy: 'insert' | 'upsert' | 'reject';
+}): {
+  requests: sheets_v4.Schema$Request[];
+  rowNumber: number;
+  action: 'inserted' | 'updated';
+} {
+  const {
+    sheetId,
+    parsed,
+    rangeStartRowIndex,
+    rangeStartColumnIndex,
+    target,
+    rowData,
+    protectedColumns,
+    targetKeys,
+    rowKeyExtractor,
+    groupSortOrder,
+    rowSortOrder,
+    duplicatePolicy,
+  } = params;
+
+  const absTopAnchor = rangeStartRowIndex + parsed.topAnchorIndex;
+  const absBottomAnchor = rangeStartRowIndex + parsed.bottomAnchorIndex;
+  const { groups, groupMap } = partitionKeyedGroups(
+    parsed.betweenRows,
+    rangeStartRowIndex,
+    rowKeyExtractor
+  );
+
+  const existingGroup = groupMap.get(targetKeys.groupKey);
+  if (existingGroup) {
+    const matchingRow = existingGroup.rows.find((r) => r.keys.sortKey === targetKeys.sortKey);
+    if (duplicatePolicy === 'reject' && matchingRow) {
+      throw new GoogleSheetsDuplicateKeyError(
+        `Duplicate key "${targetKeys.sortKey}" in group "${targetKeys.groupKey}" on sheet "${target.sheetName}" (${target.rangeName}).`
+      );
+    }
+
+    const writableRuns = buildWritableRuns({
+      rowData,
+      columnIndexMap: parsed.columnIndexMap,
+      protectedColumns,
+      rangeStartColumnIndex,
+      target,
+    });
+
+    if (duplicatePolicy === 'upsert' && matchingRow) {
+      return {
+        requests: makeUpdateCellsForRuns(sheetId, matchingRow.absRowIndex, writableRuns),
+        rowNumber: matchingRow.rowNumber,
+        action: 'updated',
+      };
+    }
+
+    const nextRow = existingGroup.rows.find(
+      (r) => compareSortKeys(r.keys.sortKey, targetKeys.sortKey, rowSortOrder) > 0
+    );
+    const absInsertIndex = nextRow ? nextRow.absRowIndex : existingGroup.lastDataAbsIndex + 1;
+    const inheritFromBefore = absInsertIndex !== absTopAnchor + 1;
+
+    return {
+      requests: [
+        makeInsertRowRequest(sheetId, absInsertIndex, 1, inheritFromBefore),
+        ...makeUpdateCellsForRuns(sheetId, absInsertIndex, writableRuns),
+      ],
+      rowNumber: absInsertIndex + 1,
+      action: 'inserted',
+    };
+  }
+
+  const writableRuns = buildWritableRuns({
+    rowData,
+    columnIndexMap: parsed.columnIndexMap,
+    protectedColumns,
+    rangeStartColumnIndex,
+    target,
+  });
+
+  if (groups.length === 0) {
+    const absInsertIndex = absBottomAnchor;
+    const inheritFromBefore = absInsertIndex !== absTopAnchor + 1;
+    return {
+      requests: [
+        makeInsertRowRequest(sheetId, absInsertIndex, 1, inheritFromBefore),
+        ...makeUpdateCellsForRuns(sheetId, absInsertIndex, writableRuns),
+      ],
+      rowNumber: absInsertIndex + 1,
+      action: 'inserted',
+    };
+  }
+
+  const nextGroupIdx = groups.findIndex(
+    (g) => compareSortKeys(g.groupKey, targetKeys.groupKey, groupSortOrder) > 0
+  );
+
+  if (nextGroupIdx === 0) {
+    const nextGroup = groups[0];
+    const hasDividerAboveNext = parsed.betweenRows.some(
+      (r) =>
+        r.kind === 'divider' &&
+        r.relIndex > parsed.topAnchorIndex &&
+        r.relIndex < nextGroup.firstDataRelIndex
+    );
+    const absInsertIndex = absTopAnchor + 1;
+    if (!hasDividerAboveNext) {
+      return {
+        requests: [
+          makeInsertRowRequest(sheetId, absInsertIndex, 2, false),
+          ...makeUpdateCellsForRuns(sheetId, absInsertIndex, writableRuns),
+          makeDividerUpdateRequest(
+            sheetId,
+            absInsertIndex + 1,
+            rangeStartColumnIndex,
+            target.groupDividerMarker
+          ),
+        ],
+        rowNumber: absInsertIndex + 1,
+        action: 'inserted',
+      };
+    }
+
+    return {
+      requests: [
+        makeInsertRowRequest(sheetId, absInsertIndex, 1, false),
+        ...makeUpdateCellsForRuns(sheetId, absInsertIndex, writableRuns),
+      ],
+      rowNumber: absInsertIndex + 1,
+      action: 'inserted',
+    };
+  }
+
+  if (nextGroupIdx > 0) {
+    const prevGroup = groups[nextGroupIdx - 1];
+    const nextGroup = groups[nextGroupIdx];
+    const absInsertIndex = prevGroup.lastDataAbsIndex + 1;
+    const hasDividerBetween = parsed.betweenRows.some(
+      (r) =>
+        r.kind === 'divider' &&
+        r.relIndex > prevGroup.lastDataRelIndex &&
+        r.relIndex < nextGroup.firstDataRelIndex
+    );
+
+    if (hasDividerBetween) {
+      return {
+        requests: [
+          makeInsertRowRequest(sheetId, absInsertIndex, 2, true),
+          makeDividerUpdateRequest(
+            sheetId,
+            absInsertIndex,
+            rangeStartColumnIndex,
+            target.groupDividerMarker
+          ),
+          ...makeUpdateCellsForRuns(sheetId, absInsertIndex + 1, writableRuns),
+        ],
+        rowNumber: absInsertIndex + 2,
+        action: 'inserted',
+      };
+    }
+
+    return {
+      requests: [
+        makeInsertRowRequest(sheetId, absInsertIndex, 3, true),
+        makeDividerUpdateRequest(
+          sheetId,
+          absInsertIndex,
+          rangeStartColumnIndex,
+          target.groupDividerMarker
+        ),
+        ...makeUpdateCellsForRuns(sheetId, absInsertIndex + 1, writableRuns),
+        makeDividerUpdateRequest(
+          sheetId,
+          absInsertIndex + 2,
+          rangeStartColumnIndex,
+          target.groupDividerMarker
+        ),
+      ],
+      rowNumber: absInsertIndex + 2,
+      action: 'inserted',
+    };
+  }
+
+  const prevGroup = groups[groups.length - 1];
+  const absInsertIndex = prevGroup.lastDataAbsIndex + 1;
+  return {
+    requests: [
+      makeInsertRowRequest(sheetId, absInsertIndex, 2, true),
+      makeDividerUpdateRequest(
+        sheetId,
+        absInsertIndex,
+        rangeStartColumnIndex,
+        target.groupDividerMarker
+      ),
+      ...makeUpdateCellsForRuns(sheetId, absInsertIndex + 1, writableRuns),
+    ],
+    rowNumber: absInsertIndex + 2,
+    action: 'inserted',
+  };
+}
+
 export class GoogleSheetsClient implements SheetsClient {
   private readonly sheetsApi: sheets_v4.Sheets;
   private readonly retryOptions: SheetsRetryOptions;
@@ -809,9 +1114,9 @@ export class GoogleSheetsClient implements SheetsClient {
       const protectedColumns = new Set(request.readOnlyColumns ?? []);
       const dataRows = parsed.betweenRows.filter((row) => row.kind === 'data');
 
-      let structuralRequests: sheets_v4.Schema$Request[];
-      let targetAbsRowIndex: number;
-      let extraClearRelCols: number[] = [];
+      let requests: sheets_v4.Schema$Request[];
+      let rowNumber: number;
+      let action: 'inserted' | 'updated';
 
       if (dataRows.length === 0) {
         const emptyPlan = planEmptyLogMutation({
@@ -820,28 +1125,54 @@ export class GoogleSheetsClient implements SheetsClient {
           rangeStartRowIndex,
           target: request.target,
         });
-        structuralRequests = emptyPlan.structuralRequests;
-        targetAbsRowIndex = emptyPlan.targetAbsRowIndex;
-        extraClearRelCols = emptyPlan.extraClearRelCols;
+        const writableRuns = buildWritableRuns({
+          rowData: request.rowData,
+          columnIndexMap: parsed.columnIndexMap,
+          protectedColumns,
+          rangeStartColumnIndex,
+          target: request.target,
+          extraClearRelCols: emptyPlan.extraClearRelCols,
+        });
+        requests = [
+          ...emptyPlan.structuralRequests,
+          ...makeUpdateCellsForRuns(sheetId, emptyPlan.targetAbsRowIndex, writableRuns),
+        ];
+        rowNumber = emptyPlan.targetAbsRowIndex + 1;
+        action = 'inserted';
+      } else if (request.targetKeys && request.rowKeyExtractor) {
+        const groupedPlan = planGroupedRowMutation({
+          sheetId,
+          parsed,
+          rangeStartRowIndex,
+          rangeStartColumnIndex,
+          target: request.target,
+          rowData: request.rowData,
+          protectedColumns,
+          targetKeys: request.targetKeys,
+          rowKeyExtractor: request.rowKeyExtractor,
+          groupSortOrder: request.groupSortOrder ?? 'asc',
+          rowSortOrder: request.rowSortOrder ?? 'asc',
+          duplicatePolicy: request.duplicatePolicy ?? 'insert',
+        });
+        requests = groupedPlan.requests;
+        rowNumber = groupedPlan.rowNumber;
+        action = groupedPlan.action;
       } else {
         const absBottomAnchor = rangeStartRowIndex + parsed.bottomAnchorIndex;
-        structuralRequests = [makeInsertRowRequest(sheetId, absBottomAnchor, 1, true)];
-        targetAbsRowIndex = absBottomAnchor;
+        const writableRuns = buildWritableRuns({
+          rowData: request.rowData,
+          columnIndexMap: parsed.columnIndexMap,
+          protectedColumns,
+          rangeStartColumnIndex,
+          target: request.target,
+        });
+        requests = [
+          makeInsertRowRequest(sheetId, absBottomAnchor, 1, true),
+          ...makeUpdateCellsForRuns(sheetId, absBottomAnchor, writableRuns),
+        ];
+        rowNumber = absBottomAnchor + 1;
+        action = 'inserted';
       }
-
-      const writableRuns = buildWritableRuns({
-        rowData: request.rowData,
-        columnIndexMap: parsed.columnIndexMap,
-        protectedColumns,
-        rangeStartColumnIndex,
-        target: request.target,
-        extraClearRelCols,
-      });
-
-      const requests = [
-        ...structuralRequests,
-        ...makeUpdateCellsForRuns(sheetId, targetAbsRowIndex, writableRuns),
-      ];
 
       if (requests.length > 0) {
         await this.executeWithRetry(() =>
@@ -853,8 +1184,8 @@ export class GoogleSheetsClient implements SheetsClient {
       }
 
       return {
-        rowNumber: targetAbsRowIndex + 1,
-        action: 'inserted',
+        rowNumber,
+        action,
       };
     });
   }
