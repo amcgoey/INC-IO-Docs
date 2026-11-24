@@ -6836,8 +6836,8 @@ describe('Document domain', () => {
       expect(result.data.idDocument).toBe('AC102-A');
       expect(result.data.id).toBe('AC102-A-261102-2');
 
-      // Dispatched activity with MOVE_FILE payload
-      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
+      // Dispatched activities: MOVE_FILE followed by WRITE_LOG
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
       const dispatchedActivity = vi.mocked(mockDispatcher.dispatch).mock.calls[0][0];
       expect(dispatchedActivity.type).toBe('MOVE_FILE');
       expect(dispatchedActivity.payload).toEqual({
@@ -6845,6 +6845,9 @@ describe('Document domain', () => {
         parentPath: '3 FFE',
         folderName: '05 Submittals',
       });
+      const writeLogActivity = vi.mocked(mockDispatcher.dispatch).mock.calls[1][0];
+      expect(writeLogActivity.type).toBe('WRITE_LOG');
+      expect(writeLogActivity.payload).toEqual({});
     });
 
     it('files Submittal FF&E with populated relatedTag and default action REC', async () => {

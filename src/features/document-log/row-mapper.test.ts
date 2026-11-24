@@ -394,4 +394,203 @@ describe('document-log row-mapper', () => {
       ).toBeNull();
     });
   });
+
+  describe('Submittal FF&E LinkedField, readOnly, and optional relatedTag handling', () => {
+    const ffeTargetSchema: LogTargetDocumentSchema = {
+      fields: [
+        {
+          key: 'status',
+          name: 'Status',
+          type: 'string',
+          required: true,
+          options: { source: 'statuses', key: 'key' },
+        },
+        {
+          key: 'specTag',
+          name: 'Spec Tag',
+          type: 'string',
+          required: true,
+          options: { source: 'specs', key: 'key', allowUserInput: true },
+        },
+        {
+          key: 'relatedTag',
+          name: 'Related Tag',
+          type: 'string',
+          required: false,
+          options: { source: 'specs', key: 'key', allowUserInput: true },
+        },
+        { key: 'revision', name: 'Revision', type: 'string', required: true },
+        {
+          key: 'specTitle',
+          name: 'Spec Title',
+          type: 'string',
+          required: true,
+          linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+        },
+        {
+          key: 'vendor',
+          name: 'Vendor',
+          type: 'string',
+          required: true,
+          options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true },
+        },
+        { key: 'date', name: 'Date', type: 'string', required: true },
+        {
+          key: 'contact',
+          name: 'Contact',
+          type: 'string',
+          required: true,
+          options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true },
+        },
+        {
+          key: 'action',
+          name: 'Action',
+          type: 'string',
+          required: true,
+          options: { source: 'actions', key: 'key', name: 'name' },
+        },
+        { key: 'notes', name: 'Notes', type: 'string', required: false },
+      ],
+      options: {
+        statuses: [{ key: 'Open' }, { key: 'Closed' }],
+        specs: [
+          { key: 'CG104', name: 'BED - KING' },
+          { key: 'FB127', name: 'FABRIC - LEATHER' },
+        ],
+        vendors: [{ key: 'FDT', name: 'Fil Doux Textiles', type: 'Fabric' }],
+        contacts: [{ key: 'BW', name: 'Benjamin West', type: 'Procurement' }],
+        actions: [
+          { key: 'REC', name: 'Received', order: '1' },
+          { key: 'REF', name: 'Referred', order: '2' },
+        ],
+      },
+      identity: {
+        idGroup: '{{specTag.key}}',
+        idDocument: '{{specTag.key}}-{{revision}}',
+        id: '{{specTag.key}}-{{revision}}-{{date}}-{{action.order}}',
+      },
+    };
+
+    const ffeLogSchema: DocumentLogSchema = {
+      provider: 'google_sheets',
+      target: {
+        sheetName: 'Submittal FF&E',
+        rangeName: 'Log_Submittal_FFE',
+        extentMarker: '<--->',
+        groupDividerMarker: '---',
+      },
+      grouping: {
+        groupBy: 'idGroup',
+        sortBy: 'id',
+        groupSortOrder: 'asc',
+        rowSortOrder: 'asc',
+        duplicatePolicy: 'insert',
+      },
+      columns: {
+        Status: { template: '{{status.key}}' },
+        'Spec Tag': { template: '{{specTag.key}}' },
+        'Related Tag': { template: '{{relatedTag.key}}' },
+        Revision: { template: '{{revision}}' },
+        'Spec Title': { template: '{{specTitle}}', readOnly: true },
+        Vendor: { template: '{{vendor.name}}' },
+        Date: { template: '{{date}}' },
+        Contact: { template: '{{contact.key}}' },
+        Action: { template: '{{action.name}}' },
+        Notes: { template: '{{notes}}' },
+        'Calc Link': { source: 'fileLink', label: 'Link' },
+      },
+    };
+
+    it('skips readOnly Spec Title, returns readOnlyColumns, and maps blank vs populated optional relatedTag', () => {
+      const baseData = {
+        status: 'Open',
+        specTag: 'CG104',
+        revision: '0',
+        specTitle: 'BED - KING',
+        vendor: 'FDT',
+        date: '260120',
+        contact: 'BW',
+        action: 'REC',
+        notes: '',
+      };
+
+      const withBlankRelatedTag = mapDocumentToLogRow({
+        document: {
+          type: 'submittal-ffe',
+          data: { ...baseData, relatedTag: '' },
+        },
+        logSchema: ffeLogSchema,
+        targetSchema: ffeTargetSchema,
+        templateEvaluator: evaluator,
+        fileUri: 'https://drive.google.com/file/d/ffe-1/view',
+      });
+
+      expect(withBlankRelatedTag.readOnlyColumns).toEqual(['Spec Title']);
+      expect('Spec Title' in withBlankRelatedTag.rowData).toBe(false);
+      expect(withBlankRelatedTag.rowData).toEqual({
+        Status: 'Open',
+        'Spec Tag': 'CG104',
+        'Related Tag': null,
+        Revision: '0',
+        Vendor: 'Fil Doux Textiles',
+        Date: '260120',
+        Contact: 'BW',
+        Action: 'Received',
+        Notes: null,
+        'Calc Link': {
+          formula: '=HYPERLINK("https://drive.google.com/file/d/ffe-1/view", "Link")',
+        },
+      });
+
+      const withPopulatedRelatedTag = mapDocumentToLogRow({
+        document: {
+          type: 'submittal-ffe',
+          data: { ...baseData, relatedTag: 'FB127' },
+        },
+        logSchema: ffeLogSchema,
+        targetSchema: ffeTargetSchema,
+        templateEvaluator: evaluator,
+      });
+
+      expect(withPopulatedRelatedTag.readOnlyColumns).toEqual(['Spec Title']);
+      expect('Spec Title' in withPopulatedRelatedTag.rowData).toBe(false);
+      expect(withPopulatedRelatedTag.rowData['Related Tag']).toBe('FB127');
+    });
+
+    it('reverse-maps Submittal FF&E sheet rows with case-insensitive Action and returns null when Spec Tag is blank', () => {
+      const extractKeys = buildRowKeyExtractor({
+        logSchema: ffeLogSchema,
+        targetSchema: ffeTargetSchema,
+        templateEvaluator: evaluator,
+      });
+
+      expect(
+        extractKeys({
+          Status: 'open',
+          'Spec Tag': 'CG104',
+          'Related Tag': '',
+          Revision: '0',
+          'Spec Title': 'BED - KING',
+          Vendor: 'Fil Doux Textiles',
+          Date: '260120',
+          Contact: 'bw',
+          Action: 'received',
+          Notes: '',
+        })
+      ).toEqual({
+        groupKey: 'CG104',
+        sortKey: 'CG104-0-260120-1',
+      });
+
+      expect(
+        extractKeys({
+          Status: 'Open',
+          'Spec Tag': '   ',
+          Revision: '0',
+          Date: '260120',
+          Action: 'Received',
+        })
+      ).toBeNull();
+    });
+  });
 });

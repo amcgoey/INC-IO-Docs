@@ -395,4 +395,171 @@ describe('LogSchemaRegistryAdapter', () => {
       await expect(invalidAdapter.initialize()).rejects.toThrow(/fileSourceStepId/i);
     }
   });
+
+  it('allows LinkedField targets (readOnly and writable) on Submittal FF&E, rejects .prop on LinkedField, and still rejects readOnly CalculatedFields', async () => {
+    const createSubmittalFfeDocDef = (columnOverrides?: Record<string, unknown>) => ({
+      key: 'submittal-ffe',
+      name: 'Submittal FF&E',
+      documentSchema: {
+        fields: [
+          {
+            key: 'status',
+            name: 'Status',
+            type: 'string',
+            required: true,
+            options: { source: 'statuses', key: 'key' },
+          },
+          {
+            key: 'specTag',
+            name: 'Spec Tag',
+            type: 'string',
+            required: true,
+            options: { source: 'specs', key: 'key', allowUserInput: true },
+          },
+          {
+            key: 'relatedTag',
+            name: 'Related Tag',
+            type: 'string',
+            required: false,
+            options: { source: 'specs', key: 'key', allowUserInput: true },
+          },
+          { key: 'revision', name: 'Revision', type: 'string', required: true },
+          {
+            key: 'specTitle',
+            name: 'Spec Title',
+            type: 'string',
+            required: true,
+            linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+          },
+          {
+            key: 'vendor',
+            name: 'Vendor',
+            type: 'string',
+            required: true,
+            options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true },
+          },
+          { key: 'date', name: 'Date', type: 'string', required: true },
+          {
+            key: 'contact',
+            name: 'Contact',
+            type: 'string',
+            required: true,
+            options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true },
+          },
+          {
+            key: 'action',
+            name: 'Action',
+            type: 'string',
+            required: true,
+            options: { source: 'actions', key: 'key', name: 'name' },
+          },
+          { key: 'notes', name: 'Notes', type: 'string', required: false },
+        ],
+        calculatedFields: [
+          {
+            key: 'fileName',
+            name: 'File Name',
+            template: '{{specTag.key}}-{{revision}} {{vendor.name}}',
+          },
+        ],
+        identity: {
+          idGroup: '{{specTag.key}}',
+          idDocument: '{{specTag.key}}-{{revision}}',
+          id: '{{specTag.key}}-{{revision}}-{{date}}-{{action.order}}',
+        },
+        options: {
+          statuses: [{ key: 'Open' }, { key: 'Closed' }],
+          actions: [{ key: 'REC', name: 'Received', order: '1' }],
+          contacts: [{ key: 'BW', name: 'Benjamin West' }],
+          vendors: [{ key: 'FDT', name: 'Fil Doux Textiles' }],
+          specs: [{ key: 'CG104', name: 'BED - KING' }],
+        },
+      },
+      documentWorkflowConfig: {
+        workflows: [
+          {
+            name: 'FileSubmittalFFE',
+            activitySequence: [{ type: 'WRITE_LOG', payload: {} }],
+          },
+        ],
+      },
+      documentLogSchema: {
+        provider: 'google_sheets',
+        target: {
+          sheetName: 'Submittal FF&E',
+          rangeName: 'Log_Submittal_FFE',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        grouping: {
+          groupBy: 'idGroup',
+          sortBy: 'id',
+          groupSortOrder: 'asc',
+          rowSortOrder: 'asc',
+          duplicatePolicy: 'insert',
+        },
+        columns: {
+          Status: { template: '{{status.key}}' },
+          'Spec Tag': { template: '{{specTag.key}}' },
+          'Related Tag': { template: '{{relatedTag.key}}' },
+          Revision: { template: '{{revision}}' },
+          'Spec Title': { template: '{{specTitle}}', readOnly: true },
+          Vendor: { template: '{{vendor.name}}' },
+          Date: { template: '{{date}}' },
+          Contact: { template: '{{contact.key}}' },
+          Action: { template: '{{action.name}}' },
+          Notes: { template: '{{notes}}' },
+          'Calc Link': { source: 'fileLink', label: 'Link' },
+          ...columnOverrides,
+        },
+      },
+    });
+
+    const createProvider = (docDef: ReturnType<typeof createSubmittalFfeDocDef>): RawManifestProviderPort => ({
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./document-types/submittal-ffe.json'],
+        configuration: { documentLog: createValidDiscoveryConfig() },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue(docDef),
+    });
+
+    // 1a. LinkedField with readOnly: true is allowed
+    const readOnlyAdapter = new LogSchemaRegistryAdapter(
+      createProvider(createSubmittalFfeDocDef()),
+      parser
+    );
+    await expect(readOnlyAdapter.initialize()).resolves.toBeUndefined();
+    expect(readOnlyAdapter.getDocumentLogSchema('submittal-ffe')?.columns['Spec Title']).toEqual({
+      template: '{{specTitle}}',
+      readOnly: true,
+    });
+
+    // 1b. Writable LinkedField (without readOnly) is also allowed
+    const writableAdapter = new LogSchemaRegistryAdapter(
+      createProvider(createSubmittalFfeDocDef({ 'Spec Title': { template: '{{specTitle}}' } })),
+      parser
+    );
+    await expect(writableAdapter.initialize()).resolves.toBeUndefined();
+    expect(writableAdapter.getDocumentLogSchema('submittal-ffe')?.columns['Spec Title']).toEqual({
+      template: '{{specTitle}}',
+    });
+
+    // 2. Rejects .prop access on LinkedField since it is not a LookupField
+    const badPropAdapter = new LogSchemaRegistryAdapter(
+      createProvider(
+        createSubmittalFfeDocDef({ 'Spec Title': { template: '{{specTitle.name}}', readOnly: true } })
+      ),
+      parser
+    );
+    await expect(badPropAdapter.initialize()).rejects.toThrow(DocumentLogConfigurationError);
+
+    // 3. Continues rejecting CalculatedFields even when readOnly: true is set
+    const calcAdapter = new LogSchemaRegistryAdapter(
+      createProvider(
+        createSubmittalFfeDocDef({ 'File Name': { template: '{{fileName}}', readOnly: true } })
+      ),
+      parser
+    );
+    await expect(calcAdapter.initialize()).rejects.toThrow(DocumentLogConfigurationError);
+  });
 });

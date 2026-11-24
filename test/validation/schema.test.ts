@@ -424,7 +424,7 @@ describe('DocumentType JSON files schema validation', () => {
       expect(nocOption?.name).toBe('No Objections As Corrected');
     });
 
-    it('should validate production configuration.documentLog and Submittal Arch documentLogSchema via LogSchemaRegistryAdapter', async () => {
+    it('should validate production configuration.documentLog and Submittal Arch / Submittal FF&E documentLogSchemas via LogSchemaRegistryAdapter', async () => {
       const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
       const manifestProvider = new AppManifestProvider({ manifestPath });
       const handlebars = new HandlebarsAdapter();
@@ -471,9 +471,39 @@ describe('DocumentType JSON files schema validation', () => {
         },
       });
 
+      const ffeLogSchema = logRegistry.getDocumentLogSchema('submittal-ffe');
+      expect(ffeLogSchema).toEqual({
+        provider: 'google_sheets',
+        target: {
+          sheetName: 'Submittal FF&E',
+          rangeName: 'Log_Submittal_FFE',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        grouping: {
+          groupBy: 'idGroup',
+          sortBy: 'id',
+          groupSortOrder: 'asc',
+          rowSortOrder: 'asc',
+          duplicatePolicy: 'insert',
+        },
+        columns: {
+          Status: { template: '{{status.key}}' },
+          'Spec Tag': { template: '{{specTag.key}}' },
+          'Related Tag': { template: '{{relatedTag.key}}' },
+          Revision: { template: '{{revision}}' },
+          'Spec Title': { template: '{{specTitle}}', readOnly: true },
+          Vendor: { template: '{{vendor.name}}' },
+          Date: { template: '{{date}}' },
+          Contact: { template: '{{contact.key}}' },
+          Action: { template: '{{action.name}}' },
+          Notes: { template: '{{notes}}' },
+          'Calc Link': { source: 'fileLink', label: 'Link' },
+        },
+      });
+
       expect(logRegistry.getDocumentLogSchema('communication-project')).toBeUndefined();
       expect(logRegistry.getDocumentLogSchema('communication-proposal')).toBeUndefined();
-      expect(logRegistry.getDocumentLogSchema('submittal-ffe')).toBeUndefined();
     });
   });
 });

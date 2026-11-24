@@ -228,9 +228,18 @@ describe('document-log.wiring', () => {
       reqheaders: { authorization: `Bearer ${perReqCredential}` },
     })
       .get(/\/v4\/spreadsheets\/auth-log-1\/values\/.*/)
-      .query(true)
+      .query((q) => q.valueRenderOption === 'FORMATTED_VALUE')
       .reply(200, {
         values: [['Status', 'Section', 'Calc Link'], [], ['<--->'], [], ['<--->']],
+      });
+
+    nock('https://sheets.googleapis.com', {
+      reqheaders: { authorization: `Bearer ${perReqCredential}` },
+    })
+      .get(/\/v4\/spreadsheets\/auth-log-1\/values\/.*/)
+      .query((q) => q.valueRenderOption === 'FORMULA')
+      .reply(200, {
+        values: [[]],
       });
 
     nock('https://sheets.googleapis.com', {
