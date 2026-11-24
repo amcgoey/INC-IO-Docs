@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { type sheets_v4 } from 'googleapis';
-import { OAuth2Client } from 'google-auth-library';
+import { GoogleAuth, OAuth2Client } from 'google-auth-library';
 import {
   GoogleSheetsClient,
   formatScopedRange,
@@ -495,6 +495,22 @@ describe('GoogleSheetsClient', () => {
       const oauth = new OAuth2Client();
       const client = new GoogleSheetsClient({ auth: oauth });
       expect(client).toBeInstanceOf(GoogleSheetsClient);
+    });
+
+    it('accepts GoogleAuth option without making network calls', () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        throw new Error('Unexpected network call during GoogleSheetsClient construction');
+      });
+      try {
+        const googleAuth = new GoogleAuth({
+          scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+        });
+        const client = new GoogleSheetsClient({ auth: googleAuth });
+        expect(client).toBeInstanceOf(GoogleSheetsClient);
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        fetchSpy.mockRestore();
+      }
     });
   });
 
