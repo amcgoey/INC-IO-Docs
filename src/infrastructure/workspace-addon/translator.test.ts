@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
+import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import {
   translateUiViewToWorkspaceCard,
   translateUiViewToNavigationAction,
@@ -1585,6 +1586,613 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
           'https://addon.nav.com/workspace/action'
         );
       });
+    });
+  });
+
+  describe('textParagraph.maxLines (#347)', () => {
+    it('forwards textParagraph.maxLines to translated GoogleWorkspaceCard widget and passes schema check', () => {
+      const view = {
+        sections: [
+          {
+            widgets: [
+              {
+                textParagraph: {
+                  text: 'Truncated body',
+                  maxLines: 2,
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const card = translateUiViewToWorkspaceCard(view);
+      expect(Value.Check(GoogleWorkspaceCardSchema, card)).toBe(true);
+      expect(card.sections[0].widgets[0]).toEqual({
+        textParagraph: {
+          text: 'Truncated body',
+          maxLines: 2,
+        },
+      });
+    });
+
+    it('accepts maxLines: undefined under ExactOptionalPropertyTypes = true and omits maxLines key from translated output', () => {
+      const prev = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        const view = {
+          sections: [
+            {
+              widgets: [
+                {
+                  textParagraph: {
+                    text: 'No max',
+                    maxLines: undefined,
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const card = translateUiViewToWorkspaceCard(view);
+        const widget = card.sections[0].widgets[0];
+        expect(widget.textParagraph).toEqual({ text: 'No max' });
+        expect('maxLines' in widget.textParagraph!).toBe(false);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prev;
+      }
+    });
+
+    it('throws Invalid UiView when textParagraph.maxLines is 0, -1, or 1.5', () => {
+      const makeView = (maxLines: number) => ({
+        sections: [
+          {
+            widgets: [
+              {
+                textParagraph: {
+                  text: 'Invalid maxLines',
+                  maxLines,
+                },
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(() => translateUiViewToWorkspaceCard(makeView(0))).toThrow('Invalid UiView');
+      expect(() => translateUiViewToWorkspaceCard(makeView(-1))).toThrow('Invalid UiView');
+      expect(() => translateUiViewToWorkspaceCard(makeView(1.5))).toThrow('Invalid UiView');
+    });
+  });
+
+  describe('button color and disabled (#347)', () => {
+    it('forwards button color (with/without alpha and boundary values 0/1) and disabled boolean through translateUiViewToWorkspaceCard', () => {
+      const view = {
+        sections: [
+          {
+            widgets: [
+              {
+                buttonList: {
+                  buttons: [
+                    {
+                      text: 'With Alpha',
+                      color: { red: 0.1, green: 0.45, blue: 0.91, alpha: 0.8 },
+                      disabled: true,
+                    },
+                    {
+                      text: 'Without Alpha',
+                      color: { red: 0.2, green: 0.3, blue: 0.4 },
+                      disabled: false,
+                    },
+                    {
+                      text: 'Boundary Channels',
+                      color: { red: 0, green: 1, blue: 0, alpha: 0 },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const card = translateUiViewToWorkspaceCard(view);
+      expect(Value.Check(GoogleWorkspaceCardSchema, card)).toBe(true);
+      expect(card.sections[0].widgets[0]).toEqual({
+        buttonList: {
+          buttons: [
+            {
+              text: 'With Alpha',
+              color: { red: 0.1, green: 0.45, blue: 0.91, alpha: 0.8 },
+              disabled: true,
+            },
+            {
+              text: 'Without Alpha',
+              color: { red: 0.2, green: 0.3, blue: 0.4 },
+              disabled: false,
+            },
+            {
+              text: 'Boundary Channels',
+              color: { red: 0, green: 1, blue: 0, alpha: 0 },
+            },
+          ],
+        },
+      });
+    });
+
+    it('omits alpha, color, and disabled keys from translated button when undefined under ExactOptionalPropertyTypes = true', () => {
+      const prev = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        const view = {
+          sections: [
+            {
+              widgets: [
+                {
+                  buttonList: {
+                    buttons: [
+                      {
+                        text: 'Alpha Undefined',
+                        color: { red: 0.1, green: 0.2, blue: 0.3, alpha: undefined },
+                        disabled: undefined,
+                      },
+                      {
+                        text: 'Color Undefined',
+                        color: undefined,
+                        disabled: undefined,
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const card = translateUiViewToWorkspaceCard(view);
+        const buttons = card.sections[0].widgets[0].buttonList!.buttons as Array<Record<string, unknown>>;
+
+        expect(buttons[0]).toEqual({
+          text: 'Alpha Undefined',
+          color: { red: 0.1, green: 0.2, blue: 0.3 },
+        });
+        expect('alpha' in (buttons[0].color as Record<string, unknown>)).toBe(false);
+        expect('disabled' in buttons[0]).toBe(false);
+
+        expect(buttons[1]).toEqual({
+          text: 'Color Undefined',
+        });
+        expect('color' in buttons[1]).toBe(false);
+        expect('disabled' in buttons[1]).toBe(false);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prev;
+      }
+    });
+
+    it('throws Invalid UiView on out-of-bounds color channels, missing channel, or non-boolean disabled', () => {
+      const makeView = (button: Record<string, unknown>) => ({
+        sections: [
+          {
+            widgets: [
+              {
+                buttonList: {
+                  buttons: [button],
+                },
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(() =>
+        translateUiViewToWorkspaceCard(makeView({ text: 'Btn', color: { red: -0.01, green: 0.5, blue: 0.5 } }))
+      ).toThrow('Invalid UiView');
+      expect(() =>
+        translateUiViewToWorkspaceCard(makeView({ text: 'Btn', color: { red: 0.5, green: 1.01, blue: 0.5 } }))
+      ).toThrow('Invalid UiView');
+      expect(() =>
+        translateUiViewToWorkspaceCard(makeView({ text: 'Btn', color: { red: 0.5, green: 0.5, blue: 0.5, alpha: 1.1 } }))
+      ).toThrow('Invalid UiView');
+      expect(() =>
+        translateUiViewToWorkspaceCard(makeView({ text: 'Btn', color: { red: 0.5, green: 0.5 } }))
+      ).toThrow('Invalid UiView');
+      expect(() =>
+        translateUiViewToWorkspaceCard(makeView({ text: 'Btn', disabled: 'true' }))
+      ).toThrow('Invalid UiView');
+    });
+  });
+
+  describe('button onClick openLink (#347)', () => {
+    it('translates button onClick openLink intent into GoogleWorkspaceCard openLink and passes schema check', () => {
+      const view = {
+        sections: [
+          {
+            widgets: [
+              {
+                buttonList: {
+                  buttons: [
+                    {
+                      text: 'Open Sheet',
+                      onClick: {
+                        openLink: {
+                          url: 'https://docs.google.com/spreadsheets/d/abc/edit',
+                          openAs: 'OVERLAY',
+                          onClose: 'RELOAD',
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const card = translateUiViewToWorkspaceCard(view);
+      expect(Value.Check(GoogleWorkspaceCardSchema, card)).toBe(true);
+      expect(card.sections[0].widgets[0]).toEqual({
+        buttonList: {
+          buttons: [
+            {
+              text: 'Open Sheet',
+              onClick: {
+                openLink: {
+                  url: 'https://docs.google.com/spreadsheets/d/abc/edit',
+                  openAs: 'OVERLAY',
+                  onClose: 'RELOAD',
+                },
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    it('accepts openLink with undefined openAs/onClose under ExactOptionalPropertyTypes = true and omits those keys from translated output', () => {
+      const prev = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        const view = {
+          sections: [
+            {
+              widgets: [
+                {
+                  buttonList: {
+                    buttons: [
+                      {
+                        text: 'Open Minimal',
+                        onClick: {
+                          openLink: {
+                            url: 'https://example.com',
+                            openAs: undefined,
+                            onClose: undefined,
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const card = translateUiViewToWorkspaceCard(view);
+        const onClick = card.sections[0].widgets[0].buttonList!.buttons[0].onClick as {
+          openLink: Record<string, unknown>;
+        };
+        expect(onClick).toEqual({
+          openLink: {
+            url: 'https://example.com',
+          },
+        });
+        expect('openAs' in onClick.openLink).toBe(false);
+        expect('onClose' in onClick.openLink).toBe(false);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prev;
+      }
+    });
+
+    it('rejects malformed action or openLink onClick values with Invalid UiView', () => {
+      const makeView = (onClick: unknown) => ({
+        sections: [
+          {
+            widgets: [
+              {
+                buttonList: {
+                  buttons: [{ text: 'Btn', onClick }],
+                },
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(() => translateUiViewToWorkspaceCard(makeView({ action: 'invalid' }))).toThrow(
+        'Invalid UiView'
+      );
+      expect(() => translateUiViewToWorkspaceCard(makeView({ openLink: { url: '' } }))).toThrow(
+        'Invalid UiView'
+      );
+      expect(() =>
+        translateUiViewToWorkspaceCard(
+          makeView({ openLink: { url: 'https://example.com', route: '/workspace/action' } })
+        )
+      ).toThrow('Invalid UiView');
+      expect(() =>
+        translateUiViewToWorkspaceCard(
+          makeView({ openLink: { url: 'https://example.com', openAs: 'POPUP' } })
+        )
+      ).toThrow('Invalid UiView');
+      expect(() =>
+        translateUiViewToWorkspaceCard(
+          makeView({ openLink: { url: 'https://example.com', onClose: 'CLOSE' } })
+        )
+      ).toThrow('Invalid UiView');
+      expect(() =>
+        translateUiViewToWorkspaceCard(
+          makeView({
+            action: 'a',
+            route: '/r',
+            openLink: { url: 'https://example.com' },
+          })
+        )
+      ).toThrow('Invalid UiView');
+    });
+  });
+
+  describe('decoratedText widget (#347)', () => {
+    it('translates minimal and full decoratedText widgets into valid GoogleWorkspaceCard', () => {
+      const view = {
+        sections: [
+          {
+            widgets: [
+              {
+                decoratedText: { text: 'Entry' },
+              },
+              {
+                decoratedText: {
+                  topLabel: 'Submittal',
+                  text: '071200-001 Waterproofing',
+                  wrapText: true,
+                  bottomLabel: '2026-11-24 • Project Alpha',
+                  button: {
+                    text: 'Open',
+                    color: { red: 0.1, green: 0.45, blue: 0.91, alpha: 0.9 },
+                    disabled: false,
+                    onClick: {
+                      openLink: {
+                        url: 'https://docs.google.com/spreadsheets/d/123/edit',
+                        openAs: 'FULL_SIZE',
+                        onClose: 'NOTHING',
+                      },
+                    },
+                  },
+                  onClick: {
+                    action: 'selectHistoryRow',
+                    route: '/workspace/action',
+                    parameters: { rowId: '4' },
+                  },
+                },
+              },
+              {
+                decoratedText: {
+                  text: 'Open External',
+                  onClick: {
+                    openLink: {
+                      url: 'https://example.com/item/1',
+                      openAs: 'OVERLAY',
+                      onClose: 'RELOAD',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const card = translateUiViewToWorkspaceCard(view);
+      expect(Value.Check(GoogleWorkspaceCardSchema, card)).toBe(true);
+      expect(card.sections[0].widgets[0]).toEqual({
+        decoratedText: { text: 'Entry' },
+      });
+      expect(card.sections[0].widgets[1]).toEqual({
+        decoratedText: {
+          topLabel: 'Submittal',
+          text: '071200-001 Waterproofing',
+          wrapText: true,
+          bottomLabel: '2026-11-24 • Project Alpha',
+          button: {
+            text: 'Open',
+            color: { red: 0.1, green: 0.45, blue: 0.91, alpha: 0.9 },
+            disabled: false,
+            onClick: {
+              openLink: {
+                url: 'https://docs.google.com/spreadsheets/d/123/edit',
+                openAs: 'FULL_SIZE',
+                onClose: 'NOTHING',
+              },
+            },
+          },
+          onClick: {
+            action: {
+              function: '/workspace/action',
+              parameters: [
+                { key: 'action', value: 'selectHistoryRow' },
+                { key: 'rowId', value: '4' },
+              ],
+              loadIndicator: 'SPINNER',
+            },
+          },
+        },
+      });
+      expect(card.sections[0].widgets[2]).toEqual({
+        decoratedText: {
+          text: 'Open External',
+          onClick: {
+            openLink: {
+              url: 'https://example.com/item/1',
+              openAs: 'OVERLAY',
+              onClose: 'RELOAD',
+            },
+          },
+        },
+      });
+    });
+
+    it('accepts undefined optional decoratedText properties under ExactOptionalPropertyTypes = true and omits undefined keys from translated output', () => {
+      const prev = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        const view = {
+          sections: [
+            {
+              widgets: [
+                {
+                  decoratedText: {
+                    text: 'Minimal Entry',
+                    topLabel: undefined,
+                    wrapText: undefined,
+                    bottomLabel: undefined,
+                    button: undefined,
+                    onClick: undefined,
+                  },
+                },
+                {
+                  decoratedText: {
+                    text: 'Entry With Button',
+                    button: {
+                      text: 'Open',
+                      color: { red: 0.1, green: 0.2, blue: 0.3, alpha: undefined },
+                      disabled: undefined,
+                      onClick: {
+                        openLink: {
+                          url: 'https://example.com',
+                          openAs: undefined,
+                          onClose: undefined,
+                        },
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const card = translateUiViewToWorkspaceCard(view);
+        const first = (card.sections[0].widgets[0] as unknown as {
+          decoratedText: Record<string, unknown>;
+        }).decoratedText;
+        expect(first).toEqual({ text: 'Minimal Entry' });
+        expect('topLabel' in first).toBe(false);
+        expect('wrapText' in first).toBe(false);
+        expect('bottomLabel' in first).toBe(false);
+        expect('button' in first).toBe(false);
+        expect('onClick' in first).toBe(false);
+
+        const second = (card.sections[0].widgets[1] as unknown as {
+          decoratedText: { button: Record<string, unknown> };
+        }).decoratedText;
+        expect(second.button).toEqual({
+          text: 'Open',
+          color: { red: 0.1, green: 0.2, blue: 0.3 },
+          onClick: {
+            openLink: {
+              url: 'https://example.com',
+            },
+          },
+        });
+        expect('alpha' in (second.button.color as Record<string, unknown>)).toBe(false);
+        expect('disabled' in second.button).toBe(false);
+        expect(
+          'openAs' in
+            ((second.button.onClick as { openLink: Record<string, unknown> }).openLink)
+        ).toBe(false);
+        expect(
+          'onClose' in
+            ((second.button.onClick as { openLink: Record<string, unknown> }).openLink)
+        ).toBe(false);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prev;
+      }
+    });
+
+    it('throws Invalid UiView on malformed decoratedText or button onClick, out-of-bounds color, columns, divider, or Chat-only fields', () => {
+      const makeWidgetsView = (widget: Record<string, unknown>) => ({
+        sections: [{ widgets: [widget] }],
+      });
+
+      expect(() =>
+        translateUiViewToWorkspaceCard(
+          makeWidgetsView({
+            decoratedText: { text: 'Entry', onClick: { action: 'invalid' } },
+          })
+        )
+      ).toThrow('Invalid UiView');
+      expect(() =>
+        translateUiViewToWorkspaceCard(
+          makeWidgetsView({
+            decoratedText: {
+              text: 'Entry',
+              button: { text: 'Btn', onClick: { action: 'invalid' } },
+            },
+          })
+        )
+      ).toThrow('Invalid UiView');
+      expect(() =>
+        translateUiViewToWorkspaceCard(
+          makeWidgetsView({
+            decoratedText: {
+              text: 'Entry',
+              button: { text: 'Btn', color: { red: 1.2, green: 0.5, blue: 0.5 } },
+            },
+          })
+        )
+      ).toThrow('Invalid UiView');
+
+      expect(() =>
+        translateUiViewToWorkspaceCard(makeWidgetsView({ columns: { columnItems: [] } }))
+      ).toThrow('Invalid UiView');
+      expect(() => translateUiViewToWorkspaceCard(makeWidgetsView({ divider: {} }))).toThrow(
+        'Invalid UiView'
+      );
+
+      expect(() =>
+        translateUiViewToWorkspaceCard(
+          makeWidgetsView({ decoratedText: { text: 'Entry', startIcon: { knownIcon: 'STAR' } } })
+        )
+      ).toThrow('Invalid UiView');
+      expect(() =>
+        translateUiViewToWorkspaceCard(
+          makeWidgetsView({ decoratedText: { text: 'Entry', endIcon: { knownIcon: 'STAR' } } })
+        )
+      ).toThrow('Invalid UiView');
+      expect(() =>
+        translateUiViewToWorkspaceCard(
+          makeWidgetsView({
+            decoratedText: { text: 'Entry', switchControl: { name: 'sw', value: '1' } },
+          })
+        )
+      ).toThrow('Invalid UiView');
+      expect(() =>
+        translateUiViewToWorkspaceCard(
+          makeWidgetsView({ decoratedText: { text: 'Entry', button: { text: 'Btn', type: 'FILLED' } } })
+        )
+      ).toThrow('Invalid UiView');
+      expect(() =>
+        translateUiViewToWorkspaceCard(
+          makeWidgetsView({
+            decoratedText: {
+              text: 'Entry',
+              button: { text: 'Btn', icon: { knownIcon: 'STAR' } },
+            },
+          })
+        )
+      ).toThrow('Invalid UiView');
     });
   });
 });

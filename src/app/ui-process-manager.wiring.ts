@@ -25,6 +25,10 @@ import {
 import type {
   SchemaDrivenUiService,
   UiView,
+  UiViewButton,
+  UiViewColor,
+  UiViewOnClick,
+  UiViewOpenLink,
 } from '../features/schema-driven-ui/domain';
 import {
   translateUiViewToNavigationAction,
@@ -32,6 +36,10 @@ import {
   type UiView as WorkspaceUiView,
   type UiViewWidget,
   type UiAction,
+  type UiButton,
+  type UiColor,
+  type UiOnClick,
+  type UiOpenLink,
 } from '../infrastructure/workspace-addon/translator';
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
 import type { FormChangeEvaluatorFn as FormChangeEvaluator } from '../features/ui-process-manager';
@@ -106,6 +114,48 @@ function mapUiAction(
   };
 }
 
+function mapUiOpenLink(openLink: UiViewOpenLink): UiOpenLink {
+  return {
+    openLink: {
+      url: openLink.openLink.url,
+      ...(openLink.openLink.openAs !== undefined ? { openAs: openLink.openLink.openAs } : {}),
+      ...(openLink.openLink.onClose !== undefined ? { onClose: openLink.openLink.onClose } : {}),
+    },
+  };
+}
+
+function mapUiOnClick(
+  onClick: UiViewOnClick | undefined,
+  baseUrl?: string | undefined
+): UiOnClick | undefined {
+  if (!onClick) {
+    return undefined;
+  }
+  if ('openLink' in onClick) {
+    return mapUiOpenLink(onClick);
+  }
+  return mapUiAction(onClick, baseUrl);
+}
+
+function mapUiColor(color: UiViewColor): UiColor {
+  return {
+    red: color.red,
+    green: color.green,
+    blue: color.blue,
+    ...(color.alpha !== undefined ? { alpha: color.alpha } : {}),
+  };
+}
+
+function mapUiButton(btn: UiViewButton, baseUrl?: string | undefined): UiButton {
+  const mappedOnClick = mapUiOnClick(btn.onClick, baseUrl);
+  return {
+    text: btn.text,
+    ...(mappedOnClick !== undefined ? { onClick: mappedOnClick } : {}),
+    ...(btn.color !== undefined ? { color: mapUiColor(btn.color) } : {}),
+    ...(btn.disabled !== undefined ? { disabled: btn.disabled } : {}),
+  };
+}
+
 export function mapUiViewToWorkspaceUiView(view: UiView, baseUrl?: string | undefined): WorkspaceUiView {
   return {
     ...(view.id !== undefined ? { id: view.id } : {}),
@@ -128,7 +178,14 @@ export function mapUiViewToWorkspaceUiView(view: UiView, baseUrl?: string | unde
       widgets: section.widgets
         .map((widget): UiViewWidget | undefined => {
           if (widget.textParagraph) {
-            return { textParagraph: { text: widget.textParagraph.text } };
+            return {
+              textParagraph: {
+                text: widget.textParagraph.text,
+                ...(widget.textParagraph.maxLines !== undefined
+                  ? { maxLines: widget.textParagraph.maxLines }
+                  : {}),
+              },
+            };
           }
           if (widget.textInput) {
             const mappedAction = mapUiAction(widget.textInput.onChangeAction, baseUrl);
@@ -166,13 +223,21 @@ export function mapUiViewToWorkspaceUiView(view: UiView, baseUrl?: string | unde
           if (widget.buttonList) {
             return {
               buttonList: {
-                buttons: widget.buttonList.buttons.map((btn) => {
-                  const mappedOnClick = mapUiAction(btn.onClick, baseUrl);
-                  return {
-                    text: btn.text,
-                    ...(mappedOnClick !== undefined ? { onClick: mappedOnClick } : {}),
-                  };
-                }),
+                buttons: widget.buttonList.buttons.map((btn) => mapUiButton(btn, baseUrl)),
+              },
+            };
+          }
+          if (widget.decoratedText) {
+            const dt = widget.decoratedText;
+            const mappedOnClick = mapUiOnClick(dt.onClick, baseUrl);
+            return {
+              decoratedText: {
+                text: dt.text,
+                ...(dt.topLabel !== undefined ? { topLabel: dt.topLabel } : {}),
+                ...(dt.wrapText !== undefined ? { wrapText: dt.wrapText } : {}),
+                ...(dt.bottomLabel !== undefined ? { bottomLabel: dt.bottomLabel } : {}),
+                ...(dt.button !== undefined ? { button: mapUiButton(dt.button, baseUrl) } : {}),
+                ...(mappedOnClick !== undefined ? { onClick: mappedOnClick } : {}),
               },
             };
           }
