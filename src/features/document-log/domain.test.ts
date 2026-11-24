@@ -235,10 +235,40 @@ describe('DocumentLogService', () => {
             formula: '=HYPERLINK("https://drive.google.com/file/d/moved-1/view", "Link")',
           },
         },
+        rowKeyExtractor: expect.any(Function),
+        targetKeys: {
+          groupKey: '071200-001',
+          sortKey: '071200-001-0-260204-1',
+        },
         groupSortOrder: 'asc',
         rowSortOrder: 'asc',
         duplicatePolicy: 'insert',
       });
+
+      const passedRequest = insertRow.mock.calls[0][0];
+      expect(
+        passedRequest.rowKeyExtractor({
+          Status: 'Closed',
+          Section: '033000',
+          Number: '001',
+          Revision: '0',
+          Title: 'Concrete',
+          Date: '260115',
+          Contact: 'MB',
+          Action: 'received',
+        })
+      ).toEqual({
+        groupKey: '033000-001',
+        sortKey: '033000-001-0-260115-1',
+      });
+      expect(
+        passedRequest.rowKeyExtractor({
+          Status: 'Open',
+          Section: '',
+          Number: '',
+          Title: 'Malformed blank key row',
+        })
+      ).toBeNull();
     });
 
     it('writes directly to selectedLogId without calling resolveLog', async () => {
@@ -311,6 +341,55 @@ describe('DocumentLogService', () => {
           document: { ...sampleDoc, space: undefined },
         })
       ).rejects.toThrow(DocumentLogConfigurationError);
+    });
+
+    it('forwards non-default grouping sort orders, duplicatePolicy, and readOnlyColumns with computed targetKeys', async () => {
+      const customLogSchema: DocumentLogSchema = {
+        ...logSchema,
+        grouping: {
+          groupBy: 'idGroup',
+          sortBy: 'idDocument',
+          groupSortOrder: 'desc',
+          rowSortOrder: 'desc',
+          duplicatePolicy: 'upsert',
+        },
+        columns: {
+          ...logSchema.columns,
+          Title: { template: '{{title}}', readOnly: true },
+        },
+      };
+      const insertRow = vi.fn().mockResolvedValue({ rowNumber: 10, action: 'updated' });
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(customLogSchema),
+        },
+        storage: { insertRow },
+      });
+
+      const res = await service.writeLog({
+        document: sampleDoc,
+        selectedLogId: 'log-upsert-1',
+      });
+
+      expect(res).toEqual({
+        spreadsheetId: 'log-upsert-1',
+        sheetName: 'Submittal Arch',
+        rowNumber: 10,
+        action: 'updated',
+      });
+      expect(insertRow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targetKeys: {
+            groupKey: '071200-001',
+            sortKey: '071200-001-0',
+          },
+          groupSortOrder: 'desc',
+          rowSortOrder: 'desc',
+          duplicatePolicy: 'upsert',
+          readOnlyColumns: ['Title'],
+          rowKeyExtractor: expect.any(Function),
+        })
+      );
     });
   });
 });

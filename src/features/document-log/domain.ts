@@ -13,7 +13,11 @@ import {
   type WriteDocumentLogRequest,
   type WriteDocumentLogResult,
 } from './ports';
-import { mapDocumentToLogRow } from './row-mapper';
+import {
+  buildRowKeyExtractor,
+  computeTargetRowKeys,
+  mapDocumentToLogRow,
+} from './row-mapper';
 
 const GOOGLE_SPREADSHEET_MIME_TYPE = 'application/vnd.google-apps.spreadsheet';
 
@@ -154,6 +158,19 @@ export class DocumentLogService implements DocumentLogPort {
       fileUri,
     });
 
+    const targetKeys = computeTargetRowKeys({
+      document,
+      logSchema,
+      targetSchema,
+      templateEvaluator: this.templateEvaluator,
+    });
+
+    const rowKeyExtractor = buildRowKeyExtractor({
+      logSchema,
+      targetSchema,
+      templateEvaluator: this.templateEvaluator,
+    });
+
     const insertResult = await this.logStorage.insertRow({
       target: {
         spreadsheetId,
@@ -163,6 +180,8 @@ export class DocumentLogService implements DocumentLogPort {
         groupDividerMarker: logSchema.target.groupDividerMarker,
       },
       rowData,
+      rowKeyExtractor,
+      ...(targetKeys !== null ? { targetKeys } : {}),
       ...(readOnlyColumns.length > 0 ? { readOnlyColumns } : {}),
       groupSortOrder: logSchema.grouping.groupSortOrder,
       rowSortOrder: logSchema.grouping.rowSortOrder,

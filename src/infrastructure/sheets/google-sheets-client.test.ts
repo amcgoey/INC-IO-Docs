@@ -13,6 +13,7 @@ import {
 import {
   GoogleSheetsApiError,
   GoogleSheetsColumnNotFoundError,
+  GoogleSheetsDuplicateKeyError,
   GoogleSheetsExtentAnchorNotFoundError,
   GoogleSheetsNamedRangeNotFoundError,
 } from './errors';
@@ -90,6 +91,190 @@ describe('GoogleSheetsClient', () => {
       },
     };
   });
+
+  interface SimCell {
+    kind: 'empty' | 'string' | 'number' | 'boolean' | 'formula';
+    value: CellValue;
+    formattedValue?: CellValue;
+  }
+
+  interface SimRow {
+    style: string;
+    cells: SimCell[];
+  }
+
+  interface SimSheetState {
+    sheetId: number;
+    title: string;
+    grid: SimRow[];
+    namedRange: {
+      name: string;
+      startRowIndex: number;
+      endRowIndex: number;
+      startColumnIndex: number;
+      endColumnIndex: number;
+    };
+  }
+
+  function toSimCell(val: CellValue): SimCell {
+    if (val === null || val === undefined || val === '') {
+      return { kind: 'empty', value: val ?? '' };
+    }
+    if (typeof val === 'boolean') return { kind: 'boolean', value: val };
+    if (typeof val === 'number') return { kind: 'number', value: val };
+    if (typeof val === 'string' && val.startsWith('=')) {
+      return { kind: 'formula', value: val };
+    }
+    return { kind: 'string', value: val };
+  }
+
+  function fromCellData(cellData: sheets_v4.Schema$CellData): SimCell {
+    const ue = cellData.userEnteredValue;
+    if (!ue) return { kind: 'empty', value: '' };
+    if (ue.formulaValue !== undefined && ue.formulaValue !== null) {
+      return { kind: 'formula', value: ue.formulaValue };
+    }
+    if (ue.stringValue !== undefined && ue.stringValue !== null) {
+      return { kind: 'string', value: ue.stringValue };
+    }
+    if (ue.numberValue !== undefined && ue.numberValue !== null) {
+      return { kind: 'number', value: ue.numberValue };
+    }
+    if (ue.boolValue !== undefined && ue.boolValue !== null) {
+      return { kind: 'boolean', value: ue.boolValue };
+    }
+    return { kind: 'empty', value: '' };
+  }
+
+  function applyBatchUpdate(
+    state: SimSheetState,
+    requests: sheets_v4.Schema$Request[]
+  ): void {
+    for (const req of requests) {
+      if (req.insertDimension) {
+        const range = req.insertDimension.range!;
+        expect(range.sheetId).toBe(state.sheetId);
+        expect(range.dimension).toBe('ROWS');
+        const start = range.startIndex!;
+        const end = range.endIndex!;
+        const count = end - start;
+        expect(count).toBeGreaterThan(0);
+
+        const inheritedStyle = req.insertDimension.inheritFromBefore
+          ? state.grid[start - 1]?.style ?? 'default'
+          : state.grid[start]?.style ?? 'default';
+
+        const insertedRows: SimRow[] = Array.from({ length: count }, () => ({
+          style: inheritedStyle,
+          cells: [],
+        }));
+        state.grid.splice(start, 0, ...insertedRows);
+
+        if (
+          start > state.namedRange.startRowIndex &&
+          start < state.namedRange.endRowIndex
+        ) {
+          state.namedRange.endRowIndex += count;
+        }
+      } else if (req.deleteDimension) {
+        const range = req.deleteDimension.range!;
+        expect(range.sheetId).toBe(state.sheetId);
+        expect(range.dimension).toBe('ROWS');
+        const start = range.startIndex!;
+        const end = range.endIndex!;
+        const count = end - start;
+        expect(count).toBeGreaterThan(0);
+        expect(end).toBeLessThanOrEqual(state.grid.length);
+
+        state.grid.splice(start, count);
+
+        if (
+          start >= state.namedRange.startRowIndex &&
+          start < state.namedRange.endRowIndex
+        ) {
+          state.namedRange.endRowIndex -= count;
+        }
+      } else if (req.updateCells) {
+        const uc = req.updateCells;
+        const range = uc.range!;
+        expect(range.sheetId).toBe(state.sheetId);
+        expect(uc.fields).toBe('userEnteredValue');
+        const startRow = range.startRowIndex!;
+        const endRow = range.endRowIndex!;
+        const startCol = range.startColumnIndex!;
+        const endCol = range.endColumnIndex!;
+        const rows = uc.rows ?? [];
+        expect(endRow - startRow).toBe(rows.length);
+
+        for (let r = 0; r < rows.length; r++) {
+          const targetRow = state.grid[startRow + r];
+          expect(targetRow).toBeDefined();
+          const rowValues = rows[r].values ?? [];
+          expect(rowValues.length).toBe(endCol - startCol);
+          for (let c = 0; c < rowValues.length; c++) {
+            const absCol = startCol + c;
+            while (targetRow.cells.length <= absCol) {
+              targetRow.cells.push({ kind: 'empty', value: '' });
+            }
+            targetRow.cells[absCol] = fromCellData(rowValues[c]);
+          }
+        }
+      } else {
+        throw new Error(`Unsupported batchUpdate request in simulator: ${JSON.stringify(req)}`);
+      }
+    }
+  }
+
+  function wireSimulator(state: SimSheetState, spreadsheetId = 'sim-sheet-id') {
+    mockSheetsApi.spreadsheets.get.mockImplementation(async () => ({
+      data: {
+        spreadsheetId,
+        sheets: [{ properties: { sheetId: state.sheetId, title: state.title } }],
+        namedRanges: [
+          {
+            namedRangeId: 'nr-sim',
+            name: state.namedRange.name,
+            range: {
+              sheetId: state.sheetId,
+              startRowIndex: state.namedRange.startRowIndex,
+              endRowIndex: state.namedRange.endRowIndex,
+              startColumnIndex: state.namedRange.startColumnIndex,
+              endColumnIndex: state.namedRange.endColumnIndex,
+            },
+          },
+        ],
+      },
+    }));
+
+    mockSheetsApi.spreadsheets.values.get.mockImplementation(async () => {
+      const nr = state.namedRange;
+      const slice: CellValue[][] = [];
+      for (let r = nr.startRowIndex; r < nr.endRowIndex; r++) {
+        const row = state.grid[r];
+        if (!row) {
+          slice.push([]);
+          continue;
+        }
+        const vals: CellValue[] = [];
+        for (let c = nr.startColumnIndex; c < nr.endColumnIndex; c++) {
+          const cell = row.cells[c];
+          vals.push(cell ? (cell.formattedValue ?? cell.value) : '');
+        }
+        while (vals.length > 0 && vals[vals.length - 1] === '') {
+          vals.pop();
+        }
+        slice.push(vals);
+      }
+      return { data: { values: slice } };
+    });
+
+    mockSheetsApi.spreadsheets.batchUpdate.mockImplementation(
+      async ({ requestBody }: { requestBody: sheets_v4.Schema$BatchUpdateSpreadsheetRequest }) => {
+        applyBatchUpdate(state, requestBody.requests ?? []);
+        return { data: {} };
+      }
+    );
+  }
 
   describe('formatScopedRange, columnIndexToLetter, and gridRangeToA1', () => {
     it('wraps and escapes sheet names properly', () => {
@@ -875,190 +1060,6 @@ describe('GoogleSheetsClient', () => {
   });
 
   describe('insertIntoGroupedList (positive-termination foundation)', () => {
-    interface SimCell {
-      kind: 'empty' | 'string' | 'number' | 'boolean' | 'formula';
-      value: CellValue;
-      formattedValue?: CellValue;
-    }
-
-    interface SimRow {
-      style: string;
-      cells: SimCell[];
-    }
-
-    interface SimSheetState {
-      sheetId: number;
-      title: string;
-      grid: SimRow[];
-      namedRange: {
-        name: string;
-        startRowIndex: number;
-        endRowIndex: number;
-        startColumnIndex: number;
-        endColumnIndex: number;
-      };
-    }
-
-    function toSimCell(val: CellValue): SimCell {
-      if (val === null || val === undefined || val === '') {
-        return { kind: 'empty', value: val ?? '' };
-      }
-      if (typeof val === 'boolean') return { kind: 'boolean', value: val };
-      if (typeof val === 'number') return { kind: 'number', value: val };
-      if (typeof val === 'string' && val.startsWith('=')) {
-        return { kind: 'formula', value: val };
-      }
-      return { kind: 'string', value: val };
-    }
-
-    function fromCellData(cellData: sheets_v4.Schema$CellData): SimCell {
-      const ue = cellData.userEnteredValue;
-      if (!ue) return { kind: 'empty', value: '' };
-      if (ue.formulaValue !== undefined && ue.formulaValue !== null) {
-        return { kind: 'formula', value: ue.formulaValue };
-      }
-      if (ue.stringValue !== undefined && ue.stringValue !== null) {
-        return { kind: 'string', value: ue.stringValue };
-      }
-      if (ue.numberValue !== undefined && ue.numberValue !== null) {
-        return { kind: 'number', value: ue.numberValue };
-      }
-      if (ue.boolValue !== undefined && ue.boolValue !== null) {
-        return { kind: 'boolean', value: ue.boolValue };
-      }
-      return { kind: 'empty', value: '' };
-    }
-
-    function applyBatchUpdate(
-      state: SimSheetState,
-      requests: sheets_v4.Schema$Request[]
-    ): void {
-      for (const req of requests) {
-        if (req.insertDimension) {
-          const range = req.insertDimension.range!;
-          expect(range.sheetId).toBe(state.sheetId);
-          expect(range.dimension).toBe('ROWS');
-          const start = range.startIndex!;
-          const end = range.endIndex!;
-          const count = end - start;
-          expect(count).toBeGreaterThan(0);
-
-          const inheritedStyle = req.insertDimension.inheritFromBefore
-            ? state.grid[start - 1]?.style ?? 'default'
-            : state.grid[start]?.style ?? 'default';
-
-          const insertedRows: SimRow[] = Array.from({ length: count }, () => ({
-            style: inheritedStyle,
-            cells: [],
-          }));
-          state.grid.splice(start, 0, ...insertedRows);
-
-          if (
-            start > state.namedRange.startRowIndex &&
-            start < state.namedRange.endRowIndex
-          ) {
-            state.namedRange.endRowIndex += count;
-          }
-        } else if (req.deleteDimension) {
-          const range = req.deleteDimension.range!;
-          expect(range.sheetId).toBe(state.sheetId);
-          expect(range.dimension).toBe('ROWS');
-          const start = range.startIndex!;
-          const end = range.endIndex!;
-          const count = end - start;
-          expect(count).toBeGreaterThan(0);
-          expect(end).toBeLessThanOrEqual(state.grid.length);
-
-          state.grid.splice(start, count);
-
-          if (
-            start >= state.namedRange.startRowIndex &&
-            start < state.namedRange.endRowIndex
-          ) {
-            state.namedRange.endRowIndex -= count;
-          }
-        } else if (req.updateCells) {
-          const uc = req.updateCells;
-          const range = uc.range!;
-          expect(range.sheetId).toBe(state.sheetId);
-          expect(uc.fields).toBe('userEnteredValue');
-          const startRow = range.startRowIndex!;
-          const endRow = range.endRowIndex!;
-          const startCol = range.startColumnIndex!;
-          const endCol = range.endColumnIndex!;
-          const rows = uc.rows ?? [];
-          expect(endRow - startRow).toBe(rows.length);
-
-          for (let r = 0; r < rows.length; r++) {
-            const targetRow = state.grid[startRow + r];
-            expect(targetRow).toBeDefined();
-            const rowValues = rows[r].values ?? [];
-            expect(rowValues.length).toBe(endCol - startCol);
-            for (let c = 0; c < rowValues.length; c++) {
-              const absCol = startCol + c;
-              while (targetRow.cells.length <= absCol) {
-                targetRow.cells.push({ kind: 'empty', value: '' });
-              }
-              targetRow.cells[absCol] = fromCellData(rowValues[c]);
-            }
-          }
-        } else {
-          throw new Error(`Unsupported batchUpdate request in simulator: ${JSON.stringify(req)}`);
-        }
-      }
-    }
-
-    function wireSimulator(state: SimSheetState) {
-      mockSheetsApi.spreadsheets.get.mockImplementation(async () => ({
-        data: {
-          spreadsheetId: 'sim-sheet-id',
-          sheets: [{ properties: { sheetId: state.sheetId, title: state.title } }],
-          namedRanges: [
-            {
-              namedRangeId: 'nr-sim',
-              name: state.namedRange.name,
-              range: {
-                sheetId: state.sheetId,
-                startRowIndex: state.namedRange.startRowIndex,
-                endRowIndex: state.namedRange.endRowIndex,
-                startColumnIndex: state.namedRange.startColumnIndex,
-                endColumnIndex: state.namedRange.endColumnIndex,
-              },
-            },
-          ],
-        },
-      }));
-
-      mockSheetsApi.spreadsheets.values.get.mockImplementation(async () => {
-        const nr = state.namedRange;
-        const slice: CellValue[][] = [];
-        for (let r = nr.startRowIndex; r < nr.endRowIndex; r++) {
-          const row = state.grid[r];
-          if (!row) {
-            slice.push([]);
-            continue;
-          }
-          const vals: CellValue[] = [];
-          for (let c = nr.startColumnIndex; c < nr.endColumnIndex; c++) {
-            const cell = row.cells[c];
-            vals.push(cell ? (cell.formattedValue ?? cell.value) : '');
-          }
-          while (vals.length > 0 && vals[vals.length - 1] === '') {
-            vals.pop();
-          }
-          slice.push(vals);
-        }
-        return { data: { values: slice } };
-      });
-
-      mockSheetsApi.spreadsheets.batchUpdate.mockImplementation(
-        async ({ requestBody }: { requestBody: sheets_v4.Schema$BatchUpdateSpreadsheetRequest }) => {
-          applyBatchUpdate(state, requestBody.requests ?? []);
-          return { data: {} };
-        }
-      );
-    }
-
     const createFfeClearedTemplateState = (betweenRows: SimRow[]): SimSheetState => {
       const headers = [
         'Status',
@@ -1563,6 +1564,428 @@ describe('GoogleSheetsClient', () => {
       expect(result).toEqual({ rowNumber: 6, action: 'inserted' });
       expect(sleepMock).toHaveBeenCalledTimes(1);
       expect(sleepMock).toHaveBeenCalledWith(50);
+    });
+  });
+
+  describe('insertIntoGroupedList (grouped/sorted placement, dividers & duplicatePolicy)', () => {
+    const target: PositiveTableTarget = {
+      spreadsheetId: 'sim-grouped-id',
+      sheetName: 'Submittal Arch',
+      rangeName: 'Log_Submittal_Arch',
+      extentMarker: '<--->',
+      groupDividerMarker: '---',
+    };
+
+    const headers = ['Status', 'Group', 'SortKey', 'Spec Title', 'Helper', 'Notes'];
+
+    const makeDataRow = (
+      status: string,
+      group: string,
+      sortKey: string,
+      notes: string
+    ): SimRow => ({
+      style: 'clean-data-row',
+      cells: [
+        toSimCell(status),
+        toSimCell(group),
+        toSimCell(sortKey),
+        { kind: 'formula', value: '=ARRAY_TITLE()', formattedValue: 'Auto Title' },
+        toSimCell('user-helper'),
+        toSimCell(notes),
+      ],
+    });
+
+    const makeDividerSimRow = (): SimRow => ({
+      style: 'divider',
+      cells: [toSimCell('---')],
+    });
+
+    const createSeededState = (betweenRows: SimRow[]): SimSheetState => {
+      const grid: SimRow[] = [
+        { style: 'title', cells: [toSimCell('Document Log')] }, // idx 0 (Row 1)
+        { style: 'spacer', cells: [] }, // idx 1 (Row 2)
+        { style: 'header', cells: headers.map(toSimCell) }, // idx 2 (Row 3)
+        { style: 'formula', cells: [toSimCell('Formula Row'), toSimCell(''), toSimCell(''), toSimCell('=ARRAYFORMULA(...)')] }, // idx 3 (Row 4)
+        { style: 'anchor', cells: [toSimCell('<--->')] }, // idx 4 (Row 5)
+        ...betweenRows,
+        { style: 'anchor', cells: [toSimCell('<--->')] }, // bottomAnchor
+      ];
+      return {
+        sheetId: 10,
+        title: 'Submittal Arch',
+        grid,
+        namedRange: {
+          name: 'Log_Submittal_Arch',
+          startRowIndex: 2,
+          endRowIndex: grid.length,
+          startColumnIndex: 0,
+          endColumnIndex: headers.length,
+        },
+      };
+    };
+
+    const rowKeyExtractor = (row: Record<string, CellValue>) => {
+      const group = typeof row.Group === 'string' ? row.Group.trim() : '';
+      if (!group) return null;
+      const sort = typeof row.SortKey === 'string' ? row.SortKey : '';
+      return { groupKey: group, sortKey: sort };
+    };
+
+    it('inserts a top new group immediately below topAnchor with inheritFromBefore: false and a Column-0-only "---" divider below', async () => {
+      const state = createSeededState([
+        makeDataRow('Closed', '033000-001', '033000-001-0-260115-1', 'Concrete'),
+        makeDividerSimRow(),
+        makeDataRow('Open', '071200-001', '071200-001-0-260204-1', 'Waterproofing'),
+      ]);
+      wireSimulator(state);
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+      const result = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '013300-001',
+          SortKey: '013300-001-0-260110-1',
+          'Spec Title': 'IGNORED',
+          Notes: 'Baseline',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '013300-001', sortKey: '013300-001-0-260110-1' },
+        readOnlyColumns: ['Spec Title'],
+      });
+
+      expect(result).toEqual({ rowNumber: 6, action: 'inserted' });
+
+      const requests = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody
+        .requests as sheets_v4.Schema$Request[];
+      const insertReq = requests[0].insertDimension!;
+      expect(insertReq.range?.startIndex).toBe(5);
+      expect(insertReq.range?.endIndex).toBe(7);
+      expect(insertReq.inheritFromBefore).toBe(false);
+
+      // Divider updateCells writes ONLY to Column 0
+      const dividerUpdate = requests.find(
+        (r) => r.updateCells?.range?.startRowIndex === 6
+      )?.updateCells;
+      expect(dividerUpdate?.range).toEqual({
+        sheetId: 10,
+        startRowIndex: 6,
+        endRowIndex: 7,
+        startColumnIndex: 0,
+        endColumnIndex: 1,
+      });
+      expect(dividerUpdate?.rows?.[0]?.values).toEqual([{ userEnteredValue: { stringValue: '---' } }]);
+
+      expect(state.grid[5].style).toBe('clean-data-row');
+      expect(state.grid[5].cells[1].value).toBe('013300-001');
+      expect(state.grid[6].cells[0].value).toBe('---');
+      expect(state.grid[6].cells.length).toBe(1);
+      expect(state.grid[7].cells[1].value).toBe('033000-001');
+      expect(state.grid[4].cells[0].value).toBe('<--->');
+      expect(state.grid[10].cells[0].value).toBe('<--->');
+      expect(state.namedRange.endRowIndex).toBe(11);
+    });
+
+    it('inserts a middle new group reusing an existing "---" divider and adds missing dividers when absent', async () => {
+      // Case A: Existing divider between 033000-001 and 087100-001
+      const stateWithDivider = createSeededState([
+        makeDataRow('Closed', '033000-001', '033000-001-0-260115-1', 'Concrete'),
+        makeDividerSimRow(),
+        makeDataRow('Manager', '087100-001', '087100-001-0-260303-1', 'Hardware'),
+      ]);
+      wireSimulator(stateWithDivider);
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+      const resA = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '075100-001',
+          SortKey: '075100-001-0-260220-1',
+          Notes: 'Roofing',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '075100-001', sortKey: '075100-001-0-260220-1' },
+      });
+
+      expect(resA).toEqual({ rowNumber: 8, action: 'inserted' });
+      const reqsA = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody
+        .requests as sheets_v4.Schema$Request[];
+      expect(reqsA[0].insertDimension?.inheritFromBefore).toBe(true);
+      expect(stateWithDivider.grid[5].cells[1].value).toBe('033000-001');
+      expect(stateWithDivider.grid[6].cells[0].value).toBe('---');
+      expect(stateWithDivider.grid[7].style).toBe('clean-data-row');
+      expect(stateWithDivider.grid[7].cells[1].value).toBe('075100-001');
+      expect(stateWithDivider.grid[8].cells[0].value).toBe('---');
+      expect(stateWithDivider.grid[9].cells[1].value).toBe('087100-001');
+      expect(stateWithDivider.grid[10].cells[0].value).toBe('<--->');
+
+      // Case B: No divider previously existed between 033000-001 and 087100-001
+      const stateNoDivider = createSeededState([
+        makeDataRow('Closed', '033000-001', '033000-001-0-260115-1', 'Concrete'),
+        makeDataRow('Manager', '087100-001', '087100-001-0-260303-1', 'Hardware'),
+      ]);
+      wireSimulator(stateNoDivider);
+
+      const resB = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '075100-001',
+          SortKey: '075100-001-0-260220-1',
+          Notes: 'Roofing',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '075100-001', sortKey: '075100-001-0-260220-1' },
+      });
+
+      expect(resB).toEqual({ rowNumber: 8, action: 'inserted' });
+      expect(stateNoDivider.grid[5].cells[1].value).toBe('033000-001');
+      expect(stateNoDivider.grid[6].cells[0].value).toBe('---');
+      expect(stateNoDivider.grid[7].cells[1].value).toBe('075100-001');
+      expect(stateNoDivider.grid[8].cells[0].value).toBe('---');
+      expect(stateNoDivider.grid[9].cells[1].value).toBe('087100-001');
+      expect(stateNoDivider.grid[10].cells[0].value).toBe('<--->');
+    });
+
+    it('inserts a bottom new group inside (topAnchor, bottomAnchor] with leading "---" divider and zero dividers adjacent to bottomAnchor', async () => {
+      const state = createSeededState([
+        makeDataRow('Closed', '033000-001', '033000-001-0-260115-1', 'Concrete'),
+        makeDividerSimRow(),
+        makeDataRow('Manager', '087100-001', '087100-001-0-260303-1', 'Hardware'),
+      ]);
+      wireSimulator(state);
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+      const result = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '096500-001',
+          SortKey: '096500-001-0-260314-1',
+          Notes: 'Flooring',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '096500-001', sortKey: '096500-001-0-260314-1' },
+      });
+
+      expect(result).toEqual({ rowNumber: 10, action: 'inserted' });
+      expect(state.grid[7].cells[1].value).toBe('087100-001');
+      expect(state.grid[8].cells[0].value).toBe('---');
+      expect(state.grid[9].style).toBe('clean-data-row');
+      expect(state.grid[9].cells[1].value).toBe('096500-001');
+      expect(state.grid[10].cells[0].value).toBe('<--->');
+      expect(state.namedRange.endRowIndex).toBe(11);
+    });
+
+    it('supports groupSortOrder: desc and rowSortOrder: desc', async () => {
+      const state = createSeededState([
+        makeDataRow('Manager', '087100-001', '087100-001-0-260305-3', 'Later'),
+        makeDataRow('Manager', '087100-001', '087100-001-0-260303-1', 'Earlier'),
+        makeDividerSimRow(),
+        makeDataRow('Closed', '033000-001', '033000-001-0-260115-1', 'Concrete'),
+      ]);
+      wireSimulator(state);
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      // Middle group 071200-001 sorts between 087100-001 and 033000-001 in desc order
+      const midRes = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '071200-001',
+          SortKey: '071200-001-0-260204-1',
+          Notes: 'Middle desc',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '071200-001', sortKey: '071200-001-0-260204-1' },
+        groupSortOrder: 'desc',
+        rowSortOrder: 'desc',
+      });
+      expect(midRes).toEqual({ rowNumber: 9, action: 'inserted' });
+
+      // Row inside 087100-001 with sortKey 260304-2 sorts between 260305-3 and 260303-1 in desc order
+      const rowRes = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Manager',
+          Group: '087100-001',
+          SortKey: '087100-001-0-260304-2',
+          Notes: 'Mid row desc',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '087100-001', sortKey: '087100-001-0-260304-2' },
+        groupSortOrder: 'desc',
+        rowSortOrder: 'desc',
+      });
+      expect(rowRes).toEqual({ rowNumber: 7, action: 'inserted' });
+
+      const table = await client.readTable({ target });
+      expect(table.rows.map((r) => r.values.SortKey)).toEqual([
+        '087100-001-0-260305-3',
+        '087100-001-0-260304-2',
+        '087100-001-0-260303-1',
+        '071200-001-0-260204-1',
+        '033000-001-0-260115-1',
+      ]);
+    });
+
+    it('uses inheritFromBefore: false when inserting before first row of first existing group and appends duplicatePolicy: insert after equal sortKeys', async () => {
+      const state = createSeededState([
+        makeDataRow('Open', '071200-001', '071200-001-0-260205-2', 'First referral PST'),
+        makeDataRow('Open', '071200-001', '071200-001-0-260205-2', 'Second referral SME'),
+        makeDataRow('Open', '071200-001', '071200-001-0-260212-5', 'RR'),
+      ]);
+      wireSimulator(state);
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      // 1. Insert earlier than first row -> absInsertIndex === topAnchor + 1 -> inheritFromBefore: false
+      const firstRes = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '071200-001',
+          SortKey: '071200-001-0-260204-1',
+          Notes: 'REC before referrals',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '071200-001', sortKey: '071200-001-0-260204-1' },
+      });
+      expect(firstRes).toEqual({ rowNumber: 6, action: 'inserted' });
+      const firstReq = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody
+        .requests as sheets_v4.Schema$Request[];
+      expect(firstReq[0].insertDimension?.inheritFromBefore).toBe(false);
+      expect(state.grid[5].style).toBe('clean-data-row');
+
+      // 2. Insert duplicate sortKey with duplicatePolicy: insert -> placed AFTER both 260205-2 referrals
+      const dupRes = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '071200-001',
+          SortKey: '071200-001-0-260205-2',
+          Notes: 'Third referral LMD',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '071200-001', sortKey: '071200-001-0-260205-2' },
+        duplicatePolicy: 'insert',
+      });
+      expect(dupRes).toEqual({ rowNumber: 9, action: 'inserted' });
+
+      const table = await client.readTable({ target });
+      expect(table.rows.map((r) => r.values.Notes)).toEqual([
+        'REC before referrals',
+        'First referral PST',
+        'Second referral SME',
+        'Third referral LMD',
+        'RR',
+      ]);
+    });
+
+    it('enforces duplicatePolicy: upsert (in-place update preserving protected/helper columns) and reject (throws before mutation)', async () => {
+      const state = createSeededState([
+        makeDataRow('Open', '071200-001', '071200-001-0-260204-1', 'Original note'),
+      ]);
+      wireSimulator(state);
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      // reject throws GoogleSheetsDuplicateKeyError with zero batchUpdate calls
+      await expect(
+        client.insertIntoGroupedList({
+          target,
+          rowData: {
+            Status: 'Closed',
+            Group: '071200-001',
+            SortKey: '071200-001-0-260204-1',
+            Notes: 'Should not write',
+          },
+          rowKeyExtractor,
+          targetKeys: { groupKey: '071200-001', sortKey: '071200-001-0-260204-1' },
+          duplicatePolicy: 'reject',
+        })
+      ).rejects.toThrow(GoogleSheetsDuplicateKeyError);
+      expect(mockSheetsApi.spreadsheets.batchUpdate).not.toHaveBeenCalled();
+
+      // upsert updates writable cells in place without inserting rows and preserves Spec Title & Helper
+      const upsertRes = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Closed',
+          Group: '071200-001',
+          SortKey: '071200-001-0-260204-1',
+          'Spec Title': 'DO_NOT_OVERWRITE',
+          Notes: null,
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '071200-001', sortKey: '071200-001-0-260204-1' },
+        duplicatePolicy: 'upsert',
+        readOnlyColumns: ['Spec Title'],
+      });
+
+      expect(upsertRes).toEqual({ rowNumber: 6, action: 'updated' });
+      const upsertReqs = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody
+        .requests as sheets_v4.Schema$Request[];
+      expect(upsertReqs.some((r) => r.insertDimension)).toBe(false);
+      expect(upsertReqs.some((r) => r.deleteDimension)).toBe(false);
+
+      expect(state.grid[5].cells[0].value).toBe('Closed');
+      expect(state.grid[5].cells[3]).toEqual({
+        kind: 'formula',
+        value: '=ARRAY_TITLE()',
+        formattedValue: 'Auto Title',
+      });
+      expect(state.grid[5].cells[4].value).toBe('user-helper');
+      expect(state.grid[5].cells[5]).toEqual({ kind: 'empty', value: '' });
+      expect(state.grid).toHaveLength(7); // no rows added
+    });
+
+    it('preserves existing rows where rowKeyExtractor returns null safely without crashing', async () => {
+      const state = createSeededState([
+        makeDataRow('Open', '', '', 'Unkeyable malformed row'),
+        makeDataRow('Open', '071200-001', '071200-001-0-260204-1', 'Valid row'),
+      ]);
+      wireSimulator(state);
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+      const res = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '071200-001',
+          SortKey: '071200-001-0-260212-5',
+          Notes: 'New valid row',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '071200-001', sortKey: '071200-001-0-260212-5' },
+      });
+
+      expect(res).toEqual({ rowNumber: 8, action: 'inserted' });
+      expect(state.grid[5].cells[5].value).toBe('Unkeyable malformed row');
+      expect(state.grid[6].cells[5].value).toBe('Valid row');
+      expect(state.grid[7].cells[5].value).toBe('New valid row');
+
+      // Also when ALL existing data rows return null
+      const allNullState = createSeededState([
+        makeDataRow('Open', '', '', 'Only malformed row'),
+      ]);
+      wireSimulator(allNullState);
+      const allNullRes = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '071200-001',
+          SortKey: '071200-001-0-260204-1',
+          Notes: 'Appended safely',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '071200-001', sortKey: '071200-001-0-260204-1' },
+      });
+      expect(allNullRes).toEqual({ rowNumber: 7, action: 'inserted' });
+      expect(allNullState.grid[5].cells[5].value).toBe('Only malformed row');
+      expect(allNullState.grid[6].cells[5].value).toBe('Appended safely');
     });
   });
 });
