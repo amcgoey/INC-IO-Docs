@@ -389,5 +389,81 @@ describe('document.wiring', () => {
       }
       expect(customFormatter).toHaveBeenCalledWith('path_not_found', '1 Admin/Communication');
     });
+
+    it('registers DocumentLogActivityHandler in both createDocumentServiceFactory and wireDocumentServicesAndRoutes and forwards selectedLogId', async () => {
+      const writeLogDocType: DocumentType = {
+        key: 'log-test',
+        name: 'Log Test',
+        documentSchema: {
+          fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+        },
+        documentUiSchema: {
+          events: { onSubmit: { catchAllWorkflow: 'LogIt' } },
+        },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'LogIt',
+              activitySequence: [{ type: 'WRITE_LOG', payload: {} }],
+            },
+          ],
+        },
+      };
+
+      const registry: DocumentSchemaRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([writeLogDocType]),
+      };
+      const compiled = new CompiledSchemaRegistry(registry);
+      await compiled.initialize();
+
+      const writeLog = vi.fn().mockResolvedValue({
+        spreadsheetId: 'override-log-id',
+        sheetName: 'Submittal Arch',
+        rowNumber: 6,
+        action: 'inserted',
+      });
+      const mockDocLogService = {
+        resolveLog: vi.fn(),
+        writeLog,
+      };
+
+      const factory = createDocumentServiceFactory({
+        documentSchemaRegistry: registry,
+        templateEvaluator: mockEvaluator,
+        compiledSchemaRegistry: compiled,
+        createDocumentLogService: () => mockDocLogService,
+      });
+
+      const perReqService = (await factory({
+        selectedLogId: 'override-log-id',
+      } as WorkspaceExecutionContext)) as DocumentService;
+
+      const reqResult = await perReqService.processDocument(
+        { type: 'log-test', data: { title: 'Test' } },
+        'onSubmit'
+      );
+      expect(reqResult.success).toBe(true);
+      expect(writeLog).toHaveBeenCalledWith(
+        expect.objectContaining({ selectedLogId: 'override-log-id' })
+      );
+
+      const mockServer: HttpServer = { registerRoute: vi.fn() } as unknown as HttpServer;
+      const headlessService = wireDocumentServicesAndRoutes({
+        server: mockServer,
+        driveClient: {} as unknown as GoogleDriveClient,
+        configProvider: { getDriveConfig: vi.fn().mockResolvedValue(undefined) },
+        documentSchemaRegistry: registry,
+        templateEvaluator: mockEvaluator,
+        documentLogService: mockDocLogService,
+      }) as DocumentService;
+      await headlessService.initialize();
+
+      const headlessResult = await headlessService.processDocument(
+        { type: 'log-test', data: { title: 'Headless' } },
+        'onSubmit'
+      );
+      expect(headlessResult.success).toBe(true);
+      expect(writeLog).toHaveBeenCalledTimes(2);
+    });
   });
 });

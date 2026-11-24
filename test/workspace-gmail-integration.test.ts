@@ -5670,6 +5670,79 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
             webViewLink: 'https://drive.google.com/file/d/drive-saved-submittal-arch/view',
           });
 
+        // WRITE_LOG: Drive discovery + Sheets read/batchUpdate
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query(
+            (q) =>
+              q.driveId === 'shared-drive-proj-root' &&
+              typeof q.q === 'string' &&
+              q.q.includes("name contains 'Document Log'")
+          )
+          .reply(200, {
+            files: [
+              {
+                id: 'doc-log-proj-1',
+                name: 'Active Projects Document Log',
+                mimeType: 'application/vnd.google-apps.spreadsheet',
+                parents: ['admin-folder-id'],
+              },
+            ],
+          });
+
+        nock('https://sheets.googleapis.com')
+          .get('/v4/spreadsheets/doc-log-proj-1')
+          .query(true)
+          .reply(200, {
+            spreadsheetId: 'doc-log-proj-1',
+            sheets: [{ properties: { sheetId: 101, title: 'Submittal Arch' } }],
+            namedRanges: [
+              {
+                namedRangeId: 'nr-arch',
+                name: 'Log_Submittal_Arch',
+                range: {
+                  sheetId: 101,
+                  startRowIndex: 2,
+                  endRowIndex: 25,
+                  startColumnIndex: 0,
+                  endColumnIndex: 10,
+                },
+              },
+            ],
+          });
+
+        nock('https://sheets.googleapis.com')
+          .get(/\/v4\/spreadsheets\/doc-log-proj-1\/values\/.*/)
+          .query((q) => q.valueRenderOption === 'FORMATTED_VALUE')
+          .reply(200, {
+            values: [
+              [
+                'Status',
+                'Section',
+                'Number',
+                'Revision',
+                'Title',
+                'Date',
+                'Contact',
+                'Action',
+                'Notes',
+                'Calc Link',
+              ],
+              [],
+              ['<--->'],
+              [],
+              ['<--->'],
+            ],
+          });
+
+        let capturedBatchUpdate: Record<string, unknown> | undefined;
+        nock('https://sheets.googleapis.com')
+          .post('/v4/spreadsheets/doc-log-proj-1:batchUpdate', (body) => {
+            capturedBatchUpdate = body as Record<string, unknown>;
+            return true;
+          })
+          .reply(200, {});
+
         const submitRes = await app.server.inject({
           method: 'POST',
           url: '/workspace/action',
@@ -5708,6 +5781,10 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(submitRes.statusCode).toBe(200);
         const submitBody = JSON.parse(submitRes.payload) as GoogleWorkspaceActionResponse;
         expect(submitBody.action?.notification?.text).toBe('Document processed successfully');
+        expect(capturedBatchUpdate).toBeDefined();
+        expect(JSON.stringify(capturedBatchUpdate)).toContain(
+          '=HYPERLINK(\\"https://drive.google.com/file/d/drive-saved-submittal-arch/view\\", \\"Link\\")'
+        );
         expect(nock.isDone()).toBe(true);
       });
 

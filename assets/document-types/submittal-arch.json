@@ -216,10 +216,42 @@
               "parentPath": "{{StorageContext.basePath}}",
               "folderName": "Submittals"
             }
+          },
+          {
+            "type": "WRITE_LOG",
+            "payload": {}
           }
         ]
       }
     ]
+  },
+  "documentLogSchema": {
+    "provider": "google_sheets",
+    "target": {
+      "sheetName": "Submittal Arch",
+      "rangeName": "Log_Submittal_Arch",
+      "extentMarker": "<--->",
+      "groupDividerMarker": "---"
+    },
+    "grouping": {
+      "groupBy": "idGroup",
+      "sortBy": "id",
+      "groupSortOrder": "asc",
+      "rowSortOrder": "asc",
+      "duplicatePolicy": "insert"
+    },
+    "columns": {
+      "Status": { "template": "{{status.key}}" },
+      "Section": { "template": "{{section}}" },
+      "Number": { "template": "{{number}}" },
+      "Revision": { "template": "{{revision}}" },
+      "Title": { "template": "{{title}}" },
+      "Date": { "template": "{{date}}" },
+      "Contact": { "template": "{{contact.key}}" },
+      "Action": { "template": "{{action.name}}" },
+      "Notes": { "template": "{{notes}}" },
+      "Calc Link": { "source": "fileLink", "label": "Link" }
+    }
   },
   "documentFormSchema": {
     "fields": {

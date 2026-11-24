@@ -6522,8 +6522,8 @@ describe('Document domain', () => {
       expect(result.data.idDocument).toBe('071200-001-1');
       expect(result.data.id).toBe('071200-001-1-261102-1');
 
-      // Dispatched activity with MOVE_FILE payload
-      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
+      // Dispatched activities: MOVE_FILE followed by WRITE_LOG
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
       const dispatchedActivity = vi.mocked(mockDispatcher.dispatch).mock.calls[0][0];
       expect(dispatchedActivity.type).toBe('MOVE_FILE');
       expect(dispatchedActivity.payload).toEqual({
@@ -6531,6 +6531,9 @@ describe('Document domain', () => {
         parentPath: '6 Construction',
         folderName: 'Submittals',
       });
+      const writeLogActivity = vi.mocked(mockDispatcher.dispatch).mock.calls[1][0];
+      expect(writeLogActivity.type).toBe('WRITE_LOG');
+      expect(writeLogActivity.payload).toEqual({});
     });
 
     it('files Submittal Arch matching key directly and action with suffix', async () => {
