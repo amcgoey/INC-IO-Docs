@@ -1150,7 +1150,21 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       action: 'inserted',
     });
     const customDocLogService: DocumentLogPort = {
-      resolveLog: vi.fn(),
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      resolveLog: vi.fn().mockResolvedValue({
+        status: 'resolved',
+        candidate: {
+          id: 'found-sheet-via-override',
+          name: 'Active Projects Document Log',
+        },
+        candidates: [
+          {
+            id: 'found-sheet-via-override',
+            name: 'Active Projects Document Log',
+          },
+        ],
+      }),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
       writeLog,
     };
 

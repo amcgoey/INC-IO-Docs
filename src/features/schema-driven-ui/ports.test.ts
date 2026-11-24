@@ -13,6 +13,11 @@ import {
   DynamicOptionResolutionSchema,
   type DynamicOptionResolution,
   OptionsFetcherContextSchema,
+  DOCUMENT_LOG_CONTEXT_KEY,
+  DocumentLogPanelContextSchema,
+  DocumentLogPanelStatusSchema,
+  UiContextQueryRequestSchema,
+  type DocumentLogPanelContext,
   type SelectionState,
   type GenerateViewRequest,
 } from './ports';
@@ -192,6 +197,89 @@ describe('schema-driven-ui ports', () => {
         items: [],
       };
       expect(Value.Check(DynamicOptionResolutionSchema, invalidResolution)).toBe(false);
+    });
+  });
+
+  describe('UiContextQuery and DocumentLogPanelContext schemas', () => {
+    it('exports DOCUMENT_LOG_CONTEXT_KEY and validates UiContextQueryRequestSchema', () => {
+      expect(DOCUMENT_LOG_CONTEXT_KEY).toBe('document-log');
+      expect(Value.Check(UiContextQueryRequestSchema, {})).toBe(true);
+      expect(
+        Value.Check(UiContextQueryRequestSchema, {
+          spaceId: 'space-1',
+          documentTypeKey: 'submittal-arch',
+          formData: { section: '071200' },
+        })
+      ).toBe(true);
+      expect(
+        Value.Check(UiContextQueryRequestSchema, {
+          spaceId: undefined,
+          documentTypeKey: undefined,
+          formData: undefined,
+        })
+      ).toBe(true);
+    });
+
+    it('validates all 5 DocumentLogPanelStatusSchema literals and rejects invalid status', () => {
+      for (const status of [
+        'missing_space',
+        'missing',
+        'resolved',
+        'ambiguous',
+        'discovery_error',
+      ]) {
+        expect(Value.Check(DocumentLogPanelStatusSchema, status)).toBe(true);
+      }
+      expect(Value.Check(DocumentLogPanelStatusSchema, 'unknown')).toBe(false);
+    });
+
+    it('validates DocumentLogPanelContextSchema with ExactOptionalPropertyTypes and rejects unknown or raw metadata fields', () => {
+      const minimal: DocumentLogPanelContext = {
+        status: 'missing_space',
+      };
+      expect(Value.Check(DocumentLogPanelContextSchema, minimal)).toBe(true);
+
+      const resolvedWithExtensibleFields: DocumentLogPanelContext = {
+        status: 'resolved',
+        spaceName: 'Harborview Hotel',
+        targetFolderPath: '1 Admin',
+        targetFileName: 'Harborview Hotel Document Log',
+        discoveryErrorMessage: undefined,
+        candidateOptions: [{ text: 'Harborview Hotel Document Log', value: 'log-1', selected: true }],
+        activeCandidate: {
+          name: 'Harborview Hotel Document Log',
+          url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+        },
+        readStatus: 'ready',
+        idGroup: '071200-001',
+        missingIdFields: undefined,
+        readErrorMessage: undefined,
+        warningMessages: ['Row 7: invalid action'],
+        entries: [
+          {
+            topLabel: 'Rev 0 • 071200-001 • Open',
+            text: '<b>Received</b> 260204 (MB)',
+            bottomLabel: 'Waterproofing',
+            fileUri: 'https://drive.google.com/file/d/f1/view',
+            valid: true,
+          },
+        ],
+      };
+      expect(Value.Check(DocumentLogPanelContextSchema, resolvedWithExtensibleFields)).toBe(true);
+
+      // Must reject raw Drive/Sheets/domain metadata leakage
+      expect(
+        Value.Check(DocumentLogPanelContextSchema, {
+          status: 'resolved',
+          parents: ['folder-1'],
+        })
+      ).toBe(false);
+      expect(
+        Value.Check(DocumentLogPanelContextSchema, {
+          status: 'resolved',
+          activeCandidate: { name: '', url: 'https://docs.google.com/spreadsheets/d/log-1/edit' },
+        })
+      ).toBe(false);
     });
   });
 });

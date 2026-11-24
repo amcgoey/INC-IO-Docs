@@ -18,6 +18,7 @@ import type {
   UiViewSchemaAdapterPort,
   SelectionState,
   OptionsFetcherPort,
+  UiContextQueryPort,
 } from './ports';
 
 describe('schema-driven-ui domain schemas', () => {
@@ -1123,6 +1124,126 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
       });
 
       expect(capturedContext?.statusMessages).toBeUndefined();
+    });
+  });
+
+  describe('generateView UiContextQueryPort integration', () => {
+    it('calls uiContextQuery when adapter declares non-empty contextKeys and attaches uiContext to adapterContext', async () => {
+      const manifestPort = createMockManifestPort({
+        getUiSchema: vi.fn().mockResolvedValue({ layout: ['section'], fields: {} }),
+        getDocumentSchema: vi.fn().mockResolvedValue({ fields: [{ key: 'section', type: 'string' }] }),
+      });
+
+      const uiContextQuery: UiContextQueryPort = {
+        queryContext: vi.fn().mockResolvedValue({
+          'document-log': {
+            status: 'resolved',
+            spaceName: 'Harborview Hotel',
+            activeCandidate: {
+              name: 'Harborview Hotel Document Log',
+              url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+            },
+          },
+        }),
+      };
+
+      let capturedContext: UiViewAdapterContext | undefined;
+      const adapter: UiViewSchemaAdapterPort = {
+        viewId: 'ctx-view',
+        contextKeys: ['document-log'],
+        composeView: vi.fn(async (ctx) => {
+          capturedContext = ctx;
+          return { id: 'ctx-view', sections: [] };
+        }),
+      };
+
+      const service = new SchemaDrivenUiService(manifestPort, [adapter], undefined, uiContextQuery);
+      await service.generateView({
+        viewId: 'ctx-view',
+        documentTypeKey: 'submittal-arch',
+        spaceId: 'space-1',
+        formData: { section: '071200' },
+      });
+
+      expect(uiContextQuery.queryContext).toHaveBeenCalledTimes(1);
+      expect(uiContextQuery.queryContext).toHaveBeenCalledWith(['document-log'], {
+        spaceId: 'space-1',
+        documentTypeKey: 'submittal-arch',
+        formData: { section: '071200' },
+      });
+      expect(capturedContext?.uiContext).toEqual({
+        'document-log': {
+          status: 'resolved',
+          spaceName: 'Harborview Hotel',
+          activeCandidate: {
+            name: 'Harborview Hotel Document Log',
+            url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+          },
+        },
+      });
+    });
+
+    it('falls back to formData.spaceId and runs even when documentTypeKey is omitted', async () => {
+      const manifestPort = createMockManifestPort();
+      const uiContextQuery: UiContextQueryPort = {
+        queryContext: vi.fn().mockResolvedValue({}),
+      };
+      const adapter: UiViewSchemaAdapterPort = {
+        viewId: 'ctx-view',
+        contextKeys: ['document-log'],
+        composeView: vi.fn(async () => ({ id: 'ctx-view', sections: [] })),
+      };
+
+      const service = new SchemaDrivenUiService(manifestPort, [adapter], undefined, uiContextQuery);
+      await service.generateView({
+        viewId: 'ctx-view',
+        formData: { spaceId: 'space-from-form' },
+      });
+
+      expect(uiContextQuery.queryContext).toHaveBeenCalledWith(['document-log'], {
+        spaceId: 'space-from-form',
+        formData: { spaceId: 'space-from-form' },
+      });
+    });
+
+    it('skips uiContextQuery when adapter.contextKeys is omitted or empty and fails fast on unknown documentTypeKey', async () => {
+      const manifestPort = createMockManifestPort({
+        getUiSchema: vi.fn().mockResolvedValue(undefined),
+      });
+      const uiContextQuery: UiContextQueryPort = {
+        queryContext: vi.fn().mockResolvedValue({}),
+      };
+
+      const adapterWithoutKeys: UiViewSchemaAdapterPort = {
+        viewId: 'no-keys',
+        composeView: vi.fn(async () => ({ id: 'no-keys', sections: [] })),
+      };
+      const adapterWithEmptyKeys: UiViewSchemaAdapterPort = {
+        viewId: 'empty-keys',
+        contextKeys: [],
+        composeView: vi.fn(async () => ({ id: 'empty-keys', sections: [] })),
+      };
+      const adapterWithKeys: UiViewSchemaAdapterPort = {
+        viewId: 'with-keys',
+        contextKeys: ['document-log'],
+        composeView: vi.fn(async () => ({ id: 'with-keys', sections: [] })),
+      };
+
+      const service = new SchemaDrivenUiService(
+        manifestPort,
+        [adapterWithoutKeys, adapterWithEmptyKeys, adapterWithKeys],
+        undefined,
+        uiContextQuery
+      );
+
+      await service.generateView({ viewId: 'no-keys' });
+      await service.generateView({ viewId: 'empty-keys' });
+      expect(uiContextQuery.queryContext).not.toHaveBeenCalled();
+
+      await expect(
+        service.generateView({ viewId: 'with-keys', documentTypeKey: 'nonexistent' })
+      ).rejects.toThrow(/UiSchema not found/i);
+      expect(uiContextQuery.queryContext).not.toHaveBeenCalled();
     });
   });
 });

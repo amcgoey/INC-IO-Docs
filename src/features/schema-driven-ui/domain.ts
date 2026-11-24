@@ -5,6 +5,7 @@ import type {
   UiViewSchemaAdapterPort,
   UiViewAdapterContext,
   OptionsFetcherPort,
+  UiContextQueryPort,
   DynamicOptionQuery,
   DynamicOptionItem,
   DynamicOptionResolution,
@@ -357,7 +358,8 @@ export class SchemaDrivenUiService {
   constructor(
     private readonly manifestPort: UiManifestPort,
     adapters: UiViewSchemaAdapterPort[] = [],
-    private readonly optionsFetcher?: OptionsFetcherPort
+    private readonly optionsFetcher?: OptionsFetcherPort,
+    private readonly uiContextQuery?: UiContextQueryPort
   ) {
     const adapterMap = new Map<string, UiViewSchemaAdapterPort>();
     for (const adapter of adapters) {
@@ -377,9 +379,15 @@ export class SchemaDrivenUiService {
       throw new Error(`UiViewSchema adapter not registered for viewId "${request.viewId}"`);
     }
 
+    const resolvedSpaceId =
+      request.spaceId ??
+      (typeof request.formData?.spaceId === 'string' ? request.formData.spaceId : undefined);
+
     let resolvedUiSchema: UiSchema | undefined = undefined;
     let resolvedDocSchema: UiViewAdapterContext['documentSchema'] = undefined;
-    let dynamicOptions: Record<string, DynamicOptionResolution | DynamicOptionItem[]> | undefined = undefined;
+    let dynamicOptionsPromise:
+      | Promise<Record<string, DynamicOptionResolution | DynamicOptionItem[]>>
+      | undefined;
 
     if (request.documentTypeKey) {
       resolvedUiSchema = await this.manifestPort.getUiSchema(request.documentTypeKey);
@@ -410,16 +418,29 @@ export class SchemaDrivenUiService {
         }
 
         if (queries.length > 0) {
-          const spaceId =
-            request.spaceId ??
-            (typeof request.formData?.spaceId === 'string' ? request.formData.spaceId : undefined);
-          dynamicOptions = await this.optionsFetcher.fetchOptions(queries, {
-            ...(spaceId !== undefined ? { spaceId } : {}),
+          dynamicOptionsPromise = this.optionsFetcher.fetchOptions(queries, {
+            ...(resolvedSpaceId !== undefined ? { spaceId: resolvedSpaceId } : {}),
             ...(request.formData !== undefined ? { formData: request.formData } : {}),
           });
         }
       }
     }
+
+    const uiContextPromise =
+      this.uiContextQuery && adapter.contextKeys && adapter.contextKeys.length > 0
+        ? this.uiContextQuery.queryContext(adapter.contextKeys, {
+            ...(resolvedSpaceId !== undefined ? { spaceId: resolvedSpaceId } : {}),
+            ...(request.documentTypeKey !== undefined
+              ? { documentTypeKey: request.documentTypeKey }
+              : {}),
+            ...(request.formData !== undefined ? { formData: request.formData } : {}),
+          })
+        : undefined;
+
+    const [dynamicOptions, uiContext] = await Promise.all([
+      dynamicOptionsPromise,
+      uiContextPromise,
+    ]);
 
     const statusMessagesList: string[] = [];
     if (request.statusMessages) {
@@ -467,6 +488,7 @@ export class SchemaDrivenUiService {
       uiSchema: resolvedUiSchema,
       documentSchema: resolvedDocSchema,
       ...(dynamicOptions !== undefined ? { dynamicOptions } : {}),
+      ...(uiContext !== undefined ? { uiContext } : {}),
       ...(deduplicatedStatusMessages.length > 0
         ? { statusMessages: deduplicatedStatusMessages }
         : {}),

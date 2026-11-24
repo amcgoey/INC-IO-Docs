@@ -1612,4 +1612,179 @@ describe('DocumentLogService', () => {
       );
     });
   });
+
+  describe('requiresDocumentLog and queryUiContext', () => {
+    it('requiresDocumentLog returns true for configured logging types and false for non-logging or blank types', () => {
+      const { service } = createService();
+
+      expect(service.requiresDocumentLog('submittal-arch')).toBe(true);
+      expect(service.requiresDocumentLog('communication-project')).toBe(false);
+      expect(service.requiresDocumentLog('communication-proposal')).toBe(false);
+      expect(service.requiresDocumentLog('')).toBe(false);
+      expect(service.requiresDocumentLog('   ')).toBe(false);
+    });
+
+    it('queryUiContext returns undefined with zero Drive/Sheets calls for non-logging or missing documentTypeKey', async () => {
+      const searchSpreadsheets = vi.fn();
+      const insertRow = vi.fn();
+      const { service } = createService({
+        discovery: { searchSpreadsheets },
+        storage: { insertRow },
+      });
+
+      await expect(
+        service.queryUiContext({ documentTypeKey: 'communication-project', space: sampleSpace })
+      ).resolves.toBeUndefined();
+      await expect(
+        service.queryUiContext({ documentTypeKey: 'communication-proposal', space: sampleSpace })
+      ).resolves.toBeUndefined();
+      await expect(service.queryUiContext({ space: sampleSpace })).resolves.toBeUndefined();
+
+      expect(searchSpreadsheets).not.toHaveBeenCalled();
+      expect(insertRow).not.toHaveBeenCalled();
+    });
+
+    it('queryUiContext returns missing_space when space is absent without calling Drive', async () => {
+      const searchSpreadsheets = vi.fn();
+      const { service } = createService({
+        discovery: { searchSpreadsheets },
+      });
+
+      const res = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+      });
+
+      expect(res).toEqual({ status: 'missing_space' });
+      expect(searchSpreadsheets).not.toHaveBeenCalled();
+    });
+
+    it('queryUiContext wraps live resolveLog in try/catch and returns discovery_error on Drive failures', async () => {
+      const { service } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockRejectedValue(new Error('Drive API 503 Service Unavailable')),
+        },
+      });
+
+      const res = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+
+      expect(res).toEqual({
+        status: 'discovery_error',
+        spaceName: 'Harborview Hotel',
+        discoveryErrorMessage: 'Drive API 503 Service Unavailable',
+      });
+    });
+
+    it('queryUiContext renders copyNameTemplate and expected folder on missing status', async () => {
+      const { service } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([]),
+        },
+      });
+
+      const res = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+
+      expect(res).toEqual({
+        status: 'missing',
+        spaceName: 'Harborview Hotel',
+        targetFolderPath: '1 Admin',
+        targetFileName: 'Harborview Hotel Document Log',
+      });
+    });
+
+    it('queryUiContext returns activeCandidate on resolved with webViewLink and fallback URL when omitted', async () => {
+      const searchSpreadsheets = vi
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            id: 'log-with-link',
+            name: 'Harborview Hotel Document Log',
+            webViewLink: 'https://docs.google.com/spreadsheets/d/custom-link/edit',
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: 'log-without-link',
+            name: 'Harborview Hotel Document Log',
+          },
+        ]);
+
+      const { service } = createService({
+        discovery: { searchSpreadsheets },
+      });
+
+      const withLink = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+      expect(withLink).toEqual({
+        status: 'resolved',
+        spaceName: 'Harborview Hotel',
+        targetFolderPath: '1 Admin',
+        activeCandidate: {
+          name: 'Harborview Hotel Document Log',
+          url: 'https://docs.google.com/spreadsheets/d/custom-link/edit',
+        },
+      });
+
+      const withoutLink = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+      expect(withoutLink).toEqual({
+        status: 'resolved',
+        spaceName: 'Harborview Hotel',
+        targetFolderPath: '1 Admin',
+        activeCandidate: {
+          name: 'Harborview Hotel Document Log',
+          url: 'https://docs.google.com/spreadsheets/d/log-without-link/edit',
+        },
+      });
+    });
+
+    it('queryUiContext returns ambiguous with matching selectedLogId or ranked fallback candidate', async () => {
+      const { service } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-1', name: 'Harborview Hotel Document Log' },
+            { id: 'log-2', name: 'Harborview Hotel Document Log Archive' },
+          ]),
+        },
+      });
+
+      const fallbackRes = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+      expect(fallbackRes).toEqual({
+        status: 'ambiguous',
+        spaceName: 'Harborview Hotel',
+        targetFolderPath: '1 Admin',
+        activeCandidate: {
+          name: 'Harborview Hotel Document Log',
+          url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+        },
+      });
+
+      const chosenRes = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        selectedLogId: 'log-2',
+      });
+      expect(chosenRes).toEqual({
+        status: 'ambiguous',
+        spaceName: 'Harborview Hotel',
+        targetFolderPath: '1 Admin',
+        activeCandidate: {
+          name: 'Harborview Hotel Document Log Archive',
+          url: 'https://docs.google.com/spreadsheets/d/log-2/edit',
+        },
+      });
+    });
+  });
 });

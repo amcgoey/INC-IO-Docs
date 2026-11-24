@@ -14,6 +14,7 @@ import {
   type RawManifestProviderPort,
   type UiProcessSpaceItem,
   type UiProcessDocumentSpaceDto,
+  type UiProcessDocumentLogPort,
   type UiProcessGmailPort,
   type UiProcessGmailMessageDescriptor,
   type UiProcessSourceParserPort,
@@ -43,7 +44,7 @@ import {
 } from '../infrastructure/workspace-addon/translator';
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
 import type { FormChangeEvaluatorFn as FormChangeEvaluator } from '../features/ui-process-manager';
-import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
+import type { OptionsFetcherPort, UiContextQueryPort } from '../features/schema-driven-ui/ports';
 import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import type {
   GmailThreadDetails,
@@ -277,6 +278,13 @@ export interface UiProcessManagerWiringOptions {
   evaluateFormChange?: FormChangeEvaluator | undefined;
   createOrchestrator?: UiProcessOrchestratorFactory | undefined;
   optionsFetcher?: OptionsFetcherPort | undefined;
+  uiContextQuery?: UiContextQueryPort | undefined;
+  documentLogPort?: UiProcessDocumentLogPort | undefined;
+  createDocumentLogPort?:
+    | ((
+        context: WorkspaceExecutionContext
+      ) => UiProcessDocumentLogPort | Promise<UiProcessDocumentLogPort>)
+    | undefined;
   driveClient?: GoogleDriveClient | undefined;
   gmailClient?: GoogleGmailClient | undefined;
   gmailPort?: UiProcessGmailPort | undefined;
@@ -477,6 +485,7 @@ export function createUiProcessManagerWiring(
       : createSchemaDrivenUiWiring({
           manifestProvider: options.manifestProvider,
           ...(options.optionsFetcher !== undefined ? { optionsFetcher: options.optionsFetcher } : {}),
+          ...(options.uiContextQuery !== undefined ? { uiContextQuery: options.uiContextQuery } : {}),
           ...(options.driveClient !== undefined ? { driveClient: options.driveClient } : {}),
         });
 
@@ -568,6 +577,7 @@ export function createUiProcessManagerWiring(
     spaceProvider: fallbackSpaceProvider,
     configProvider,
     manifestPort,
+    ...(options.documentLogPort !== undefined ? { documentLogPort: options.documentLogPort } : {}),
     documentRunner: fallbackDocumentRunner,
     formEvaluator,
     gmailPort,
@@ -584,9 +594,19 @@ export function createUiProcessManagerWiring(
     const token = context.userOAuthToken ?? context.gmail?.accessToken;
     const reqGmailPort: UiProcessGmailPort = options.gmailPort ?? createGmailPortForToken(gmailClient, token);
 
-    if (!options.createDocumentSpaceService && !options.createDocumentService && !options.createSourceParser && !token) {
+    if (
+      !options.createDocumentSpaceService &&
+      !options.createDocumentService &&
+      !options.createSourceParser &&
+      !options.createDocumentLogPort &&
+      !token
+    ) {
       return orchestrator;
     }
+
+    const reqDocumentLogPort: UiProcessDocumentLogPort | undefined = options.createDocumentLogPort
+      ? await options.createDocumentLogPort(context)
+      : options.documentLogPort;
 
     const reqSourceParser: UiProcessSourceParserPort | undefined = options.createSourceParser
       ? await options.createSourceParser(context)
@@ -610,7 +630,7 @@ export function createUiProcessManagerWiring(
       options.documentService || options.createDocumentService
         ? {
             processDocument: async (payload, eventName) => {
-              const { sourceFiles, targetMessageId, ...documentPayload } = payload;
+              const { sourceFiles, targetMessageId, selectedLogId, ...documentPayload } = payload;
               const space = toStructuredDocumentSpace(documentPayload.space);
               const targetDocPayload: DocumentModel = {
                 type: documentPayload.type,
@@ -629,6 +649,7 @@ export function createUiProcessManagerWiring(
                       },
                     }
                   : {}),
+                selectedLogId,
                 sourceFiles: activeSourceFiles,
                 selectedItems: activeSourceFiles.map((file) => ({
                   id: file.id,
@@ -658,6 +679,7 @@ export function createUiProcessManagerWiring(
       spaceProvider: reqSpaceProvider,
       configProvider,
       manifestPort,
+      ...(reqDocumentLogPort !== undefined ? { documentLogPort: reqDocumentLogPort } : {}),
       documentRunner: reqDocumentRunner,
       formEvaluator,
       gmailPort: reqGmailPort,

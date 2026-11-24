@@ -6,7 +6,7 @@ import {
   type RawManifestProviderPort,
   type EvaluationOrderEnsurer,
 } from '../features/schema-driven-ui/adapters';
-import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
+import type { OptionsFetcherPort, UiContextQueryPort } from '../features/schema-driven-ui/ports';
 import { DynamicOptionsAdapter, type DynamicOptionsDriveClient } from './dynamic-options.adapter';
 import { ensureEvaluationOrder } from '../infrastructure/validation/json-logic-graph';
 
@@ -16,12 +16,14 @@ export interface SchemaDrivenUiWiringOptions {
   manifestProvider: RawManifestProviderPort;
   evaluationOrderEnsurer?: EvaluationOrderEnsurer | undefined;
   optionsFetcher?: OptionsFetcherPort | undefined;
+  uiContextQuery?: UiContextQueryPort | undefined;
   driveClient?: DynamicOptionsDriveClient | undefined;
 }
 
 export interface SchemaDrivenUiWiring {
   schemaDrivenUiService: SchemaDrivenUiService;
   optionsFetcher?: OptionsFetcherPort | undefined;
+  uiContextQuery?: UiContextQueryPort | undefined;
 }
 
 export function createSchemaDrivenUiWiring(
@@ -41,11 +43,13 @@ export function createSchemaDrivenUiWiring(
   const service = new SchemaDrivenUiService(
     manifestAdapter,
     [workspaceAddonAdapter, gmailWorkspaceAddonAdapter],
-    optionsFetcher
+    optionsFetcher,
+    options.uiContextQuery
   );
 
   return {
     schemaDrivenUiService: service,
     ...(optionsFetcher !== undefined ? { optionsFetcher } : {}),
+    ...(options.uiContextQuery !== undefined ? { uiContextQuery: options.uiContextQuery } : {}),
   };
 }

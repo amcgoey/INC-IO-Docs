@@ -210,12 +210,44 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     });
 
     await app.initialize();
+    nock.disableNetConnect();
   });
 
   afterEach(() => {
     nock.cleanAll();
+    nock.enableNetConnect();
     vi.restoreAllMocks();
   });
+
+  function mockDocumentLogSearch(options: {
+    sharedDriveId?: string;
+    fileId?: string;
+    name?: string;
+    webViewLink?: string;
+  } = {}) {
+    const sharedDriveId = options.sharedDriveId ?? 'shared-drive-proj-root';
+    const fileId = options.fileId ?? `log-${sharedDriveId}`;
+    const name = options.name ?? 'Active Projects Document Log';
+    return nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query(
+        (q) =>
+          typeof q.q === 'string' &&
+          q.q.includes("name contains 'Document Log'") &&
+          q.driveId === sharedDriveId
+      )
+      .reply(200, {
+        files: [
+          {
+            id: fileId,
+            name,
+            mimeType: 'application/vnd.google-apps.spreadsheet',
+            webViewLink:
+              options.webViewLink ?? `https://docs.google.com/spreadsheets/d/${fileId}/edit`,
+          },
+        ],
+      });
+  }
 
   function mockDynamicValidationProject({
     sharedDriveId,
@@ -4713,6 +4745,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
 
       it('runs Pass 1 inferRouting when InputDriveURL receives a valid Drive URL on onFormChange, resolving document type from Drive and space from email fallback', async () => {
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         nock('https://www.googleapis.com')
           .get('/drive/v3/files/drive-submittal-url-123')
           .query(true)
@@ -4931,6 +4964,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
 
       it('infers projects DocumentSpace 123 Main St and submittal-arch from hierarchical Gmail label on card open', async () => {
+        mockDocumentLogSearch({ sharedDriveId: 'drive-123', name: '123 Main St Document Log' });
         const res = await app.server.inject({
           method: 'POST',
           url: '/workspace/gmail-contextual',
@@ -4955,6 +4989,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
 
       it('lets explicit FF&E code-bearing attachment win over generic Submittals label, selecting submittal-ffe', async () => {
+        mockDocumentLogSearch({ sharedDriveId: 'drive-123', name: '123 Main St Document Log' });
         const res = await app.server.inject({
           method: 'POST',
           url: '/workspace/gmail-contextual',
@@ -5586,6 +5621,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
 
       it('renders Submittal Arch card with pre-populated compound attachment fields, contact alias, action: REC, and submits document successfully', async () => {
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root', name: 'Active Projects Document Log' });
         const res = await app.server.inject({
           method: 'POST',
           url: '/workspace/gmail-contextual',
@@ -5796,6 +5832,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
 
       it('renders Submittal FF&E card with pre-populated specTag, auto-derived specTitle, vendor alias, action: REC, and submits document successfully', async () => {
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root', name: 'Active Projects Document Log' });
         const res = await app.server.inject({
           method: 'POST',
           url: '/workspace/gmail-contextual',
@@ -6069,6 +6106,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
 
       it('binds specTag and revision to CG104-A_CutSheet.pdf across [Berman_Cover.pdf, CG104-A_CutSheet.pdf] and resolves vendor BM via real submittal-ffe.json', async () => {
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         vi.spyOn(mockGmailClient, 'getThread').mockResolvedValueOnce({
           id: 'th-iter2-ffe-multi-att',
           messages: [
@@ -6136,6 +6174,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
 
       it('ignores PO12345 prefix and extracts CG104-A from subject "PO12345 - CG104-A" against real submittal-ffe.json', async () => {
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         vi.spyOn(mockGmailClient, 'getThread').mockResolvedValueOnce({
           id: 'th-iter2-ffe-po',
           messages: [
@@ -6185,6 +6224,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
 
       it('ignores prefixed token "XCG104-Z" and resolves specTag "CG104" and revision "A" from "XCG104-Z - CG104-A" against real submittal-ffe.json', async () => {
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         vi.spyOn(mockGmailClient, 'getThread').mockResolvedValueOnce({
           id: 'th-iter3-ffe-xcg',
           messages: [
@@ -6487,6 +6527,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         });
 
         // 1. Attachment without revision + unrelated "v2" in subject -> revision stays blank, Drive API never called
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         const res1 = await app.server.inject({
           method: 'POST',
           url: '/workspace/gmail-contextual',
@@ -6522,6 +6563,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         ).toBe('PMG');
 
         // 2. Subject ending in .Inc does NOT get truncated as a file extension
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         const res2 = await app.server.inject({
           method: 'POST',
           url: '/workspace/gmail-contextual',
@@ -6604,6 +6646,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         });
 
         for (const c of attachmentCases) {
+          mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
           const res = await app.server.inject({
             method: 'POST',
             url: '/workspace/gmail-contextual',
@@ -6629,6 +6672,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
 
       it('runs gmail before drive in Google Drive URL mode for submittal-arch, letting gmail win first and drive fill remaining blank fields', async () => {
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         const flatPdfBytes = await (await PDFDocument.create()).save();
         vi.spyOn(GoogleDriveClient.prototype, 'downloadFileMedia').mockResolvedValue(flatPdfBytes);
         vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
@@ -6788,6 +6832,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         });
 
         // 1. CG-104_v2_Fil_Doux.pdf -> specTag CG104, specTitle BED - KING, revision 1, vendor FDT, Drive API never called
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         const res1 = await app.server.inject({
           method: 'POST',
           url: '/workspace/gmail-contextual',
@@ -6820,6 +6865,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         ).toBe('FDT');
 
         // 2. LT 159A_R0.pdf -> specTag LT159A, specTitle SCONCE - CORRIDOR, revision 0, vendor AL
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         const res2 = await app.server.inject({
           method: 'POST',
           url: '/workspace/gmail-contextual',
@@ -6873,6 +6919,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
 
       it('runs gmail before drive in Google Drive URL mode for submittal-ffe, letting gmail win first and drive fill remaining blank fields', async () => {
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         const flatPdfBytes = await (await PDFDocument.create()).save();
         vi.spyOn(GoogleDriveClient.prototype, 'downloadFileMedia').mockResolvedValue(flatPdfBytes);
         vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
@@ -7005,6 +7052,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         }));
 
         // 1. Google Drive URL mode -> form extractor runs and extracts action: NOC
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         const urlRes = await app.server.inject({
           method: 'POST',
           url: '/workspace/on-form-change',
@@ -7053,6 +7101,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         // 2. Email Attachments mode -> skips Drive & form extraction completely
         getFileSpy.mockClear();
         downloadMediaSpy.mockClear();
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
 
         const attRes = await app.server.inject({
           method: 'POST',
@@ -7125,6 +7174,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         }));
 
         // 1. email.date present -> email.date wins ('261117') while form still populates action ('NOC')
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         const withEmailDateRes = await app.server.inject({
           method: 'POST',
           url: '/workspace/on-form-change',
@@ -7162,6 +7212,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
         // 2. email.date absent -> form Date ('230913') wins ahead of drive.modifiedTime ('261118')
         emailDate = undefined;
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         const withoutEmailDateRes = await app.server.inject({
           method: 'POST',
           url: '/workspace/on-form-change',
@@ -7241,6 +7292,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           ],
         }));
 
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         const res = await app.server.inject({
           method: 'POST',
           url: '/workspace/on-form-change',
@@ -7332,6 +7384,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           ],
         }));
 
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         const res = await app.server.inject({
           method: 'POST',
           url: '/workspace/on-form-change',
@@ -7463,6 +7516,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           });
 
         // 1. Google Drive URL mode -> gmail populates contact/date/section/number; form advances to revision "2"
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         const urlRes = await app.server.inject({
           method: 'POST',
           url: '/workspace/on-form-change',
@@ -7502,6 +7556,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(docsScope.isDone()).toBe(true);
 
         // 2. Email Attachments mode -> makes zero docs.googleapis.com calls (enforced by nock.disableNetConnect)
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         const attRes = await app.server.inject({
           method: 'POST',
           url: '/workspace/gmail-contextual',
@@ -7743,6 +7798,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
             })
           );
 
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         const archRes = await app.server.inject({
           method: 'POST',
           url: '/workspace/on-form-change',
@@ -7833,6 +7889,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
             })
           );
 
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
         const ffeRes = await app.server.inject({
           method: 'POST',
           url: '/workspace/on-form-change',
@@ -7923,6 +7980,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         attachments,
       });
 
+      mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root' });
       const res = await app.server.inject({
         method: 'POST',
         url: '/workspace/gmail-contextual',

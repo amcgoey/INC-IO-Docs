@@ -8,7 +8,8 @@ import {
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
   createWorkspaceAddonViewSchema,
 } from './workspace-addon.adapter';
-import type { UiViewAdapterContext } from '../ports';
+import type { DocumentLogPanelContext, UiViewAdapterContext } from '../ports';
+import { PRIMARY_ACTION_BUTTON_COLOR } from '../blocks/common';
 
 describe('WorkspaceAddonAdapter', () => {
   let adapter: WorkspaceAddonAdapter;
@@ -342,8 +343,13 @@ describe('WorkspaceAddonAdapter', () => {
     expect(infoSection.header).toBe('Document Data');
     expect(infoSection.widgets).toHaveLength(2);
     expect(infoSection.widgets[0].textInput?.name).toBe('invoiceNumber_invoice');
+    expect(PRIMARY_ACTION_BUTTON_COLOR).toBeDefined();
     expect(infoSection.widgets[1].buttonList?.buttons).toEqual([
-      { text: 'Process Document', onClick: { action: 'processDocument' } },
+      {
+        text: 'Process Document',
+        onClick: { action: 'processDocument' },
+        color: PRIMARY_ACTION_BUTTON_COLOR,
+      },
     ]);
 
     const adminSection = view.sections[1];
@@ -1217,6 +1223,161 @@ describe('WorkspaceAddonAdapter', () => {
         action: 'onFormChange',
       });
     });
+  });
+
+  describe('Document Log contextKeys, section placement, and Process Document gating', () => {
+    const adapterEntries = [
+      {
+        label: 'WorkspaceAddonAdapter (Drive)',
+        viewId: WORKSPACE_ADDON_VIEW_ID,
+        createAdapter: () => new WorkspaceAddonAdapter(),
+      },
+      {
+        label: 'GmailWorkspaceAddonAdapter (Gmail)',
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        createAdapter: () => new GmailWorkspaceAddonAdapter(),
+      },
+    ] as const;
+
+    const buildBaseContext = (
+      viewId: string,
+      uiContext?: Record<string, unknown>
+    ): UiViewAdapterContext => ({
+      viewId,
+      selectionState: {
+        spaceTypes: [{ text: 'Projects', value: 'projects', selected: true }],
+        spaces: ['Harborview Hotel'],
+        documentTypes: [{ text: 'Submittal', value: 'submittal-arch', selected: true }],
+        files: [{ text: 'submittal.pdf', value: 'file-1', selected: true }],
+      },
+      documentTypeKey: 'submittal-arch',
+      documentSchema: {
+        fields: [{ key: 'title', type: 'string' }],
+      },
+      ...(uiContext !== undefined ? { uiContext } : {}),
+    });
+
+    const getProcessButton = (view: UiView) => {
+      const dataSection = view.sections.find((s) => s.header === 'Document Data');
+      const buttonListWidget = dataSection?.widgets.find((w) => w.buttonList !== undefined);
+      return buttonListWidget?.buttonList?.buttons.find((b) => b.text === 'Process Document');
+    };
+
+    it.each(adapterEntries)('$label declares contextKeys equal to ["document-log"]', ({ createAdapter }) => {
+      const instance = createAdapter();
+      expect(instance.contextKeys).toEqual(['document-log']);
+    });
+
+    it.each(adapterEntries)(
+      '$label omits Document Log section and keeps Process Document enabled when uiContext or uiContext["document-log"] is undefined',
+      async ({ viewId, createAdapter }) => {
+        const instance = createAdapter();
+
+        for (const uiContext of [undefined, {}, { 'document-log': undefined }]) {
+          const view = await instance.composeView(buildBaseContext(viewId, uiContext));
+          assertValidUiView(view);
+
+          const headers = view.sections.map((s) => s.header);
+          expect(headers).not.toContain('Document Log');
+          expect(headers.indexOf('Document Data')).toBe(headers.indexOf('File Selection') + 1);
+
+          const processButton = getProcessButton(view);
+          expect(PRIMARY_ACTION_BUTTON_COLOR).toBeDefined();
+          expect(processButton).toEqual({
+            text: 'Process Document',
+            onClick: { action: 'processDocument' },
+            color: PRIMARY_ACTION_BUTTON_COLOR,
+          });
+          expect('disabled' in (processButton ?? {})).toBe(false);
+        }
+      }
+    );
+
+    const statusCases: ReadonlyArray<{
+      status: DocumentLogPanelContext['status'];
+      panel: DocumentLogPanelContext;
+      expectedDisabled: boolean;
+    }> = [
+      {
+        status: 'missing_space',
+        panel: { status: 'missing_space' },
+        expectedDisabled: true,
+      },
+      {
+        status: 'missing',
+        panel: {
+          status: 'missing',
+          spaceName: 'Harborview Hotel',
+          targetFolderPath: '1 Admin',
+          targetFileName: 'Harborview Hotel Document Log',
+        },
+        expectedDisabled: true,
+      },
+      {
+        status: 'discovery_error',
+        panel: {
+          status: 'discovery_error',
+          discoveryErrorMessage: 'Drive lookup failed',
+        },
+        expectedDisabled: false,
+      },
+      {
+        status: 'resolved',
+        panel: {
+          status: 'resolved',
+          spaceName: 'Harborview Hotel',
+          targetFolderPath: '1 Admin',
+          activeCandidate: {
+            name: 'Harborview Hotel Document Log',
+            url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+          },
+        },
+        expectedDisabled: false,
+      },
+    ];
+
+    it.each(statusCases)(
+      'renders Document Log section identically between File Selection and Document Data and gates Process Document for status: $status',
+      async ({ panel, expectedDisabled }) => {
+        const driveAdapter = new WorkspaceAddonAdapter();
+        const gmailAdapter = new GmailWorkspaceAddonAdapter();
+
+        const driveView = await driveAdapter.composeView(
+          buildBaseContext(WORKSPACE_ADDON_VIEW_ID, { 'document-log': panel })
+        );
+        const gmailView = await gmailAdapter.composeView(
+          buildBaseContext(GMAIL_WORKSPACE_ADDON_VIEW_ID, { 'document-log': panel })
+        );
+
+        assertValidUiView(driveView);
+        assertValidUiView(gmailView);
+
+        for (const view of [driveView, gmailView]) {
+          const headers = view.sections.map((s) => s.header);
+          const fileIdx = headers.indexOf('File Selection');
+          const logIdx = headers.indexOf('Document Log');
+          const dataIdx = headers.indexOf('Document Data');
+
+          expect(fileIdx).toBeGreaterThanOrEqual(0);
+          expect(logIdx).toBe(fileIdx + 1);
+          expect(dataIdx).toBe(logIdx + 1);
+
+          const processButton = getProcessButton(view);
+          expect(processButton?.color).toEqual(PRIMARY_ACTION_BUTTON_COLOR);
+          if (expectedDisabled) {
+            expect(processButton?.disabled).toBe(true);
+          } else {
+            expect(processButton?.disabled).toBeUndefined();
+            expect('disabled' in (processButton ?? {})).toBe(false);
+          }
+        }
+
+        const driveLogSection = driveView.sections.find((s) => s.header === 'Document Log');
+        const gmailLogSection = gmailView.sections.find((s) => s.header === 'Document Log');
+        expect(driveLogSection).toBeDefined();
+        expect(driveLogSection).toEqual(gmailLogSection);
+      }
+    );
   });
 });
 

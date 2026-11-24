@@ -1,5 +1,6 @@
 export * from './status-message';
 export * from './document-type-selection';
+export * from './document-log';
 export * from './document-info';
 export * from './document-admin';
 export * from './file-selection';

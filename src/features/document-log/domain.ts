@@ -4,6 +4,7 @@ import {
   DocumentLogMissingError,
   type DocumentLogPort,
   type DocumentLogSpace,
+  type DocumentLogUiContextResult,
   type LogDiscoveryFileMetadata,
   type LogDiscoveryPort,
   type LogResolutionCandidate,
@@ -11,6 +12,7 @@ import {
   type LogSchemaRegistryPort,
   type LogStoragePort,
   type LogTemplateEvaluatorPort,
+  type QueryDocumentLogUiContextRequest,
   type WriteDocumentLogRequest,
   type WriteDocumentLogResult,
 } from './ports';
@@ -184,6 +186,13 @@ async function isDescendantOfRoot(
   return false;
 }
 
+function buildCandidateUrl(candidate: LogResolutionCandidate): string {
+  const link = candidate.webViewLink?.trim();
+  return link && link.length > 0
+    ? link
+    : `https://docs.google.com/spreadsheets/d/${candidate.id}/edit`;
+}
+
 /**
  * Core domain service managing live DocumentLog discovery and Document dehydration/write orchestration.
  */
@@ -194,6 +203,88 @@ export class DocumentLogService implements DocumentLogPort {
     private readonly logStorage: LogStoragePort,
     private readonly templateEvaluator: LogTemplateEvaluatorPort
   ) {}
+
+  requiresDocumentLog(documentTypeKey: string): boolean {
+    const trimmed = typeof documentTypeKey === 'string' ? documentTypeKey.trim() : '';
+    if (trimmed.length === 0) {
+      return false;
+    }
+    return this.schemaRegistry.getDocumentLogSchema(trimmed) !== undefined;
+  }
+
+  async queryUiContext(
+    request: QueryDocumentLogUiContextRequest
+  ): Promise<DocumentLogUiContextResult | undefined> {
+    if (!request.documentTypeKey || !this.requiresDocumentLog(request.documentTypeKey)) {
+      return undefined;
+    }
+
+    if (!request.space) {
+      return { status: 'missing_space' };
+    }
+
+    let resolution: LogResolutionResult;
+    try {
+      resolution = await this.resolveLog(request.space);
+    } catch (error) {
+      if (error instanceof DocumentLogConfigurationError) {
+        throw error;
+      }
+      return {
+        status: 'discovery_error',
+        spaceName: request.space.name,
+        discoveryErrorMessage: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    const discoveryConfig = this.schemaRegistry.getDiscoveryConfig(request.space.typeId);
+
+    if (resolution.status === 'missing') {
+      const targetFileName = discoveryConfig
+        ? this.templateEvaluator.evaluate(discoveryConfig.copyNameTemplate, {
+            DocumentSpace: request.space,
+          })
+        : undefined;
+      return {
+        status: 'missing',
+        spaceName: request.space.name,
+        targetFolderPath: resolution.expectedFolderPath,
+        ...(targetFileName !== undefined ? { targetFileName } : {}),
+      };
+    }
+
+    if (resolution.status === 'resolved') {
+      return {
+        status: 'resolved',
+        spaceName: request.space.name,
+        ...(discoveryConfig?.preferredFolderPath !== undefined
+          ? { targetFolderPath: discoveryConfig.preferredFolderPath }
+          : {}),
+        activeCandidate: {
+          name: resolution.candidate.name,
+          url: buildCandidateUrl(resolution.candidate),
+        },
+      };
+    }
+
+    const trimmedSelectedId = request.selectedLogId?.trim();
+    const active =
+      (trimmedSelectedId
+        ? resolution.candidates.find((c) => c.id === trimmedSelectedId)
+        : undefined) ?? resolution.candidates[0];
+
+    return {
+      status: 'ambiguous',
+      spaceName: request.space.name,
+      ...(discoveryConfig?.preferredFolderPath !== undefined
+        ? { targetFolderPath: discoveryConfig.preferredFolderPath }
+        : {}),
+      activeCandidate: {
+        name: active.name,
+        url: buildCandidateUrl(active),
+      },
+    };
+  }
 
   private async resolveDiscoveryScope(
     space: DocumentLogSpace

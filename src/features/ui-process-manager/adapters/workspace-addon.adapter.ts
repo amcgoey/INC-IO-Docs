@@ -5,6 +5,7 @@ import type {
   UiProcessSpaceProviderPort,
   UiProcessConfigProviderPort,
   UiProcessManifestPort,
+  UiProcessDocumentLogPort,
   UiProcessDocumentRunnerPort,
   UiProcessFormEvaluatorPort,
   UiProcessDocumentSpaceDto,
@@ -156,6 +157,7 @@ export interface WorkspaceAddonAdapterOptions {
   spaceProvider: UiProcessSpaceProviderPort;
   configProvider?: UiProcessConfigProviderPort | undefined;
   manifestPort?: UiProcessManifestPort | undefined;
+  documentLogPort?: UiProcessDocumentLogPort | undefined;
   documentRunner?: UiProcessDocumentRunnerPort | undefined;
   formEvaluator?: UiProcessFormEvaluatorPort | undefined;
   gmailPort?: UiProcessGmailPort | undefined;
@@ -900,6 +902,36 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         abstractStorageId: matchedSpace.abstractStorageId ?? matchedSpace.id,
       };
 
+      let selectedLogId: string | undefined;
+      if (this.options.documentLogPort && resolvedDocumentTypeKey) {
+        try {
+          const needsLog = await this.options.documentLogPort.requiresDocumentLog(
+            resolvedDocumentTypeKey
+          );
+          if (needsLog) {
+            const logResolution = await this.options.documentLogPort.resolveLog(space);
+            if (logResolution.status === 'missing') {
+              return createErrorRenderResult([
+                `No DocumentLog spreadsheet found for space "${space.name}". Expected a DocumentLog spreadsheet in "${logResolution.expectedFolderPath}".`,
+              ]);
+            }
+            if (logResolution.status === 'ambiguous') {
+              const candidateSummary = logResolution.candidates
+                .map((c) => `"${c.name}" (${c.id})`)
+                .join(', ');
+              return createErrorRenderResult([
+                `Multiple DocumentLog spreadsheets found for space "${space.name}": ${candidateSummary}.`,
+              ]);
+            }
+            selectedLogId = logResolution.candidate.id;
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : 'Failed to verify DocumentLog availability';
+          return createErrorRenderResult([message]);
+        }
+      }
+
       const data = extractDocumentData(normalizedContext.formData);
 
       try {
@@ -911,6 +943,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
               space,
               sourceFiles: activeSourceFiles,
               ...(selectedMessageId !== undefined ? { targetMessageId: selectedMessageId } : {}),
+              ...(selectedLogId !== undefined ? { selectedLogId } : {}),
             },
             'onSubmit'
           );

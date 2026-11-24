@@ -165,6 +165,31 @@ export interface UiProcessDocumentExecutionResult {
   error?: string | undefined;
 }
 
+export const UiProcessLogCandidateSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  name: Type.String({ minLength: 1 }),
+});
+export type UiProcessLogCandidate = Static<typeof UiProcessLogCandidateSchema>;
+
+export type UiProcessLogResolutionResult =
+  | {
+      status: 'missing';
+      expectedFolderPath: string;
+    }
+  | {
+      status: 'resolved';
+      candidate: UiProcessLogCandidate;
+    }
+  | {
+      status: 'ambiguous';
+      candidates: UiProcessLogCandidate[];
+    };
+
+export interface UiProcessDocumentLogPort {
+  requiresDocumentLog(documentTypeKey: string): Promise<boolean> | boolean;
+  resolveLog(space: UiProcessDocumentSpaceDto): Promise<UiProcessLogResolutionResult>;
+}
+
 export interface UiProcessDocumentRunnerPort {
   processDocument(
     payload: {
@@ -173,6 +198,7 @@ export interface UiProcessDocumentRunnerPort {
       space?: UiProcessDocumentSpaceDto | undefined;
       sourceFiles?: UiProcessSourceFileDto[] | undefined;
       targetMessageId?: string | undefined;
+      selectedLogId?: string | undefined;
     },
     eventName: string
   ): Promise<UiProcessDocumentExecutionResult>;

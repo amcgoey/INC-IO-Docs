@@ -6,7 +6,7 @@ import type { UiSchema, UiView } from './domain';
 export const SelectionItemSchema = Type.Object({
   text: Type.String(),
   value: Type.String(),
-  selected: Type.Optional(Type.Boolean()),
+  selected: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
 });
 
 export type SelectionItem = Static<typeof SelectionItemSchema>;
@@ -85,6 +85,102 @@ export interface OptionsFetcherPort {
   ): Promise<Record<string, DynamicOptionResolution>>;
 }
 
+// --- Pre-Submit UI Context Query Port & Storage-Agnostic Panel DTOs ---
+
+export const DOCUMENT_LOG_CONTEXT_KEY = 'document-log';
+
+export const UiContextQueryRequestSchema = Type.Object({
+  spaceId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  documentTypeKey: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  formData: Type.Optional(
+    Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])
+  ),
+});
+
+export type UiContextQueryRequest = Static<typeof UiContextQueryRequestSchema>;
+
+export interface UiContextQueryPort {
+  queryContext(
+    keys: readonly string[],
+    context: UiContextQueryRequest
+  ): Promise<Record<string, unknown>>;
+}
+
+export const DocumentLogPanelStatusSchema = Type.Union([
+  Type.Literal('missing_space'),
+  Type.Literal('missing'),
+  Type.Literal('resolved'),
+  Type.Literal('ambiguous'),
+  Type.Literal('discovery_error'),
+]);
+
+export type DocumentLogPanelStatus = Static<typeof DocumentLogPanelStatusSchema>;
+
+export const DocumentLogPanelCandidateSchema = Type.Object(
+  {
+    name: Type.String({ minLength: 1 }),
+    url: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false }
+);
+
+export type DocumentLogPanelCandidate = Static<typeof DocumentLogPanelCandidateSchema>;
+
+export const DocumentLogPanelReadStatusSchema = Type.Union([
+  Type.Literal('ready'),
+  Type.Literal('idle_incomplete_id'),
+  Type.Literal('read_error'),
+  Type.Literal('partial_hydration'),
+]);
+
+export type DocumentLogPanelReadStatus = Static<typeof DocumentLogPanelReadStatusSchema>;
+
+export const DocumentLogPanelEntrySchema = Type.Object(
+  {
+    topLabel: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    text: Type.String(),
+    bottomLabel: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    fileUri: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    valid: Type.Boolean(),
+  },
+  { additionalProperties: false }
+);
+
+export type DocumentLogPanelEntry = Static<typeof DocumentLogPanelEntrySchema>;
+
+export const DocumentLogPanelContextSchema = Type.Object(
+  {
+    status: DocumentLogPanelStatusSchema,
+    spaceName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    targetFolderPath: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    targetFileName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    discoveryErrorMessage: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    candidateOptions: Type.Optional(
+      Type.Union([Type.Array(SelectionItemSchema), Type.Undefined()])
+    ),
+    activeCandidate: Type.Optional(
+      Type.Union([DocumentLogPanelCandidateSchema, Type.Undefined()])
+    ),
+    readStatus: Type.Optional(
+      Type.Union([DocumentLogPanelReadStatusSchema, Type.Undefined()])
+    ),
+    idGroup: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    missingIdFields: Type.Optional(
+      Type.Union([Type.Array(Type.String()), Type.Undefined()])
+    ),
+    readErrorMessage: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    warningMessages: Type.Optional(
+      Type.Union([Type.Array(Type.String()), Type.Undefined()])
+    ),
+    entries: Type.Optional(
+      Type.Union([Type.Array(DocumentLogPanelEntrySchema), Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export type DocumentLogPanelContext = Static<typeof DocumentLogPanelContextSchema>;
+
 // --- Data & Presentation DTO Schemas ---
 
 export const LinkedFieldSchema = Type.Object({
@@ -132,9 +228,11 @@ export interface UiViewAdapterContext extends GenerateViewRequest {
   uiSchema?: UiSchema | undefined;
   documentSchema?: AbstractDataSchema | undefined;
   dynamicOptions?: Record<string, DynamicOptionResolution | DynamicOptionItem[]> | undefined;
+  uiContext?: Record<string, unknown> | undefined;
 }
 
 export interface UiViewSchemaAdapterPort {
   readonly viewId: string;
+  readonly contextKeys?: readonly string[] | undefined;
   composeView(context: UiViewAdapterContext): Promise<UiView> | UiView;
 }

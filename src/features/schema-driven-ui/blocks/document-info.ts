@@ -16,13 +16,14 @@ import type {
   DynamicOptionResolution,
 } from '../ports';
 import { DEFAULT_MESSAGE_CATALOG, formatFieldHint } from '../message-catalog';
-import { withOnChangeAction } from './common';
+import { PRIMARY_ACTION_BUTTON_COLOR, withOnChangeAction } from './common';
 
 export interface DocumentInfoOptions {
   sectionHeader?: string | undefined;
   formData?: Record<string, unknown> | undefined;
   hiddenFields?: string[] | undefined;
   onProcessAction?: UiViewAction | string | undefined;
+  processDisabled?: boolean | undefined;
   documentTypeKey?: string | undefined;
   dynamicOptions?: Record<string, DynamicOptionResolution | DynamicOptionItem[]> | undefined;
   onChangeActionParameters?: Record<string, unknown> | undefined;
@@ -302,6 +303,8 @@ export function buildDocumentInfoSection(
           {
             text: 'Process Document',
             onClick: processAction,
+            color: PRIMARY_ACTION_BUTTON_COLOR,
+            ...(options.processDisabled ? { disabled: true } : {}),
           },
         ],
       },

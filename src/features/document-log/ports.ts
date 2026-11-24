@@ -403,9 +403,71 @@ export interface LogStoragePort {
   insertRow(request: InsertLogRowRequest): Promise<InsertLogRowResult>;
 }
 
+// --- Pre-Submit UI Context DTOs ---
+
+export const QueryDocumentLogUiContextRequestSchema = Type.Object({
+  documentTypeKey: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  space: Type.Optional(Type.Union([DocumentLogSpaceSchema, Type.Undefined()])),
+  selectedLogId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  formData: Type.Optional(
+    Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])
+  ),
+});
+export type QueryDocumentLogUiContextRequest = Static<typeof QueryDocumentLogUiContextRequestSchema>;
+
+export const DocumentLogUiStatusSchema = Type.Union([
+  Type.Literal('missing_space'),
+  Type.Literal('missing'),
+  Type.Literal('resolved'),
+  Type.Literal('ambiguous'),
+  Type.Literal('discovery_error'),
+]);
+export type DocumentLogUiStatus = Static<typeof DocumentLogUiStatusSchema>;
+
+export const DocumentLogUiCandidateSchema = Type.Object(
+  {
+    name: Type.String({ minLength: 1 }),
+    url: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false }
+);
+export type DocumentLogUiCandidate = Static<typeof DocumentLogUiCandidateSchema>;
+
+export const DocumentLogUiCandidateOptionSchema = Type.Object(
+  {
+    text: Type.String(),
+    value: Type.String(),
+    selected: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+export type DocumentLogUiCandidateOption = Static<typeof DocumentLogUiCandidateOptionSchema>;
+
+export const DocumentLogUiContextResultSchema = Type.Object(
+  {
+    status: DocumentLogUiStatusSchema,
+    spaceName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    targetFolderPath: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    targetFileName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    discoveryErrorMessage: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    candidateOptions: Type.Optional(
+      Type.Union([Type.Array(DocumentLogUiCandidateOptionSchema), Type.Undefined()])
+    ),
+    activeCandidate: Type.Optional(
+      Type.Union([DocumentLogUiCandidateSchema, Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
+export type DocumentLogUiContextResult = Static<typeof DocumentLogUiContextResultSchema>;
+
 // --- Driving Port ---
 
 export interface DocumentLogPort {
+  requiresDocumentLog(documentTypeKey: string): boolean;
   resolveLog(space: DocumentLogSpace): Promise<LogResolutionResult>;
+  queryUiContext(
+    request: QueryDocumentLogUiContextRequest
+  ): Promise<DocumentLogUiContextResult | undefined>;
   writeLog(request: WriteDocumentLogRequest): Promise<WriteDocumentLogResult>;
 }

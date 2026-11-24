@@ -44,7 +44,9 @@ describe('DocumentLogActivityHandler', () => {
 
   it('canHandle returns true only for WRITE_LOG', () => {
     const mockService: DocumentLogPort = {
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
       resolveLog: vi.fn(),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
       writeLog: vi.fn(),
     };
     const handler = new DocumentLogActivityHandler(mockService);
@@ -61,7 +63,12 @@ describe('DocumentLogActivityHandler', () => {
       action: 'inserted',
     });
     const handler = new DocumentLogActivityHandler(
-      { resolveLog: vi.fn(), writeLog },
+      {
+        requiresDocumentLog: vi.fn().mockReturnValue(true),
+        resolveLog: vi.fn(),
+        queryUiContext: vi.fn().mockResolvedValue(undefined),
+        writeLog,
+      },
       { selectedLogId: 'sheet-log-1' }
     );
 
@@ -95,7 +102,12 @@ describe('DocumentLogActivityHandler', () => {
       rowNumber: 8,
       action: 'inserted',
     });
-    const handler = new DocumentLogActivityHandler({ resolveLog: vi.fn(), writeLog });
+    const handler = new DocumentLogActivityHandler({
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      resolveLog: vi.fn(),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
+      writeLog,
+    });
 
     const contextWithSteps: ActivityExecutionContext = {
       ...baseContext,
@@ -130,7 +142,12 @@ describe('DocumentLogActivityHandler', () => {
 
   it('fails fast when fileSourceStepId references an unexecuted step', async () => {
     const writeLog = vi.fn();
-    const handler = new DocumentLogActivityHandler({ resolveLog: vi.fn(), writeLog });
+    const handler = new DocumentLogActivityHandler({
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      resolveLog: vi.fn(),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
+      writeLog,
+    });
 
     const output = await handler.handle(
       { type: 'WRITE_LOG', payload: { fileSourceStepId: 'missingStep' } },
@@ -146,7 +163,12 @@ describe('DocumentLogActivityHandler', () => {
 
   it('validates WRITE_LOG payload and rejects unknown keys or invalid fileSourceStepId', async () => {
     const writeLog = vi.fn();
-    const handler = new DocumentLogActivityHandler({ resolveLog: vi.fn(), writeLog });
+    const handler = new DocumentLogActivityHandler({
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      resolveLog: vi.fn(),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
+      writeLog,
+    });
 
     const badPayloads: Activity[] = [
       { type: 'WRITE_LOG', payload: { unexpected: true } },
@@ -164,7 +186,9 @@ describe('DocumentLogActivityHandler', () => {
 
   it('maps domain/Sheets/Drive errors from writeLog into { success: false, error }', async () => {
     const handler = new DocumentLogActivityHandler({
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
       resolveLog: vi.fn(),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
       writeLog: vi.fn().mockRejectedValue(
         new DocumentLogMissingError('Harborview Hotel', '1 Admin')
       ),
