@@ -1568,5 +1568,48 @@ describe('DocumentLogService', () => {
         })
       ).toBeNull();
     });
+
+    it('enriches document.data once per writeLog and reuses enrichedData for row mapping and target key computation', async () => {
+      const insertRow = vi.fn().mockResolvedValue({ rowNumber: 6, action: 'inserted' });
+      const { service } = createService({ storage: { insertRow } });
+
+      let titleReads = 0;
+      const dataWithReadCounter: Record<string, unknown> = {
+        status: 'Open',
+        section: '071200',
+        number: '001',
+        revision: '0',
+        date: '260204',
+        contact: 'MB',
+        action: 'REC',
+      };
+      Object.defineProperty(dataWithReadCounter, 'title', {
+        enumerable: true,
+        get: () => {
+          titleReads++;
+          return 'Waterproofing';
+        },
+      });
+
+      const result = await service.writeLog({
+        document: {
+          type: 'submittal-arch',
+          data: dataWithReadCounter,
+        },
+        selectedLogId: 'log-single-enrich',
+      });
+
+      expect(result.action).toBe('inserted');
+      expect(titleReads).toBe(1);
+      expect(insertRow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rowData: expect.objectContaining({ Title: 'Waterproofing', Action: 'Received' }),
+          targetKeys: {
+            groupKey: '071200-001',
+            sortKey: '071200-001-0-260204-1',
+          },
+        })
+      );
+    });
   });
 });

@@ -758,6 +758,13 @@ function coalesceInsertions(insertions: readonly PlannedInsertion[]): PlannedIns
   return coalesced;
 }
 
+interface AtomicMutationDraft {
+  sortedUniqueDeletesDesc: readonly number[];
+  postDeleteIndex: (origAbsIndex: number) => number;
+  insertions: readonly PlannedInsertion[];
+  upsertOrigAbsIndex?: number | undefined;
+}
+
 /**
  * Compiles deletions (executed descending so upper indices stay stable), coalesced insertions
  * (executed ascending with running offset), and optional upsert updates into one atomic batchUpdate.
@@ -846,29 +853,19 @@ function compileAtomicMutationPlan(params: {
  * and healing only that group's immediate upper and lower boundaries.
  */
 function planExistingGroupMutation(params: {
-  sheetId: number;
   parsed: ParsedPositiveTable;
   rangeStartRowIndex: number;
-  rangeStartColumnIndex: number;
-  target: PositiveTableTarget;
-  writableRuns: WritableColumnRun[];
+  groupDividerMarker: string;
   targetKeys: RowKey;
   groups: readonly PartitionedGroup[];
   existingGroup: PartitionedGroup;
   rowSortOrder: 'asc' | 'desc';
   duplicatePolicy: 'insert' | 'upsert' | 'reject';
-}): {
-  requests: sheets_v4.Schema$Request[];
-  rowNumber: number;
-  action: 'inserted' | 'updated';
-} {
+}): AtomicMutationDraft {
   const {
-    sheetId,
     parsed,
     rangeStartRowIndex,
-    rangeStartColumnIndex,
-    target,
-    writableRuns,
+    groupDividerMarker,
     targetKeys,
     groups,
     existingGroup,
@@ -891,7 +888,7 @@ function planExistingGroupMutation(params: {
       rangeStartRowIndex,
       startRelExclusive: prevGroup.lastDataRelIndex,
       endRelExclusive: existingGroup.firstDataRelIndex,
-      groupDividerMarker: target.groupDividerMarker,
+      groupDividerMarker,
     });
     deleteAbsIndices.push(...upperGap.deleteAbsIndices);
     needsUpperDivider = upperGap.keptCleanDividerAbsIndex === undefined;
@@ -924,7 +921,7 @@ function planExistingGroupMutation(params: {
       rangeStartRowIndex,
       startRelExclusive: existingGroup.lastDataRelIndex,
       endRelExclusive: nextGroup.firstDataRelIndex,
-      groupDividerMarker: target.groupDividerMarker,
+      groupDividerMarker,
     });
     deleteAbsIndices.push(...lowerGap.deleteAbsIndices);
     needsLowerDivider = lowerGap.keptCleanDividerAbsIndex === undefined;
@@ -979,16 +976,12 @@ function planExistingGroupMutation(params: {
     });
   }
 
-  return compileAtomicMutationPlan({
-    sheetId,
-    rangeStartColumnIndex,
-    groupDividerMarker: target.groupDividerMarker,
-    writableRuns,
+  return {
     sortedUniqueDeletesDesc,
     postDeleteIndex,
     insertions,
     ...(isUpsert ? { upsertOrigAbsIndex: matchingRow.absRowIndex } : {}),
-  });
+  };
 }
 
 /**
@@ -996,27 +989,17 @@ function planExistingGroupMutation(params: {
  * the affected insertion boundary and preserving any null-keyed rows.
  */
 function planNewGroupMutation(params: {
-  sheetId: number;
   parsed: ParsedPositiveTable;
   rangeStartRowIndex: number;
-  rangeStartColumnIndex: number;
-  target: PositiveTableTarget;
-  writableRuns: WritableColumnRun[];
+  groupDividerMarker: string;
   targetKeys: RowKey;
   groups: readonly PartitionedGroup[];
   groupSortOrder: 'asc' | 'desc';
-}): {
-  requests: sheets_v4.Schema$Request[];
-  rowNumber: number;
-  action: 'inserted' | 'updated';
-} {
+}): AtomicMutationDraft {
   const {
-    sheetId,
     parsed,
     rangeStartRowIndex,
-    rangeStartColumnIndex,
-    target,
-    writableRuns,
+    groupDividerMarker,
     targetKeys,
     groups,
     groupSortOrder,
@@ -1050,15 +1033,7 @@ function planNewGroupMutation(params: {
       inheritFromBefore: postDeleteInsertIndex !== absTopAnchor + 1,
       rows: ['data'],
     });
-    return compileAtomicMutationPlan({
-      sheetId,
-      rangeStartColumnIndex,
-      groupDividerMarker: target.groupDividerMarker,
-      writableRuns,
-      sortedUniqueDeletesDesc,
-      postDeleteIndex,
-      insertions,
-    });
+    return { sortedUniqueDeletesDesc, postDeleteIndex, insertions };
   }
 
   const nextGroupIdx = groups.findIndex(
@@ -1082,15 +1057,7 @@ function planNewGroupMutation(params: {
       inheritFromBefore: false,
       rows: ['data', 'divider'],
     });
-    return compileAtomicMutationPlan({
-      sheetId,
-      rangeStartColumnIndex,
-      groupDividerMarker: target.groupDividerMarker,
-      writableRuns,
-      sortedUniqueDeletesDesc,
-      postDeleteIndex,
-      insertions,
-    });
+    return { sortedUniqueDeletesDesc, postDeleteIndex, insertions };
   }
 
   if (nextGroupIdx > 0) {
@@ -1101,7 +1068,7 @@ function planNewGroupMutation(params: {
       rangeStartRowIndex,
       startRelExclusive: prevGroup.lastDataRelIndex,
       endRelExclusive: nextGroup.firstDataRelIndex,
-      groupDividerMarker: target.groupDividerMarker,
+      groupDividerMarker,
     });
     deleteAbsIndices.push(...middleGap.deleteAbsIndices);
     const { sortedUniqueDeletesDesc, postDeleteIndex } = buildPostDeleteMapper(deleteAbsIndices);
@@ -1122,15 +1089,7 @@ function planNewGroupMutation(params: {
       });
     }
 
-    return compileAtomicMutationPlan({
-      sheetId,
-      rangeStartColumnIndex,
-      groupDividerMarker: target.groupDividerMarker,
-      writableRuns,
-      sortedUniqueDeletesDesc,
-      postDeleteIndex,
-      insertions,
-    });
+    return { sortedUniqueDeletesDesc, postDeleteIndex, insertions };
   }
 
   const prevGroup = groups[groups.length - 1];
@@ -1150,15 +1109,7 @@ function planNewGroupMutation(params: {
     rows: ['divider', 'data'],
   });
 
-  return compileAtomicMutationPlan({
-    sheetId,
-    rangeStartColumnIndex,
-    groupDividerMarker: target.groupDividerMarker,
-    writableRuns,
-    sortedUniqueDeletesDesc,
-    postDeleteIndex,
-    insertions,
-  });
+  return { sortedUniqueDeletesDesc, postDeleteIndex, insertions };
 }
 
 function planGroupedRowMutation(params: {
@@ -1218,32 +1169,32 @@ function planGroupedRowMutation(params: {
     target,
   });
 
-  if (existingGroup) {
-    return planExistingGroupMutation({
-      sheetId,
-      parsed,
-      rangeStartRowIndex,
-      rangeStartColumnIndex,
-      target,
-      writableRuns,
-      targetKeys,
-      groups,
-      existingGroup,
-      rowSortOrder,
-      duplicatePolicy,
-    });
-  }
+  const draft = existingGroup
+    ? planExistingGroupMutation({
+        parsed,
+        rangeStartRowIndex,
+        groupDividerMarker: target.groupDividerMarker,
+        targetKeys,
+        groups,
+        existingGroup,
+        rowSortOrder,
+        duplicatePolicy,
+      })
+    : planNewGroupMutation({
+        parsed,
+        rangeStartRowIndex,
+        groupDividerMarker: target.groupDividerMarker,
+        targetKeys,
+        groups,
+        groupSortOrder,
+      });
 
-  return planNewGroupMutation({
+  return compileAtomicMutationPlan({
     sheetId,
-    parsed,
-    rangeStartRowIndex,
     rangeStartColumnIndex,
-    target,
+    groupDividerMarker: target.groupDividerMarker,
     writableRuns,
-    targetKeys,
-    groups,
-    groupSortOrder,
+    ...draft,
   });
 }
 

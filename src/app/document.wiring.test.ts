@@ -390,48 +390,49 @@ describe('document.wiring', () => {
       expect(customFormatter).toHaveBeenCalledWith('path_not_found', '1 Admin/Communication');
     });
 
-    it('registers DocumentLogActivityHandler in both createDocumentServiceFactory and wireDocumentServicesAndRoutes and forwards selectedLogId', async () => {
-      const writeLogDocType: DocumentType = {
+    it('composes additionalActivityHandlers and createAdditionalActivityHandlers in createDocumentServiceFactory and wireDocumentServicesAndRoutes', async () => {
+      const customStepDocType: DocumentType = {
         key: 'log-test',
         name: 'Log Test',
         documentSchema: {
           fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
         },
         documentUiSchema: {
-          events: { onSubmit: { catchAllWorkflow: 'LogIt' } },
+          events: { onSubmit: { catchAllWorkflow: 'CustomIt' } },
         },
         documentWorkflowConfig: {
           workflows: [
             {
-              name: 'LogIt',
-              activitySequence: [{ type: 'WRITE_LOG', payload: {} }],
+              name: 'CustomIt',
+              activitySequence: [{ type: 'CUSTOM_AUDIT', payload: { source: 'test' } }],
             },
           ],
         },
       };
 
       const registry: DocumentSchemaRegistryPort = {
-        loadAll: vi.fn().mockResolvedValue([writeLogDocType]),
+        loadAll: vi.fn().mockResolvedValue([customStepDocType]),
       };
       const compiled = new CompiledSchemaRegistry(registry);
       await compiled.initialize();
 
-      const writeLog = vi.fn().mockResolvedValue({
-        spreadsheetId: 'override-log-id',
-        sheetName: 'Submittal Arch',
-        rowNumber: 6,
-        action: 'inserted',
+      const perReqHandle = vi.fn().mockResolvedValue({
+        success: true,
+        contextVariables: { audited: true },
       });
-      const mockDocLogService = {
-        resolveLog: vi.fn(),
-        writeLog,
-      };
+      const createAdditionalActivityHandlers = vi.fn((ctx: WorkspaceExecutionContext) => [
+        {
+          canHandle: (act: { type: string }) => act.type === 'CUSTOM_AUDIT',
+          handle: (act: { type: string }) =>
+            perReqHandle(act, ctx.selectedLogId),
+        },
+      ]);
 
       const factory = createDocumentServiceFactory({
         documentSchemaRegistry: registry,
         templateEvaluator: mockEvaluator,
         compiledSchemaRegistry: compiled,
-        createDocumentLogService: () => mockDocLogService,
+        createAdditionalActivityHandlers,
       });
 
       const perReqService = (await factory({
@@ -443,10 +444,13 @@ describe('document.wiring', () => {
         'onSubmit'
       );
       expect(reqResult.success).toBe(true);
-      expect(writeLog).toHaveBeenCalledWith(
-        expect.objectContaining({ selectedLogId: 'override-log-id' })
+      expect(createAdditionalActivityHandlers).toHaveBeenCalledTimes(1);
+      expect(perReqHandle).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'CUSTOM_AUDIT' }),
+        'override-log-id'
       );
 
+      const staticHandle = vi.fn().mockResolvedValue({ success: true });
       const mockServer: HttpServer = { registerRoute: vi.fn() } as unknown as HttpServer;
       const headlessService = wireDocumentServicesAndRoutes({
         server: mockServer,
@@ -454,7 +458,12 @@ describe('document.wiring', () => {
         configProvider: { getDriveConfig: vi.fn().mockResolvedValue(undefined) },
         documentSchemaRegistry: registry,
         templateEvaluator: mockEvaluator,
-        documentLogService: mockDocLogService,
+        additionalActivityHandlers: [
+          {
+            canHandle: (act) => act.type === 'CUSTOM_AUDIT',
+            handle: staticHandle,
+          },
+        ],
       }) as DocumentService;
       await headlessService.initialize();
 
@@ -463,7 +472,7 @@ describe('document.wiring', () => {
         'onSubmit'
       );
       expect(headlessResult.success).toBe(true);
-      expect(writeLog).toHaveBeenCalledTimes(2);
+      expect(staticHandle).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -206,6 +206,43 @@ describe('document-log row-mapper', () => {
     expect(mapped.rowData['Calc Link']).toBeNull();
   });
 
+  it('honors pre-enriched enrichedData in mapDocumentToLogRow without re-enriching document.data', () => {
+    const mapped = mapDocumentToLogRow({
+      document: {
+        type: 'submittal-arch',
+        data: {
+          status: 'Open',
+          section: '071200',
+          number: '001',
+          revision: '0',
+          title: 'Raw Title',
+          date: '260204',
+          contact: 'MB',
+          action: 'REC',
+        },
+      },
+      logSchema,
+      targetSchema,
+      templateEvaluator: evaluator,
+      enrichedData: {
+        status: { key: 'PreEnrichedStatus' },
+        section: '999999',
+        number: '999',
+        revision: '9',
+        title: 'PreEnriched Title',
+        date: '260204',
+        contact: { key: 'PRE', name: 'PreEnriched Contact' },
+        action: { key: 'PRE', name: 'PreEnriched Action', order: '9' },
+      },
+    });
+
+    expect(mapped.rowData.Status).toBe('PreEnrichedStatus');
+    expect(mapped.rowData.Section).toBe('999999');
+    expect(mapped.rowData.Title).toBe('PreEnriched Title');
+    expect(mapped.rowData.Contact).toBe('PRE');
+    expect(mapped.rowData.Action).toBe('PreEnriched Action');
+  });
+
   it('formats fileLink strictly for http:// and https:// URLs, escapes double quotes as "", and returns null otherwise', () => {
     expect(formatFileLinkFormula('http://example.com/a?q="test"', 'Open "Doc"')).toEqual({
       formula: '=HYPERLINK("http://example.com/a?q=""test""", "Open ""Doc""")',

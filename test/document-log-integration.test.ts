@@ -3,7 +3,6 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createApp, type AppOptions } from '../src/app/server';
-import { DocumentLogActivityHandler } from '../src/app/document-log-activity-handler';
 import { createDocumentLogWiring } from '../src/app/document-log.wiring';
 import {
   createDocumentServiceFactory,
@@ -603,7 +602,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       }
     );
 
-    const logHandler = new DocumentLogActivityHandler(logWiring.documentLogService, {
+    const logHandler = logWiring.createActivityHandler({
       ...(params.selectedLogId !== undefined ? { selectedLogId: params.selectedLogId } : {}),
     });
 
@@ -889,7 +888,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       const engine = new ActivityEngine([
         createHandler,
         archiveHandler,
-        new DocumentLogActivityHandler(logWiring.documentLogService),
+        logWiring.createActivityHandler(),
       ]);
       const service = new DocumentService(engine, customRegistry, handlebars, compiled);
       await service.initialize();
@@ -1026,7 +1025,9 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       compiledSchemaRegistry: compiledRegistry,
       configProvider: manifestProvider,
       driveClient,
-      createDocumentLogService: logWiring.createDocumentLogService,
+      createAdditionalActivityHandlers: (context) => [
+        logWiring.createPerRequestActivityHandler(context),
+      ],
     });
 
     const service = await factory({
@@ -1153,6 +1154,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     const headlessCompiled = new CompiledSchemaRegistry(headlessDocRegistry);
     await headlessCompiled.initialize();
 
+    const customLogWiring = createDocumentLogWiring({
+      manifestProvider,
+      documentLogService: customDocLogService,
+    });
     const headlessServer = createHttpServer();
     const headlessService = wireDocumentServicesAndRoutes({
       server: headlessServer,
@@ -1162,7 +1167,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       templateEvaluator: handlebars,
       compiledSchemaRegistry: headlessCompiled,
       primaryTargetId: 'headless-file-1',
-      documentLogService: customDocLogService,
+      additionalActivityHandlers: [customLogWiring.createActivityHandler()],
     });
     if ('initialize' in headlessService && typeof headlessService.initialize === 'function') {
       await headlessService.initialize();

@@ -152,7 +152,7 @@ export function createApp(options?: AppOptions): AppInstance {
     activityEngine: options?.activityEngine,
     documentService: options?.documentService,
     compiledSchemaRegistry,
-    documentLogService: documentLogWiring.documentLogService,
+    additionalActivityHandlers: [documentLogWiring.createActivityHandler()],
   });
 
   const storageAdapter = options?.storageAdapter ?? options?.documentSpaceStoragePort;
@@ -209,7 +209,9 @@ export function createApp(options?: AppOptions): AppInstance {
     ...(options?.documentLogService !== undefined
       ? { documentLogService: options.documentLogService }
       : {}),
-    createDocumentLogService: documentLogWiring.createDocumentLogService,
+    createAdditionalActivityHandlers: (context) => [
+      documentLogWiring.createPerRequestActivityHandler(context),
+    ],
     sourceParser: sourceParserWiring.sourceParser,
     createSourceParser: sourceParserWiring.createSourceParser,
   });

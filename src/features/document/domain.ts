@@ -992,9 +992,9 @@ function validateWorkflowSteps(workflows: Workflow[], errors: string[]): void {
       }
 
       if (
-        activity.type === 'WRITE_LOG' &&
         activity.payload &&
         typeof activity.payload === 'object' &&
+        !Array.isArray(activity.payload) &&
         activity.payload['fileSourceStepId'] !== undefined
       ) {
         const fileSourceStepId = activity.payload['fileSourceStepId'];

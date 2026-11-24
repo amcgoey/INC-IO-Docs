@@ -331,7 +331,6 @@ export interface LogTemplateParserPort {
 }
 
 export interface LogTemplateEvaluatorPort {
-  validate(template: string, allowedVariables: string[]): boolean;
   evaluate(template: string, context: Record<string, unknown>): string;
 }
 

@@ -111,7 +111,9 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       compiledSchemaRegistry,
       configProvider: manifestProvider,
       driveClient: liveDriveClient,
-      createDocumentLogService: logWiring.createDocumentLogService,
+      createAdditionalActivityHandlers: (context) => [
+        logWiring.createPerRequestActivityHandler(context),
+      ],
     });
 
     const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
