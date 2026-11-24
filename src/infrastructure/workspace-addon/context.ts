@@ -83,6 +83,7 @@ export interface WorkspaceExecutionContext {
   }> | undefined;
   validationErrors?: string[] | undefined;
   formData?: Record<string, unknown> | undefined;
+  selectedLogId?: string | undefined;
   actionName?: string | undefined;
   parameters?: Record<string, string> | undefined;
   rawEvent?: unknown;

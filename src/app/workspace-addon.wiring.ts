@@ -45,6 +45,9 @@ import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 import type { UiProcessGmailPort } from '../features/ui-process-manager';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import type { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
+import type { SheetsClient } from '../infrastructure/sheets';
+import type { DocumentLogPort } from '../features/document-log';
+import { createDocumentLogWiring } from './document-log.wiring';
 
 export interface WorkspaceAddonWiringOptions {
   server: HttpServer;
@@ -77,6 +80,11 @@ export interface WorkspaceAddonWiringOptions {
     | undefined;
   driveContextClient?: DriveSourceContextClientPort | undefined;
   docsClient?: GoogleDocsClient | undefined;
+  sheetsClient?: SheetsClient | undefined;
+  documentLogService?: DocumentLogPort | undefined;
+  createDocumentLogService?:
+    | ((context: WorkspaceExecutionContext) => DocumentLogPort | Promise<DocumentLogPort>)
+    | undefined;
 }
 
 export function wireWorkspaceAddonRoutes(
@@ -114,6 +122,37 @@ export function wireWorkspaceAddonRoutes(
       }
     }
 
+    let createDocumentLogService = options.createDocumentLogService;
+    if (
+      !createDocumentLogService &&
+      !options.documentLogService &&
+      (options.manifestProvider || options.sheetsClient)
+    ) {
+      const documentLogWiring = createDocumentLogWiring({
+        manifestProvider,
+        configProvider: appConfigProvider,
+        driveClient: options.driveClient,
+        sheetsClient: options.sheetsClient,
+        templateEvaluator: options.templateEvaluator,
+      });
+      let logRegistryInitPromise: Promise<void> | undefined;
+      const ensureLogRegistryInitialized = async (): Promise<void> => {
+        if (!logRegistryInitPromise) {
+          logRegistryInitPromise = documentLogWiring.logSchemaRegistry
+            .initialize()
+            .catch((err) => {
+              logRegistryInitPromise = undefined;
+              throw err;
+            });
+        }
+        await logRegistryInitPromise;
+      };
+      createDocumentLogService = async (context: WorkspaceExecutionContext) => {
+        await ensureLogRegistryInitialized();
+        return documentLogWiring.createDocumentLogService(context);
+      };
+    }
+
     let createDocumentService = options.createDocumentService;
     if (!createDocumentService) {
       if (options.documentService) {
@@ -127,6 +166,10 @@ export function wireWorkspaceAddonRoutes(
           driveClient: options.driveClient,
           gmailClient,
           pdfProcessor: options.pdfProcessor,
+          ...(options.documentLogService !== undefined
+            ? { documentLogService: options.documentLogService }
+            : {}),
+          ...(createDocumentLogService !== undefined ? { createDocumentLogService } : {}),
         });
       }
     }
