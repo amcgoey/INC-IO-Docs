@@ -12,7 +12,7 @@ The root agent coordinates the audit orchestrator and conducts the resolution in
 
 1. **Resolve Target**: Identify the exact target (e.g., `implementation_plan.md`, an artifact, or a GitHub issue).
 2. **Locate Transcript**: Determine the absolute path to the current conversation's transcript file (`<appDataDir>\brain\<conversation-id>\.system_generated\logs\transcript.jsonl`).
-3. **Dispatch Orchestrator**: Spawn a single subagent (Model: `pro`) with the role `Senior Auditor`. Pass the target, transcript path, and instruct it to execute the **Senior Auditor Protocol**.
+3. **Dispatch Orchestrator**: Spawn an `architect-auditor` subagent (`TypeName: "architect-auditor"`) with role `Senior Auditor`. Pass the target, transcript path, and instruct it to execute the **Senior Auditor Protocol**.
 4. **Handoff to `/grill-with-docs`**: When the Senior Auditor reports completion, immediately start an interactive `/grill-with-docs` session with the user:
    - Work through the **Open Decisions** and **Recommended Modifications** in the report using the `grilling` design-tree rounds (asking the frontier questions with your recommended choices).
    - Capture approved architectural decisions as ADRs in `docs/adr/` and update `CONTEXT.md` terminology using the `domain-modeling` skill.
@@ -24,15 +24,15 @@ As the Senior Auditor, you are the orchestrator and synthesizer. You coordinate 
 
 ### Step A: Spawn the Audit Team
 
-Use `invoke_subagent` to spawn 4 specialist subagents concurrently (all Model: `pro`). Pass the target material to all of them.
+Use `invoke_subagent` to spawn 4 specialist subagents concurrently, passing the target material to all of them:
 
-1. **Role: Traceability Auditor**
+1. **Role: Traceability Auditor** (`TypeName: "codebase-researcher"`)
    - **Prompt**: Use your file tools to read the provided `transcript.jsonl` file. Compare the conversation history against the target plan. Find dropped context, missing details, or ignored user instructions. Report back all deviations.
-2. **Role: Stress-Test Auditor**
+2. **Role: Stress-Test Auditor** (`TypeName: "architect-auditor"`)
    - **Prompt**: Review the target plan. Hunt for logic holes, edge cases, race conditions, and missing test decisions. Report back all resilience and logical failures.
-3. **Role: Architecture Auditor**
+3. **Role: Architecture Auditor** (`TypeName: "architect-auditor"`)
    - **Prompt**: Read `docs/agents/domain.md` and `CODING_STANDARDS.md`. Evaluate the plan's architectural seams, module boundaries, leakage, and simplicity (Occam's razor). Report back structural and best-practice violations.
-4. **Role: Integration Auditor**
+4. **Role: Integration Auditor** (`TypeName: "codebase-researcher"`)
    - **Prompt**: Scan the relevant codebase to evaluate the plan's consequences. Identify prior art or zombie code that must be removed, missing integrations, and fatal flaws in how the plan wires into the existing app. Report back integration risks.
 
 ### Step B: Reconcile and Deduplicate

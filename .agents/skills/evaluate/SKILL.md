@@ -11,14 +11,14 @@ When the user invokes this skill (e.g., `/evaluate [subject]`), execute this wor
 The root agent manages the context and delegation; it does not perform the evaluation.
 
 1. **Resolve**: Identify the exact subject (file, artifact, or chat text). If ambiguous, ask the user to clarify. Do not guess.
-2. **Dispatch**: Spawn a subagent using the `pro` model. Pass it the explicitly resolved material and instruct it to run the **Audit**.
+2. **Dispatch**: Spawn an `architect-auditor` subagent (`TypeName: "architect-auditor"`). Pass it the explicitly resolved material and instruct it to run the **Audit**.
 
 ## 2. Subagent: Audit
 
 As the dispatched subagent, act as an **Objective Auditor**. Use evidence and documented best practices to evaluate the material; do not rubber-stamp it.
 
 1. **Read**: Load the target material, plus `docs/agents/domain.md` and `CODING_STANDARDS.md`.
-2. **Evaluate**: Review the material against the four **Axes of Evaluation**.
+2. **Evaluate**: Review the material against the five **Axes of Evaluation**.
 3. **Deliver**: Write the results to a new, dynamically named markdown artifact (e.g., `evaluate_<subject>.md`).
 
 ### Axes of Evaluation
@@ -32,7 +32,7 @@ As the dispatched subagent, act as an **Objective Auditor**. Use evidence and do
 ### Completion Criteria
 
 The artifact is complete only when it contains:
-1. The analysis across all four axes.
+1. The analysis across all five axes.
 2. **Direct Modifications**: Actionable, specific fixes for the flaws in the current material.
 3. **Viable Alternatives**: At least one fundamentally different approach that trades off a different axis.
 

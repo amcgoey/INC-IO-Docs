@@ -14,10 +14,10 @@ The tickets are not a list of steps. They are a **task graph** with blocking rel
 
 Communication to and from subagents should be sparse. Communicate primarily through **context pointers**: to the spec, tickets, research notes, and previous commits. Don't duplicate information already available via pointers.
 
-- **Exploration subagents** use the `pro` model.
-- **Implementer subagents** use the `flash` model and run in the background where possible for maximum concurrency.
-- **Review planner agents** use the `pro` model.
-- **Code review agents** use the `pro` model.
+- **Exploration subagents** use `TypeName: "codebase-researcher"`.
+- **Implementer subagents** use `TypeName: "senior-coder"` and run in the background where possible for maximum concurrency.
+- **Merger subagents** use `TypeName: "senior-coder"`.
+- **Review planner agents** use `TypeName: "code-planner"`.
 
 ## Steps
 
@@ -29,6 +29,7 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 
 4. Use **implementer subagents** to implement each ticket, each in its own worktree on its own branch. Each implementer subagent:
    - confirms its worktree is based on the integration branch before starting, and resets onto it if not;
+   - delegates routine or tightly specified portions of the implementation to `coder` subagents (`TypeName: "coder"`) while owning architecture, integration, and verification;
    - calls the Skill tool with `tdd` to build the ticket;
    - merges the integration branch tip into its own branch before reporting done
 

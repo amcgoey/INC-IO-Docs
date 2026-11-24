@@ -57,7 +57,7 @@ Each smell reads *what it is* → *how to fix*; match it against the diff:
 
 ### 4. Spawn both sub-agents in parallel
 
-Invoke both reviewers with `TypeName: "research"` and `Model: "pro"`.
+Invoke both reviewers with `TypeName: "code-reviewer"`.
 
 **Standards sub-agent prompt** — include:
 
