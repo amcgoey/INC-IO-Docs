@@ -323,11 +323,65 @@ describe('LogSchemaRegistryAdapter', () => {
     await expect(adapter.initialize()).rejects.toThrow(/identity/i);
   });
 
-  it('fails fast when a DocumentType with WRITE_LOG step omits documentLogSchema', async () => {
-    const docDef = createValidArchDocDef();
-    delete (docDef as { documentLogSchema?: unknown }).documentLogSchema;
+  it('fails fast when a DocumentType with WRITE_LOG or READ_LOG step omits documentLogSchema', async () => {
+    const writeDocDef = createValidArchDocDef();
+    delete (writeDocDef as { documentLogSchema?: unknown }).documentLogSchema;
 
-    const manifestProvider: RawManifestProviderPort = {
+    const writeProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./document-types/submittal-arch.json'],
+        configuration: { documentLog: createValidDiscoveryConfig() },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue(writeDocDef),
+    };
+
+    const writeAdapter = new LogSchemaRegistryAdapter(writeProvider, parser);
+    await expect(writeAdapter.initialize()).rejects.toThrow(/documentLogSchema/i);
+
+    const readDocDef = createValidArchDocDef({
+      documentWorkflowConfig: {
+        workflows: [
+          {
+            name: 'LookupPriorLogs',
+            activitySequence: [{ type: 'READ_LOG', payload: {} }],
+          },
+        ],
+      },
+    });
+    delete (readDocDef as { documentLogSchema?: unknown }).documentLogSchema;
+
+    const readProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./document-types/submittal-arch.json'],
+        configuration: { documentLog: createValidDiscoveryConfig() },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue(readDocDef),
+    };
+
+    const readAdapter = new LogSchemaRegistryAdapter(readProvider, parser);
+    await expect(readAdapter.initialize()).rejects.toThrow(DocumentLogConfigurationError);
+    await expect(readAdapter.initialize()).rejects.toThrow(/READ_LOG.*documentLogSchema/i);
+  });
+
+  it('retains minLength and pattern on LogTargetDocumentFieldSchema and allows READ_LOG when documentLogSchema is present', async () => {
+    const docDef = createValidArchDocDef({
+      documentWorkflowConfig: {
+        workflows: [
+          {
+            name: 'LookupAndWrite',
+            activitySequence: [
+              { id: 'readPrior', type: 'READ_LOG', payload: { filterBy: 'idGroup', values: ['{{Document.idGroup}}'] } },
+              { type: 'WRITE_LOG', payload: {} },
+            ],
+          },
+        ],
+      },
+    });
+    (docDef.documentSchema.fields[1] as Record<string, unknown>).pattern = '^\\d{6}$';
+    (docDef.documentSchema.fields[3] as Record<string, unknown>).minLength = 1;
+    (docDef.documentSchema.fields[3] as Record<string, unknown>).pattern = '^.*\\S+.*$';
+
+    const provider: RawManifestProviderPort = {
       getRawManifest: vi.fn().mockResolvedValue({
         documentTypes: ['./document-types/submittal-arch.json'],
         configuration: { documentLog: createValidDiscoveryConfig() },
@@ -335,8 +389,15 @@ describe('LogSchemaRegistryAdapter', () => {
       readParsedSchema: vi.fn().mockResolvedValue(docDef),
     };
 
-    const adapter = new LogSchemaRegistryAdapter(manifestProvider, parser);
-    await expect(adapter.initialize()).rejects.toThrow(/documentLogSchema/i);
+    const adapter = new LogSchemaRegistryAdapter(provider, parser);
+    await expect(adapter.initialize()).resolves.toBeUndefined();
+
+    const target = adapter.getTargetSchema('submittal-arch');
+    const sectionField = target?.fields.find((f) => f.key === 'section');
+    const revisionField = target?.fields.find((f) => f.key === 'revision');
+    expect(sectionField?.pattern).toBe('^\\d{6}$');
+    expect(revisionField?.minLength).toBe(1);
+    expect(revisionField?.pattern).toBe('^.*\\S+.*$');
   });
 
   it('validates WRITE_LOG fileSourceStepId matches an earlier Activity.id in the same workflow', async () => {

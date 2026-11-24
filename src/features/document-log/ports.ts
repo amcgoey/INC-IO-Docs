@@ -186,6 +186,48 @@ export const WriteDocumentLogResultSchema = Type.Object({
 });
 export type WriteDocumentLogResult = Static<typeof WriteDocumentLogResultSchema>;
 
+export const LogFilterBySchema = Type.Union([
+  Type.Literal('idGroup'),
+  Type.Literal('idDocument'),
+  Type.Literal('id'),
+]);
+export type LogFilterBy = Static<typeof LogFilterBySchema>;
+
+export const ReadDocumentLogRequestSchema = Type.Object({
+  documentTypeKey: Type.String({ minLength: 1 }),
+  space: Type.Optional(Type.Union([DocumentLogSpaceSchema, Type.Undefined()])),
+  selectedLogId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  filterBy: Type.Optional(Type.Union([LogFilterBySchema, Type.Undefined()])),
+  values: Type.Optional(
+    Type.Union([Type.String(), Type.Array(Type.String()), Type.Undefined()])
+  ),
+});
+export type ReadDocumentLogRequest = Static<typeof ReadDocumentLogRequestSchema>;
+
+export const DocumentLogEntrySchema = Type.Object({
+  document: DocumentLogDocumentSchema,
+  valid: Type.Boolean(),
+  fileUri: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  rowNumber: Type.Number(),
+  validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+});
+export type DocumentLogEntry = Static<typeof DocumentLogEntrySchema>;
+
+export const RowHydrationWarningSchema = Type.Object({
+  rowNumber: Type.Number(),
+  field: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  message: Type.String(),
+});
+export type RowHydrationWarning = Static<typeof RowHydrationWarningSchema>;
+
+export const ReadDocumentLogResultSchema = Type.Object({
+  spreadsheetId: Type.String(),
+  sheetName: Type.String({ minLength: 1 }),
+  entries: Type.Array(DocumentLogEntrySchema),
+  warnings: Type.Array(RowHydrationWarningSchema),
+});
+export type ReadDocumentLogResult = Static<typeof ReadDocumentLogResultSchema>;
+
 export const LogTargetDocumentFieldOptionsSchema = Type.Object(
   {
     source: Type.String({ minLength: 1 }),
@@ -213,6 +255,8 @@ export const LogTargetDocumentFieldSchema = Type.Object(
     name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
     type: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
     required: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+    minLength: Type.Optional(Type.Union([Type.Number(), Type.Undefined()])),
+    pattern: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
     options: Type.Optional(Type.Union([LogTargetDocumentFieldOptionsSchema, Type.Undefined()])),
     linkedField: Type.Optional(Type.Union([LogTargetLinkedFieldSchema, Type.Undefined()])),
   },
@@ -399,13 +443,32 @@ export interface InsertLogRowResult {
   action: 'inserted' | 'updated';
 }
 
+export interface ReadLogRowsRequest {
+  target: LogStorageTarget;
+  linkColumns?: string[] | undefined;
+}
+
+export interface ReadLogRow {
+  rowNumber: number;
+  values: LogRowValues;
+  links?: Record<string, string | null> | undefined;
+}
+
+export interface ReadLogRowsResult {
+  headers: string[];
+  formulaColumns: string[];
+  rows: ReadLogRow[];
+}
+
 export interface LogStoragePort {
   insertRow(request: InsertLogRowRequest): Promise<InsertLogRowResult>;
+  readRows(request: ReadLogRowsRequest): Promise<ReadLogRowsResult>;
 }
 
 // --- Driving Port ---
 
 export interface DocumentLogPort {
   resolveLog(space: DocumentLogSpace): Promise<LogResolutionResult>;
+  readLog(request: ReadDocumentLogRequest): Promise<ReadDocumentLogResult>;
   writeLog(request: WriteDocumentLogRequest): Promise<WriteDocumentLogResult>;
 }

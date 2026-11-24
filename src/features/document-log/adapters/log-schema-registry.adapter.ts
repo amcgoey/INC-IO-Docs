@@ -426,7 +426,7 @@ function validateDocumentLogSchema(params: {
   return structuredClone(logSchema);
 }
 
-function validateWriteLogWorkflowSteps(params: {
+function validateDocumentLogWorkflowSteps(params: {
   rawWorkflowConfig: unknown;
   relPath: string;
   hasDocumentLogSchema: boolean;
@@ -461,14 +461,15 @@ function validateWriteLogWorkflowSteps(params: {
         payload?: unknown;
       };
 
-      if (activity.type === 'WRITE_LOG') {
+      if (activity.type === 'WRITE_LOG' || activity.type === 'READ_LOG') {
         if (!hasDocumentLogSchema) {
           throw new DocumentLogConfigurationError(
-            `Workflow "${wfName}" in "${relPath}" uses WRITE_LOG without declaring documentLogSchema`
+            `Workflow "${wfName}" in "${relPath}" uses ${activity.type} without declaring documentLogSchema`
           );
         }
 
         if (
+          activity.type === 'WRITE_LOG' &&
           activity.payload &&
           typeof activity.payload === 'object' &&
           'fileSourceStepId' in activity.payload &&
@@ -631,7 +632,7 @@ export class LogSchemaRegistryAdapter implements LogSchemaRegistryPort {
         nextLogSchemas.set(documentTypeKey, validatedLogSchema);
       }
 
-      validateWriteLogWorkflowSteps({
+      validateDocumentLogWorkflowSteps({
         rawWorkflowConfig: docDef.documentWorkflowConfig,
         relPath,
         hasDocumentLogSchema,

@@ -120,6 +120,7 @@ describe('DocumentLogService', () => {
     };
     const storage: LogStoragePort = {
       insertRow: vi.fn().mockResolvedValue({ rowNumber: 6, action: 'inserted' }),
+      readRows: vi.fn().mockResolvedValue({ headers: [], formulaColumns: [], rows: [] }),
       ...overrides?.storage,
     };
     const service = new DocumentLogService(
@@ -1610,6 +1611,513 @@ describe('DocumentLogService', () => {
           },
         })
       );
+    });
+  });
+
+  describe('readLog', () => {
+    it('resolves log via resolveLog, collects fileLink columns, delegates to readRows, and hydrates valid and partial rows with readOnly columns, LookupFields, Identity keys, and warnings', async () => {
+      const searchSpreadsheets = vi.fn().mockResolvedValue([
+        { id: 'log-read-1', name: 'Harborview Hotel Document Log' },
+      ]);
+      const readRows = vi.fn().mockResolvedValue({
+        headers: [
+          'Status',
+          'Section',
+          'Number',
+          'Revision',
+          'Title',
+          'Date',
+          'Contact',
+          'Action',
+          'Notes',
+          'Calc Link',
+        ],
+        formulaColumns: [],
+        rows: [
+          {
+            rowNumber: 6,
+            values: {
+              Status: 'open',
+              Section: '071200',
+              Number: '001',
+              Revision: '0',
+              Title: 'Fluid-Applied Waterproofing',
+              Date: '260204',
+              Contact: 'Acme Corp',
+              Action: 'received',
+              Notes: '',
+              'Calc Link': 'Link',
+            },
+            links: {
+              'Calc Link': 'https://drive.google.com/file/d/arch-valid-1/view',
+            },
+          },
+          {
+            rowNumber: 7,
+            values: {
+              Status: 'Open',
+              Section: '071200',
+              Number: '002',
+              Revision: '1',
+              Title: 'Roofing Membrane',
+              Date: '',
+              Contact: 'MB',
+              Action: 'Approved',
+              Notes: 'Manual entry',
+              'Calc Link': '',
+            },
+            links: {
+              'Calc Link': null,
+            },
+          },
+        ],
+      });
+
+      const archReadOnlyLogSchema: DocumentLogSchema = {
+        ...logSchema,
+        columns: {
+          ...logSchema.columns,
+          Title: { template: '{{title}}', readOnly: true },
+        },
+      };
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockImplementation((k) =>
+            k === 'submittal-arch' ? archReadOnlyLogSchema : undefined
+          ),
+        },
+        discovery: { searchSpreadsheets },
+        storage: { readRows },
+      });
+
+      const result = await service.readLog({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+
+      expect(searchSpreadsheets).toHaveBeenCalledTimes(1);
+      expect(readRows).toHaveBeenCalledWith({
+        target: {
+          spreadsheetId: 'log-read-1',
+          sheetName: 'Submittal Arch',
+          rangeName: 'Log_Submittal_Arch',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        linkColumns: ['Calc Link'],
+      });
+
+      expect(result.spreadsheetId).toBe('log-read-1');
+      expect(result.sheetName).toBe('Submittal Arch');
+      expect(result.entries).toHaveLength(2);
+
+      const validEntry = result.entries[0];
+      expect(validEntry).toEqual({
+        rowNumber: 6,
+        valid: true,
+        fileUri: 'https://drive.google.com/file/d/arch-valid-1/view',
+        document: {
+          id: '071200-001-0-260204-1',
+          idDocument: '071200-001-0',
+          idGroup: '071200-001',
+          type: 'submittal-arch',
+          data: {
+            status: { key: 'Open' },
+            section: '071200',
+            number: '001',
+            revision: '0',
+            title: 'Fluid-Applied Waterproofing',
+            date: '260204',
+            contact: { key: 'Acme Corp', name: 'Acme Corp' },
+            action: { key: 'REC', name: 'Received', order: '1' },
+          },
+        },
+      });
+      expect('notes' in validEntry.document.data).toBe(false);
+      expect('calculated' in validEntry.document).toBe(false);
+
+      const partialEntry = result.entries[1];
+      expect(partialEntry.rowNumber).toBe(7);
+      expect(partialEntry.valid).toBe(false);
+      expect('fileUri' in partialEntry).toBe(false);
+      expect('date' in partialEntry.document.data).toBe(false);
+      expect('calculated' in partialEntry.document).toBe(false);
+      expect(partialEntry.document.idGroup).toBe('071200-002');
+      expect(partialEntry.document.idDocument).toBe('071200-002-1');
+      expect(partialEntry.document.id).toBe('071200-002-1--');
+      expect(partialEntry.document.data.action).toEqual({ key: 'Approved', name: 'Approved' });
+      expect(partialEntry.document.data.contact).toEqual({ key: 'MB', name: 'Meridian Builders' });
+      expect(partialEntry.document.data.notes).toBe('Manual entry');
+      expect(partialEntry.validationErrors).toHaveLength(2);
+
+      expect(result.warnings).toHaveLength(2);
+      expect(result.warnings.map((w) => ({ rowNumber: w.rowNumber, field: w.field }))).toEqual([
+        { rowNumber: 7, field: 'date' },
+        { rowNumber: 7, field: 'action' },
+      ]);
+    });
+
+    it('bypasses resolveLog and Drive search when selectedLogId is provided even if space is omitted', async () => {
+      const searchSpreadsheets = vi.fn();
+      const readRows = vi.fn().mockResolvedValue({
+        headers: ['Status', 'Section'],
+        formulaColumns: [],
+        rows: [],
+      });
+
+      const { service } = createService({
+        discovery: { searchSpreadsheets },
+        storage: { readRows },
+      });
+
+      const result = await service.readLog({
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: 'selected-log-77',
+      });
+
+      expect(searchSpreadsheets).not.toHaveBeenCalled();
+      expect(readRows).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: expect.objectContaining({ spreadsheetId: 'selected-log-77' }),
+        })
+      );
+      expect(result).toEqual({
+        spreadsheetId: 'selected-log-77',
+        sheetName: 'Submittal Arch',
+        entries: [],
+        warnings: [],
+      });
+    });
+
+    it('validates documentTypeKey before filterBy/values checks and enforces paired filterBy and values', async () => {
+      const { service, discovery, storage } = createService();
+
+      // Unknown documentTypeKey throws even with unpaired filterBy or values
+      await expect(
+        service.readLog({
+          documentTypeKey: 'unknown-type',
+          filterBy: 'idGroup',
+        })
+      ).rejects.toThrow(DocumentLogConfigurationError);
+
+      await expect(
+        service.readLog({
+          documentTypeKey: 'unknown-type',
+          values: ['071200-001'],
+        })
+      ).rejects.toThrow(DocumentLogConfigurationError);
+
+      // filterBy without values throws
+      await expect(
+        service.readLog({
+          documentTypeKey: 'submittal-arch',
+          selectedLogId: 'log-1',
+          filterBy: 'idGroup',
+        })
+      ).rejects.toThrow(DocumentLogConfigurationError);
+
+      // values without filterBy throws
+      await expect(
+        service.readLog({
+          documentTypeKey: 'submittal-arch',
+          selectedLogId: 'log-1',
+          values: ['071200-001'],
+        })
+      ).rejects.toThrow(DocumentLogConfigurationError);
+
+      await expect(
+        service.readLog({
+          documentTypeKey: 'submittal-arch',
+          selectedLogId: 'log-1',
+          values: '',
+        })
+      ).rejects.toThrow(DocumentLogConfigurationError);
+
+      expect(discovery.searchSpreadsheets).not.toHaveBeenCalled();
+      expect(storage.readRows).not.toHaveBeenCalled();
+    });
+
+    it('short-circuits with zero Drive or Sheets calls when filterBy is set and normalized values are empty', async () => {
+      const searchSpreadsheets = vi.fn();
+      const readRows = vi.fn();
+      const { service } = createService({
+        discovery: { searchSpreadsheets },
+        storage: { readRows },
+      });
+
+      for (const emptyValues of [[], '', ['  ', '\t']] as Array<string | string[]>) {
+        const result = await service.readLog({
+          documentTypeKey: 'submittal-arch',
+          filterBy: 'idGroup',
+          values: emptyValues,
+        });
+        expect(result).toEqual({
+          spreadsheetId: '',
+          sheetName: 'Submittal Arch',
+          entries: [],
+          warnings: [],
+        });
+      }
+
+      expect(searchSpreadsheets).not.toHaveBeenCalled();
+      expect(readRows).not.toHaveBeenCalled();
+    });
+
+    it('filters by idGroup, idDocument, and id case-insensitively on trimmed values, ignores unkeyable rows for "-", and scopes warnings to matched rows', async () => {
+      const ffeLogSchema: DocumentLogSchema = {
+        provider: 'google_sheets',
+        target: {
+          sheetName: 'Submittal FF&E',
+          rangeName: 'Log_Submittal_FFE',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        grouping: {
+          groupBy: 'idGroup',
+          sortBy: 'id',
+          groupSortOrder: 'asc',
+          rowSortOrder: 'asc',
+          duplicatePolicy: 'insert',
+        },
+        columns: {
+          Status: { template: '{{status.key}}' },
+          'Spec Tag': { template: '{{specTag.key}}' },
+          Revision: { template: '{{revision}}' },
+          'Spec Title': { template: '{{specTitle}}', readOnly: true },
+          Vendor: { template: '{{vendor.name}}' },
+          Date: { template: '{{date}}' },
+          Contact: { template: '{{contact.key}}' },
+          Action: { template: '{{action.name}}' },
+        },
+      };
+
+      const ffeTargetSchema: LogTargetDocumentSchema = {
+        fields: [
+          { key: 'status', name: 'Status', type: 'string', required: true, options: { source: 'statuses', key: 'key' } },
+          { key: 'specTag', name: 'Spec Tag', type: 'string', required: true, options: { source: 'specs', key: 'key', allowUserInput: true } },
+          { key: 'revision', name: 'Revision', type: 'string', required: true },
+          { key: 'specTitle', name: 'Spec Title', type: 'string', required: false },
+          { key: 'vendor', name: 'Vendor', type: 'string', required: true, options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'date', name: 'Date', type: 'string', required: true },
+          { key: 'contact', name: 'Contact', type: 'string', required: true, options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'action', name: 'Action', type: 'string', required: true, options: { source: 'actions', key: 'key', name: 'name' } },
+        ],
+        identity: {
+          idGroup: '{{specTag.key}}',
+          idDocument: '{{specTag.key}}-{{revision}}',
+          id: '{{specTag.key}}-{{revision}}-{{date}}-{{action.order}}',
+        },
+        options: {
+          statuses: [{ key: 'Open' }],
+          specs: [{ key: 'CG104', name: 'BED - KING' }],
+          vendors: [{ key: 'FDT', name: 'Fil Doux Textiles' }],
+          contacts: [{ key: 'BW', name: 'Benjamin West' }],
+          actions: [
+            { key: 'REC', name: 'Received', order: '1' },
+            { key: 'REF', name: 'Referred', order: '2' },
+          ],
+        },
+      };
+
+      const archRows = [
+        // Row 6: 071200-001 (partial, missing date -> warning on row 6)
+        {
+          rowNumber: 6,
+          values: {
+            Status: 'Open',
+            Section: '071200',
+            Number: '001',
+            Revision: '0',
+            Title: 'Waterproofing',
+            Date: '',
+            Contact: 'MB',
+            Action: 'REC',
+          },
+        },
+        // Row 7: 071200-002 (partial, invalid action -> warning on row 7)
+        {
+          rowNumber: 7,
+          values: {
+            Status: 'Open',
+            Section: '071200',
+            Number: '002',
+            Revision: '1',
+            Title: 'Flashing',
+            Date: '260205',
+            Contact: 'MB',
+            Action: 'BadAction',
+          },
+        },
+        // Row 8: Unkeyable note row (all identity fields blank -> idGroup/idDocument/id undefined, never '-')
+        {
+          rowNumber: 8,
+          values: {
+            Status: '',
+            Section: '',
+            Number: '',
+            Revision: '',
+            Title: 'General section note',
+            Date: '',
+            Contact: '',
+            Action: '',
+          },
+        },
+      ];
+
+      const ffeRows = [
+        {
+          rowNumber: 10,
+          values: {
+            Status: 'Open',
+            'Spec Tag': 'CG104',
+            Revision: '0',
+            'Spec Title': 'BED - KING',
+            Vendor: 'Fil Doux Textiles',
+            Date: '260120',
+            Contact: 'BW',
+            Action: 'Received',
+          },
+        },
+        {
+          rowNumber: 11,
+          values: {
+            Status: 'Open',
+            'Spec Tag': 'LT108',
+            Revision: '1',
+            'Spec Title': 'SCONCE',
+            Vendor: 'Fil Doux Textiles',
+            Date: '260121',
+            Contact: 'BW',
+            Action: 'Referred',
+          },
+        },
+      ];
+
+      const readRows = vi.fn().mockImplementation(({ target }: { target: { sheetName: string } }) =>
+        Promise.resolve({
+          headers: [],
+          formulaColumns: [],
+          rows: target.sheetName === 'Submittal FF&E' ? ffeRows : archRows,
+        })
+      );
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockImplementation((k) => {
+            if (k === 'submittal-arch') return logSchema;
+            if (k === 'submittal-ffe') return ffeLogSchema;
+            return undefined;
+          }),
+          getTargetSchema: vi.fn().mockImplementation((k) => {
+            if (k === 'submittal-arch') return targetSchema;
+            if (k === 'submittal-ffe') return ffeTargetSchema;
+            return undefined;
+          }),
+        },
+        storage: { readRows },
+      });
+
+      // idGroup match with whitespace + warning scoping to row 6 only (excluding row 7 and row 8 warnings)
+      const byGroup = await service.readLog({
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: 'log-filter-1',
+        filterBy: 'idGroup',
+        values: [' 071200-001 ', '  '],
+      });
+      expect(byGroup.entries.map((e) => e.rowNumber)).toEqual([6]);
+      expect(byGroup.warnings.map((w) => w.rowNumber)).toEqual([6]);
+
+      // Case-insensitive single-string filter on FF&E idGroup ('cg104')
+      const ffeByGroup = await service.readLog({
+        documentTypeKey: 'submittal-ffe',
+        selectedLogId: 'log-filter-1',
+        filterBy: 'idGroup',
+        values: 'cg104',
+      });
+      expect(ffeByGroup.entries.map((e) => e.rowNumber)).toEqual([10]);
+      expect(ffeByGroup.entries[0].document.idGroup).toBe('CG104');
+
+      // idDocument filter
+      const byDoc = await service.readLog({
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: 'log-filter-1',
+        filterBy: 'idDocument',
+        values: ['071200-002-1'],
+      });
+      expect(byDoc.entries.map((e) => e.rowNumber)).toEqual([7]);
+      expect(byDoc.warnings.map((w) => w.rowNumber)).toEqual([7]);
+
+      // id filter
+      const byId = await service.readLog({
+        documentTypeKey: 'submittal-ffe',
+        selectedLogId: 'log-filter-1',
+        filterBy: 'id',
+        values: ['lt108-1-260121-2'],
+      });
+      expect(byId.entries.map((e) => e.rowNumber)).toEqual([11]);
+
+      // Unkeyable note row has undefined identities and never matches idGroup = '-'
+      const fullArch = await service.readLog({
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: 'log-filter-1',
+      });
+      const noteEntry = fullArch.entries.find((e) => e.rowNumber === 8);
+      expect(noteEntry?.document.idGroup).toBeUndefined();
+      expect(noteEntry?.document.idDocument).toBeUndefined();
+      expect(noteEntry?.document.id).toBeUndefined();
+      expect(fullArch.warnings.some((w) => w.rowNumber === 8)).toBe(true);
+
+      const dashFilter = await service.readLog({
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: 'log-filter-1',
+        filterBy: 'idGroup',
+        values: ['-'],
+      });
+      expect(dashFilter.entries).toEqual([]);
+      expect(dashFilter.warnings).toEqual([]);
+    });
+
+    it('fails fast with DocumentLogMissingError, DocumentLogAmbiguousError, and DocumentLogConfigurationError when space and selectedLogId are omitted', async () => {
+      const missingService = createService({
+        discovery: { searchSpreadsheets: vi.fn().mockResolvedValue([]) },
+      }).service;
+
+      await expect(
+        missingService.readLog({
+          documentTypeKey: 'submittal-arch',
+          space: sampleSpace,
+        })
+      ).rejects.toThrow(DocumentLogMissingError);
+
+      const ambiguousService = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-1', name: 'Harborview Hotel Document Log' },
+            { id: 'log-2', name: 'Harborview Hotel Document Log Copy' },
+          ]),
+        },
+      }).service;
+
+      await expect(
+        ambiguousService.readLog({
+          documentTypeKey: 'submittal-arch',
+          space: sampleSpace,
+        })
+      ).rejects.toThrow(DocumentLogAmbiguousError);
+
+      await expect(
+        missingService.readLog({
+          documentTypeKey: 'submittal-arch',
+        })
+      ).rejects.toThrow(DocumentLogConfigurationError);
+
+      await expect(
+        missingService.readLog({
+          documentTypeKey: 'submittal-arch',
+          selectedLogId: '   ',
+        })
+      ).rejects.toThrow(DocumentLogConfigurationError);
     });
   });
 });

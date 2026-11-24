@@ -13,12 +13,22 @@ import { ActivityEngine } from '../src/features/document/adapters/activity-engin
 import { CompiledSchemaRegistry } from '../src/features/document/adapters/compiled-schema-registry';
 import { DocumentSchemaRegistryAdapter } from '../src/features/document/adapters/document-schema-registry';
 import { DriveActivityHandler } from '../src/features/document/adapters/drive-activity-handler';
-import { DocumentService, type Document, type DocumentType } from '../src/features/document/domain';
-import type { ActivityHandler, DocumentSchemaRegistryPort } from '../src/features/document/ports';
+import {
+  DocumentService,
+  type Activity,
+  type Document,
+  type DocumentType,
+} from '../src/features/document/domain';
 import type {
-  DocumentLogDuplicatePolicy,
-  DocumentLogPort,
-  RawManifestProviderPort,
+  ActivityHandler,
+  ActivityOutput,
+  DocumentSchemaRegistryPort,
+} from '../src/features/document/ports';
+import {
+  DocumentLogConfigurationError,
+  type DocumentLogDuplicatePolicy,
+  type DocumentLogPort,
+  type RawManifestProviderPort,
 } from '../src/features/document-log';
 import { GoogleDriveClient, type GoogleDriveClientOptions } from '../src/infrastructure/drive/drive-client';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
@@ -79,6 +89,7 @@ const sampleFixture = JSON.parse(
     formulaOwnedColumns: string[];
     seedEntries: FixtureSubmittalEntry[];
     writeScenarios: FixtureWriteScenario[];
+    partialHydrationRows: FixturePartialHydrationRow[];
   };
 };
 
@@ -1151,6 +1162,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     });
     const customDocLogService: DocumentLogPort = {
       resolveLog: vi.fn(),
+      readLog: vi.fn(),
       writeLog,
     };
 
@@ -2538,5 +2550,562 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       },
     });
     expect(readAfter.rows.find((r) => r.rowNumber === 10)?.values.Notes).toBe('Upserted with healing');
+  });
+});
+
+describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () => {
+  const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+  let manifestProvider: AppManifestProvider;
+  let handlebars: HandlebarsAdapter;
+
+  beforeEach(() => {
+    manifestProvider = new AppManifestProvider({ manifestPath });
+    handlebars = new HandlebarsAdapter();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const space = {
+    id: sampleFixture.space.id,
+    typeId: sampleFixture.space.typeId,
+    name: sampleFixture.space.name,
+    abstractStorageId: sampleFixture.space.abstractStorageId,
+  };
+
+  function toSimCellsByHeaders(
+    headers: readonly string[],
+    values: Record<string, string>,
+    linkFormula: string
+  ): SimCellValue[] {
+    return headers.map((header) => {
+      if (header === 'Calc Link') {
+        return linkFormula.length > 0 ? linkFormula : null;
+      }
+      const val = values[header];
+      return typeof val === 'string' && val.length > 0 ? val : null;
+    });
+  }
+
+  function buildArchReadGridState(): MockSheetsState {
+    const headers = sampleFixture.submittalArch.headers;
+    const grid: SimCellValue[][] = [
+      [], // Row 1
+      [], // Row 2
+      [...headers], // Row 3 Headers
+      [], // Row 4 Formula Row
+      ['<--->'], // Row 5 Top Anchor
+    ];
+
+    let previousGroupId: string | undefined;
+    for (const entry of sampleFixture.submittalArch.seedEntries) {
+      if (previousGroupId !== undefined && previousGroupId !== entry.identity.idGroup) {
+        grid.push(['---']);
+      }
+      previousGroupId = entry.identity.idGroup;
+      const d = entry.documentData;
+      grid.push([
+        String(d.status ?? ''),
+        String(d.section ?? ''),
+        String(d.number ?? ''),
+        String(d.revision ?? ''),
+        String(d.title ?? ''),
+        String(d.date ?? ''),
+        String(d.contact ?? ''),
+        entry.actionName,
+        typeof d.notes === 'string' && d.notes.length > 0 ? d.notes : null,
+        entry.fileUri ? `=HYPERLINK("${entry.fileUri}", "Link")` : null,
+      ]);
+    }
+
+    const [invalidSectionPattern, unknownActionAndRawUrl, missingRequiredDate] =
+      sampleFixture.submittalArch.partialHydrationRows;
+    grid.push(['---']);
+    grid.push(
+      toSimCellsByHeaders(headers, unknownActionAndRawUrl.rowCells, unknownActionAndRawUrl.linkFormula)
+    );
+    grid.push(
+      toSimCellsByHeaders(headers, missingRequiredDate.rowCells, missingRequiredDate.linkFormula)
+    );
+    grid.push(['---']);
+    grid.push(
+      toSimCellsByHeaders(headers, invalidSectionPattern.rowCells, invalidSectionPattern.linkFormula)
+    );
+    grid.push(['---']);
+    // Unkeyable note row: blank Status/Section/Number/Revision/Date/Contact/Action, Title: "General note"
+    grid.push([null, null, null, null, 'General note', null, null, null, null, null]);
+    grid.push(['<--->']);
+
+    return {
+      tableValues: [],
+      batchUpdates: [],
+      grid,
+      namedRange: {
+        namedRangeId: 'nr-arch',
+        name: sampleFixture.submittalArch.rangeName,
+        range: {
+          sheetId: 101,
+          startRowIndex: 2,
+          endRowIndex: grid.length,
+          startColumnIndex: 0,
+          endColumnIndex: headers.length,
+        },
+      },
+    };
+  }
+
+  function buildFfeReadGridState(): MockSheetsState {
+    const headers = sampleFixture.submittalFfe.headers;
+    const ffeFormula =
+      '=ARRAYFORMULA(IF(B6:B="","",VLOOKUP(B6:B,Options_Submittal_FFE_Specs,2,FALSE)))';
+    const grid: SimCellValue[][] = [
+      [], // Row 1
+      [], // Row 2
+      [...headers], // Row 3 Headers
+      ['Formula Row', null, null, null, ffeFormula], // Row 4 Formula Row
+      ['<--->'], // Row 5 Top Anchor
+    ];
+
+    let previousGroupId: string | undefined;
+    for (const entry of sampleFixture.submittalFfe.seedEntries) {
+      if (previousGroupId !== undefined && previousGroupId !== entry.identity.idGroup) {
+        grid.push(['---']);
+      }
+      previousGroupId = entry.identity.idGroup;
+      const d = entry.documentData;
+      grid.push([
+        String(d.status ?? ''),
+        String(d.specTag ?? ''),
+        typeof d.relatedTag === 'string' && d.relatedTag.length > 0 ? d.relatedTag : null,
+        String(d.revision ?? ''),
+        String(d.specTitle ?? ''),
+        String(d.vendor ?? ''),
+        String(d.date ?? ''),
+        String(d.contact ?? ''),
+        entry.actionName,
+        typeof d.notes === 'string' && d.notes.length > 0 ? d.notes : null,
+        entry.fileUri ? `=HYPERLINK("${entry.fileUri}", "Link")` : null,
+      ]);
+    }
+
+    for (const partialRow of sampleFixture.submittalFfe.partialHydrationRows) {
+      grid.push(['---']);
+      grid.push(toSimCellsByHeaders(headers, partialRow.rowCells, partialRow.linkFormula));
+    }
+    grid.push(['<--->']);
+
+    return {
+      tableValues: [],
+      batchUpdates: [],
+      grid,
+      namedRange: {
+        namedRangeId: 'nr-ffe',
+        name: sampleFixture.submittalFfe.rangeName,
+        range: {
+          sheetId: 102,
+          startRowIndex: 2,
+          endRowIndex: grid.length,
+          startColumnIndex: 0,
+          endColumnIndex: headers.length,
+        },
+      },
+    };
+  }
+
+  it('hydrates full and filtered logs via DocumentLogPort.readLog() across submittalArch (partialHydrationRows + unkeyable row) and submittalFfe (partialHydrationRows + readOnly Spec Title)', async () => {
+    const driveState: MockDriveState = {
+      searchResults: [
+        {
+          id: 'harborview-log-1',
+          name: sampleFixture.space.expectedLogFileName,
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ],
+    };
+
+    // 1) Submittal Arch
+    const archWiring = createDocumentLogWiring({
+      manifestProvider,
+      driveClient: new GoogleDriveClient({
+        drive: createMockDriveSdk(driveState),
+        configProvider: manifestProvider,
+      }),
+      sheetsClient: new GoogleSheetsClient({
+        sheets: createMockSheetsSdk(buildArchReadGridState()),
+        configProvider: manifestProvider,
+      }),
+      configProvider: manifestProvider,
+      templateEvaluator: handlebars,
+    });
+    await archWiring.logSchemaRegistry.initialize();
+
+    const archFull = await archWiring.documentLogService.readLog({
+      documentTypeKey: 'submittal-arch',
+      space,
+    });
+    expect(archFull.spreadsheetId).toBe('harborview-log-1');
+    expect(archFull.sheetName).toBe(sampleFixture.submittalArch.sheetName);
+    expect(archFull.entries).toHaveLength(sampleFixture.submittalArch.seedEntries.length + 4);
+    for (const entry of archFull.entries) {
+      expect(entry.document.calculated).toBeUndefined();
+      expect('calculated' in entry.document).toBe(false);
+    }
+
+    const partialShortSec = archFull.entries.find((e) => e.document.idGroup === '7120-001');
+    expect(partialShortSec).toBeDefined();
+    expect(partialShortSec?.valid).toBe(false);
+    expect(partialShortSec?.fileUri).toBe(
+      'https://drive.google.com/file/d/fixture-arch-partial-sec/view'
+    );
+    expect(
+      archFull.warnings
+        .filter((w) => w.rowNumber === partialShortSec?.rowNumber)
+        .map((w) => w.field)
+    ).toEqual(sampleFixture.submittalArch.partialHydrationRows[0].expectedIssues);
+
+    const partialUnknownAction = archFull.entries.find(
+      (e) => e.document.data.notes === 'Legacy human label'
+    );
+    expect(partialUnknownAction).toBeDefined();
+    expect(partialUnknownAction?.valid).toBe(false);
+    expect(partialUnknownAction?.document.data.action).toEqual({
+      key: 'Approved',
+      name: 'Approved',
+    });
+    expect(partialUnknownAction?.fileUri).toBe(
+      'https://drive.google.com/file/d/fixture-arch-raw-url/view'
+    );
+    expect(
+      archFull.warnings
+        .filter((w) => w.rowNumber === partialUnknownAction?.rowNumber)
+        .map((w) => w.field)
+    ).toEqual(sampleFixture.submittalArch.partialHydrationRows[1].expectedIssues);
+
+    const partialMissingDate = archFull.entries.find(
+      (e) => e.document.data.notes === 'Awaiting date confirmation'
+    );
+    expect(partialMissingDate).toBeDefined();
+    expect(partialMissingDate?.valid).toBe(false);
+    expect('date' in (partialMissingDate?.document.data ?? {})).toBe(false);
+    expect(partialMissingDate?.fileUri).toBeUndefined();
+    expect(
+      archFull.warnings
+        .filter((w) => w.rowNumber === partialMissingDate?.rowNumber)
+        .map((w) => w.field)
+    ).toEqual(sampleFixture.submittalArch.partialHydrationRows[2].expectedIssues);
+
+    const unkeyableNoteRow = archFull.entries.find(
+      (e) => e.document.data.title === 'General note'
+    );
+    expect(unkeyableNoteRow).toBeDefined();
+    expect(unkeyableNoteRow?.valid).toBe(false);
+    expect(unkeyableNoteRow?.document.idGroup).toBeUndefined();
+    expect(unkeyableNoteRow?.document.idDocument).toBeUndefined();
+    expect(unkeyableNoteRow?.document.id).toBeUndefined();
+
+    const warnedRowNumbers = new Set(archFull.warnings.map((w) => w.rowNumber));
+    expect(warnedRowNumbers.has(partialShortSec!.rowNumber)).toBe(true);
+    expect(warnedRowNumbers.has(partialUnknownAction!.rowNumber)).toBe(true);
+    expect(warnedRowNumbers.has(partialMissingDate!.rowNumber)).toBe(true);
+    expect(warnedRowNumbers.has(unkeyableNoteRow!.rowNumber)).toBe(true);
+
+    // Filtered idGroup: [' 071200-001 ']
+    const archFiltered = await archWiring.documentLogService.readLog({
+      documentTypeKey: 'submittal-arch',
+      space,
+      filterBy: 'idGroup',
+      values: [' 071200-001 '],
+    });
+    expect(archFiltered.entries).toHaveLength(7);
+    expect(archFiltered.entries.every((e) => e.document.idGroup === '071200-001')).toBe(true);
+    expect(archFiltered.entries.some((e) => e.rowNumber === partialUnknownAction?.rowNumber)).toBe(
+      true
+    );
+    expect(archFiltered.entries.some((e) => e.rowNumber === partialMissingDate?.rowNumber)).toBe(
+      true
+    );
+    const matchedRows = new Set(archFiltered.entries.map((e) => e.rowNumber));
+    expect(archFiltered.warnings.every((w) => matchedRows.has(w.rowNumber))).toBe(true);
+    expect(archFiltered.warnings.map((w) => w.field)).toEqual(['action', 'date']);
+    expect(
+      archFiltered.warnings.some(
+        (w) =>
+          w.rowNumber === partialShortSec?.rowNumber ||
+          w.rowNumber === unkeyableNoteRow?.rowNumber
+      )
+    ).toBe(false);
+
+    // Non-matching '-' filter returns empty entries and warnings
+    const archDashFilter = await archWiring.documentLogService.readLog({
+      documentTypeKey: 'submittal-arch',
+      space,
+      filterBy: 'idGroup',
+      values: ['-'],
+    });
+    expect(archDashFilter.entries).toEqual([]);
+    expect(archDashFilter.warnings).toEqual([]);
+
+    // 2) Submittal FF&E
+    const ffeWiring = createDocumentLogWiring({
+      manifestProvider,
+      driveClient: new GoogleDriveClient({
+        drive: createMockDriveSdk(driveState),
+        configProvider: manifestProvider,
+      }),
+      sheetsClient: new GoogleSheetsClient({
+        sheets: createMockSheetsSdk(buildFfeReadGridState()),
+        configProvider: manifestProvider,
+      }),
+      configProvider: manifestProvider,
+      templateEvaluator: handlebars,
+    });
+    await ffeWiring.logSchemaRegistry.initialize();
+
+    const ffeLt108 = await ffeWiring.documentLogService.readLog({
+      documentTypeKey: 'submittal-ffe',
+      space,
+      filterBy: 'idGroup',
+      values: 'lt108',
+    });
+    expect(ffeLt108.entries).toHaveLength(4);
+    for (const entry of ffeLt108.entries) {
+      expect(entry.document.data.specTitle).toBe('SCONCE');
+    }
+    const invalidStatusRow = ffeLt108.entries.find(
+      (e) => e.document.data.notes === 'Pending vendor confirmation'
+    );
+    expect(invalidStatusRow).toBeDefined();
+    expect(invalidStatusRow?.valid).toBe(false);
+    expect(invalidStatusRow?.document.data.status).toEqual({ key: 'In Review' });
+    expect('vendor' in (invalidStatusRow?.document.data ?? {})).toBe(false);
+    expect(invalidStatusRow?.fileUri).toBe(
+      'https://drive.google.com/file/d/fixture-ffe-partial-vendor/view'
+    );
+    expect(ffeLt108.warnings.map((w) => w.field)).toEqual(['status', 'vendor']);
+    expect(
+      invalidStatusRow?.validationErrors?.filter((msg) => msg.includes('"vendor"'))
+    ).toHaveLength(1);
+
+    const ffeFull = await ffeWiring.documentLogService.readLog({
+      documentTypeKey: 'submittal-ffe',
+      space,
+    });
+    expect(ffeFull.entries).toHaveLength(sampleFixture.submittalFfe.seedEntries.length + 2);
+    const missingRevRow = ffeFull.entries.find(
+      (e) => e.document.data.notes === 'Missing rev number'
+    );
+    expect(missingRevRow).toBeDefined();
+    expect(missingRevRow?.valid).toBe(false);
+    expect('revision' in (missingRevRow?.document.data ?? {})).toBe(false);
+    expect(missingRevRow?.document.data.specTitle).toBe('BED - KING');
+    expect(missingRevRow?.fileUri).toBe(
+      'https://drive.google.com/file/d/fixture-ffe-raw-url/view'
+    );
+    expect(
+      ffeFull.warnings
+        .filter((w) => w.rowNumber === missingRevRow?.rowNumber)
+        .map((w) => w.field)
+    ).toEqual(['revision']);
+    expect(missingRevRow?.validationErrors).toHaveLength(1);
+
+    // idDocument and id filtering on Submittal FF&E
+    const ffeByIdDocument = await ffeWiring.documentLogService.readLog({
+      documentTypeKey: 'submittal-ffe',
+      space,
+      filterBy: 'idDocument',
+      values: 'CG104-0',
+    });
+    expect(ffeByIdDocument.entries).toHaveLength(2);
+    expect(ffeByIdDocument.entries.every((e) => e.document.idDocument === 'CG104-0')).toBe(true);
+
+    const ffeById = await ffeWiring.documentLogService.readLog({
+      documentTypeKey: 'submittal-ffe',
+      space,
+      filterBy: 'id',
+      values: 'LT108-0-260215-2',
+    });
+    expect(ffeById.entries).toHaveLength(2);
+    expect(ffeById.entries.every((e) => e.document.id === 'LT108-0-260215-2')).toBe(true);
+  });
+
+  it('executes wired DocumentService.processDocument() READ_LOG -> downstream activity reading {{Context.logEntries.0...}} and {{Context.documentLogRead.*}} while skipping Drive search when selectedLogId is forwarded', async () => {
+    const driveSdk = createMockDriveSdk({ searchResults: [] });
+    const sheetsSdk = createMockSheetsSdk(buildArchReadGridState());
+    const driveClient = new GoogleDriveClient({
+      drive: driveSdk,
+      configProvider: manifestProvider,
+    });
+    const sheetsClient = new GoogleSheetsClient({
+      sheets: sheetsSdk,
+      configProvider: manifestProvider,
+    });
+
+    const lookupManifestProvider: RawManifestProviderPort = {
+      getRawManifest: () => manifestProvider.getRawManifest(),
+      readParsedSchema: async (relPath: string) => {
+        const parsed = await manifestProvider.readParsedSchema(relPath);
+        if (!relPath.includes('submittal-arch')) {
+          return parsed;
+        }
+        const cloned = structuredClone(parsed) as Record<string, unknown>;
+        const uiSchema = cloned.documentUiSchema as {
+          events: Record<string, { catchAllWorkflow?: string }>;
+        };
+        uiSchema.events.onLookup = { catchAllWorkflow: 'LookupAndSummarize' };
+        const workflowConfig = cloned.documentWorkflowConfig as {
+          workflows: Array<{ name: string; activitySequence: unknown[] }>;
+        };
+        workflowConfig.workflows.push({
+          name: 'LookupAndSummarize',
+          activitySequence: [
+            {
+              id: 'readPrior',
+              type: 'READ_LOG',
+              payload: {
+                filterBy: 'idGroup',
+                values: ['{{Document.idGroup}}'],
+              },
+            },
+            {
+              id: 'summarize',
+              type: 'CAPTURE_SUMMARY',
+              payload: {
+                priorTitle: '{{Context.logEntries.0.document.data.title}}',
+                priorAction: '{{Context.logEntries.0.document.data.action.name}}',
+                priorUri: '{{Context.logEntries.0.fileUri}}',
+                firstWarningField: '{{Context.logEntriesWarnings.0.field}}',
+                entryCount: '{{Context.documentLogRead.entryCount}}',
+                warningCount: '{{Context.documentLogRead.warningCount}}',
+              },
+            },
+          ],
+        });
+        return cloned;
+      },
+    };
+
+    const docSchemaRegistry = new DocumentSchemaRegistryAdapter(
+      lookupManifestProvider,
+      handlebars,
+      ensureEvaluationOrder
+    );
+    const compiledRegistry = new CompiledSchemaRegistry(docSchemaRegistry);
+    await compiledRegistry.initialize();
+
+    const logWiring = createDocumentLogWiring({
+      manifestProvider: lookupManifestProvider,
+      driveClient,
+      sheetsClient,
+      configProvider: manifestProvider,
+      templateEvaluator: handlebars,
+    });
+    await logWiring.logSchemaRegistry.initialize();
+
+    const capturedSummaries: Array<Record<string, unknown>> = [];
+    const captureHandler: ActivityHandler = {
+      canHandle: (activity: Activity) => activity.type === 'CAPTURE_SUMMARY',
+      handle: async (
+        activity: Activity
+      ): Promise<ActivityOutput> => {
+        capturedSummaries.push(activity.payload);
+        return {
+          success: true,
+          contextVariables: { capturedSummary: activity.payload },
+        };
+      },
+    };
+
+    const activityEngine = new ActivityEngine([
+      logWiring.createPerRequestActivityHandler({ selectedLogId: 'harborview-log-1' }),
+      captureHandler,
+    ]);
+    const documentService = new DocumentService(
+      activityEngine,
+      docSchemaRegistry,
+      handlebars,
+      compiledRegistry
+    );
+    await documentService.initialize();
+
+    const targetSeed = sampleFixture.submittalArch.seedEntries[2]; // 071200-001
+    const result = await documentService.processDocument(
+      {
+        type: 'submittal-arch',
+        space,
+        data: targetSeed.documentData,
+      },
+      'onLookup'
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    expect(result.activities.map((a) => a.type)).toEqual(['READ_LOG', 'CAPTURE_SUMMARY']);
+    expect(capturedSummaries).toEqual([
+      {
+        priorTitle: 'Fluid-Applied Waterproofing Membrane',
+        priorAction: 'Received',
+        priorUri: 'https://drive.google.com/file/d/fixture-arch-071200-001-0-rec/view',
+        firstWarningField: 'action',
+        entryCount: '7',
+        warningCount: '2',
+      },
+    ]);
+    expect(driveSdk.files.list).not.toHaveBeenCalled();
+  });
+
+  it('fails fast during LogSchemaRegistryAdapter.initialize() when a DocumentType workflow uses READ_LOG without declaring documentLogSchema', async () => {
+    const driveClient = new GoogleDriveClient({
+      drive: createMockDriveSdk({ searchResults: [] }),
+      configProvider: manifestProvider,
+    });
+    const sheetsClient = new GoogleSheetsClient({
+      sheets: createMockSheetsSdk({ tableValues: [], batchUpdates: [] }),
+      configProvider: manifestProvider,
+    });
+
+    const invalidManifestProvider: RawManifestProviderPort = {
+      getRawManifest: () => manifestProvider.getRawManifest(),
+      readParsedSchema: async (relPath: string) => {
+        const parsed = await manifestProvider.readParsedSchema(relPath);
+        if (!relPath.includes('submittal-arch')) {
+          return parsed;
+        }
+        const cloned = structuredClone(parsed) as Record<string, unknown>;
+        delete cloned.documentLogSchema;
+        const workflowConfig = cloned.documentWorkflowConfig as {
+          workflows: Array<{ name: string; activitySequence: unknown[] }>;
+        };
+        workflowConfig.workflows = [
+          {
+            name: 'LookupWithoutLogSchema',
+            activitySequence: [
+              {
+                id: 'readPrior',
+                type: 'READ_LOG',
+                payload: {},
+              },
+            ],
+          },
+        ];
+        return cloned;
+      },
+    };
+
+    const logWiring = createDocumentLogWiring({
+      manifestProvider: invalidManifestProvider,
+      driveClient,
+      sheetsClient,
+      configProvider: manifestProvider,
+      templateEvaluator: handlebars,
+    });
+
+    await expect(logWiring.logSchemaRegistry.initialize()).rejects.toThrow(
+      DocumentLogConfigurationError
+    );
+    await expect(logWiring.logSchemaRegistry.initialize()).rejects.toThrow(
+      /READ_LOG.*documentLogSchema/i
+    );
   });
 });
