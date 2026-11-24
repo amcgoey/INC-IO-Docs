@@ -1,0 +1,761 @@
+{
+  "metadata": {
+    "description": "Anonymized realistic Submittal Arch and Submittal FF&E test fixture dataset for DocumentLog unit, integration, and copy-and-trash live E2E tests.",
+    "anonymized": true,
+    "templateSpreadsheetId": "1Ops-suWgiqs-_PbaEvdx1WIdUWdVCctJkjS2rPjB42I",
+    "liveTestPolicy": "Copy template into scratch Drive folder, seed/exercise from this fixture, and trash copy in afterAll."
+  },
+  "space": {
+    "id": "fixture-space-harborview",
+    "typeId": "projects",
+    "name": "Harborview Hotel",
+    "abstractStorageId": "fixture-drive-harborview",
+    "expectedLogFileName": "Harborview Hotel Document Log"
+  },
+  "anonymizedEntities": {
+    "contacts": [
+      { "key": "ARC", "name": "Apex Architecture Studio", "type": "Architect" },
+      { "key": "MB", "name": "Meridian Builders", "type": "Contractor" },
+      { "key": "SME", "name": "Summit MEP Engineers", "type": "MEP" },
+      { "key": "PST", "name": "Pillar Structural Consultants", "type": "Structural" },
+      { "key": "LMD", "name": "Lumen Lighting Design", "type": "Lighting" },
+      { "key": "HPG", "name": "Harbor Procurement Group", "type": "Procurement" },
+      { "key": "OBR", "name": "Oceanview Brand Standards", "type": "Brand" }
+    ],
+    "vendors": [
+      { "key": "KC", "name": "Keystone Casegoods", "type": "Casegoods" },
+      { "key": "CL", "name": "Crestline Lighting", "type": "Lighting" },
+      { "key": "AT", "name": "Atlas Textiles", "type": "Fabric" },
+      { "key": "VM", "name": "Vanguard Mills", "type": "Carpet" },
+      { "key": "NF", "name": "Northstar Furnishings", "type": "Furniture" }
+    ]
+  },
+  "submittalArch": {
+    "documentTypeKey": "submittal-arch",
+    "sheetName": "Submittal Arch",
+    "rangeName": "Log_Submittal_Arch",
+    "headers": [
+      "Status",
+      "Section",
+      "Number",
+      "Revision",
+      "Title",
+      "Date",
+      "Contact",
+      "Action",
+      "Notes",
+      "Calc Link"
+    ],
+    "seedEntries": [
+      {
+        "documentData": {
+          "status": "Closed",
+          "section": "033000",
+          "number": "001",
+          "revision": "0",
+          "title": "Cast-in-Place Concrete Mix Design",
+          "date": "260115",
+          "contact": "MB",
+          "action": "REC",
+          "notes": "4000 psi podium slab mix"
+        },
+        "actionName": "Received",
+        "fileUri": "https://drive.google.com/file/d/fixture-arch-033000-001-0-rec/view",
+        "identity": {
+          "idGroup": "033000-001",
+          "idDocument": "033000-001-0",
+          "id": "033000-001-0-260115-1"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Closed",
+          "section": "033000",
+          "number": "001",
+          "revision": "0",
+          "title": "Cast-in-Place Concrete Mix Design",
+          "date": "260122",
+          "contact": "ARC",
+          "action": "NET",
+          "notes": ""
+        },
+        "actionName": "No Exceptions Taken",
+        "fileUri": "https://drive.google.com/file/d/fixture-arch-033000-001-0-net/view",
+        "identity": {
+          "idGroup": "033000-001",
+          "idDocument": "033000-001-0",
+          "id": "033000-001-0-260122-7"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Open",
+          "section": "071200",
+          "number": "001",
+          "revision": "0",
+          "title": "Fluid-Applied Waterproofing Membrane",
+          "date": "260204",
+          "contact": "MB",
+          "action": "REC",
+          "notes": "Terrace deck assembly"
+        },
+        "actionName": "Received",
+        "fileUri": "https://drive.google.com/file/d/fixture-arch-071200-001-0-rec/view",
+        "identity": {
+          "idGroup": "071200-001",
+          "idDocument": "071200-001-0",
+          "id": "071200-001-0-260204-1"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Open",
+          "section": "071200",
+          "number": "001",
+          "revision": "0",
+          "title": "Fluid-Applied Waterproofing Membrane",
+          "date": "260205",
+          "contact": "PST",
+          "action": "REF",
+          "notes": "Structural slab edge check"
+        },
+        "actionName": "Referred",
+        "fileUri": "https://drive.google.com/file/d/fixture-arch-071200-001-0-ref-pst/view",
+        "identity": {
+          "idGroup": "071200-001",
+          "idDocument": "071200-001-0",
+          "id": "071200-001-0-260205-2"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Open",
+          "section": "071200",
+          "number": "001",
+          "revision": "0",
+          "title": "Fluid-Applied Waterproofing Membrane",
+          "date": "260205",
+          "contact": "SME",
+          "action": "REF",
+          "notes": "Roof drain flashing coordination"
+        },
+        "actionName": "Referred",
+        "fileUri": "https://drive.google.com/file/d/fixture-arch-071200-001-0-ref-sme/view",
+        "identity": {
+          "idGroup": "071200-001",
+          "idDocument": "071200-001-0",
+          "id": "071200-001-0-260205-2"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Open",
+          "section": "071200",
+          "number": "001",
+          "revision": "0",
+          "title": "Fluid-Applied Waterproofing Membrane",
+          "date": "260212",
+          "contact": "ARC",
+          "action": "RR",
+          "notes": "Missing parapet termination detail"
+        },
+        "actionName": "Revise & Resubmit",
+        "fileUri": "https://drive.google.com/file/d/fixture-arch-071200-001-0-rr/view",
+        "identity": {
+          "idGroup": "071200-001",
+          "idDocument": "071200-001-0",
+          "id": "071200-001-0-260212-5"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Open",
+          "section": "071200",
+          "number": "001",
+          "revision": "1",
+          "title": "Fluid-Applied Waterproofing Membrane",
+          "date": "260224",
+          "contact": "ARC",
+          "action": "NOC",
+          "notes": "Verify primer cure time in field"
+        },
+        "actionName": "No Objections As Corrected",
+        "fileUri": "https://drive.google.com/file/d/fixture-arch-071200-001-1-noc/view",
+        "identity": {
+          "idGroup": "071200-001",
+          "idDocument": "071200-001-1",
+          "id": "071200-001-1-260224-6"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Waiting",
+          "section": "071200",
+          "number": "002",
+          "revision": "0",
+          "title": "Below-Grade Sheet Waterproofing",
+          "date": "260218",
+          "contact": "MB",
+          "action": "REC",
+          "notes": ""
+        },
+        "actionName": "Received",
+        "fileUri": "https://drive.google.com/file/d/fixture-arch-071200-002-0-rec/view",
+        "identity": {
+          "idGroup": "071200-002",
+          "idDocument": "071200-002-0",
+          "id": "071200-002-0-260218-1"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Waiting",
+          "section": "071200",
+          "number": "002",
+          "revision": "0",
+          "title": "Below-Grade Sheet Waterproofing",
+          "date": "260219",
+          "contact": "PST",
+          "action": "REF",
+          "notes": "Pending foundation wall review"
+        },
+        "actionName": "Referred",
+        "fileUri": null,
+        "identity": {
+          "idGroup": "071200-002",
+          "idDocument": "071200-002-0",
+          "id": "071200-002-0-260219-2"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Manager",
+          "section": "087100",
+          "number": "001",
+          "revision": "0",
+          "title": "Door Hardware Schedule & Cut Sheets",
+          "date": "260303",
+          "contact": "MB",
+          "action": "REC",
+          "notes": "Guestroom and corridor hardware sets"
+        },
+        "actionName": "Received",
+        "fileUri": "https://drive.google.com/file/d/fixture-arch-087100-001-0-rec/view",
+        "identity": {
+          "idGroup": "087100-001",
+          "idDocument": "087100-001-0",
+          "id": "087100-001-0-260303-1"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Manager",
+          "section": "087100",
+          "number": "001",
+          "revision": "0",
+          "title": "Door Hardware Schedule & Cut Sheets",
+          "date": "260305",
+          "contact": "ARC",
+          "action": "NR",
+          "notes": "Incomplete keying schedule"
+        },
+        "actionName": "Not Reviewed",
+        "fileUri": "https://drive.google.com/file/d/fixture-arch-087100-001-0-nr/view",
+        "identity": {
+          "idGroup": "087100-001",
+          "idDocument": "087100-001-0",
+          "id": "087100-001-0-260305-3"
+        }
+      }
+    ],
+    "writeScenarios": [
+      {
+        "scenario": "insertTopNewGroup",
+        "description": "Insert a new idGroup sorting before all existing groups (013300-001 before 033000-001).",
+        "documentData": {
+          "status": "Open",
+          "section": "013300",
+          "number": "001",
+          "revision": "0",
+          "title": "Submittal Procedures & Schedule",
+          "date": "260110",
+          "contact": "MB",
+          "action": "REC",
+          "notes": "Initial submittal log baseline"
+        },
+        "actionName": "Received",
+        "fileUri": "https://drive.google.com/file/d/fixture-arch-013300-001-0-rec/view",
+        "identity": {
+          "idGroup": "013300-001",
+          "idDocument": "013300-001-0",
+          "id": "013300-001-0-260110-1"
+        }
+      },
+      {
+        "scenario": "insertMiddleNewGroup",
+        "description": "Insert a new idGroup between existing groups (075100-001 between 071200-002 and 087100-001) with divider boundaries.",
+        "documentData": {
+          "status": "Open",
+          "section": "075100",
+          "number": "001",
+          "revision": "0",
+          "title": "Built-Up Bituminous Roofing",
+          "date": "260220",
+          "contact": "MB",
+          "action": "REC",
+          "notes": "Main roof insulation and cap sheet"
+        },
+        "actionName": "Received",
+        "fileUri": "https://drive.google.com/file/d/fixture-arch-075100-001-0-rec/view",
+        "identity": {
+          "idGroup": "075100-001",
+          "idDocument": "075100-001-0",
+          "id": "075100-001-0-260220-1"
+        }
+      },
+      {
+        "scenario": "insertBottomNewGroup",
+        "description": "Insert a new idGroup after the last existing group (096500-001 after 087100-001) before bottom extent anchor.",
+        "documentData": {
+          "status": "Open",
+          "section": "096500",
+          "number": "001",
+          "revision": "0",
+          "title": "Resilient Base & Flooring Samples",
+          "date": "260314",
+          "contact": "MB",
+          "action": "REC",
+          "notes": "Back-of-house corridor rubber base"
+        },
+        "actionName": "Received",
+        "fileUri": "https://drive.google.com/file/d/fixture-arch-096500-001-0-rec/view",
+        "identity": {
+          "idGroup": "096500-001",
+          "idDocument": "096500-001-0",
+          "id": "096500-001-0-260314-1"
+        }
+      },
+      {
+        "scenario": "insertChronologicalMiddleInExistingGroup",
+        "description": "Insert an entry inside existing group 071200-001 sorting between 071200-001-0-260212-5 and 071200-001-1-260224-6.",
+        "documentData": {
+          "status": "Open",
+          "section": "071200",
+          "number": "001",
+          "revision": "1",
+          "title": "Fluid-Applied Waterproofing Membrane",
+          "date": "260220",
+          "contact": "MB",
+          "action": "REC",
+          "notes": "Resubmission addressing parapet flashing"
+        },
+        "actionName": "Received",
+        "fileUri": "https://drive.google.com/file/d/fixture-arch-071200-001-1-rec/view",
+        "identity": {
+          "idGroup": "071200-001",
+          "idDocument": "071200-001-1",
+          "id": "071200-001-1-260220-1"
+        }
+      },
+      {
+        "scenario": "insertSameDayDuplicateIdReferral",
+        "description": "Insert a third same-day referral into 071200-001 sharing identical Identity.id (071200-001-0-260205-2) to verify duplicatePolicy: insert preserves prior referrals.",
+        "documentData": {
+          "status": "Open",
+          "section": "071200",
+          "number": "001",
+          "revision": "0",
+          "title": "Fluid-Applied Waterproofing Membrane",
+          "date": "260205",
+          "contact": "LMD",
+          "action": "REF",
+          "notes": "Exterior sconce penetration coordination"
+        },
+        "actionName": "Referred",
+        "fileUri": "https://drive.google.com/file/d/fixture-arch-071200-001-0-ref-lmd/view",
+        "identity": {
+          "idGroup": "071200-001",
+          "idDocument": "071200-001-0",
+          "id": "071200-001-0-260205-2"
+        }
+      }
+    ],
+    "partialHydrationRows": [
+      {
+        "scenario": "invalidSectionPattern",
+        "description": "Human-edited 4-digit Section violating ^\\d{6}$ regex while remaining fields are valid.",
+        "rowCells": {
+          "Status": "Open",
+          "Section": "7120",
+          "Number": "001",
+          "Revision": "0",
+          "Title": "Manual Entry Short Section",
+          "Date": "260225",
+          "Contact": "MB",
+          "Action": "Received",
+          "Notes": "Entered manually without leading zeros",
+          "Calc Link": "Link"
+        },
+        "linkFormula": "=HYPERLINK(\"https://drive.google.com/file/d/fixture-arch-partial-sec/view\", \"Link\")",
+        "expectedIssues": ["section"]
+      },
+      {
+        "scenario": "unknownActionAndRawUrl",
+        "description": "Human-edited Action text not matching canonical actions options, paired with a raw URL string in Calc Link.",
+        "rowCells": {
+          "Status": "Open",
+          "Section": "071200",
+          "Number": "001",
+          "Revision": "1",
+          "Title": "Fluid-Applied Waterproofing Membrane",
+          "Date": "260226",
+          "Contact": "ARC",
+          "Action": "Approved",
+          "Notes": "Legacy human label",
+          "Calc Link": "https://drive.google.com/file/d/fixture-arch-raw-url/view"
+        },
+        "linkFormula": "https://drive.google.com/file/d/fixture-arch-raw-url/view",
+        "expectedIssues": ["action"]
+      },
+      {
+        "scenario": "missingRequiredDate",
+        "description": "Human-edited row missing required Date field while Section and Number identify idGroup 071200-001.",
+        "rowCells": {
+          "Status": "Waiting",
+          "Section": "071200",
+          "Number": "001",
+          "Revision": "1",
+          "Title": "Fluid-Applied Waterproofing Membrane",
+          "Date": "",
+          "Contact": "PST",
+          "Action": "Referred",
+          "Notes": "Awaiting date confirmation",
+          "Calc Link": ""
+        },
+        "linkFormula": "",
+        "expectedIssues": ["date"]
+      }
+    ]
+  },
+  "submittalFfe": {
+    "documentTypeKey": "submittal-ffe",
+    "sheetName": "Submittal FF&E",
+    "rangeName": "Log_Submittal_FFE",
+    "headers": [
+      "Status",
+      "Spec Tag",
+      "Related Tag",
+      "Revision",
+      "Spec Title",
+      "Vendor",
+      "Date",
+      "Contact",
+      "Action",
+      "Notes",
+      "Calc Link"
+    ],
+    "formulaOwnedColumns": ["Spec Title"],
+    "seedEntries": [
+      {
+        "documentData": {
+          "status": "Open",
+          "specTag": "CG104",
+          "relatedTag": "FB127",
+          "revision": "0",
+          "specTitle": "BED - KING",
+          "vendor": "Keystone Casegoods",
+          "date": "260120",
+          "contact": "HPG",
+          "action": "REC",
+          "notes": "Headboard upholstered in FB127"
+        },
+        "actionName": "Received",
+        "fileUri": "https://drive.google.com/file/d/fixture-ffe-cg104-0-rec/view",
+        "identity": {
+          "idGroup": "CG104",
+          "idDocument": "CG104-0",
+          "id": "CG104-0-260120-1"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Open",
+          "specTag": "CG104",
+          "relatedTag": "FB127",
+          "revision": "0",
+          "specTitle": "BED - KING",
+          "vendor": "Keystone Casegoods",
+          "date": "260128",
+          "contact": "ARC",
+          "action": "RR",
+          "notes": "Adjust nightstand cleat height"
+        },
+        "actionName": "Revise & Resubmit",
+        "fileUri": "https://drive.google.com/file/d/fixture-ffe-cg104-0-rr/view",
+        "identity": {
+          "idGroup": "CG104",
+          "idDocument": "CG104-0",
+          "id": "CG104-0-260128-5"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Open",
+          "specTag": "CG104",
+          "relatedTag": "FB127",
+          "revision": "1",
+          "specTitle": "BED - KING",
+          "vendor": "Keystone Casegoods",
+          "date": "260210",
+          "contact": "ARC",
+          "action": "NOC",
+          "notes": "Approved with walnut stain sample"
+        },
+        "actionName": "No Objections As Corrected",
+        "fileUri": "https://drive.google.com/file/d/fixture-ffe-cg104-1-noc/view",
+        "identity": {
+          "idGroup": "CG104",
+          "idDocument": "CG104-1",
+          "id": "CG104-1-260210-6"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Closed",
+          "specTag": "FB127",
+          "relatedTag": "",
+          "revision": "0",
+          "specTitle": "FABRIC - LEATHER",
+          "vendor": "Atlas Textiles",
+          "date": "260118",
+          "contact": "HPG",
+          "action": "REC",
+          "notes": "CFA cutting"
+        },
+        "actionName": "Received",
+        "fileUri": "https://drive.google.com/file/d/fixture-ffe-fb127-0-rec/view",
+        "identity": {
+          "idGroup": "FB127",
+          "idDocument": "FB127-0",
+          "id": "FB127-0-260118-1"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Closed",
+          "specTag": "FB127",
+          "relatedTag": "",
+          "revision": "0",
+          "specTitle": "FABRIC - LEATHER",
+          "vendor": "Atlas Textiles",
+          "date": "260125",
+          "contact": "ARC",
+          "action": "NET",
+          "notes": ""
+        },
+        "actionName": "No Exceptions Taken",
+        "fileUri": "https://drive.google.com/file/d/fixture-ffe-fb127-0-net/view",
+        "identity": {
+          "idGroup": "FB127",
+          "idDocument": "FB127-0",
+          "id": "FB127-0-260125-7"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Waiting",
+          "specTag": "LT108",
+          "relatedTag": "",
+          "revision": "0",
+          "specTitle": "SCONCE",
+          "vendor": "Crestline Lighting",
+          "date": "260214",
+          "contact": "HPG",
+          "action": "REC",
+          "notes": "Corridor brass sconce shop drawing"
+        },
+        "actionName": "Received",
+        "fileUri": "https://drive.google.com/file/d/fixture-ffe-lt108-0-rec/view",
+        "identity": {
+          "idGroup": "LT108",
+          "idDocument": "LT108-0",
+          "id": "LT108-0-260214-1"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Waiting",
+          "specTag": "LT108",
+          "relatedTag": "",
+          "revision": "0",
+          "specTitle": "SCONCE",
+          "vendor": "Crestline Lighting",
+          "date": "260215",
+          "contact": "LMD",
+          "action": "REF",
+          "notes": "Photometric and dimming driver check"
+        },
+        "actionName": "Referred",
+        "fileUri": "https://drive.google.com/file/d/fixture-ffe-lt108-0-ref-lmd/view",
+        "identity": {
+          "idGroup": "LT108",
+          "idDocument": "LT108-0",
+          "id": "LT108-0-260215-2"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Waiting",
+          "specTag": "LT108",
+          "relatedTag": "",
+          "revision": "0",
+          "specTitle": "SCONCE",
+          "vendor": "Crestline Lighting",
+          "date": "260215",
+          "contact": "OBR",
+          "action": "REF",
+          "notes": "Brand finish sign-off"
+        },
+        "actionName": "Referred",
+        "fileUri": null,
+        "identity": {
+          "idGroup": "LT108",
+          "idDocument": "LT108-0",
+          "id": "LT108-0-260215-2"
+        }
+      },
+      {
+        "documentData": {
+          "status": "Billed",
+          "specTag": "TA139",
+          "relatedTag": "",
+          "revision": "0",
+          "specTitle": "TABLE - WORK",
+          "vendor": "Northstar Furnishings",
+          "date": "260301",
+          "contact": "ARC",
+          "action": "REJ",
+          "notes": "Incorrect desktop laminate finish"
+        },
+        "actionName": "Rejected",
+        "fileUri": "https://drive.google.com/file/d/fixture-ffe-ta139-0-rej/view",
+        "identity": {
+          "idGroup": "TA139",
+          "idDocument": "TA139-0",
+          "id": "TA139-0-260301-4"
+        }
+      }
+    ],
+    "writeScenarios": [
+      {
+        "scenario": "insertTopNewGroup",
+        "description": "Insert a new Spec Tag group before CG104 (AC102) without overwriting formula-owned Spec Title.",
+        "documentData": {
+          "status": "Open",
+          "specTag": "AC102",
+          "relatedTag": "",
+          "revision": "0",
+          "specTitle": "HOOK",
+          "vendor": "Northstar Furnishings",
+          "date": "260112",
+          "contact": "HPG",
+          "action": "REC",
+          "notes": "Robe hook finish sample"
+        },
+        "actionName": "Received",
+        "fileUri": "https://drive.google.com/file/d/fixture-ffe-ac102-0-rec/view",
+        "identity": {
+          "idGroup": "AC102",
+          "idDocument": "AC102-0",
+          "id": "AC102-0-260112-1"
+        }
+      },
+      {
+        "scenario": "insertMiddleNewGroup",
+        "description": "Insert a new Spec Tag group between CG104 and FB127 (CP119) with divider healing.",
+        "documentData": {
+          "status": "Open",
+          "specTag": "CP119",
+          "relatedTag": "",
+          "revision": "0",
+          "specTitle": "CARPET",
+          "vendor": "Vanguard Mills",
+          "date": "260201",
+          "contact": "HPG",
+          "action": "REC",
+          "notes": "Guestroom broadloom strike-off"
+        },
+        "actionName": "Received",
+        "fileUri": "https://drive.google.com/file/d/fixture-ffe-cp119-0-rec/view",
+        "identity": {
+          "idGroup": "CP119",
+          "idDocument": "CP119-0",
+          "id": "CP119-0-260201-1"
+        }
+      },
+      {
+        "scenario": "insertIntoExistingGroupWithRelatedTag",
+        "description": "Insert CG104 Rev 1 REC sorting between CG104-0-260128-5 and CG104-1-260210-6 while preserving E4 Spec Title ARRAYFORMULA.",
+        "documentData": {
+          "status": "Open",
+          "specTag": "CG104",
+          "relatedTag": "FB127",
+          "revision": "1",
+          "specTitle": "BED - KING",
+          "vendor": "Keystone Casegoods",
+          "date": "260205",
+          "contact": "HPG",
+          "action": "REC",
+          "notes": "Revised shop drawing with walnut sample"
+        },
+        "actionName": "Received",
+        "fileUri": "https://drive.google.com/file/d/fixture-ffe-cg104-1-rec/view",
+        "identity": {
+          "idGroup": "CG104",
+          "idDocument": "CG104-1",
+          "id": "CG104-1-260205-1"
+        }
+      }
+    ],
+    "partialHydrationRows": [
+      {
+        "scenario": "invalidStatusAndMissingVendor",
+        "description": "Human-edited Status not in allowed options and blank required Vendor cell.",
+        "rowCells": {
+          "Status": "In Review",
+          "Spec Tag": "LT108",
+          "Related Tag": "",
+          "Revision": "0",
+          "Spec Title": "SCONCE",
+          "Vendor": "",
+          "Date": "260216",
+          "Contact": "HPG",
+          "Action": "Received",
+          "Notes": "Pending vendor confirmation",
+          "Calc Link": "Link"
+        },
+        "linkFormula": "=HYPERLINK(\"https://drive.google.com/file/d/fixture-ffe-partial-vendor/view\", \"Link\")",
+        "expectedIssues": ["status", "vendor"]
+      },
+      {
+        "scenario": "missingRevisionAndRawUrl",
+        "description": "Human-edited row missing required Revision while Calc Link contains a raw URL.",
+        "rowCells": {
+          "Status": "Open",
+          "Spec Tag": "CG104",
+          "Related Tag": "FB127",
+          "Revision": "",
+          "Spec Title": "BED - KING",
+          "Vendor": "Keystone Casegoods",
+          "Date": "260211",
+          "Contact": "ARC",
+          "Action": "Referred",
+          "Notes": "Missing rev number",
+          "Calc Link": "https://drive.google.com/file/d/fixture-ffe-raw-url/view"
+        },
+        "linkFormula": "https://drive.google.com/file/d/fixture-ffe-raw-url/view",
+        "expectedIssues": ["revision"]
+      }
+    ]
+  }
+}
