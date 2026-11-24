@@ -391,5 +391,111 @@ describe('DocumentLogService', () => {
         })
       );
     });
+
+    it('passes a rowKeyExtractor that extracts best-effort keys for submittalArch.partialHydrationRows-style hand-edited rows without throwing and returns null for unkeyable rows', async () => {
+      const insertRow = vi.fn().mockResolvedValue({ rowNumber: 6, action: 'inserted' });
+      const archTargetSchemaWithRef: LogTargetDocumentSchema = {
+        ...targetSchema,
+        options: {
+          ...targetSchema.options,
+          actions: [
+            ...(targetSchema.options?.actions ?? []),
+            { key: 'REF', name: 'Referred', order: '2' },
+          ],
+        },
+      };
+      const { service } = createService({
+        registry: {
+          getTargetSchema: vi.fn().mockImplementation((k) =>
+            k === 'submittal-arch' ? archTargetSchemaWithRef : undefined
+          ),
+        },
+        storage: { insertRow },
+      });
+
+      await service.writeLog({
+        document: sampleDoc,
+        selectedLogId: 'log-partial-rows',
+      });
+
+      const { rowKeyExtractor } = insertRow.mock.calls[0][0];
+
+      // Short 4-digit section
+      expect(
+        rowKeyExtractor({
+          Status: 'Open',
+          Section: '7120',
+          Number: '001',
+          Revision: '0',
+          Title: 'Manual Entry Short Section',
+          Date: '260225',
+          Contact: 'MB',
+          Action: 'Received',
+        })
+      ).toEqual({
+        groupKey: '7120-001',
+        sortKey: '7120-001-0-260225-1',
+      });
+
+      // Unknown Action ('Approved')
+      expect(
+        rowKeyExtractor({
+          Status: 'Open',
+          Section: '071200',
+          Number: '001',
+          Revision: '1',
+          Title: 'Fluid-Applied Waterproofing Membrane',
+          Date: '260226',
+          Contact: 'ARC',
+          Action: 'Approved',
+        })
+      ).toEqual({
+        groupKey: '071200-001',
+        sortKey: '071200-001-1-260226-',
+      });
+
+      // Missing required Date
+      expect(
+        rowKeyExtractor({
+          Status: 'Waiting',
+          Section: '071200',
+          Number: '001',
+          Revision: '1',
+          Title: 'Fluid-Applied Waterproofing Membrane',
+          Date: '',
+          Contact: 'PST',
+          Action: 'Referred',
+        })
+      ).toEqual({
+        groupKey: '071200-001',
+        sortKey: '071200-001-1--2',
+      });
+
+      // Key-in-name-column ('REC')
+      expect(
+        rowKeyExtractor({
+          Status: 'Open',
+          Section: '071200',
+          Number: '001',
+          Revision: '0',
+          Title: 'Fluid-Applied Waterproofing',
+          Date: '260204',
+          Contact: 'MB',
+          Action: 'REC',
+        })
+      ).toEqual({
+        groupKey: '071200-001',
+        sortKey: '071200-001-0-260204-1',
+      });
+
+      // Completely unkeyable row
+      expect(
+        rowKeyExtractor({
+          Section: '',
+          Number: '',
+          Title: 'Random note',
+        })
+      ).toBeNull();
+    });
   });
 });

@@ -349,6 +349,238 @@ describe('document-log row-mapper', () => {
         sortKey: '071200-001-1-260226-',
       });
     });
+
+    it('resolves hand-edited LookupField values entered by alternate key/name property and trims whitespace in key fields', () => {
+      const extractKeys = buildRowKeyExtractor({
+        logSchema,
+        targetSchema,
+        templateEvaluator: evaluator,
+      });
+
+      // Human typed Action key "REC" instead of name "Received", and left spaces around Section/Number
+      expect(
+        extractKeys({
+          Status: 'Open',
+          Section: ' 071200 ',
+          Number: ' 001 ',
+          Revision: ' 0 ',
+          Date: ' 260204 ',
+          Contact: 'Pavarini McGovern',
+          Action: 'rec',
+        })
+      ).toEqual({
+        groupKey: '071200-001',
+        sortKey: '071200-001-0-260204-1',
+      });
+    });
+
+    it('extracts best-effort keys for malformed partialHydrationRows and returns null when groupBy fields are empty', () => {
+      const extractArchKeys = buildRowKeyExtractor({
+        logSchema,
+        targetSchema,
+        templateEvaluator: evaluator,
+      });
+
+      // Short 4-digit section, missing date, and unkeyable note-only row
+      expect(
+        extractArchKeys({
+          Status: 'Open',
+          Section: '7120',
+          Number: '001',
+          Revision: '0',
+          Date: '260225',
+          Contact: 'MB',
+          Action: 'Received',
+        })
+      ).toEqual({
+        groupKey: '7120-001',
+        sortKey: '7120-001-0-260225-1',
+      });
+
+      expect(
+        extractArchKeys({
+          Status: 'Waiting',
+          Section: '071200',
+          Number: '001',
+          Revision: '1',
+          Date: '',
+          Contact: 'PST',
+          Action: 'Referred',
+        })
+      ).toEqual({
+        groupKey: '071200-001',
+        sortKey: '071200-001-1--2',
+      });
+
+      expect(
+        extractArchKeys({
+          Status: 'Open',
+          Section: '',
+          Number: '',
+          Revision: '',
+          Title: 'Human note row without submittal identity',
+          Date: '',
+          Contact: '',
+          Action: '',
+          Notes: 'Check owner allowance',
+        })
+      ).toBeNull();
+    });
+
+    it('extracts best-effort keys for submittalFfe partialHydrationRows (allowUserInput specTag) and returns null when Spec Tag is blank', () => {
+      const ffeTargetSchema: LogTargetDocumentSchema = {
+        fields: [
+          {
+            key: 'status',
+            name: 'Status',
+            type: 'string',
+            required: true,
+            options: { source: 'statuses', key: 'key' },
+          },
+          {
+            key: 'specTag',
+            name: 'Spec Tag',
+            type: 'string',
+            required: true,
+            options: { source: 'specs', key: 'key', allowUserInput: true },
+          },
+          {
+            key: 'relatedTag',
+            name: 'Related Tag',
+            type: 'string',
+            required: false,
+            options: { source: 'specs', key: 'key', allowUserInput: true },
+          },
+          { key: 'revision', name: 'Revision', type: 'string', required: true },
+          {
+            key: 'specTitle',
+            name: 'Spec Title',
+            type: 'string',
+            required: false,
+            linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+          },
+          {
+            key: 'vendor',
+            name: 'Vendor',
+            type: 'string',
+            required: true,
+            options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true },
+          },
+          { key: 'date', name: 'Date', type: 'string', required: true },
+          {
+            key: 'contact',
+            name: 'Contact',
+            type: 'string',
+            required: true,
+            options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true },
+          },
+          {
+            key: 'action',
+            name: 'Action',
+            type: 'string',
+            required: true,
+            options: { source: 'actions', key: 'key', name: 'name' },
+          },
+        ],
+        options: {
+          statuses: [{ key: 'Open' }, { key: 'Closed' }],
+          specs: [{ key: 'CG104', name: 'BED - KING' }],
+          vendors: [{ key: 'KC', name: 'Keystone Casegoods' }],
+          contacts: [
+            { key: 'HPG', name: 'Harbor Procurement Group' },
+            { key: 'ARC', name: 'Apex Architecture Studio' },
+          ],
+          actions: [
+            { key: 'REC', name: 'Received', order: '1' },
+            { key: 'REF', name: 'Referred', order: '2' },
+          ],
+        },
+        identity: {
+          idGroup: '{{specTag.key}}',
+          idDocument: '{{specTag.key}}-{{revision}}',
+          id: '{{specTag.key}}-{{revision}}-{{date}}-{{action.order}}',
+        },
+      };
+
+      const ffeLogSchema: DocumentLogSchema = {
+        ...logSchema,
+        target: {
+          sheetName: 'Submittal FF&E',
+          rangeName: 'Log_Submittal_FFE',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        grouping: {
+          groupBy: 'idGroup',
+          sortBy: 'id',
+          groupSortOrder: 'asc',
+          rowSortOrder: 'asc',
+          duplicatePolicy: 'insert',
+        },
+        columns: {
+          Status: { template: '{{status.key}}' },
+          'Spec Tag': { template: '{{specTag.key}}' },
+          'Related Tag': { template: '{{relatedTag.key}}' },
+          Revision: { template: '{{revision}}' },
+          'Spec Title': { template: '{{specTitle}}', readOnly: true },
+          Vendor: { template: '{{vendor.name}}' },
+          Date: { template: '{{date}}' },
+          Contact: { template: '{{contact.key}}' },
+          Action: { template: '{{action.name}}' },
+        },
+      };
+
+      const extractFfeKeys = buildRowKeyExtractor({
+        logSchema: ffeLogSchema,
+        targetSchema: ffeTargetSchema,
+        templateEvaluator: evaluator,
+      });
+
+      // invalidStatusAndMissingVendor
+      expect(
+        extractFfeKeys({
+          Status: 'In Review',
+          'Spec Tag': 'LT108',
+          'Related Tag': '',
+          Revision: '0',
+          'Spec Title': 'SCONCE',
+          Vendor: '',
+          Date: '260216',
+          Contact: 'HPG',
+          Action: 'Received',
+        })
+      ).toEqual({
+        groupKey: 'LT108',
+        sortKey: 'LT108-0-260216-1',
+      });
+
+      // missingRevisionAndRawUrl
+      expect(
+        extractFfeKeys({
+          Status: 'Open',
+          'Spec Tag': 'CG104',
+          'Related Tag': 'FB127',
+          Revision: '',
+          'Spec Title': 'BED - KING',
+          Vendor: 'Keystone Casegoods',
+          Date: '260211',
+          Contact: 'ARC',
+          Action: 'Referred',
+        })
+      ).toEqual({
+        groupKey: 'CG104',
+        sortKey: 'CG104--260211-2',
+      });
+
+      // Completely blank/unkeyable Spec Tag row
+      expect(
+        extractFfeKeys({
+          Status: 'Open',
+          'Spec Tag': '  ',
+          Title: 'Hand-edited note',
+        })
+      ).toBeNull();
+    });
   });
 
   describe('computeTargetRowKeys', () => {

@@ -1600,6 +1600,11 @@ describe('GoogleSheetsClient', () => {
       cells: [toSimCell('---')],
     });
 
+    const makeBlankSimRow = (): SimRow => ({
+      style: 'blank',
+      cells: [],
+    });
+
     const createSeededState = (betweenRows: SimRow[]): SimSheetState => {
       const grid: SimRow[] = [
         { style: 'title', cells: [toSimCell('Document Log')] }, // idx 0 (Row 1)
@@ -1986,6 +1991,513 @@ describe('GoogleSheetsClient', () => {
       expect(allNullRes).toEqual({ rowNumber: 7, action: 'inserted' });
       expect(allNullState.grid[5].cells[5].value).toBe('Only malformed row');
       expect(allNullState.grid[6].cells[5].value).toBe('Appended safely');
+    });
+
+    it('heals trapped blanks/dividers and immediate boundaries when inserting into an existing group without touching unrelated messy gaps or null-keyed rows', async () => {
+      const state = createSeededState([
+        makeDividerSimRow(), // idx 5: unrelated top stray divider
+        makeDataRow('Closed', '013300-001', '013300-001-0-260110-1', 'G0 row'), // idx 6
+        makeDividerSimRow(), // idx 7: unrelated gap messy divider 1
+        makeDividerSimRow(), // idx 8: unrelated gap messy divider 2
+        makeBlankSimRow(), // idx 9: unrelated gap messy blank
+        makeDataRow('Closed', '033000-001', '033000-001-0-260115-1', 'G1 row'), // idx 10
+        makeBlankSimRow(), // idx 11: G1..G2 blank (no divider -> heal to 1 ---)
+        makeDataRow('Open', '071200-001', '071200-001-0-260204-1', 'G2 row 1'), // idx 12
+        makeBlankSimRow(), // idx 13: trapped blank inside G2
+        makeDividerSimRow(), // idx 14: trapped divider inside G2
+        makeDataRow('Open', '', '', 'Malformed inside G2'), // idx 15: null-keyed row inside G2 (preserve!)
+        makeDataRow('Open', '071200-001', '071200-001-1-260224-6', 'G2 row 2'), // idx 16
+        makeBlankSimRow(), // idx 17: G2..G3 blank (heal out)
+        makeDividerSimRow(), // idx 18: G2..G3 divider 1 (keep)
+        makeDividerSimRow(), // idx 19: G2..G3 divider 2 (heal out)
+        makeDataRow('Manager', '087100-001', '087100-001-0-260303-1', 'G3 row'), // idx 20
+        makeDividerSimRow(), // idx 21: unrelated bottom stray divider
+      ]);
+      wireSimulator(state);
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+      const res = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '071200-001',
+          SortKey: '071200-001-0-260212-5',
+          'Spec Title': 'IGNORED',
+          Notes: 'G2 new mid',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '071200-001', sortKey: '071200-001-0-260212-5' },
+        readOnlyColumns: ['Spec Title'],
+      });
+
+      expect(res).toEqual({ rowNumber: 15, action: 'inserted' });
+      expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledTimes(1);
+
+      // Verify exact final grid structure
+      expect(state.grid.slice(4).map((row) => row.cells[5]?.value ?? row.cells[0]?.value ?? '')).toEqual([
+        '<--->',
+        '---', // untouched top stray divider
+        'G0 row',
+        '---', // untouched unrelated messy gap
+        '---', // untouched unrelated messy gap
+        '', // untouched unrelated messy gap
+        'G1 row',
+        '---', // healed missing G1..G2 divider (Col 0 only)
+        'G2 row 1',
+        'Malformed inside G2', // preserved null-keyed row inside G2
+        'G2 new mid', // idx 14 -> rowNumber 15
+        'G2 row 2',
+        '---', // healed single G2..G3 divider
+        'G3 row',
+        '---', // untouched bottom stray divider
+        '<--->',
+      ]);
+      expect(state.grid[11].cells).toEqual([{ kind: 'string', value: '---' }]);
+      expect(state.grid[16].cells).toEqual([{ kind: 'string', value: '---' }]);
+      expect(state.grid[14].style).toBe('clean-data-row');
+      expect(state.namedRange.endRowIndex).toBe(20);
+    });
+
+    it('heals edge stray blanks/dividers at <---> when inserting before first row of targetGroupIdx === 0 (inheritFromBefore: false) and into targetGroupIdx === groups.length - 1', async () => {
+      // 1. targetGroupIdx === 0 with stray blank + divider above it, inserting BEFORE its first row
+      const topState = createSeededState([
+        makeBlankSimRow(), // idx 5: stray blank at top <--->
+        makeDividerSimRow(), // idx 6: stray divider at top <--->
+        makeDataRow('Open', '033000-001', '033000-001-0-260120-1', 'G0 existing'), // idx 7
+        makeDividerSimRow(), // idx 8
+        makeDataRow('Open', '071200-001', '071200-001-0-260204-1', 'G1 existing'), // idx 9
+      ]);
+      wireSimulator(topState);
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+      const topRes = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '033000-001',
+          SortKey: '033000-001-0-260115-1',
+          Notes: 'G0 before',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '033000-001', sortKey: '033000-001-0-260115-1' },
+      });
+
+      expect(topRes).toEqual({ rowNumber: 6, action: 'inserted' });
+      const topRequests = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody
+        .requests as sheets_v4.Schema$Request[];
+      const topInsertReq = topRequests.find((r) => r.insertDimension)?.insertDimension;
+      expect(topInsertReq?.inheritFromBefore).toBe(false);
+      expect(topState.grid[5].style).toBe('clean-data-row');
+      expect(topState.grid.slice(4).map((row) => row.cells[5]?.value ?? row.cells[0]?.value ?? '')).toEqual([
+        '<--->',
+        'G0 before',
+        'G0 existing',
+        '---',
+        'G1 existing',
+        '<--->',
+      ]);
+      const topTable = await client.readTable({ target });
+      expect(topTable.rows.map((r) => ({ rowNumber: r.rowNumber, notes: r.values.Notes }))).toEqual([
+        { rowNumber: 6, notes: 'G0 before' },
+        { rowNumber: 7, notes: 'G0 existing' },
+        { rowNumber: 9, notes: 'G1 existing' },
+      ]);
+
+      // 2. targetGroupIdx === groups.length - 1 with stray divider + blank below it at bottom <--->
+      const bottomState = createSeededState([
+        makeDividerSimRow(), // idx 5: unrelated top stray divider
+        makeDataRow('Closed', '013300-001', '013300-001-0-260110-1', 'G0 row'), // idx 6
+        makeBlankSimRow(), // idx 7: unrelated upper messy gap blank
+        makeDividerSimRow(), // idx 8: unrelated upper messy gap divider 1
+        makeDividerSimRow(), // idx 9: unrelated upper messy gap divider 2
+        makeDataRow('Closed', '033000-001', '033000-001-0-260115-1', 'G1 row'), // idx 10
+        makeDividerSimRow(), // idx 11: G1..G2 divider
+        makeDataRow('Open', '087100-001', '087100-001-0-260303-1', 'G2 existing'), // idx 12
+        makeDividerSimRow(), // idx 13: stray divider at bottom <--->
+        makeBlankSimRow(), // idx 14: stray blank at bottom <--->
+      ]);
+      wireSimulator(bottomState);
+
+      const bottomRes = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '087100-001',
+          SortKey: '087100-001-0-260305-2',
+          Notes: 'G2 appended',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '087100-001', sortKey: '087100-001-0-260305-2' },
+      });
+
+      expect(bottomRes).toEqual({ rowNumber: 14, action: 'inserted' });
+      expect(bottomState.grid[13].style).toBe('clean-data-row');
+      expect(bottomState.grid.slice(4).map((row) => row.cells[5]?.value ?? row.cells[0]?.value ?? '')).toEqual([
+        '<--->',
+        '---', // untouched top stray divider
+        'G0 row',
+        '', // untouched unrelated upper gap
+        '---', // untouched unrelated upper gap
+        '---', // untouched unrelated upper gap
+        'G1 row',
+        '---', // G1..G2 divider
+        'G2 existing',
+        'G2 appended', // idx 13 -> Row 14
+        '<--->',
+      ]);
+      const bottomTable = await client.readTable({ target });
+      expect(bottomTable.rows.map((r) => ({ rowNumber: r.rowNumber, notes: r.values.Notes }))).toEqual([
+        { rowNumber: 7, notes: 'G0 row' },
+        { rowNumber: 11, notes: 'G1 row' },
+        { rowNumber: 13, notes: 'G2 existing' },
+        { rowNumber: 14, notes: 'G2 appended' },
+      ]);
+    });
+
+    it('heals trapped blanks/dividers and immediate boundaries during duplicatePolicy: upsert while preserving null-keyed rows, formula/helper columns, and unrelated gaps', async () => {
+      const state = createSeededState([
+        makeDividerSimRow(), // idx 5: unrelated top stray divider
+        makeDataRow('Closed', '013300-001', '013300-001-0-260110-1', 'G0 row'), // idx 6
+        makeBlankSimRow(), // idx 7: unrelated messy gap G0..G1
+        makeDividerSimRow(), // idx 8: unrelated messy gap G0..G1
+        makeDividerSimRow(), // idx 9: unrelated messy gap G0..G1
+        makeDataRow('Closed', '033000-001', '033000-001-0-260115-1', 'G1 row'), // idx 10
+        makeBlankSimRow(), // idx 11: missing G1..G2 divider (blank only -> heal to 1 ---)
+        makeDataRow('Open', '071200-001', '071200-001-0-260204-1', 'G2 first'), // idx 12
+        makeBlankSimRow(), // idx 13: trapped blank inside G2
+        makeDividerSimRow(), // idx 14: trapped divider inside G2
+        makeDataRow('Open', '', '', 'Malformed inside G2'), // idx 15: null-keyed row inside G2
+        makeDataRow('Open', '071200-001', '071200-001-0-260212-5', 'Original G2 note'), // idx 16: upsert target
+        makeBlankSimRow(), // idx 17: G2..G3 excess blank
+        makeDividerSimRow(), // idx 18: G2..G3 divider 1 (keep)
+        makeDividerSimRow(), // idx 19: G2..G3 divider 2 (heal out)
+        makeDataRow('Manager', '087100-001', '087100-001-0-260303-1', 'G3 row'), // idx 20
+        makeDividerSimRow(), // idx 21: unrelated bottom stray divider
+      ]);
+      wireSimulator(state);
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+      const res = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Closed',
+          Group: '071200-001',
+          SortKey: '071200-001-0-260212-5',
+          'Spec Title': 'DO_NOT_OVERWRITE',
+          Notes: 'Upserted G2 note',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '071200-001', sortKey: '071200-001-0-260212-5' },
+        duplicatePolicy: 'upsert',
+        readOnlyColumns: ['Spec Title'],
+      });
+
+      expect(res).toEqual({ rowNumber: 15, action: 'updated' });
+      expect(state.grid.slice(4).map((row) => row.cells[5]?.value ?? row.cells[0]?.value ?? '')).toEqual([
+        '<--->',
+        '---', // untouched top stray
+        'G0 row',
+        '', // untouched G0..G1
+        '---', // untouched G0..G1
+        '---', // untouched G0..G1
+        'G1 row',
+        '---', // healed G1..G2 Col-0 divider
+        'G2 first',
+        'Malformed inside G2', // preserved null-keyed row
+        'Upserted G2 note', // idx 14 -> Row 15
+        '---', // healed G2..G3 Col-0 divider
+        'G3 row',
+        '---', // untouched bottom stray
+        '<--->',
+      ]);
+      expect(state.grid[11].cells).toEqual([{ kind: 'string', value: '---' }]);
+      expect(state.grid[15].cells).toEqual([{ kind: 'string', value: '---' }]);
+      expect(state.grid[14].cells[0].value).toBe('Closed');
+      expect(state.grid[14].cells[3]).toEqual({
+        kind: 'formula',
+        value: '=ARRAY_TITLE()',
+        formattedValue: 'Auto Title',
+      });
+      expect(state.grid[14].cells[4].value).toBe('user-helper');
+
+      const table = await client.readTable({ target });
+      expect(table.rows.map((r) => ({ rowNumber: r.rowNumber, status: r.values.Status, title: r.values['Spec Title'], helper: r.values.Helper, notes: r.values.Notes }))).toEqual([
+        { rowNumber: 7, status: 'Closed', title: 'Auto Title', helper: 'user-helper', notes: 'G0 row' },
+        { rowNumber: 11, status: 'Closed', title: 'Auto Title', helper: 'user-helper', notes: 'G1 row' },
+        { rowNumber: 13, status: 'Open', title: 'Auto Title', helper: 'user-helper', notes: 'G2 first' },
+        { rowNumber: 14, status: 'Open', title: 'Auto Title', helper: 'user-helper', notes: 'Malformed inside G2' },
+        { rowNumber: 15, status: 'Closed', title: 'Auto Title', helper: 'user-helper', notes: 'Upserted G2 note' },
+        { rowNumber: 17, status: 'Manager', title: 'Auto Title', helper: 'user-helper', notes: 'G3 row' },
+      ]);
+    });
+
+    it('inserts new groups at TOP, MIDDLE, BOTTOM, and groups.length === 0 of messy sheets while healing touched gaps/dividers, preserving null-keyed rows, and leaving unrelated gaps untouched', async () => {
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+
+      // 1. TOP (nextGroupIdx === 0) with stray blanks/dividers & null-keyed malformed row at top edge
+      const topState = createSeededState([
+        makeBlankSimRow(), // idx 5: top stray blank
+        makeDividerSimRow(), // idx 6: top stray divider
+        makeDataRow('Open', '', '', 'Top edge malformed'), // idx 7: null-keyed row at top edge
+        makeDataRow('Closed', '033000-001', '033000-001-0-260115-1', 'G1 row'), // idx 8
+        makeBlankSimRow(), // idx 9: unrelated messy gap
+        makeDividerSimRow(), // idx 10: unrelated messy gap
+        makeDividerSimRow(), // idx 11: unrelated messy gap
+        makeDataRow('Open', '071200-001', '071200-001-0-260204-1', 'G2 row'), // idx 12
+        makeDividerSimRow(), // idx 13: unrelated bottom stray divider
+      ]);
+      wireSimulator(topState);
+
+      const topRes = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '013300-001',
+          SortKey: '013300-001-0-260110-1',
+          Notes: 'New top group',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '013300-001', sortKey: '013300-001-0-260110-1' },
+      });
+
+      expect(topRes).toEqual({ rowNumber: 6, action: 'inserted' });
+      expect(topState.grid[5].style).toBe('clean-data-row');
+      expect(topState.grid[6].cells).toEqual([{ kind: 'string', value: '---' }]);
+      expect(topState.grid.slice(4).map((row) => row.cells[5]?.value ?? row.cells[0]?.value ?? '')).toEqual([
+        '<--->',
+        'New top group',
+        '---',
+        'Top edge malformed',
+        'G1 row',
+        '',
+        '---',
+        '---',
+        'G2 row',
+        '---',
+        '<--->',
+      ]);
+      const topTable = await client.readTable({ target });
+      expect(topTable.rows.map((r) => ({ rowNumber: r.rowNumber, notes: r.values.Notes }))).toEqual([
+        { rowNumber: 6, notes: 'New top group' },
+        { rowNumber: 8, notes: 'Top edge malformed' },
+        { rowNumber: 9, notes: 'G1 row' },
+        { rowNumber: 13, notes: 'G2 row' },
+      ]);
+
+      // 2. MIDDLE (nextGroupIdx > 0) with duplicate dividers [blank, '---', '---', blank] + null-keyed row in middle gap
+      const midDupState = createSeededState([
+        makeDividerSimRow(), // idx 5: unrelated top stray divider
+        makeDataRow('Closed', '013300-001', '013300-001-0-260110-1', 'G0 row'), // idx 6
+        makeDividerSimRow(), // idx 7: unrelated G0..G1 divider
+        makeBlankSimRow(), // idx 8: unrelated G0..G1 blank
+        makeDataRow('Closed', '033000-001', '033000-001-0-260115-1', 'G1 row'), // idx 9
+        makeBlankSimRow(), // idx 10: middle gap blank
+        makeDividerSimRow(), // idx 11: middle gap clean divider 1 (reused!)
+        makeDividerSimRow(), // idx 12: middle gap duplicate divider 2 (deleted)
+        makeDataRow('Open', '', '', 'Middle gap malformed'), // idx 13: null-keyed row in middle gap
+        makeBlankSimRow(), // idx 14: middle gap trailing blank
+        makeDataRow('Manager', '087100-001', '087100-001-0-260303-1', 'G2 row'), // idx 15
+        makeDividerSimRow(), // idx 16: unrelated bottom stray divider
+      ]);
+      wireSimulator(midDupState);
+
+      const midDupRes = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '075100-001',
+          SortKey: '075100-001-0-260220-1',
+          Notes: 'New mid group',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '075100-001', sortKey: '075100-001-0-260220-1' },
+      });
+
+      expect(midDupRes).toEqual({ rowNumber: 12, action: 'inserted' });
+      expect(midDupState.grid[11].style).toBe('clean-data-row');
+      expect(midDupState.grid[10].cells).toEqual([{ kind: 'string', value: '---' }]);
+      expect(midDupState.grid[12].cells).toEqual([{ kind: 'string', value: '---' }]);
+      expect(midDupState.grid.slice(4).map((row) => row.cells[5]?.value ?? row.cells[0]?.value ?? '')).toEqual([
+        '<--->',
+        '---', // untouched top stray
+        'G0 row',
+        '---', // untouched G0..G1
+        '', // untouched G0..G1
+        'G1 row',
+        '---', // new Col-0 divider
+        'New mid group', // idx 11 -> Row 12
+        '---', // reused clean divider (no duplicates)
+        'Middle gap malformed', // preserved null-keyed row
+        'G2 row',
+        '---', // untouched bottom stray
+        '<--->',
+      ]);
+      const midDupTable = await client.readTable({ target });
+      expect(midDupTable.rows.map((r) => ({ rowNumber: r.rowNumber, notes: r.values.Notes }))).toEqual([
+        { rowNumber: 7, notes: 'G0 row' },
+        { rowNumber: 10, notes: 'G1 row' },
+        { rowNumber: 12, notes: 'New mid group' },
+        { rowNumber: 14, notes: 'Middle gap malformed' },
+        { rowNumber: 15, notes: 'G2 row' },
+      ]);
+
+      // 3. MIDDLE (nextGroupIdx > 0) with dirty non-Col-0 divider ['', '---'] replaced by clean Col-0-only '---'
+      const shiftedHeaders = ['Marker', ...headers];
+      const makeShiftedDataRow = (
+        status: string,
+        group: string,
+        sortKey: string,
+        notes: string
+      ): SimRow => ({
+        style: 'clean-data-row',
+        cells: [
+          toSimCell(''),
+          toSimCell(status),
+          toSimCell(group),
+          toSimCell(sortKey),
+          { kind: 'formula', value: '=ARRAY_TITLE()', formattedValue: 'Auto Title' },
+          toSimCell('user-helper'),
+          toSimCell(notes),
+        ],
+      });
+      const dirtyDividerState: SimSheetState = {
+        sheetId: 11,
+        title: 'Submittal Arch',
+        grid: [
+          { style: 'title', cells: [toSimCell('Document Log')] },
+          { style: 'spacer', cells: [] },
+          { style: 'header', cells: shiftedHeaders.map(toSimCell) },
+          { style: 'formula', cells: [toSimCell('Formula Row')] },
+          { style: 'anchor', cells: [toSimCell('<--->')] },
+          makeShiftedDataRow('Closed', '033000-001', '033000-001-0-260115-1', 'G0 shifted'),
+          { style: 'divider', cells: [toSimCell(''), toSimCell('---')] }, // dirty non-Col-0 divider
+          makeShiftedDataRow('Manager', '087100-001', '087100-001-0-260303-1', 'G1 shifted'),
+          { style: 'anchor', cells: [toSimCell('<--->')] },
+        ],
+        namedRange: {
+          name: 'Log_Submittal_Arch',
+          startRowIndex: 2,
+          endRowIndex: 9,
+          startColumnIndex: 0,
+          endColumnIndex: shiftedHeaders.length,
+        },
+      };
+      wireSimulator(dirtyDividerState);
+
+      const dirtyMidRes = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '075100-001',
+          SortKey: '075100-001-0-260220-1',
+          Notes: 'New mid clean',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '075100-001', sortKey: '075100-001-0-260220-1' },
+      });
+
+      expect(dirtyMidRes).toEqual({ rowNumber: 8, action: 'inserted' });
+      expect(dirtyDividerState.grid[6].cells).toEqual([{ kind: 'string', value: '---' }]);
+      expect(dirtyDividerState.grid[7].style).toBe('clean-data-row');
+      expect(dirtyDividerState.grid[8].cells).toEqual([{ kind: 'string', value: '---' }]);
+      expect(
+        dirtyDividerState.grid.slice(4).map((row) => row.cells[6]?.value ?? row.cells[0]?.value ?? '')
+      ).toEqual(['<--->', 'G0 shifted', '---', 'New mid clean', '---', 'G1 shifted', '<--->']);
+      const dirtyTable = await client.readTable({ target });
+      expect(dirtyTable.rows.map((r) => ({ rowNumber: r.rowNumber, notes: r.values.Notes }))).toEqual([
+        { rowNumber: 6, notes: 'G0 shifted' },
+        { rowNumber: 8, notes: 'New mid clean' },
+        { rowNumber: 10, notes: 'G1 shifted' },
+      ]);
+
+      // 4. BOTTOM (nextGroupIdx === -1) with null-keyed row & stray divider/blank at bottom <--->
+      const bottomState = createSeededState([
+        makeDividerSimRow(), // idx 5: unrelated top stray divider
+        makeDataRow('Closed', '013300-001', '013300-001-0-260110-1', 'G0 row'), // idx 6
+        makeBlankSimRow(), // idx 7: unrelated messy gap
+        makeDividerSimRow(), // idx 8: unrelated messy gap
+        makeDividerSimRow(), // idx 9: unrelated messy gap
+        makeDataRow('Closed', '033000-001', '033000-001-0-260115-1', 'G1 row'), // idx 10
+        makeDataRow('Open', '', '', 'Bottom edge malformed'), // idx 11: null-keyed row at bottom edge
+        makeDividerSimRow(), // idx 12: bottom stray divider
+        makeBlankSimRow(), // idx 13: bottom stray blank
+      ]);
+      wireSimulator(bottomState);
+
+      const bottomRes = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '096500-001',
+          SortKey: '096500-001-0-260314-1',
+          Notes: 'New bottom group',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '096500-001', sortKey: '096500-001-0-260314-1' },
+      });
+
+      expect(bottomRes).toEqual({ rowNumber: 14, action: 'inserted' });
+      expect(bottomState.grid[12].cells).toEqual([{ kind: 'string', value: '---' }]);
+      expect(bottomState.grid[13].style).toBe('clean-data-row');
+      expect(bottomState.grid.slice(4).map((row) => row.cells[5]?.value ?? row.cells[0]?.value ?? '')).toEqual([
+        '<--->',
+        '---', // untouched top stray
+        'G0 row',
+        '', // untouched G0..G1
+        '---', // untouched G0..G1
+        '---', // untouched G0..G1
+        'G1 row',
+        'Bottom edge malformed', // preserved null-keyed row
+        '---', // new Col-0 divider
+        'New bottom group', // idx 13 -> Row 14
+        '<--->',
+      ]);
+      const bottomTable = await client.readTable({ target });
+      expect(bottomTable.rows.map((r) => ({ rowNumber: r.rowNumber, notes: r.values.Notes }))).toEqual([
+        { rowNumber: 7, notes: 'G0 row' },
+        { rowNumber: 11, notes: 'G1 row' },
+        { rowNumber: 12, notes: 'Bottom edge malformed' },
+        { rowNumber: 14, notes: 'New bottom group' },
+      ]);
+
+      // 5. groups.length === 0 with only null-keyed rows + bottom stray divider/blank
+      const emptyGroupsState = createSeededState([
+        makeDataRow('Open', '', '', 'Only null-keyed 1'), // idx 5
+        makeDataRow('Open', '', '', 'Only null-keyed 2'), // idx 6
+        makeDividerSimRow(), // idx 7: bottom stray divider
+        makeBlankSimRow(), // idx 8: bottom stray blank
+      ]);
+      wireSimulator(emptyGroupsState);
+
+      const emptyGroupsRes = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '071200-001',
+          SortKey: '071200-001-0-260204-1',
+          Notes: 'First real group',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '071200-001', sortKey: '071200-001-0-260204-1' },
+      });
+
+      expect(emptyGroupsRes).toEqual({ rowNumber: 8, action: 'inserted' });
+      expect(emptyGroupsState.grid[7].style).toBe('clean-data-row');
+      expect(
+        emptyGroupsState.grid.slice(4).map((row) => row.cells[5]?.value ?? row.cells[0]?.value ?? '')
+      ).toEqual([
+        '<--->',
+        'Only null-keyed 1',
+        'Only null-keyed 2',
+        'First real group',
+        '<--->',
+      ]);
+      const emptyGroupsTable = await client.readTable({ target });
+      expect(emptyGroupsTable.rows.map((r) => ({ rowNumber: r.rowNumber, notes: r.values.Notes }))).toEqual([
+        { rowNumber: 6, notes: 'Only null-keyed 1' },
+        { rowNumber: 7, notes: 'Only null-keyed 2' },
+        { rowNumber: 8, notes: 'First real group' },
+      ]);
     });
   });
 });

@@ -314,7 +314,8 @@ export function buildRowKeyExtractor(
         continue;
       }
       const rawStr = typeof rawCell === 'string' ? rawCell : String(rawCell);
-      if (rawStr.trim().length === 0) {
+      const trimmedStr = rawStr.trim();
+      if (trimmedStr.length === 0) {
         continue;
       }
 
@@ -322,22 +323,16 @@ export function buildRowKeyExtractor(
         const optionTuples = targetSchema.options?.[mapping.field.options.source] ?? [];
         const keyProp = mapping.field.options.key;
         const nameProp = mapping.field.options.name;
-        const normalizedTarget = rawStr.trim().toLowerCase();
+        const normalizedTarget = trimmedStr.toLowerCase();
 
-        let matchedTuple: LogTargetDocumentOptionTuple | undefined;
-        if (mapping.property !== undefined) {
-          matchedTuple = matchOptionTupleCaseInsensitive(
-            optionTuples,
-            mapping.property,
-            normalizedTarget
-          );
-        } else {
-          matchedTuple =
-            matchOptionTupleCaseInsensitive(optionTuples, keyProp, normalizedTarget) ??
-            (nameProp !== undefined
-              ? matchOptionTupleCaseInsensitive(optionTuples, nameProp, normalizedTarget)
-              : undefined);
-        }
+        const matchedTuple =
+          (mapping.property !== undefined
+            ? matchOptionTupleCaseInsensitive(optionTuples, mapping.property, normalizedTarget)
+            : undefined) ??
+          matchOptionTupleCaseInsensitive(optionTuples, keyProp, normalizedTarget) ??
+          (nameProp !== undefined
+            ? matchOptionTupleCaseInsensitive(optionTuples, nameProp, normalizedTarget)
+            : undefined);
 
         if (matchedTuple) {
           reconstructed[mapping.fieldKey] = { ...matchedTuple };
@@ -346,16 +341,21 @@ export function buildRowKeyExtractor(
           mapping.field.options.allowUserInput &&
           !matchedLookupFields.has(mapping.fieldKey)
         ) {
-          const fallback: Record<string, unknown> = {
-            [keyProp]: rawStr,
-          };
-          if (nameProp) {
-            fallback[nameProp] = rawStr;
+          const existing = reconstructed[mapping.fieldKey];
+          const fallback: Record<string, unknown> =
+            existing && typeof existing === 'object'
+              ? { ...(existing as Record<string, unknown>) }
+              : {
+                  [keyProp]: trimmedStr,
+                  ...(nameProp ? { [nameProp]: trimmedStr } : {}),
+                };
+          if (mapping.property !== undefined) {
+            fallback[mapping.property] = trimmedStr;
           }
           reconstructed[mapping.fieldKey] = fallback;
         }
       } else if (reconstructed[mapping.fieldKey] === undefined) {
-        reconstructed[mapping.fieldKey] = rawStr;
+        reconstructed[mapping.fieldKey] = trimmedStr;
       }
     }
 
