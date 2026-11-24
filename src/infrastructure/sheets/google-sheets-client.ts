@@ -2,27 +2,30 @@ import { google, type sheets_v4 } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import type {
   CellValue,
-  FindRowsRequest,
   GoogleSheetsClientOptions,
-  InsertGroupedRowRequest,
+  InsertGroupedRowResult,
+  InsertPositiveGroupedRowRequest,
   NamedRangeTarget,
+  PositiveTableReadResult,
+  PositiveTableRow,
+  PositiveTableTarget,
   ReadNamedRangeRequest,
+  ReadPositiveTableRequest,
   RowRecord,
+  SheetCellInput,
+  SheetFormulaCell,
   SheetsClient,
   SheetsConfigProvider,
   SheetsRetryOptions,
-  SheetTargetConfig,
   WriteNamedRangeRequest,
 } from './types';
 import {
   GoogleSheetsApiError,
   GoogleSheetsColumnNotFoundError,
+  GoogleSheetsExtentAnchorNotFoundError,
   GoogleSheetsNamedRangeNotFoundError,
-  GoogleSheetsRangeMisalignedError,
 } from './errors';
 import { KeyedAsyncLock } from './keyed-lock';
-
-
 
 function extractHttpStatusCode(error: unknown): number | undefined {
   if (!error || typeof error !== 'object') return undefined;
@@ -57,15 +60,109 @@ function formatErrorMessage(error: unknown): string {
   return String(error);
 }
 
-export function formatScopedRange(sheetName: string, rangeName: string): string {
+function quoteSheetName(sheetName: string): string {
   const unquoted = sheetName.replace(/^'|'$/g, '');
   const escaped = unquoted.replace(/'/g, "''");
-  return `'${escaped}'!${rangeName}`;
+  return `'${escaped}'`;
 }
 
-export function cellValueToCellData(value: CellValue): sheets_v4.Schema$CellData {
+/**
+ * Formats a sheet-qualified range reference with proper single-quote escaping.
+ */
+export function formatScopedRange(sheetName: string, rangeName: string): string {
+  return `${quoteSheetName(sheetName)}!${rangeName}`;
+}
+
+/**
+ * Converts a 0-based column index to its A1 column letters (e.g. 0 -> "A", 26 -> "AA").
+ */
+export function columnIndexToLetter(columnIndex: number): string {
+  if (!Number.isInteger(columnIndex) || columnIndex < 0) {
+    throw new GoogleSheetsApiError(`Invalid column index: ${columnIndex}`);
+  }
+  let index = columnIndex;
+  let result = '';
+  while (index >= 0) {
+    result = String.fromCharCode((index % 26) + 65) + result;
+    index = Math.floor(index / 26) - 1;
+  }
+  return result;
+}
+
+/**
+ * Converts a Sheets GridRange into explicit sheet-qualified A1 bounds (e.g. `'Submittal Arch'!A3:J25`)
+ * so workbook-scoped Named Ranges do not trigger `400 Unable to parse range` on values APIs.
+ */
+export function gridRangeToA1(sheetName: string, gridRange: sheets_v4.Schema$GridRange): string {
+  const startRowIndex = gridRange.startRowIndex ?? 0;
+  const endRowIndex = gridRange.endRowIndex;
+  const startColumnIndex = gridRange.startColumnIndex ?? 0;
+  const endColumnIndex = gridRange.endColumnIndex;
+
+  if (endColumnIndex !== undefined && endColumnIndex !== null) {
+    if (endColumnIndex <= startColumnIndex) {
+      throw new GoogleSheetsApiError(
+        `Invalid GridRange: endColumnIndex (${endColumnIndex}) must be greater than startColumnIndex (${startColumnIndex}).`
+      );
+    }
+    if (endRowIndex !== undefined && endRowIndex !== null && endRowIndex <= startRowIndex) {
+      throw new GoogleSheetsApiError(
+        `Invalid GridRange: endRowIndex (${endRowIndex}) must be greater than startRowIndex (${startRowIndex}).`
+      );
+    }
+    const startCol = columnIndexToLetter(startColumnIndex);
+    const endCol = columnIndexToLetter(endColumnIndex - 1);
+    const startRow = startRowIndex + 1;
+    const endRowPart = endRowIndex !== undefined && endRowIndex !== null ? String(endRowIndex) : '';
+    return formatScopedRange(sheetName, `${startCol}${startRow}:${endCol}${endRowPart}`);
+  }
+
+  if (startColumnIndex > 0) {
+    throw new GoogleSheetsApiError(
+      `Invalid GridRange: unbounded endColumnIndex with non-zero startColumnIndex (${startColumnIndex}) cannot be converted to A1 notation.`
+    );
+  }
+
+  if (endRowIndex !== undefined && endRowIndex !== null) {
+    if (endRowIndex <= startRowIndex) {
+      throw new GoogleSheetsApiError(
+        `Invalid GridRange: endRowIndex (${endRowIndex}) must be greater than startRowIndex (${startRowIndex}).`
+      );
+    }
+    return formatScopedRange(sheetName, `${startRowIndex + 1}:${endRowIndex}`);
+  }
+
+  if (startRowIndex === 0) {
+    return quoteSheetName(sheetName);
+  }
+
+  throw new GoogleSheetsApiError(
+    `Invalid GridRange: unbounded endRowIndex and endColumnIndex past row 0 cannot be converted to A1 notation.`
+  );
+}
+
+/**
+ * Type guard identifying explicit `{ formula }` cell inputs.
+ */
+export function isSheetFormulaCell(value: unknown): value is SheetFormulaCell {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'formula' in value &&
+    typeof (value as { formula: unknown }).formula === 'string'
+  );
+}
+
+/**
+ * Maps a `SheetCellInput` to Google Sheets `CellData`.
+ * Plain strings always map to `stringValue` (never `formulaValue`) to prevent spreadsheet formula injection.
+ */
+export function cellValueToCellData(value: SheetCellInput | undefined): sheets_v4.Schema$CellData {
   if (value === null || value === undefined) {
     return {};
+  }
+  if (isSheetFormulaCell(value)) {
+    return { userEnteredValue: { formulaValue: value.formula } };
   }
   if (typeof value === 'boolean') {
     return { userEnteredValue: { boolValue: value } };
@@ -74,15 +171,12 @@ export function cellValueToCellData(value: CellValue): sheets_v4.Schema$CellData
     return { userEnteredValue: { numberValue: value } };
   }
   if (typeof value === 'string') {
-    if (value.startsWith('=')) {
-      return { userEnteredValue: { formulaValue: value } };
-    }
     return { userEnteredValue: { stringValue: value } };
   }
   return { userEnteredValue: { stringValue: String(value) } };
 }
 
-export function valuesToRowData(values: CellValue[][]): sheets_v4.Schema$RowData[] {
+export function valuesToRowData(values: SheetCellInput[][]): sheets_v4.Schema$RowData[] {
   return values.map((row) => ({
     values: row.map(cellValueToCellData),
   }));
@@ -92,133 +186,144 @@ export function isCellEmpty(value: CellValue | undefined): boolean {
   return value === null || value === undefined || value === '';
 }
 
-export function compareCellValues(a: CellValue | undefined, b: CellValue | undefined): number {
-  const aEmpty = isCellEmpty(a);
-  const bEmpty = isCellEmpty(b);
-
-  if (aEmpty && bEmpty) return 0;
-  if (aEmpty) return -1;
-  if (bEmpty) return 1;
-
-  const typeA = typeof a;
-  const typeB = typeof b;
-
-  if (typeA === 'number' && typeB === 'number') {
-    if ((a as number) < (b as number)) return -1;
-    if ((a as number) > (b as number)) return 1;
-    return 0;
-  }
-
-  if (typeA === 'number' && typeB !== 'number') {
-    return 1;
-  }
-  if (typeA !== 'number' && typeB === 'number') {
-    return -1;
-  }
-
-  const strA = String(a).toLowerCase();
-  const strB = String(b).toLowerCase();
-  if (strA < strB) return -1;
-  if (strA > strB) return 1;
-  return 0;
+export function buildColumnIndexMap(headerRow: CellValue[]): Map<string, number> {
+  const columnIndexMap = new Map<string, number>();
+  headerRow.forEach((header, index) => {
+    if (header !== null && header !== undefined) {
+      const colName = String(header);
+      if (colName && !columnIndexMap.has(colName)) {
+        columnIndexMap.set(colName, index);
+      }
+    }
+  });
+  return columnIndexMap;
 }
 
-export function mapRowRecordToRow(
-  rowData: RowRecord,
-  headerRow: CellValue[],
-  totalColumns: number
-): CellValue[] {
-  const result: CellValue[] = [];
-  for (let c = 0; c < totalColumns; c++) {
-    const headerName =
-      c < headerRow.length && headerRow[c] !== null && headerRow[c] !== undefined
-        ? String(headerRow[c])
-        : '';
-    if (headerName && Object.prototype.hasOwnProperty.call(rowData, headerName)) {
-      const val = rowData[headerName];
-      result.push(val !== undefined ? val : null);
-    } else {
-      result.push(null);
+type PositiveRowKind = 'data' | 'blank' | 'divider';
+
+interface ParsedPositiveRow {
+  relIndex: number;
+  rowNumber: number;
+  kind: PositiveRowKind;
+  rawRow: CellValue[];
+  values: RowRecord;
+}
+
+interface ParsedPositiveTable {
+  headers: string[];
+  columnIndexMap: Map<string, number>;
+  topAnchorIndex: number;
+  bottomAnchorIndex: number;
+  betweenRows: ParsedPositiveRow[];
+}
+
+function matchesMarkerInAnchorOrStatus(
+  row: CellValue[],
+  marker: string,
+  statusColIndex: number | undefined
+): boolean {
+  if (row[0] === marker) {
+    return true;
+  }
+  if (statusColIndex !== undefined && row[statusColIndex] === marker) {
+    return true;
+  }
+  return false;
+}
+
+function isBlankRow(row: CellValue[]): boolean {
+  return row.length === 0 || row.every((cell) => isCellEmpty(cell));
+}
+
+function buildRowRecord(row: CellValue[], columnIndexMap: Map<string, number>): RowRecord {
+  const record: RowRecord = {};
+  for (const [colName, idx] of columnIndexMap.entries()) {
+    const val = idx < row.length ? row[idx] : undefined;
+    record[colName] = val !== undefined ? val : null;
+  }
+  return record;
+}
+
+function parsePositiveTable(
+  values: CellValue[][],
+  target: PositiveTableTarget,
+  rangeStartRowIndex: number
+): ParsedPositiveTable {
+  if (values.length === 0) {
+    throw new GoogleSheetsExtentAnchorNotFoundError(
+      `Positive extent anchors "${target.extentMarker}" not found in empty range "${target.rangeName}" on sheet "${target.sheetName}".`
+    );
+  }
+
+  const headerRow = values[0] ?? [];
+  const columnIndexMap = buildColumnIndexMap(headerRow);
+  const headers = Array.from(columnIndexMap.keys());
+  const statusColIndex = columnIndexMap.get('Status');
+
+  let topAnchorIndex = -1;
+  let bottomAnchorIndex = -1;
+
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] ?? [];
+    if (matchesMarkerInAnchorOrStatus(row, target.extentMarker, statusColIndex)) {
+      if (topAnchorIndex === -1) {
+        topAnchorIndex = i;
+      }
+      bottomAnchorIndex = i;
     }
   }
-  return result;
+
+  if (topAnchorIndex === -1 || bottomAnchorIndex === -1 || topAnchorIndex >= bottomAnchorIndex) {
+    throw new GoogleSheetsExtentAnchorNotFoundError(
+      `Valid start and end extent anchors "${target.extentMarker}" not found in range "${target.rangeName}" on sheet "${target.sheetName}".`
+    );
+  }
+
+  const betweenRows: ParsedPositiveRow[] = [];
+  for (let i = topAnchorIndex + 1; i < bottomAnchorIndex; i++) {
+    const rawRow = values[i] ?? [];
+    const rowNumber = rangeStartRowIndex + i + 1;
+    let kind: PositiveRowKind;
+    let rowValues: RowRecord = {};
+
+    if (matchesMarkerInAnchorOrStatus(rawRow, target.groupDividerMarker, statusColIndex)) {
+      kind = 'divider';
+    } else if (isBlankRow(rawRow)) {
+      kind = 'blank';
+    } else {
+      kind = 'data';
+      rowValues = buildRowRecord(rawRow, columnIndexMap);
+    }
+
+    betweenRows.push({
+      relIndex: i,
+      rowNumber,
+      kind,
+      rawRow,
+      values: rowValues,
+    });
+  }
+
+  return {
+    headers,
+    columnIndexMap,
+    topAnchorIndex,
+    bottomAnchorIndex,
+    betweenRows,
+  };
 }
 
-export interface GroupedColumnTarget {
-  columnIndex: number;
-  value: CellValue;
-}
-
-interface SheetInsertionContext {
-  sheetId: number;
-  dataStartRowIndex: number;
-  rowDataCells: sheets_v4.Schema$RowData[];
+interface WritableColumnRun {
   startColumnIndex: number;
   endColumnIndex: number;
-}
-
-export interface SheetGroup {
-  groupValue: CellValue;
-  startIndex: number;
-  endIndex: number;
-  rowIndices: number[];
-  internalBlankIndices?: number[];
-}
-
-export function extractSheetGroups(
-  dataValues: CellValue[][],
-  groupColIndex: number
-): SheetGroup[] {
-  const groups: SheetGroup[] = [];
-  if (!dataValues || dataValues.length === 0) {
-    return groups;
-  }
-
-  let currentGroup: SheetGroup | null = null;
-  const pendingBlankIndices: number[] = [];
-
-  for (let i = 0; i < dataValues.length; i++) {
-    const row = dataValues[i];
-    const groupVal = row ? row[groupColIndex] : null;
-
-    if (isCellEmpty(groupVal)) {
-      if (currentGroup) {
-        pendingBlankIndices.push(i);
-      }
-      continue;
-    }
-
-    if (currentGroup && compareCellValues(currentGroup.groupValue, groupVal) === 0) {
-      // Same group continued after potential blank rows
-      if (pendingBlankIndices.length > 0) {
-        if (!currentGroup.internalBlankIndices) {
-          currentGroup.internalBlankIndices = [];
-        }
-        currentGroup.internalBlankIndices.push(...pendingBlankIndices);
-        pendingBlankIndices.length = 0;
-      }
-      currentGroup.endIndex = i;
-      currentGroup.rowIndices.push(i);
-    } else {
-      // New group encountered
-      pendingBlankIndices.length = 0;
-      currentGroup = {
-        groupValue: groupVal,
-        startIndex: i,
-        endIndex: i,
-        rowIndices: [i],
-      };
-      groups.push(currentGroup);
-    }
-  }
-
-  return groups;
+  cells: sheets_v4.Schema$CellData[];
 }
 
 function makeInsertRowRequest(
   sheetId: number,
   startIndex: number,
-  count: number
+  count: number,
+  inheritFromBefore: boolean
 ): sheets_v4.Schema$Request {
   return {
     insertDimension: {
@@ -228,7 +333,7 @@ function makeInsertRowRequest(
         startIndex,
         endIndex: startIndex + count,
       },
-      inheritFromBefore: startIndex > 0,
+      inheritFromBefore,
     },
   };
 }
@@ -250,349 +355,159 @@ function makeDeleteRowsRequest(
   };
 }
 
-function makeUpdateCellsRequest(
-  ctx: SheetInsertionContext,
-  rowIndex: number
-): sheets_v4.Schema$Request {
-  return {
+function buildWritableRuns(params: {
+  rowData: Record<string, SheetCellInput>;
+  columnIndexMap: Map<string, number>;
+  protectedColumns: ReadonlySet<string>;
+  rangeStartColumnIndex: number;
+  target: PositiveTableTarget;
+  extraClearRelCols?: number[];
+}): WritableColumnRun[] {
+  const {
+    rowData,
+    columnIndexMap,
+    protectedColumns,
+    rangeStartColumnIndex,
+    target,
+    extraClearRelCols = [],
+  } = params;
+
+  const entryByRelCol = new Map<number, sheets_v4.Schema$CellData>();
+
+  for (const colName of Object.keys(rowData)) {
+    if (protectedColumns.has(colName)) {
+      continue;
+    }
+    const relCol = columnIndexMap.get(colName);
+    if (relCol === undefined) {
+      const available = Array.from(columnIndexMap.keys());
+      const availableMsg = available.length > 0 ? available.join(', ') : 'none';
+      throw new GoogleSheetsColumnNotFoundError(
+        `Column "${colName}" not found in range "${target.rangeName}" on sheet "${target.sheetName}". Available headers: ${availableMsg}`
+      );
+    }
+    entryByRelCol.set(relCol, cellValueToCellData(rowData[colName]));
+  }
+
+  const protectedRelCols = new Set<number>();
+  for (const colName of protectedColumns) {
+    const idx = columnIndexMap.get(colName);
+    if (idx !== undefined) {
+      protectedRelCols.add(idx);
+    }
+  }
+
+  for (const relCol of extraClearRelCols) {
+    if (!entryByRelCol.has(relCol) && !protectedRelCols.has(relCol)) {
+      entryByRelCol.set(relCol, {});
+    }
+  }
+
+  const sortedRelCols = Array.from(entryByRelCol.keys()).sort((a, b) => a - b);
+  const runs: WritableColumnRun[] = [];
+
+  for (const relCol of sortedRelCols) {
+    const cellData = entryByRelCol.get(relCol)!;
+    const absCol = rangeStartColumnIndex + relCol;
+    const prevRun = runs[runs.length - 1];
+    if (prevRun && prevRun.endColumnIndex === absCol) {
+      prevRun.endColumnIndex = absCol + 1;
+      prevRun.cells.push(cellData);
+    } else {
+      runs.push({
+        startColumnIndex: absCol,
+        endColumnIndex: absCol + 1,
+        cells: [cellData],
+      });
+    }
+  }
+
+  return runs;
+}
+
+function makeUpdateCellsForRuns(
+  sheetId: number,
+  absRowIndex: number,
+  runs: WritableColumnRun[]
+): sheets_v4.Schema$Request[] {
+  return runs.map((run) => ({
     updateCells: {
       range: {
-        sheetId: ctx.sheetId,
-        startRowIndex: rowIndex,
-        endRowIndex: rowIndex + 1,
-        startColumnIndex: ctx.startColumnIndex,
-        endColumnIndex: ctx.endColumnIndex,
+        sheetId,
+        startRowIndex: absRowIndex,
+        endRowIndex: absRowIndex + 1,
+        startColumnIndex: run.startColumnIndex,
+        endColumnIndex: run.endColumnIndex,
       },
-      rows: ctx.rowDataCells,
+      rows: [{ values: run.cells }],
       fields: 'userEnteredValue',
     },
-  };
+  }));
 }
 
-/**
- * Builds requests for inserting a new group between existing groups or at edge boundaries,
- * healing missing or excess blank rows to maintain exactly 1 blank row separation.
- */
-function buildBoundaryInsertionRequests(params: {
-  ctx: SheetInsertionContext;
-  currentBlankCount: number;
-  blankStartRelIndex: number;
-  targetBlanks: 1 | 2;
-  dataRowOffsetFromBlankStart: number;
-  insertAtEndIfZeroBlanks?: boolean;
-  singleBlankInsertRelIndex?: number;
-}): sheets_v4.Schema$Request[] {
-  const {
-    ctx,
-    currentBlankCount,
-    blankStartRelIndex,
-    targetBlanks,
-    dataRowOffsetFromBlankStart,
-    insertAtEndIfZeroBlanks,
-    singleBlankInsertRelIndex,
-  } = params;
-  const { sheetId, dataStartRowIndex } = ctx;
-  const requests: sheets_v4.Schema$Request[] = [];
-
-  if (currentBlankCount === 0) {
-    // 0 blanks present: need to insert data row + targetBlanks blank rows
-    const rowsToInsert = targetBlanks + 1;
-    const absInsertIndex = dataStartRowIndex + blankStartRelIndex;
-    requests.push(makeInsertRowRequest(sheetId, absInsertIndex, rowsToInsert));
-    // If inserting between groups or at bottom, data row is padded with a blank
-    const updateRowOffset = insertAtEndIfZeroBlanks ? 1 : 0;
-    requests.push(makeUpdateCellsRequest(ctx, absInsertIndex + updateRowOffset));
-  } else if (currentBlankCount < targetBlanks) {
-    // Need 1 more blank row (e.g. 1 blank present between 2 groups, needs 2 blanks total)
-    const relIndex = singleBlankInsertRelIndex ?? blankStartRelIndex;
-    const absInsertIndex = dataStartRowIndex + relIndex;
-    requests.push(makeInsertRowRequest(sheetId, absInsertIndex, 2));
-    requests.push(makeUpdateCellsRequest(ctx, absInsertIndex));
-  } else if (currentBlankCount === targetBlanks) {
-    // Exact blank count: insert 1 data row at designated offset
-    const absDataIndex = dataStartRowIndex + blankStartRelIndex + dataRowOffsetFromBlankStart;
-    requests.push(makeInsertRowRequest(sheetId, absDataIndex, 1));
-    requests.push(makeUpdateCellsRequest(ctx, absDataIndex));
-  } else {
-    // Excess blanks: delete excess, insert 1 data row
-    const excess = currentBlankCount - targetBlanks;
-    const absDeleteStart = dataStartRowIndex + blankStartRelIndex + targetBlanks;
-    requests.push(makeDeleteRowsRequest(sheetId, absDeleteStart, excess));
-    const absDataIndex = dataStartRowIndex + blankStartRelIndex + dataRowOffsetFromBlankStart;
-    requests.push(makeInsertRowRequest(sheetId, absDataIndex, 1));
-    requests.push(makeUpdateCellsRequest(ctx, absDataIndex));
-  }
-
-  return requests;
-}
-
-function buildNewGroupInsertionRequests(params: {
-  ctx: SheetInsertionContext;
-  dataValues: CellValue[][];
-  groups: SheetGroup[];
-  groupTarget: GroupedColumnTarget;
-}): sheets_v4.Schema$Request[] {
-  const { ctx, dataValues, groups, groupTarget } = params;
-  const { sheetId, dataStartRowIndex } = ctx;
-
-  let nextGroup: SheetGroup | undefined;
-  let prevGroup: SheetGroup | undefined;
-
-  const nextGroupIdx = groups.findIndex(
-    (g) => compareCellValues(groupTarget.value, g.groupValue) > 0
-  );
-
-  if (nextGroupIdx !== -1) {
-    nextGroup = groups[nextGroupIdx];
-    if (nextGroupIdx > 0) {
-      prevGroup = groups[nextGroupIdx - 1];
-    }
-  } else if (groups.length > 0) {
-    prevGroup = groups[groups.length - 1];
-  }
-
-  if (!prevGroup && !nextGroup) {
-    const absInsertIndex = dataStartRowIndex;
-    return [
-      makeInsertRowRequest(sheetId, absInsertIndex, 1),
-      makeUpdateCellsRequest(ctx, absInsertIndex),
-    ];
-  }
-
-  if (prevGroup && nextGroup) {
-    return buildBoundaryInsertionRequests({
-      ctx,
-      currentBlankCount: nextGroup.startIndex - prevGroup.endIndex - 1,
-      blankStartRelIndex: prevGroup.endIndex + 1,
-      targetBlanks: 2,
-      dataRowOffsetFromBlankStart: 1,
-      insertAtEndIfZeroBlanks: true,
-      singleBlankInsertRelIndex: nextGroup.startIndex,
-    });
-  }
-
-  if (nextGroup && !prevGroup) {
-    return buildBoundaryInsertionRequests({
-      ctx,
-      currentBlankCount: nextGroup.startIndex,
-      blankStartRelIndex: 0,
-      targetBlanks: 1,
-      dataRowOffsetFromBlankStart: 0,
-      insertAtEndIfZeroBlanks: false,
-    });
-  }
-
-  const safePrevGroup = prevGroup as SheetGroup;
-  const blankStartRel = safePrevGroup.endIndex + 1;
-  const currentBlankCount = dataValues.length - blankStartRel;
-
-  return buildBoundaryInsertionRequests({
-    ctx,
-    currentBlankCount,
-    blankStartRelIndex: blankStartRel,
-    targetBlanks: 1,
-    dataRowOffsetFromBlankStart: 1,
-    insertAtEndIfZeroBlanks: true,
-  });
-}
-
-function buildExistingGroupInsertionRequests(params: {
-  ctx: SheetInsertionContext;
-  dataValues: CellValue[][];
-  groups: SheetGroup[];
-  targetGroup: SheetGroup;
-  sortTarget: GroupedColumnTarget;
-}): sheets_v4.Schema$Request[] {
-  const { ctx, dataValues, groups, targetGroup, sortTarget } = params;
-  const { sheetId, dataStartRowIndex } = ctx;
-
-  const requests: sheets_v4.Schema$Request[] = [];
-
-  // 1. Determine internal insertion position according to sort order
-  let internalInsertRelIndex = targetGroup.endIndex + 1;
-  for (const rowIndex of targetGroup.rowIndices) {
-    const row = dataValues[rowIndex];
-    const rowSortVal = row ? row[sortTarget.columnIndex] : null;
-    if (compareCellValues(sortTarget.value, rowSortVal) > 0) {
-      internalInsertRelIndex = rowIndex;
-      break;
-    }
-  }
-
-  // 2. Heal internal blank rows trapped inside this group (if any)
-  // Delete contiguous ranges of internal blank indices in descending order so earlier indices remain valid
-  let totalInternalBlanks = 0;
-  let internalBlanksAboveInsert = 0;
-  if (targetGroup.internalBlankIndices && targetGroup.internalBlankIndices.length > 0) {
-    const blanks = [...targetGroup.internalBlankIndices].sort((a, b) => a - b);
-    totalInternalBlanks = blanks.length;
-    internalBlanksAboveInsert = blanks.filter((bIdx) => bIdx < internalInsertRelIndex).length;
-
-    const ranges: { start: number; count: number }[] = [];
-    let curRange: { start: number; count: number } | null = null;
-    for (const bIdx of blanks) {
-      if (!curRange) {
-        curRange = { start: bIdx, count: 1 };
-      } else if (bIdx === curRange.start + curRange.count) {
-        curRange.count++;
-      } else {
-        ranges.push(curRange);
-        curRange = { start: bIdx, count: 1 };
-      }
-    }
-    if (curRange) {
-      ranges.push(curRange);
-    }
-
-    // Process delete requests in descending order of index
-    for (let i = ranges.length - 1; i >= 0; i--) {
-      const r = ranges[i];
-      const absDeleteStart = dataStartRowIndex + r.start;
-      requests.push(makeDeleteRowsRequest(sheetId, absDeleteStart, r.count));
-    }
-  }
-
-  const targetGroupIdx = groups.indexOf(targetGroup);
-  const prevGroup = targetGroupIdx > 0 ? groups[targetGroupIdx - 1] : undefined;
-  const nextGroup = targetGroupIdx < groups.length - 1 ? groups[targetGroupIdx + 1] : undefined;
-
-  // 3. Heal padding above target group
-  let paddingAboveShift = 0;
-  if (prevGroup) {
-    const blankRowsAbove = targetGroup.startIndex - prevGroup.endIndex - 1;
-    if (blankRowsAbove === 0) {
-      const absIndex = dataStartRowIndex + targetGroup.startIndex;
-      requests.push(makeInsertRowRequest(sheetId, absIndex, 1));
-      paddingAboveShift += 1;
-    } else if (blankRowsAbove > 1) {
-      const excessAbove = blankRowsAbove - 1;
-      const absDeleteStart = dataStartRowIndex + prevGroup.endIndex + 2;
-      requests.push(makeDeleteRowsRequest(sheetId, absDeleteStart, excessAbove));
-      paddingAboveShift -= excessAbove;
-    }
-  }
-
-  // 4. Insert data row and update cells
-  // The row insertion index shifts ONLY for internal blanks deleted before this point, plus any padding shift above
-  const absDataRowIndex =
-    dataStartRowIndex + internalInsertRelIndex - internalBlanksAboveInsert + paddingAboveShift;
-  requests.push(makeInsertRowRequest(sheetId, absDataRowIndex, 1));
-  requests.push(makeUpdateCellsRequest(ctx, absDataRowIndex));
-
-  // 5. Heal padding below target group
-  if (nextGroup) {
-    const blankRowsBelow = nextGroup.startIndex - targetGroup.endIndex - 1;
-    // Account for all internal blank deletions in target group, padding above, plus 1 for the new data row
-    const effectiveGroupEndIndex =
-      targetGroup.endIndex - totalInternalBlanks + paddingAboveShift + 1;
-    if (blankRowsBelow === 0) {
-      const absIndex = dataStartRowIndex + effectiveGroupEndIndex + 1;
-      requests.push(makeInsertRowRequest(sheetId, absIndex, 1));
-    } else if (blankRowsBelow > 1) {
-      const excessBelow = blankRowsBelow - 1;
-      const absDeleteStart = dataStartRowIndex + effectiveGroupEndIndex + 2;
-      requests.push(makeDeleteRowsRequest(sheetId, absDeleteStart, excessBelow));
-    }
-  }
-
-  return requests;
-}
-
-export interface GroupedInsertionParams {
+function planEmptyLogMutation(params: {
   sheetId: number;
-  dataValues: CellValue[][];
-  groupTarget: GroupedColumnTarget;
-  sortTarget: GroupedColumnTarget;
-  dataStartRowIndex: number;
-  mappedRow: CellValue[];
-  startColumnIndex: number;
-  endColumnIndex: number;
-}
+  parsed: ParsedPositiveTable;
+  rangeStartRowIndex: number;
+  target: PositiveTableTarget;
+}): {
+  structuralRequests: sheets_v4.Schema$Request[];
+  targetAbsRowIndex: number;
+  extraClearRelCols: number[];
+} {
+  const { sheetId, parsed, rangeStartRowIndex, target } = params;
+  const absTopAnchor = rangeStartRowIndex + parsed.topAnchorIndex;
+  const absBottomAnchor = rangeStartRowIndex + parsed.bottomAnchorIndex;
+  const structuralRequests: sheets_v4.Schema$Request[] = [];
+  const extraClearRelCols: number[] = [];
 
-export function buildGroupedInsertionRequests(
-  params: GroupedInsertionParams
-): sheets_v4.Schema$Request[] {
-  const {
-    sheetId,
-    dataValues,
-    groupTarget,
-    sortTarget,
-    dataStartRowIndex,
-    mappedRow,
-    startColumnIndex,
-    endColumnIndex,
-  } = params;
-
-  const groups = extractSheetGroups(dataValues, groupTarget.columnIndex);
-  const targetGroup = groups.find(
-    (g) => compareCellValues(g.groupValue, groupTarget.value) === 0
-  );
-
-  const ctx: SheetInsertionContext = {
-    sheetId,
-    dataStartRowIndex,
-    rowDataCells: valuesToRowData([mappedRow]),
-    startColumnIndex,
-    endColumnIndex,
-  };
-
-  if (!targetGroup) {
-    return buildNewGroupInsertionRequests({
-      ctx,
-      dataValues,
-      groups,
-      groupTarget,
-    });
+  if (parsed.betweenRows.length === 0) {
+    // Inherit from bottomAnchor (false) rather than topAnchor to avoid copying strict anchor styling/validation.
+    structuralRequests.push(makeInsertRowRequest(sheetId, absBottomAnchor, 1, false));
+    return { structuralRequests, targetAbsRowIndex: absBottomAnchor, extraClearRelCols };
   }
 
-  return buildExistingGroupInsertionRequests({
-    ctx,
-    dataValues,
-    groups,
-    targetGroup,
-    sortTarget,
-  });
-}
+  const firstBlank = parsed.betweenRows.find((r) => r.kind === 'blank');
+  const keepRow = firstBlank ?? parsed.betweenRows[0];
 
-export function buildColumnIndexMap(headerRow: CellValue[]): Map<string, number> {
-  const columnIndexMap = new Map<string, number>();
-  headerRow.forEach((header, index) => {
-    if (header !== null && header !== undefined) {
-      const colName = String(header);
-      if (colName && !columnIndexMap.has(colName)) {
-        columnIndexMap.set(colName, index);
-      }
+  // Delete trailing excess rows first so earlier row indices remain stable for any leading deletion.
+  if (keepRow.relIndex < parsed.bottomAnchorIndex - 1) {
+    const absDeleteStart = rangeStartRowIndex + keepRow.relIndex + 1;
+    const deleteCount = absBottomAnchor - absDeleteStart;
+    structuralRequests.push(makeDeleteRowsRequest(sheetId, absDeleteStart, deleteCount));
+  }
+
+  if (keepRow.relIndex > parsed.topAnchorIndex + 1) {
+    const absDeleteStart = absTopAnchor + 1;
+    const deleteCount = rangeStartRowIndex + keepRow.relIndex - absDeleteStart;
+    structuralRequests.push(makeDeleteRowsRequest(sheetId, absDeleteStart, deleteCount));
+  }
+
+  if (keepRow.kind === 'divider') {
+    if (keepRow.rawRow[0] === target.groupDividerMarker) {
+      extraClearRelCols.push(0);
     }
-  });
-  return columnIndexMap;
-}
-
-function requireColumnIndex(
-  columnIndexMap: Map<string, number>,
-  columnName: string,
-  roleDescription: string | undefined,
-  context: { headerRangeName: string; sheetName: string }
-): number {
-  const index = columnIndexMap.get(columnName);
-  if (index === undefined) {
-    const available = Array.from(columnIndexMap.keys());
-    const availableMsg = available.length > 0 ? available.join(', ') : 'none';
-    const roleMsg = roleDescription ? ` (${roleDescription})` : '';
-    throw new GoogleSheetsColumnNotFoundError(
-      `Column "${columnName}"${roleMsg} not found in headers range "${context.headerRangeName}" on sheet "${context.sheetName}". Available headers: ${availableMsg}`
-    );
+    const statusColIndex = parsed.columnIndexMap.get('Status');
+    if (
+      statusColIndex !== undefined &&
+      keepRow.rawRow[statusColIndex] === target.groupDividerMarker
+    ) {
+      extraClearRelCols.push(statusColIndex);
+    }
   }
-  return index;
+
+  return {
+    structuralRequests,
+    targetAbsRowIndex: absTopAnchor + 1,
+    extraClearRelCols,
+  };
 }
-
-
 
 export class GoogleSheetsClient implements SheetsClient {
   private readonly sheetsApi: sheets_v4.Sheets;
   private readonly retryOptions: SheetsRetryOptions;
   private readonly configProvider?: SheetsConfigProvider | undefined;
   private readonly lock = new KeyedAsyncLock();
-
 
   constructor(optionsOrSheets: GoogleSheetsClientOptions | sheets_v4.Sheets = {}) {
     if ('spreadsheets' in optionsOrSheets) {
@@ -688,6 +603,7 @@ export class GoogleSheetsClient implements SheetsClient {
     target: NamedRangeTarget
   ): {
     sheetId: number;
+    sheetTitle: string;
     namedRange: sheets_v4.Schema$NamedRange;
     gridRange: sheets_v4.Schema$GridRange;
   } {
@@ -702,6 +618,7 @@ export class GoogleSheetsClient implements SheetsClient {
     }
 
     const targetSheetId = targetSheet.properties.sheetId;
+    const sheetTitle = targetSheet.properties.title ?? target.sheetName;
     const targetRangeLower = target.rangeName.toLowerCase();
     const scopedRangeNameLower = `${target.sheetName}!${target.rangeName}`.toLowerCase();
 
@@ -733,6 +650,7 @@ export class GoogleSheetsClient implements SheetsClient {
 
     return {
       sheetId: targetSheetId,
+      sheetTitle,
       namedRange: resolvedRange,
       gridRange: {
         ...resolvedRange.range,
@@ -743,6 +661,7 @@ export class GoogleSheetsClient implements SheetsClient {
 
   private async resolveNamedRange(target: NamedRangeTarget): Promise<{
     sheetId: number;
+    sheetTitle: string;
     namedRange: sheets_v4.Schema$NamedRange;
     gridRange: sheets_v4.Schema$GridRange;
   }> {
@@ -750,90 +669,31 @@ export class GoogleSheetsClient implements SheetsClient {
     return this.findNamedRange(spreadsheet, target);
   }
 
-  private async resolveTargetNamedRanges(target: SheetTargetConfig): Promise<{
-    sheetId: number;
-    headerRange: { namedRange: sheets_v4.Schema$NamedRange; gridRange: sheets_v4.Schema$GridRange };
-    dataRange: { namedRange: sheets_v4.Schema$NamedRange; gridRange: sheets_v4.Schema$GridRange };
-  }> {
-    const spreadsheet = await this.getSpreadsheetMetadata(target.spreadsheetId);
-
-    const headerRange = this.findNamedRange(spreadsheet, {
-      spreadsheetId: target.spreadsheetId,
-      sheetName: target.sheetName,
-      rangeName: target.headerRangeName,
-    });
-
-    const dataRange = this.findNamedRange(spreadsheet, {
-      spreadsheetId: target.spreadsheetId,
-      sheetName: target.sheetName,
-      rangeName: target.dataRangeName,
-    });
-
-    const headerSheetId = headerRange.gridRange.sheetId ?? headerRange.sheetId;
-    const dataSheetId = dataRange.gridRange.sheetId ?? dataRange.sheetId;
-
-    if (headerSheetId !== dataSheetId) {
-      throw new GoogleSheetsApiError(
-        `Headers range "${target.headerRangeName}" (sheetId ${headerSheetId}) and Data range "${target.dataRangeName}" (sheetId ${dataSheetId}) must belong to the same sheet "${target.sheetName}".`
-      );
-    }
-
-    const headerStartCol = headerRange.gridRange.startColumnIndex ?? 0;
-    const headerEndCol = headerRange.gridRange.endColumnIndex;
-    const dataStartCol = dataRange.gridRange.startColumnIndex ?? 0;
-    const dataEndCol = dataRange.gridRange.endColumnIndex;
-
-    if (headerStartCol !== dataStartCol || headerEndCol !== dataEndCol) {
-      throw new GoogleSheetsRangeMisalignedError(
-        `Headers range "${target.headerRangeName}" (columns ${headerStartCol}-${headerEndCol ?? 'end'}) and Data range "${target.dataRangeName}" (columns ${dataStartCol}-${dataEndCol ?? 'end'}) must align on the column axis on sheet "${target.sheetName}".`
-      );
-    }
-
-    return {
-      sheetId: dataSheetId,
-      headerRange,
-      dataRange,
-    };
-  }
-
-  private async readUnformattedValues(
+  private async readValues(
     spreadsheetId: string,
-    sheetName: string,
-    rangeName: string
+    a1Range: string,
+    valueRenderOption: 'UNFORMATTED_VALUE' | 'FORMATTED_VALUE'
   ): Promise<CellValue[][]> {
-    const scopedRange = formatScopedRange(sheetName, rangeName);
     const response = await this.executeWithRetry(() =>
       this.sheetsApi.spreadsheets.values.get({
         spreadsheetId,
-        range: scopedRange,
-        valueRenderOption: 'UNFORMATTED_VALUE',
+        range: a1Range,
+        valueRenderOption,
       })
     );
 
     return (response.data.values as CellValue[][]) ?? [];
   }
 
-  private async readHeaderRowAndIndexMap(target: SheetTargetConfig): Promise<{
-    headerRow: CellValue[];
-    columnIndexMap: Map<string, number>;
-  }> {
-    const headerValues = await this.readUnformattedValues(
-      target.spreadsheetId,
-      target.sheetName,
-      target.headerRangeName
-    );
-    const headerRow = headerValues[0] ?? [];
-    return { headerRow, columnIndexMap: buildColumnIndexMap(headerRow) };
-  }
-
   async readNamedRange(request: ReadNamedRangeRequest): Promise<CellValue[][]> {
-    await this.resolveNamedRange(request);
-    return this.readUnformattedValues(request.spreadsheetId, request.sheetName, request.rangeName);
+    const { sheetTitle, gridRange } = await this.resolveNamedRange(request);
+    const a1Range = gridRangeToA1(sheetTitle, gridRange);
+    return this.readValues(request.spreadsheetId, a1Range, 'UNFORMATTED_VALUE');
   }
 
   async writeNamedRange(request: WriteNamedRangeRequest): Promise<void> {
     return await this.lock.acquire(request.spreadsheetId, async () => {
-      const { sheetId, gridRange } = await this.resolveNamedRange(request);
+      const { sheetId, sheetTitle, gridRange } = await this.resolveNamedRange(request);
 
       if (request.insertRows) {
         const rowCount = request.values.length;
@@ -880,11 +740,11 @@ export class GoogleSheetsClient implements SheetsClient {
           })
         );
       } else {
-        const scopedRange = formatScopedRange(request.sheetName, request.rangeName);
+        const a1Range = gridRangeToA1(sheetTitle, gridRange);
         await this.executeWithRetry(() =>
           this.sheetsApi.spreadsheets.values.update({
             spreadsheetId: request.spreadsheetId,
-            range: scopedRange,
+            range: a1Range,
             valueInputOption: 'USER_ENTERED',
             requestBody: {
               values: request.values,
@@ -895,96 +755,107 @@ export class GoogleSheetsClient implements SheetsClient {
     });
   }
 
-  async insertIntoGroupedList(request: InsertGroupedRowRequest): Promise<void> {
-    return await this.lock.acquire(request.target.spreadsheetId, async () => {
-      const { sheetId, headerRange, dataRange } = await this.resolveTargetNamedRanges(request.target);
+  private async loadParsedPositiveTable(target: PositiveTableTarget): Promise<{
+    sheetId: number;
+    rangeStartRowIndex: number;
+    rangeStartColumnIndex: number;
+    parsed: ParsedPositiveTable;
+  }> {
+    const { sheetId, sheetTitle, gridRange } = await this.resolveNamedRange(target);
+    const a1Range = gridRangeToA1(sheetTitle, gridRange);
+    const values = await this.readValues(target.spreadsheetId, a1Range, 'FORMATTED_VALUE');
+    const rangeStartRowIndex = gridRange.startRowIndex ?? 0;
+    const rangeStartColumnIndex = gridRange.startColumnIndex ?? 0;
+    const parsed = parsePositiveTable(values, target, rangeStartRowIndex);
 
-      const { headerRow, columnIndexMap } = await this.readHeaderRowAndIndexMap(request.target);
-
-      const groupColIndex = requireColumnIndex(
-        columnIndexMap,
-        request.groupConfig.columnName,
-        'groupConfig',
-        request.target
-      );
-
-      const sortColIndex = requireColumnIndex(
-        columnIndexMap,
-        request.sortConfig.columnName,
-        'sortConfig',
-        request.target
-      );
-
-      const dataValues = await this.readUnformattedValues(
-        request.target.spreadsheetId,
-        request.target.sheetName,
-        request.target.dataRangeName
-      );
-
-      const mappedRow = mapRowRecordToRow(request.rowData, headerRow, headerRow.length);
-
-      const startColumnIndex = headerRange.gridRange.startColumnIndex ?? 0;
-      const endColumnIndex = startColumnIndex + mappedRow.length;
-      const dataStartRowIndex = dataRange.gridRange.startRowIndex ?? 0;
-
-      const requests = buildGroupedInsertionRequests({
-        sheetId,
-        dataValues,
-        groupTarget: { columnIndex: groupColIndex, value: request.groupConfig.value },
-        sortTarget: { columnIndex: sortColIndex, value: request.sortConfig.value },
-        dataStartRowIndex,
-        mappedRow,
-        startColumnIndex,
-        endColumnIndex,
-      });
-
-      const batchUpdateRequest: sheets_v4.Schema$BatchUpdateSpreadsheetRequest = {
-        requests,
-      };
-
-      await this.executeWithRetry(() =>
-        this.sheetsApi.spreadsheets.batchUpdate({
-          spreadsheetId: request.target.spreadsheetId,
-          requestBody: batchUpdateRequest,
-        })
-      );
-    });
+    return {
+      sheetId,
+      rangeStartRowIndex,
+      rangeStartColumnIndex,
+      parsed,
+    };
   }
 
-  async findRowsByValue(request: FindRowsRequest): Promise<RowRecord[]> {
-    await this.resolveTargetNamedRanges(request.target);
+  /**
+   * Reads a positive-terminated table bounded by `extentMarker` anchors using `FORMATTED_VALUE`.
+   */
+  async readTable(request: ReadPositiveTableRequest): Promise<PositiveTableReadResult> {
+    const { parsed } = await this.loadParsedPositiveTable(request.target);
 
-    const { columnIndexMap } = await this.readHeaderRowAndIndexMap(request.target);
+    const rows: PositiveTableRow[] = parsed.betweenRows
+      .filter((row) => row.kind === 'data')
+      .map((row) => ({
+        rowNumber: row.rowNumber,
+        values: row.values,
+      }));
 
-    const targetIndex = requireColumnIndex(
-      columnIndexMap,
-      request.columnName,
-      undefined,
-      request.target
-    );
+    return {
+      headers: parsed.headers,
+      formulaColumns: [],
+      rows,
+    };
+  }
 
+  /**
+   * Inserts a row atomically inside a positive-terminated table under per-spreadsheet lock.
+   */
+  async insertIntoGroupedList(
+    request: InsertPositiveGroupedRowRequest
+  ): Promise<InsertGroupedRowResult> {
+    return await this.lock.acquire(request.target.spreadsheetId, async () => {
+      const { sheetId, rangeStartRowIndex, rangeStartColumnIndex, parsed } =
+        await this.loadParsedPositiveTable(request.target);
 
-    const dataValues = await this.readUnformattedValues(
-      request.target.spreadsheetId,
-      request.target.sheetName,
-      request.target.dataRangeName
-    );
+      const protectedColumns = new Set(request.readOnlyColumns ?? []);
+      const dataRows = parsed.betweenRows.filter((row) => row.kind === 'data');
 
-    const matchingRecords: RowRecord[] = [];
+      let structuralRequests: sheets_v4.Schema$Request[];
+      let targetAbsRowIndex: number;
+      let extraClearRelCols: number[] = [];
 
-    for (const row of dataValues) {
-      const cellValue = row[targetIndex] !== undefined ? row[targetIndex] : null;
-
-      if (cellValue === request.value) {
-        const record: RowRecord = {};
-        for (const [colName, idx] of columnIndexMap.entries()) {
-          const val = row[idx];
-          record[colName] = val !== undefined ? val : null;
-        }
-        matchingRecords.push(record);
+      if (dataRows.length === 0) {
+        const emptyPlan = planEmptyLogMutation({
+          sheetId,
+          parsed,
+          rangeStartRowIndex,
+          target: request.target,
+        });
+        structuralRequests = emptyPlan.structuralRequests;
+        targetAbsRowIndex = emptyPlan.targetAbsRowIndex;
+        extraClearRelCols = emptyPlan.extraClearRelCols;
+      } else {
+        const absBottomAnchor = rangeStartRowIndex + parsed.bottomAnchorIndex;
+        structuralRequests = [makeInsertRowRequest(sheetId, absBottomAnchor, 1, true)];
+        targetAbsRowIndex = absBottomAnchor;
       }
-    }
 
-    return matchingRecords;
+      const writableRuns = buildWritableRuns({
+        rowData: request.rowData,
+        columnIndexMap: parsed.columnIndexMap,
+        protectedColumns,
+        rangeStartColumnIndex,
+        target: request.target,
+        extraClearRelCols,
+      });
+
+      const requests = [
+        ...structuralRequests,
+        ...makeUpdateCellsForRuns(sheetId, targetAbsRowIndex, writableRuns),
+      ];
+
+      if (requests.length > 0) {
+        await this.executeWithRetry(() =>
+          this.sheetsApi.spreadsheets.batchUpdate({
+            spreadsheetId: request.target.spreadsheetId,
+            requestBody: { requests },
+          })
+        );
+      }
+
+      return {
+        rowNumber: targetAbsRowIndex + 1,
+        action: 'inserted',
+      };
+    });
   }
 }
