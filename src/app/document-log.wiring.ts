@@ -10,7 +10,11 @@ import {
   type LogTemplateParserPort,
   type RawManifestProviderPort,
 } from '../features/document-log';
-import type { AppConfigurationProviderPort } from '../features/document/ports';
+import type { ActivityHandler, AppConfigurationProviderPort } from '../features/document/ports';
+import {
+  DocumentLogActivityHandler,
+  type DocumentLogActivityHandlerOptions,
+} from './document-log-activity-handler';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import {
   GoogleSheetsClient,
@@ -32,6 +36,11 @@ export type DocumentLogServiceFactory = (
   overrides?: DocumentLogServiceRequestOverrides
 ) => DocumentLogPort;
 
+export type DocumentLogActivityHandlerFactory = (
+  context: WorkspaceExecutionContext,
+  overrides?: DocumentLogServiceRequestOverrides
+) => ActivityHandler;
+
 export interface DocumentLogWiringOptions {
   manifestProvider?: RawManifestProviderPort | undefined;
   logSchemaRegistry?: LogSchemaRegistryPort | undefined;
@@ -49,6 +58,8 @@ export interface DocumentLogWiring {
   logSchemaRegistry: LogSchemaRegistryPort;
   documentLogService: DocumentLogPort;
   createDocumentLogService: DocumentLogServiceFactory;
+  createActivityHandler: (options?: DocumentLogActivityHandlerOptions) => ActivityHandler;
+  createPerRequestActivityHandler: DocumentLogActivityHandlerFactory;
 }
 
 function createOAuth2Client(oauthCred: string): OAuth2Client {
@@ -72,7 +83,6 @@ function resolveTemplateEvaluator(candidate: unknown): LogTemplateEvaluatorPort 
   if (
     candidate !== null &&
     candidate !== undefined &&
-    typeof (candidate as { validate?: unknown }).validate === 'function' &&
     typeof (candidate as { evaluate?: unknown }).evaluate === 'function'
   ) {
     return candidate as LogTemplateEvaluatorPort;
@@ -226,9 +236,23 @@ export function createDocumentLogWiring(
     );
   };
 
+  const createActivityHandler = (
+    handlerOptions?: DocumentLogActivityHandlerOptions
+  ): ActivityHandler => new DocumentLogActivityHandler(documentLogService, handlerOptions);
+
+  const createPerRequestActivityHandler: DocumentLogActivityHandlerFactory = (
+    context: WorkspaceExecutionContext,
+    overrides?: DocumentLogServiceRequestOverrides
+  ): ActivityHandler =>
+    new DocumentLogActivityHandler(createDocumentLogService(context, overrides), {
+      ...(context.selectedLogId !== undefined ? { selectedLogId: context.selectedLogId } : {}),
+    });
+
   return {
     logSchemaRegistry,
     documentLogService,
     createDocumentLogService,
+    createActivityHandler,
+    createPerRequestActivityHandler,
   };
 }

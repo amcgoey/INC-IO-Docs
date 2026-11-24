@@ -5601,6 +5601,41 @@ describe('Document domain', () => {
         const errors = validateManifestTemplates(manifest, evaluator);
         expect(errors).toEqual([]);
       });
+
+      it('validates payload.fileSourceStepId generically across non-WRITE_LOG activity types', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'generic-file-source',
+          name: 'Generic File Source',
+          documentSchema: {
+            fields: [{ key: 'title', name: 'Title', type: 'string' }],
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'InvalidGenericStepRef',
+                activitySequence: [
+                  { id: 'move_1', type: 'MOVE_FILE', payload: {} },
+                  { type: 'DUPLICATE_FILE', payload: { fileSourceStepId: 'missing_step' } },
+                  { type: 'COPY_FILE', payload: { fileSourceStepId: 123 } },
+                ],
+              },
+              {
+                name: 'ValidGenericStepRef',
+                activitySequence: [
+                  { id: 'move_1', type: 'MOVE_FILE', payload: {} },
+                  { type: 'DUPLICATE_FILE', payload: { fileSourceStepId: 'move_1' } },
+                ],
+              },
+            ],
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toHaveLength(2);
+        expect(errors[0]).toContain('workflows[0].activitySequence[1].payload.fileSourceStepId');
+        expect(errors[1]).toContain('workflows[0].activitySequence[2].payload.fileSourceStepId');
+      });
     });
   });
 

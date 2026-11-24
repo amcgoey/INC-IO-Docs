@@ -34,8 +34,6 @@ import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 import { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
 import { GmailSourceFileHydratorAdapter } from '../features/document/adapters/gmail-source-file-hydrator.adapter';
-import type { DocumentLogPort } from '../features/document-log';
-import { DocumentLogActivityHandler } from './document-log-activity-handler';
 
 export interface DocumentFeatureWiringOptions {
   manifestProvider: RawManifestProviderPort;
@@ -91,9 +89,11 @@ export interface CreateDocumentServiceFactoryOptions {
   pdfProcessor?: PdfProcessor | undefined;
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
   validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
-  documentLogService?: DocumentLogPort | undefined;
-  createDocumentLogService?:
-    | ((context: WorkspaceExecutionContext) => DocumentLogPort | Promise<DocumentLogPort>)
+  additionalActivityHandlers?: readonly ActivityHandler[] | undefined;
+  createAdditionalActivityHandlers?:
+    | ((
+        context: WorkspaceExecutionContext
+      ) => readonly ActivityHandler[] | Promise<readonly ActivityHandler[]>)
     | undefined;
 }
 
@@ -168,17 +168,14 @@ export function createDocumentServiceFactory(
       isFileSourceEmailAttachments,
     });
 
-    const handlers: ActivityHandler[] = [driveActivityHandler];
-    const documentLogService = options.createDocumentLogService
-      ? await options.createDocumentLogService(context)
-      : options.documentLogService;
-    if (documentLogService) {
-      handlers.push(
-        new DocumentLogActivityHandler(documentLogService, {
-          ...(context.selectedLogId !== undefined ? { selectedLogId: context.selectedLogId } : {}),
-        })
-      );
-    }
+    const perRequestHandlers = options.createAdditionalActivityHandlers
+      ? await options.createAdditionalActivityHandlers(context)
+      : [];
+    const handlers: ActivityHandler[] = [
+      driveActivityHandler,
+      ...(options.additionalActivityHandlers ?? []),
+      ...perRequestHandlers,
+    ];
 
     const activityEngine = new ActivityEngine(handlers);
 
@@ -218,8 +215,7 @@ export interface WireDocumentServicesOptions {
   primaryTargetId?: string | undefined;
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
   validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
-  documentLogService?: DocumentLogPort | undefined;
-  selectedLogId?: string | undefined;
+  additionalActivityHandlers?: readonly ActivityHandler[] | undefined;
 }
 
 export function wireDocumentServicesAndRoutes(
@@ -235,14 +231,10 @@ export function wireDocumentServicesAndRoutes(
       primaryTargetId: options.primaryTargetId,
     });
 
-    const handlers: ActivityHandler[] = [driveActivityHandler];
-    if (options.documentLogService) {
-      handlers.push(
-        new DocumentLogActivityHandler(options.documentLogService, {
-          ...(options.selectedLogId !== undefined ? { selectedLogId: options.selectedLogId } : {}),
-        })
-      );
-    }
+    const handlers: ActivityHandler[] = [
+      driveActivityHandler,
+      ...(options.additionalActivityHandlers ?? []),
+    ];
 
     const activityEngine =
       options.activityEngine ??

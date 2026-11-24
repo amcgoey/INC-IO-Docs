@@ -707,4 +707,193 @@ describe('document-log.wiring', () => {
     ]);
     expect(nock.isDone()).toBe(true);
   });
+
+  it('exports createActivityHandler and createPerRequestActivityHandler with selectedLogId forwarding and overrides', async () => {
+    const defaultWriteLog = vi.fn().mockResolvedValue({
+      spreadsheetId: 'default-sheet',
+      sheetName: 'Submittal Arch',
+      rowNumber: 6,
+      action: 'inserted',
+    });
+    const defaultService = {
+      resolveLog: vi.fn(),
+      writeLog: defaultWriteLog,
+    };
+    const wiring = createDocumentLogWiring({
+      manifestProvider: createManifestProvider(),
+      documentLogService: defaultService,
+    });
+
+    const sampleActivity = { type: 'WRITE_LOG', payload: {} };
+    const sampleContext = {
+      document: {
+        type: 'submittal-arch',
+        data: { title: 'Test' },
+      },
+      files: [{ id: 'f1', name: 'doc.pdf', uri: 'https://drive.google.com/file/d/f1/view' }],
+      stepOutputs: {},
+      contextVariables: {},
+    };
+
+    const defaultHandler = wiring.createActivityHandler({ selectedLogId: 'static-selected-1' });
+    expect(defaultHandler.canHandle(sampleActivity)).toBe(true);
+    const defaultOutput = await defaultHandler.handle(sampleActivity, sampleContext);
+    expect(defaultOutput).toEqual(expect.objectContaining({ success: true }));
+    expect(defaultWriteLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedLogId: 'static-selected-1',
+        fileUri: 'https://drive.google.com/file/d/f1/view',
+      })
+    );
+
+    // Honors options.documentLogService override while forwarding context.selectedLogId
+    const perReqWithDefaultOverride = wiring.createPerRequestActivityHandler({
+      userOAuthToken: 'ya29.cred',
+      selectedLogId: 'ctx-selected-2',
+    });
+    const perReqOutput = await perReqWithDefaultOverride.handle(sampleActivity, sampleContext);
+    expect(perReqOutput).toEqual(expect.objectContaining({ success: true }));
+    expect(defaultWriteLog).toHaveBeenCalledWith(
+      expect.objectContaining({ selectedLogId: 'ctx-selected-2' })
+    );
+
+    // Honors per-request overrides.documentLogService over options.documentLogService
+    const overrideWriteLog = vi.fn().mockResolvedValue({
+      spreadsheetId: 'override-req-sheet',
+      sheetName: 'Submittal Arch',
+      rowNumber: 12,
+      action: 'updated',
+    });
+    const overrideHandler = wiring.createPerRequestActivityHandler(
+      { selectedLogId: 'override-ctx-3' },
+      { documentLogService: { resolveLog: vi.fn(), writeLog: overrideWriteLog } }
+    );
+    const overrideOutput = await overrideHandler.handle(sampleActivity, sampleContext);
+    expect(overrideOutput).toEqual({
+      success: true,
+      contextVariables: {
+        documentLogWrite: {
+          spreadsheetId: 'override-req-sheet',
+          sheetName: 'Submittal Arch',
+          rowNumber: 12,
+          action: 'updated',
+        },
+      },
+    });
+    expect(overrideWriteLog).toHaveBeenCalledWith(
+      expect.objectContaining({ selectedLogId: 'override-ctx-3' })
+    );
+
+    // Per-request sheetsClient override uses request-scoped SheetsClient
+    const mockDriveClient = {
+      searchFiles: vi.fn().mockResolvedValue([
+        {
+          id: 'req-sheet-id',
+          name: 'Harborview Hotel Document Log',
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ]),
+    } as unknown as GoogleDriveClient;
+    const reqSheetsClient: SheetsClient = {
+      readTable: vi.fn(),
+      insertIntoGroupedList: vi.fn().mockResolvedValue({ rowNumber: 8, action: 'inserted' }),
+      readNamedRange: vi.fn(),
+      writeNamedRange: vi.fn(),
+    };
+    const liveWiring = createDocumentLogWiring({
+      manifestProvider: createManifestProvider(),
+    });
+    await liveWiring.logSchemaRegistry.initialize();
+
+    const liveHandler = liveWiring.createPerRequestActivityHandler(
+      {},
+      { driveClient: mockDriveClient, sheetsClient: reqSheetsClient }
+    );
+    const liveDoc = {
+      type: 'submittal-arch',
+      space: {
+        id: 'space-1',
+        typeId: 'projects',
+        name: 'Harborview Hotel',
+        abstractStorageId: 'drive-1',
+      },
+      data: {
+        status: 'Open',
+        section: '071200',
+        number: '001',
+        revision: '0',
+        title: 'Waterproofing',
+        date: '260204',
+        contact: 'PMG',
+        action: 'REC',
+      },
+    };
+    const liveOut = await liveHandler.handle(sampleActivity, {
+      document: liveDoc,
+      files: [{ id: 'f1', name: 'doc.pdf', uri: 'https://drive.google.com/file/d/f1/view' }],
+      stepOutputs: {},
+      contextVariables: {},
+    });
+    expect(liveOut).toEqual(expect.objectContaining({ success: true }));
+    expect(reqSheetsClient.insertIntoGroupedList).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: expect.objectContaining({ spreadsheetId: 'req-sheet-id' }),
+      })
+    );
+
+    const directHandler = liveWiring.createPerRequestActivityHandler(
+      { selectedLogId: 'direct-log-44' },
+      { driveClient: mockDriveClient, sheetsClient: reqSheetsClient }
+    );
+    const directOut = await directHandler.handle(sampleActivity, {
+      document: liveDoc,
+      files: [{ id: 'f1', name: 'doc.pdf', uri: 'https://drive.google.com/file/d/f1/view' }],
+      stepOutputs: {},
+      contextVariables: {},
+    });
+    expect(directOut).toEqual(expect.objectContaining({ success: true }));
+    expect(reqSheetsClient.insertIntoGroupedList).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        target: expect.objectContaining({ spreadsheetId: 'direct-log-44' }),
+      })
+    );
+  });
+
+  it('accepts a narrow LogTemplateEvaluatorPort with only evaluate() (no validate method required)', async () => {
+    const evaluateOnly = vi.fn((template: string, context: Record<string, unknown>) =>
+      template === '{{status.key}}' ? String((context.status as { key?: string })?.key ?? '') : 'eval-custom'
+    );
+    const mockSheetsClient: SheetsClient = {
+      readTable: vi.fn(),
+      insertIntoGroupedList: vi.fn().mockResolvedValue({ rowNumber: 7, action: 'inserted' }),
+      readNamedRange: vi.fn(),
+      writeNamedRange: vi.fn(),
+    };
+    const wiring = createDocumentLogWiring({
+      manifestProvider: createManifestProvider(),
+      sheetsClient: mockSheetsClient,
+      templateEvaluator: { evaluate: evaluateOnly },
+    });
+    await wiring.logSchemaRegistry.initialize();
+
+    const result = await wiring.documentLogService.writeLog({
+      document: {
+        type: 'submittal-arch',
+        data: {
+          status: 'Open',
+          section: '071200',
+          number: '001',
+          revision: '0',
+          title: 'Waterproofing',
+          date: '260204',
+          contact: 'PMG',
+          action: 'REC',
+        },
+      },
+      selectedLogId: 'narrow-eval-log',
+    });
+
+    expect(result.rowNumber).toBe(7);
+    expect(evaluateOnly).toHaveBeenCalled();
+  });
 });

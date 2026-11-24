@@ -17,6 +17,7 @@ import {
 import {
   buildRowKeyExtractor,
   computeTargetRowKeys,
+  enrichDocumentData,
   mapDocumentToLogRow,
 } from './row-mapper';
 
@@ -377,6 +378,7 @@ export class DocumentLogService implements DocumentLogPort {
     }
 
     const spreadsheetId = await this.resolveSpreadsheetId(document, selectedLogId);
+    const enrichedData = enrichDocumentData(document.data, targetSchema);
 
     const { rowData, readOnlyColumns } = mapDocumentToLogRow({
       document,
@@ -384,6 +386,7 @@ export class DocumentLogService implements DocumentLogPort {
       targetSchema,
       templateEvaluator: this.templateEvaluator,
       fileUri,
+      enrichedData,
     });
 
     const targetKeys = computeTargetRowKeys({
@@ -391,6 +394,7 @@ export class DocumentLogService implements DocumentLogPort {
       logSchema,
       targetSchema,
       templateEvaluator: this.templateEvaluator,
+      enrichedData,
     });
 
     const rowKeyExtractor = buildRowKeyExtractor({

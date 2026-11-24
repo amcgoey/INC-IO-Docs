@@ -3,11 +3,20 @@ import type { docs_v1 } from 'googleapis';
 import { createHttpServer } from '../infrastructure/http';
 import { GoogleDocsClient } from '../infrastructure/docs';
 import { getDocumentInfoWidgetName } from '../features/schema-driven-ui/blocks/document-info';
+import {
+  getDocumentSpaceWidgetName,
+  getDocumentTypeWidgetName,
+} from '../features/schema-driven-ui/blocks/document-type-selection';
 import { wireWorkspaceAddonRoutes } from './workspace-addon.wiring';
 import { createSourceParserWiring } from './source-parser.wiring';
 import { ParseSchemaRegistryAdapter } from '../features/source-parser/adapters/parse-schema-registry.adapter';
+import { LogSchemaRegistryAdapter } from '../features/document-log';
+import { CompiledSchemaRegistry } from '../features/document/adapters/compiled-schema-registry';
+import type { DocumentSchemaRegistryPort } from '../features/document/ports';
 import type { DocumentSpaceService } from '../features/document-space/domain';
+import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import type { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
+import type { SheetsClient } from '../infrastructure/sheets';
 import type { GoogleWorkspaceActionResponse } from '../infrastructure/workspace-addon/ui-blocks';
 
 describe('workspace-addon.wiring (S3)', () => {
@@ -141,6 +150,197 @@ describe('workspace-addon.wiring (S3)', () => {
     });
     expect(res3.statusCode).toBe(200);
     expect(initSpy).toHaveBeenCalledTimes(2);
+
+    initSpy.mockRestore();
+  });
+
+  it('initializes logSchemaRegistry once in standalone fallback mode, retries after rejection, and caches on success', async () => {
+    const server = createHttpServer();
+    const originalInit = LogSchemaRegistryAdapter.prototype.initialize;
+    let initCalls = 0;
+    const initSpy = vi
+      .spyOn(LogSchemaRegistryAdapter.prototype, 'initialize')
+      .mockImplementation(async function (this: LogSchemaRegistryAdapter) {
+        initCalls++;
+        if (initCalls === 1) {
+          throw new Error('Transient log registry init failure');
+        }
+        return originalInit.call(this);
+      });
+
+    const docTypeDef = {
+      key: 'comm-doc',
+      name: 'Comm Doc',
+      documentSchema: {
+        fields: [{ key: 'description', name: 'Description', type: 'string', required: true }],
+        identity: { idGroup: '{{description}}', id: '{{description}}' },
+      },
+      documentUiSchema: {
+        layout: ['description'],
+        fields: {
+          description: { widget: 'textInput', label: 'Description' },
+        },
+        events: {
+          onSubmit: { catchAllWorkflow: 'LogOnly' },
+        },
+      },
+      documentWorkflowConfig: {
+        workflows: [
+          {
+            name: 'LogOnly',
+            activitySequence: [{ type: 'WRITE_LOG', payload: {} }],
+          },
+        ],
+      },
+      documentLogSchema: {
+        provider: 'google_sheets',
+        target: {
+          sheetName: 'Log',
+          rangeName: 'Log_Range',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        grouping: {
+          groupBy: 'idGroup',
+          sortBy: 'id',
+          groupSortOrder: 'asc',
+          rowSortOrder: 'asc',
+          duplicatePolicy: 'insert',
+        },
+        columns: {
+          Description: { template: '{{description}}' },
+        },
+      },
+    };
+
+    const manifestProvider = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./types/comm-doc.json'],
+        configuration: {
+          documentLog: {
+            preferredFolderPath: '1 Admin',
+            fileNameContains: 'Document Log',
+            excludePrefixes: ['Copy of '],
+            excludeSubstrings: ['Template'],
+            templateSpreadsheetId: 'tmpl-1',
+            copyNameTemplate: '{{DocumentSpace.name}} Document Log',
+          },
+        },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue(docTypeDef),
+    };
+
+    const documentSchemaRegistry: DocumentSchemaRegistryPort = {
+      loadAll: vi.fn().mockResolvedValue([docTypeDef]),
+    };
+    const compiledSchemaRegistry = new CompiledSchemaRegistry(documentSchemaRegistry);
+    await compiledSchemaRegistry.initialize();
+
+    const documentSpaceService = {
+      getAllTypes: () => [
+        {
+          id: 'projects',
+          displayName: 'Projects',
+          spaceSchema: {
+            allowedDocumentTypes: ['comm-doc'],
+            defaultDocumentType: 'comm-doc',
+          },
+          storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+        },
+      ],
+      getCollection: async () => ({
+        spaces: [
+          {
+            id: 'space-1',
+            typeId: 'projects',
+            name: 'Harborview',
+            abstractStorageId: 'drive-1',
+          },
+        ],
+      }),
+    } as unknown as DocumentSpaceService;
+
+    const mockDriveClient = {
+      searchFiles: vi.fn().mockResolvedValue([
+        {
+          id: 'log-sheet-1',
+          name: 'Harborview Document Log',
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ]),
+    } as unknown as GoogleDriveClient;
+
+    const mockSheetsClient: SheetsClient = {
+      readTable: vi.fn(),
+      insertIntoGroupedList: vi.fn().mockResolvedValue({ rowNumber: 6, action: 'inserted' }),
+      readNamedRange: vi.fn(),
+      writeNamedRange: vi.fn(),
+    };
+
+    wireWorkspaceAddonRoutes({
+      server,
+      authVerifier: createAuthVerifier(),
+      manifestProvider,
+      documentSpaceService,
+      documentSchemaRegistry,
+      compiledSchemaRegistry,
+      driveClient: mockDriveClient,
+      sheetsClient: mockSheetsClient,
+      gmailClient: createGmailClient(),
+    });
+
+    const submitPayload = {
+      drive: { selectedItems: [{ id: 'file-1', title: 'Notes.pdf' }] },
+      commonEventObject: {
+        hostApp: 'DRIVE',
+        parameters: { action: 'processDocument' },
+        formInputs: {
+          SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+          [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Harborview'] } },
+          [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['comm-doc'] } },
+          SelectFiles: { stringInputs: { value: ['file-1'] } },
+          [getDocumentInfoWidgetName('description', 'comm-doc')]: {
+            stringInputs: { value: ['Initial submittal'] },
+          },
+        },
+      },
+    };
+
+    // First request triggers lazy initialization which rejects -> initializer must reset
+    const res1 = await server.inject({
+      method: 'POST',
+      url: '/workspace/action',
+      headers: { authorization: 'Bearer valid' },
+      payload: submitPayload,
+    });
+    expect(res1.statusCode).toBe(200);
+    expect(res1.payload).toContain('Transient log registry init failure');
+    expect(initSpy).toHaveBeenCalledTimes(1);
+
+    // Second request retries initialization and completes WRITE_LOG
+    const res2 = await server.inject({
+      method: 'POST',
+      url: '/workspace/action',
+      headers: { authorization: 'Bearer valid' },
+      payload: submitPayload,
+    });
+    expect(res2.statusCode).toBe(200);
+    expect(initSpy).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(res2.payload).action?.notification?.text).toBe(
+      'Document processed successfully'
+    );
+    expect(mockSheetsClient.insertIntoGroupedList).toHaveBeenCalledTimes(1);
+
+    // Third request reuses the memoized initialization promise (no extra initialize call)
+    const res3 = await server.inject({
+      method: 'POST',
+      url: '/workspace/action',
+      headers: { authorization: 'Bearer valid' },
+      payload: submitPayload,
+    });
+    expect(res3.statusCode).toBe(200);
+    expect(initSpy).toHaveBeenCalledTimes(2);
+    expect(mockSheetsClient.insertIntoGroupedList).toHaveBeenCalledTimes(2);
 
     initSpy.mockRestore();
   });

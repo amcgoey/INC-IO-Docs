@@ -108,6 +108,7 @@ export interface MapDocumentToLogRowParams {
   targetSchema: LogTargetDocumentSchema;
   templateEvaluator: LogTemplateEvaluatorPort;
   fileUri?: string | undefined;
+  enrichedData?: Readonly<Record<string, unknown>> | undefined;
 }
 
 export interface MappedLogRow {
@@ -121,7 +122,7 @@ export interface MappedLogRow {
  */
 export function mapDocumentToLogRow(params: MapDocumentToLogRowParams): MappedLogRow {
   const { document, logSchema, targetSchema, templateEvaluator, fileUri } = params;
-  const enrichedData = enrichDocumentData(document.data, targetSchema);
+  const enrichedData = params.enrichedData ?? enrichDocumentData(document.data, targetSchema);
   const rowData: Record<string, LogCellInput> = {};
   const readOnlyColumns: string[] = [];
 
