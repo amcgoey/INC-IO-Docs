@@ -148,6 +148,37 @@ export const DocumentSchemaOptionTupleType = Type.Record(Type.String(), Type.Unk
 
 export type DocumentSchemaOptionTuple = Static<typeof DocumentSchemaOptionTupleType>;
 
+export const DocumentLogOptionSourceSchema = Type.Object(
+  {
+    provider: Type.Literal('document_log'),
+    properties: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  },
+  { additionalProperties: false }
+);
+
+export type DocumentLogOptionSource = Static<typeof DocumentLogOptionSourceSchema>;
+
+export const GoogleDriveOptionSourceSchema = Type.Object(
+  {
+    provider: Type.Literal('google_drive'),
+    method: Type.Optional(Type.Union([Type.Literal('list_folders'), Type.Undefined()])),
+    relativePath: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+    properties: Type.Optional(
+      Type.Union([Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }), Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export type GoogleDriveOptionSource = Static<typeof GoogleDriveOptionSourceSchema>;
+
+export const OptionSourceSchema = Type.Union([
+  DocumentLogOptionSourceSchema,
+  GoogleDriveOptionSourceSchema,
+]);
+
+export type OptionSource = Static<typeof OptionSourceSchema>;
+
 export const DocumentIdentitySchemaType = Type.Object(
   {
     id: Type.Optional(Type.String()),
@@ -179,6 +210,9 @@ export const DocumentSchemaType = Type.Object({
   calculatedFields: Type.Optional(Type.Array(CalculatedFieldType)),
   identity: Type.Optional(DocumentIdentitySchemaType),
   options: Type.Optional(Type.Record(Type.String(), Type.Array(DocumentSchemaOptionTupleType))),
+  optionSources: Type.Optional(
+    Type.Union([Type.Record(Type.String({ minLength: 1 }), OptionSourceSchema), Type.Undefined()])
+  ),
 });
 
 export type DocumentSchema = Static<typeof DocumentSchemaType>;
@@ -342,7 +376,11 @@ export function buildFieldSchema(
 ): TSchema {
   let fieldSchema: TSchema;
   if (field.type === 'string') {
-    if (field.options && !field.options.allowUserInput) {
+    const isDynamicSource =
+      field.options !== undefined &&
+      (documentSchema.optionSources?.[field.options.source] !== undefined ||
+        field.options.dynamicConfig !== undefined);
+    if (field.options && !field.options.allowUserInput && !isDynamicSource) {
       // nosemgrep: domain-pass-through-read
       const keyProp = field.options.key;
       const nameProp = field.options.name ?? keyProp;
@@ -915,15 +953,22 @@ function getBaseVariables(manifest: DocumentType): string[] {
   for (const field of manifest.documentSchema.fields) {
     vars.push(field.key);
     if (field.options) {
-      if (field.options.key) {
-        vars.push(`${field.key}.${field.options.key}`);
-      }
-      if (field.options.name) {
-        vars.push(`${field.key}.${field.options.name}`);
-      }
-      const optionTuples = manifest.documentSchema.options?.[field.options.source] ?? [];
-      for (const tuple of optionTuples) {
-        vars.push(...flattenObjectPaths(tuple, field.key));
+      const optionSource = manifest.documentSchema.optionSources?.[field.options.source];
+      if (optionSource?.properties) {
+        for (const prop of optionSource.properties) {
+          vars.push(`${field.key}.${prop}`);
+        }
+      } else {
+        if (field.options.key) {
+          vars.push(`${field.key}.${field.options.key}`);
+        }
+        if (field.options.name) {
+          vars.push(`${field.key}.${field.options.name}`);
+        }
+        const optionTuples = manifest.documentSchema.options?.[field.options.source] ?? [];
+        for (const tuple of optionTuples) {
+          vars.push(...flattenObjectPaths(tuple, field.key));
+        }
       }
     }
   }
@@ -1016,6 +1061,134 @@ function validateWorkflowSteps(workflows: Workflow[], errors: string[]): void {
   });
 }
 
+function validateOptionSourcesAndFields(
+  documentSchema: DocumentSchema | undefined,
+  errors: string[]
+): void {
+  if (!documentSchema) {
+    return;
+  }
+
+  if (documentSchema.optionSources) {
+    for (const [sourceKey, sourceDef] of Object.entries(documentSchema.optionSources)) {
+      if (sourceKey.trim().length === 0) {
+        errors.push('OptionSource key in documentSchema.optionSources must be a non-empty string.');
+      }
+      if (documentSchema.options?.[sourceKey] !== undefined) {
+        errors.push(
+          `Option source "${sourceKey}" cannot be declared in both documentSchema.options and documentSchema.optionSources.`
+        );
+      }
+      if (sourceDef.properties !== undefined) {
+        for (const prop of sourceDef.properties) {
+          if (prop.trim().length === 0) {
+            errors.push(
+              `OptionSource "${sourceKey}" contains an empty or whitespace-only property name.`
+            );
+          }
+        }
+      }
+      if (
+        sourceDef.provider === 'google_drive' &&
+        sourceDef.relativePath !== undefined &&
+        sourceDef.relativePath.trim().length === 0
+      ) {
+        errors.push(
+          `OptionSource "${sourceKey}" relativePath must be a non-empty string.`
+        );
+      }
+    }
+  }
+
+  if (!documentSchema.fields) {
+    return;
+  }
+
+  for (const field of documentSchema.fields) {
+    if (field.options) {
+      // nosemgrep: domain-pass-through-read
+      const sourceKey = field.options.source;
+      const hasStaticOptions = documentSchema.options?.[sourceKey] !== undefined;
+      const optionSource = documentSchema.optionSources?.[sourceKey];
+      const hasDynamicConfig = field.options.dynamicConfig !== undefined;
+
+      if (!hasStaticOptions && optionSource === undefined && !hasDynamicConfig) {
+        errors.push(`Field "${field.key}" references unknown OptionSource "${sourceKey}".`);
+      } else if (hasDynamicConfig && optionSource !== undefined) {
+        errors.push(
+          `Field "${field.key}" cannot declare both options.dynamicConfig and documentSchema.optionSources["${sourceKey}"].`
+        );
+      } else if (optionSource?.properties !== undefined) {
+        if (!optionSource.properties.includes(field.options.key)) {
+          errors.push(
+            `Field "${field.key}" options.key "${field.options.key}" is not declared in OptionSource "${sourceKey}" properties.`
+          );
+        }
+        if (
+          field.options.name !== undefined &&
+          !optionSource.properties.includes(field.options.name)
+        ) {
+          errors.push(
+            `Field "${field.key}" options.name "${field.options.name}" is not declared in OptionSource "${sourceKey}" properties.`
+          );
+        }
+      }
+    }
+
+    if (field.linkedField) {
+      // nosemgrep: domain-pass-through-read
+      const { sourceField, sourceProperty } = field.linkedField;
+      if (sourceField === field.key) {
+        errors.push(`Field "${field.key}" has invalid linkedField: cannot reference itself.`);
+        continue;
+      }
+      const targetField = documentSchema.fields.find((f) => f.key === sourceField);
+      if (!targetField) {
+        errors.push(
+          `Field "${field.key}" has invalid linkedField: sourceField "${sourceField}" does not exist.`
+        );
+        continue;
+      }
+      if (!targetField.options) {
+        errors.push(
+          `Field "${field.key}" has invalid linkedField: sourceField "${sourceField}" does not define options.`
+        );
+        continue;
+      }
+      // nosemgrep: domain-pass-through-read
+      const optionSourceKey = targetField.options.source;
+      const declaredOptionSource = documentSchema.optionSources?.[optionSourceKey];
+      // nosemgrep: domain-pass-through-read
+      const keyProp = targetField.options.key;
+      const nameProp = targetField.options.name ?? keyProp;
+      if (declaredOptionSource !== undefined) {
+        const propertyExists =
+          declaredOptionSource.properties !== undefined
+            ? declaredOptionSource.properties.includes(sourceProperty)
+            : sourceProperty === keyProp || sourceProperty === nameProp;
+        if (!propertyExists) {
+          errors.push(
+            `Field "${field.key}" has invalid linkedField: sourceProperty "${sourceProperty}" does not exist on sourceField "${sourceField}" options.`
+          );
+        }
+      } else {
+        const tuples = documentSchema.options?.[optionSourceKey];
+        if (tuples && tuples.length > 0) {
+          const propertyExists =
+            sourceProperty === keyProp ||
+            sourceProperty === nameProp ||
+            tuples.some((t) => typeof t === 'object' && t !== null && sourceProperty in t);
+          if (!propertyExists) {
+            errors.push(
+              `Field "${field.key}" has invalid linkedField: sourceProperty "${sourceProperty}" does not exist on sourceField "${sourceField}" options.`
+            );
+          }
+        }
+      }
+    }
+  }
+}
+
 /**
  * Pure domain function to statically validate all Handlebars templates within a DocumentType manifest.
  * Returns an array of formatted error strings using exact dot-notation paths.
@@ -1029,46 +1202,7 @@ export function validateManifestTemplates(
   const baseVariables = getBaseVariables(manifest);
   const executionVariables = getExecutionVariables(manifest, baseVariables);
 
-  if (manifest.documentSchema?.fields) {
-    for (const field of manifest.documentSchema.fields) {
-      if (field.linkedField) {
-        // nosemgrep: domain-pass-through-read
-        const { sourceField, sourceProperty } = field.linkedField;
-        if (sourceField === field.key) {
-          errors.push(`Field "${field.key}" has invalid linkedField: cannot reference itself.`);
-        } else {
-          const targetField = manifest.documentSchema.fields.find((f) => f.key === sourceField);
-          if (!targetField) {
-            errors.push(
-              `Field "${field.key}" has invalid linkedField: sourceField "${sourceField}" does not exist.`
-            );
-          } else if (!targetField.options) {
-            errors.push(
-              `Field "${field.key}" has invalid linkedField: sourceField "${sourceField}" does not define options.`
-            );
-          } else {
-            // nosemgrep: domain-pass-through-read
-            const optionSource = targetField.options.source;
-            const tuples = manifest.documentSchema.options?.[optionSource];
-            if (tuples && tuples.length > 0) {
-              // nosemgrep: domain-pass-through-read
-              const keyProp = targetField.options.key;
-              const nameProp = targetField.options.name ?? keyProp;
-              const propertyExists =
-                sourceProperty === keyProp ||
-                sourceProperty === nameProp ||
-                tuples.some((t) => typeof t === 'object' && t !== null && sourceProperty in t);
-              if (!propertyExists) {
-                errors.push(
-                  `Field "${field.key}" has invalid linkedField: sourceProperty "${sourceProperty}" does not exist on sourceField "${sourceField}" options.`
-                );
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+  validateOptionSourcesAndFields(manifest.documentSchema, errors);
 
   if (manifest.documentSchema.calculatedFields) {
     manifest.documentSchema.calculatedFields.forEach((calcField, index) => {

@@ -1,13 +1,17 @@
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { DocumentSchemaRegistryAdapter } from '../../src/features/document/adapters/document-schema-registry';
+import { CompiledSchemaRegistry } from '../../src/features/document/adapters/compiled-schema-registry';
 import { AppManifestProvider } from '../../src/infrastructure/manifest/app-manifest-provider';
 import { HandlebarsAdapter } from '../../src/infrastructure/template-engine/handlebars-adapter';
+import { ensureEvaluationOrder } from '../../src/infrastructure/validation/json-logic-graph';
 import {
   DocumentTypeSchema,
   formatValidationErrors,
 } from '../../src/features/document/domain';
-import { FormSchemaType } from '../../src/features/document/ports';
+import { FormSchemaType, type RawManifestProviderPort } from '../../src/features/document/ports';
 import { UiSchema, type UiSchema as UiSchemaType } from '../../src/features/schema-driven-ui/domain';
 import { Value } from '@sinclair/typebox/value';
 import {
@@ -534,7 +538,495 @@ describe('DocumentType JSON files schema validation', () => {
   });
 });
 
+describe('Split Option Schemas (optionSources & optionBindings) & Manifest Immutability (Ticket #356)', () => {
+  const DOC_REL_PATH = './document-types/split-submittal.json';
+  const DOC_KEY = 'split-submittal';
 
+  function createSplitOptionFixture() {
+    const manifest = {
+      documentTypes: [DOC_REL_PATH],
+      configuration: {
+        documentLog: {
+          preferredFolderPath: '1 Admin',
+          fileNameContains: 'Document Log',
+          excludePrefixes: ['Copy of '],
+          excludeSubstrings: ['Template'],
+          templateSpreadsheetId: 'template-spreadsheet-id',
+          copyNameTemplate: '{{DocumentSpace.name}} Document Log',
+        },
+      },
+    };
 
+    const docType = {
+      key: DOC_KEY,
+      name: 'Split Submittal',
+      documentSchema: {
+        fields: [
+          {
+            key: 'status',
+            name: 'Status',
+            type: 'string',
+            required: true,
+            options: {
+              source: 'statuses',
+              key: 'key',
+              allowUserInput: false,
+            },
+          },
+          {
+            key: 'action',
+            name: 'Action',
+            type: 'string',
+            required: true,
+            options: {
+              source: 'actions',
+              key: 'key',
+              name: 'name',
+              allowUserInput: false,
+            },
+          },
+          {
+            key: 'specTag',
+            name: 'Spec Tag',
+            type: 'string',
+            required: true,
+            options: {
+              source: 'specs',
+              key: 'key',
+              name: 'name',
+              allowUserInput: true,
+            },
+          },
+          {
+            key: 'specTitle',
+            name: 'Spec Title',
+            type: 'string',
+            required: true,
+            linkedField: {
+              sourceField: 'specTag',
+              sourceProperty: 'name',
+            },
+          },
+          {
+            key: 'contact',
+            name: 'Contact',
+            type: 'string',
+            required: true,
+            options: {
+              source: 'contacts',
+              key: 'key',
+              name: 'name',
+              allowUserInput: true,
+            },
+          },
+          {
+            key: 'folder',
+            name: 'Folder',
+            type: 'string',
+            required: false,
+            options: {
+              source: 'contactFolders',
+              key: 'key',
+              name: 'name',
+              allowUserInput: true,
+            },
+          },
+        ],
+        optionSources: {
+          statuses: {
+            provider: 'document_log',
+            properties: ['key'],
+          },
+          actions: {
+            provider: 'document_log',
+            properties: ['key', 'name'],
+          },
+          specs: {
+            provider: 'document_log',
+            properties: ['key', 'name'],
+          },
+          contacts: {
+            provider: 'document_log',
+            properties: ['key', 'name'],
+          },
+          contactFolders: {
+            provider: 'google_drive',
+            method: 'list_folders',
+            relativePath: '1 Admin/Communication',
+            properties: ['key', 'name'],
+          },
+        },
+        calculatedFields: [
+          {
+            key: 'summary',
+            name: 'Summary',
+            template: '{{specTag.key}} - {{specTitle}} ({{action.name}})',
+          },
+        ],
+        identity: {
+          id: '{{specTag.key}}-{{status.key}}',
+          idDocument: '{{specTag.key}}',
+          idGroup: '{{specTag.key}}',
+        },
+      },
+      documentUiSchema: {
+        layout: ['status', 'specTag', 'specTitle', 'contact', 'action', 'folder'],
+        fields: {
+          status: { widget: 'select' },
+          specTag: { widget: 'select', onChange: true },
+          specTitle: { widget: 'text' },
+          contact: { widget: 'select' },
+          action: { widget: 'select' },
+          folder: { widget: 'select' },
+        },
+      },
+      documentLogSchema: {
+        provider: 'google_sheets',
+        target: {
+          sheetName: 'Submittal',
+          rangeName: 'Log_Submittal',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        grouping: {
+          groupBy: 'idGroup',
+          sortBy: 'id',
+          groupSortOrder: 'asc',
+          rowSortOrder: 'asc',
+          duplicatePolicy: 'insert',
+        },
+        columns: {
+          Status: { template: '{{status.key}}' },
+          'Spec Tag': { template: '{{specTag.key}}' },
+          'Spec Title': { template: '{{specTitle}}', readOnly: true },
+          Contact: { template: '{{contact.key}}' },
+          Action: { template: '{{action.name}}' },
+          'Calc Link': { source: 'fileLink', label: 'Link' },
+        },
+        historyDisplay: {
+          topLabel: '{{specTag.key}} • {{status.key}}',
+          text: '<b>{{action.name}}</b> ({{contact.key}})',
+          bottomLabel: '{{specTitle}}',
+        },
+        optionBindings: {
+          statuses: {
+            sheetName: 'Lookups',
+            rangeName: 'Tbl_Statuses',
+            validationRangeName: 'Val_Statuses',
+            endMarker: '<--->',
+            columns: { Key: 'key' },
+          },
+          actions: {
+            sheetName: 'Lookups',
+            rangeName: 'Tbl_Actions',
+            validationRangeName: 'Val_Actions',
+            endMarker: '<--->',
+            columns: { Key: 'key', Name: 'name' },
+            aliasesColumn: 'Aliases',
+          },
+          specs: {
+            sheetName: 'Lookups',
+            rangeName: 'Tbl_Specs',
+            validationRangeName: 'Val_Specs',
+            endMarker: '<--->',
+            columns: { Key: 'key', Name: 'name' },
+            aliasesColumn: 'Aliases',
+          },
+          contacts: {
+            sheetName: 'Lookups',
+            rangeName: 'Tbl_Contacts',
+            validationRangeName: 'Val_Contacts',
+            endMarker: '<--->',
+            columns: { Key: 'key', Name: 'name' },
+            aliasesColumn: 'Aliases',
+          },
+        },
+      },
+      documentFormSchema: {
+        fields: {
+          'Submittal No': {
+            template: '{{specTag.key}}',
+          },
+          'Submittal Response': {
+            template: '{{action.name}}',
+            valueMap: { RR: 'Revise and Resubmit' },
+          },
+        },
+      },
+    };
 
+    return { manifest, docType };
+  }
+
+  function createMockManifestProvider(
+    manifest: unknown,
+    schemas: Record<string, unknown>
+  ): RawManifestProviderPort {
+    return {
+      async getRawManifest(): Promise<unknown> {
+        return structuredClone(manifest);
+      },
+      async readParsedSchema(relPath: string): Promise<unknown> {
+        if (!(relPath in schemas)) {
+          throw new Error(`Unknown schema path "${relPath}"`);
+        }
+        return structuredClone(schemas[relPath]);
+      },
+    };
+  }
+
+  it('loads split optionSources, optionBindings, LinkedField, documentLogSchema, and documentFormSchema across all registries and compiles dynamic allowUserInput: false fields as strings', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'inc-io-docs-ticket-356-'));
+    try {
+      const { manifest, docType } = createSplitOptionFixture();
+      const manifestPath = path.join(tmpDir, 'manifest.json');
+      const docDir = path.join(tmpDir, 'document-types');
+      await fs.mkdir(docDir, { recursive: true });
+      await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8');
+      await fs.writeFile(
+        path.join(tmpDir, DOC_REL_PATH),
+        JSON.stringify(docType, null, 2),
+        'utf-8'
+      );
+
+      const manifestProvider = new AppManifestProvider({ manifestPath });
+      const handlebars = new HandlebarsAdapter();
+
+      const docRegistry = new DocumentSchemaRegistryAdapter(
+        manifestProvider,
+        handlebars,
+        ensureEvaluationOrder
+      );
+      const loadedDocTypes = await docRegistry.loadAll();
+      expect(loadedDocTypes).toHaveLength(1);
+      const loadedDoc = loadedDocTypes[0];
+      expect(loadedDoc.key).toBe(DOC_KEY);
+      expect(loadedDoc.documentSchema.optionSources).toEqual(docType.documentSchema.optionSources);
+      expect(
+        loadedDoc.documentSchema.fields.find((f) => f.key === 'specTitle')?.linkedField
+      ).toEqual({
+        sourceField: 'specTag',
+        sourceProperty: 'name',
+      });
+
+      const compiledRegistry = new CompiledSchemaRegistry(docRegistry);
+      await compiledRegistry.initialize();
+      const compiledSchema = compiledRegistry.get(DOC_KEY);
+      expect(compiledSchema).toBeDefined();
+
+      // Dynamic allowUserInput: false fields (status, action) must validate as strings rather than Type.Never()
+      expect(
+        compiledSchema!.Check({
+          status: 'Open',
+          action: 'REC',
+          specTag: '09-65-00',
+          specTitle: 'Resilient Flooring',
+          contact: 'JDOE',
+        })
+      ).toBe(true);
+      expect(
+        compiledSchema!.Check({
+          status: 'Open',
+          action: 'REC',
+          specTag: '09-65-00',
+          specTitle: 'Resilient Flooring',
+          contact: 'JDOE',
+          folder: 'Acme Corp',
+        })
+      ).toBe(true);
+      expect(
+        compiledSchema!.Check({
+          status: 123,
+          action: 'REC',
+          specTag: '09-65-00',
+          specTitle: 'Resilient Flooring',
+          contact: 'JDOE',
+        })
+      ).toBe(false);
+
+      const logRegistry = new LogSchemaRegistryAdapter(manifestProvider, handlebars);
+      await logRegistry.initialize();
+      expect(logRegistry.getTargetSchema(DOC_KEY)?.optionSources).toEqual(
+        docType.documentSchema.optionSources
+      );
+      expect(logRegistry.getDocumentLogSchema(DOC_KEY)?.optionBindings).toEqual(
+        docType.documentLogSchema.optionBindings
+      );
+
+      const parseRegistry = new ParseSchemaRegistryAdapter(manifestProvider, handlebars);
+      await parseRegistry.initialize();
+      expect(parseRegistry.getTargetSchema(DOC_KEY)?.optionSources).toEqual(
+        docType.documentSchema.optionSources
+      );
+      expect(parseRegistry.getDocumentFormSchema(DOC_KEY)).toEqual(docType.documentFormSchema);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  describe('negative startup validation fixtures', () => {
+    it('rejects LookupField referencing an unknown OptionSource in DocumentSchemaRegistryAdapter.loadAll()', async () => {
+      const { manifest, docType } = structuredClone(createSplitOptionFixture());
+      const statusField = docType.documentSchema.fields.find((f) => f.key === 'status')!;
+      statusField.options!.source = 'unknown_source';
+
+      const provider = createMockManifestProvider(manifest, { [DOC_REL_PATH]: docType });
+      const registry = new DocumentSchemaRegistryAdapter(
+        provider,
+        new HandlebarsAdapter(),
+        ensureEvaluationOrder
+      );
+
+      await expect(registry.loadAll()).rejects.toThrow(
+        /Field "status" references unknown OptionSource "unknown_source"/
+      );
+    });
+
+    it('rejects undeclared property in calculatedFields template in DocumentSchemaRegistryAdapter.loadAll()', async () => {
+      const { manifest, docType } = structuredClone(createSplitOptionFixture());
+      docType.documentSchema.calculatedFields[0].template = '{{action.undeclaredProp}}';
+
+      const provider = createMockManifestProvider(manifest, { [DOC_REL_PATH]: docType });
+      const registry = new DocumentSchemaRegistryAdapter(
+        provider,
+        new HandlebarsAdapter(),
+        ensureEvaluationOrder
+      );
+
+      await expect(registry.loadAll()).rejects.toThrow(
+        /documentSchema\.calculatedFields\[0\]\.template/
+      );
+    });
+
+    it('rejects undeclared property in documentLogSchema.columns in LogSchemaRegistryAdapter.initialize()', async () => {
+      const { manifest, docType } = structuredClone(createSplitOptionFixture());
+      docType.documentLogSchema.columns.Action = { template: '{{action.undeclaredProp}}' };
+
+      const provider = createMockManifestProvider(manifest, { [DOC_REL_PATH]: docType });
+      const registry = new LogSchemaRegistryAdapter(provider, new HandlebarsAdapter());
+
+      await expect(registry.initialize()).rejects.toThrow(
+        /accesses unknown property "\.undeclaredProp" on LookupField "action"/
+      );
+    });
+
+    it('rejects undeclared property in documentFormSchema in ParseSchemaRegistryAdapter.initialize()', async () => {
+      const { manifest, docType } = structuredClone(createSplitOptionFixture());
+      docType.documentFormSchema.fields['Submittal Response'].template =
+        '{{action.undeclaredProp}}';
+
+      const provider = createMockManifestProvider(manifest, { [DOC_REL_PATH]: docType });
+      const registry = new ParseSchemaRegistryAdapter(provider, new HandlebarsAdapter());
+
+      await expect(registry.initialize()).rejects.toThrow(
+        /accesses unknown property "\.undeclaredProp" on LookupField "action"/
+      );
+    });
+
+    it('rejects LinkedField.sourceProperty referencing an undeclared property in DocumentSchemaRegistryAdapter.loadAll()', async () => {
+      const { manifest, docType } = structuredClone(createSplitOptionFixture());
+      const specTitleField = docType.documentSchema.fields.find((f) => f.key === 'specTitle')!;
+      specTitleField.linkedField!.sourceProperty = 'undeclaredProp';
+
+      const provider = createMockManifestProvider(manifest, { [DOC_REL_PATH]: docType });
+      const registry = new DocumentSchemaRegistryAdapter(
+        provider,
+        new HandlebarsAdapter(),
+        ensureEvaluationOrder
+      );
+
+      await expect(registry.loadAll()).rejects.toThrow(
+        /Field "specTitle" has invalid linkedField: sourceProperty "undeclaredProp" does not exist on sourceField "specTag" options/
+      );
+    });
+
+    it('rejects document_log OptionSource lacking a matching OptionBinding in LogSchemaRegistryAdapter.initialize()', async () => {
+      const { manifest, docType } = structuredClone(createSplitOptionFixture());
+      const optionBindings = docType.documentLogSchema.optionBindings as Record<string, unknown>;
+      delete optionBindings.statuses;
+
+      const provider = createMockManifestProvider(manifest, { [DOC_REL_PATH]: docType });
+      const registry = new LogSchemaRegistryAdapter(provider, new HandlebarsAdapter());
+
+      await expect(registry.initialize()).rejects.toThrow(
+        /missing binding for document_log OptionSource "statuses"/
+      );
+    });
+
+    it('rejects OptionBinding.columns missing one or more declared OptionSource.properties in LogSchemaRegistryAdapter.initialize()', async () => {
+      const { manifest, docType } = structuredClone(createSplitOptionFixture());
+      docType.documentLogSchema.optionBindings.actions.columns = { Key: 'key' } as {
+        Key: string;
+        Name: string;
+      };
+
+      const provider = createMockManifestProvider(manifest, { [DOC_REL_PATH]: docType });
+      const registry = new LogSchemaRegistryAdapter(provider, new HandlebarsAdapter());
+
+      await expect(registry.initialize()).rejects.toThrow(
+        /missing column mappings for declared properties: name/
+      );
+    });
+  });
+
+  it('protects AppManifestProvider boot memoization via structuredClone immutability against caller mutations', async () => {
+    const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
+    const manifestProvider = new AppManifestProvider({ manifestPath });
+
+    const rawManifest = (await manifestProvider.getRawManifest()) as {
+      documentTypes: string[];
+      configuration: { documentLog: { preferredFolderPath: string } };
+      DocumentSpaceTypes: unknown[];
+    };
+    rawManifest.documentTypes.push('./document-types/does-not-exist.json');
+    rawManifest.configuration.documentLog.preferredFolderPath = '';
+    rawManifest.DocumentSpaceTypes = [];
+
+    const rawArch = (await manifestProvider.readParsedSchema(
+      './document-types/submittal-arch.json'
+    )) as {
+      key: string;
+      documentSchema: { fields: unknown[] };
+      documentLogSchema?: unknown;
+    };
+    rawArch.key = 'mutated-key';
+    rawArch.documentSchema.fields.length = 0;
+    delete rawArch.documentLogSchema;
+
+    const freshManifest = (await manifestProvider.getRawManifest()) as {
+      documentTypes: string[];
+      configuration: { documentLog: { preferredFolderPath: string } };
+    };
+    expect(freshManifest.documentTypes).toHaveLength(4);
+    expect(freshManifest.configuration.documentLog.preferredFolderPath).toBe('1 Admin');
+
+    const freshArch = (await manifestProvider.readParsedSchema(
+      './document-types/submittal-arch.json'
+    )) as {
+      key: string;
+      documentSchema: { fields: unknown[] };
+    };
+    expect(freshArch.key).toBe('submittal-arch');
+    expect(freshArch.documentSchema.fields.length).toBeGreaterThan(0);
+
+    const handlebars = new HandlebarsAdapter();
+    const docRegistry = new DocumentSchemaRegistryAdapter(
+      manifestProvider,
+      handlebars,
+      ensureEvaluationOrder
+    );
+    const loadedDocs = await docRegistry.loadAll();
+    expect(loadedDocs).toHaveLength(4);
+    const archDoc = loadedDocs.find((d) => d.key === 'submittal-arch');
+    expect(archDoc).toBeDefined();
+    expect(archDoc!.documentSchema.fields.length).toBeGreaterThan(0);
+
+    const logRegistry = new LogSchemaRegistryAdapter(manifestProvider, handlebars);
+    await expect(logRegistry.initialize()).resolves.toBeUndefined();
+    expect(logRegistry.getDiscoveryConfig()?.preferredFolderPath).toBe('1 Admin');
+    expect(logRegistry.getDocumentLogSchema('submittal-arch')?.target.sheetName).toBe(
+      'Submittal Arch'
+    );
+  });
+});
 

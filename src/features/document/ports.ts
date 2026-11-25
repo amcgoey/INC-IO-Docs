@@ -10,6 +10,9 @@ import {
   OPTION_NOT_FOUND_MSG,
   VALIDATION_TIMEOUT_MSG,
   LinkedFieldSchema,
+  OptionSourceSchema,
+  DocumentLogOptionSourceSchema,
+  GoogleDriveOptionSourceSchema,
   type Activity,
   type ActivityExecutionContext,
   type ActivityOutput,
@@ -22,6 +25,9 @@ import {
   type Document,
   type DocumentModel,
   type LinkedField,
+  type OptionSource,
+  type DocumentLogOptionSource,
+  type GoogleDriveOptionSource,
 } from './domain';
 
 export {
@@ -36,6 +42,12 @@ export {
   VALIDATION_TIMEOUT_MSG,
   LinkedFieldSchema,
   type LinkedField,
+  OptionSourceSchema,
+  type OptionSource,
+  DocumentLogOptionSourceSchema,
+  type DocumentLogOptionSource,
+  GoogleDriveOptionSourceSchema,
+  type GoogleDriveOptionSource,
 };
 
 export type SchemaOrKeys =
@@ -93,6 +105,9 @@ export const FormDocumentSchemaType = Type.Object({
   calculatedFields: Type.Optional(Type.Array(FormDocumentCalculatedFieldType)),
   identity: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   options: Type.Optional(Type.Record(Type.String(), Type.Array(Type.Record(Type.String(), Type.Unknown())))),
+  optionSources: Type.Optional(
+    Type.Union([Type.Record(Type.String({ minLength: 1 }), OptionSourceSchema), Type.Undefined()])
+  ),
 }, { additionalProperties: true });
 
 export type FormDocumentSchema = Static<typeof FormDocumentSchemaType>;

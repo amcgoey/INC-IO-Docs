@@ -395,6 +395,101 @@ describe('AppManifestProvider', () => {
       await expect(provider.getWorkspaceConfig()).rejects.toThrow(/timeZone/i);
     });
   });
+
+  describe('Memoization and immutability', () => {
+    it('memoizes readParsedSchema by resolved path so repeated or equivalent reads do not hit disk again', async () => {
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      await fs.writeFile(manifestPath, JSON.stringify({ documentTypes: ['./schemas/doc.json'] }), 'utf-8');
+      const schemaDir = path.join(tempDir, 'schemas');
+      const schemaPath = path.join(schemaDir, 'doc.json');
+      await fs.mkdir(schemaDir, { recursive: true });
+      await fs.writeFile(schemaPath, JSON.stringify({ key: 'doc', version: 1 }), 'utf-8');
+
+      const provider = new AppManifestProvider({ manifestPath });
+      const first = await provider.readParsedSchema('./schemas/doc.json');
+      expect(first).toEqual({ key: 'doc', version: 1 });
+
+      // Overwrite on disk to confirm memoization across equivalent relative paths
+      await fs.writeFile(schemaPath, JSON.stringify({ key: 'doc', version: 2 }), 'utf-8');
+
+      const second = await provider.readParsedSchema('schemas/doc.json');
+      expect(second).toEqual({ key: 'doc', version: 1 });
+    });
+
+    it('deduplicates concurrent readParsedSchema calls and does not cache failures', async () => {
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      await fs.writeFile(manifestPath, JSON.stringify({ documentTypes: [] }), 'utf-8');
+      const schemaDir = path.join(tempDir, 'schemas');
+      const schemaPath = path.join(schemaDir, 'concurrent.json');
+      await fs.mkdir(schemaDir, { recursive: true });
+
+      const provider = new AppManifestProvider({ manifestPath });
+      await expect(provider.readParsedSchema('./schemas/concurrent.json')).rejects.toThrow(
+        /failed to read documenttype file/i
+      );
+
+      // Creating the file after a failed read should succeed
+      await fs.writeFile(schemaPath, JSON.stringify({ key: 'concurrent', nested: { count: 1 } }), 'utf-8');
+      const [a, b] = await Promise.all([
+        provider.readParsedSchema('./schemas/concurrent.json'),
+        provider.readParsedSchema('schemas/concurrent.json'),
+      ]);
+      expect(a).toEqual({ key: 'concurrent', nested: { count: 1 } });
+      expect(b).toEqual({ key: 'concurrent', nested: { count: 1 } });
+      expect(a).not.toBe(b);
+    });
+
+    it('returns structuredClone copies from getRawManifest, readParsedSchema, and configuration getters so caller mutations do not leak', async () => {
+      const manifestPath = path.join(tempDir, 'manifest.json');
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({
+          documentTypes: ['./schemas/doc.json'],
+          configuration: {
+            workspace: { defaultDocumentType: 'comm', timeZone: 'America/New_York' },
+            drive: { defaultFolderName: 'Unfiled' },
+            sheets: { maxRetries: 3 },
+          },
+        }),
+        'utf-8'
+      );
+      const schemaDir = path.join(tempDir, 'schemas');
+      await fs.mkdir(schemaDir, { recursive: true });
+      await fs.writeFile(
+        path.join(schemaDir, 'doc.json'),
+        JSON.stringify({ key: 'doc', nested: { items: ['a', 'b'] } }),
+        'utf-8'
+      );
+
+      const provider = new AppManifestProvider({ manifestPath });
+
+      const raw1 = (await provider.getRawManifest()) as { documentTypes: string[]; configuration: { workspace: { defaultDocumentType: string } } };
+      raw1.documentTypes.push('mutated');
+      raw1.configuration.workspace.defaultDocumentType = 'mutated';
+
+      const raw2 = (await provider.getRawManifest()) as { documentTypes: string[]; configuration: { workspace: { defaultDocumentType: string } } };
+      expect(raw2.documentTypes).toEqual(['./schemas/doc.json']);
+      expect(raw2.configuration.workspace.defaultDocumentType).toBe('comm');
+
+      const schema1 = (await provider.readParsedSchema('./schemas/doc.json')) as { nested: { items: string[] } };
+      schema1.nested.items.push('mutated');
+
+      const schema2 = (await provider.readParsedSchema('./schemas/doc.json')) as { nested: { items: string[] } };
+      expect(schema2.nested.items).toEqual(['a', 'b']);
+
+      const ws1 = await provider.getWorkspaceConfig();
+      ws1!.defaultDocumentType = 'mutated';
+      expect((await provider.getWorkspaceConfig())?.defaultDocumentType).toBe('comm');
+
+      const drive1 = await provider.getDriveConfig();
+      drive1!.defaultFolderName = 'Mutated';
+      expect((await provider.getDriveConfig())?.defaultFolderName).toBe('Unfiled');
+
+      const sheets1 = await provider.getSheetsConfig();
+      sheets1!.maxRetries = 99;
+      expect((await provider.getSheetsConfig())?.maxRetries).toBe(3);
+    });
+  });
 });
 
 

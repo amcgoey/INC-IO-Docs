@@ -9,12 +9,14 @@ import {
   ParseTargetCalculatedFieldSchema,
   ParseTargetDocumentOptionTupleSchema,
   ParseTargetDocumentSchemaSchema,
+  ParseTargetOptionSourceSchema,
   type DocumentParseSchema,
   type DocumentFormSchema,
   type ParseTargetDocumentSchema,
   type ParseTargetDocumentField,
   type ParseTargetCalculatedField,
   type ParseTargetDocumentOptionTuple,
+  type ParseTargetOptionSource,
   type ParseSchemaRegistryPort,
   type RawManifestProviderPort,
   type AliasDictionary,
@@ -101,6 +103,7 @@ function validateValueMap(
   valueMap: Record<string, string>,
   targetField: ParseTargetDocumentField,
   cleanedOptions: Record<string, ParseTargetDocumentOptionTuple[]> | undefined,
+  cleanedOptionSources: Record<string, ParseTargetOptionSource> | undefined,
   prefix: string
 ): void {
   if (!targetField.options) {
@@ -122,7 +125,10 @@ function validateValueMap(
     seenLabels.set(normLabel, mapKey);
   }
 
-  if (targetField.options.dynamicConfig !== undefined) {
+  if (
+    targetField.options.dynamicConfig !== undefined ||
+    cleanedOptionSources?.[targetField.options.source] !== undefined
+  ) {
     return;
   }
 
@@ -172,6 +178,7 @@ function validateDocumentFormSchema(params: {
   calcFieldKeys: Set<string>;
   linkedFieldKeys: Set<string>;
   cleanedOptions: Record<string, ParseTargetDocumentOptionTuple[]> | undefined;
+  cleanedOptionSources: Record<string, ParseTargetOptionSource> | undefined;
 }): DocumentFormSchema {
   const {
     rawFormSchema,
@@ -182,6 +189,7 @@ function validateDocumentFormSchema(params: {
     calcFieldKeys,
     linkedFieldKeys,
     cleanedOptions,
+    cleanedOptionSources,
   } = params;
 
   if (!Value.Check(DocumentFormSchemaSchema, rawFormSchema)) {
@@ -230,7 +238,24 @@ function validateDocumentFormSchema(params: {
             `${prefix} accesses property ".${token.property}" on non-LookupField "${token.fieldKey}"`
           );
         }
-        if (targetField.options.dynamicConfig === undefined) {
+        const optionSource = cleanedOptionSources?.[targetField.options.source];
+        if (optionSource !== undefined) {
+          if (optionSource.properties !== undefined) {
+            if (!optionSource.properties.includes(token.property)) {
+              throw new Error(
+                `${prefix} accesses unknown property ".${token.property}" on LookupField "${token.fieldKey}"`
+              );
+            }
+          } else if (targetField.options.dynamicConfig === undefined) {
+            const keyProp = targetField.options.key ?? 'key';
+            const nameProp = targetField.options.name ?? keyProp;
+            if (token.property !== keyProp && token.property !== nameProp) {
+              throw new Error(
+                `${prefix} accesses unknown property ".${token.property}" on LookupField "${token.fieldKey}"`
+              );
+            }
+          }
+        } else if (targetField.options.dynamicConfig === undefined) {
           const staticTuples = cleanedOptions?.[targetField.options.source];
           if (staticTuples !== undefined) {
             const keyProp = targetField.options.key ?? 'key';
@@ -264,7 +289,13 @@ function validateDocumentFormSchema(params: {
       }
     } else if (binding.valueMap !== undefined) {
       const singleTargetField = targetFields.find((f) => f.key === parsed.tokens[0].fieldKey)!;
-      validateValueMap(binding.valueMap, singleTargetField, cleanedOptions, prefix);
+      validateValueMap(
+        binding.valueMap,
+        singleTargetField,
+        cleanedOptions,
+        cleanedOptionSources,
+        prefix
+      );
     }
   }
 
@@ -414,10 +445,61 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
         }
       }
 
+      const rawOptionSources = rawDocSchema?.optionSources;
+      let cleanedOptionSources: Record<string, ParseTargetOptionSource> | undefined;
+      if (rawOptionSources !== undefined) {
+        if (
+          rawOptionSources === null ||
+          typeof rawOptionSources !== 'object' ||
+          Array.isArray(rawOptionSources)
+        ) {
+          throw new Error(`Invalid documentSchema.optionSources in "${relPath}": must be an object`);
+        }
+        cleanedOptionSources = {};
+        for (const [sourceKey, rawSource] of Object.entries(
+          rawOptionSources as Record<string, unknown>
+        )) {
+          if (sourceKey.trim().length === 0) {
+            throw new Error(
+              `Invalid documentSchema.optionSources key in "${relPath}": must be non-empty`
+            );
+          }
+          if (!Value.Check(ParseTargetOptionSourceSchema, rawSource)) {
+            const errors = [...Value.Errors(ParseTargetOptionSourceSchema, rawSource)]
+              .map((e) => `${e.path}: ${e.message}`)
+              .join(', ');
+            throw new Error(
+              `Invalid documentSchema.optionSources["${sourceKey}"] in "${relPath}": ${errors}`
+            );
+          }
+          const typedSource = structuredClone(rawSource) as ParseTargetOptionSource;
+          if (typedSource.properties !== undefined) {
+            for (const prop of typedSource.properties) {
+              if (prop.trim().length === 0) {
+                throw new Error(
+                  `Invalid documentSchema.optionSources["${sourceKey}"] in "${relPath}": property names must be non-empty`
+                );
+              }
+            }
+          }
+          if (
+            typedSource.provider === 'google_drive' &&
+            typedSource.relativePath !== undefined &&
+            typedSource.relativePath.trim().length === 0
+          ) {
+            throw new Error(
+              `Invalid documentSchema.optionSources["${sourceKey}"] in "${relPath}": relativePath must be non-empty`
+            );
+          }
+          cleanedOptionSources[sourceKey] = typedSource;
+        }
+      }
+
       const candidateTargetSchema = Value.Clean(ParseTargetDocumentSchemaSchema, {
         fields: targetFields,
         calculatedFields: targetCalcFields,
         ...(cleanedOptions !== undefined ? { options: cleanedOptions } : {}),
+        ...(cleanedOptionSources !== undefined ? { optionSources: cleanedOptionSources } : {}),
       });
       if (!Value.Check(ParseTargetDocumentSchemaSchema, candidateTargetSchema)) {
         const errors = [...Value.Errors(ParseTargetDocumentSchemaSchema, candidateTargetSchema)]
@@ -438,6 +520,7 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
           calcFieldKeys,
           linkedFieldKeys,
           cleanedOptions,
+          cleanedOptionSources,
         });
         this.formSchemas.set(documentTypeKey, validatedFormSchema);
       }

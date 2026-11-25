@@ -995,4 +995,166 @@ describe('LogSchemaRegistryAdapter', () => {
     expect(adapter.getDiscoveryConfig('proposals')).toEqual(completeOverride);
     expect(adapter.getSpaceFetchMethod('proposals')).toBe('folders');
   });
+
+  describe('OptionSources & OptionBindings cross-schema validation (Spec #355 / Ticket #356)', () => {
+    function createOptionSourcesDocDef() {
+      const base = createValidArchDocDef();
+      delete (base.documentSchema as Record<string, unknown>).options;
+      (base.documentSchema as Record<string, unknown>).optionSources = {
+        statuses: { provider: 'document_log', properties: ['key'] },
+        actions: { provider: 'document_log', properties: ['key', 'name', 'order'] },
+        contacts: { provider: 'document_log', properties: ['key', 'name'] },
+      };
+      (base.documentLogSchema as Record<string, unknown>).optionBindings = {
+        statuses: {
+          sheetName: '_Config',
+          rangeName: 'Options_Submittal_Arch_Statuses',
+          validationRangeName: 'Validation_Submittal_Arch_Statuses',
+          endMarker: '---',
+          columns: { Status: 'key' },
+        },
+        actions: {
+          sheetName: '_Config',
+          rangeName: 'Options_Submittal_Arch_Actions',
+          endMarker: '---',
+          columns: { Action: 'key', Description: 'name', Order: 'order' },
+        },
+        contacts: {
+          sheetName: '_Config',
+          rangeName: 'Options_Contacts',
+          endMarker: '---',
+          columns: { Key: 'key', Company: 'name' },
+          aliasesColumn: 'Aliases',
+        },
+      };
+      return base;
+    }
+
+    it('hydrates optionSources on targetSchema and optionBindings on documentLogSchema when all declared properties are covered', async () => {
+      const docDef = createOptionSourcesDocDef();
+      const adapter = new LogSchemaRegistryAdapter(
+        {
+          getRawManifest: vi.fn().mockResolvedValue({
+            documentTypes: ['./document-types/submittal-arch.json'],
+            configuration: { documentLog: createValidDiscoveryConfig() },
+          }),
+          readParsedSchema: vi.fn().mockResolvedValue(docDef),
+        },
+        parser
+      );
+
+      await expect(adapter.initialize()).resolves.toBeUndefined();
+      const logSchema = adapter.getDocumentLogSchema('submittal-arch') as Record<string, unknown>;
+      expect(logSchema.optionBindings).toEqual(
+        (docDef.documentLogSchema as Record<string, unknown>).optionBindings
+      );
+      const targetSchema = adapter.getTargetSchema('submittal-arch') as Record<string, unknown>;
+      expect(targetSchema.optionSources).toEqual(
+        (docDef.documentSchema as Record<string, unknown>).optionSources
+      );
+    });
+
+    it('fails fast when a document_log OptionSource lacks a matching OptionBinding or omits documentLogSchema', async () => {
+      const missingBindingDoc = createOptionSourcesDocDef();
+      delete ((missingBindingDoc.documentLogSchema as Record<string, unknown>).optionBindings as Record<string, unknown>).contacts;
+
+      const missingBindingAdapter = new LogSchemaRegistryAdapter(
+        {
+          getRawManifest: vi.fn().mockResolvedValue({
+            documentTypes: ['./document-types/submittal-arch.json'],
+            configuration: { documentLog: createValidDiscoveryConfig() },
+          }),
+          readParsedSchema: vi.fn().mockResolvedValue(missingBindingDoc),
+        },
+        parser
+      );
+      await expect(missingBindingAdapter.initialize()).rejects.toThrow(
+        /missing binding for document_log OptionSource "contacts"/i
+      );
+
+      const noLogSchemaDoc = createOptionSourcesDocDef();
+      delete (noLogSchemaDoc as Record<string, unknown>).documentLogSchema;
+      (noLogSchemaDoc as Record<string, unknown>).documentWorkflowConfig = { workflows: [] };
+
+      const noLogSchemaAdapter = new LogSchemaRegistryAdapter(
+        {
+          getRawManifest: vi.fn().mockResolvedValue({
+            documentTypes: ['./document-types/submittal-arch.json'],
+            configuration: { documentLog: createValidDiscoveryConfig() },
+          }),
+          readParsedSchema: vi.fn().mockResolvedValue(noLogSchemaDoc),
+        },
+        parser
+      );
+      await expect(noLogSchemaAdapter.initialize()).rejects.toThrow(
+        /without declaring documentLogSchema/i
+      );
+    });
+
+    it('fails fast when an OptionBinding does not cover all declared OptionSource.properties or references a non-document_log source', async () => {
+      const incompleteColumnsDoc = createOptionSourcesDocDef();
+      ((incompleteColumnsDoc.documentLogSchema as Record<string, unknown>).optionBindings as Record<string, Record<string, unknown>>).actions.columns = {
+        Action: 'key',
+        Description: 'name',
+      };
+
+      const incompleteAdapter = new LogSchemaRegistryAdapter(
+        {
+          getRawManifest: vi.fn().mockResolvedValue({
+            documentTypes: ['./document-types/submittal-arch.json'],
+            configuration: { documentLog: createValidDiscoveryConfig() },
+          }),
+          readParsedSchema: vi.fn().mockResolvedValue(incompleteColumnsDoc),
+        },
+        parser
+      );
+      await expect(incompleteAdapter.initialize()).rejects.toThrow(
+        /missing column mappings for declared properties: order/i
+      );
+
+      const extraBindingDoc = createOptionSourcesDocDef();
+      ((extraBindingDoc.documentLogSchema as Record<string, unknown>).optionBindings as Record<string, unknown>).nonExistent = {
+        sheetName: '_Config',
+        rangeName: 'Options_NonExistent',
+        endMarker: '---',
+        columns: { Key: 'key' },
+      };
+
+      const extraBindingAdapter = new LogSchemaRegistryAdapter(
+        {
+          getRawManifest: vi.fn().mockResolvedValue({
+            documentTypes: ['./document-types/submittal-arch.json'],
+            configuration: { documentLog: createValidDiscoveryConfig() },
+          }),
+          readParsedSchema: vi.fn().mockResolvedValue(extraBindingDoc),
+        },
+        parser
+      );
+      await expect(extraBindingAdapter.initialize()).rejects.toThrow(
+        /does not match a document_log OptionSource/i
+      );
+    });
+
+    it('fails fast when documentLogSchema column or historyDisplay templates reference undeclared OptionSource properties', async () => {
+      const badColDoc = createOptionSourcesDocDef();
+      badColDoc.documentLogSchema.columns = {
+        ...badColDoc.documentLogSchema.columns,
+        BadProp: { template: '{{action.undeclaredProp}}' },
+      } as typeof badColDoc.documentLogSchema.columns;
+
+      const badColAdapter = new LogSchemaRegistryAdapter(
+        {
+          getRawManifest: vi.fn().mockResolvedValue({
+            documentTypes: ['./document-types/submittal-arch.json'],
+            configuration: { documentLog: createValidDiscoveryConfig() },
+          }),
+          readParsedSchema: vi.fn().mockResolvedValue(badColDoc),
+        },
+        parser
+      );
+      await expect(badColAdapter.initialize()).rejects.toThrow(
+        /accesses unknown property "\.undeclaredProp"/i
+      );
+    });
+  });
 });

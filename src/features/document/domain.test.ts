@@ -15,6 +15,7 @@ import {
   LinkedFieldSchema,
   DocumentSchemaType,
   DocumentSchemaOptionTupleType,
+  OptionSourceSchema,
   DocumentIdentitySchemaType,
   CalculatedFieldType,
   SystemContextSchema,
@@ -871,6 +872,98 @@ describe('Document domain', () => {
 
       const invalidTuple = 'not-an-object';
       expect(Value.Check(DocumentSchemaOptionTupleType, invalidTuple)).toBe(false);
+    });
+
+    it('validates DocumentSchemaType.optionSources for document_log and google_drive providers alongside options and legacy dynamicConfig', () => {
+      expect(
+        Value.Check(OptionSourceSchema, {
+          provider: 'document_log',
+          properties: ['key', 'name', 'suffix', 'order'],
+        })
+      ).toBe(true);
+
+      expect(
+        Value.Check(OptionSourceSchema, {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: '1 Admin/Communication',
+        })
+      ).toBe(true);
+
+      // Invalid: document_log without properties or with empty properties
+      expect(Value.Check(OptionSourceSchema, { provider: 'document_log' })).toBe(false);
+      expect(Value.Check(OptionSourceSchema, { provider: 'document_log', properties: [] })).toBe(false);
+      // Invalid: unknown provider
+      expect(Value.Check(OptionSourceSchema, { provider: 'unknown_provider', properties: ['key'] })).toBe(false);
+      // Invalid: extra unknown property
+      expect(
+        Value.Check(OptionSourceSchema, { provider: 'document_log', properties: ['key'], sheetName: '_Config' })
+      ).toBe(false);
+
+      const schemaWithOptionSources = {
+        fields: [
+          {
+            key: 'status',
+            name: 'Status',
+            type: 'string',
+            required: true,
+            options: { source: 'statuses', key: 'key', allowUserInput: false },
+          },
+          {
+            key: 'contact',
+            name: 'Contact',
+            type: 'string',
+            required: true,
+            options: { source: 'contactFolders', key: 'key', name: 'name', allowUserInput: true },
+          },
+        ],
+        optionSources: {
+          statuses: { provider: 'document_log', properties: ['key'] },
+          contactFolders: {
+            provider: 'google_drive',
+            method: 'list_folders',
+            relativePath: '1 Admin/Communication',
+          },
+        },
+        options: {
+          direction: [{ key: 'IN', name: 'Incoming' }],
+        },
+      };
+      expect(Value.Check(DocumentSchemaType, schemaWithOptionSources)).toBe(true);
+    });
+
+    it('buildDocumentTypeSchema compiles dynamic LookupFields with allowUserInput: false as string instead of Type.Never()', () => {
+      const docType: DocumentType = {
+        key: 'submittal-arch',
+        name: 'Submittal Arch',
+        documentSchema: {
+          fields: [
+            {
+              key: 'status',
+              name: 'Status',
+              type: 'string',
+              required: true,
+              minLength: 1,
+              options: { source: 'statuses', key: 'key', allowUserInput: false },
+            },
+            {
+              key: 'action',
+              name: 'Action',
+              type: 'string',
+              required: true,
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+          ],
+          optionSources: {
+            statuses: { provider: 'document_log', properties: ['key'] },
+            actions: { provider: 'document_log', properties: ['key', 'name'] },
+          },
+        },
+      };
+
+      const compiled = TypeCompiler.Compile(buildDocumentTypeSchema(docType));
+      expect(compiled.Check({ status: 'Open', action: 'REC' })).toBe(true);
+      expect(compiled.Check({ status: '', action: 'REC' })).toBe(false);
     });
 
     it('validates DocumentSchemaType.options as optional Record<string, DocumentSchemaOptionTupleType[]>', () => {
@@ -5464,6 +5557,158 @@ describe('Document domain', () => {
 
         const errors = validateManifestTemplates(manifest, evaluator);
         expect(errors).toEqual([]);
+      });
+    });
+
+    describe('optionSources referential integrity and template property validation', () => {
+      it('rejects LookupField referencing an unknown OptionSource', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'unknown-source-doc',
+          name: 'Unknown Source Doc',
+          documentSchema: {
+            fields: [
+              {
+                key: 'status',
+                name: 'Status',
+                type: 'string',
+                required: true,
+                options: { source: 'statuses', key: 'key' },
+              },
+            ],
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toContain('Field "status" references unknown OptionSource "statuses".');
+      });
+
+      it('rejects duplicate source key across options and optionSources', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'dup-source-doc',
+          name: 'Dup Source Doc',
+          documentSchema: {
+            fields: [
+              {
+                key: 'status',
+                name: 'Status',
+                type: 'string',
+                required: true,
+                options: { source: 'statuses', key: 'key' },
+              },
+            ],
+            options: {
+              statuses: [{ key: 'Open' }],
+            },
+            optionSources: {
+              statuses: { provider: 'document_log', properties: ['key'] },
+            },
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toContain(
+          'Option source "statuses" cannot be declared in both documentSchema.options and documentSchema.optionSources.'
+        );
+      });
+
+      it('rejects LookupField options.key/options.name and LinkedField.sourceProperty undeclared in OptionSource.properties', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'undeclared-prop-doc',
+          name: 'Undeclared Prop Doc',
+          documentSchema: {
+            fields: [
+              {
+                key: 'specTag',
+                name: 'Spec Tag',
+                type: 'string',
+                required: true,
+                options: { source: 'specs', key: 'code', name: 'title', allowUserInput: true },
+              },
+              {
+                key: 'specTitle',
+                name: 'Spec Title',
+                type: 'string',
+                required: true,
+                linkedField: { sourceField: 'specTag', sourceProperty: 'description' },
+              },
+            ],
+            optionSources: {
+              specs: { provider: 'document_log', properties: ['key', 'name'] },
+            },
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toContain(
+          'Field "specTag" options.key "code" is not declared in OptionSource "specs" properties.'
+        );
+        expect(errors).toContain(
+          'Field "specTag" options.name "title" is not declared in OptionSource "specs" properties.'
+        );
+        expect(errors).toContain(
+          'Field "specTitle" has invalid linkedField: sourceProperty "description" does not exist on sourceField "specTag" options.'
+        );
+      });
+
+      it('allows declared OptionSource.properties in templates and LinkedField, and rejects undeclared template properties', () => {
+        const evaluator = createEvaluator();
+        const validManifest: DocumentType = {
+          key: 'valid-option-sources-doc',
+          name: 'Valid Option Sources Doc',
+          documentSchema: {
+            fields: [
+              {
+                key: 'action',
+                name: 'Action',
+                type: 'string',
+                required: true,
+                options: { source: 'actions', key: 'key', name: 'name', allowUserInput: false },
+              },
+              {
+                key: 'specTag',
+                name: 'Spec Tag',
+                type: 'string',
+                required: true,
+                options: { source: 'specs', key: 'key', allowUserInput: true },
+              },
+              {
+                key: 'specTitle',
+                name: 'Spec Title',
+                type: 'string',
+                required: true,
+                linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+              },
+            ],
+            optionSources: {
+              actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
+              specs: { provider: 'document_log', properties: ['key', 'name'] },
+            },
+            calculatedFields: [
+              { key: 'fileName', template: '{{specTag.key}}{{action.suffix}}' },
+            ],
+            identity: {
+              id: '{{specTag.key}}-{{action.order}}',
+            },
+          },
+        };
+        expect(validateManifestTemplates(validManifest, evaluator)).toEqual([]);
+
+        const invalidTemplateManifest: DocumentType = {
+          ...validManifest,
+          documentSchema: {
+            ...validManifest.documentSchema,
+            calculatedFields: [
+              { key: 'fileName', template: '{{specTag.key}}-{{action.nonExistent}}' },
+            ],
+          },
+        };
+        const errors = validateManifestTemplates(invalidTemplateManifest, evaluator);
+        expect(errors).toEqual([
+          'Invalid template at "documentSchema.calculatedFields[0].template": references unknown fields or is malformed.',
+        ]);
       });
     });
 

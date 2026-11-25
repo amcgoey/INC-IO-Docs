@@ -1359,5 +1359,76 @@ describe('ParseSchemaRegistryAdapter', () => {
       );
       await expect(invalidAdapter.initialize()).rejects.toThrow(/unsupported field "number"/i);
     });
+
+    it('hydrates optionSources on ParseTargetDocumentSchema and validates DocumentFormSchema template properties against OptionSource.properties', async () => {
+      const makeOptionSourcesAdapter = (formFields: Record<string, unknown>, optionSourcesOverride?: unknown) =>
+        new ParseSchemaRegistryAdapter(
+          {
+            getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-doc.json'] }),
+            readParsedSchema: vi.fn().mockResolvedValue({
+              key: 'test-doc',
+              documentSchema: {
+                fields: [
+                  {
+                    key: 'action',
+                    type: 'string',
+                    options: { source: 'actions', key: 'key', name: 'name', allowUserInput: false },
+                  },
+                  {
+                    key: 'contact',
+                    type: 'string',
+                    options: { source: 'contactFolders', key: 'key', name: 'name', allowUserInput: true },
+                  },
+                ],
+                optionSources: optionSourcesOverride ?? {
+                  actions: { provider: 'document_log', properties: ['key', 'name', 'suffix'] },
+                  contactFolders: { provider: 'google_drive', method: 'list_folders', relativePath: 'Contacts' },
+                },
+              },
+              documentFormSchema: {
+                fields: formFields,
+              },
+            }),
+          },
+          formTemplateParser
+        );
+
+      const validAdapter = makeOptionSourcesAdapter({
+        Response: {
+          template: '{{action.name}}',
+          valueMap: { RR: 'Revise and Resubmit' },
+        },
+        ContactName: {
+          template: '{{contact.name}}',
+        },
+      });
+      await expect(validAdapter.initialize()).resolves.toBeUndefined();
+      expect(validAdapter.getTargetSchema('test-doc')).toMatchObject({
+        optionSources: {
+          actions: { provider: 'document_log', properties: ['key', 'name', 'suffix'] },
+          contactFolders: { provider: 'google_drive', method: 'list_folders', relativePath: 'Contacts' },
+        },
+      });
+
+      const badPropAdapter = makeOptionSourcesAdapter({
+        Response: { template: '{{action.undeclaredProp}}' },
+      });
+      await expect(badPropAdapter.initialize()).rejects.toThrow(
+        /accesses unknown property "\.undeclaredProp"/i
+      );
+
+      const badDrivePropAdapter = makeOptionSourcesAdapter({
+        ContactName: { template: '{{contact.undeclaredProp}}' },
+      });
+      await expect(badDrivePropAdapter.initialize()).rejects.toThrow(
+        /accesses unknown property "\.undeclaredProp"/i
+      );
+
+      const invalidSourceAdapter = makeOptionSourcesAdapter(
+        { Response: { template: '{{action.name}}' } },
+        { actions: { provider: 'document_log', properties: [] } }
+      );
+      await expect(invalidSourceAdapter.initialize()).rejects.toThrow(/optionSources/i);
+    });
   });
 });
