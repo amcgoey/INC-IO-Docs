@@ -133,10 +133,60 @@ function mockDriveFileRead(options: {
   }
 }
 
+function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optional?: boolean }) {
+  const applyOpt = <T extends nock.Interceptor>(interceptor: T): T =>
+    options?.optional ? (interceptor.optionally() as T) : interceptor;
+
+  applyOpt(
+    nock('https://sheets.googleapis.com')
+      .get(`/v4/spreadsheets/${spreadsheetId}`)
+      .query(true)
+  ).reply(200, {
+    spreadsheetId,
+    sheets: [
+      { properties: { sheetId: 101, title: 'Submittal Arch' } },
+      { properties: { sheetId: 102, title: 'Submittal FF&E' } },
+    ],
+    namedRanges: [
+      {
+        namedRangeId: 'nr-arch',
+        name: 'Log_Submittal_Arch',
+        range: { sheetId: 101, startRowIndex: 2, endRowIndex: 21, startColumnIndex: 0, endColumnIndex: 11 },
+      },
+      {
+        namedRangeId: 'nr-ffe',
+        name: 'Log_Submittal_FFE',
+        range: { sheetId: 102, startRowIndex: 2, endRowIndex: 21, startColumnIndex: 0, endColumnIndex: 12 },
+      },
+    ],
+  });
+
+  applyOpt(
+    nock('https://sheets.googleapis.com')
+      .get(new RegExp(`/v4/spreadsheets/${spreadsheetId}/values/.*`))
+      .query((q) => q.valueRenderOption === 'FORMATTED_VALUE')
+  ).reply(200, (uri) => {
+    const isFfe = decodeURIComponent(uri).includes('Submittal FF&E');
+    const headers = isFfe
+      ? ['Status', 'Spec Tag', 'Related Tag', 'Revision', 'Spec Title', 'Vendor', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link']
+      : ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link'];
+    return { values: [headers, ['Formula Row'], ['<--->'], [], ['<--->']] };
+  });
+
+  applyOpt(
+    nock('https://sheets.googleapis.com')
+      .get(`/v4/spreadsheets/${spreadsheetId}/values:batchGet`)
+      .query((q) => q.valueRenderOption === 'FORMULA')
+  ).reply(200, {
+    valueRanges: [{ values: [['Formula Row']] }],
+  });
+}
+
 function mockAmbiguousDocumentLogDiscovery(options: {
   driveId: string;
   spaceName: string;
   times?: number;
+  stubSheetsRead?: boolean;
   candidates?: Array<{
     id: string;
     name: string;
@@ -221,6 +271,14 @@ function mockAmbiguousDocumentLogDiscovery(options: {
         mimeType: 'application/vnd.google-apps.folder',
         parents: [options.driveId],
       });
+  }
+
+  if (options.stubSheetsRead !== false) {
+    for (const candidate of candidates) {
+      for (let i = 0; i < times; i++) {
+        mockEmptyDocumentLogSheetsRead(candidate.id, { optional: true });
+      }
+    }
   }
 
   return searchScope;
@@ -541,7 +599,7 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
       expect(docDataIdx).toBe(docLogIdx + 1);
 
       const logSection = findSection(card, 'Document Log')!;
-      expect(logSection.widgets).toHaveLength(2);
+      expect(logSection.widgets).toHaveLength(3);
       const dropdown = logSection.widgets[0].selectionInput!;
       expect(dropdown.name).toBe(SELECT_DOCUMENT_LOG_KEY);
       expect(dropdown.type).toBe('DROPDOWN');
@@ -598,7 +656,7 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
     // Verify switch updateCard assertions for Drive and Gmail (Email Attachments mode)
     for (const card of [driveSwitchCard, gmailSwitchCard]) {
       const logSection = findSection(card, 'Document Log')!;
-      expect(logSection.widgets).toHaveLength(2);
+      expect(logSection.widgets).toHaveLength(3);
       const dropdown = logSection.widgets[0].selectionInput!;
       expect(dropdown.items.find((i) => i.value === LOG_CONST_ID)?.selected).toBe(true);
       expect(dropdown.items.find((i) => i.value === LOG_ADMIN_ID)?.selected).toBe(false);
@@ -1296,6 +1354,7 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
       driveId: DRIVE_ID,
       spaceName: SPACE_NAME,
       times: 1,
+      stubSheetsRead: false,
     });
     // MOVE_FILE mocks for submittal-arch: 6 Construction/Submittals
     nock('https://www.googleapis.com')
@@ -1384,6 +1443,7 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
       driveId: DRIVE_ID,
       spaceName: SPACE_NAME,
       times: 1,
+      stubSheetsRead: false,
     });
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')

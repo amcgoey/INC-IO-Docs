@@ -78,6 +78,55 @@ function mockDriveHierarchyForArchSubmittal(options: {
     .reply(200, Buffer.from(options.pdfBytes), { 'content-type': 'application/pdf' });
 }
 
+function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optional?: boolean }) {
+  const applyOpt = <T extends nock.Interceptor>(interceptor: T): T =>
+    options?.optional ? (interceptor.optionally() as T) : interceptor;
+
+  applyOpt(
+    nock('https://sheets.googleapis.com')
+      .get(`/v4/spreadsheets/${spreadsheetId}`)
+      .query(true)
+  ).reply(200, {
+    spreadsheetId,
+    sheets: [
+      { properties: { sheetId: 101, title: 'Submittal Arch' } },
+      { properties: { sheetId: 102, title: 'Submittal FF&E' } },
+    ],
+    namedRanges: [
+      {
+        namedRangeId: 'nr-arch',
+        name: 'Log_Submittal_Arch',
+        range: { sheetId: 101, startRowIndex: 2, endRowIndex: 21, startColumnIndex: 0, endColumnIndex: 11 },
+      },
+      {
+        namedRangeId: 'nr-ffe',
+        name: 'Log_Submittal_FFE',
+        range: { sheetId: 102, startRowIndex: 2, endRowIndex: 21, startColumnIndex: 0, endColumnIndex: 12 },
+      },
+    ],
+  });
+
+  applyOpt(
+    nock('https://sheets.googleapis.com')
+      .get(new RegExp(`/v4/spreadsheets/${spreadsheetId}/values/.*`))
+      .query((q) => q.valueRenderOption === 'FORMATTED_VALUE')
+  ).reply(200, (uri) => {
+    const isFfe = decodeURIComponent(uri).includes('Submittal FF&E');
+    const headers = isFfe
+      ? ['Status', 'Spec Tag', 'Related Tag', 'Revision', 'Spec Title', 'Vendor', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link']
+      : ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link'];
+    return { values: [headers, ['Formula Row'], ['<--->'], [], ['<--->']] };
+  });
+
+  applyOpt(
+    nock('https://sheets.googleapis.com')
+      .get(`/v4/spreadsheets/${spreadsheetId}/values:batchGet`)
+      .query((q) => q.valueRenderOption === 'FORMULA')
+  ).reply(200, {
+    valueRanges: [{ values: [['Formula Row']] }],
+  });
+}
+
 function mockSubmittalArchLogWrite(spreadsheetId: string) {
   nock('https://sheets.googleapis.com')
     .get(`/v4/spreadsheets/${spreadsheetId}`)
@@ -814,6 +863,7 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
           },
         ],
       });
+    mockEmptyDocumentLogSheetsRead('log-a');
 
     const res = await app.server.inject({
       method: 'POST',
@@ -879,6 +929,7 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
           },
         ],
       });
+    mockEmptyDocumentLogSheetsRead(logId);
 
     const renderRes = await app.server.inject({
       method: 'POST',

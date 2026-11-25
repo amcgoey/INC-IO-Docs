@@ -1,3 +1,5 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { DocumentLogService } from './domain';
@@ -1901,6 +1903,8 @@ describe('DocumentLogService', () => {
           name: 'Harborview Hotel Document Log',
           url: 'https://docs.google.com/spreadsheets/d/custom-link/edit',
         },
+        readStatus: 'idle_incomplete_id',
+        missingIdFields: ['Section', 'Number'],
       });
 
       const withoutLink = await service.queryUiContext({
@@ -1915,6 +1919,8 @@ describe('DocumentLogService', () => {
           name: 'Harborview Hotel Document Log',
           url: 'https://docs.google.com/spreadsheets/d/log-without-link/edit',
         },
+        readStatus: 'idle_incomplete_id',
+        missingIdFields: ['Section', 'Number'],
       });
     });
 
@@ -1986,6 +1992,8 @@ describe('DocumentLogService', () => {
           name: 'Harborview Hotel Document Log',
           url: 'https://docs.google.com/spreadsheets/d/custom-log-1/edit',
         },
+        readStatus: 'idle_incomplete_id',
+        missingIdFields: ['Section', 'Number'],
       });
 
       // Raw Drive metadata never leaks onto the presentation-ready UI context DTO
@@ -2024,6 +2032,427 @@ describe('DocumentLogService', () => {
       });
       expect(staleRes?.candidateOptions?.[0]?.selected).toBe(true);
       expect(staleRes?.candidateOptions?.slice(1).every((o) => o.selected === false)).toBe(true);
+    });
+
+    it('queryUiContext resolves widget-suffixed keys before unsuffixed keys, trims before enrichment, and skips Sheets on idle_incomplete_id', async () => {
+      const readRows = vi.fn();
+      const { service } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-1', name: 'Harborview Hotel Document Log' },
+          ]),
+        },
+        storage: { readRows },
+      });
+
+      // Suffixed key cleared ('') must win over unsuffixed fallback ('071200') and skip Sheets
+      const clearedSuffixed = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        formData: {
+          'section_submittal-arch': '   ',
+          section: '071200',
+          'number_submittal-arch': ' 001 ',
+        },
+      });
+      expect(clearedSuffixed?.readStatus).toBe('idle_incomplete_id');
+      expect(clearedSuffixed?.missingIdFields).toEqual(['Section']);
+      expect(clearedSuffixed?.idGroup).toBeUndefined();
+      expect(readRows).not.toHaveBeenCalled();
+
+      // Missing number only
+      const missingNumber = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        formData: {
+          'section_submittal-arch': ' 071200 ',
+        },
+      });
+      expect(missingNumber?.readStatus).toBe('idle_incomplete_id');
+      expect(missingNumber?.missingIdFields).toEqual(['Number']);
+      expect(readRows).not.toHaveBeenCalled();
+    });
+
+    it('queryUiContext formats newest-first historyDisplay with 5-char HTML escaping in text (preserving = and falling back to "—") and unescaped plain labels', async () => {
+      const archLogWithHistory: DocumentLogSchema = {
+        ...logSchema,
+        historyDisplay: {
+          topLabel: 'Rev {{revision}} • {{section}}-{{number}} • {{status.key}} • {{title}}',
+          text: '<b>{{action.name}}</b> {{date}} ({{contact.key}}) — {{notes}}',
+          bottomLabel: '{{title}}',
+        },
+      };
+      const archTargetWithSpecials: LogTargetDocumentSchema = {
+        ...targetSchema,
+        options: {
+          statuses: [{ key: 'Open' }, { key: 'Closed' }],
+          actions: [
+            { key: 'REC', name: 'Received', order: '1' },
+            { key: 'RR', name: 'Revise & Resubmit', order: '5' },
+          ],
+          contacts: [
+            { key: 'MB', name: 'Meridian Builders' },
+            { key: 'A&B', name: 'A & B Tower' },
+          ],
+        },
+      };
+
+      const readRows = vi.fn().mockResolvedValue({
+        headers: ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link'],
+        formulaColumns: [],
+        rows: [
+          {
+            rowNumber: 6,
+            values: {
+              Status: 'Open',
+              Section: '071200',
+              Number: '001',
+              Revision: '0',
+              Title: 'Pipe <2" at A & B Tower',
+              Date: '260204',
+              Contact: 'MB',
+              Action: 'Received',
+              Notes: 'ratio=1:2 & \'ok\'',
+              'Calc Link': 'Link',
+            },
+            links: { 'Calc Link': 'https://drive.google.com/file/d/row-6/view' },
+          },
+          {
+            rowNumber: 7,
+            values: {
+              Status: 'Open',
+              Section: '071200',
+              Number: '001',
+              Revision: '1',
+              Title: 'Pipe <2" at A & B Tower',
+              Date: '260212',
+              Contact: 'A&B',
+              Action: 'Revise & Resubmit',
+              Notes: 'Check <detail> "A=B"',
+              'Calc Link': '',
+            },
+            links: { 'Calc Link': null },
+          },
+        ],
+      });
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(archLogWithHistory),
+          getTargetSchema: vi.fn().mockReturnValue(archTargetWithSpecials),
+        },
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-hist-1', name: 'A & B Tower Document Log' },
+          ]),
+        },
+        storage: { readRows },
+      });
+
+      const res = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        formData: {
+          'section_submittal-arch': ' 071200 ',
+          'number_submittal-arch': ' 001 ',
+        },
+      });
+
+      expect(Value.Check(DocumentLogUiContextResultSchema, res)).toBe(true);
+      expect(readRows).toHaveBeenCalledTimes(1);
+      expect(readRows).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: expect.objectContaining({ spreadsheetId: 'log-hist-1' }),
+          linkColumns: ['Calc Link'],
+        })
+      );
+
+      expect(res?.readStatus).toBe('ready');
+      expect(res?.idGroup).toBe('071200-001');
+      expect(res?.warningMessages).toBeUndefined();
+      // Newest-first (row 7 before row 6)
+      expect(res?.entries).toEqual([
+        {
+          topLabel: 'Rev 1 • 071200-001 • Open • Pipe <2" at A & B Tower',
+          text: '<b>Revise &amp; Resubmit</b> 260212 (A&amp;B) — Check &lt;detail&gt; &quot;A=B&quot;',
+          bottomLabel: 'Pipe <2" at A & B Tower',
+          valid: true,
+        },
+        {
+          topLabel: 'Rev 0 • 071200-001 • Open • Pipe <2" at A & B Tower',
+          text: '<b>Received</b> 260204 (MB) — ratio=1:2 &amp; &#39;ok&#39;',
+          bottomLabel: 'Pipe <2" at A & B Tower',
+          fileUri: 'https://drive.google.com/file/d/row-6/view',
+          valid: true,
+        },
+      ]);
+      // Preserves '=' without &#x3D;
+      expect(res?.entries?.[0].text).not.toContain('&#x3D;');
+      expect(res?.entries?.[1].text).not.toContain('&#x3D;');
+      // Plain text labels stay unescaped
+      expect(res?.entries?.[0].bottomLabel).not.toContain('&lt;');
+      expect(res?.entries?.[0].bottomLabel).not.toContain('&amp;');
+      expect('fileUri' in (res?.entries?.[0] ?? {})).toBe(false);
+
+      // Blank rendered text falls back to "—" and omitted historyDisplay uses a sensible HTML-escaped default format
+      const blankTextLogSchema: DocumentLogSchema = {
+        ...logSchema,
+        historyDisplay: { text: '<b>{{notes}}</b>' },
+      };
+      const { service: blankSvc } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(blankTextLogSchema),
+          getTargetSchema: vi.fn().mockReturnValue(archTargetWithSpecials),
+        },
+        discovery: {
+          searchSpreadsheets: vi
+            .fn()
+            .mockResolvedValue([{ id: 'log-blank', name: 'Harborview Hotel Document Log' }]),
+        },
+        storage: {
+          readRows: vi.fn().mockResolvedValue({
+            headers: ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action', 'Notes'],
+            formulaColumns: [],
+            rows: [
+              {
+                rowNumber: 6,
+                values: {
+                  Status: 'Open',
+                  Section: '071200',
+                  Number: '001',
+                  Revision: '0',
+                  Title: 'Pipe <2"',
+                  Date: '260204',
+                  Contact: 'MB',
+                  Action: 'Received',
+                  Notes: '',
+                },
+              },
+            ],
+          }),
+        },
+      });
+      const blankRes = await blankSvc.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        formData: { section: '071200', number: '001' },
+      });
+      expect(blankRes?.entries?.[0].text).toBe('—');
+
+      const { service: defaultFormatSvc } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(logSchema), // historyDisplay omitted
+          getTargetSchema: vi.fn().mockReturnValue(archTargetWithSpecials),
+        },
+        discovery: {
+          searchSpreadsheets: vi
+            .fn()
+            .mockResolvedValue([{ id: 'log-default', name: 'Harborview Hotel Document Log' }]),
+        },
+        storage: {
+          readRows: vi.fn().mockResolvedValue({
+            headers: ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action'],
+            formulaColumns: [],
+            rows: [
+              {
+                rowNumber: 6,
+                values: {
+                  Status: 'Open',
+                  Section: '071200',
+                  Number: '001',
+                  Revision: '0',
+                  Title: 'Pipe <2" & A=B',
+                  Date: '260204',
+                  Contact: 'MB',
+                  Action: 'Revise & Resubmit',
+                },
+              },
+            ],
+          }),
+        },
+      });
+      const defaultRes = await defaultFormatSvc.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        formData: { section: '071200', number: '001' },
+      });
+      expect(defaultRes?.readStatus).toBe('ready');
+      expect(defaultRes?.entries).toHaveLength(1);
+      expect(defaultRes?.entries?.[0].topLabel).toBe('071200-001-0');
+      expect(defaultRes?.entries?.[0].text).toContain('Revise &amp; Resubmit');
+      expect(defaultRes?.entries?.[0].text).not.toContain('&#x3D;');
+    });
+
+    it('queryUiContext enriches trimmed/lowercase Submittal FF&E specTag, queries selected ambiguous log, maps partialHydrationRows warnings, and degrades gracefully on Sheets read_error', async () => {
+      interface FixturePartialRow {
+        scenario: string;
+        rowCells: Record<string, string>;
+        linkFormula: string;
+      }
+      const fixture = JSON.parse(
+        fs.readFileSync(
+          path.resolve(__dirname, '../../../test/fixtures/document-log-sample-data.json'),
+          'utf-8'
+        )
+      ) as {
+        anonymizedEntities: {
+          contacts: Array<{ key: string; name: string; type: string }>;
+          vendors: Array<{ key: string; name: string; type: string }>;
+        };
+        submittalFfe: { partialHydrationRows: FixturePartialRow[] };
+      };
+
+      const ffeLogSchema: DocumentLogSchema = {
+        provider: 'google_sheets',
+        target: {
+          sheetName: 'Submittal FF&E',
+          rangeName: 'Log_Submittal_FFE',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        grouping: {
+          groupBy: 'idGroup',
+          sortBy: 'id',
+          groupSortOrder: 'asc',
+          rowSortOrder: 'asc',
+          duplicatePolicy: 'insert',
+        },
+        columns: {
+          Status: { template: '{{status.key}}' },
+          'Spec Tag': { template: '{{specTag.key}}' },
+          'Related Tag': { template: '{{relatedTag.key}}' },
+          Revision: { template: '{{revision}}' },
+          'Spec Title': { template: '{{specTitle}}', readOnly: true },
+          Vendor: { template: '{{vendor.name}}' },
+          Date: { template: '{{date}}' },
+          Contact: { template: '{{contact.key}}' },
+          Action: { template: '{{action.name}}' },
+          Notes: { template: '{{notes}}' },
+          'Calc Link': { source: 'fileLink', label: 'Link' },
+        },
+        historyDisplay: {
+          topLabel: 'Rev {{revision}} • {{specTag.key}} • {{status.key}}',
+          text: '<b>{{action.name}}</b> {{date}} ({{contact.key}})',
+          bottomLabel: '{{specTitle}} — {{vendor.name}}',
+        },
+      };
+
+      const ffeTargetSchema: LogTargetDocumentSchema = {
+        fields: [
+          { key: 'status', name: 'Status', type: 'string', required: true, options: { source: 'statuses', key: 'key' } },
+          { key: 'specTag', name: 'Spec Tag', type: 'string', required: true, options: { source: 'specs', key: 'key', allowUserInput: true } },
+          { key: 'relatedTag', name: 'Related Tag', type: 'string', required: false, options: { source: 'specs', key: 'key', allowUserInput: true } },
+          { key: 'revision', name: 'Revision', type: 'string', required: true },
+          { key: 'specTitle', name: 'Spec Title', type: 'string', required: true, linkedField: { sourceField: 'specTag', sourceProperty: 'name' } },
+          { key: 'vendor', name: 'Vendor', type: 'string', required: true, options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'date', name: 'Date', type: 'string', required: true },
+          { key: 'contact', name: 'Contact', type: 'string', required: true, options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'action', name: 'Action', type: 'string', required: true, options: { source: 'actions', key: 'key', name: 'name' } },
+          { key: 'notes', name: 'Notes', type: 'string', required: false },
+        ],
+        identity: {
+          idGroup: '{{specTag.key}}',
+          idDocument: '{{specTag.key}}-{{revision}}',
+          id: '{{specTag.key}}-{{revision}}-{{date}}-{{action.order}}',
+        },
+        options: {
+          statuses: [{ key: 'Open' }, { key: 'Closed' }, { key: 'Waiting' }],
+          specs: [
+            { key: 'CG104', name: 'BED - KING' },
+            { key: 'LT108', name: 'SCONCE' },
+          ],
+          vendors: fixture.anonymizedEntities.vendors,
+          contacts: fixture.anonymizedEntities.contacts,
+          actions: [
+            { key: 'REC', name: 'Received', order: '1' },
+            { key: 'REF', name: 'Referred', order: '2' },
+          ],
+        },
+      };
+
+      const partialFfeRow0 = fixture.submittalFfe.partialHydrationRows[0]; // LT108, Status "In Review", blank Vendor
+      const partialFfeRow1 = fixture.submittalFfe.partialHydrationRows[1]; // CG104, blank Revision, raw URL
+
+      const readRows = vi.fn().mockImplementation(async (req: { target: { spreadsheetId: string } }) => {
+        if (req.target.spreadsheetId === 'log-ffe-2') {
+          return {
+            headers: Object.keys(partialFfeRow0.rowCells),
+            formulaColumns: ['Spec Title'],
+            rows: [
+              {
+                rowNumber: 8,
+                values: partialFfeRow0.rowCells,
+                links: { 'Calc Link': 'https://drive.google.com/file/d/fixture-ffe-partial-vendor/view' },
+              },
+              {
+                rowNumber: 9,
+                values: partialFfeRow1.rowCells,
+                links: { 'Calc Link': 'https://drive.google.com/file/d/fixture-ffe-raw-url/view' },
+              },
+            ],
+          };
+        }
+        const sheetsErr = new Error('Named range "Log_Submittal_FFE" not found on sheet "Submittal FF&E".');
+        sheetsErr.name = 'GoogleSheetsNamedRangeNotFoundError';
+        throw sheetsErr;
+      });
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockImplementation((k) => (k === 'submittal-ffe' ? ffeLogSchema : undefined)),
+          getTargetSchema: vi.fn().mockImplementation((k) => (k === 'submittal-ffe' ? ffeTargetSchema : undefined)),
+        },
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-ffe-1', name: 'Harborview Hotel Document Log A', modifiedTime: '2026-10-19T12:00:00Z' },
+            { id: 'log-ffe-2', name: 'Harborview Hotel Document Log B', modifiedTime: '2026-10-10T12:00:00Z' },
+          ]),
+        },
+        storage: { readRows },
+      });
+
+      // Ambiguous log-ffe-2 selected + lowercase/untrimmed specTag ' lt108 ' -> partial_hydration with human-entered "In Review" visible!
+      const partialRes = await service.queryUiContext({
+        documentTypeKey: 'submittal-ffe',
+        space: sampleSpace,
+        selectedLogId: 'log-ffe-2',
+        formData: {
+          'specTag_submittal-ffe': ' lt108 ',
+        },
+      });
+      expect(Value.Check(DocumentLogUiContextResultSchema, partialRes)).toBe(true);
+      expect(partialRes?.status).toBe('ambiguous');
+      expect(partialRes?.readStatus).toBe('partial_hydration');
+      expect(partialRes?.idGroup).toBe('LT108');
+      expect(partialRes?.entries).toEqual([
+        {
+          topLabel: 'Rev 0 • LT108 • In Review',
+          text: '<b>Received</b> 260216 (HPG)',
+          bottomLabel: 'SCONCE —',
+          fileUri: 'https://drive.google.com/file/d/fixture-ffe-partial-vendor/view',
+          valid: false,
+        },
+      ]);
+      expect(partialRes?.warningMessages).toHaveLength(2);
+      expect(partialRes?.warningMessages?.every((m) => typeof m === 'string')).toBe(true);
+      expect(partialRes?.warningMessages?.[0]).toContain('Row 8');
+      expect(JSON.stringify(partialRes)).not.toContain('"rowNumber"');
+
+      // Ambiguous default log-ffe-1 -> read_error without leaking GoogleSheetsNamedRangeNotFoundError name
+      const errorRes = await service.queryUiContext({
+        documentTypeKey: 'submittal-ffe',
+        space: sampleSpace,
+        formData: {
+          'specTag_submittal-ffe': ' cg104 ',
+        },
+      });
+      expect(Value.Check(DocumentLogUiContextResultSchema, errorRes)).toBe(true);
+      expect(errorRes?.status).toBe('ambiguous');
+      expect(errorRes?.readStatus).toBe('read_error');
+      expect(errorRes?.idGroup).toBe('CG104');
+      expect(errorRes?.readErrorMessage).toContain('Named range "Log_Submittal_FFE" not found');
+      expect(JSON.stringify(errorRes)).not.toContain('GoogleSheetsNamedRangeNotFoundError');
+      expect(errorRes?.entries).toBeUndefined();
     });
   });
 

@@ -12,6 +12,7 @@ import {
   LogTargetDocumentSchemaSchema,
   type DocumentLogDiscoveryConfig,
   type DocumentLogDiscoveryConfigOverride,
+  type DocumentLogHistoryDisplay,
   type DocumentLogSchema,
   type DocumentSpaceFetchMethod,
   type LogParsedMustacheTemplate,
@@ -275,31 +276,191 @@ function buildTargetDocumentSchema(
   };
 }
 
-function validateColumnTemplateBinding(params: {
+const SIMPLE_ALLOWED_CARD_HTML_TAGS = new Set(['b', 'i', 'u', 's', 'time']);
+const ALLOWED_CARD_CLOSING_TAGS = new Set(['b', 'i', 'u', 's', 'font', 'a', 'time']);
+const SAFE_FONT_COLOR_REGEX = /^(?:#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|[a-zA-Z]{1,32})$/;
+const SINGLE_ATTR_REGEX = /^([a-zA-Z]+)\s*=\s*(?:"([^"]*)"|'([^']*)')$/;
+
+function isValidHttpOrHttpsUrl(rawUrl: string): boolean {
+  const trimmed = rawUrl.trim();
+  if (trimmed.length === 0 || /[\r\n]/.test(trimmed)) {
+    return false;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function validateSafeCardHtmlLiterals(
+  literals: readonly string[],
+  contextLabel: string
+): void {
+  const openTags: string[] = [];
+
+  for (const literal of literals) {
+    let cursor = 0;
+    while (cursor < literal.length) {
+      const ltIndex = literal.indexOf('<', cursor);
+      const gtIndex = literal.indexOf('>', cursor);
+
+      if (ltIndex === -1) {
+        if (gtIndex !== -1) {
+          throw new DocumentLogConfigurationError(
+            `${contextLabel} contains an unmatched ">" character in HTML text`
+          );
+        }
+        break;
+      }
+
+      if (gtIndex !== -1 && gtIndex < ltIndex) {
+        throw new DocumentLogConfigurationError(
+          `${contextLabel} contains an unmatched ">" character in HTML text`
+        );
+      }
+
+      const closeBracket = literal.indexOf('>', ltIndex + 1);
+      if (closeBracket === -1) {
+        throw new DocumentLogConfigurationError(
+          `${contextLabel} contains an unclosed "<" tag or mustache token inside an HTML tag`
+        );
+      }
+
+      const rawTagContent = literal.slice(ltIndex + 1, closeBracket);
+      if (rawTagContent.includes('<')) {
+        throw new DocumentLogConfigurationError(
+          `${contextLabel} contains malformed nested "<" inside HTML tag`
+        );
+      }
+
+      const trimmedContent = rawTagContent.trim();
+      if (trimmedContent.length === 0) {
+        throw new DocumentLogConfigurationError(`${contextLabel} contains an empty "<>" HTML tag`);
+      }
+
+      if (trimmedContent.startsWith('/')) {
+        const closeNameRaw = trimmedContent.slice(1).trim();
+        if (!/^[a-zA-Z]+$/.test(closeNameRaw)) {
+          throw new DocumentLogConfigurationError(
+            `${contextLabel} contains invalid closing HTML tag "<${rawTagContent}>"`
+          );
+        }
+        const closeName = closeNameRaw.toLowerCase();
+        if (!ALLOWED_CARD_CLOSING_TAGS.has(closeName)) {
+          throw new DocumentLogConfigurationError(
+            `${contextLabel} uses disallowed closing HTML tag "</${closeNameRaw}>"`
+          );
+        }
+        const expected = openTags.pop();
+        if (expected !== closeName) {
+          throw new DocumentLogConfigurationError(
+            `${contextLabel} has unbalanced HTML tag "</${closeNameRaw}>" (expected ${expected ? `"</${expected}>"` : 'no closing tag'})`
+          );
+        }
+      } else {
+        const selfClosing = trimmedContent.endsWith('/');
+        const withoutSlash = selfClosing ? trimmedContent.slice(0, -1).trim() : trimmedContent;
+        const nameMatch = /^([a-zA-Z]+)(?:\s+([\s\S]*))?$/.exec(withoutSlash);
+        if (!nameMatch) {
+          throw new DocumentLogConfigurationError(
+            `${contextLabel} contains unsupported or malformed HTML tag "<${rawTagContent}>"`
+          );
+        }
+        const tagName = nameMatch[1].toLowerCase();
+        const attrText = (nameMatch[2] ?? '').trim();
+
+        if (tagName === 'br') {
+          if (attrText.length > 0) {
+            throw new DocumentLogConfigurationError(
+              `${contextLabel} does not allow attributes on "<br>"`
+            );
+          }
+        } else if (SIMPLE_ALLOWED_CARD_HTML_TAGS.has(tagName)) {
+          if (selfClosing || attrText.length > 0) {
+            throw new DocumentLogConfigurationError(
+              `${contextLabel} does not allow attributes or self-closing syntax on "<${tagName}>"`
+            );
+          }
+          openTags.push(tagName);
+        } else if (tagName === 'font') {
+          if (selfClosing) {
+            throw new DocumentLogConfigurationError(
+              `${contextLabel} does not allow self-closing "<font/>"`
+            );
+          }
+          const attrMatch = SINGLE_ATTR_REGEX.exec(attrText);
+          const attrName = attrMatch?.[1]?.toLowerCase();
+          const attrValue = attrMatch?.[2] ?? attrMatch?.[3] ?? '';
+          if (!attrMatch || attrName !== 'color' || !SAFE_FONT_COLOR_REGEX.test(attrValue)) {
+            throw new DocumentLogConfigurationError(
+              `${contextLabel} requires '<font color="...">' with a safe color value and no extra attributes`
+            );
+          }
+          openTags.push('font');
+        } else if (tagName === 'a') {
+          if (selfClosing) {
+            throw new DocumentLogConfigurationError(
+              `${contextLabel} does not allow self-closing "<a/>"`
+            );
+          }
+          if (openTags.includes('a')) {
+            throw new DocumentLogConfigurationError(
+              `${contextLabel} does not allow nested "<a>" tags`
+            );
+          }
+          const attrMatch = SINGLE_ATTR_REGEX.exec(attrText);
+          const attrName = attrMatch?.[1]?.toLowerCase();
+          const attrValue = attrMatch?.[2] ?? attrMatch?.[3] ?? '';
+          if (!attrMatch || attrName !== 'href' || !isValidHttpOrHttpsUrl(attrValue)) {
+            throw new DocumentLogConfigurationError(
+              `${contextLabel} requires '<a href="https://...">' with a valid http(s) URL and no extra attributes`
+            );
+          }
+          openTags.push('a');
+        } else {
+          throw new DocumentLogConfigurationError(
+            `${contextLabel} uses disallowed HTML tag "<${nameMatch[1]}>"`
+          );
+        }
+      }
+
+      cursor = closeBracket + 1;
+    }
+  }
+
+  if (openTags.length > 0) {
+    throw new DocumentLogConfigurationError(
+      `${contextLabel} has unclosed HTML tag(s): ${openTags.map((t) => `<${t}>`).join(', ')}`
+    );
+  }
+}
+
+function validateStage1TemplateTokens(params: {
   template: string;
-  columnName: string;
-  relPath: string;
+  contextLabel: string;
+  requireAtLeastOneToken: boolean;
   parser: LogTemplateParserPort | undefined;
   targetSchema: LogTargetDocumentSchema;
   knownFieldKeys: ReadonlySet<string>;
   calcFieldKeys: ReadonlySet<string>;
-}): void {
+}): LogParsedMustacheTemplate {
   const {
     template,
-    columnName,
-    relPath,
+    contextLabel,
+    requireAtLeastOneToken,
     parser,
     targetSchema,
     knownFieldKeys,
     calcFieldKeys,
   } = params;
 
-  const prefix = `documentLogSchema column "${columnName}" in "${relPath}"`;
-  const parsed = parseTemplateOrThrow(parser, template, prefix);
+  const parsed = parseTemplateOrThrow(parser, template, contextLabel);
 
-  if (parsed.tokens.length === 0) {
+  if (requireAtLeastOneToken && parsed.tokens.length === 0) {
     throw new DocumentLogConfigurationError(
-      `${prefix} must reference at least one Stage-1 DocumentField token`
+      `${contextLabel} must reference at least one Stage-1 DocumentField token`
     );
   }
 
@@ -310,30 +471,32 @@ function validateColumnTemplateBinding(params: {
       token.parts.some((part) => part.trim().length === 0)
     ) {
       throw new DocumentLogConfigurationError(
-        `${prefix} has invalid field path "${token.original}" (expected fieldKey or fieldKey.property)`
+        `${contextLabel} has invalid field path "${token.original}" (expected fieldKey or fieldKey.property)`
       );
     }
 
     const [fieldKey, property] = token.parts;
     if (DISALLOWED_TEMPLATE_NAMESPACES.has(fieldKey)) {
       throw new DocumentLogConfigurationError(
-        `${prefix} uses disallowed namespace "${fieldKey}" in Stage-1 column template`
+        `${contextLabel} uses disallowed namespace "${fieldKey}" in Stage-1 template`
       );
     }
 
     if (calcFieldKeys.has(fieldKey) && !knownFieldKeys.has(fieldKey)) {
-      throw new DocumentLogConfigurationError(`${prefix} targets CalculatedField "${fieldKey}"`);
+      throw new DocumentLogConfigurationError(
+        `${contextLabel} targets CalculatedField "${fieldKey}"`
+      );
     }
 
     if (!knownFieldKeys.has(fieldKey)) {
-      throw new DocumentLogConfigurationError(`${prefix} targets unknown field "${fieldKey}"`);
+      throw new DocumentLogConfigurationError(`${contextLabel} targets unknown field "${fieldKey}"`);
     }
 
     if (property !== undefined) {
       const targetField = targetSchema.fields.find((f) => f.key === fieldKey)!;
       if (!targetField.options) {
         throw new DocumentLogConfigurationError(
-          `${prefix} accesses property ".${property}" on non-LookupField "${fieldKey}"`
+          `${contextLabel} accesses property ".${property}" on non-LookupField "${fieldKey}"`
         );
       }
 
@@ -348,12 +511,86 @@ function validateColumnTemplateBinding(params: {
             staticTuples.some((tuple) => property in tuple);
           if (!isValidProp) {
             throw new DocumentLogConfigurationError(
-              `${prefix} accesses unknown property ".${property}" on LookupField "${fieldKey}"`
+              `${contextLabel} accesses unknown property ".${property}" on LookupField "${fieldKey}"`
             );
           }
         }
       }
     }
+  }
+
+  return parsed;
+}
+
+function validateColumnTemplateBinding(params: {
+  template: string;
+  columnName: string;
+  relPath: string;
+  parser: LogTemplateParserPort | undefined;
+  targetSchema: LogTargetDocumentSchema;
+  knownFieldKeys: ReadonlySet<string>;
+  calcFieldKeys: ReadonlySet<string>;
+}): void {
+  validateStage1TemplateTokens({
+    template: params.template,
+    contextLabel: `documentLogSchema column "${params.columnName}" in "${params.relPath}"`,
+    requireAtLeastOneToken: true,
+    parser: params.parser,
+    targetSchema: params.targetSchema,
+    knownFieldKeys: params.knownFieldKeys,
+    calcFieldKeys: params.calcFieldKeys,
+  });
+}
+
+function validateHistoryDisplay(params: {
+  historyDisplay: DocumentLogHistoryDisplay;
+  relPath: string;
+  parser: LogTemplateParserPort | undefined;
+  targetSchema: LogTargetDocumentSchema;
+  knownFieldKeys: ReadonlySet<string>;
+  calcFieldKeys: ReadonlySet<string>;
+}): void {
+  const { historyDisplay, relPath, parser, targetSchema, knownFieldKeys, calcFieldKeys } = params;
+
+  const textLabel = `documentLogSchema.historyDisplay.text in "${relPath}"`;
+  assertNonBlankString(historyDisplay.text, textLabel);
+  const parsedText = validateStage1TemplateTokens({
+    template: historyDisplay.text,
+    contextLabel: textLabel,
+    requireAtLeastOneToken: true,
+    parser,
+    targetSchema,
+    knownFieldKeys,
+    calcFieldKeys,
+  });
+  validateSafeCardHtmlLiterals(parsedText.literals, textLabel);
+
+  if (historyDisplay.topLabel !== undefined) {
+    const topLabelCtx = `documentLogSchema.historyDisplay.topLabel in "${relPath}"`;
+    assertNonBlankString(historyDisplay.topLabel, topLabelCtx);
+    validateStage1TemplateTokens({
+      template: historyDisplay.topLabel,
+      contextLabel: topLabelCtx,
+      requireAtLeastOneToken: false,
+      parser,
+      targetSchema,
+      knownFieldKeys,
+      calcFieldKeys,
+    });
+  }
+
+  if (historyDisplay.bottomLabel !== undefined) {
+    const bottomLabelCtx = `documentLogSchema.historyDisplay.bottomLabel in "${relPath}"`;
+    assertNonBlankString(historyDisplay.bottomLabel, bottomLabelCtx);
+    validateStage1TemplateTokens({
+      template: historyDisplay.bottomLabel,
+      contextLabel: bottomLabelCtx,
+      requireAtLeastOneToken: false,
+      parser,
+      targetSchema,
+      knownFieldKeys,
+      calcFieldKeys,
+    });
   }
 }
 
@@ -421,6 +658,17 @@ function validateDocumentLogSchema(params: {
         `documentLogSchema.columns["${columnName}"].label in "${relPath}"`
       );
     }
+  }
+
+  if (logSchema.historyDisplay !== undefined) {
+    validateHistoryDisplay({
+      historyDisplay: logSchema.historyDisplay,
+      relPath,
+      parser,
+      targetSchema,
+      knownFieldKeys,
+      calcFieldKeys,
+    });
   }
 
   return structuredClone(logSchema);

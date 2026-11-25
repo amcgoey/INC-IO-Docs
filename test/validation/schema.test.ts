@@ -472,6 +472,11 @@ describe('DocumentType JSON files schema validation', () => {
           Notes: { template: '{{notes}}' },
           'Calc Link': { source: 'fileLink', label: 'Link' },
         },
+        historyDisplay: {
+          topLabel: 'Rev {{revision}} • {{section}}-{{number}} • {{status.key}}',
+          text: '<b>{{action.name}}</b> {{date}} ({{contact.key}})',
+          bottomLabel: '{{title}}',
+        },
       });
 
       const ffeLogSchema = logRegistry.getDocumentLogSchema('submittal-ffe');
@@ -503,10 +508,28 @@ describe('DocumentType JSON files schema validation', () => {
           Notes: { template: '{{notes}}' },
           'Calc Link': { source: 'fileLink', label: 'Link' },
         },
+        historyDisplay: {
+          topLabel: 'Rev {{revision}} • {{specTag.key}} • {{status.key}}',
+          text: '<b>{{action.name}}</b> {{date}} ({{contact.key}})',
+          bottomLabel: '{{specTitle}} — {{vendor.name}}',
+        },
       });
 
       expect(logRegistry.getDocumentLogSchema('communication-project')).toBeUndefined();
       expect(logRegistry.getDocumentLogSchema('communication-proposal')).toBeUndefined();
+
+      // Verify reactive onChange: true rollout on submittal idGroup fields
+      const docAdapter = new DocumentSchemaRegistryAdapter(manifestProvider, handlebars);
+      const allDocTypes = await docAdapter.loadAll();
+      const archDocType = allDocTypes.find((d) => d.key === 'submittal-arch');
+      const ffeDocType = allDocTypes.find((d) => d.key === 'submittal-ffe');
+
+      const archUiFields = (archDocType?.documentUiSchema as UiSchemaType | undefined)?.fields;
+      expect(archUiFields?.section?.onChange).toBe(true);
+      expect(archUiFields?.number?.onChange).toBe(true);
+
+      const ffeUiFields = (ffeDocType?.documentUiSchema as UiSchemaType | undefined)?.fields;
+      expect(ffeUiFields?.specTag?.onChange).toBe(true);
     });
   });
 });

@@ -219,6 +219,55 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     vi.restoreAllMocks();
   });
 
+  function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optional?: boolean }) {
+    const applyOpt = <T extends nock.Interceptor>(interceptor: T): T =>
+      options?.optional ? (interceptor.optionally() as T) : interceptor;
+
+    applyOpt(
+      nock('https://sheets.googleapis.com')
+        .get(`/v4/spreadsheets/${spreadsheetId}`)
+        .query(true)
+    ).reply(200, {
+      spreadsheetId,
+      sheets: [
+        { properties: { sheetId: 101, title: 'Submittal Arch' } },
+        { properties: { sheetId: 102, title: 'Submittal FF&E' } },
+      ],
+      namedRanges: [
+        {
+          namedRangeId: 'nr-arch',
+          name: 'Log_Submittal_Arch',
+          range: { sheetId: 101, startRowIndex: 2, endRowIndex: 21, startColumnIndex: 0, endColumnIndex: 11 },
+        },
+        {
+          namedRangeId: 'nr-ffe',
+          name: 'Log_Submittal_FFE',
+          range: { sheetId: 102, startRowIndex: 2, endRowIndex: 21, startColumnIndex: 0, endColumnIndex: 12 },
+        },
+      ],
+    });
+
+    applyOpt(
+      nock('https://sheets.googleapis.com')
+        .get(new RegExp(`/v4/spreadsheets/${spreadsheetId}/values/.*`))
+        .query((q) => q.valueRenderOption === 'FORMATTED_VALUE')
+    ).reply(200, (uri) => {
+      const isFfe = decodeURIComponent(uri).includes('Submittal FF&E');
+      const headers = isFfe
+        ? ['Status', 'Spec Tag', 'Related Tag', 'Revision', 'Spec Title', 'Vendor', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link']
+        : ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link'];
+      return { values: [headers, ['Formula Row'], ['<--->'], [], ['<--->']] };
+    });
+
+    applyOpt(
+      nock('https://sheets.googleapis.com')
+        .get(`/v4/spreadsheets/${spreadsheetId}/values:batchGet`)
+        .query((q) => q.valueRenderOption === 'FORMULA')
+    ).reply(200, {
+      valueRanges: [{ values: [['Formula Row']] }],
+    });
+  }
+
   function mockDocumentLogSearch(options: {
     sharedDriveId?: string;
     fileId?: string;
@@ -228,6 +277,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     const sharedDriveId = options.sharedDriveId ?? 'shared-drive-proj-root';
     const fileId = options.fileId ?? `log-${sharedDriveId}`;
     const name = options.name ?? 'Active Projects Document Log';
+    mockEmptyDocumentLogSheetsRead(fileId, { optional: true });
     return nock('https://www.googleapis.com')
       .get('/drive/v3/files')
       .query(

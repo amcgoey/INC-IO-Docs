@@ -92,6 +92,16 @@ export const DocumentLogColumnBindingSchema = Type.Union([
 ]);
 export type DocumentLogColumnBinding = Static<typeof DocumentLogColumnBindingSchema>;
 
+export const DocumentLogHistoryDisplaySchema = Type.Object(
+  {
+    topLabel: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+    text: Type.String({ minLength: 1 }),
+    bottomLabel: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+export type DocumentLogHistoryDisplay = Static<typeof DocumentLogHistoryDisplaySchema>;
+
 export const DocumentLogSchemaSchema = Type.Object(
   {
     provider: Type.Literal('google_sheets'),
@@ -100,6 +110,9 @@ export const DocumentLogSchemaSchema = Type.Object(
     columns: Type.Record(Type.String({ minLength: 1 }), DocumentLogColumnBindingSchema, {
       minProperties: 1,
     }),
+    historyDisplay: Type.Optional(
+      Type.Union([DocumentLogHistoryDisplaySchema, Type.Undefined()])
+    ),
   },
   { additionalProperties: false }
 );
@@ -519,6 +532,26 @@ export const DocumentLogUiCandidateOptionSchema = Type.Object(
 );
 export type DocumentLogUiCandidateOption = Static<typeof DocumentLogUiCandidateOptionSchema>;
 
+export const DocumentLogUiReadStatusSchema = Type.Union([
+  Type.Literal('ready'),
+  Type.Literal('idle_incomplete_id'),
+  Type.Literal('read_error'),
+  Type.Literal('partial_hydration'),
+]);
+export type DocumentLogUiReadStatus = Static<typeof DocumentLogUiReadStatusSchema>;
+
+export const DocumentLogUiHistoryEntrySchema = Type.Object(
+  {
+    topLabel: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    text: Type.String(),
+    bottomLabel: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    fileUri: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    valid: Type.Boolean(),
+  },
+  { additionalProperties: false }
+);
+export type DocumentLogUiHistoryEntry = Static<typeof DocumentLogUiHistoryEntrySchema>;
+
 export const DocumentLogUiContextResultSchema = Type.Object(
   {
     status: DocumentLogUiStatusSchema,
@@ -531,6 +564,20 @@ export const DocumentLogUiContextResultSchema = Type.Object(
     ),
     activeCandidate: Type.Optional(
       Type.Union([DocumentLogUiCandidateSchema, Type.Undefined()])
+    ),
+    readStatus: Type.Optional(
+      Type.Union([DocumentLogUiReadStatusSchema, Type.Undefined()])
+    ),
+    idGroup: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    missingIdFields: Type.Optional(
+      Type.Union([Type.Array(Type.String()), Type.Undefined()])
+    ),
+    readErrorMessage: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    warningMessages: Type.Optional(
+      Type.Union([Type.Array(Type.String()), Type.Undefined()])
+    ),
+    entries: Type.Optional(
+      Type.Union([Type.Array(DocumentLogUiHistoryEntrySchema), Type.Undefined()])
     ),
   },
   { additionalProperties: false }
