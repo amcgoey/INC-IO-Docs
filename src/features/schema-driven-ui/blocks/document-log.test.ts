@@ -659,5 +659,360 @@ describe('Document Log Block', () => {
     ).toBe(false);
     expect('collapsible' in budgetZero!).toBe(false);
     expect('uncollapsibleWidgetsCount' in budgetZero!).toBe(false);
+
+    // Case 6: fractional and NaN maxWidgets are normalized safely via floor (never emitting fractional counts)
+    const fractionalBudget = buildDocumentLogSection(
+      { ...baseContext, entries: makeHistoryEntries(5) },
+      { maxWidgets: 2.5 }
+    );
+    expect(fractionalBudget).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, fractionalBudget)).toBe(true);
+    expect(fractionalBudget?.widgets).toHaveLength(2);
+    expect(fractionalBudget?.widgets[1].decoratedText?.text).toBe('Showing 0 of 5 entries');
+    expect('collapsible' in fractionalBudget!).toBe(false);
+    expect('uncollapsibleWidgetsCount' in fractionalBudget!).toBe(false);
+
+    expect(
+      buildDocumentLogSection({ ...baseContext, entries: makeHistoryEntries(5) }, { maxWidgets: 0.5 })
+    ).toBeUndefined();
+    expect(
+      buildDocumentLogSection({ ...baseContext, entries: makeHistoryEntries(5) }, { maxWidgets: Number.NaN })
+    ).toBeUndefined();
+  });
+
+  it('returns undefined for maxWidgets <= 0 (0 and -5) across all DocumentLogPanelContext statuses', () => {
+    const activeCandidate = {
+      name: 'Harborview Hotel Document Log',
+      url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+    };
+    const contexts: DocumentLogPanelContext[] = [
+      { status: 'missing_space' },
+      { status: 'discovery_error', discoveryErrorMessage: 'Drive timeout' },
+      {
+        status: 'missing',
+        spaceName: 'Harborview Hotel',
+        targetFolderPath: '1 Admin',
+        targetFileName: 'Harborview Hotel Document Log',
+      },
+      {
+        status: 'resolved',
+        spaceName: 'Harborview Hotel',
+        targetFolderPath: '1 Admin',
+        activeCandidate,
+        readStatus: 'ready',
+        idGroup: '071200-001',
+        entries: makeHistoryEntries(3),
+      },
+      {
+        status: 'ambiguous',
+        spaceName: 'Harborview Hotel',
+        targetFolderPath: '1 Admin',
+        candidateOptions: [
+          { text: 'Log A (1 Admin)', value: 'log-a', selected: true },
+          { text: 'Log B (6 Construction)', value: 'log-b', selected: false },
+        ],
+        activeCandidate,
+        readStatus: 'partial_hydration',
+        idGroup: '071200-001',
+        warningMessages: ['Skipped invalid row 2'],
+        entries: makeHistoryEntries(3),
+      },
+    ];
+
+    for (const ctx of contexts) {
+      expect(buildDocumentLogSection(ctx, { maxWidgets: 0 })).toBeUndefined();
+      expect(buildDocumentLogSection(ctx, { maxWidgets: -5 })).toBeUndefined();
+    }
+  });
+
+  it('enforces additional resolved + ready boundaries, omitted maxWidgets cap, exact-fit 1-entry budget, and newest-first slicing order', () => {
+    const activeUrl = 'https://docs.google.com/spreadsheets/d/log-1/edit';
+    const baseContext: Omit<DocumentLogPanelContext, 'entries'> = {
+      status: 'resolved',
+      spaceName: 'Harborview Hotel',
+      targetFolderPath: '1 Admin',
+      activeCandidate: {
+        name: 'Harborview Hotel Document Log',
+        url: activeUrl,
+      },
+      readStatus: 'ready',
+      idGroup: '071200-001',
+    };
+
+    // maxWidgets = 22 (rawBudget = 21) with 21 entries -> 20 newest rows + 1 overflow notice, length 22
+    const atCap22 = buildDocumentLogSection(
+      { ...baseContext, entries: makeHistoryEntries(21) },
+      { maxWidgets: 22 }
+    );
+    expect(atCap22).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, atCap22)).toBe(true);
+    expect(atCap22?.widgets).toHaveLength(22);
+    expect(atCap22?.collapsible).toBe(true);
+    expect(atCap22?.uncollapsibleWidgetsCount).toBe(1);
+    expect(atCap22?.widgets[1].decoratedText?.topLabel).toBe('Submission 21');
+    expect(atCap22?.widgets[20].decoratedText?.topLabel).toBe('Submission 2');
+    expect(atCap22?.widgets[21].decoratedText).toEqual({
+      text: 'Showing 20 of 21 entries',
+      wrapText: true,
+      button: {
+        text: 'Open Log',
+        onClick: {
+          openLink: {
+            url: activeUrl,
+            openAs: 'FULL_SIZE',
+          },
+        },
+      },
+    });
+
+    // maxWidgets omitted (undefined) with 25 entries -> 20 newest rows + 1 overflow notice, length 22
+    const omittedMax25 = buildDocumentLogSection({
+      ...baseContext,
+      entries: makeHistoryEntries(25),
+    });
+    expect(omittedMax25).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, omittedMax25)).toBe(true);
+    expect(omittedMax25?.widgets).toHaveLength(22);
+    expect(omittedMax25?.collapsible).toBe(true);
+    expect(omittedMax25?.uncollapsibleWidgetsCount).toBe(1);
+    expect(omittedMax25?.widgets[1].decoratedText?.topLabel).toBe('Submission 25');
+    expect(omittedMax25?.widgets[20].decoratedText?.topLabel).toBe('Submission 6');
+    expect(omittedMax25?.widgets[21].decoratedText).toEqual({
+      text: 'Showing 20 of 25 entries',
+      wrapText: true,
+      button: {
+        text: 'Open Log',
+        onClick: {
+          openLink: {
+            url: activeUrl,
+            openAs: 'FULL_SIZE',
+          },
+        },
+      },
+    });
+
+    // maxWidgets = 2 (rawBudget = 1) with 1 entry -> 1 row + NO overflow notice, length 2
+    const exactFitOne = buildDocumentLogSection(
+      { ...baseContext, entries: makeHistoryEntries(1) },
+      { maxWidgets: 2 }
+    );
+    expect(exactFitOne).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, exactFitOne)).toBe(true);
+    expect(exactFitOne?.widgets).toHaveLength(2);
+    expect(exactFitOne?.collapsible).toBe(true);
+    expect(exactFitOne?.uncollapsibleWidgetsCount).toBe(1);
+    expect(exactFitOne?.widgets[1].decoratedText?.topLabel).toBe('Submission 1');
+    expect(
+      exactFitOne?.widgets.some((w) => w.decoratedText?.text.startsWith('Showing '))
+    ).toBe(false);
+
+    // Newest-first ordering preserved when slicing maxWidgets = 21 with 21 entries -> 19 rows (Submission 21..Submission 3) + overflow notice
+    const slicedAt21 = buildDocumentLogSection(
+      { ...baseContext, entries: makeHistoryEntries(21) },
+      { maxWidgets: 21 }
+    );
+    expect(slicedAt21).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, slicedAt21)).toBe(true);
+    expect(slicedAt21?.widgets).toHaveLength(21);
+    expect(slicedAt21?.widgets[1].decoratedText?.topLabel).toBe('Submission 21');
+    expect(slicedAt21?.widgets[19].decoratedText?.topLabel).toBe('Submission 3');
+    expect(slicedAt21?.widgets[20].decoratedText?.text).toBe('Showing 19 of 21 entries');
+  });
+
+  it('enforces ambiguous + partial_hydration (logFixedWidgets = 3) overflow-first budget and clamping boundaries', () => {
+    const activeUrl = 'https://docs.google.com/spreadsheets/d/log-a/edit';
+    const baseContext: Omit<DocumentLogPanelContext, 'entries'> = {
+      status: 'ambiguous',
+      spaceName: 'Harborview Hotel',
+      targetFolderPath: '1 Admin',
+      candidateOptions: [
+        { text: 'Log A (1 Admin)', value: 'log-a', selected: true },
+        { text: 'Log B (6 Construction)', value: 'log-b', selected: false },
+      ],
+      activeCandidate: {
+        name: 'Log A',
+        url: activeUrl,
+      },
+      readStatus: 'partial_hydration',
+      idGroup: '071200-001',
+      warningMessages: ['Skipped invalid row 4'],
+    };
+
+    // maxWidgets = 23 (rawBudget = 20) with 21 entries -> 19 rows + 1 overflow notice, length 23, uncollapsibleWidgetsCount: 3
+    const budget20With21 = buildDocumentLogSection(
+      { ...baseContext, entries: makeHistoryEntries(21) },
+      { maxWidgets: 23 }
+    );
+    expect(budget20With21).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, budget20With21)).toBe(true);
+    expect(budget20With21?.widgets).toHaveLength(23);
+    expect(budget20With21?.collapsible).toBe(true);
+    expect(budget20With21?.uncollapsibleWidgetsCount).toBe(3);
+    expect(budget20With21?.widgets[3].decoratedText?.topLabel).toBe('Submission 21');
+    expect(budget20With21?.widgets[21].decoratedText?.topLabel).toBe('Submission 3');
+    expect(budget20With21?.widgets[22].decoratedText).toEqual({
+      text: 'Showing 19 of 21 entries',
+      wrapText: true,
+      button: {
+        text: 'Open Log',
+        onClick: {
+          openLink: {
+            url: activeUrl,
+            openAs: 'FULL_SIZE',
+          },
+        },
+      },
+    });
+
+    // maxWidgets = 30 (ample budget) with 25 entries -> 20 rows + 1 overflow notice, length 24, uncollapsibleWidgetsCount: 3
+    const ampleWith25 = buildDocumentLogSection(
+      { ...baseContext, entries: makeHistoryEntries(25) },
+      { maxWidgets: 30 }
+    );
+    expect(ampleWith25).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, ampleWith25)).toBe(true);
+    expect(ampleWith25?.widgets).toHaveLength(24);
+    expect(ampleWith25?.collapsible).toBe(true);
+    expect(ampleWith25?.uncollapsibleWidgetsCount).toBe(3);
+    expect(ampleWith25?.widgets[3].decoratedText?.topLabel).toBe('Submission 25');
+    expect(ampleWith25?.widgets[22].decoratedText?.topLabel).toBe('Submission 6');
+    expect(ampleWith25?.widgets[23].decoratedText).toEqual({
+      text: 'Showing 20 of 25 entries',
+      wrapText: true,
+      button: {
+        text: 'Open Log',
+        onClick: {
+          openLink: {
+            url: activeUrl,
+            openAs: 'FULL_SIZE',
+          },
+        },
+      },
+    });
+
+    // maxWidgets = 4 (rawBudget = 1) with 5 entries -> 0 rows + 1 overflow notice, length 4, omits collapsible props
+    const budgetOneWith5 = buildDocumentLogSection(
+      { ...baseContext, entries: makeHistoryEntries(5) },
+      { maxWidgets: 4 }
+    );
+    expect(budgetOneWith5).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, budgetOneWith5)).toBe(true);
+    expect(budgetOneWith5?.widgets).toHaveLength(4);
+    expect('collapsible' in budgetOneWith5!).toBe(false);
+    expect('uncollapsibleWidgetsCount' in budgetOneWith5!).toBe(false);
+    expect(budgetOneWith5?.widgets[3].decoratedText).toEqual({
+      text: 'Showing 0 of 5 entries',
+      wrapText: true,
+      button: {
+        text: 'Open Log',
+        onClick: {
+          openLink: {
+            url: activeUrl,
+            openAs: 'FULL_SIZE',
+          },
+        },
+      },
+    });
+
+    // maxWidgets = 3 (rawBudget = 0) with 5 entries -> 0 rows, NO overflow notice, length 3, omits collapsible props
+    const budgetZeroWith5 = buildDocumentLogSection(
+      { ...baseContext, entries: makeHistoryEntries(5) },
+      { maxWidgets: 3 }
+    );
+    expect(budgetZeroWith5).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, budgetZeroWith5)).toBe(true);
+    expect(budgetZeroWith5?.widgets).toHaveLength(3);
+    expect('collapsible' in budgetZeroWith5!).toBe(false);
+    expect('uncollapsibleWidgetsCount' in budgetZeroWith5!).toBe(false);
+    expect(
+      budgetZeroWith5?.widgets.some((w) => w.decoratedText?.text.startsWith('Showing '))
+    ).toBe(false);
+
+    // maxWidgets = 2 and maxWidgets = 1 (< logFixedWidgets = 3) with 5 entries -> clamped cleanly to 2 and 1 widgets
+    const clampedToTwo = buildDocumentLogSection(
+      { ...baseContext, entries: makeHistoryEntries(5) },
+      { maxWidgets: 2 }
+    );
+    expect(clampedToTwo).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, clampedToTwo)).toBe(true);
+    expect(clampedToTwo?.widgets).toHaveLength(2);
+    expect('collapsible' in clampedToTwo!).toBe(false);
+    expect('uncollapsibleWidgetsCount' in clampedToTwo!).toBe(false);
+
+    const clampedToOne = buildDocumentLogSection(
+      { ...baseContext, entries: makeHistoryEntries(5) },
+      { maxWidgets: 1 }
+    );
+    expect(clampedToOne).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, clampedToOne)).toBe(true);
+    expect(clampedToOne?.widgets).toHaveLength(1);
+    expect('collapsible' in clampedToOne!).toBe(false);
+    expect('uncollapsibleWidgetsCount' in clampedToOne!).toBe(false);
+  });
+
+  it('clamps non-history multi-widget states strictly to maxWidgets < fixed widget count while remaining schema-valid', () => {
+    const missingContext: DocumentLogPanelContext = {
+      status: 'missing',
+      spaceName: 'Harborview Hotel',
+      targetFolderPath: '1 Admin',
+      targetFileName: 'Harborview Hotel Document Log',
+    };
+
+    const missingClamped2 = buildDocumentLogSection(missingContext, { maxWidgets: 2 });
+    expect(missingClamped2).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, missingClamped2)).toBe(true);
+    expect(missingClamped2?.widgets).toHaveLength(2);
+    expect('collapsible' in missingClamped2!).toBe(false);
+    expect('uncollapsibleWidgetsCount' in missingClamped2!).toBe(false);
+
+    const missingClamped1 = buildDocumentLogSection(missingContext, { maxWidgets: 1 });
+    expect(missingClamped1).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, missingClamped1)).toBe(true);
+    expect(missingClamped1?.widgets).toHaveLength(1);
+    expect('collapsible' in missingClamped1!).toBe(false);
+    expect('uncollapsibleWidgetsCount' in missingClamped1!).toBe(false);
+
+    const activeCandidate = {
+      name: 'Harborview Hotel Document Log',
+      url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+    };
+
+    const nonHistoryResolvedContexts: DocumentLogPanelContext[] = [
+      {
+        status: 'resolved',
+        spaceName: 'Harborview Hotel',
+        targetFolderPath: '1 Admin',
+        activeCandidate,
+        readStatus: 'idle_incomplete_id',
+        missingIdFields: ['Section', 'Number'],
+      },
+      {
+        status: 'resolved',
+        spaceName: 'Harborview Hotel',
+        targetFolderPath: '1 Admin',
+        activeCandidate,
+        readStatus: 'read_error',
+        idGroup: '071200-001',
+        readErrorMessage: 'Timeout',
+      },
+      {
+        status: 'resolved',
+        spaceName: 'Harborview Hotel',
+        targetFolderPath: '1 Admin',
+        activeCandidate,
+        readStatus: 'ready',
+        idGroup: '071200-001',
+        entries: [],
+      },
+    ];
+
+    for (const ctx of nonHistoryResolvedContexts) {
+      const clamped = buildDocumentLogSection(ctx, { maxWidgets: 1 });
+      expect(clamped).toBeDefined();
+      expect(Value.Check(UiViewSectionSchema, clamped)).toBe(true);
+      expect(clamped?.widgets).toHaveLength(1);
+      expect('collapsible' in clamped!).toBe(false);
+      expect('uncollapsibleWidgetsCount' in clamped!).toBe(false);
+    }
   });
 });
