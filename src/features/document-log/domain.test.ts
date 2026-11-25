@@ -3492,5 +3492,109 @@ describe('DocumentLogService', () => {
         tables: {},
       });
     });
+
+    it('parses optional aliasesColumn cells as RFC 4180 CSV with "" escaped quotes into tuple.aliases[] and ignores silently when header is absent (Ticket #360)', async () => {
+      const logSchemaWithAliases: DocumentLogSchema = {
+        ...logSchema,
+        optionBindings: {
+          contacts: {
+            sheetName: '_Config',
+            rangeName: 'Options_Contacts',
+            endMarker: '---',
+            columns: {
+              Contact: 'key',
+              Name: 'name',
+            },
+            aliasesColumn: 'Aliases',
+          },
+          vendors: {
+            sheetName: '_Config',
+            rangeName: 'Options_Vendors',
+            endMarker: '---',
+            columns: {
+              Vendor: 'key',
+              Name: 'name',
+            },
+            aliasesColumn: 'Aliases',
+          },
+        },
+      };
+
+      const targetSchemaWithContactsAndVendors: LogTargetDocumentSchema = {
+        ...targetSchema,
+        optionSources: {
+          contacts: { provider: 'document_log', properties: ['key', 'name'] },
+          vendors: { provider: 'document_log', properties: ['key', 'name'] },
+        },
+      };
+
+      const readNamedRanges = vi.fn().mockResolvedValue({
+        contacts: {
+          status: 'found',
+          values: [
+            ['Contact', 'Name', 'Aliases'],
+            ['PMG', 'Pavarini McGovern', '"Pavarini, McGovern", "ACME ""Corp"", Inc.", PCNE, @pavarini.com'],
+            ['OBR', "O'Brien Design", '  "O\'Brien, James" , , "" , """OB"" Studio"  '],
+            ['NOAL', 'No Aliases Co', '   '],
+            ['---', '', ''],
+          ],
+        },
+        vendors: {
+          status: 'found',
+          values: [
+            ['Vendor', 'Name'],
+            ['BM', 'Berman Falk'],
+            ['---', ''],
+          ],
+        },
+      });
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(logSchemaWithAliases),
+          getTargetSchema: vi.fn().mockReturnValue(targetSchemaWithContactsAndVendors),
+        },
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-1', name: 'Harborview Hotel Document Log' },
+          ]),
+        },
+        storage: {
+          readNamedRanges,
+        },
+      });
+
+      const result = await service.readOptionTables({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+
+      expect(result.status).toBe('ready');
+      if (result.status === 'ready') {
+        expect(result.tables.contacts).toEqual({
+          status: 'ready',
+          tuples: [
+            {
+              key: 'PMG',
+              name: 'Pavarini McGovern',
+              aliases: ['Pavarini, McGovern', 'ACME "Corp", Inc.', 'PCNE', '@pavarini.com'],
+            },
+            {
+              key: 'OBR',
+              name: "O'Brien Design",
+              aliases: ["O'Brien, James", '"OB" Studio'],
+            },
+            {
+              key: 'NOAL',
+              name: 'No Aliases Co',
+            },
+          ],
+        });
+        expect(result.tables.vendors).toEqual({
+          status: 'ready',
+          tuples: [{ key: 'BM', name: 'Berman Falk' }],
+        });
+      }
+    });
   });
 });
