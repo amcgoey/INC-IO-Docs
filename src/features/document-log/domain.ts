@@ -231,8 +231,7 @@ function formatCandidateOptionLabel(candidate: LogResolutionCandidate): string {
 
 function formatReadErrorMessage(error: unknown): string {
   const raw = error instanceof Error ? error.message.trim() : String(error).trim();
-  const sanitized = raw.replace(/^GoogleSheets[A-Za-z]*Error:\s*/, '').trim();
-  return sanitized.length > 0 ? sanitized : 'Unable to read Document Log history right now.';
+  return raw.length > 0 ? raw : 'Unable to read Document Log history right now.';
 }
 
 /**
@@ -398,9 +397,6 @@ export class DocumentLogService implements DocumentLogPort {
       return {
         status: 'resolved',
         spaceName: request.space.name,
-        ...(discoveryConfig?.preferredFolderPath !== undefined
-          ? { targetFolderPath: discoveryConfig.preferredFolderPath }
-          : {}),
         activeCandidate: {
           name: resolution.candidate.name,
           url: buildCandidateUrl(resolution.candidate),
@@ -432,9 +428,6 @@ export class DocumentLogService implements DocumentLogPort {
     return {
       status: 'ambiguous',
       spaceName: request.space.name,
-      ...(discoveryConfig?.preferredFolderPath !== undefined
-        ? { targetFolderPath: discoveryConfig.preferredFolderPath }
-        : {}),
       candidateOptions,
       activeCandidate: {
         name: active.name,

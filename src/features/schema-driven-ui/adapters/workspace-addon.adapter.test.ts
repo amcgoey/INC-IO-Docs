@@ -1435,10 +1435,10 @@ describe('WorkspaceAddonAdapter', () => {
         expect(gmailLogSection).toBeDefined();
 
         if (panel.status === 'missing') {
-          expect(driveLogSection?.widgets.slice(0, 2)).toEqual(
-            gmailLogSection?.widgets.slice(0, 2)
-          );
-          expect(driveLogSection?.widgets[2]).toEqual({
+          expect(driveLogSection?.widgets).toHaveLength(2);
+          expect(gmailLogSection?.widgets).toHaveLength(2);
+          expect(driveLogSection?.widgets[0]).toEqual(gmailLogSection?.widgets[0]);
+          expect(driveLogSection?.widgets[1]).toEqual({
             buttonList: {
               buttons: [
                 {
@@ -1453,10 +1453,10 @@ describe('WorkspaceAddonAdapter', () => {
           });
           expect(
             'parameters' in
-              (driveLogSection?.widgets[2].buttonList?.buttons[0].onClick ?? {})
+              (driveLogSection?.widgets[1].buttonList?.buttons[0].onClick ?? {})
           ).toBe(false);
 
-          expect(gmailLogSection?.widgets[2]).toEqual({
+          expect(gmailLogSection?.widgets[1]).toEqual({
             buttonList: {
               buttons: [
                 {
@@ -2191,7 +2191,7 @@ describe('WorkspaceAddonAdapter', () => {
         expect('uncollapsibleWidgetsCount' in (logMax1 ?? {})).toBe(false);
         expect(countTotalWidgets(ambiguousMax1)).toBe(100);
 
-        // missing (logFixedWidgets = 3) at fixedWidgetCount = 99 (93 fields) -> maxWidgets = 1, Process Document stays disabled
+        // missing (2 widgets) at fixedWidgetCount = 99 (93 fields) -> maxWidgets = 1, Process Document stays disabled
         const missingMax1 = await driveAdapter.composeView({
           ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, {
             'document-log': {
@@ -2207,11 +2207,37 @@ describe('WorkspaceAddonAdapter', () => {
 
         const missingLog = missingMax1.sections.find((s) => s.header === 'Document Log');
         expect(missingLog?.widgets).toHaveLength(1);
-        expect(missingLog?.widgets[0].textParagraph?.text).toContain('No Document Log found');
+        expect(missingLog?.widgets[0].decoratedText?.topLabel).toBe(
+          'No Document Log in Harborview Hotel'
+        );
+        expect(missingLog?.widgets[0].decoratedText?.text).toBe(
+          'Create <b>Harborview Hotel Document Log</b> in <b>Harborview Hotel</b>'
+        );
         expect('collapsible' in (missingLog ?? {})).toBe(false);
         expect('uncollapsibleWidgetsCount' in (missingLog ?? {})).toBe(false);
         expect(countTotalWidgets(missingMax1)).toBe(100);
         expect(getProcessButton(missingMax1)?.disabled).toBe(true);
+
+        // missing (2 widgets) at fixedWidgetCount = 98 (92 fields) -> maxWidgets = 2, Copy Log retained & Process Document stays disabled
+        const missingMax2 = await driveAdapter.composeView({
+          ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, {
+            'document-log': {
+              status: 'missing',
+              spaceName: 'Harborview Hotel',
+              targetFolderPath: '1 Admin',
+              targetFileName: 'Harborview Hotel Document Log',
+            },
+          }),
+          documentSchema: { fields: buildStringFields(92) },
+        });
+        assertValidUiView(missingMax2);
+
+        const missingLog2 = missingMax2.sections.find((s) => s.header === 'Document Log');
+        expect(missingLog2?.widgets).toHaveLength(2);
+        expect(missingLog2?.widgets[0].decoratedText).toBeDefined();
+        expect(missingLog2?.widgets[1].buttonList?.buttons[0].text).toBe('Copy Log');
+        expect(countTotalWidgets(missingMax2)).toBe(100);
+        expect(getProcessButton(missingMax2)?.disabled).toBe(true);
       });
 
       it('enforces ambiguous + partial_hydration overflow with uncollapsibleWidgetsCount: 3 at exact 100-widget cap and ample budget', async () => {

@@ -60,6 +60,37 @@ import {
   type UiProcessSpaceItem,
 } from '../domain';
 
+function resolveValidatedSpaceDto(
+  params: {
+    formData?: Record<string, unknown> | undefined;
+    activeSpaceType: string;
+    config?: ProcessUiStateConfig | undefined;
+  },
+  spaces: UiProcessSpaceItem[],
+  missingSpaceError: string
+): { ok: true; space: UiProcessDocumentSpaceDto } | { ok: false; error: string } {
+  const spaceResolution = resolveSpace(params, spaces);
+  if (spaceResolution.collisionError) {
+    return { ok: false, error: spaceResolution.collisionError };
+  }
+  if (spaceResolution.notFoundError) {
+    return { ok: false, error: spaceResolution.notFoundError };
+  }
+  if (!spaceResolution.matchedSpace) {
+    return { ok: false, error: missingSpaceError };
+  }
+  const matchedSpace = spaceResolution.matchedSpace;
+  return {
+    ok: true,
+    space: {
+      id: matchedSpace.id,
+      name: matchedSpace.name,
+      typeId: matchedSpace.typeId ?? params.activeSpaceType,
+      abstractStorageId: matchedSpace.abstractStorageId ?? matchedSpace.id,
+    },
+  };
+}
+
 interface GmailDriveSelection {
   effectiveFileSource: string | undefined;
   currentDriveUrl: string;
@@ -778,36 +809,19 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         ]);
       }
 
-      const spaceResolution = resolveSpace(
+      const spaceResult = resolveValidatedSpaceDto(
         {
           formData: normalizedContext.formData,
           activeSpaceType: currentSpaceType,
           config,
         },
-        spaces
+        spaces,
+        'Please select a Document Space before copying a Document Log.'
       );
-
-      if (spaceResolution.collisionError) {
-        return createErrorRenderResult([spaceResolution.collisionError]);
+      if (!spaceResult.ok) {
+        return createErrorRenderResult([spaceResult.error]);
       }
-
-      if (spaceResolution.notFoundError) {
-        return createErrorRenderResult([spaceResolution.notFoundError]);
-      }
-
-      if (!spaceResolution.matchedSpace) {
-        return createErrorRenderResult([
-          'Please select a Document Space before copying a Document Log.',
-        ]);
-      }
-
-      const matchedSpace = spaceResolution.matchedSpace;
-      const space: UiProcessDocumentSpaceDto = {
-        id: matchedSpace.id,
-        name: matchedSpace.name,
-        typeId: matchedSpace.typeId ?? currentSpaceType,
-        abstractStorageId: matchedSpace.abstractStorageId ?? matchedSpace.id,
-      };
+      const space = spaceResult.space;
 
       try {
         const copyResult = await this.options.documentLogPort.copyLog(space);
@@ -1012,34 +1026,19 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         }
       }
 
-      const spaceResolution = resolveSpace(
+      const spaceResult = resolveValidatedSpaceDto(
         {
           formData: normalizedContext.formData,
           activeSpaceType: currentSpaceType,
           config,
         },
-        spaces
+        spaces,
+        'Please select a Document Space.'
       );
-
-      if (spaceResolution.collisionError) {
-        return createErrorRenderResult([spaceResolution.collisionError]);
+      if (!spaceResult.ok) {
+        return createErrorRenderResult([spaceResult.error]);
       }
-
-      if (spaceResolution.notFoundError) {
-        return createErrorRenderResult([spaceResolution.notFoundError]);
-      }
-
-      if (!spaceResolution.matchedSpace) {
-        return createErrorRenderResult(['Please select a Document Space.']);
-      }
-
-      const matchedSpace = spaceResolution.matchedSpace;
-      const space: UiProcessDocumentSpaceDto = {
-        id: matchedSpace.id,
-        name: matchedSpace.name,
-        typeId: matchedSpace.typeId ?? currentSpaceType,
-        abstractStorageId: matchedSpace.abstractStorageId ?? matchedSpace.id,
-      };
+      const space = spaceResult.space;
 
       let selectedLogId: string | undefined;
       if (this.options.documentLogPort && resolvedDocumentTypeKey) {

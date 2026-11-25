@@ -53,7 +53,7 @@ describe('Document Log Block', () => {
     expect(paragraph?.text.trim().length).toBeGreaterThan(0);
   });
 
-  it('renders HTML-escaped textParagraph/decoratedText and unescaped plain labels for status: missing', () => {
+  it('renders HTML-escaped decoratedText and unescaped plain labels for 2-widget status: missing', () => {
     const trickySpace = 'A & B "Tower" <1> = \'Main\'';
     const trickyFolder = '1 Admin & Ops <Root> = \'Log\'';
     const trickyFile = 'Log "2026" & <Draft> = \'v1\'';
@@ -70,24 +70,34 @@ describe('Document Log Block', () => {
     expect(section).toBeDefined();
     expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
     expect(section?.header).toBe('Document Log');
+    expect(section?.widgets).toHaveLength(2);
+    expect(section?.widgets.some((w) => w.textParagraph !== undefined)).toBe(false);
 
-    const paragraph = section?.widgets.find((w) => w.textParagraph !== undefined)?.textParagraph;
-    expect(paragraph).toBeDefined();
-    expect(paragraph?.text).toContain(escapeCardHtml(trickySpace));
-    expect(paragraph?.text).not.toContain(trickySpace);
-
-    const decorated = section?.widgets.find((w) => w.decoratedText !== undefined)?.decoratedText;
+    const decorated = section?.widgets[0].decoratedText;
     expect(decorated).toBeDefined();
-    expect(decorated?.text).toContain(escapeCardHtml(trickyFile));
-    expect(decorated?.text).not.toContain(trickyFile);
-
-    expect(decorated?.topLabel).toContain(trickySpace);
+    expect(decorated?.topLabel).toBe(`No Document Log in ${trickySpace}`);
     expect(decorated?.topLabel).not.toContain('&amp;');
     expect(decorated?.topLabel).not.toContain('&#x3D;');
 
-    expect(decorated?.bottomLabel).toContain(trickyFolder);
+    expect(decorated?.text).toBe(
+      `Create <b>${escapeCardHtml(trickyFile)}</b> in <b>${escapeCardHtml(trickySpace)}</b>`
+    );
+    expect(decorated?.text).not.toContain(trickyFile);
+    expect(decorated?.text).not.toContain(trickySpace);
+
+    expect(decorated?.bottomLabel).toBe(`Folder: ${trickyFolder}`);
     expect(decorated?.bottomLabel).not.toContain('&amp;');
     expect(decorated?.bottomLabel).not.toContain('&#x3D;');
+
+    const fallbackSection = buildDocumentLogSection({ status: 'missing' });
+    expect(fallbackSection).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, fallbackSection)).toBe(true);
+    expect(fallbackSection?.widgets).toHaveLength(2);
+    const fallbackDecorated = fallbackSection?.widgets[0].decoratedText;
+    expect(fallbackDecorated).toBeDefined();
+    expect(fallbackDecorated?.topLabel).toBe('No Document Log found');
+    expect(fallbackDecorated?.text).toBe('Create <b>Document Log</b>');
+    expect('bottomLabel' in fallbackDecorated!).toBe(false);
   });
 
   it('renders primary-blue Copy Log buttonList for status: missing and forwards actionParameters only when non-empty', () => {
@@ -101,10 +111,9 @@ describe('Document Log Block', () => {
     const defaultSection = buildDocumentLogSection(context);
     expect(defaultSection).toBeDefined();
     expect(Value.Check(UiViewSectionSchema, defaultSection)).toBe(true);
-    expect(defaultSection?.widgets).toHaveLength(3);
-    expect(defaultSection?.widgets[0].textParagraph).toBeDefined();
-    expect(defaultSection?.widgets[1].decoratedText).toBeDefined();
-    expect(defaultSection?.widgets[2]).toEqual({
+    expect(defaultSection?.widgets).toHaveLength(2);
+    expect(defaultSection?.widgets[0].decoratedText).toBeDefined();
+    expect(defaultSection?.widgets[1]).toEqual({
       buttonList: {
         buttons: [
           {
@@ -117,14 +126,16 @@ describe('Document Log Block', () => {
         ],
       },
     });
-    expect('parameters' in (defaultSection?.widgets[2].buttonList?.buttons[0].onClick ?? {})).toBe(
+    expect('parameters' in (defaultSection?.widgets[1].buttonList?.buttons[0].onClick ?? {})).toBe(
       false
     );
 
     const emptyParamsSection = buildDocumentLogSection(context, { actionParameters: {} });
     expect(emptyParamsSection).toBeDefined();
     expect(Value.Check(UiViewSectionSchema, emptyParamsSection)).toBe(true);
-    expect(emptyParamsSection?.widgets[2]).toEqual({
+    expect(emptyParamsSection?.widgets).toHaveLength(2);
+    expect(emptyParamsSection?.widgets[0].decoratedText).toBeDefined();
+    expect(emptyParamsSection?.widgets[1]).toEqual({
       buttonList: {
         buttons: [
           {
@@ -138,7 +149,7 @@ describe('Document Log Block', () => {
       },
     });
     expect(
-      'parameters' in (emptyParamsSection?.widgets[2].buttonList?.buttons[0].onClick ?? {})
+      'parameters' in (emptyParamsSection?.widgets[1].buttonList?.buttons[0].onClick ?? {})
     ).toBe(false);
 
     const actionParameters = {
@@ -148,7 +159,9 @@ describe('Document Log Block', () => {
     const withParamsSection = buildDocumentLogSection(context, { actionParameters });
     expect(withParamsSection).toBeDefined();
     expect(Value.Check(UiViewSectionSchema, withParamsSection)).toBe(true);
-    expect(withParamsSection?.widgets[2]).toEqual({
+    expect(withParamsSection?.widgets).toHaveLength(2);
+    expect(withParamsSection?.widgets[0].decoratedText).toBeDefined();
+    expect(withParamsSection?.widgets[1]).toEqual({
       buttonList: {
         buttons: [
           {
@@ -181,6 +194,15 @@ describe('Document Log Block', () => {
     expect(paragraph).toBeDefined();
     expect(paragraph?.text).toContain(escapeCardHtml(rawError));
     expect(paragraph?.text).not.toContain('<500>');
+
+    const fallbackSection = buildDocumentLogSection({ status: 'discovery_error' });
+    expect(fallbackSection).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, fallbackSection)).toBe(true);
+    const fallbackParagraph = fallbackSection?.widgets.find(
+      (w) => w.textParagraph !== undefined
+    )?.textParagraph;
+    expect(fallbackParagraph?.text).toContain('Unable to check for a Document Log right now.');
+    expect(fallbackParagraph?.text).not.toContain('Google Drive');
   });
 
   it('renders single active-log decoratedText bar with Open Log link for status: resolved', () => {
@@ -212,8 +234,8 @@ describe('Document Log Block', () => {
     expect(decorated?.text).not.toContain(activeName);
     expect(decorated?.topLabel).toContain(spaceName);
     expect(decorated?.topLabel).not.toContain('&amp;');
-    expect(decorated?.bottomLabel).toContain(folderPath);
-    expect(decorated?.bottomLabel).not.toContain('&amp;');
+    expect(decorated?.bottomLabel).toBeUndefined();
+    expect('bottomLabel' in decorated!).toBe(false);
     expect(decorated?.button).toEqual({
       text: 'Open Log',
       onClick: {
@@ -223,6 +245,17 @@ describe('Document Log Block', () => {
         },
       },
     });
+
+    const emptyEntriesSection = buildDocumentLogSection({
+      ...context,
+      readStatus: 'ready',
+      idGroup: '071200-001',
+      entries: [],
+    });
+    expect(emptyEntriesSection).toBeDefined();
+    const emptyEntriesDecorated = emptyEntriesSection?.widgets[0].decoratedText;
+    expect(emptyEntriesDecorated?.bottomLabel).toBe('No prior entries for 071200-001');
+    expect(emptyEntriesDecorated?.bottomLabel).not.toContain('Folder:');
   });
 
   it('renders SelectDocumentLog DROPDOWN followed by only 1 active-log decoratedText bar with Open Log for status: ambiguous and honors maxWidgets clamp', () => {
@@ -962,6 +995,8 @@ describe('Document Log Block', () => {
     expect(missingClamped2).toBeDefined();
     expect(Value.Check(UiViewSectionSchema, missingClamped2)).toBe(true);
     expect(missingClamped2?.widgets).toHaveLength(2);
+    expect(missingClamped2?.widgets[0].decoratedText).toBeDefined();
+    expect(missingClamped2?.widgets[1].buttonList?.buttons[0].text).toBe('Copy Log');
     expect('collapsible' in missingClamped2!).toBe(false);
     expect('uncollapsibleWidgetsCount' in missingClamped2!).toBe(false);
 
@@ -969,6 +1004,9 @@ describe('Document Log Block', () => {
     expect(missingClamped1).toBeDefined();
     expect(Value.Check(UiViewSectionSchema, missingClamped1)).toBe(true);
     expect(missingClamped1?.widgets).toHaveLength(1);
+    expect(missingClamped1?.widgets[0].decoratedText?.text).toBe(
+      'Create <b>Harborview Hotel Document Log</b> in <b>Harborview Hotel</b>'
+    );
     expect('collapsible' in missingClamped1!).toBe(false);
     expect('uncollapsibleWidgetsCount' in missingClamped1!).toBe(false);
 

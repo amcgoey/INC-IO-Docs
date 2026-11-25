@@ -23,36 +23,25 @@ function buildOpenLinkButton(text: string, url: string) {
   };
 }
 
-function buildActiveLogBottomLabel(
-  context: DocumentLogPanelContext,
-  plainFolder: string | undefined,
-  includeFolder: boolean
-): string | undefined {
-  const folderPrefix = includeFolder && plainFolder ? `Folder: ${plainFolder}` : undefined;
+function buildActiveLogBottomLabel(context: DocumentLogPanelContext): string | undefined {
   if (context.readStatus === undefined) {
-    return folderPrefix;
+    return undefined;
   }
 
   const plainIdGroup = context.idGroup?.trim() || undefined;
-  let statusSummary: string;
   switch (context.readStatus) {
     case 'idle_incomplete_id':
-      statusSummary = 'Enter ID fields for history';
-      break;
+      return 'Enter ID fields for history';
     case 'read_error':
-      statusSummary = 'History unavailable';
-      break;
+      return 'History unavailable';
     case 'ready':
     case 'partial_hydration': {
       const count = context.entries?.length ?? 0;
       const countText =
         count === 0 ? 'No prior entries' : `${count} ${count === 1 ? 'entry' : 'entries'}`;
-      statusSummary = plainIdGroup ? `${countText} for ${plainIdGroup}` : countText;
-      break;
+      return plainIdGroup ? `${countText} for ${plainIdGroup}` : countText;
     }
   }
-
-  return folderPrefix ? `${folderPrefix} · ${statusSummary}` : statusSummary;
 }
 
 function buildHistoryEntryWidget(entry: DocumentLogPanelEntry): UiViewWidget {
@@ -233,7 +222,7 @@ export function buildDocumentLogSection(
       const detail = context.discoveryErrorMessage?.trim();
       const escapedMsg = detail
         ? escapeCardHtml(detail)
-        : 'Unable to check Google Drive for a Document Log right now.';
+        : 'Unable to check for a Document Log right now.';
       widgets.push({
         textParagraph: {
           text: `<font color="#b06000"><b>Document Log lookup unavailable:</b></font> ${escapedMsg}`,
@@ -246,16 +235,11 @@ export function buildDocumentLogSection(
       const targetFile = context.targetFileName?.trim() || 'Document Log';
       const escapedFile = escapeCardHtml(targetFile);
       widgets.push({
-        textParagraph: {
-          text: escapedSpace
-            ? `<font color="#b06000"><b>No Document Log found</b></font> in <b>${escapedSpace}</b>.`
-            : '<font color="#b06000"><b>No Document Log found.</b></font>',
-        },
-      });
-      widgets.push({
         decoratedText: {
-          topLabel: plainSpace ? `Expected in ${plainSpace}` : 'Expected Document Log',
-          text: `<b>${escapedFile}</b>`,
+          topLabel: plainSpace ? `No Document Log in ${plainSpace}` : 'No Document Log found',
+          text: escapedSpace
+            ? `Create <b>${escapedFile}</b> in <b>${escapedSpace}</b>`
+            : `Create <b>${escapedFile}</b>`,
           wrapText: true,
           ...(plainFolder !== undefined ? { bottomLabel: `Folder: ${plainFolder}` } : {}),
         },
@@ -282,7 +266,7 @@ export function buildDocumentLogSection(
 
     case 'resolved': {
       const active = context.activeCandidate;
-      const bottomLabel = buildActiveLogBottomLabel(context, plainFolder, true);
+      const bottomLabel = buildActiveLogBottomLabel(context);
       widgets.push({
         decoratedText: {
           topLabel: plainSpace ? `Active Document Log · ${plainSpace}` : 'Active Document Log',
@@ -324,7 +308,7 @@ export function buildDocumentLogSection(
       }
       const active = context.activeCandidate;
       if (active) {
-        const bottomLabel = buildActiveLogBottomLabel(context, plainFolder, false);
+        const bottomLabel = buildActiveLogBottomLabel(context);
         widgets.push({
           decoratedText: {
             topLabel: plainSpace ? `Active Document Log · ${plainSpace}` : 'Active Document Log',

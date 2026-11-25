@@ -908,6 +908,8 @@ describe('workspace-addon.wiring (S3)', () => {
     const updateCard = response.action.navigations?.[0]?.updateCard;
     const logSection = updateCard?.sections.find((s) => s.header === 'Document Log');
     expect(logSection).toBeDefined();
-    expect(logSection?.widgets[1].decoratedText?.text).toContain('Harborview Document Log');
+    expect(logSection?.widgets).toHaveLength(2);
+    expect(logSection?.widgets[0].decoratedText?.text).toContain('Harborview Document Log');
+    expect(logSection?.widgets[1].buttonList?.buttons[0].text).toBe('Copy Log');
   });
 });

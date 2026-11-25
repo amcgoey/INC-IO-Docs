@@ -711,7 +711,32 @@ describe('Ticket #353 CQRS Integration: Google Workspace 100-Widget Card Cap & O
 
     const logSec = findSection(card, 'Document Log')!;
     expect(logSec.widgets).toHaveLength(1);
-    expect(logSec.widgets[0].textParagraph?.text).toContain('No Document Log found');
+    expect(logSec.widgets[0].decoratedText?.topLabel).toBe('No Document Log in A & B Tower');
+    expect(logSec.widgets[0].decoratedText?.text).toBe(
+      'Create <b>A &amp; B Tower Document Log</b> in <b>A &amp; B Tower</b>'
+    );
+    expect(logSec.collapsible).toBeUndefined();
+    expect(logSec.uncollapsibleWidgetsCount).toBeUndefined();
+    expect(findProcessButton(card)?.disabled).toBe(true);
+    expect(nock.isDone()).toBe(true);
+  });
+
+  it('retains Copy Log on missing status at maxWidgets = 2 (extraFieldCount = 83) while keeping Process Document disabled', async () => {
+    const app83 = await createAppWithCustomFieldCount(83);
+
+    mockMissingLogDriveDiscovery();
+
+    const { card, totalCardWidgets } = await injectOnFormChange(app83, 'DRIVE');
+    assertFixedSectionsIntact(card, 83);
+    assertLogSectionPositionedBetweenFileSelectionAndDocData(card);
+    expect(totalCardWidgets).toBe(100);
+
+    const logSec = findSection(card, 'Document Log')!;
+    expect(logSec.widgets).toHaveLength(2);
+    expect(logSec.widgets[0].decoratedText?.text).toContain(
+      'Create <b>A &amp; B Tower Document Log</b>'
+    );
+    expect(logSec.widgets[1].buttonList?.buttons[0].text).toBe('Copy Log');
     expect(logSec.collapsible).toBeUndefined();
     expect(logSec.uncollapsibleWidgetsCount).toBeUndefined();
     expect(findProcessButton(card)?.disabled).toBe(true);
