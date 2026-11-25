@@ -25,6 +25,7 @@ import {
   createLookupOptionsService,
 } from './lookup-options.wiring';
 import type { LookupOptionsPort } from '../features/lookup-options';
+import type { DocumentLogPort } from '../features/document-log';
 
 export type InjectedDocumentService =
   | DocumentService
@@ -95,6 +96,8 @@ export interface CreateDocumentServiceFactoryOptions {
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
   getDynamicValidator?: ((requestContext: WorkspaceExecutionContext) => DocumentDynamicValidationPort) | undefined;
   validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
+  documentLogService?: DocumentLogPort | undefined;
+  ensureDocumentLogInitialized?: (() => Promise<void>) | undefined;
   additionalActivityHandlers?: readonly ActivityHandler[] | undefined;
   createAdditionalActivityHandlers?:
     | ((
@@ -200,6 +203,8 @@ export function createDocumentServiceFactory(
               documentSchemaRegistry: options.documentSchemaRegistry,
               driveClient,
               configProvider: options.configProvider,
+              documentLogService: options.documentLogService,
+              ensureDocumentLogInitialized: options.ensureDocumentLogInitialized,
             })
           ));
 
@@ -238,9 +243,15 @@ export interface WireDocumentServicesOptions {
   primaryTargetId?: string | undefined;
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
   validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
+  documentLogService?: DocumentLogPort | undefined;
+  getDocumentLogService?: ((context: WorkspaceExecutionContext) => DocumentLogPort) | undefined;
+  ensureDocumentLogInitialized?: (() => Promise<void>) | undefined;
   additionalActivityHandlers?: readonly ActivityHandler[] | undefined;
   createAdditionalActivityHandlers?:
-    | ((lookupOptions: LookupOptionsPort) => readonly ActivityHandler[] | Promise<readonly ActivityHandler[]>)
+    | ((
+        lookupOptions: LookupOptionsPort,
+        requestContext: WorkspaceExecutionContext
+      ) => readonly ActivityHandler[] | Promise<readonly ActivityHandler[]>)
     | undefined;
 }
 
@@ -258,16 +269,24 @@ export function wireDocumentServicesAndRoutes(
       formatValidationError(DEFAULT_MESSAGE_CATALOG, status, targetPath) ??
       'Option not found.');
 
-  const buildDefaultLookupOptions = (): LookupOptionsPort =>
+  const buildDefaultLookupOptions = (
+    requestContext?: WorkspaceExecutionContext
+  ): LookupOptionsPort =>
     createLookupOptionsService({
       manifestProvider: options.manifestProvider,
       documentSchemaRegistry: options.documentSchemaRegistry,
       driveClient: options.driveClient,
       configProvider: options.configProvider,
+      documentLogService:
+        requestContext && options.getDocumentLogService
+          ? options.getDocumentLogService(requestContext)
+          : options.documentLogService,
+      ensureDocumentLogInitialized: options.ensureDocumentLogInitialized,
     });
 
   const buildActivityEngine = async (
-    lookupOptions?: LookupOptionsPort
+    lookupOptions?: LookupOptionsPort,
+    requestContext?: WorkspaceExecutionContext
   ): Promise<ActivityDispatcherPort> => {
     if (options.activityEngine) {
       return options.activityEngine;
@@ -282,7 +301,7 @@ export function wireDocumentServicesAndRoutes(
 
     const dynamicHandlers =
       lookupOptions && options.createAdditionalActivityHandlers
-        ? await options.createAdditionalActivityHandlers(lookupOptions)
+        ? await options.createAdditionalActivityHandlers(lookupOptions, requestContext ?? {})
         : (options.additionalActivityHandlers ?? []);
 
     const handlers: ActivityHandler[] = [driveActivityHandler, ...dynamicHandlers];
@@ -327,8 +346,9 @@ export function wireDocumentServicesAndRoutes(
   } else {
     registerDocumentFeatureRoutes(options.server, {
       createService: async () => {
-        const reqLookupOptions = buildDefaultLookupOptions();
-        const activityEngine = await buildActivityEngine(reqLookupOptions);
+        const reqContext: WorkspaceExecutionContext = {};
+        const reqLookupOptions = buildDefaultLookupOptions(reqContext);
+        const activityEngine = await buildActivityEngine(reqLookupOptions, reqContext);
         const reqService = new DocumentService(
           activityEngine,
           options.documentSchemaRegistry,

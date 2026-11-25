@@ -91,6 +91,28 @@ export interface InsertPositiveGroupedRowRequest {
 export const ReadNamedRangeRequestSchema = NamedRangeTargetSchema;
 export type ReadNamedRangeRequest = Static<typeof ReadNamedRangeRequestSchema>;
 
+export const BatchNamedRangeTargetSchema = Type.Object({
+  key: Type.String({ minLength: 1 }),
+  sheetName: Type.String({ minLength: 1 }),
+  rangeName: Type.String({ minLength: 1 }),
+});
+export type BatchNamedRangeTarget = Static<typeof BatchNamedRangeTargetSchema>;
+
+export interface ReadNamedRangesBatchRequest {
+  spreadsheetId: string;
+  targets: readonly BatchNamedRangeTarget[];
+}
+
+export type ReadNamedRangeBatchEntry =
+  | {
+      status: 'found';
+      values: CellValue[][];
+    }
+  | {
+      status: 'missing_range';
+      errorMessage: string;
+    };
+
 export const WriteNamedRangeRequestSchema = Type.Intersect([
   NamedRangeTargetSchema,
   Type.Object({
@@ -126,5 +148,8 @@ export interface SheetsClient {
   readTable(request: ReadPositiveTableRequest): Promise<PositiveTableReadResult>;
   insertIntoGroupedList(request: InsertPositiveGroupedRowRequest): Promise<InsertGroupedRowResult>;
   readNamedRange(request: ReadNamedRangeRequest): Promise<CellValue[][]>;
+  readNamedRangesBatch?(
+    request: ReadNamedRangesBatchRequest
+  ): Promise<Record<string, ReadNamedRangeBatchEntry>>;
   writeNamedRange(request: WriteNamedRangeRequest): Promise<void>;
 }

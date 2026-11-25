@@ -147,6 +147,27 @@ function buildRowFromRecord(headers: string[], cells: Record<string, string>): s
   return headers.map((h) => cells[h] ?? '');
 }
 
+const CONFIG_ARCH_STATUS_VALUES = [
+  ['Status'],
+  ['Open'],
+  ['Closed'],
+  ['Waiting'],
+  ['Manager'],
+  ['---'],
+];
+
+const CONFIG_ARCH_ACTION_VALUES = [
+  ['Action', 'Name', 'Suffix', 'Order'],
+  ['REC', 'Received', '', '1'],
+  ['REF', 'Referred', '_REF', '2'],
+  ['NR', 'Not Reviewed', '_NR', '3'],
+  ['REJ', 'Rejected', '_REJ', '4'],
+  ['RR', 'Revise & Resubmit', '_RR', '5'],
+  ['NOC', 'No Objections As Corrected', '_NOC', '6'],
+  ['NET', 'No Exceptions Taken', '_NET', '7'],
+  ['---', '', '', ''],
+];
+
 function mockPositiveTableRead(options: {
   spreadsheetId: string;
   sheetName: 'Submittal Arch' | 'Submittal FF&E';
@@ -155,7 +176,8 @@ function mockPositiveTableRead(options: {
   rows: Array<{ cells: string[]; linkFormula: string }>;
   formulaRow?: string[];
 }) {
-  const sheetId = options.sheetName === 'Submittal Arch' ? 101 : 102;
+  const isArch = options.sheetName === 'Submittal Arch';
+  const sheetId = isArch ? 101 : 102;
   const formulaRow = options.formulaRow ?? ['Formula Row'];
   const totalRows = 4 + Math.max(1, options.rows.length);
   const formattedValues: string[][] = [
@@ -166,26 +188,90 @@ function mockPositiveTableRead(options: {
     ['<--->'],
   ];
 
+  const sheets = [
+    { properties: { sheetId, title: options.sheetName } },
+    ...(isArch ? [{ properties: { sheetId: 103, title: '_Config Submittal Arch' } }] : []),
+  ];
+  const namedRanges = [
+    {
+      namedRangeId: `nr-${sheetId}`,
+      name: options.rangeName,
+      range: {
+        sheetId,
+        startRowIndex: 2,
+        endRowIndex: 2 + totalRows + 2,
+        startColumnIndex: 0,
+        endColumnIndex: options.headers.length,
+      },
+    },
+    ...(isArch
+      ? [
+          {
+            namedRangeId: 'nr-arch-statuses',
+            name: 'Options_Submittal_Arch_Statuses',
+            range: {
+              sheetId: 103,
+              startRowIndex: 0,
+              endRowIndex: 6,
+              startColumnIndex: 0,
+              endColumnIndex: 1,
+            },
+          },
+          {
+            namedRangeId: 'nr-arch-actions',
+            name: 'Options_Submittal_Arch_Actions',
+            range: {
+              sheetId: 103,
+              startRowIndex: 0,
+              endRowIndex: 9,
+              startColumnIndex: 2,
+              endColumnIndex: 6,
+            },
+          },
+        ]
+      : []),
+  ];
+
   nock('https://sheets.googleapis.com')
     .get(`/v4/spreadsheets/${options.spreadsheetId}`)
     .query(true)
+    .times(isArch ? 2 : 1)
     .reply(200, {
       spreadsheetId: options.spreadsheetId,
-      sheets: [{ properties: { sheetId, title: options.sheetName } }],
-      namedRanges: [
-        {
-          namedRangeId: `nr-${sheetId}`,
-          name: options.rangeName,
-          range: {
-            sheetId,
-            startRowIndex: 2,
-            endRowIndex: 2 + totalRows + 2,
-            startColumnIndex: 0,
-            endColumnIndex: options.headers.length,
-          },
-        },
-      ],
+      sheets,
+      namedRanges,
     });
+
+  if (isArch) {
+    nock('https://sheets.googleapis.com')
+      .get(`/v4/spreadsheets/${options.spreadsheetId}/values:batchGet`)
+      .query((q) => {
+        if (q.valueRenderOption !== 'FORMATTED_VALUE') {
+          return false;
+        }
+        const ranges = Array.isArray(q.ranges)
+          ? q.ranges
+          : typeof q.ranges === 'string'
+            ? q.ranges.split(',')
+            : [];
+        return ranges.length > 0 && ranges.every((r) => String(r).includes('_Config Submittal Arch'));
+      })
+      .reply(200, (uri) => {
+        const url = new URL(uri, 'https://sheets.googleapis.com');
+        const ranges = url.searchParams.getAll('ranges').flatMap((r) => r.split(','));
+        return {
+          valueRanges: ranges.map((range) => {
+            if (range.includes('A1:A6')) {
+              return { range, values: CONFIG_ARCH_STATUS_VALUES };
+            }
+            if (range.includes('C1:F9')) {
+              return { range, values: CONFIG_ARCH_ACTION_VALUES };
+            }
+            return { range, values: [] };
+          }),
+        };
+      });
+  }
 
   nock('https://sheets.googleapis.com')
     .get(new RegExp(`/v4/spreadsheets/${options.spreadsheetId}/values/.*`))
@@ -836,7 +922,7 @@ describe('Ticket #352 CQRS Integration: Collapsible idGroup History, Declarative
     expect(resolvedLogSec.collapsible).toBe(true);
     expect(resolvedLogSec.uncollapsibleWidgetsCount).toBe(2); // active bar + warning banner
     expect(resolvedLogSec.widgets).toHaveLength(4); // active bar + warning + 2 matched partial rows
-    expect(resolvedLogSec.widgets[1].textParagraph?.text).toContain('Partial read (2 warnings)');
+    expect(resolvedLogSec.widgets[1].textParagraph?.text).toContain('Partial read (1 warning)');
     expect(resolvedLogSec.widgets[1].textParagraph?.text).not.toContain('7120'); // unrelated row warning excluded!
 
     // Newest matched row: missingRequiredDate (no Open button)
@@ -934,6 +1020,7 @@ describe('Ticket #352 CQRS Integration: Collapsible idGroup History, Declarative
     nock('https://sheets.googleapis.com')
       .get(`/v4/spreadsheets/${LOG_PRIMARY_ID}`)
       .query(true)
+      .times(2)
       .reply(200, {
         spreadsheetId: LOG_PRIMARY_ID,
         sheets: [{ properties: { sheetId: 101, title: 'Submittal Arch' } }],
@@ -980,7 +1067,7 @@ describe('Ticket #352 CQRS Integration: Collapsible idGroup History, Declarative
     nock('https://sheets.googleapis.com')
       .get(`/v4/spreadsheets/${LOG_PRIMARY_ID}`)
       .query(true)
-      .times(4) // initial + gaxios retry attempts on 503
+      .times(8) // initial + gaxios retry attempts on 503 across readOptionTables + readLog
       .optionally()
       .reply(503, { error: { code: 503, message: 'Sheets temporarily unavailable <503>' } });
 

@@ -201,8 +201,16 @@ export type DynamicValidationMessageFormatter = (
   targetPath?: string
 ) => string;
 
+export const DynamicValidationSpaceSchema = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  typeId: Type.String(),
+  abstractStorageId: Type.String(),
+});
+
 export const DynamicValidationContextSchema = Type.Object({
   spaceId: Type.Optional(Type.String()),
+  space: Type.Optional(DynamicValidationSpaceSchema),
   documentTypeKey: Type.Optional(Type.String()),
   selectedLogId: Type.Optional(Type.String()),
   formData: Type.Optional(Type.Record(Type.String(), Type.Unknown())),

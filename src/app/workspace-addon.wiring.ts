@@ -90,6 +90,7 @@ export interface WorkspaceAddonWiringOptions {
   sheetsClient?: SheetsClient | undefined;
   documentLogService?: DocumentLogPort | undefined;
   documentLogWiring?: DocumentLogWiring | undefined;
+  lookupTimeoutMs?: number | undefined;
   createAdditionalActivityHandlers?:
     | ((
         context: WorkspaceExecutionContext,
@@ -215,6 +216,18 @@ export function wireWorkspaceAddonRoutes(
       documentSchemaRegistry: options.documentSchemaRegistry,
       driveClient: options.driveClient,
       configProvider: appConfigProvider,
+      ...(options.lookupTimeoutMs !== undefined ? { timeoutMs: options.lookupTimeoutMs } : {}),
+      ...(resolvedDocumentLogWiring
+        ? {
+            getDocumentLogService: (ctx) => resolvedDocumentLogWiring.getPerRequestService(ctx),
+            ensureDocumentLogInitialized: ensureLogRegistryInitialized,
+          }
+        : {}),
+      ...(createDocumentSpaceService
+        ? { getDocumentSpaceService: (ctx) => createDocumentSpaceService!(ctx) }
+        : options.documentSpaceService
+          ? { getDocumentSpaceService: () => options.documentSpaceService! }
+          : {}),
     });
 
     let createAdditionalActivityHandlers = options.createAdditionalActivityHandlers;
@@ -237,12 +250,12 @@ export function wireWorkspaceAddonRoutes(
         requestContext?: WorkspaceExecutionContext
       ) => {
         await ensureLogRegistryInitialized();
-        const sharedLookup = lookupOptionsWiring.getPerRequestLookupOptions(
-          requestContext ?? context
-        );
+        const effectiveCtx = requestContext ?? context;
+        const sharedLookup = lookupOptionsWiring.getPerRequestLookupOptions(effectiveCtx);
         return [
-          resolvedDocumentLogWiring.createPerRequestActivityHandler(context, {
-            onWriteLogSuccess: (spaceId) => sharedLookup.invalidate({ spaceId }),
+          resolvedDocumentLogWiring.createPerRequestActivityHandler(effectiveCtx, {
+            ...(context.selectedLogId !== undefined ? { selectedLogId: context.selectedLogId } : {}),
+            onWriteLogSuccess: () => sharedLookup.invalidate(),
           }),
         ];
       };

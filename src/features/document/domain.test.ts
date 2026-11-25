@@ -2683,7 +2683,7 @@ describe('Document domain', () => {
       }
     });
 
-    it('sanitizes disallowed characters, control chars, and trailing dots/whitespace in string fields and synthesized lookup tuples before evaluating calculatedFields and identity', async () => {
+    it('preserves raw punctuation in Document.data and identity while scoping sanitizeFilePath strictly to file path assembly in workflow activities', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -2742,6 +2742,31 @@ describe('Document domain', () => {
               ],
             },
           },
+          storageContextConfig: {
+            basePath: '1 Admin/Communication',
+          },
+          documentUiSchema: {
+            events: {
+              onSubmit: { catchAllWorkflow: 'FileComm' },
+            },
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'FileComm',
+                activitySequence: [
+                  {
+                    type: 'MOVE_FILE',
+                    payload: {
+                      rootStorageId: '{{Document.space.abstractStorageId}}',
+                      parentPath: '{{StorageContext.basePath}}',
+                      folderName: '{{Document.data.contact.key}}/{{Document.calculated.commFolderName}}',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
         },
       ];
 
@@ -2749,33 +2774,47 @@ describe('Document domain', () => {
       const service = createDocumentService(mockDispatcher, customRegistry, new HandlebarsAdapter());
       await service.initialize();
 
-      // Test with disallowed path characters: / \ : * ? " < > | and control char \x07, plus trailing dots and whitespace
+      const rawContact = 'Client: /Bad*Name?|With<Disallowed>"Chars\\And\x07Control. .';
+      const rawDescription = 'Meeting / Discussion: Issue *123? ...';
       const inputDocument: Document = {
         type: 'comm-project',
+        space: {
+          id: 'sp-1',
+          name: 'Space 1',
+          typeId: 'projects',
+          abstractStorageId: 'drive-root-1',
+        },
         data: {
-          contact: '  Client: /Bad*Name?|With<Disallowed>"Chars\\And\x07Control. . ',
+          contact: `  ${rawContact} `,
           date: '260920',
           direction: 'IN',
-          description: '  Meeting / Discussion: Issue *123? ...  ',
+          description: rawDescription,
         },
       };
 
-      const result = await service.processDocument(inputDocument);
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      const expectedContact = 'Client- -Bad-Name--With-Disallowed--Chars-And-Control';
-      const expectedDescription = 'Meeting - Discussion- Issue -123-';
-      const expectedCommFolder = '260920 IN - Meeting - Discussion- Issue -123-';
-
+      // Raw non-path characters and punctuation are preserved in Document.data, calculatedFields, and identity
       expect(result.data.data.contact).toEqual({
-        key: expectedContact,
-        name: expectedContact,
+        key: rawContact,
+        name: rawContact,
       });
-      expect(result.data.data.description).toBe(expectedDescription);
-      expect(result.data.calculated?.commFolderName).toBe(expectedCommFolder);
-      expect(result.data.id).toBe(`${expectedContact}-260920-IN-${expectedDescription}`);
-      expect(result.data.idGroup).toBe(expectedContact);
+      expect(result.data.data.description).toBe(rawDescription);
+      expect(result.data.calculated?.commFolderName).toBe(`260920 IN - ${rawDescription}`);
+      expect(result.data.id).toBe(`${rawContact}-260920-IN-${rawDescription}`);
+      expect(result.data.idGroup).toBe(rawContact);
+
+      // File path assembly sanitizes interpolated Document values while preserving template '/' separators
+      expect(result.activities[0]).toEqual({
+        type: 'MOVE_FILE',
+        payload: {
+          rootStorageId: 'drive-root-1',
+          parentPath: '1 Admin/Communication',
+          folderName: 'Client- -Bad-Name--With-Disallowed--Chars-And-Control/260920 IN - Meeting - Discussion- Issue -123-',
+        },
+      });
     });
 
     it('passes enriched tuple context seamlessly to Handlebars evaluator for calculatedFields and identity', async () => {
@@ -6704,12 +6743,141 @@ describe('Document domain', () => {
       expect(result.success).toBe(false);
       expect(result.errors).toEqual(['Vendor does not exist']);
     });
+
+    it('rejects invalid restricted dynamic LookupField values and skips validation for blank optional dynamic fields', async () => {
+      const restrictedDocType: DocumentType = {
+        key: 'restricted-dyn-doc',
+        name: 'Restricted Dynamic Doc',
+        documentSchema: {
+          fields: [
+            {
+              key: 'action',
+              name: 'Action',
+              type: 'string',
+              required: true,
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+            {
+              key: 'relatedTag',
+              name: 'Related Tag',
+              type: 'string',
+              required: false,
+              options: { source: 'specs', key: 'key', allowUserInput: true },
+            },
+          ],
+          optionSources: {
+            actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
+            specs: { provider: 'document_log', properties: ['key', 'name'] },
+          },
+        },
+      };
+
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const customRegistry = createCustomRegistry([restrictedDocType]);
+      const mockDynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn().mockImplementation(async (queries) => {
+          const out: Record<string, { isValid: boolean; status: 'valid' | 'option_not_found' }> = {};
+          for (const q of queries) {
+            out[q.queryId] =
+              q.valueToValidate === 'REC'
+                ? { isValid: true, status: 'valid' }
+                : { isValid: false, status: 'option_not_found' };
+          }
+          return out;
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        defaultEvaluator,
+        undefined,
+        mockDynamicValidator
+      );
+      await service.initialize();
+
+      const validWithBlankOptional: DocumentModel = {
+        type: 'restricted-dyn-doc',
+        space: { id: 'sp-1', name: 'Space 1', typeId: 'projects', abstractStorageId: 'drive-1' },
+        data: { action: 'REC', relatedTag: '' },
+      };
+      const validRes = await service.validateDocument(validWithBlankOptional);
+      expect(validRes.success).toBe(true);
+      expect(mockDynamicValidator.validateExistence).toHaveBeenCalledWith(
+        [
+          {
+            sourceKey: 'actions',
+            fieldKey: 'action',
+            valueToValidate: 'REC',
+            queryId: 'action',
+          },
+        ],
+        expect.objectContaining({
+          spaceId: 'drive-1',
+          space: validWithBlankOptional.space,
+          documentTypeKey: 'restricted-dyn-doc',
+        })
+      );
+
+      const invalidRes = await service.validateDocument({
+        type: 'restricted-dyn-doc',
+        space: { id: 'sp-1', name: 'Space 1', typeId: 'projects', abstractStorageId: 'drive-1' },
+        data: { action: 'BOGUS' },
+      });
+      expect(invalidRes.success).toBe(false);
+      expect(invalidRes.errors).toEqual(['Option not found.']);
+    });
   });
 
   describe('Submittal Arch (submittal-arch) DocumentType filing and validation', () => {
     const submittalArchPath = path.resolve(__dirname, '../../../assets/document-types/submittal-arch.json');
     const submittalArchSchema: DocumentType = JSON.parse(fs.readFileSync(submittalArchPath, 'utf-8'));
     const handlebarsEvaluator = new HandlebarsAdapter();
+
+    const createSubmittalArchDynamicValidator = (): DocumentDynamicValidationPort => {
+      const statusTuples: Array<Record<string, unknown>> = [
+        { key: 'Open' },
+        { key: 'Waiting' },
+        { key: 'Closed' },
+      ];
+      const actionTuples: Array<Record<string, unknown>> = [
+        { key: 'REC', name: 'Received', suffix: '', order: '1' },
+        { key: 'REF', name: 'Referred', suffix: '_REF', order: '2' },
+      ];
+
+      return {
+        validateExistence: async (queries) => {
+          const out: Record<
+            string,
+            {
+              isValid: boolean;
+              status: 'valid' | 'option_not_found';
+              matchedTuple?: Record<string, unknown>;
+              errorMessage?: string;
+            }
+          > = {};
+          for (const query of queries) {
+            const tuples = query.sourceKey === 'statuses' ? statusTuples : actionTuples;
+            const norm = query.valueToValidate.trim().toLowerCase();
+            const match = tuples.find(
+              (t) =>
+                String(t.key ?? '').toLowerCase() === norm ||
+                (query.sourceKey === 'actions' && String(t.name ?? '').toLowerCase() === norm)
+            );
+            if (match) {
+              out[query.queryId] = { isValid: true, status: 'valid', matchedTuple: match };
+            } else {
+              out[query.queryId] = {
+                isValid: false,
+                status: 'option_not_found',
+                errorMessage: `/${query.fieldKey ?? query.queryId}: Value "${query.valueToValidate}" is not a valid option for "${query.sourceKey}".`,
+              };
+            }
+          }
+          return out;
+        },
+      };
+    };
 
     it('passes DocumentTypeSchema validation and manifest template validation', () => {
       expect(Value.Check(DocumentTypeSchema, submittalArchSchema)).toBe(true);
@@ -6722,7 +6890,13 @@ describe('Document domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry = createCustomRegistry([submittalArchSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        handlebarsEvaluator,
+        undefined,
+        createSubmittalArchDynamicValidator()
+      );
       await service.initialize();
 
       const inputDoc: Document = {
@@ -6808,7 +6982,13 @@ describe('Document domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry = createCustomRegistry([submittalArchSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        handlebarsEvaluator,
+        undefined,
+        createSubmittalArchDynamicValidator()
+      );
       await service.initialize();
 
       const inputDoc: Document = {
@@ -6855,7 +7035,13 @@ describe('Document domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry = createCustomRegistry([submittalArchSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        handlebarsEvaluator,
+        undefined,
+        createSubmittalArchDynamicValidator()
+      );
       await service.initialize();
 
       const inputDoc: Document = {
@@ -6968,10 +7154,16 @@ describe('Document domain', () => {
       }
     });
 
-    it('rejects invalid static action and status choices', async () => {
+    it('rejects invalid dynamic action and status choices', async () => {
       const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
       const customRegistry = createCustomRegistry([submittalArchSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        defaultEvaluator,
+        undefined,
+        createSubmittalArchDynamicValidator()
+      );
       await service.initialize();
 
       // Invalid action

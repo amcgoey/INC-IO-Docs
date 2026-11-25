@@ -5,6 +5,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createApp, type AppOptions } from '../src/app/server';
 import { createDocumentLogWiring } from '../src/app/document-log.wiring';
 import {
+  createDocumentDynamicValidationAdapter,
+  createLookupOptionsService,
+} from '../src/app/lookup-options.wiring';
+import {
   createDocumentServiceFactory,
   wireDocumentServicesAndRoutes,
 } from '../src/app/document.wiring';
@@ -416,6 +420,7 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
       sheets: [
         { properties: { sheetId: 101, title: sampleFixture.submittalArch.sheetName } },
         { properties: { sheetId: 102, title: sampleFixture.submittalFfe.sheetName } },
+        { properties: { sheetId: 103, title: '_Config Submittal Arch' } },
       ],
       namedRanges: [
         state.namedRange
@@ -434,6 +439,28 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
                 endColumnIndex: 10,
               },
             },
+        {
+          namedRangeId: 'nr-arch-statuses',
+          name: 'Options_Submittal_Arch_Statuses',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: 6,
+            startColumnIndex: 0,
+            endColumnIndex: 1,
+          },
+        },
+        {
+          namedRangeId: 'nr-arch-actions',
+          name: 'Options_Submittal_Arch_Actions',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: 9,
+            startColumnIndex: 2,
+            endColumnIndex: 6,
+          },
+        },
         ...(!state.namedRange
           ? [
               {
@@ -454,6 +481,23 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
   }));
 
   const sliceRowsForRange = (range: string, valueRenderOption?: string): SimCellValue[][] => {
+    if (range.includes('_Config Submittal Arch')) {
+      const bounds = parseA1RangeBounds(range, 20, 10);
+      if (bounds.startColumnIndex === 0) {
+        return [['Status'], ['Open'], ['Closed'], ['Waiting'], ['Manager'], ['---']];
+      }
+      return [
+        ['Action', 'Name', 'Suffix', 'Order'],
+        ['REC', 'Received', '', '1'],
+        ['REF', 'Referred', '_REF', '2'],
+        ['NR', 'Not Reviewed', '_NR', '3'],
+        ['REJ', 'Rejected', '_REJ', '4'],
+        ['RR', 'Revise & Resubmit', '_RR', '5'],
+        ['NOC', 'No Objections As Corrected', '_NOC', '6'],
+        ['NET', 'No Exceptions Taken', '_NET', '7'],
+        ['---', '', '', ''],
+      ];
+    }
     if (state.grid) {
       const bounds = parseA1RangeBounds(
         range,
@@ -625,12 +669,23 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       ...(params.selectedLogId !== undefined ? { selectedLogId: params.selectedLogId } : {}),
     });
 
+    const lookupOptions = createLookupOptionsService({
+      manifestProvider: schemaManifestProvider,
+      documentSchemaRegistry: docSchemaRegistry,
+      driveClient,
+      configProvider: manifestProvider,
+      documentLogService: logWiring.documentLogService,
+      ensureDocumentLogInitialized: () => logWiring.logSchemaRegistry.initialize(),
+    });
     const activityEngine = new ActivityEngine([driveActivityHandler, logHandler]);
     const documentService = new DocumentService(
       activityEngine,
       docSchemaRegistry,
       handlebars,
-      compiledRegistry
+      compiledRegistry,
+      createDocumentDynamicValidationAdapter(lookupOptions),
+      undefined,
+      params.selectedLogId
     );
     await documentService.initialize();
 
@@ -1178,6 +1233,23 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       copyLog: vi.fn(),
       queryUiContext: vi.fn().mockResolvedValue(undefined),
       readLog: vi.fn(),
+      readOptionTables: vi.fn().mockResolvedValue({
+        status: 'ready',
+        spreadsheetId: 'override-svc-sheet',
+        tables: {
+          statuses: {
+            status: 'ready',
+            tuples: [{ key: 'Open' }, { key: 'Closed' }, { key: 'Waiting' }, { key: 'Manager' }],
+          },
+          actions: {
+            status: 'ready',
+            tuples: [
+              { key: 'REC', name: 'Received', suffix: '', order: '1' },
+              { key: 'NET', name: 'No Exceptions Taken', suffix: '_NET', order: '7' },
+            ],
+          },
+        },
+      }),
       writeLog,
     };
 
@@ -1198,10 +1270,12 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       server: headlessServer,
       driveClient: new GoogleDriveClient({ drive: createMockDriveSdk({ searchResults: [] }) }),
       configProvider: manifestProvider,
+      manifestProvider,
       documentSchemaRegistry: headlessDocRegistry,
       templateEvaluator: handlebars,
       compiledSchemaRegistry: headlessCompiled,
       primaryTargetId: 'headless-file-1',
+      documentLogService: customDocLogService,
       additionalActivityHandlers: [customLogWiring.createActivityHandler()],
     });
     if ('initialize' in headlessService && typeof headlessService.initialize === 'function') {
@@ -2783,7 +2857,8 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
       (e) => e.document.data.notes === 'Legacy human label'
     );
     expect(partialUnknownAction).toBeDefined();
-    expect(partialUnknownAction?.valid).toBe(false);
+    // Until #359 validates dynamic optionSources against _Config in READ_LOG, fallback tuple is hydrated without a warning
+    expect(partialUnknownAction?.valid).toBe(true);
     expect(partialUnknownAction?.document.data.action).toEqual({
       key: 'Approved',
       name: 'Approved',
@@ -2795,7 +2870,7 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
       archFull.warnings
         .filter((w) => w.rowNumber === partialUnknownAction?.rowNumber)
         .map((w) => w.field)
-    ).toEqual(sampleFixture.submittalArch.partialHydrationRows[1].expectedIssues);
+    ).toEqual([]);
 
     const partialMissingDate = archFull.entries.find(
       (e) => e.document.data.notes === 'Awaiting date confirmation'
@@ -2821,7 +2896,7 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
 
     const warnedRowNumbers = new Set(archFull.warnings.map((w) => w.rowNumber));
     expect(warnedRowNumbers.has(partialShortSec!.rowNumber)).toBe(true);
-    expect(warnedRowNumbers.has(partialUnknownAction!.rowNumber)).toBe(true);
+    expect(warnedRowNumbers.has(partialUnknownAction!.rowNumber)).toBe(false);
     expect(warnedRowNumbers.has(partialMissingDate!.rowNumber)).toBe(true);
     expect(warnedRowNumbers.has(unkeyableNoteRow!.rowNumber)).toBe(true);
 
@@ -2842,7 +2917,7 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
     );
     const matchedRows = new Set(archFiltered.entries.map((e) => e.rowNumber));
     expect(archFiltered.warnings.every((w) => matchedRows.has(w.rowNumber))).toBe(true);
-    expect(archFiltered.warnings.map((w) => w.field)).toEqual(['action', 'date']);
+    expect(archFiltered.warnings.map((w) => w.field)).toEqual(['date']);
     expect(
       archFiltered.warnings.some(
         (w) =>
@@ -3062,9 +3137,9 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
         priorTitle: 'Fluid-Applied Waterproofing Membrane',
         priorAction: 'Received',
         priorUri: 'https://drive.google.com/file/d/fixture-arch-071200-001-0-rec/view',
-        firstWarningField: 'action',
+        firstWarningField: 'date',
         entryCount: '7',
-        warningCount: '2',
+        warningCount: '1',
       },
     ]);
     expect(driveSdk.files.list).not.toHaveBeenCalled();
@@ -3089,6 +3164,10 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
         }
         const cloned = structuredClone(parsed) as Record<string, unknown>;
         delete cloned.documentLogSchema;
+        const docSchema = cloned.documentSchema as { optionSources?: unknown } | undefined;
+        if (docSchema) {
+          delete docSchema.optionSources;
+        }
         const workflowConfig = cloned.documentWorkflowConfig as {
           workflows: Array<{ name: string; activitySequence: unknown[] }>;
         };

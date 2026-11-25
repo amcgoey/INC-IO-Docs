@@ -9,7 +9,9 @@ import type {
   PositiveTableReadResult,
   PositiveTableRow,
   PositiveTableTarget,
+  ReadNamedRangeBatchEntry,
   ReadNamedRangeRequest,
+  ReadNamedRangesBatchRequest,
   ReadPositiveTableRequest,
   RowKey,
   RowRecord,
@@ -1585,6 +1587,61 @@ export class GoogleSheetsClient implements SheetsClient {
     const { sheetTitle, gridRange } = await this.resolveNamedRange(request);
     const a1Range = gridRangeToA1(sheetTitle, gridRange);
     return this.readValues(request.spreadsheetId, a1Range, 'UNFORMATTED_VALUE');
+  }
+
+  /**
+   * Resolves and reads multiple Named Ranges in 1 `spreadsheets.get` + 1 `values.batchGet` (`FORMATTED_VALUE`),
+   * surfacing missing sheet or Named Range errors per target key without failing valid sibling targets.
+   */
+  async readNamedRangesBatch(
+    request: ReadNamedRangesBatchRequest
+  ): Promise<Record<string, ReadNamedRangeBatchEntry>> {
+    if (request.targets.length === 0) {
+      return {};
+    }
+
+    const spreadsheet = await this.getSpreadsheetMetadata(request.spreadsheetId);
+    const results: Record<string, ReadNamedRangeBatchEntry> = {};
+    const resolvedTargets: Array<{ key: string; a1Range: string }> = [];
+
+    for (const target of request.targets) {
+      try {
+        const { sheetTitle, gridRange } = this.findNamedRange(spreadsheet, {
+          spreadsheetId: request.spreadsheetId,
+          sheetName: target.sheetName,
+          rangeName: target.rangeName,
+        });
+        resolvedTargets.push({
+          key: target.key,
+          a1Range: gridRangeToA1(sheetTitle, gridRange),
+        });
+      } catch (error) {
+        if (error instanceof GoogleSheetsApiError) {
+          results[target.key] = {
+            status: 'missing_range',
+            errorMessage: error.message,
+          };
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    if (resolvedTargets.length > 0) {
+      const valueRanges = await this.readBatchValues(
+        request.spreadsheetId,
+        resolvedTargets.map((item) => item.a1Range),
+        'FORMATTED_VALUE'
+      );
+      resolvedTargets.forEach((item, index) => {
+        results[item.key] = {
+          status: 'found',
+          values: (valueRanges[index]?.values as CellValue[][] | undefined) ?? [],
+        };
+      });
+    }
+
+    return results;
   }
 
   async writeNamedRange(request: WriteNamedRangeRequest): Promise<void> {

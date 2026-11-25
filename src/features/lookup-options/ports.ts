@@ -119,6 +119,7 @@ export interface LookupSourceResolution {
   tuples: LookupOptionTuple[];
   items: LookupOptionItem[];
   targetPath?: string | undefined;
+  errorMessage?: string | undefined;
 }
 
 export interface LookupMatchResult {
@@ -187,6 +188,42 @@ export interface DriveOptionSourcePort {
     targetPath: string;
     matchedTuple?: LookupOptionTuple | undefined;
   }>;
+}
+
+export interface DocumentLogOptionTableEntry {
+  status: 'ready' | 'config_error';
+  tuples: LookupOptionTuple[];
+  errorMessage?: string | undefined;
+}
+
+export type DocumentLogOptionTablesBatchResult =
+  | {
+      status: 'missing_space';
+      tables: Record<string, DocumentLogOptionTableEntry>;
+    }
+  | {
+      status: 'missing_log';
+      expectedFolderPath?: string | undefined;
+      tables: Record<string, DocumentLogOptionTableEntry>;
+    }
+  | {
+      status: 'config_error';
+      errorMessage: string;
+      tables: Record<string, DocumentLogOptionTableEntry>;
+    }
+  | {
+      status: 'ready';
+      spreadsheetId: string;
+      tables: Record<string, DocumentLogOptionTableEntry>;
+    };
+
+export interface DocumentLogOptionSourcePort {
+  readOptionTables(params: {
+    documentTypeKey: string;
+    space?: LookupSpaceContext | undefined;
+    selectedLogId?: string | undefined;
+    sourceKeys?: readonly string[] | undefined;
+  }): Promise<DocumentLogOptionTablesBatchResult>;
 }
 
 export interface LookupManifestPort {

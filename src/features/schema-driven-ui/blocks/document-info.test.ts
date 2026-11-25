@@ -1033,6 +1033,53 @@ describe('Document Info Block', () => {
         }
       );
 
+      it('renders Copy Log prompt on missing_log and source-specific hints on config_error and timeout for document_log selectionInput', () => {
+        const docLogSchema: AbstractDataSchema = {
+          fields: [
+            {
+              key: 'action',
+              type: 'string',
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+          ],
+          optionSources: {
+            actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
+          },
+        };
+        const uiSchema: UiSchema = {
+          fields: { action: { widget: 'selectionInput', label: 'Action' } },
+        };
+
+        const missingSection = buildDocumentInfoSection(docLogSchema, uiSchema, {
+          dynamicOptions: {
+            actions: { status: 'missing_log', items: [], targetPath: '1 Admin' },
+          },
+        });
+        expect(missingSection.widgets[0].selectionInput?.items).toEqual([
+          { text: 'Copy Document Log to load options', value: '' },
+        ]);
+
+        const configErrSection = buildDocumentInfoSection(docLogSchema, uiSchema, {
+          dynamicOptions: {
+            actions: {
+              status: 'config_error',
+              items: [],
+              errorMessage: 'Missing "---" terminator',
+            },
+          },
+        });
+        expect(configErrSection.widgets[0]?.selectionInput?.items?.[0]?.text).toContain('actions');
+        expect(configErrSection.widgets[0]?.selectionInput?.items?.[0]?.text).toContain('Missing "---" terminator');
+
+        const timeoutSection = buildDocumentInfoSection(docLogSchema, uiSchema, {
+          dynamicOptions: {
+            actions: { status: 'timeout', items: [] },
+          },
+        });
+        expect(timeoutSection.widgets[0]?.selectionInput?.items?.[0]?.text).toContain('actions');
+        expect(timeoutSection.widgets[0]?.selectionInput?.items?.[0]?.text.toLowerCase()).toContain('timed out');
+      });
+
       it('preserves backward compatibility when dynamicOptions contains raw DynamicOptionItem[] array', () => {
         // Non-empty array -> status ready
         const readySection = buildDocumentInfoSection(dynamicSchema, dynamicUiSchemaTextInput, {

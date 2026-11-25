@@ -3214,4 +3214,283 @@ describe('DocumentLogService', () => {
       await expect(copyFailureService.copyLog(sampleSpace)).rejects.toBe(copyForbiddenError);
     });
   });
+
+  describe('readOptionTables (Ticket #358)', () => {
+    const logSchemaWithBindings: DocumentLogSchema = {
+      ...logSchema,
+      optionBindings: {
+        statuses: {
+          sheetName: '_Config Submittal Arch',
+          rangeName: 'Options_Submittal_Arch_Statuses',
+          validationRangeName: 'Validation_Submittal_Arch_Statuses',
+          endMarker: '---',
+          columns: {
+            Status: 'key',
+          },
+        },
+        actions: {
+          sheetName: '_Config Submittal Arch',
+          rangeName: 'Options_Submittal_Arch_Actions',
+          endMarker: '---',
+          columns: {
+            Action: 'key',
+            Name: 'name',
+            Suffix: 'suffix',
+            Order: 'order',
+          },
+        },
+      },
+    };
+
+    const targetSchemaWithSources: LogTargetDocumentSchema = {
+      ...targetSchema,
+      optionSources: {
+        statuses: { provider: 'document_log', properties: ['key'] },
+        actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
+      },
+    };
+
+    it('reads all bound _Config option tables in one batched readNamedRanges call, parses order-independent Row 0 headers ignoring extra columns, skips blank rows, and deduplicates by trimmed case-insensitive key keeping first row', async () => {
+      const readNamedRanges = vi.fn().mockResolvedValue({
+        statuses: {
+          status: 'found',
+          values: [
+            ['Notes', 'Status', 'Extra'],
+            ['', '', ''],
+            ['default', 'Open', '1'],
+            ['dup', '  open  ', '2'],
+            ['done', 'Closed', '3'],
+            ['', '---', ''],
+            ['ignored', 'AfterMarker', '4'],
+          ],
+        },
+        actions: {
+          status: 'found',
+          values: [
+            ['Order', 'Suffix', 'ExtraCol', 'Name', 'Action'],
+            ['', '', '', '', ''],
+            ['1', '', 'unused', 'Received', 'REC'],
+            ['2', '_REF', 'unused', 'Referred', 'REF'],
+            ['9', '_DUP', 'unused', 'Duplicate Rec', ' rec '],
+            ['6', '_NOC', 'unused', 'No Objections As Corrected', 'NOC'],
+            ['---', '', '', '', ''],
+          ],
+        },
+      });
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(logSchemaWithBindings),
+          getTargetSchema: vi.fn().mockReturnValue(targetSchemaWithSources),
+        },
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-1', name: 'Harborview Hotel Document Log' },
+          ]),
+        },
+        storage: {
+          readNamedRanges,
+        },
+      });
+
+      const result = await service.readOptionTables({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+
+      expect(readNamedRanges).toHaveBeenCalledTimes(1);
+      expect(readNamedRanges).toHaveBeenCalledWith({
+        spreadsheetId: 'log-1',
+        targets: [
+          {
+            key: 'statuses',
+            sheetName: '_Config Submittal Arch',
+            rangeName: 'Options_Submittal_Arch_Statuses',
+          },
+          {
+            key: 'actions',
+            sheetName: '_Config Submittal Arch',
+            rangeName: 'Options_Submittal_Arch_Actions',
+          },
+        ],
+      });
+
+      expect(result).toEqual({
+        status: 'ready',
+        spreadsheetId: 'log-1',
+        tables: {
+          statuses: {
+            status: 'ready',
+            tuples: [{ key: 'Open' }, { key: 'Closed' }],
+          },
+          actions: {
+            status: 'ready',
+            tuples: [
+              { key: 'REC', name: 'Received', suffix: '', order: '1' },
+              { key: 'REF', name: 'Referred', suffix: '_REF', order: '2' },
+              { key: 'NOC', name: 'No Objections As Corrected', suffix: '_NOC', order: '6' },
+            ],
+          },
+        },
+      });
+    });
+
+    it('resolves omitted or stale selectedLogId to top-ranked candidates[0] when ambiguous, while writeLog still rejects ambiguous_log', async () => {
+      const readNamedRanges = vi.fn().mockResolvedValue({
+        statuses: {
+          status: 'found',
+          values: [['Status'], ['Open'], ['---']],
+        },
+      });
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(logSchemaWithBindings),
+          getTargetSchema: vi.fn().mockReturnValue(targetSchemaWithSources),
+        },
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-older', name: 'Old Document Log', modifiedTime: '2026-01-01T00:00:00Z' },
+            { id: 'log-best', name: 'Harborview Hotel Document Log', modifiedTime: '2026-02-01T00:00:00Z' },
+          ]),
+        },
+        storage: {
+          readNamedRanges,
+        },
+      });
+
+      // Omitted selectedLogId -> candidates[0] ('log-best')
+      const omittedRes = await service.readOptionTables({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        sourceKeys: ['statuses'],
+      });
+      expect(omittedRes.status).toBe('ready');
+      if (omittedRes.status === 'ready') {
+        expect(omittedRes.spreadsheetId).toBe('log-best');
+      }
+
+      // Stale selectedLogId -> falls back to candidates[0] ('log-best')
+      const staleRes = await service.readOptionTables({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        selectedLogId: 'deleted-log-id',
+        sourceKeys: ['statuses'],
+      });
+      expect(staleRes.status).toBe('ready');
+      if (staleRes.status === 'ready') {
+        expect(staleRes.spreadsheetId).toBe('log-best');
+      }
+
+      // Valid selectedLogId -> uses that candidate
+      const chosenRes = await service.readOptionTables({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        selectedLogId: 'log-older',
+        sourceKeys: ['statuses'],
+      });
+      expect(chosenRes.status).toBe('ready');
+      if (chosenRes.status === 'ready') {
+        expect(chosenRes.spreadsheetId).toBe('log-older');
+      }
+
+      // writeLog without selectedLogId still rejects with DocumentLogAmbiguousError
+      await expect(service.writeLog({ document: sampleDoc })).rejects.toThrow(
+        DocumentLogAmbiguousError
+      );
+    });
+
+    it('surfaces per-source config_error on missing Named Range, missing "---" terminator, or missing mapped header while valid siblings remain ready', async () => {
+      const readNamedRanges = vi.fn().mockResolvedValue({
+        statuses: {
+          status: 'missing_range',
+          errorMessage: 'Named range "Options_Submittal_Arch_Statuses" not found.',
+        },
+        actions: {
+          status: 'found',
+          values: [
+            ['Action', 'Name', 'Suffix', 'Order'],
+            ['REC', 'Received', '', '1'],
+            // Missing '---' terminator!
+          ],
+        },
+      });
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(logSchemaWithBindings),
+          getTargetSchema: vi.fn().mockReturnValue(targetSchemaWithSources),
+        },
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([{ id: 'log-1', name: 'Harborview Hotel Document Log' }]),
+        },
+        storage: { readNamedRanges },
+      });
+
+      const res = await service.readOptionTables({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+      expect(res.status).toBe('ready');
+      if (res.status === 'ready') {
+        expect(res.tables.statuses.status).toBe('config_error');
+        expect(res.tables.actions.status).toBe('config_error');
+        if (res.tables.actions.status === 'config_error') {
+          expect(res.tables.actions.errorMessage).toMatch(/---/);
+        }
+      }
+
+      // Sibling valid while another has missing mapped header
+      readNamedRanges.mockResolvedValueOnce({
+        statuses: {
+          status: 'found',
+          values: [['Status'], ['Open'], ['---']],
+        },
+        actions: {
+          status: 'found',
+          values: [['Action', 'Name', 'Order'], ['REC', 'Received', '1'], ['---']],
+        },
+      });
+
+      const partialRes = await service.readOptionTables({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+      expect(partialRes.status).toBe('ready');
+      if (partialRes.status === 'ready') {
+        expect(partialRes.tables.statuses).toEqual({
+          status: 'ready',
+          tuples: [{ key: 'Open' }],
+        });
+        expect(partialRes.tables.actions.status).toBe('config_error');
+      }
+    });
+
+    it('returns missing_space and missing_log cleanly', async () => {
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(logSchemaWithBindings),
+          getTargetSchema: vi.fn().mockReturnValue(targetSchemaWithSources),
+        },
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([]),
+        },
+      });
+
+      expect(
+        await service.readOptionTables({ documentTypeKey: 'submittal-arch' })
+      ).toEqual({
+        status: 'missing_space',
+        tables: {},
+      });
+
+      expect(
+        await service.readOptionTables({ documentTypeKey: 'submittal-arch', space: sampleSpace })
+      ).toEqual({
+        status: 'missing_log',
+        expectedFolderPath: '1 Admin',
+        tables: {},
+      });
+    });
+  });
 });

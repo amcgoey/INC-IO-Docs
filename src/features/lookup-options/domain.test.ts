@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { LookupOptionsService } from './domain';
 import type {
+  DocumentLogOptionSourcePort,
   DriveOptionSourcePort,
   LookupDocumentSchema,
   LookupManifestPort,
@@ -363,6 +364,177 @@ describe('LookupOptionsService (LookupOptionsPort seam)', () => {
       isValid: false,
       status: 'option_not_found',
       targetPath: '1 Admin/Communication',
+    });
+  });
+
+  describe('document_log OptionSource integration (Ticket #358)', () => {
+    const submittalArchSchema: LookupDocumentSchema = {
+      fields: [
+        {
+          key: 'status',
+          options: { source: 'statuses', key: 'key' },
+        },
+        {
+          key: 'action',
+          options: { source: 'actions', key: 'key', name: 'name' },
+        },
+      ],
+      optionSources: {
+        statuses: { provider: 'document_log', properties: ['key'] },
+        actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
+      },
+    };
+
+    it('batches all document_log sources for a request in one readOptionTables call, memoizes across resolveOptions and validateFields, and clears on invalidate()', async () => {
+      const readOptionTables = vi.fn().mockResolvedValue({
+        status: 'ready',
+        spreadsheetId: 'log-arch-1',
+        tables: {
+          statuses: {
+            status: 'ready',
+            tuples: [{ key: 'Open' }, { key: 'Closed' }],
+          },
+          actions: {
+            status: 'ready',
+            tuples: [
+              { key: 'REC', name: 'Received', suffix: '', order: '1' },
+              { key: 'REF', name: 'Referred', suffix: '_REF', order: '2' },
+            ],
+          },
+        },
+      });
+
+      const docLogSource: DocumentLogOptionSourcePort = { readOptionTables };
+      const service = new LookupOptionsService(
+        createManifestPort({ 'submittal-arch': submittalArchSchema }),
+        { documentLogOptionSource: docLogSource }
+      );
+
+      const ctx = {
+        space: { id: 'sp-1', typeId: 'projects', name: 'Proj 1', abstractStorageId: 'drive-1' },
+        documentTypeKey: 'submittal-arch',
+      };
+
+      const resolved = await service.resolveOptions(ctx, ['statuses', 'actions']);
+      expect(readOptionTables).toHaveBeenCalledTimes(1);
+      expect(readOptionTables).toHaveBeenCalledWith({
+        documentTypeKey: 'submittal-arch',
+        space: ctx.space,
+        sourceKeys: ['statuses', 'actions'],
+      });
+      expect(resolved.statuses).toEqual({
+        status: 'ready',
+        tuples: [{ key: 'Open' }, { key: 'Closed' }],
+        items: [
+          { text: 'Open', value: 'Open' },
+          { text: 'Closed', value: 'Closed' },
+        ],
+      });
+      expect(resolved.actions).toEqual({
+        status: 'ready',
+        tuples: [
+          { key: 'REC', name: 'Received', suffix: '', order: '1' },
+          { key: 'REF', name: 'Referred', suffix: '_REF', order: '2' },
+        ],
+        items: [
+          { text: 'Received', value: 'REC' },
+          { text: 'Referred', value: 'REF' },
+        ],
+      });
+
+      // Subsequent validation reuses memoized batch result with zero extra DocumentLog calls
+      const validation = await service.validateFields(ctx, [
+        { queryId: 'status', fieldKey: 'status', sourceKey: 'statuses', value: 'open', allowUserInput: false },
+        { queryId: 'action', fieldKey: 'action', sourceKey: 'actions', value: 'Referred', allowUserInput: false },
+      ]);
+      expect(readOptionTables).toHaveBeenCalledTimes(1);
+      expect(validation.status).toEqual({
+        isValid: true,
+        status: 'valid',
+        canonicalValue: 'Open',
+        matchedTuple: { key: 'Open' },
+      });
+      expect(validation.action).toEqual({
+        isValid: true,
+        status: 'valid',
+        canonicalValue: 'REF',
+        matchedTuple: { key: 'REF', name: 'Referred', suffix: '_REF', order: '2' },
+      });
+
+      // Invalid restricted dynamic LookupField fails with option_not_found
+      const invalidVal = await service.validateFields(ctx, [
+        { queryId: 'action', fieldKey: 'action', sourceKey: 'actions', value: 'BAD', allowUserInput: false },
+      ]);
+      expect(invalidVal.action).toEqual({
+        isValid: false,
+        status: 'option_not_found',
+      });
+
+      // Invalidation forces fresh read on next call
+      service.invalidate({ spaceId: 'drive-1' });
+      await service.resolveOptions(ctx, ['statuses']);
+      expect(readOptionTables).toHaveBeenCalledTimes(2);
+    });
+
+    it('surfaces missing_log, per-source config_error, and timeout cleanly for document_log sources', async () => {
+      const readOptionTables = vi
+        .fn()
+        .mockResolvedValueOnce({
+          status: 'missing_log',
+          expectedFolderPath: '1 Admin',
+          tables: {},
+        })
+        .mockResolvedValueOnce({
+          status: 'ready',
+          spreadsheetId: 'log-1',
+          tables: {
+            statuses: {
+              status: 'ready',
+              tuples: [{ key: 'Open' }],
+            },
+            actions: {
+              status: 'config_error',
+              tuples: [],
+              errorMessage: 'Missing endMarker "---" in Options_Submittal_Arch_Actions',
+            },
+          },
+        })
+        .mockImplementationOnce(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          return { status: 'missing_space', tables: {} };
+        });
+
+      const service = new LookupOptionsService(
+        createManifestPort({ 'submittal-arch': submittalArchSchema }),
+        { documentLogOptionSource: { readOptionTables }, timeoutMs: 15 }
+      );
+
+      const missingRes = await service.resolveOptions(
+        { space: { id: 'sp-missing' }, documentTypeKey: 'submittal-arch' },
+        ['statuses', 'actions']
+      );
+      expect(missingRes.statuses.status).toBe('missing_log');
+      expect(missingRes.statuses.targetPath).toBe('1 Admin');
+
+      const configErrRes = await service.resolveOptions(
+        { space: { id: 'sp-cfg' }, documentTypeKey: 'submittal-arch' },
+        ['statuses', 'actions']
+      );
+      expect(configErrRes.statuses.status).toBe('ready');
+      expect(configErrRes.actions).toEqual({
+        status: 'config_error',
+        tuples: [],
+        items: [],
+        errorMessage: 'Missing endMarker "---" in Options_Submittal_Arch_Actions',
+      });
+
+      const timeoutRes = await service.resolveOptions(
+        { space: { id: 'sp-slow' }, documentTypeKey: 'submittal-arch' },
+        ['statuses', 'actions']
+      );
+      expect(timeoutRes.statuses.status).toBe('timeout');
+      expect(timeoutRes.actions.status).toBe('timeout');
+      expect(timeoutRes.statuses.targetPath).toBeUndefined();
     });
   });
 });

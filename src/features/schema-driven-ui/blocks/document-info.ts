@@ -100,7 +100,17 @@ export function extractSelectionItems(
             value: opt.value,
           }));
         } else if (isDynamicLookupField(field.options, dataSchema)) {
-          const hint = formatFieldHint(DEFAULT_MESSAGE_CATALOG, resolution.status, resolution.targetPath);
+          const optionSource = dataSchema?.optionSources?.[sourceKey];
+          const hint = formatFieldHint(
+            DEFAULT_MESSAGE_CATALOG,
+            resolution.status,
+            resolution.targetPath,
+            {
+              provider: optionSource?.provider,
+              sourceKey,
+              errorMessage: resolution.errorMessage,
+            }
+          );
           defaultItems = [{ text: hint ?? '', value: '' }];
         }
       }
@@ -151,7 +161,18 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
         if (resolution.status === 'ready') {
           baseItems = resolution.items.map((opt) => ({ text: opt.text, value: opt.value }));
         } else {
-          const hint = formatFieldHint(DEFAULT_MESSAGE_CATALOG, resolution.status, resolution.targetPath);
+          const optionSource = dataSchema?.optionSources?.[field.options.source];
+          const hint = formatFieldHint(
+            DEFAULT_MESSAGE_CATALOG,
+            resolution.status,
+            resolution.targetPath,
+            {
+              provider: optionSource?.provider,
+              sourceKey: field.options.source,
+              fieldLabel: label,
+              errorMessage: resolution.errorMessage,
+            }
+          );
           baseItems = [{ text: hint ?? '', value: '' }];
         }
       } else {
@@ -198,7 +219,18 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
         if (resolution.status === 'ready') {
           autocompleteItems = resolution.items.map((opt) => ({ text: opt.text, value: opt.value }));
         } else {
-          hintText = formatFieldHint(DEFAULT_MESSAGE_CATALOG, resolution.status, resolution.targetPath);
+          const optionSource = dataSchema?.optionSources?.[field.options.source];
+          hintText = formatFieldHint(
+            DEFAULT_MESSAGE_CATALOG,
+            resolution.status,
+            resolution.targetPath,
+            {
+              provider: optionSource?.provider,
+              sourceKey: field.options.source,
+              fieldLabel: label,
+              errorMessage: resolution.errorMessage,
+            }
+          );
           autocompleteItems = [];
         }
       }

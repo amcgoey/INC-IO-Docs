@@ -69,6 +69,7 @@ export interface AppOptions {
   appBaseUrl?: string | undefined;
   pdfProcessor?: PdfProcessor | undefined;
   docsClient?: GoogleDocsClient | undefined;
+  lookupTimeoutMs?: number | undefined;
 }
 
 export interface AppInstance {
@@ -153,10 +154,14 @@ export function createApp(options?: AppOptions): AppInstance {
     activityEngine: options?.activityEngine,
     documentService: options?.documentService,
     compiledSchemaRegistry,
+    documentLogService: documentLogWiring.documentLogService,
+    getDocumentLogService: (requestContext) =>
+      documentLogWiring.getPerRequestService(requestContext),
+    ensureDocumentLogInitialized: () => documentLogWiring.logSchemaRegistry.initialize(),
     additionalActivityHandlers: [documentLogWiring.createActivityHandler()],
-    createAdditionalActivityHandlers: (lookupOptions) => [
-      documentLogWiring.createActivityHandler({
-        onWriteLogSuccess: (spaceId) => lookupOptions.invalidate({ spaceId }),
+    createAdditionalActivityHandlers: (lookupOptions, requestContext) => [
+      documentLogWiring.createPerRequestActivityHandler(requestContext, {
+        onWriteLogSuccess: () => lookupOptions.invalidate(),
       }),
     ],
   });
@@ -216,11 +221,9 @@ export function createApp(options?: AppOptions): AppInstance {
       ? { documentLogService: options.documentLogService }
       : {}),
     documentLogWiring,
-    createAdditionalActivityHandlers: (context) => [
-      documentLogWiring.createPerRequestActivityHandler(context),
-    ],
     sourceParser: sourceParserWiring.sourceParser,
     createSourceParser: sourceParserWiring.createSourceParser,
+    ...(options?.lookupTimeoutMs !== undefined ? { lookupTimeoutMs: options.lookupTimeoutMs } : {}),
   });
 
   const initialize = async () => {

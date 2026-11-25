@@ -210,7 +210,9 @@ describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schem
     );
   });
 
-  it('sanitizes disallowed file-path characters in contact and description, evaluates commFolderName, synthesizes identity, and dispatches sanitized MOVE_FILE activity', async () => {
+  it('preserves raw punctuation in Document.data and identity while sanitizing disallowed file-path characters strictly in MOVE_FILE path assembly', async () => {
+    const rawContact = 'Client: /Bad*Name?|With<Disallowed>"Chars\\And\x01Control. .';
+    const rawDescription = '  ASR / 06: Design * Changes? ...  ';
     const projectDocument: Document = {
       type: 'communication-project',
       space: {
@@ -220,10 +222,10 @@ describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schem
         name: 'Project Alpha',
       },
       data: {
-        contact: '  Client: /Bad*Name?|With<Disallowed>"Chars\\And\x01Control. . ',
+        contact: `  ${rawContact} `,
         date: '260826',
         direction: 'OT',
-        description: '  ASR / 06: Design * Changes? ...  ',
+        description: rawDescription,
       },
     };
 
@@ -232,15 +234,15 @@ describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schem
     expect(result.success).toBe(true);
     if (!result.success) return;
 
-    const expectedContact = 'Client- -Bad-Name--With-Disallowed--Chars-And-Control';
-    const expectedDescription = 'ASR - 06- Design - Changes-';
-    const expectedCommFolder = '260826 OT - ASR - 06- Design - Changes-';
+    const rawCommFolder = `260826 OT - ${rawDescription}`;
+    const expectedContactPath = 'Client- -Bad-Name--With-Disallowed--Chars-And-Control';
+    const expectedCommFolderPath = '260826 OT - ASR - 06- Design - Changes-';
 
     expect(result.data).toEqual({
       type: 'communication-project',
-      id: `${expectedContact}-260826-OT-${expectedDescription}`,
-      idDocument: `${expectedContact}-260826-OT-${expectedDescription}`,
-      idGroup: expectedContact,
+      id: `${rawContact}-260826-OT-${rawDescription}`,
+      idDocument: `${rawContact}-260826-OT-${rawDescription}`,
+      idGroup: rawContact,
       space: {
         id: 'proj-1',
         typeId: 'projects',
@@ -249,25 +251,25 @@ describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schem
       },
       data: {
         contact: {
-          key: expectedContact,
-          name: expectedContact,
+          key: rawContact,
+          name: rawContact,
         },
         date: '260826',
         direction: {
           key: 'OT',
           name: 'Outgoing',
         },
-        description: expectedDescription,
+        description: rawDescription,
       },
       calculated: {
-        commFolderName: expectedCommFolder,
+        commFolderName: rawCommFolder,
       },
     });
 
     const expectedPayload = {
       rootStorageId: 'shared-drive-proj-123',
       parentPath: '1 Admin/Communication',
-      folderName: `${expectedContact}/${expectedCommFolder}`,
+      folderName: `${expectedContactPath}/${expectedCommFolderPath}`,
     };
 
     const expectedActivity: Activity = {

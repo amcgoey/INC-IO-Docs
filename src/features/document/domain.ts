@@ -302,6 +302,72 @@ export function sanitizeFilePath(value: string): string {
     .replace(/[\s.]+$/, '');
 }
 
+const FILE_PATH_PAYLOAD_KEYS = new Set([
+  'parentPath',
+  'folderName',
+  'targetPath',
+  'filePath',
+  'fileName',
+  'targetName',
+  'path',
+]);
+
+function sanitizeStringsDeepForPath(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return sanitizeFilePath(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeStringsDeepForPath(item));
+  }
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = sanitizeStringsDeepForPath(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+function createPathSafeDocument(
+  document: Document,
+  documentType: DocumentType,
+  evaluator: TemplateEvaluatorPort
+): Document {
+  const sanitizedData = sanitizeStringsDeepForPath(document.data) as Record<string, unknown>;
+  let sanitizedCalculated: Record<string, unknown> | undefined;
+
+  if (documentType.documentSchema.calculatedFields) {
+    const pathBasePayload: Record<string, unknown> = {
+      ...sanitizedData,
+      ...(document.space !== undefined
+        ? {
+            space: document.space,
+            Document: {
+              ...document,
+              data: sanitizedData,
+              space: document.space,
+            },
+          }
+        : {}),
+    };
+    sanitizedCalculated = {};
+    for (const calcField of documentType.documentSchema.calculatedFields) {
+      sanitizedCalculated[calcField.key] = sanitizeFilePath(
+        evaluator.evaluate(calcField.template, pathBasePayload)
+      );
+    }
+  } else if (document.calculated !== undefined) {
+    sanitizedCalculated = sanitizeStringsDeepForPath(document.calculated) as Record<string, unknown>;
+  }
+
+  return {
+    ...document,
+    data: sanitizedData,
+    ...(sanitizedCalculated !== undefined ? { calculated: sanitizedCalculated } : {}),
+  };
+}
+
 function matchesRule(matchFields: { [key: string]: string } | undefined, document: Document): boolean {
   if (!matchFields || Object.keys(matchFields).length === 0) {
     return true;
@@ -318,18 +384,21 @@ function matchesRule(matchFields: { [key: string]: string } | undefined, documen
 function resolvePayloadTemplates(
   value: unknown,
   evaluator: TemplateEvaluatorPort,
-  context: TemplateEvaluationContext
+  context: TemplateEvaluationContext,
+  pathContext?: TemplateEvaluationContext
 ): unknown {
   if (typeof value === 'string') {
     return evaluator.evaluate(value, context);
   }
   if (Array.isArray(value)) {
-    return value.map((item) => resolvePayloadTemplates(item, evaluator, context));
+    return value.map((item) => resolvePayloadTemplates(item, evaluator, context, pathContext));
   }
   if (value !== null && typeof value === 'object') {
     const result: { [key: string]: unknown } = {};
     for (const [k, v] of Object.entries(value as { [key: string]: unknown })) {
-      result[k] = resolvePayloadTemplates(v, evaluator, context);
+      const targetContext =
+        pathContext !== undefined && FILE_PATH_PAYLOAD_KEYS.has(k) ? pathContext : context;
+      result[k] = resolvePayloadTemplates(v, evaluator, targetContext, pathContext);
     }
     return result;
   }
@@ -549,6 +618,9 @@ export class DocumentService implements DocumentServicePort {
           const normalizedValues = Array.isArray(rawValue) ? rawValue : [rawValue];
           for (const item of normalizedValues) {
             if (typeof item === 'string') {
+              if (!field.required && item.trim() === '') {
+                continue;
+              }
               valuesToValidate.push(item);
             }
           }
@@ -578,6 +650,7 @@ export class DocumentService implements DocumentServicePort {
           dynamicQueries,
           {
             ...(spaceId !== undefined ? { spaceId } : {}),
+            ...(document.space !== undefined ? { space: document.space } : {}),
             documentTypeKey: document.type,
             ...(this.selectedLogId !== undefined ? { selectedLogId: this.selectedLogId } : {}),
             formData: rawData,
@@ -654,7 +727,7 @@ export class DocumentService implements DocumentServicePort {
     const enrichedData: { [key: string]: unknown } = {};
     for (const [key, value] of Object.entries(rawData)) {
       if (schemaFieldKeys.has(key)) {
-        enrichedData[key] = typeof value === 'string' ? sanitizeFilePath(value) : value;
+        enrichedData[key] = value;
       }
     }
 
@@ -669,43 +742,30 @@ export class DocumentService implements DocumentServicePort {
         // nosemgrep: domain-pass-through-read
         const { key: keyProp, name: nameProp } = field.options;
         if (typeof rawValue === 'string') {
-          const sanitizedVal = sanitizeFilePath(rawValue);
-          if (!field.required && sanitizedVal === '') {
+          const trimmedVal = rawValue.trim();
+          if (!field.required && trimmedVal === '') {
             delete enrichedData[field.key];
             continue;
           }
           const optionTuples = documentType.documentSchema.options?.[field.options.source] ?? [];
           const matchedTuple =
             dynamicMatchedTuples?.get(field.key) ??
-            matchStaticOptionTuple(optionTuples, [rawValue, sanitizedVal], keyProp, nameProp);
+            matchStaticOptionTuple(optionTuples, [rawValue, trimmedVal], keyProp, nameProp);
           if (matchedTuple) {
             enrichedData[field.key] = { ...matchedTuple };
           } else if (field.options.allowUserInput) {
             const fallback: Record<string, unknown> = {
-              [keyProp]: sanitizedVal,
+              [keyProp]: trimmedVal,
             };
             if (field.options.name) {
-              fallback[field.options.name] = sanitizedVal;
+              fallback[field.options.name] = trimmedVal;
             }
             enrichedData[field.key] = fallback;
           }
         } else if (rawValue !== null && typeof rawValue === 'object') {
           const tupleObj = rawValue as Record<string, unknown>;
           if (field.options.allowUserInput) {
-            const updatedObj: Record<string, unknown> = {
-              ...tupleObj,
-              [keyProp]:
-                typeof tupleObj[keyProp] === 'string'
-                  ? sanitizeFilePath(tupleObj[keyProp] as string)
-                  : tupleObj[keyProp],
-            };
-            if (field.options.name) {
-              updatedObj[field.options.name] =
-                typeof tupleObj[field.options.name] === 'string'
-                  ? sanitizeFilePath(tupleObj[field.options.name] as string)
-                  : tupleObj[field.options.name];
-            }
-            enrichedData[field.key] = updatedObj;
+            enrichedData[field.key] = { ...tupleObj };
           }
         }
       }
@@ -802,7 +862,7 @@ export class DocumentService implements DocumentServicePort {
       storageContext = resolvePayloadTemplates(
         documentType.storageContextConfig,
         this.templateEvaluator,
-        { Document: enrichedDocument }
+        { Document: createPathSafeDocument(enrichedDocument, documentType, this.templateEvaluator) }
       );
     }
 
@@ -811,6 +871,10 @@ export class DocumentService implements DocumentServicePort {
       documentSchema: documentType.documentSchema,
       Context: {},
       ...(storageContext !== undefined ? { StorageContext: storageContext } : {}),
+    };
+    const pathEvaluationContext: TemplateEvaluationContext = {
+      ...evaluationContext,
+      Document: createPathSafeDocument(enrichedDocument, documentType, this.templateEvaluator),
     };
 
     let currentFiles: readonly FileLocator[] = Object.freeze([]);
@@ -829,7 +893,8 @@ export class DocumentService implements DocumentServicePort {
       const resolvedPayload = (resolvePayloadTemplates(
         activity.payload,
         this.templateEvaluator,
-        evaluationContext
+        evaluationContext,
+        pathEvaluationContext
       ) ?? {}) as { [key: string]: unknown };
 
       const resolvedActivity: Activity = {
@@ -877,6 +942,13 @@ export class DocumentService implements DocumentServicePort {
           ...accumulatedContextVariables,
           ...stepOutputs,
         };
+        pathEvaluationContext.Document = createPathSafeDocument(
+          enrichedDocument,
+          documentType,
+          this.templateEvaluator
+        );
+        const { Context: nextContext } = evaluationContext;
+        pathEvaluationContext.Context = nextContext;
         currentContext = createActivityExecutionContext(
           enrichedDocument,
           currentFiles,

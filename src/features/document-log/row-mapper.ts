@@ -58,7 +58,8 @@ export function formatFileLinkFormula(
  */
 export function enrichDocumentData(
   data: Readonly<Record<string, unknown>>,
-  targetSchema: LogTargetDocumentSchema
+  targetSchema: LogTargetDocumentSchema,
+  dynamicOptions?: Readonly<Record<string, readonly LogTargetDocumentOptionTuple[]>>
 ): Record<string, unknown> {
   const enriched: Record<string, unknown> = {};
   const schemaFieldKeys = new Set(targetSchema.fields.map((f) => f.key));
@@ -83,7 +84,10 @@ export function enrichDocumentData(
         delete enriched[field.key];
         continue;
       }
-      const optionTuples = targetSchema.options?.[field.options.source] ?? [];
+      const optionTuples =
+        dynamicOptions?.[field.options.source] ??
+        targetSchema.options?.[field.options.source] ??
+        [];
       const exactTuple = optionTuples.find(
         (tuple) =>
           tuple[keyProp] === rawValue ||
@@ -279,6 +283,7 @@ export interface BuildRowKeyExtractorParams {
   logSchema: DocumentLogSchema;
   targetSchema: LogTargetDocumentSchema;
   templateEvaluator: LogTemplateEvaluatorPort;
+  dynamicOptions?: Readonly<Record<string, readonly LogTargetDocumentOptionTuple[]>> | undefined;
 }
 
 interface ReconstructedRowFields {
@@ -325,7 +330,10 @@ function reconstructFieldsFromRow(
   row: LogRowValues,
   mappings: readonly ColumnReverseMapping[],
   targetSchema: LogTargetDocumentSchema,
-  options: { synthesizeInvalidLookupFallback: boolean }
+  options: {
+    synthesizeInvalidLookupFallback: boolean;
+    dynamicOptions?: Readonly<Record<string, readonly LogTargetDocumentOptionTuple[]>> | undefined;
+  }
 ): ReconstructedRowFields {
   const data: Record<string, unknown> = {};
   const matchedLookupFields = new Set<string>();
@@ -344,7 +352,10 @@ function reconstructFieldsFromRow(
     }
 
     if (mapping.field?.options) {
-      const optionTuples = targetSchema.options?.[mapping.field.options.source] ?? [];
+      const optionTuples =
+        options.dynamicOptions?.[mapping.field.options.source] ??
+        targetSchema.options?.[mapping.field.options.source] ??
+        [];
       const keyProp = mapping.field.options.key;
       const nameProp = mapping.field.options.name;
       const normalizedTarget = trimmedStr.toLowerCase();
@@ -411,7 +422,7 @@ function reconstructFieldsFromRow(
 export function buildRowKeyExtractor(
   params: BuildRowKeyExtractorParams
 ): (row: LogRowValues) => LogRowKey | null {
-  const { logSchema, targetSchema, templateEvaluator } = params;
+  const { logSchema, targetSchema, templateEvaluator, dynamicOptions } = params;
   const { groupByTemplate, sortByTemplate, groupByTokens } = resolveGroupingTemplates(
     logSchema,
     targetSchema
@@ -421,6 +432,7 @@ export function buildRowKeyExtractor(
   return (row: LogRowValues): LogRowKey | null => {
     const { data } = reconstructFieldsFromRow(row, mappings, targetSchema, {
       synthesizeInvalidLookupFallback: false,
+      dynamicOptions,
     });
 
     return evaluateRowKeysFromData({

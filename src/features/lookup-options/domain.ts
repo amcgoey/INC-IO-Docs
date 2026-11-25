@@ -1,4 +1,6 @@
 import type {
+  DocumentLogOptionSourcePort,
+  DocumentLogOptionTablesBatchResult,
   DriveOptionSourcePort,
   LookupDocumentSchema,
   LookupFieldOptions,
@@ -164,8 +166,14 @@ interface InternalSourceResolution {
   optionSource?: LookupOptionSource | undefined;
 }
 
+type InternalDocumentLogBatchOutcome =
+  | { kind: 'result'; result: DocumentLogOptionTablesBatchResult }
+  | { kind: 'timeout' }
+  | { kind: 'error' };
+
 export interface LookupOptionsServiceDeps {
   driveOptionSource?: DriveOptionSourcePort | undefined;
+  documentLogOptionSource?: DocumentLogOptionSourcePort | undefined;
   timeoutMs?: number | undefined;
 }
 
@@ -173,6 +181,7 @@ export class LookupOptionsService implements LookupOptionsPort {
   private readonly timeoutMs: number;
   private readonly schemaCache = new Map<string, Promise<LookupDocumentSchema | undefined>>();
   private readonly sourceCache = new Map<string, Promise<InternalSourceResolution>>();
+  private readonly documentLogBatchCache = new Map<string, Promise<InternalDocumentLogBatchOutcome>>();
   private readonly validationCache = new Map<string, Promise<LookupFieldValidationResult>>();
 
   constructor(
@@ -185,6 +194,7 @@ export class LookupOptionsService implements LookupOptionsPort {
   invalidate(scope?: LookupInvalidationScope): void {
     if (!scope || (!scope.spaceId && !scope.documentTypeKey && !scope.selectedLogId)) {
       this.sourceCache.clear();
+      this.documentLogBatchCache.clear();
       this.validationCache.clear();
       this.schemaCache.clear();
       return;
@@ -205,6 +215,11 @@ export class LookupOptionsService implements LookupOptionsPort {
     for (const key of this.sourceCache.keys()) {
       if (matchesScope(key)) {
         this.sourceCache.delete(key);
+      }
+    }
+    for (const key of this.documentLogBatchCache.keys()) {
+      if (matchesScope(key)) {
+        this.documentLogBatchCache.delete(key);
       }
     }
     for (const key of this.validationCache.keys()) {
@@ -404,6 +419,7 @@ export class LookupOptionsService implements LookupOptionsPort {
         isValid: false,
         status: resolution.status,
         ...(resolution.targetPath !== undefined ? { targetPath: resolution.targetPath } : {}),
+        ...(resolution.errorMessage !== undefined ? { errorMessage: resolution.errorMessage } : {}),
       };
     }
 
@@ -507,7 +523,7 @@ export class LookupOptionsService implements LookupOptionsPort {
   }
 
   private async executeResolveSingleSource(
-    _context: LookupOptionsCallContext,
+    context: LookupOptionsCallContext,
     schema: LookupDocumentSchema,
     sourceKey: string,
     spaceStorageId: string
@@ -632,10 +648,139 @@ export class LookupOptionsService implements LookupOptionsPort {
       );
     }
 
-    // document_log OptionSource will be wired in Ticket #358
+    const selectedLogId = context.selectedLogId?.trim() ?? '';
+    if (!spaceStorageId && !selectedLogId) {
+      return {
+        resolution: { status: 'missing_space', tuples: [], items: [] },
+        duplicateNormalizedKeys: new Set(),
+        truncated: false,
+        optionSource,
+      };
+    }
+
+    if (!this.deps?.documentLogOptionSource) {
+      return {
+        resolution: { status: 'error', tuples: [], items: [] },
+        duplicateNormalizedKeys: new Set(),
+        truncated: false,
+        optionSource,
+      };
+    }
+
+    const docKey = context.documentTypeKey.trim();
+    const batchCacheKey = `${spaceStorageId}::${docKey}::${selectedLogId}`;
+    let batchPromise = this.documentLogBatchCache.get(batchCacheKey);
+    if (!batchPromise) {
+      const allDocLogSourceKeys = Object.entries(schema.optionSources ?? {})
+        .filter(([, src]) => src.provider === 'document_log')
+        .map(([k]) => k);
+      const sourceKeys = allDocLogSourceKeys.length > 0 ? allDocLogSourceKeys : [sourceKey];
+
+      batchPromise = this.runWithTimeout<InternalDocumentLogBatchOutcome>(
+        async () => {
+          const result = await this.deps!.documentLogOptionSource!.readOptionTables({
+            documentTypeKey: docKey,
+            ...(context.space !== undefined ? { space: context.space } : {}),
+            ...(selectedLogId ? { selectedLogId } : {}),
+            sourceKeys,
+          });
+          return { kind: 'result', result };
+        },
+        () => ({ kind: 'timeout' }),
+        () => ({ kind: 'error' })
+      ).catch((error) => {
+        this.documentLogBatchCache.delete(batchCacheKey);
+        throw error;
+      });
+      this.documentLogBatchCache.set(batchCacheKey, batchPromise);
+    }
+
+    const batchOutcome = await batchPromise;
+    if (batchOutcome.kind === 'timeout' || batchOutcome.kind === 'error') {
+      return {
+        resolution: { status: batchOutcome.kind, tuples: [], items: [] },
+        duplicateNormalizedKeys: new Set(),
+        truncated: false,
+        optionSource,
+      };
+    }
+
+    const { result: batchResult } = batchOutcome;
+    if (batchResult.status === 'missing_space') {
+      return {
+        resolution: { status: 'missing_space', tuples: [], items: [] },
+        duplicateNormalizedKeys: new Set(),
+        truncated: false,
+        optionSource,
+      };
+    }
+    if (batchResult.status === 'missing_log') {
+      return {
+        resolution: {
+          status: 'missing_log',
+          tuples: [],
+          items: [],
+          ...(batchResult.expectedFolderPath !== undefined
+            ? { targetPath: batchResult.expectedFolderPath }
+            : {}),
+        },
+        duplicateNormalizedKeys: new Set(),
+        truncated: false,
+        optionSource,
+      };
+    }
+    if (batchResult.status === 'config_error') {
+      return {
+        resolution: {
+          status: 'config_error',
+          tuples: [],
+          items: [],
+          errorMessage: batchResult.errorMessage,
+        },
+        duplicateNormalizedKeys: new Set(),
+        truncated: false,
+        optionSource,
+      };
+    }
+
+    const tableEntry = batchResult.tables[sourceKey];
+    if (!tableEntry || tableEntry.status === 'config_error') {
+      return {
+        resolution: {
+          status: 'config_error',
+          tuples: [],
+          items: [],
+          ...(tableEntry?.errorMessage !== undefined
+            ? { errorMessage: tableEntry.errorMessage }
+            : {}),
+        },
+        duplicateNormalizedKeys: new Set(),
+        truncated: false,
+        optionSource,
+      };
+    }
+
+    if (tableEntry.tuples.length === 0) {
+      return {
+        resolution: { status: 'empty', tuples: [], items: [] },
+        duplicateNormalizedKeys: new Set(),
+        truncated: false,
+        optionSource,
+      };
+    }
+
+    const { uniqueTuples, duplicateNormalizedKeys } = deduplicateTuplesByKey(
+      tableEntry.tuples,
+      keyProp
+    );
+    const items = formatLookupOptionItems(uniqueTuples, fieldForSource?.options);
     return {
-      resolution: { status: 'config_error', tuples: [], items: [] },
-      duplicateNormalizedKeys: new Set(),
+      resolution: {
+        status: 'ready',
+        tuples: uniqueTuples,
+        items,
+      },
+      duplicateNormalizedKeys,
       truncated: false,
       optionSource,
     };
