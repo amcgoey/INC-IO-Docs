@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { UiViewColorSchema, UiViewSectionSchema } from '../domain';
-import type { DocumentLogPanelContext } from '../ports';
+import type { DocumentLogPanelContext, DocumentLogPanelEntry } from '../ports';
 import { PRIMARY_ACTION_BUTTON_COLOR, escapeCardHtml } from './common';
 import { buildDocumentLogSection } from './document-log';
 
@@ -308,5 +308,356 @@ describe('Document Log Block', () => {
     expect(clamped).toBeDefined();
     expect(Value.Check(UiViewSectionSchema, clamped)).toBe(true);
     expect(clamped?.widgets).toHaveLength(1);
+  });
+
+  const makeHistoryEntries = (count: number): DocumentLogPanelEntry[] =>
+    Array.from({ length: count }, (_, idx) => ({
+      topLabel: `Submission ${count - idx}`,
+      text: `<b>Revise &amp; Resubmit</b> 2602${String(idx + 1).padStart(2, '0')} (ARC)`,
+      bottomLabel: `Row ${idx + 1}`,
+      fileUri: `https://drive.google.com/file/d/entry-${idx + 1}/view`,
+      valid: true,
+    }));
+
+  it('renders HTML-escaped missing field guidance for readStatus: idle_incomplete_id and omits collapsible properties', () => {
+    const context: DocumentLogPanelContext = {
+      status: 'resolved',
+      spaceName: 'Harborview Hotel',
+      targetFolderPath: '1 Admin',
+      activeCandidate: {
+        name: 'Harborview Hotel Document Log',
+        url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+      },
+      readStatus: 'idle_incomplete_id',
+      missingIdFields: ['Section & <1>', 'Number'],
+    };
+
+    const section = buildDocumentLogSection(context);
+
+    expect(section).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+    expect('collapsible' in section!).toBe(false);
+    expect('uncollapsibleWidgetsCount' in section!).toBe(false);
+    expect(section?.widgets).toHaveLength(2);
+
+    const guidance = section?.widgets[1].textParagraph;
+    expect(guidance).toBeDefined();
+    expect(guidance?.text).toContain(escapeCardHtml('Section & <1>'));
+    expect(guidance?.text).toContain('Number');
+    expect(guidance?.text).not.toContain('Section & <1>');
+  });
+
+  it('renders non-blocking HTML-escaped error and idGroup for readStatus: read_error and omits collapsible properties', () => {
+    const rawError = 'Sheet <Read> & "Timeout" = \'504\'';
+    const rawIdGroup = '071200 & <001>';
+    const context: DocumentLogPanelContext = {
+      status: 'resolved',
+      spaceName: 'Harborview Hotel',
+      targetFolderPath: '1 Admin',
+      activeCandidate: {
+        name: 'Harborview Hotel Document Log',
+        url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+      },
+      readStatus: 'read_error',
+      idGroup: rawIdGroup,
+      readErrorMessage: rawError,
+    };
+
+    const section = buildDocumentLogSection(context);
+
+    expect(section).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+    expect('collapsible' in section!).toBe(false);
+    expect('uncollapsibleWidgetsCount' in section!).toBe(false);
+    expect(section?.widgets).toHaveLength(2);
+
+    const paragraph = section?.widgets[1].textParagraph;
+    expect(paragraph).toBeDefined();
+    expect(paragraph?.text).toContain(escapeCardHtml(rawError));
+    expect(paragraph?.text).not.toContain('<Read>');
+    expect(paragraph?.text).toContain(escapeCardHtml(rawIdGroup));
+    expect(paragraph?.text).not.toContain(rawIdGroup);
+  });
+
+  it('renders empty-history guidance with HTML-escaped idGroup for readStatus: ready with entries: [] and omits collapsible properties', () => {
+    const rawIdGroup = '071200 & <001>';
+    const context: DocumentLogPanelContext = {
+      status: 'resolved',
+      spaceName: 'Harborview Hotel',
+      targetFolderPath: '1 Admin',
+      activeCandidate: {
+        name: 'Harborview Hotel Document Log',
+        url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+      },
+      readStatus: 'ready',
+      idGroup: rawIdGroup,
+      entries: [],
+    };
+
+    const section = buildDocumentLogSection(context);
+
+    expect(section).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+    expect('collapsible' in section!).toBe(false);
+    expect('uncollapsibleWidgetsCount' in section!).toBe(false);
+    expect(section?.widgets).toHaveLength(2);
+
+    const paragraph = section?.widgets[1].textParagraph;
+    expect(paragraph).toBeDefined();
+    expect(paragraph?.text).toContain(escapeCardHtml(rawIdGroup));
+    expect(paragraph?.text).not.toContain(rawIdGroup);
+  });
+
+  it('renders newest-first history rows for resolved + readStatus: ready preserving pre-escaped text, plain labels, optional Open link, and collapsible: true / uncollapsibleWidgetsCount: 1', () => {
+    const firstFileUri = 'https://drive.google.com/file/d/sub-2/view';
+    const context: DocumentLogPanelContext = {
+      status: 'resolved',
+      spaceName: 'Harborview Hotel',
+      targetFolderPath: '1 Admin',
+      activeCandidate: {
+        name: 'Harborview Hotel Document Log',
+        url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+      },
+      readStatus: 'ready',
+      idGroup: '071200-001',
+      entries: [
+        {
+          topLabel: 'Rev 2 · A & B <C>',
+          text: '<b>Revise &amp; Resubmit</b> 260212 (ARC)',
+          bottomLabel: 'Note: "Check" = \'OK\'',
+          fileUri: firstFileUri,
+          valid: true,
+        },
+        {
+          text: '<b>Approved</b> 260110 (ENG)',
+          valid: true,
+        },
+      ],
+    };
+
+    const section = buildDocumentLogSection(context);
+
+    expect(section).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+    expect(section?.collapsible).toBe(true);
+    expect(section?.uncollapsibleWidgetsCount).toBe(1);
+    expect(section?.widgets).toHaveLength(3);
+
+    const row0 = section?.widgets[1].decoratedText;
+    expect(row0).toEqual({
+      topLabel: 'Rev 2 · A & B <C>',
+      text: '<b>Revise &amp; Resubmit</b> 260212 (ARC)',
+      wrapText: true,
+      bottomLabel: 'Note: "Check" = \'OK\'',
+      button: {
+        text: 'Open',
+        onClick: {
+          openLink: {
+            url: firstFileUri,
+            openAs: 'FULL_SIZE',
+          },
+        },
+      },
+    });
+
+    const row1 = section?.widgets[2].decoratedText;
+    expect(row1).toEqual({
+      text: '<b>Approved</b> 260110 (ENG)',
+      wrapText: true,
+    });
+    expect('topLabel' in row1!).toBe(false);
+    expect('bottomLabel' in row1!).toBe(false);
+    expect('button' in row1!).toBe(false);
+  });
+
+  it('renders partial_hydration warning banner and adjusts collapsible/uncollapsibleWidgetsCount for resolved and ambiguous', () => {
+    const rawWarning = 'Row 3 & <4> "bad" = \'skip\'';
+    const escapedWarning = escapeCardHtml(rawWarning);
+    expect(escapedWarning).not.toContain('&#x3D;');
+
+    const candidateOptions = [
+      { text: 'Log A (1 Admin)', value: 'log-a', selected: true },
+      { text: 'Log B (6 Construction)', value: 'log-b', selected: false },
+    ];
+    const activeCandidate = {
+      name: 'Log A',
+      url: 'https://docs.google.com/spreadsheets/d/log-a/edit',
+    };
+    const oneEntry = makeHistoryEntries(1);
+
+    // 1. resolved + partial_hydration + >= 1 entries -> uncollapsibleWidgetsCount: 2 (active bar + warning banner)
+    const resolvedPartial = buildDocumentLogSection({
+      status: 'resolved',
+      spaceName: 'Harborview Hotel',
+      activeCandidate,
+      readStatus: 'partial_hydration',
+      idGroup: '071200-001',
+      warningMessages: [rawWarning],
+      entries: oneEntry,
+    });
+    expect(resolvedPartial).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, resolvedPartial)).toBe(true);
+    expect(resolvedPartial?.collapsible).toBe(true);
+    expect(resolvedPartial?.uncollapsibleWidgetsCount).toBe(2);
+    expect(resolvedPartial?.widgets).toHaveLength(3);
+    expect(resolvedPartial?.widgets[1].textParagraph?.text).toContain(escapedWarning);
+    expect(resolvedPartial?.widgets[1].textParagraph?.text).not.toContain(rawWarning);
+    expect(resolvedPartial?.widgets[1].textParagraph?.text).not.toContain('&#x3D;');
+
+    // 2. ambiguous + partial_hydration + >= 1 entries -> uncollapsibleWidgetsCount: 3 (SelectDocumentLog + active bar + warning banner)
+    const ambiguousPartial = buildDocumentLogSection({
+      status: 'ambiguous',
+      spaceName: 'Harborview Hotel',
+      candidateOptions,
+      activeCandidate,
+      readStatus: 'partial_hydration',
+      idGroup: '071200-001',
+      warningMessages: [rawWarning],
+      entries: oneEntry,
+    });
+    expect(ambiguousPartial).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, ambiguousPartial)).toBe(true);
+    expect(ambiguousPartial?.collapsible).toBe(true);
+    expect(ambiguousPartial?.uncollapsibleWidgetsCount).toBe(3);
+    expect(ambiguousPartial?.widgets).toHaveLength(4);
+    expect(ambiguousPartial?.widgets[2].textParagraph?.text).toContain(escapedWarning);
+    expect(ambiguousPartial?.widgets[2].textParagraph?.text).not.toContain('&#x3D;');
+
+    // 3. ambiguous + ready + >= 1 entries (no warning) -> uncollapsibleWidgetsCount: 2
+    const ambiguousReady = buildDocumentLogSection({
+      status: 'ambiguous',
+      spaceName: 'Harborview Hotel',
+      candidateOptions,
+      activeCandidate,
+      readStatus: 'ready',
+      idGroup: '071200-001',
+      entries: oneEntry,
+    });
+    expect(ambiguousReady).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, ambiguousReady)).toBe(true);
+    expect(ambiguousReady?.collapsible).toBe(true);
+    expect(ambiguousReady?.uncollapsibleWidgetsCount).toBe(2);
+    expect(ambiguousReady?.widgets).toHaveLength(3);
+
+    // 4. partial_hydration + entries: [] -> omits collapsible and uncollapsibleWidgetsCount
+    const partialEmpty = buildDocumentLogSection({
+      status: 'resolved',
+      spaceName: 'Harborview Hotel',
+      activeCandidate,
+      readStatus: 'partial_hydration',
+      idGroup: '071200-001',
+      warningMessages: [rawWarning],
+      entries: [],
+    });
+    expect(partialEmpty).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, partialEmpty)).toBe(true);
+    expect('collapsible' in partialEmpty!).toBe(false);
+    expect('uncollapsibleWidgetsCount' in partialEmpty!).toBe(false);
+    expect(partialEmpty?.widgets.some((w) => w.textParagraph?.text.includes(escapedWarning))).toBe(
+      true
+    );
+  });
+
+  it('enforces hard 100-widget cap guard and overflow-first math boundaries in buildDocumentLogSection', () => {
+    const activeUrl = 'https://docs.google.com/spreadsheets/d/log-1/edit';
+    const baseContext: Omit<DocumentLogPanelContext, 'entries'> = {
+      status: 'resolved',
+      spaceName: 'Harborview Hotel',
+      targetFolderPath: '1 Admin',
+      activeCandidate: {
+        name: 'Harborview Hotel Document Log',
+        url: activeUrl,
+      },
+      readStatus: 'ready',
+      idGroup: '071200-001',
+    };
+
+    // Case 1: maxWidgets = 21, 20 entries -> 20 history rows, NO overflow notice, widgets.length === 21
+    const exactFit = buildDocumentLogSection(
+      { ...baseContext, entries: makeHistoryEntries(20) },
+      { maxWidgets: 21 }
+    );
+    expect(exactFit).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, exactFit)).toBe(true);
+    expect(exactFit?.widgets).toHaveLength(21);
+    expect(exactFit?.collapsible).toBe(true);
+    expect(exactFit?.uncollapsibleWidgetsCount).toBe(1);
+    expect(
+      exactFit?.widgets.some((w) => w.decoratedText?.text.startsWith('Showing '))
+    ).toBe(false);
+
+    // Case 2: maxWidgets = 21, 21 entries -> 19 history rows + 1 overflow notice ('Showing 19 of 21 entries'), widgets.length === 21
+    const overflowAt21 = buildDocumentLogSection(
+      { ...baseContext, entries: makeHistoryEntries(21) },
+      { maxWidgets: 21 }
+    );
+    expect(overflowAt21).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, overflowAt21)).toBe(true);
+    expect(overflowAt21?.widgets).toHaveLength(21);
+    expect(overflowAt21?.collapsible).toBe(true);
+    expect(overflowAt21?.uncollapsibleWidgetsCount).toBe(1);
+    expect(overflowAt21?.widgets[20].decoratedText).toEqual({
+      text: 'Showing 19 of 21 entries',
+      wrapText: true,
+      button: {
+        text: 'Open Log',
+        onClick: {
+          openLink: {
+            url: activeUrl,
+            openAs: 'FULL_SIZE',
+          },
+        },
+      },
+    });
+
+    // Case 3: maxWidgets = 30, 25 entries -> enforces 20-row history cap + 1 overflow notice ('Showing 20 of 25 entries'), widgets.length === 22
+    const cappedAt20 = buildDocumentLogSection(
+      { ...baseContext, entries: makeHistoryEntries(25) },
+      { maxWidgets: 30 }
+    );
+    expect(cappedAt20).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, cappedAt20)).toBe(true);
+    expect(cappedAt20?.widgets).toHaveLength(22);
+    expect(cappedAt20?.collapsible).toBe(true);
+    expect(cappedAt20?.uncollapsibleWidgetsCount).toBe(1);
+    expect(cappedAt20?.widgets[21].decoratedText?.text).toBe('Showing 20 of 25 entries');
+
+    // Case 4: maxWidgets = 2, 5 entries -> 0 history rows + 1 overflow notice ('Showing 0 of 5 entries'), widgets.length === 2, omits collapsible/uncollapsibleWidgetsCount
+    const budgetOne = buildDocumentLogSection(
+      { ...baseContext, entries: makeHistoryEntries(5) },
+      { maxWidgets: 2 }
+    );
+    expect(budgetOne).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, budgetOne)).toBe(true);
+    expect(budgetOne?.widgets).toHaveLength(2);
+    expect(budgetOne?.widgets[1].decoratedText).toEqual({
+      text: 'Showing 0 of 5 entries',
+      wrapText: true,
+      button: {
+        text: 'Open Log',
+        onClick: {
+          openLink: {
+            url: activeUrl,
+            openAs: 'FULL_SIZE',
+          },
+        },
+      },
+    });
+    expect('collapsible' in budgetOne!).toBe(false);
+    expect('uncollapsibleWidgetsCount' in budgetOne!).toBe(false);
+
+    // Case 5: maxWidgets = 1, 5 entries -> 0 history rows and NO overflow notice (no negative .slice), widgets.length === 1, omits collapsible/uncollapsibleWidgetsCount
+    const budgetZero = buildDocumentLogSection(
+      { ...baseContext, entries: makeHistoryEntries(5) },
+      { maxWidgets: 1 }
+    );
+    expect(budgetZero).toBeDefined();
+    expect(Value.Check(UiViewSectionSchema, budgetZero)).toBe(true);
+    expect(budgetZero?.widgets).toHaveLength(1);
+    expect(
+      budgetZero?.widgets.some((w) => w.decoratedText?.text.startsWith('Showing '))
+    ).toBe(false);
+    expect('collapsible' in budgetZero!).toBe(false);
+    expect('uncollapsibleWidgetsCount' in budgetZero!).toBe(false);
   });
 });

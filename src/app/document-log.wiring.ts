@@ -231,7 +231,8 @@ export function createDocumentLogWiring(
       logSchemaRegistry,
       createDriveDiscoveryAdapter(defaultDriveClient),
       createSheetsStorageAdapter(defaultSheetsClient),
-      templateEvaluator
+      templateEvaluator,
+      templateParser
     );
 
   const createDocumentLogService: DocumentLogServiceFactory = (
@@ -265,7 +266,8 @@ export function createDocumentLogWiring(
       logSchemaRegistry,
       createDriveDiscoveryAdapter(reqDriveClient),
       createSheetsStorageAdapter(reqSheetsClient),
-      templateEvaluator
+      templateEvaluator,
+      templateParser
     );
   };
 

@@ -167,11 +167,13 @@
       },
       "section": {
         "widget": "textInput",
-        "label": "Section"
+        "label": "Section",
+        "onChange": true
       },
       "number": {
         "widget": "textInput",
-        "label": "Number"
+        "label": "Number",
+        "onChange": true
       },
       "revision": {
         "widget": "textInput",
@@ -251,6 +253,11 @@
       "Action": { "template": "{{action.name}}" },
       "Notes": { "template": "{{notes}}" },
       "Calc Link": { "source": "fileLink", "label": "Link" }
+    },
+    "historyDisplay": {
+      "topLabel": "Rev {{revision}} • {{section}}-{{number}} • {{status.key}}",
+      "text": "<b>{{action.name}}</b> {{date}} ({{contact.key}})",
+      "bottomLabel": "{{title}}"
     }
   },
   "documentFormSchema": {

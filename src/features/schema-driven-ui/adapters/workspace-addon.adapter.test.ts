@@ -1680,6 +1680,175 @@ describe('WorkspaceAddonAdapter', () => {
         parameters: expectedGmailParams,
       });
     });
+
+    const readStatusGatingCases: ReadonlyArray<{
+      label: string;
+      panel: DocumentLogPanelContext;
+      expectedLogWidgetCount: number;
+    }> = [
+      {
+        label: 'resolved + readStatus: read_error',
+        panel: {
+          status: 'resolved',
+          spaceName: 'Harborview Hotel',
+          targetFolderPath: '1 Admin',
+          activeCandidate: {
+            name: 'Harborview Hotel Document Log',
+            url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+          },
+          readStatus: 'read_error',
+          idGroup: '071200-001',
+          readErrorMessage: 'Sheet read timed out',
+        },
+        expectedLogWidgetCount: 2,
+      },
+      {
+        label: 'resolved + readStatus: partial_hydration',
+        panel: {
+          status: 'resolved',
+          spaceName: 'Harborview Hotel',
+          targetFolderPath: '1 Admin',
+          activeCandidate: {
+            name: 'Harborview Hotel Document Log',
+            url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+          },
+          readStatus: 'partial_hydration',
+          idGroup: '071200-001',
+          warningMessages: ['Skipped 1 malformed row'],
+          entries: [
+            {
+              text: '<b>Approved</b> 260212 (ARC)',
+              valid: true,
+            },
+          ],
+        },
+        expectedLogWidgetCount: 3,
+      },
+      {
+        label: 'ambiguous + readStatus: partial_hydration',
+        panel: {
+          status: 'ambiguous',
+          spaceName: 'Harborview Hotel',
+          candidateOptions: [
+            { text: 'Log A (1 Admin)', value: 'log-a', selected: true },
+            { text: 'Log B (6 Construction)', value: 'log-b', selected: false },
+          ],
+          activeCandidate: {
+            name: 'Log A',
+            url: 'https://docs.google.com/spreadsheets/d/log-a/edit',
+          },
+          readStatus: 'partial_hydration',
+          idGroup: '071200-001',
+          warningMessages: ['Skipped 1 malformed row'],
+          entries: [
+            {
+              text: '<b>Approved</b> 260212 (ARC)',
+              valid: true,
+            },
+          ],
+        },
+        expectedLogWidgetCount: 4,
+      },
+    ];
+
+    it.each(readStatusGatingCases)(
+      'keeps Process Document enabled (disabled omitted) for $label in both Drive and Gmail adapters',
+      async ({ panel, expectedLogWidgetCount }) => {
+        const driveAdapter = new WorkspaceAddonAdapter();
+        const gmailAdapter = new GmailWorkspaceAddonAdapter();
+
+        const driveView = await driveAdapter.composeView(
+          buildBaseContext(WORKSPACE_ADDON_VIEW_ID, { 'document-log': panel })
+        );
+        const gmailView = await gmailAdapter.composeView(
+          buildBaseContext(GMAIL_WORKSPACE_ADDON_VIEW_ID, { 'document-log': panel })
+        );
+
+        assertValidUiView(driveView);
+        assertValidUiView(gmailView);
+
+        for (const view of [driveView, gmailView]) {
+          const logSection = view.sections.find((s) => s.header === 'Document Log');
+          expect(logSection).toBeDefined();
+          expect(logSection?.widgets).toHaveLength(expectedLogWidgetCount);
+
+          const processButton = getProcessButton(view);
+          expect(processButton).toBeDefined();
+          expect(processButton?.disabled).toBeUndefined();
+          expect('disabled' in (processButton ?? {})).toBe(false);
+        }
+      }
+    );
+
+    it('enforces the hard 100-widget card cap guard end-to-end across Drive WorkspaceAddonAdapter and omits Document Log when fixedWidgetCount >= 100', async () => {
+      const driveAdapter = new WorkspaceAddonAdapter();
+      const activeUrl = 'https://docs.google.com/spreadsheets/d/log-1/edit';
+      const panelWith21Entries: DocumentLogPanelContext = {
+        status: 'resolved',
+        spaceName: 'Harborview Hotel',
+        targetFolderPath: '1 Admin',
+        activeCandidate: {
+          name: 'Harborview Hotel Document Log',
+          url: activeUrl,
+        },
+        readStatus: 'ready',
+        idGroup: '071200-001',
+        entries: Array.from({ length: 21 }, (_, idx) => ({
+          topLabel: `Submission ${21 - idx}`,
+          text: `<b>Revise &amp; Resubmit</b> 2602${String(idx + 1).padStart(2, '0')} (ARC)`,
+          bottomLabel: `Row ${idx + 1}`,
+          fileUri: `https://drive.google.com/file/d/entry-${idx + 1}/view`,
+          valid: true,
+        })),
+      };
+
+      // Fixed widgets: Document Type (3) + File Selection (1) + Document Data (73 fields + 1 Process Document button = 74) + Admin (1) = 79
+      const viewAtCap = await driveAdapter.composeView({
+        ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, { 'document-log': panelWith21Entries }),
+        documentSchema: {
+          fields: Array.from({ length: 73 }, (_, i) => ({
+            key: `field${i + 1}`,
+            type: 'string',
+          })),
+        },
+      });
+      assertValidUiView(viewAtCap);
+
+      const totalWidgets = viewAtCap.sections.reduce((sum, s) => sum + s.widgets.length, 0);
+      expect(totalWidgets).toBe(100);
+
+      const logSection = viewAtCap.sections.find((s) => s.header === 'Document Log');
+      expect(logSection).toBeDefined();
+      expect(logSection?.widgets).toHaveLength(21);
+      expect(logSection?.collapsible).toBe(true);
+      expect(logSection?.uncollapsibleWidgetsCount).toBe(1);
+      expect(logSection?.widgets[20].decoratedText).toEqual({
+        text: 'Showing 19 of 21 entries',
+        wrapText: true,
+        button: {
+          text: 'Open Log',
+          onClick: {
+            openLink: {
+              url: activeUrl,
+              openAs: 'FULL_SIZE',
+            },
+          },
+        },
+      });
+
+      // When fixedWidgetCount >= 100 (94 fields -> 3 + 1 + 95 + 1 = 100), Document Log is omitted cleanly
+      const viewOverFixedCap = await driveAdapter.composeView({
+        ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, { 'document-log': panelWith21Entries }),
+        documentSchema: {
+          fields: Array.from({ length: 94 }, (_, i) => ({
+            key: `field${i + 1}`,
+            type: 'string',
+          })),
+        },
+      });
+      assertValidUiView(viewOverFixedCap);
+      expect(viewOverFixedCap.sections.map((s) => s.header)).not.toContain('Document Log');
+    });
   });
 });
 

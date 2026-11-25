@@ -3,14 +3,17 @@ import {
   type DocumentLogDocument,
   type DocumentLogEntry,
   type DocumentLogSchema,
+  type DocumentLogUiHistoryEntry,
   type LogCellInput,
   type LogFormulaCell,
+  type LogParsedMustacheTemplate,
   type LogRowKey,
   type LogRowValues,
   type LogTargetDocumentField,
   type LogTargetDocumentOptionTuple,
   type LogTargetDocumentSchema,
   type LogTemplateEvaluatorPort,
+  type LogTemplateParserPort,
   type ReadLogRow,
   type RowHydrationWarning,
 } from './ports';
@@ -81,11 +84,18 @@ export function enrichDocumentData(
         continue;
       }
       const optionTuples = targetSchema.options?.[field.options.source] ?? [];
-      const matchedTuple = optionTuples.find(
+      const exactTuple = optionTuples.find(
         (tuple) =>
           tuple[keyProp] === rawValue ||
           (nameProp !== undefined && tuple[nameProp] === rawValue)
       );
+      const normalizedTarget = rawValue.trim().toLowerCase();
+      const matchedTuple =
+        exactTuple ??
+        matchOptionTupleCaseInsensitive(optionTuples, keyProp, normalizedTarget) ??
+        (nameProp !== undefined
+          ? matchOptionTupleCaseInsensitive(optionTuples, nameProp, normalizedTarget)
+          : undefined);
       if (matchedTuple) {
         enriched[field.key] = { ...matchedTuple };
       } else if (field.options.allowUserInput) {
@@ -648,4 +658,235 @@ export function computeTargetRowKeys(params: ComputeTargetRowKeysParams): LogRow
     groupByTokens,
     templateEvaluator,
   });
+}
+
+/**
+ * Explicit 5-character HTML escaping for Google Workspace Card HTML-parsed text fields.
+ * Preserves `=` verbatim (avoiding Handlebars' `&#x3D;`).
+ */
+export function escapeCardHtmlText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function resolveTokenString(
+  data: Readonly<Record<string, unknown>>,
+  parts: readonly string[]
+): string {
+  let current: unknown = data;
+  for (const part of parts) {
+    if (current === null || current === undefined || typeof current !== 'object') {
+      return '';
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+  if (typeof current === 'string') {
+    return current;
+  }
+  if (typeof current === 'number' || typeof current === 'boolean') {
+    return String(current);
+  }
+  return '';
+}
+
+function stitchMustacheTemplate(
+  parsed: LogParsedMustacheTemplate,
+  data: Readonly<Record<string, unknown>>,
+  options: { escapeHtml: boolean }
+): string {
+  let result = parsed.literals[0] ?? '';
+  for (let i = 0; i < parsed.tokens.length; i++) {
+    const raw = resolveTokenString(data, parsed.tokens[i].parts);
+    const interpolated = options.escapeHtml ? escapeCardHtmlText(raw) : raw;
+    result += interpolated + (parsed.literals[i + 1] ?? '');
+  }
+  return result;
+}
+
+export interface ExtractFormIdGroupParams {
+  documentTypeKey: string;
+  formData?: Readonly<Record<string, unknown>> | undefined;
+  targetSchema: LogTargetDocumentSchema;
+  templateParser: LogTemplateParserPort;
+  templateEvaluator: LogTemplateEvaluatorPort;
+}
+
+export type ExtractFormIdGroupResult =
+  | { complete: true; idGroup: string }
+  | { complete: false; missingIdFields: string[] };
+
+/**
+ * Resolves widget-suffixed (`${fieldKey}_${documentTypeKey}` ?? `fieldKey`) form values referenced by
+ * `targetSchema.identity.idGroup`, trims each referenced value individually BEFORE calling
+ * `enrichDocumentData(...)`, and returns either the evaluated `idGroup` or missing `DocumentField` labels.
+ */
+export function extractFormIdGroup(params: ExtractFormIdGroupParams): ExtractFormIdGroupResult {
+  const { documentTypeKey, formData, targetSchema, templateParser, templateEvaluator } = params;
+  const idGroupTemplate = targetSchema.identity?.idGroup;
+  if (typeof idGroupTemplate !== 'string' || idGroupTemplate.trim().length === 0) {
+    return { complete: false, missingIdFields: [] };
+  }
+
+  const parsed = templateParser.parseMustacheTemplate(idGroupTemplate);
+  if (parsed.tokens.length === 0) {
+    return { complete: false, missingIdFields: [] };
+  }
+
+  const trimmedRawData: Record<string, unknown> = {};
+  const seenFieldKeys = new Set<string>();
+
+  for (const token of parsed.tokens) {
+    const fieldKey = token.parts[0];
+    if (!fieldKey || seenFieldKeys.has(fieldKey)) {
+      continue;
+    }
+    seenFieldKeys.add(fieldKey);
+
+    const suffixedKey = `${fieldKey}_${documentTypeKey}`;
+    const rawValue = formData?.[suffixedKey] ?? formData?.[fieldKey];
+    if (typeof rawValue === 'string') {
+      const trimmed = rawValue.trim();
+      if (trimmed.length > 0) {
+        trimmedRawData[fieldKey] = trimmed;
+      }
+    } else if (typeof rawValue === 'number' || typeof rawValue === 'boolean') {
+      const trimmed = String(rawValue).trim();
+      if (trimmed.length > 0) {
+        trimmedRawData[fieldKey] = trimmed;
+      }
+    } else if (rawValue !== null && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
+      const cleanedObj: Record<string, unknown> = {};
+      for (const [propKey, propVal] of Object.entries(rawValue as Record<string, unknown>)) {
+        if (typeof propVal === 'string') {
+          const trimmed = propVal.trim();
+          if (trimmed.length > 0) {
+            cleanedObj[propKey] = trimmed;
+          }
+        } else if (propVal !== undefined && propVal !== null) {
+          cleanedObj[propKey] = propVal;
+        }
+      }
+      if (Object.keys(cleanedObj).length > 0) {
+        trimmedRawData[fieldKey] = cleanedObj;
+      }
+    }
+  }
+
+  const enrichedData = enrichDocumentData(trimmedRawData, targetSchema);
+
+  const missingFieldKeys = new Set<string>();
+  const missingIdFields: string[] = [];
+  for (const token of parsed.tokens) {
+    if (!isTokenPresent(enrichedData, token.parts)) {
+      const fieldKey = token.parts[0];
+      if (fieldKey && !missingFieldKeys.has(fieldKey)) {
+        missingFieldKeys.add(fieldKey);
+        const fieldDef = targetSchema.fields.find((f) => f.key === fieldKey);
+        missingIdFields.push(fieldDef?.name?.trim() || fieldKey);
+      }
+    }
+  }
+
+  if (missingIdFields.length > 0) {
+    return { complete: false, missingIdFields };
+  }
+
+  const evaluated = templateEvaluator.evaluate(idGroupTemplate, enrichedData).trim();
+  if (evaluated.length === 0) {
+    return { complete: false, missingIdFields: [] };
+  }
+
+  return { complete: true, idGroup: evaluated };
+}
+
+export interface FormatHistoryDisplayEntryParams {
+  entry: DocumentLogEntry;
+  logSchema: DocumentLogSchema;
+  templateParser: LogTemplateParserPort;
+}
+
+/**
+ * Formats a hydrated `DocumentLogEntry` into a presentation-ready `DocumentLogUiHistoryEntry`.
+ * Stitches `historyDisplay.text` via `parseMustacheTemplate` with 5-char HTML escaping on
+ * interpolated values (falling back to `"—"` when blank), keeps `topLabel`/`bottomLabel` unescaped
+ * plain text, and provides a sensible HTML-escaped default format when `historyDisplay` is omitted.
+ */
+export function formatHistoryDisplayEntry(
+  params: FormatHistoryDisplayEntryParams
+): DocumentLogUiHistoryEntry {
+  const { entry, logSchema, templateParser } = params;
+  const data = entry.document.data;
+  const trimmedUri = entry.fileUri?.trim();
+  const fileUri = trimmedUri && trimmedUri.length > 0 ? trimmedUri : undefined;
+
+  if (logSchema.historyDisplay) {
+    const hd = logSchema.historyDisplay;
+    const parsedText = templateParser.parseMustacheTemplate(hd.text);
+    const stitchedText = stitchMustacheTemplate(parsedText, data, { escapeHtml: true }).trim();
+    const visibleText = stitchedText.replace(/<[^>]*>/g, '').trim();
+    const text = visibleText.length > 0 ? stitchedText : '—';
+
+    let topLabel: string | undefined;
+    if (hd.topLabel !== undefined) {
+      const parsedTop = templateParser.parseMustacheTemplate(hd.topLabel);
+      const renderedTop = stitchMustacheTemplate(parsedTop, data, { escapeHtml: false }).trim();
+      if (renderedTop.length > 0) {
+        topLabel = renderedTop;
+      }
+    }
+
+    let bottomLabel: string | undefined;
+    if (hd.bottomLabel !== undefined) {
+      const parsedBottom = templateParser.parseMustacheTemplate(hd.bottomLabel);
+      const renderedBottom = stitchMustacheTemplate(parsedBottom, data, {
+        escapeHtml: false,
+      }).trim();
+      if (renderedBottom.length > 0) {
+        bottomLabel = renderedBottom;
+      }
+    }
+
+    return {
+      ...(topLabel !== undefined ? { topLabel } : {}),
+      text,
+      ...(bottomLabel !== undefined ? { bottomLabel } : {}),
+      ...(fileUri !== undefined ? { fileUri } : {}),
+      valid: entry.valid,
+    };
+  }
+
+  // Sensible default format when historyDisplay is omitted
+  const defaultTopRaw =
+    entry.document.idDocument?.trim() || entry.document.idGroup?.trim() || undefined;
+
+  const summaryParts: string[] = [];
+  for (const [, binding] of Object.entries(logSchema.columns)) {
+    if (!('template' in binding)) {
+      continue;
+    }
+    const parsedCol = templateParser.parseMustacheTemplate(binding.template);
+    const rendered = stitchMustacheTemplate(parsedCol, data, { escapeHtml: false }).trim();
+    if (rendered.length > 0) {
+      summaryParts.push(escapeCardHtmlText(rendered));
+    }
+  }
+
+  const fallbackRaw = entry.document.id?.trim() || entry.document.idDocument?.trim() || '';
+  const text =
+    summaryParts.length > 0
+      ? summaryParts.join(' • ')
+      : fallbackRaw.length > 0
+        ? escapeCardHtmlText(fallbackRaw)
+        : '—';
+
+  return {
+    ...(defaultTopRaw !== undefined ? { topLabel: defaultTopRaw } : {}),
+    text,
+    ...(fileUri !== undefined ? { fileUri } : {}),
+    valid: entry.valid,
+  };
 }

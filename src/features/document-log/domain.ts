@@ -9,6 +9,8 @@ import {
   type DocumentLogSpace,
   type DocumentLogUiCandidateOption,
   type DocumentLogUiContextResult,
+  type DocumentLogUiHistoryEntry,
+  type DocumentLogUiReadStatus,
   type LogDiscoveryFileMetadata,
   type LogDiscoveryPort,
   type LogFilterBy,
@@ -18,6 +20,7 @@ import {
   type LogStoragePort,
   type LogTargetDocumentSchema,
   type LogTemplateEvaluatorPort,
+  type LogTemplateParserPort,
   type QueryDocumentLogUiContextRequest,
   type ReadDocumentLogRequest,
   type ReadDocumentLogResult,
@@ -30,6 +33,8 @@ import {
   buildRowKeyExtractor,
   computeTargetRowKeys,
   enrichDocumentData,
+  extractFormIdGroup,
+  formatHistoryDisplayEntry,
   mapDocumentToLogRow,
 } from './row-mapper';
 
@@ -224,6 +229,12 @@ function formatCandidateOptionLabel(candidate: LogResolutionCandidate): string {
   return metaParts.length > 0 ? `${candidate.name} (${metaParts.join(' · ')})` : candidate.name;
 }
 
+function formatReadErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message.trim() : String(error).trim();
+  const sanitized = raw.replace(/^GoogleSheets[A-Za-z]*Error:\s*/, '').trim();
+  return sanitized.length > 0 ? sanitized : 'Unable to read Document Log history right now.';
+}
+
 /**
  * Core domain service managing live DocumentLog discovery and Document dehydration/write orchestration.
  */
@@ -232,8 +243,101 @@ export class DocumentLogService implements DocumentLogPort {
     private readonly schemaRegistry: LogSchemaRegistryPort,
     private readonly logDiscovery: LogDiscoveryPort,
     private readonly logStorage: LogStoragePort,
-    private readonly templateEvaluator: LogTemplateEvaluatorPort
+    private readonly templateEvaluator: LogTemplateEvaluatorPort,
+    private readonly templateParser?: LogTemplateParserPort
   ) {}
+
+  private resolveTemplateParser(): LogTemplateParserPort {
+    if (this.templateParser) {
+      return this.templateParser;
+    }
+    const candidate = this.templateEvaluator as Partial<LogTemplateParserPort>;
+    if (typeof candidate.parseMustacheTemplate === 'function') {
+      return candidate as LogTemplateParserPort;
+    }
+    throw new DocumentLogConfigurationError(
+      'DocumentLogService requires a LogTemplateParserPort to parse idGroup and historyDisplay templates.'
+    );
+  }
+
+  private async loadUiHistoryContext(params: {
+    documentTypeKey: string;
+    activeCandidateId: string;
+    formData?: Readonly<Record<string, unknown>> | undefined;
+  }): Promise<{
+    readStatus: DocumentLogUiReadStatus;
+    idGroup?: string | undefined;
+    missingIdFields?: string[] | undefined;
+    readErrorMessage?: string | undefined;
+    warningMessages?: string[] | undefined;
+    entries?: DocumentLogUiHistoryEntry[] | undefined;
+  }> {
+    const { documentTypeKey, activeCandidateId, formData } = params;
+    const { logSchema, targetSchema } = this.requireSchemasForDocumentType(documentTypeKey);
+    const templateParser = this.resolveTemplateParser();
+
+    const idGroupExtraction = extractFormIdGroup({
+      documentTypeKey,
+      formData,
+      targetSchema,
+      templateParser,
+      templateEvaluator: this.templateEvaluator,
+    });
+
+    if (!idGroupExtraction.complete) {
+      return {
+        readStatus: 'idle_incomplete_id',
+        missingIdFields: idGroupExtraction.missingIdFields,
+      };
+    }
+
+    const { idGroup } = idGroupExtraction;
+    try {
+      const readResult = await this.readLog({
+        documentTypeKey,
+        selectedLogId: activeCandidateId,
+        filterBy: 'idGroup',
+        values: [idGroup],
+      });
+
+      const orderedEntries =
+        logSchema.grouping.rowSortOrder === 'desc'
+          ? [...readResult.entries]
+          : [...readResult.entries].reverse();
+
+      const entries = orderedEntries.map((entry) =>
+        formatHistoryDisplayEntry({
+          entry,
+          logSchema,
+          templateParser,
+        })
+      );
+
+      if (readResult.warnings.length > 0) {
+        return {
+          readStatus: 'partial_hydration',
+          idGroup,
+          warningMessages: readResult.warnings.map((w) => `Row ${w.rowNumber}: ${w.message}`),
+          entries,
+        };
+      }
+
+      return {
+        readStatus: 'ready',
+        idGroup,
+        entries,
+      };
+    } catch (error) {
+      if (error instanceof DocumentLogConfigurationError) {
+        throw error;
+      }
+      return {
+        readStatus: 'read_error',
+        idGroup,
+        readErrorMessage: formatReadErrorMessage(error),
+      };
+    }
+  }
 
   requiresDocumentLog(documentTypeKey: string): boolean {
     const trimmed = typeof documentTypeKey === 'string' ? documentTypeKey.trim() : '';
@@ -285,6 +389,12 @@ export class DocumentLogService implements DocumentLogPort {
     }
 
     if (resolution.status === 'resolved') {
+      const historyContext = await this.loadUiHistoryContext({
+        documentTypeKey: request.documentTypeKey,
+        activeCandidateId: resolution.candidate.id,
+        formData: request.formData,
+      });
+
       return {
         status: 'resolved',
         spaceName: request.space.name,
@@ -295,6 +405,7 @@ export class DocumentLogService implements DocumentLogPort {
           name: resolution.candidate.name,
           url: buildCandidateUrl(resolution.candidate),
         },
+        ...historyContext,
       };
     }
 
@@ -312,6 +423,12 @@ export class DocumentLogService implements DocumentLogPort {
       })
     );
 
+    const historyContext = await this.loadUiHistoryContext({
+      documentTypeKey: request.documentTypeKey,
+      activeCandidateId: active.id,
+      formData: request.formData,
+    });
+
     return {
       status: 'ambiguous',
       spaceName: request.space.name,
@@ -323,6 +440,7 @@ export class DocumentLogService implements DocumentLogPort {
         name: active.name,
         url: buildCandidateUrl(active),
       },
+      ...historyContext,
     };
   }
 
