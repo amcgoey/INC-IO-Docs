@@ -550,6 +550,77 @@ describe('ParseSchemaRegistryAdapter', () => {
     expect(contactAliases).toBeDefined();
     expect(contactAliases?.source).toBe('contacts');
     expect(contactAliases?.mappings.pavarini).toEqual(['@pavarini.com', 'PCNE']);
+    expect(contactAliases?.mappings.structuretone).toEqual(['@structuretone.com', 'STO']);
+  });
+
+  it('normalizes AliasDictionary mapping keys trimmed and case-insensitively and fails fast on blank or colliding normalized keys (Ticket #360)', async () => {
+    const mockManifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: [],
+        aliases: {
+          vendors: './aliases/vendors.json',
+        },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        source: 'vendors',
+        mappings: {
+          ' Carn ': ['@carnegiefabrics.com', 'Carnegie'],
+          Delta: ['@deltafabrics.com'],
+        },
+      }),
+    };
+
+    const adapter = new ParseSchemaRegistryAdapter(mockManifestProvider);
+    await adapter.initialize();
+
+    expect(adapter.getAliasDictionary('vendors')).toEqual({
+      source: 'vendors',
+      mappings: {
+        carn: ['@carnegiefabrics.com', 'Carnegie'],
+        delta: ['@deltafabrics.com'],
+      },
+    });
+
+    const collidingProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: [],
+        aliases: {
+          vendors: './aliases/vendors.json',
+        },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        source: 'vendors',
+        mappings: {
+          Carn: ['@carnegiefabrics.com'],
+          ' carn ': ['Carnegie'],
+        },
+      }),
+    };
+
+    const collidingAdapter = new ParseSchemaRegistryAdapter(collidingProvider);
+    await expect(collidingAdapter.initialize()).rejects.toThrow(
+      'Duplicate normalized key "carn" in AliasDictionary "./aliases/vendors.json"'
+    );
+
+    const blankKeyProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: [],
+        aliases: {
+          vendors: './aliases/vendors.json',
+        },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        source: 'vendors',
+        mappings: {
+          '   ': ['SomeAlias'],
+        },
+      }),
+    };
+
+    const blankKeyAdapter = new ParseSchemaRegistryAdapter(blankKeyProvider);
+    await expect(blankKeyAdapter.initialize()).rejects.toThrow(
+      'Empty or whitespace-only key in AliasDictionary "./aliases/vendors.json"'
+    );
   });
 
   it('fails fast if extractor.fields contains an empty rule array []', async () => {

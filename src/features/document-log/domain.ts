@@ -248,6 +248,77 @@ function cellToTrimmedString(cell: LogCellPrimitive | undefined): string {
   return String(cell).trim();
 }
 
+/**
+ * Parses an optional `_Config` `aliasesColumn` cell as RFC 4180 CSV with `""` escaped quotes,
+ * returning trimmed non-empty alias strings.
+ */
+function parseRfc4180CsvList(cell: LogCellPrimitive | undefined): string[] {
+  const raw = cellToTrimmedString(cell);
+  if (raw.length === 0) {
+    return [];
+  }
+
+  const values: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  let atFieldStart = true;
+  let afterClosingQuote = false;
+
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (i + 1 < raw.length && raw[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = false;
+          afterClosingQuote = true;
+        }
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    if (ch === ',') {
+      const trimmed = current.trim();
+      if (trimmed.length > 0) {
+        values.push(trimmed);
+      }
+      current = '';
+      atFieldStart = true;
+      afterClosingQuote = false;
+      continue;
+    }
+
+    if (atFieldStart && /\s/.test(ch)) {
+      continue;
+    }
+
+    if (atFieldStart && ch === '"') {
+      inQuotes = true;
+      atFieldStart = false;
+      continue;
+    }
+
+    if (afterClosingQuote && /\s/.test(ch)) {
+      continue;
+    }
+
+    atFieldStart = false;
+    afterClosingQuote = false;
+    current += ch;
+  }
+
+  const trimmed = current.trim();
+  if (trimmed.length > 0) {
+    values.push(trimmed);
+  }
+
+  return values;
+}
+
 function parseOptionTableEntry(
   sourceKey: string,
   binding: DocumentLogOptionBinding,
@@ -298,6 +369,10 @@ function parseOptionTableEntry(
     columnEntries.find((c) => c.propName === 'key') ?? columnEntries[0];
   const keyColIdx = keyColumnEntry !== undefined ? keyColumnEntry.colIdx : undefined;
   const dedupProp = keyColumnEntry !== undefined ? keyColumnEntry.propName : 'key';
+  const aliasesColIdx =
+    binding.aliasesColumn !== undefined
+      ? headerIndexMap.get(binding.aliasesColumn.trim())
+      : undefined;
 
   let terminatorIndex = -1;
   for (let i = 1; i < rows.length; i++) {
@@ -352,6 +427,14 @@ function parseOptionTableEntry(
       continue;
     }
     seenKeys.add(normalizedKey);
+    if (aliasesColIdx !== undefined) {
+      const parsedAliases = parseRfc4180CsvList(
+        aliasesColIdx < row.length ? row[aliasesColIdx] : undefined
+      );
+      if (parsedAliases.length > 0) {
+        tuple.aliases = parsedAliases;
+      }
+    }
     tuples.push(tuple);
   }
 
