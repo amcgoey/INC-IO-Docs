@@ -26,11 +26,7 @@ import {
 } from './ui-process-manager.wiring';
 import { createSchemaDrivenUiWiring } from './schema-driven-ui.wiring';
 import { DynamicOptionsAdapter } from './dynamic-options.adapter';
-import { UiContextQueryAdapter } from './ui-context-query.adapter';
-import type {
-  RawManifestProviderPort,
-  UiProcessDocumentLogPort,
-} from '../features/ui-process-manager';
+import type { RawManifestProviderPort } from '../features/ui-process-manager';
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
 import type {
   ActivityHandler,
@@ -278,83 +274,24 @@ export function wireWorkspaceAddonRoutes(
       return adapter;
     };
 
-    const perRequestDocLogServices = new WeakMap<WorkspaceExecutionContext, DocumentLogPort>();
-    const getPerRequestDocLogService =
-      resolvedDocumentLogWiring !== undefined
-        ? (context: WorkspaceExecutionContext): DocumentLogPort => {
-            let service = perRequestDocLogServices.get(context);
-            if (!service) {
-              service = resolvedDocumentLogWiring.createDocumentLogService(context);
-              perRequestDocLogServices.set(context, service);
-            }
-            return service;
-          }
-        : undefined;
-
     const createDocumentLogPort =
-      getPerRequestDocLogService && ensureLogRegistryInitialized
-        ? async (context: WorkspaceExecutionContext): Promise<UiProcessDocumentLogPort> => {
-            await ensureLogRegistryInitialized();
-            const service = getPerRequestDocLogService(context);
-            return {
-              requiresDocumentLog: (documentTypeKey) =>
-                service.requiresDocumentLog(documentTypeKey),
-              resolveLog: async (space) => {
-                const res = await service.resolveLog({
-                  id: space.id,
-                  typeId: space.typeId,
-                  name: space.name,
-                  abstractStorageId: space.abstractStorageId,
-                });
-                if (res.status === 'missing') {
-                  return { status: 'missing', expectedFolderPath: res.expectedFolderPath };
-                }
-                if (res.status === 'resolved') {
-                  return {
-                    status: 'resolved',
-                    candidate: { id: res.candidate.id, name: res.candidate.name },
-                  };
-                }
-                return {
-                  status: 'ambiguous',
-                  candidates: res.candidates.map((c) => ({ id: c.id, name: c.name })),
-                };
-              },
-              copyLog: async (space) => {
-                const res = await service.copyLog({
-                  id: space.id,
-                  typeId: space.typeId,
-                  name: space.name,
-                  abstractStorageId: space.abstractStorageId,
-                });
-                return {
-                  created: res.created,
-                  candidate: { id: res.candidate.id, name: res.candidate.name },
-                  folderPath: res.folderPath,
-                };
-              },
-            };
-          }
+      resolvedDocumentLogWiring && ensureLogRegistryInitialized
+        ? (context: WorkspaceExecutionContext) =>
+            resolvedDocumentLogWiring.createUiProcessDocumentLogPort(context, {
+              ensureInitialized: ensureLogRegistryInitialized,
+            })
         : undefined;
 
-    const uiContextQueryAdapters = new WeakMap<WorkspaceExecutionContext, UiContextQueryAdapter>();
     const getUiContextQueryAdapter =
-      getPerRequestDocLogService && ensureLogRegistryInitialized
-        ? (context: WorkspaceExecutionContext): UiContextQueryAdapter => {
-            let adapter = uiContextQueryAdapters.get(context);
-            if (!adapter) {
-              adapter = new UiContextQueryAdapter({
-                documentLogService: getPerRequestDocLogService(context),
-                getDocumentSpaceService: () =>
-                  createDocumentSpaceService
-                    ? createDocumentSpaceService(context)
-                    : documentSpaceService!,
-                ensureInitialized: ensureLogRegistryInitialized,
-              });
-              uiContextQueryAdapters.set(context, adapter);
-            }
-            return adapter;
-          }
+      resolvedDocumentLogWiring && ensureLogRegistryInitialized
+        ? (context: WorkspaceExecutionContext) =>
+            resolvedDocumentLogWiring.createUiContextQueryPort(context, {
+              getDocumentSpaceService: () =>
+                createDocumentSpaceService
+                  ? createDocumentSpaceService(context)
+                  : documentSpaceService!,
+              ensureInitialized: ensureLogRegistryInitialized,
+            })
         : undefined;
 
     let createSchemaDrivenUiService = options.createSchemaDrivenUiService;

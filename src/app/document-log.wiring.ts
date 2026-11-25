@@ -1,5 +1,6 @@
 import { OAuth2Client } from 'google-auth-library';
 import {
+  DocumentLogError,
   DocumentLogService,
   LogSchemaRegistryAdapter,
   type DocumentLogPort,
@@ -17,6 +18,7 @@ import {
 } from './document-log-activity-handler';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import {
+  GoogleSheetsApiError,
   GoogleSheetsClient,
   type RowRecord,
   type SheetsClient,
@@ -24,6 +26,10 @@ import {
 } from '../infrastructure/sheets';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
+import type { UiProcessDocumentLogPort } from '../features/ui-process-manager';
+import type { UiContextQueryPort } from '../features/schema-driven-ui/ports';
+import type { DocumentSpaceService } from '../features/document-space/domain';
+import { UiContextQueryAdapter } from './ui-context-query.adapter';
 
 export interface DocumentLogServiceRequestOverrides {
   driveClient?: GoogleDriveClient | undefined;
@@ -60,6 +66,67 @@ export interface DocumentLogWiring {
   createDocumentLogService: DocumentLogServiceFactory;
   createActivityHandler: (options?: DocumentLogActivityHandlerOptions) => ActivityHandler;
   createPerRequestActivityHandler: DocumentLogActivityHandlerFactory;
+  createUiProcessDocumentLogPort: (
+    context: WorkspaceExecutionContext,
+    options?: {
+      ensureInitialized?: (() => Promise<void>) | undefined;
+      overrides?: DocumentLogServiceRequestOverrides | undefined;
+    }
+  ) => Promise<UiProcessDocumentLogPort>;
+  createUiContextQueryPort: (
+    context: WorkspaceExecutionContext,
+    options: {
+      getDocumentSpaceService: () => Promise<DocumentSpaceService> | DocumentSpaceService;
+      ensureInitialized?: (() => Promise<void>) | undefined;
+      overrides?: DocumentLogServiceRequestOverrides | undefined;
+    }
+  ) => UiContextQueryPort;
+}
+
+/**
+ * Adapts `DocumentLogPort` to the narrow `UiProcessDocumentLogPort` boundary.
+ */
+export function createUiProcessDocumentLogAdapter(
+  documentLogService: DocumentLogPort
+): UiProcessDocumentLogPort {
+  return {
+    requiresDocumentLog: (documentTypeKey) =>
+      documentLogService.requiresDocumentLog(documentTypeKey),
+    resolveLog: async (space) => {
+      const res = await documentLogService.resolveLog({
+        id: space.id,
+        typeId: space.typeId,
+        name: space.name,
+        abstractStorageId: space.abstractStorageId,
+      });
+      if (res.status === 'missing') {
+        return { status: 'missing', expectedFolderPath: res.expectedFolderPath };
+      }
+      if (res.status === 'resolved') {
+        return {
+          status: 'resolved',
+          candidate: { id: res.candidate.id, name: res.candidate.name },
+        };
+      }
+      return {
+        status: 'ambiguous',
+        candidates: res.candidates.map((c) => ({ id: c.id, name: c.name })),
+      };
+    },
+    copyLog: async (space) => {
+      const res = await documentLogService.copyLog({
+        id: space.id,
+        typeId: space.typeId,
+        name: space.name,
+        abstractStorageId: space.abstractStorageId,
+      });
+      return {
+        created: res.created,
+        candidate: { id: res.candidate.id, name: res.candidate.name },
+        folderPath: res.folderPath,
+      };
+    },
+  };
 }
 
 function createOAuth2Client(oauthCred: string): OAuth2Client {
@@ -165,6 +232,15 @@ function createDriveDiscoveryAdapter(driveClient: GoogleDriveClient): LogDiscove
   };
 }
 
+const SHEETS_ERROR_NAME_REGEX = /^GoogleSheets[A-Za-z]*Error$/;
+const SHEETS_ERROR_PREFIX_REGEX = /^GoogleSheets[A-Za-z]*Error:\s*/;
+
+function sanitizeSheetsErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message.trim() : String(error).trim();
+  const sanitized = raw.replace(SHEETS_ERROR_PREFIX_REGEX, '').trim();
+  return sanitized.length > 0 ? sanitized : 'Unable to read Document Log storage.';
+}
+
 function createSheetsStorageAdapter(sheetsClient: SheetsClient): LogStoragePort {
   return {
     insertRow: async (request) =>
@@ -186,11 +262,25 @@ function createSheetsStorageAdapter(sheetsClient: SheetsClient): LogStoragePort 
           ? { readOnlyColumns: request.readOnlyColumns }
           : {}),
       }),
-    readRows: async (request) =>
-      sheetsClient.readTable({
-        target: request.target,
-        ...(request.linkColumns !== undefined ? { linkColumns: request.linkColumns } : {}),
-      }),
+    readRows: async (request) => {
+      try {
+        return await sheetsClient.readTable({
+          target: request.target,
+          ...(request.linkColumns !== undefined ? { linkColumns: request.linkColumns } : {}),
+        });
+      } catch (error) {
+        if (
+          error instanceof GoogleSheetsApiError ||
+          (error instanceof Error &&
+            (SHEETS_ERROR_NAME_REGEX.test(error.name) ||
+              SHEETS_ERROR_PREFIX_REGEX.test(error.message))) ||
+          (typeof error === 'string' && SHEETS_ERROR_PREFIX_REGEX.test(error.trim()))
+        ) {
+          throw new DocumentLogError(sanitizeSheetsErrorMessage(error), { cause: error });
+        }
+        throw error;
+      }
+    },
   };
 }
 
@@ -283,11 +373,68 @@ export function createDocumentLogWiring(
       ...(context.selectedLogId !== undefined ? { selectedLogId: context.selectedLogId } : {}),
     });
 
+  const perRequestServices = new WeakMap<WorkspaceExecutionContext, DocumentLogPort>();
+  const perRequestUiContextAdapters = new WeakMap<WorkspaceExecutionContext, UiContextQueryPort>();
+
+  const getPerRequestService = (
+    context: WorkspaceExecutionContext,
+    overrides?: DocumentLogServiceRequestOverrides
+  ): DocumentLogPort => {
+    if (overrides !== undefined) {
+      return createDocumentLogService(context, overrides);
+    }
+    let service = perRequestServices.get(context);
+    if (!service) {
+      service = createDocumentLogService(context);
+      perRequestServices.set(context, service);
+    }
+    return service;
+  };
+
+  const createUiProcessDocumentLogPort: DocumentLogWiring['createUiProcessDocumentLogPort'] = async (
+    context,
+    portOptions
+  ) => {
+    if (portOptions?.ensureInitialized) {
+      await portOptions.ensureInitialized();
+    }
+    return createUiProcessDocumentLogAdapter(getPerRequestService(context, portOptions?.overrides));
+  };
+
+  const buildUiContextQueryAdapter = (
+    context: WorkspaceExecutionContext,
+    portOptions: Parameters<DocumentLogWiring['createUiContextQueryPort']>[1]
+  ): UiContextQueryPort =>
+    new UiContextQueryAdapter({
+      documentLogService: getPerRequestService(context, portOptions.overrides),
+      getDocumentSpaceService: portOptions.getDocumentSpaceService,
+      ...(portOptions.ensureInitialized !== undefined
+        ? { ensureInitialized: portOptions.ensureInitialized }
+        : {}),
+    });
+
+  const createUiContextQueryPort: DocumentLogWiring['createUiContextQueryPort'] = (
+    context,
+    portOptions
+  ) => {
+    if (portOptions.overrides !== undefined) {
+      return buildUiContextQueryAdapter(context, portOptions);
+    }
+    let adapter = perRequestUiContextAdapters.get(context);
+    if (!adapter) {
+      adapter = buildUiContextQueryAdapter(context, portOptions);
+      perRequestUiContextAdapters.set(context, adapter);
+    }
+    return adapter;
+  };
+
   return {
     logSchemaRegistry,
     documentLogService,
     createDocumentLogService,
     createActivityHandler,
     createPerRequestActivityHandler,
+    createUiProcessDocumentLogPort,
+    createUiContextQueryPort,
   };
 }

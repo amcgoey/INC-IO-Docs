@@ -1898,7 +1898,6 @@ describe('DocumentLogService', () => {
       expect(withLink).toEqual({
         status: 'resolved',
         spaceName: 'Harborview Hotel',
-        targetFolderPath: '1 Admin',
         activeCandidate: {
           name: 'Harborview Hotel Document Log',
           url: 'https://docs.google.com/spreadsheets/d/custom-link/edit',
@@ -1906,6 +1905,7 @@ describe('DocumentLogService', () => {
         readStatus: 'idle_incomplete_id',
         missingIdFields: ['Section', 'Number'],
       });
+      expect('targetFolderPath' in withLink!).toBe(false);
 
       const withoutLink = await service.queryUiContext({
         documentTypeKey: 'submittal-arch',
@@ -1914,7 +1914,6 @@ describe('DocumentLogService', () => {
       expect(withoutLink).toEqual({
         status: 'resolved',
         spaceName: 'Harborview Hotel',
-        targetFolderPath: '1 Admin',
         activeCandidate: {
           name: 'Harborview Hotel Document Log',
           url: 'https://docs.google.com/spreadsheets/d/log-without-link/edit',
@@ -1922,6 +1921,7 @@ describe('DocumentLogService', () => {
         readStatus: 'idle_incomplete_id',
         missingIdFields: ['Section', 'Number'],
       });
+      expect('targetFolderPath' in withoutLink!).toBe(false);
     });
 
     it('queryUiContext returns ambiguous with presentation-ready candidateOptions, matching selectedLogId, or ranked fallback when absent/stale, without leaking raw Drive metadata', async () => {
@@ -1980,7 +1980,6 @@ describe('DocumentLogService', () => {
       expect(fallbackRes).toEqual({
         status: 'ambiguous',
         spaceName: 'Harborview Hotel',
-        targetFolderPath: '1 Admin',
         candidateOptions: [
           { text: 'Harborview Hotel Document Log (1 Admin · 2026-10-19)', value: 'log-1', selected: true },
           { text: 'Harborview Hotel Document Log (6 Construction · 2026-10-12)', value: 'log-2', selected: false },
@@ -1995,6 +1994,7 @@ describe('DocumentLogService', () => {
         readStatus: 'idle_incomplete_id',
         missingIdFields: ['Section', 'Number'],
       });
+      expect('targetFolderPath' in fallbackRes!).toBe(false);
 
       // Raw Drive metadata never leaks onto the presentation-ready UI context DTO
       const serialized = JSON.stringify(fallbackRes);
@@ -2453,6 +2453,44 @@ describe('DocumentLogService', () => {
       expect(errorRes?.readErrorMessage).toContain('Named range "Log_Submittal_FFE" not found');
       expect(JSON.stringify(errorRes)).not.toContain('GoogleSheetsNamedRangeNotFoundError');
       expect(errorRes?.entries).toBeUndefined();
+    });
+
+    it('forwards non-empty readRows error messages verbatim without storage-specific stripping and falls back on blank errors', async () => {
+      const readRows = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('GoogleSheetsApiError: Upstream failure'))
+        .mockRejectedValueOnce(new Error('   '));
+
+      const { service } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-err-1', name: 'Harborview Hotel Document Log' },
+          ]),
+        },
+        storage: { readRows },
+      });
+
+      const verbatimRes = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        formData: {
+          section: '071200',
+          number: '001',
+        },
+      });
+      expect(verbatimRes?.readStatus).toBe('read_error');
+      expect(verbatimRes?.readErrorMessage).toBe('GoogleSheetsApiError: Upstream failure');
+
+      const blankRes = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        formData: {
+          section: '071200',
+          number: '001',
+        },
+      });
+      expect(blankRes?.readStatus).toBe('read_error');
+      expect(blankRes?.readErrorMessage).toBe('Unable to read Document Log history right now.');
     });
   });
 

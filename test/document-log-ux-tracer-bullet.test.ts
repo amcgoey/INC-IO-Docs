@@ -636,13 +636,14 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
     expect(renderRes.statusCode).toBe(200);
     const renderCard = getCard(renderRes.payload, 'pushCard');
     const logSection = findSection(renderCard, 'Document Log')!;
-    const pText = logSection.widgets[0].textParagraph?.text ?? '';
-    const dWidget = logSection.widgets[1].decoratedText!;
+    expect(logSection.widgets).toHaveLength(2);
+    const dWidget = logSection.widgets[0].decoratedText!;
 
-    expect(pText).toContain('Harbor &amp; &lt;Bay&gt; &quot;Hotel&quot; &#39;Log&#39;');
     expect(dWidget.text).toContain('Harbor &amp; &lt;Bay&gt; &quot;Hotel&quot; &#39;Log&#39; Document Log');
-    expect(dWidget.topLabel).toBe(`Expected in ${rawSpaceName}`);
+    expect(dWidget.text).toContain('Harbor &amp; &lt;Bay&gt; &quot;Hotel&quot; &#39;Log&#39;');
+    expect(dWidget.topLabel).toBe(`No Document Log in ${rawSpaceName}`);
     expect(dWidget.bottomLabel).toBe('Folder: 1 Admin');
+    expect(logSection.widgets[1].buttonList?.buttons[0].text).toBe('Copy Log');
     expect(findProcessButton(renderCard)?.disabled).toBe(true);
 
     // Drive processDocument submission when log missing -> pre-flight blocks BEFORE MOVE_FILE (zero folder list or PATCH calls!)
