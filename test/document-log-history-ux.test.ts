@@ -922,7 +922,7 @@ describe('Ticket #352 CQRS Integration: Collapsible idGroup History, Declarative
     expect(resolvedLogSec.collapsible).toBe(true);
     expect(resolvedLogSec.uncollapsibleWidgetsCount).toBe(2); // active bar + warning banner
     expect(resolvedLogSec.widgets).toHaveLength(4); // active bar + warning + 2 matched partial rows
-    expect(resolvedLogSec.widgets[1].textParagraph?.text).toContain('Partial read (1 warning)');
+    expect(resolvedLogSec.widgets[1].textParagraph?.text).toContain('Partial read (2 warnings)');
     expect(resolvedLogSec.widgets[1].textParagraph?.text).not.toContain('7120'); // unrelated row warning excluded!
 
     // Newest matched row: missingRequiredDate (no Open button)

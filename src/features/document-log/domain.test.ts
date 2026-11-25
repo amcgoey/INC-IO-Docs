@@ -3493,4 +3493,201 @@ describe('DocumentLogService', () => {
       });
     });
   });
+
+  describe('READ_LOG live _Config hydration & partial_hydration (Ticket #359)', () => {
+    const dynamicLogSchema: DocumentLogSchema = {
+      ...logSchema,
+      optionBindings: {
+        statuses: {
+          sheetName: '_Config Submittal Arch',
+          rangeName: 'Options_Submittal_Arch_Statuses',
+          endMarker: '---',
+          columns: { Status: 'key' },
+        },
+        actions: {
+          sheetName: '_Config Submittal Arch',
+          rangeName: 'Options_Submittal_Arch_Actions',
+          endMarker: '---',
+          columns: { Action: 'key', Name: 'name', Suffix: 'suffix', Order: 'order' },
+        },
+      },
+    };
+
+    const dynamicTargetSchema: LogTargetDocumentSchema = {
+      ...targetSchema,
+      options: {
+        contacts: [{ key: 'MB', name: 'Meridian Builders' }],
+      },
+      optionSources: {
+        statuses: { provider: 'document_log', properties: ['key'] },
+        actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
+      },
+    };
+
+    it('hydrates restricted dynamic LookupFields from live _Config tables, computes Identity from live tuple properties, and flags partial_hydration on invalid historical values', async () => {
+      const readNamedRanges = vi.fn().mockResolvedValue({
+        statuses: {
+          status: 'found',
+          values: [['Status'], ['Open'], ['Closed'], ['---']],
+        },
+        actions: {
+          status: 'found',
+          values: [
+            ['Action', 'Name', 'Suffix', 'Order'],
+            ['CUST', 'Custom Action', '_CUST', '9'],
+            ['---', '', '', ''],
+          ],
+        },
+      });
+
+      const readRows = vi.fn().mockResolvedValue({
+        headers: ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link'],
+        formulaColumns: [],
+        rows: [
+          {
+            rowNumber: 6,
+            values: {
+              Status: 'Open',
+              Section: '071200',
+              Number: '001',
+              Revision: '0',
+              Title: 'Waterproofing',
+              Date: '260204',
+              Contact: 'MB',
+              Action: 'Custom Action',
+              Notes: '',
+            },
+          },
+          {
+            rowNumber: 7,
+            values: {
+              Status: 'LegacyStatus',
+              Section: '071200',
+              Number: '001',
+              Revision: '1',
+              Title: 'Waterproofing',
+              Date: '260205',
+              Contact: 'MB',
+              Action: 'Approved',
+              Notes: '',
+            },
+          },
+        ],
+      });
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(dynamicLogSchema),
+          getTargetSchema: vi.fn().mockReturnValue(dynamicTargetSchema),
+        },
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-live-359', name: 'Harborview Hotel Document Log' },
+          ]),
+        },
+        storage: {
+          readRows,
+          readNamedRanges,
+        },
+      });
+
+      const readRes = await service.readLog({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+
+      expect(readNamedRanges).toHaveBeenCalledTimes(1);
+      expect(readRes.entries).toHaveLength(2);
+
+      // Row 6 matched live _Config tuple (including custom order '9' and suffix '_CUST')
+      expect(readRes.entries[0].valid).toBe(true);
+      expect(readRes.entries[0].document.data.action).toEqual({
+        key: 'CUST',
+        name: 'Custom Action',
+        suffix: '_CUST',
+        order: '9',
+      });
+      expect(readRes.entries[0].document.id).toBe('071200-001-0-260204-9');
+
+      // Row 7 failed both restricted dynamic LookupFields ('status' and 'action')
+      expect(readRes.entries[1].valid).toBe(false);
+      expect(readRes.entries[1].document.data.status).toEqual({ key: 'LegacyStatus' });
+      expect(readRes.entries[1].document.data.action).toEqual({ key: 'Approved', name: 'Approved' });
+      expect(readRes.warnings).toHaveLength(2);
+      expect(readRes.warnings.map((w) => ({ row: w.rowNumber, field: w.field }))).toEqual([
+        { row: 7, field: 'status' },
+        { row: 7, field: 'action' },
+      ]);
+
+      // queryUiContext surfaces partial_hydration
+      const uiCtx = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        formData: { section: '071200', number: '001' },
+      });
+      expect(uiCtx?.readStatus).toBe('partial_hydration');
+      expect(uiCtx?.warningMessages).toHaveLength(2);
+    });
+
+    it('shares one batched readNamedRanges call across concurrent readOptionTables and readLog when memoizeResolvePerInstance is enabled', async () => {
+      const readNamedRanges = vi.fn().mockResolvedValue({
+        statuses: { status: 'found', values: [['Status'], ['Open'], ['---']] },
+        actions: { status: 'found', values: [['Action', 'Name', 'Suffix', 'Order'], ['REC', 'Received', '', '1'], ['---', '', '', '']] },
+      });
+      const readRows = vi.fn().mockResolvedValue({
+        headers: ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link'],
+        formulaColumns: [],
+        rows: [
+          {
+            rowNumber: 6,
+            values: {
+              Status: 'Open',
+              Section: '071200',
+              Number: '001',
+              Revision: '0',
+              Title: 'Waterproofing',
+              Date: '260204',
+              Contact: 'MB',
+              Action: 'REC',
+              Notes: '',
+            },
+          },
+        ],
+      });
+
+      const registry: LogSchemaRegistryPort = {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        getDiscoveryConfig: vi.fn().mockReturnValue(discoveryConfig),
+        getDocumentLogSchema: vi.fn().mockReturnValue(dynamicLogSchema),
+        getTargetSchema: vi.fn().mockReturnValue(dynamicTargetSchema),
+      };
+      const discovery: LogDiscoveryPort = {
+        searchSpreadsheets: vi.fn().mockResolvedValue([
+          { id: 'log-memo-359', name: 'Harborview Hotel Document Log' },
+        ]),
+      };
+      const storage: LogStoragePort = {
+        insertRow: vi.fn(),
+        readRows,
+        readNamedRanges,
+      };
+      const service = new DocumentLogService(
+        registry,
+        discovery,
+        storage,
+        new HandlebarsAdapter(),
+        undefined,
+        { memoizeResolvePerInstance: true }
+      );
+
+      const [tablesRes, readRes] = await Promise.all([
+        service.readOptionTables({ documentTypeKey: 'submittal-arch', space: sampleSpace }),
+        service.readLog({ documentTypeKey: 'submittal-arch', space: sampleSpace }),
+      ]);
+
+      expect(tablesRes.status).toBe('ready');
+      expect(readRes.entries[0].valid).toBe(true);
+      expect(readNamedRanges).toHaveBeenCalledTimes(1);
+    });
+  });
 });

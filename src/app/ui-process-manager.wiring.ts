@@ -603,6 +603,7 @@ export function createUiProcessManagerWiring(
       !options.createDocumentService &&
       !options.createSourceParser &&
       !options.createDocumentLogPort &&
+      !options.getLookupOptionsInvalidator &&
       !token
     ) {
       return orchestrator;
