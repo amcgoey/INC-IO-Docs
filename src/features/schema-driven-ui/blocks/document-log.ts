@@ -199,7 +199,15 @@ export function buildDocumentLogSection(
   if (!context) {
     return undefined;
   }
-  if (options?.maxWidgets !== undefined && options.maxWidgets <= 0) {
+
+  const maxWidgets =
+    options?.maxWidgets !== undefined
+      ? Number.isNaN(options.maxWidgets)
+        ? 0
+        : Math.floor(options.maxWidgets)
+      : undefined;
+
+  if (maxWidgets !== undefined && maxWidgets <= 0) {
     return undefined;
   }
 
@@ -287,7 +295,7 @@ export function buildDocumentLogSection(
       const historyStats = appendReadStateAndHistoryWidgets({
         context,
         widgets,
-        maxWidgets: options?.maxWidgets,
+        maxWidgets,
       });
       renderedHistoryRows = historyStats.renderedHistoryRows;
       uncollapsibleCount = historyStats.uncollapsibleCount;
@@ -329,7 +337,7 @@ export function buildDocumentLogSection(
         const historyStats = appendReadStateAndHistoryWidgets({
           context,
           widgets,
-          maxWidgets: options?.maxWidgets,
+          maxWidgets,
         });
         renderedHistoryRows = historyStats.renderedHistoryRows;
         uncollapsibleCount = historyStats.uncollapsibleCount;
@@ -347,8 +355,8 @@ export function buildDocumentLogSection(
   }
 
   const finalWidgets =
-    options?.maxWidgets !== undefined && widgets.length > options.maxWidgets
-      ? widgets.slice(0, options.maxWidgets)
+    maxWidgets !== undefined && widgets.length > maxWidgets
+      ? widgets.slice(0, maxWidgets)
       : widgets;
 
   if (finalWidgets.length === 0) {
