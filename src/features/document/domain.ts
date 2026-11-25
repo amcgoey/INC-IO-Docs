@@ -95,29 +95,15 @@ export interface ActivityExecutionContext {
 }
 
 
-export const DynamicOptionsConfigSchema = Type.Record(Type.String(), Type.Unknown());
-export type DynamicOptionsConfig = Static<typeof DynamicOptionsConfigSchema>;
-
-export const DynamicDocumentFieldOptionType = Type.Object({
-  source: Type.String(),
-  key: Type.String(),
-  name: Type.Optional(Type.String()),
-  allowUserInput: Type.Literal(true),
-  dynamicConfig: DynamicOptionsConfigSchema,
-});
-
-export const StaticDocumentFieldOptionType = Type.Object({
-  source: Type.String(),
-  key: Type.String(),
-  name: Type.Optional(Type.String()),
-  allowUserInput: Type.Optional(Type.Boolean()),
-  dynamicConfig: Type.Optional(Type.Never()),
-});
-
-export const DocumentFieldOptionType = Type.Union([
-  DynamicDocumentFieldOptionType,
-  StaticDocumentFieldOptionType,
-]);
+export const DocumentFieldOptionType = Type.Object(
+  {
+    source: Type.String(),
+    key: Type.String(),
+    name: Type.Optional(Type.String()),
+    allowUserInput: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: false }
+);
 
 export type DocumentFieldOption = Static<typeof DocumentFieldOptionType>;
 
@@ -350,19 +336,16 @@ function resolvePayloadTemplates(
   return value;
 }
 
-export const DynamicOptionFieldOptionsSchema = Type.Object({
-  source: Type.String(),
-  dynamicConfig: Type.Record(Type.String(), Type.Unknown()),
-}, { additionalProperties: true });
-
-export type DynamicOptionFieldOptions = Static<typeof DynamicOptionFieldOptionsSchema>;
-
 function isDynamicOptionField(
-  field: DocumentField
+  field: DocumentField,
+  documentSchema: DocumentSchema
 ): field is DocumentField & {
-  options: DynamicOptionFieldOptions;
+  options: DocumentFieldOption;
 } {
-  return field.options !== undefined && Value.Check(DynamicOptionFieldOptionsSchema, field.options);
+  return (
+    field.options !== undefined &&
+    documentSchema.optionSources?.[field.options.source] !== undefined
+  );
 }
 
 function getSpaceStorageId(space?: DocumentSpace): string | undefined {
@@ -376,10 +359,7 @@ export function buildFieldSchema(
 ): TSchema {
   let fieldSchema: TSchema;
   if (field.type === 'string') {
-    const isDynamicSource =
-      field.options !== undefined &&
-      (documentSchema.optionSources?.[field.options.source] !== undefined ||
-        field.options.dynamicConfig !== undefined);
+    const isDynamicSource = isDynamicOptionField(field, documentSchema);
     if (field.options && !field.options.allowUserInput && !isDynamicSource) {
       // nosemgrep: domain-pass-through-read
       const keyProp = field.options.key;
@@ -436,6 +416,47 @@ export function buildDocumentTypeSchema(documentType: DocumentType): TSchema {
 }
 
 const validatedDataObjects = new WeakSet<object>();
+const validatedDynamicMatchedTuples = new WeakMap<object, Map<string, Record<string, unknown>>>();
+
+function matchStaticOptionTuple(
+  optionTuples: readonly Record<string, unknown>[],
+  candidates: readonly string[],
+  keyProp: string,
+  nameProp: string | undefined
+): Record<string, unknown> | undefined {
+  const normalizedCandidates = candidates
+    .map((c) => c.trim().toLowerCase())
+    .filter((c) => c.length > 0);
+  if (normalizedCandidates.length === 0) {
+    return undefined;
+  }
+
+  for (const tuple of optionTuples) {
+    const rawKey = tuple[keyProp];
+    if (rawKey === undefined || rawKey === null) {
+      continue;
+    }
+    const normKey = String(rawKey).trim().toLowerCase();
+    if (normKey.length > 0 && normalizedCandidates.includes(normKey)) {
+      return tuple;
+    }
+  }
+
+  if (nameProp !== undefined) {
+    for (const tuple of optionTuples) {
+      const rawName = tuple[nameProp];
+      if (rawName === undefined || rawName === null) {
+        continue;
+      }
+      const normName = String(rawName).trim().toLowerCase();
+      if (normName.length > 0 && normalizedCandidates.includes(normName)) {
+        return tuple;
+      }
+    }
+  }
+
+  return undefined;
+}
 
 function cloneAndFreezePlainValue<T>(value: T): T {
   if (value === null || typeof value !== 'object') {
@@ -478,7 +499,8 @@ export class DocumentService implements DocumentServicePort {
     private readonly templateEvaluator: TemplateEvaluatorPort,
     private readonly compiledSchemaRegistry: CompiledSchemaRegistryPort,
     private readonly dynamicValidator?: DocumentDynamicValidationPort,
-    private readonly validationMessageFormatter?: DynamicValidationMessageFormatter
+    private readonly validationMessageFormatter?: DynamicValidationMessageFormatter,
+    private readonly selectedLogId?: string
   ) {}
 
   async initialize(): Promise<void> {
@@ -518,9 +540,10 @@ export class DocumentService implements DocumentServicePort {
 
     if (this.dynamicValidator) {
       const dynamicQueries: DynamicValidationQuery[] = [];
+      const queryFieldKeys = new Map<string, string>();
 
       for (const field of documentType.documentSchema.fields) {
-        if (isDynamicOptionField(field)) {
+        if (isDynamicOptionField(field, documentType.documentSchema)) {
           const rawValue = rawData[field.key];
           const valuesToValidate: string[] = [];
           const normalizedValues = Array.isArray(rawValue) ? rawValue : [rawValue];
@@ -535,9 +558,10 @@ export class DocumentService implements DocumentServicePort {
               valuesToValidate.length > 1
                 ? `${field.key}_${index}`
                 : field.key;
+            queryFieldKeys.set(queryId, field.key);
             dynamicQueries.push({
               sourceKey: field.options.source,
-              config: field.options.dynamicConfig,
+              fieldKey: field.key,
               valueToValidate: val,
               queryId,
               ...(field.options.allowUserInput !== undefined
@@ -554,11 +578,14 @@ export class DocumentService implements DocumentServicePort {
           dynamicQueries,
           {
             ...(spaceId !== undefined ? { spaceId } : {}),
+            documentTypeKey: document.type,
+            ...(this.selectedLogId !== undefined ? { selectedLogId: this.selectedLogId } : {}),
             formData: rawData,
           }
         );
 
         const dynamicErrors: string[] = [];
+        const matchedDynamicTuples = new Map<string, Record<string, unknown>>();
         for (const query of dynamicQueries) {
           const result = validationResults[query.queryId] ?? validationResults[query.sourceKey];
           if (!result || !result.isValid) {
@@ -573,6 +600,8 @@ export class DocumentService implements DocumentServicePort {
             } else {
               dynamicErrors.push(OPTION_NOT_FOUND_MSG);
             }
+          } else if (result.matchedTuple && query.queryId === queryFieldKeys.get(query.queryId)) {
+            matchedDynamicTuples.set(queryFieldKeys.get(query.queryId)!, result.matchedTuple);
           }
         }
 
@@ -581,6 +610,10 @@ export class DocumentService implements DocumentServicePort {
             success: false,
             errors: dynamicErrors,
           };
+        }
+
+        if (matchedDynamicTuples.size > 0 && document.data && typeof document.data === 'object') {
+          validatedDynamicMatchedTuples.set(document.data, matchedDynamicTuples);
         }
       }
     }
@@ -625,12 +658,16 @@ export class DocumentService implements DocumentServicePort {
       }
     }
 
+    const dynamicMatchedTuples =
+      document.data && typeof document.data === 'object'
+        ? validatedDynamicMatchedTuples.get(document.data)
+        : undefined;
+
     for (const field of documentType.documentSchema.fields) {
       if (field.options) {
         const rawValue = rawData[field.key];
         // nosemgrep: domain-pass-through-read
-        const keyProp = field.options.key;
-        const nameProp = field.options.name ?? keyProp;
+        const { key: keyProp, name: nameProp } = field.options;
         if (typeof rawValue === 'string') {
           const sanitizedVal = sanitizeFilePath(rawValue);
           if (!field.required && sanitizedVal === '') {
@@ -638,12 +675,9 @@ export class DocumentService implements DocumentServicePort {
             continue;
           }
           const optionTuples = documentType.documentSchema.options?.[field.options.source] ?? [];
-          const matchedTuple = optionTuples.find(
-            (tuple) =>
-              tuple[keyProp] === rawValue ||
-              tuple[keyProp] === sanitizedVal ||
-              (nameProp && (tuple[nameProp] === rawValue || tuple[nameProp] === sanitizedVal))
-          );
+          const matchedTuple =
+            dynamicMatchedTuples?.get(field.key) ??
+            matchStaticOptionTuple(optionTuples, [rawValue, sanitizedVal], keyProp, nameProp);
           if (matchedTuple) {
             enrichedData[field.key] = { ...matchedTuple };
           } else if (field.options.allowUserInput) {
@@ -1110,14 +1144,9 @@ function validateOptionSourcesAndFields(
       const sourceKey = field.options.source;
       const hasStaticOptions = documentSchema.options?.[sourceKey] !== undefined;
       const optionSource = documentSchema.optionSources?.[sourceKey];
-      const hasDynamicConfig = field.options.dynamicConfig !== undefined;
 
-      if (!hasStaticOptions && optionSource === undefined && !hasDynamicConfig) {
+      if (!hasStaticOptions && optionSource === undefined) {
         errors.push(`Field "${field.key}" references unknown OptionSource "${sourceKey}".`);
-      } else if (hasDynamicConfig && optionSource !== undefined) {
-        errors.push(
-          `Field "${field.key}" cannot declare both options.dynamicConfig and documentSchema.optionSources["${sourceKey}"].`
-        );
       } else if (optionSource?.properties !== undefined) {
         if (!optionSource.properties.includes(field.options.key)) {
           errors.push(

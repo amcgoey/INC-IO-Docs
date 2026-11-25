@@ -261,7 +261,8 @@ async function resolveLookupCandidate(params: {
 }): Promise<{ value: string; matchedTuple?: ParseTargetDocumentOptionTuple | undefined } | undefined> {
   const { candidate, property, targetField, targetSchema, spaceId, resolverDeps } = params;
   const useCanonicalLookup =
-    targetField.options?.dynamicConfig !== undefined ||
+    (targetField.options?.source !== undefined &&
+      targetSchema?.optionSources?.[targetField.options.source] !== undefined) ||
     targetField.options?.allowUserInput === true;
 
   if (useCanonicalLookup) {
@@ -641,6 +642,8 @@ export async function extractFormExtractorFields(params: {
   const resolverDeps: CanonicalOptionResolverDeps = {
     canonicalOptionsProvider,
     parseSchemaRegistry,
+    documentTypeKey: request.documentTypeKey,
+    ...(request.selectedLogId !== undefined ? { selectedLogId: request.selectedLogId } : {}),
   };
   const workingFields: Record<string, unknown> = { ...existingFields };
   const extractedFields: Record<string, unknown> = {};

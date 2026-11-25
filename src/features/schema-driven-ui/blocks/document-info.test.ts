@@ -880,13 +880,15 @@ describe('Document Info Block', () => {
               key: 'name',
               name: 'name',
               allowUserInput: true,
-              dynamicConfig: {
-                provider: 'google_drive',
-                method: 'list_folders',
-              },
             },
           },
         ],
+        optionSources: {
+          contactFolders: {
+            provider: 'google_drive',
+            method: 'list_folders',
+          },
+        },
       };
 
       const section = buildDocumentInfoSection(schema, undefined, {
@@ -916,14 +918,16 @@ describe('Document Info Block', () => {
               key: 'name',
               name: 'name',
               allowUserInput: true,
-              dynamicConfig: {
-                provider: 'google_drive',
-                method: 'list_folders',
-                relativePath: 'Communications',
-              },
             },
           },
         ],
+        optionSources: {
+          contactFolders: {
+            provider: 'google_drive',
+            method: 'list_folders',
+            relativePath: 'Communications',
+          },
+        },
       };
 
       const dynamicUiSchemaTextInput: UiSchema = {

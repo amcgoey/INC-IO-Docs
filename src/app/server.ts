@@ -146,6 +146,7 @@ export function createApp(options?: AppOptions): AppInstance {
     server,
     driveClient,
     configProvider: manifestProvider ?? defaultAppConfigProvider,
+    ...(manifestProvider !== undefined ? { manifestProvider } : {}),
     documentSchemaRegistry,
     templateEvaluator,
     driveService: options?.driveService,
@@ -153,6 +154,11 @@ export function createApp(options?: AppOptions): AppInstance {
     documentService: options?.documentService,
     compiledSchemaRegistry,
     additionalActivityHandlers: [documentLogWiring.createActivityHandler()],
+    createAdditionalActivityHandlers: (lookupOptions) => [
+      documentLogWiring.createActivityHandler({
+        onWriteLogSuccess: (spaceId) => lookupOptions.invalidate({ spaceId }),
+      }),
+    ],
   });
 
   const storageAdapter = options?.storageAdapter ?? options?.documentSpaceStoragePort;

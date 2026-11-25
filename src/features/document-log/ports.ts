@@ -273,7 +273,6 @@ export const LogTargetDocumentFieldOptionsSchema = Type.Object(
     key: Type.String({ minLength: 1 }),
     name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
     allowUserInput: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
-    dynamicConfig: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
   },
   { additionalProperties: false }
 );

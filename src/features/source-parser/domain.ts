@@ -922,6 +922,15 @@ async function extractLookupCandidateFromSourceItems(
         request.spaceId,
         targetSchema,
         deps
+          ? {
+              ...deps,
+              documentTypeKey: request.documentTypeKey,
+              ...(request.selectedLogId !== undefined ? { selectedLogId: request.selectedLogId } : {}),
+            }
+          : {
+              documentTypeKey: request.documentTypeKey,
+              ...(request.selectedLogId !== undefined ? { selectedLogId: request.selectedLogId } : {}),
+            }
       );
       if (match) {
         return {
@@ -1256,7 +1265,7 @@ export class SourceParserService implements SourceParserPort {
             let accepted: ValidatedCandidate | undefined;
             if (targetField.options) {
               const useCanonicalLookup =
-                targetField.options.dynamicConfig !== undefined ||
+                targetSchema?.optionSources?.[targetField.options.source] !== undefined ||
                 lookupFieldKeys.has(key) ||
                 targetField.options.allowUserInput === true;
               accepted = useCanonicalLookup
@@ -1265,7 +1274,13 @@ export class SourceParserService implements SourceParserPort {
                     targetField,
                     request.spaceId,
                     targetSchema,
-                    this.deps
+                    {
+                      ...this.deps,
+                      documentTypeKey: request.documentTypeKey,
+                      ...(request.selectedLogId !== undefined
+                        ? { selectedLogId: request.selectedLogId }
+                        : {}),
+                    }
                   )
                 : validateCandidateWithTuple(strVal, targetField, targetSchema);
             } else {

@@ -498,10 +498,12 @@ describe('ParseSchemaRegistryAdapter', () => {
                     source: 'contacts',
                     key: 'key',
                     name: 'name',
-                    dynamicConfig: { provider: 'google_drive', relativePath: 'Contacts' },
                   },
                 },
               ],
+              optionSources: {
+                contacts: { provider: 'google_drive', relativePath: 'Contacts' },
+              },
               options: {
                 direction: [
                   { key: 'IN', name: 'Incoming', aliases: ['inbound'] },
@@ -539,7 +541,7 @@ describe('ParseSchemaRegistryAdapter', () => {
 
     const targetSchema = adapter.getTargetSchema('test-doc');
     expect(targetSchema?.options?.direction[0].aliases).toEqual(['inbound']);
-    expect(targetSchema?.fields.find((f) => f.key === 'contact')?.options?.dynamicConfig).toEqual({
+    expect(targetSchema?.optionSources?.contacts).toEqual({
       provider: 'google_drive',
       relativePath: 'Contacts',
     });
@@ -1093,10 +1095,12 @@ describe('ParseSchemaRegistryAdapter', () => {
             source: 'vendors',
             key: 'key',
             name: 'name',
-            dynamicConfig: { provider: 'google_drive' },
           },
         },
       ],
+      optionSources: {
+        vendors: { provider: 'google_drive', properties: ['key', 'name', 'companyName'] },
+      },
       options: {
         actions: [
           { key: 'REC', name: 'Received', suffix: '' },

@@ -198,6 +198,18 @@ function buildTargetDocumentSchema(
     if (!rawField || typeof rawField !== 'object') {
       continue;
     }
+    const rawOptions = (rawField as { options?: unknown }).options;
+    if (
+      rawOptions !== null &&
+      typeof rawOptions === 'object' &&
+      'dynamicConfig' in rawOptions &&
+      (rawOptions as { dynamicConfig?: unknown }).dynamicConfig !== undefined
+    ) {
+      const fieldKey = (rawField as { key?: unknown }).key;
+      throw new DocumentLogConfigurationError(
+        `Field "${String(fieldKey ?? '')}" in "${relPath}" uses legacy options.dynamicConfig which is no longer supported; use documentSchema.optionSources instead`
+      );
+    }
     const cleanedField = Value.Clean(LogTargetDocumentFieldSchema, structuredClone(rawField));
     if (Value.Check(LogTargetDocumentFieldSchema, cleanedField)) {
       knownFieldKeys.add(cleanedField.key);
@@ -561,7 +573,7 @@ function validateStage1TemplateTokens(params: {
               `${contextLabel} accesses unknown property ".${property}" on LookupField "${fieldKey}"`
             );
           }
-        } else if (targetField.options.dynamicConfig === undefined) {
+        } else {
           const keyProp = targetField.options.key;
           const nameProp = targetField.options.name ?? keyProp;
           if (property !== keyProp && property !== nameProp) {
@@ -570,7 +582,7 @@ function validateStage1TemplateTokens(params: {
             );
           }
         }
-      } else if (targetField.options.dynamicConfig === undefined) {
+      } else {
         const staticTuples = targetSchema.options?.[targetField.options.source];
         if (staticTuples !== undefined) {
           const keyProp = targetField.options.key;

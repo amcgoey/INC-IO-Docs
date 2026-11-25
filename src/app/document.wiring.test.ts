@@ -280,14 +280,16 @@ describe('document.wiring', () => {
                 key: 'key',
                 name: 'name',
                 allowUserInput: true,
-                dynamicConfig: {
-                  provider: 'google_drive',
-                  method: 'list_folders',
-                  relativePath: '1 Admin/Communication',
-                },
               },
             },
           ],
+          optionSources: {
+            contactFolders: {
+              provider: 'google_drive',
+              method: 'list_folders',
+              relativePath: '1 Admin/Communication',
+            },
+          },
         },
       };
 
@@ -349,14 +351,16 @@ describe('document.wiring', () => {
                 key: 'key',
                 name: 'name',
                 allowUserInput: true,
-                dynamicConfig: {
-                  provider: 'google_drive',
-                  method: 'list_folders',
-                  relativePath: '1 Admin/Communication',
-                },
               },
             },
           ],
+          optionSources: {
+            contactFolders: {
+              provider: 'google_drive',
+              method: 'list_folders',
+              relativePath: '1 Admin/Communication',
+            },
+          },
         },
       };
 

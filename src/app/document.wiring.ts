@@ -20,7 +20,11 @@ import { ensureEvaluationOrder } from '../infrastructure/validation/json-logic-g
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import { DocumentService } from '../features/document/domain';
 import { CompiledSchemaRegistry } from '../features/document/adapters/compiled-schema-registry';
-import { DynamicOptionsAdapter } from './dynamic-options.adapter';
+import {
+  createDocumentDynamicValidationAdapter,
+  createLookupOptionsService,
+} from './lookup-options.wiring';
+import type { LookupOptionsPort } from '../features/lookup-options';
 
 export type InjectedDocumentService =
   | DocumentService
@@ -83,16 +87,19 @@ export interface CreateDocumentServiceFactoryOptions {
   documentSchemaRegistry: DocumentSchemaRegistryPort;
   templateEvaluator: TemplateEvaluatorPort;
   compiledSchemaRegistry: CompiledSchemaRegistryPort;
+  manifestProvider?: RawManifestProviderPort | undefined;
   configProvider?: AppConfigurationProviderPort | undefined;
   driveClient?: GoogleDriveClient | undefined;
   gmailClient?: GoogleGmailClient | undefined;
   pdfProcessor?: PdfProcessor | undefined;
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
+  getDynamicValidator?: ((requestContext: WorkspaceExecutionContext) => DocumentDynamicValidationPort) | undefined;
   validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
   additionalActivityHandlers?: readonly ActivityHandler[] | undefined;
   createAdditionalActivityHandlers?:
     | ((
-        context: WorkspaceExecutionContext
+        context: WorkspaceExecutionContext,
+        requestContext?: WorkspaceExecutionContext
       ) => readonly ActivityHandler[] | Promise<readonly ActivityHandler[]>)
     | undefined;
 }
@@ -100,7 +107,11 @@ export interface CreateDocumentServiceFactoryOptions {
 export function createDocumentServiceFactory(
   options: CreateDocumentServiceFactoryOptions
 ): DocumentServiceFactory {
-  return async (context: WorkspaceExecutionContext): Promise<DocumentService> => {
+  return async (
+    context: WorkspaceExecutionContext,
+    requestContext?: WorkspaceExecutionContext
+  ): Promise<DocumentService> => {
+    const effectiveRequestContext = requestContext ?? context;
     const primaryTargetId =
       context.sourceFiles?.[0]?.id ??
       context.selectedItems?.[0]?.id ??
@@ -169,7 +180,7 @@ export function createDocumentServiceFactory(
     });
 
     const perRequestHandlers = options.createAdditionalActivityHandlers
-      ? await options.createAdditionalActivityHandlers(context)
+      ? await options.createAdditionalActivityHandlers(context, effectiveRequestContext)
       : [];
     const handlers: ActivityHandler[] = [
       driveActivityHandler,
@@ -180,7 +191,17 @@ export function createDocumentServiceFactory(
     const activityEngine = new ActivityEngine(handlers);
 
     const dynamicValidator =
-      options.dynamicValidator ?? new DynamicOptionsAdapter(driveClient);
+      options.dynamicValidator ??
+      (options.getDynamicValidator
+        ? options.getDynamicValidator(effectiveRequestContext)
+        : createDocumentDynamicValidationAdapter(
+            createLookupOptionsService({
+              manifestProvider: options.manifestProvider,
+              documentSchemaRegistry: options.documentSchemaRegistry,
+              driveClient,
+              configProvider: options.configProvider,
+            })
+          ));
 
     const validationMessageFormatter =
       options.validationMessageFormatter ??
@@ -194,7 +215,8 @@ export function createDocumentServiceFactory(
       options.templateEvaluator,
       options.compiledSchemaRegistry,
       dynamicValidator,
-      validationMessageFormatter
+      validationMessageFormatter,
+      context.selectedLogId
     );
 
     await service.initialize();
@@ -208,6 +230,7 @@ export interface WireDocumentServicesOptions {
   configProvider: AppConfigurationProviderPort;
   documentSchemaRegistry: DocumentSchemaRegistryPort;
   templateEvaluator: TemplateEvaluatorPort;
+  manifestProvider?: RawManifestProviderPort | undefined;
   driveService?: DriveServicePort | undefined;
   activityEngine?: ActivityDispatcherPort | undefined;
   documentService?: InjectedDocumentService | undefined;
@@ -216,11 +239,56 @@ export interface WireDocumentServicesOptions {
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
   validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
   additionalActivityHandlers?: readonly ActivityHandler[] | undefined;
+  createAdditionalActivityHandlers?:
+    | ((lookupOptions: LookupOptionsPort) => readonly ActivityHandler[] | Promise<readonly ActivityHandler[]>)
+    | undefined;
 }
 
 export function wireDocumentServicesAndRoutes(
   options: WireDocumentServicesOptions
 ): InjectedDocumentService {
+  const compiledSchemaRegistry = resolveCompiledSchemaRegistry(
+    options.documentSchemaRegistry,
+    options.compiledSchemaRegistry
+  );
+
+  const validationMessageFormatter: DynamicValidationMessageFormatter =
+    options.validationMessageFormatter ??
+    ((status, targetPath) =>
+      formatValidationError(DEFAULT_MESSAGE_CATALOG, status, targetPath) ??
+      'Option not found.');
+
+  const buildDefaultLookupOptions = (): LookupOptionsPort =>
+    createLookupOptionsService({
+      manifestProvider: options.manifestProvider,
+      documentSchemaRegistry: options.documentSchemaRegistry,
+      driveClient: options.driveClient,
+      configProvider: options.configProvider,
+    });
+
+  const buildActivityEngine = async (
+    lookupOptions?: LookupOptionsPort
+  ): Promise<ActivityDispatcherPort> => {
+    if (options.activityEngine) {
+      return options.activityEngine;
+    }
+    const driveService: DriveServicePort =
+      options.driveService ?? new DriveServiceAdapter(options.driveClient);
+
+    const driveActivityHandler = new DriveActivityHandler(driveService, {
+      configProvider: options.configProvider,
+      primaryTargetId: options.primaryTargetId,
+    });
+
+    const dynamicHandlers =
+      lookupOptions && options.createAdditionalActivityHandlers
+        ? await options.createAdditionalActivityHandlers(lookupOptions)
+        : (options.additionalActivityHandlers ?? []);
+
+    const handlers: ActivityHandler[] = [driveActivityHandler, ...dynamicHandlers];
+    return new ActivityEngine(handlers);
+  };
+
   let documentService = options.documentService;
   if (!documentService) {
     const driveService: DriveServicePort =
@@ -231,28 +299,16 @@ export function wireDocumentServicesAndRoutes(
       primaryTargetId: options.primaryTargetId,
     });
 
+    const lookupOptions = options.dynamicValidator ? undefined : buildDefaultLookupOptions();
     const handlers: ActivityHandler[] = [
       driveActivityHandler,
       ...(options.additionalActivityHandlers ?? []),
     ];
 
-    const activityEngine =
-      options.activityEngine ??
-      new ActivityEngine(handlers);
-
-    const compiledSchemaRegistry = resolveCompiledSchemaRegistry(
-      options.documentSchemaRegistry,
-      options.compiledSchemaRegistry
-    );
+    const activityEngine = options.activityEngine ?? new ActivityEngine(handlers);
 
     const dynamicValidator =
-      options.dynamicValidator ?? new DynamicOptionsAdapter(options.driveClient);
-
-    const validationMessageFormatter =
-      options.validationMessageFormatter ??
-      ((status, targetPath) =>
-        formatValidationError(DEFAULT_MESSAGE_CATALOG, status, targetPath) ??
-        'Option not found.');
+      options.dynamicValidator ?? createDocumentDynamicValidationAdapter(lookupOptions!);
 
     documentService = new DocumentService(
       activityEngine,
@@ -264,9 +320,28 @@ export function wireDocumentServicesAndRoutes(
     );
   }
 
-  registerDocumentFeatureRoutes(options.server, {
-    service: documentService,
-  });
+  if (options.documentService || options.dynamicValidator) {
+    registerDocumentFeatureRoutes(options.server, {
+      service: documentService,
+    });
+  } else {
+    registerDocumentFeatureRoutes(options.server, {
+      createService: async () => {
+        const reqLookupOptions = buildDefaultLookupOptions();
+        const activityEngine = await buildActivityEngine(reqLookupOptions);
+        const reqService = new DocumentService(
+          activityEngine,
+          options.documentSchemaRegistry,
+          options.templateEvaluator,
+          compiledSchemaRegistry,
+          createDocumentDynamicValidationAdapter(reqLookupOptions),
+          validationMessageFormatter
+        );
+        await reqService.initialize();
+        return reqService;
+      },
+    });
+  }
 
   return documentService;
 }

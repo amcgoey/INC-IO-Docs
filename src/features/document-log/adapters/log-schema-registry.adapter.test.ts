@@ -396,7 +396,7 @@ describe('LogSchemaRegistryAdapter', () => {
     }
   });
 
-  it('allows dynamic LookupField arbitrary .prop references in column templates', async () => {
+  it('allows dynamic LookupField declared .prop references in column templates', async () => {
     const docDef = createValidArchDocDef();
     (docDef.documentSchema.fields as Array<Record<string, unknown>>).push({
       key: 'dynContact',
@@ -407,9 +407,15 @@ describe('LogSchemaRegistryAdapter', () => {
         source: 'dynContacts',
         key: 'key',
         allowUserInput: true,
-        dynamicConfig: { provider: 'google_drive', method: 'list_folders' },
       },
     });
+    (docDef.documentSchema as Record<string, unknown>).optionSources = {
+      dynContacts: {
+        provider: 'google_drive',
+        method: 'list_folders',
+        properties: ['key', 'customAttr'],
+      },
+    };
     docDef.documentLogSchema.columns = {
       ...docDef.documentLogSchema.columns,
       DynamicCol: { template: '{{dynContact.customAttr}}' },

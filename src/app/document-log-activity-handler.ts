@@ -42,6 +42,7 @@ const DEFAULT_READ_OUTPUT_VARIABLE = 'logEntries';
 
 export interface DocumentLogActivityHandlerOptions {
   selectedLogId?: string | undefined;
+  onWriteLogSuccess?: ((spaceId?: string) => void) | undefined;
 }
 
 function toDocumentLogSpace(
@@ -155,6 +156,10 @@ export class DocumentLogActivityHandler implements ActivityHandler {
           ? { selectedLogId: this.options.selectedLogId }
           : {}),
       });
+
+      this.options?.onWriteLogSuccess?.(
+        context.document.space?.abstractStorageId ?? context.document.space?.id
+      );
 
       return {
         success: true,

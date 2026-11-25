@@ -125,10 +125,7 @@ function validateValueMap(
     seenLabels.set(normLabel, mapKey);
   }
 
-  if (
-    targetField.options.dynamicConfig !== undefined ||
-    cleanedOptionSources?.[targetField.options.source] !== undefined
-  ) {
+  if (cleanedOptionSources?.[targetField.options.source] !== undefined) {
     return;
   }
 
@@ -246,7 +243,7 @@ function validateDocumentFormSchema(params: {
                 `${prefix} accesses unknown property ".${token.property}" on LookupField "${token.fieldKey}"`
               );
             }
-          } else if (targetField.options.dynamicConfig === undefined) {
+          } else {
             const keyProp = targetField.options.key ?? 'key';
             const nameProp = targetField.options.name ?? keyProp;
             if (token.property !== keyProp && token.property !== nameProp) {
@@ -255,7 +252,7 @@ function validateDocumentFormSchema(params: {
               );
             }
           }
-        } else if (targetField.options.dynamicConfig === undefined) {
+        } else {
           const staticTuples = cleanedOptions?.[targetField.options.source];
           if (staticTuples !== undefined) {
             const keyProp = targetField.options.key ?? 'key';
@@ -375,6 +372,18 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
       for (const f of rawFields) {
         if (!f || typeof f !== 'object') {
           continue;
+        }
+        const rawOptions = (f as { options?: unknown }).options;
+        if (
+          rawOptions !== null &&
+          typeof rawOptions === 'object' &&
+          'dynamicConfig' in rawOptions &&
+          (rawOptions as { dynamicConfig?: unknown }).dynamicConfig !== undefined
+        ) {
+          const fieldKey = (f as { key?: unknown }).key;
+          throw new Error(
+            `Field "${String(fieldKey ?? '')}" in "${relPath}" uses legacy options.dynamicConfig which is no longer supported; use documentSchema.optionSources instead`
+          );
         }
         const cleanedField = Value.Clean(ParseTargetDocumentFieldSchema, structuredClone(f));
         if (Value.Check(ParseTargetDocumentFieldSchema, cleanedField)) {

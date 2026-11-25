@@ -207,6 +207,7 @@ export interface WorkspaceAddonAdapterOptions {
   formEvaluator?: UiProcessFormEvaluatorPort | undefined;
   gmailPort?: UiProcessGmailPort | undefined;
   sourceParser?: UiProcessSourceParserPort | undefined;
+  onLogCopied?: ((spaceId: string) => void) | undefined;
 }
 
 function extractFieldKeysFromDocSchema(docSchema: unknown): Set<string> | undefined {
@@ -825,6 +826,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
       try {
         const copyResult = await this.options.documentLogPort.copyLog(space);
+        this.options.onLogCopied?.(space.abstractStorageId ?? space.id);
         const notification = copyResult.created
           ? `Created "${copyResult.candidate.name}" in "${copyResult.folderPath}".`
           : `Document Log already exists: "${copyResult.candidate.name}".`;

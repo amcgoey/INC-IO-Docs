@@ -366,7 +366,7 @@ function reconstructFieldsFromRow(
       } else if (!matchedLookupFields.has(mapping.fieldKey)) {
         const isDynamicOrUserInput =
           Boolean(mapping.field.options.allowUserInput) ||
-          mapping.field.options.dynamicConfig !== undefined;
+          targetSchema.optionSources?.[mapping.field.options.source] !== undefined;
 
         if (isDynamicOrUserInput) {
           const existing = data[mapping.fieldKey];
@@ -516,7 +516,7 @@ function validateHydratedRowFields(params: {
     const reasons: string[] = [];
     const isStaticRestrictedLookup = Boolean(
       field.options &&
-        field.options.dynamicConfig === undefined &&
+        targetSchema.optionSources?.[field.options.source] === undefined &&
         !field.options.allowUserInput
     );
 

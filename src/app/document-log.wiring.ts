@@ -35,6 +35,7 @@ export interface DocumentLogServiceRequestOverrides {
   driveClient?: GoogleDriveClient | undefined;
   sheetsClient?: SheetsClient | undefined;
   documentLogService?: DocumentLogPort | undefined;
+  onWriteLogSuccess?: ((spaceId?: string) => void) | undefined;
 }
 
 export type DocumentLogServiceFactory = (
@@ -371,6 +372,9 @@ export function createDocumentLogWiring(
   ): ActivityHandler =>
     new DocumentLogActivityHandler(createDocumentLogService(context, overrides), {
       ...(context.selectedLogId !== undefined ? { selectedLogId: context.selectedLogId } : {}),
+      ...(overrides?.onWriteLogSuccess !== undefined
+        ? { onWriteLogSuccess: overrides.onWriteLogSuccess }
+        : {}),
     });
 
   const perRequestServices = new WeakMap<WorkspaceExecutionContext, DocumentLogPort>();

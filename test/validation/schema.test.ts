@@ -186,7 +186,7 @@ describe('DocumentType JSON files schema validation', () => {
     }
   });
 
-  it('should configure contact field in communication-project with dynamicConfig, key/name, allowUserInput: true, and aligned identity templates', async () => {
+  it('should configure contact field in communication-project with optionSources (google_drive), key/name, allowUserInput: true, and aligned identity templates', async () => {
     const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
     const manifestProvider = new AppManifestProvider({ manifestPath });
     const adapter = new DocumentSchemaRegistryAdapter(
@@ -200,15 +200,17 @@ describe('DocumentType JSON files schema validation', () => {
 
     const contactField = commProject!.documentSchema.fields.find((f) => f.key === 'contact');
     expect(contactField).toBeDefined();
-    expect(contactField?.options).toBeDefined();
-    expect(contactField?.options?.allowUserInput).toBe(true);
-    expect(contactField?.options?.source).toBe('contactFolders');
-    expect(contactField?.options?.key).toBe('key');
-    expect(contactField?.options?.name).toBe('name');
-    expect(contactField?.options?.dynamicConfig).toEqual({
+    expect(contactField?.options).toEqual({
+      source: 'contactFolders',
+      key: 'key',
+      name: 'name',
+      allowUserInput: true,
+    });
+    expect(commProject!.documentSchema.optionSources?.contactFolders).toEqual({
       provider: 'google_drive',
       method: 'list_folders',
       relativePath: '1 Admin/Communication',
+      properties: ['key', 'name'],
     });
 
     expect(commProject!.documentSchema.identity).toEqual({
@@ -218,7 +220,7 @@ describe('DocumentType JSON files schema validation', () => {
     });
   });
 
-  it('should configure contact field in communication-proposal with dynamicConfig, allowUserInput: true, and aligned identity templates', async () => {
+  it('should configure contact field in communication-proposal with optionSources (google_drive), allowUserInput: true, and aligned identity templates', async () => {
     const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
     const manifestProvider = new AppManifestProvider({ manifestPath });
     const adapter = new DocumentSchemaRegistryAdapter(
@@ -232,15 +234,17 @@ describe('DocumentType JSON files schema validation', () => {
 
     const contactField = commProposal!.documentSchema.fields.find((f) => f.key === 'contact');
     expect(contactField).toBeDefined();
-    expect(contactField?.options).toBeDefined();
-    expect(contactField?.options?.allowUserInput).toBe(true);
-    expect(contactField?.options?.source).toBe('contactFolders');
-    expect(contactField?.options?.key).toBe('key');
-    expect(contactField?.options?.name).toBe('name');
-    expect(contactField?.options?.dynamicConfig).toEqual({
+    expect(contactField?.options).toEqual({
+      source: 'contactFolders',
+      key: 'key',
+      name: 'name',
+      allowUserInput: true,
+    });
+    expect(commProposal!.documentSchema.optionSources?.contactFolders).toEqual({
       provider: 'google_drive',
       method: 'list_folders',
       relativePath: 'Communications',
+      properties: ['key', 'name'],
     });
 
     expect(commProposal!.documentSchema.identity).toEqual({
@@ -966,6 +970,32 @@ describe('Split Option Schemas (optionSources & optionBindings) & Manifest Immut
       await expect(registry.initialize()).rejects.toThrow(
         /missing column mappings for declared properties: name/
       );
+    });
+
+    it('rejects legacy options.dynamicConfig across DocumentSchemaRegistryAdapter, LogSchemaRegistryAdapter, and ParseSchemaRegistryAdapter', async () => {
+      const { manifest, docType } = structuredClone(createSplitOptionFixture());
+      const folderField = docType.documentSchema.fields.find((f) => f.key === 'folder')!;
+      (folderField.options as Record<string, unknown>).dynamicConfig = {
+        provider: 'google_drive',
+        method: 'list_folders',
+        relativePath: '1 Admin/Communication',
+      };
+
+      const provider = createMockManifestProvider(manifest, { [DOC_REL_PATH]: docType });
+      const handlebars = new HandlebarsAdapter();
+
+      const docRegistry = new DocumentSchemaRegistryAdapter(
+        provider,
+        handlebars,
+        ensureEvaluationOrder
+      );
+      await expect(docRegistry.loadAll()).rejects.toThrow(/dynamicConfig/i);
+
+      const logRegistry = new LogSchemaRegistryAdapter(provider, handlebars);
+      await expect(logRegistry.initialize()).rejects.toThrow(/dynamicConfig/i);
+
+      const parseRegistry = new ParseSchemaRegistryAdapter(provider, handlebars);
+      await expect(parseRegistry.initialize()).rejects.toThrow(/dynamicConfig/i);
     });
   });
 
