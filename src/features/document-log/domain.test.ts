@@ -1,9 +1,14 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
+import { Value } from '@sinclair/typebox/value';
 import { DocumentLogService } from './domain';
 import {
   DocumentLogAmbiguousError,
   DocumentLogConfigurationError,
   DocumentLogMissingError,
+  DocumentLogUiContextResultSchema,
+  LogResolutionCandidateSchema,
   type DocumentLogDiscoveryConfig,
   type DocumentLogDocument,
   type DocumentLogSchema,
@@ -120,6 +125,7 @@ describe('DocumentLogService', () => {
     };
     const storage: LogStoragePort = {
       insertRow: vi.fn().mockResolvedValue({ rowNumber: 6, action: 'inserted' }),
+      readRows: vi.fn().mockResolvedValue({ headers: [], formulaColumns: [], rows: [] }),
       ...overrides?.storage,
     };
     const service = new DocumentLogService(
@@ -1028,6 +1034,173 @@ describe('DocumentLogService', () => {
         expect(res.status).toBe('ambiguous');
         expect(res.candidates.map((c) => c.id)).toEqual(['log-a', 'log-b', 'log-m', 'log-z']);
       });
+
+      describe('lazy parentFolderName resolution on 2+ ambiguous candidates', () => {
+        it('supports optional parentFolderName on LogResolutionCandidateSchema', () => {
+          expect(
+            Value.Check(LogResolutionCandidateSchema, {
+              id: 'log-1',
+              name: 'Harborview Hotel Document Log',
+              parentFolderName: '1 Admin',
+            })
+          ).toBe(true);
+          expect(
+            Value.Check(LogResolutionCandidateSchema, {
+              id: 'log-1',
+              name: 'Harborview Hotel Document Log',
+              parentFolderName: undefined,
+            })
+          ).toBe(true);
+          expect(
+            Value.Check(LogResolutionCandidateSchema, {
+              id: 'log-1',
+              name: 'Harborview Hotel Document Log',
+              parentFolderName: 123,
+            })
+          ).toBe(false);
+        });
+
+        it('leaves single-match resolved untouched with 0 getFile calls and 1 Drive search call', async () => {
+          const searchSpreadsheets = vi.fn().mockResolvedValue([
+            {
+              id: 'log-single',
+              name: 'Harborview Hotel Document Log',
+              parents: ['folder-admin'],
+              modifiedTime: '2026-10-01T00:00:00Z',
+            },
+          ]);
+          const getFile = vi.fn();
+
+          const { service } = createService({
+            registry: { getSpaceFetchMethod: vi.fn().mockReturnValue('shared_drives') },
+            discovery: { searchSpreadsheets, getFile },
+          });
+
+          const res = await service.resolveLog(sampleSpace);
+          expect(res.status).toBe('resolved');
+          if (res.status === 'resolved') {
+            expect(res.candidate.parentFolderName).toBeUndefined();
+            expect('parentFolderName' in res.candidate).toBe(false);
+          }
+          expect(searchSpreadsheets).toHaveBeenCalledTimes(1);
+          expect(getFile).not.toHaveBeenCalled();
+        });
+
+        it('lazily resolves parents[0] names on 2+ matches reusing per-call getFileMemo, skipping space root, and omitting on lookup failure', async () => {
+          const searchSpreadsheets = vi.fn().mockResolvedValue([
+            {
+              id: 'log-admin-1',
+              name: 'Harborview Hotel Document Log',
+              parents: ['folder-admin'],
+              modifiedTime: '2026-10-15T12:00:00Z',
+            },
+            {
+              id: 'log-admin-2',
+              name: 'Harborview Hotel Document Log Backup',
+              parents: ['folder-admin'],
+              modifiedTime: '2026-10-10T12:00:00Z',
+            },
+            {
+              id: 'log-root',
+              name: 'Harborview Hotel Document Log Root',
+              parents: [sampleSpace.abstractStorageId],
+              modifiedTime: '2026-10-05T12:00:00Z',
+            },
+            {
+              id: 'log-unreadable-parent',
+              name: 'Harborview Hotel Document Log Hidden',
+              parents: ['folder-forbidden'],
+              modifiedTime: '2026-10-01T12:00:00Z',
+            },
+          ]);
+          const getFile = vi.fn().mockImplementation(async (fileId: string) => {
+            if (fileId === 'folder-admin') {
+              return { id: 'folder-admin', name: '1 Admin', parents: [sampleSpace.abstractStorageId] };
+            }
+            throw new Error('403 Forbidden');
+          });
+
+          const { service } = createService({
+            registry: { getSpaceFetchMethod: vi.fn().mockReturnValue('shared_drives') },
+            discovery: {
+              searchSpreadsheets,
+              getFile,
+              resolveFolderPath: vi.fn().mockResolvedValue({ id: 'folder-admin', name: '1 Admin' }),
+            },
+          });
+
+          const res = await service.resolveLog(sampleSpace);
+          expect(res.status).toBe('ambiguous');
+          if (res.status === 'ambiguous') {
+            const byId = new Map(res.candidates.map((c) => [c.id, c]));
+            expect(byId.get('log-admin-1')?.parentFolderName).toBe('1 Admin');
+            expect(byId.get('log-admin-2')?.parentFolderName).toBe('1 Admin');
+            expect(byId.get('log-root')?.parentFolderName).toBeUndefined();
+            expect('parentFolderName' in (byId.get('log-root') ?? {})).toBe(false);
+            expect(byId.get('log-unreadable-parent')?.parentFolderName).toBeUndefined();
+            expect('parentFolderName' in (byId.get('log-unreadable-parent') ?? {})).toBe(false);
+          }
+
+          // folder-admin queried only ONCE across 2 candidates; space root NEVER queried; folder-forbidden queried once
+          expect(getFile).toHaveBeenCalledTimes(2);
+          expect(getFile).toHaveBeenCalledWith('folder-admin');
+          expect(getFile).toHaveBeenCalledWith('folder-forbidden');
+          expect(getFile).not.toHaveBeenCalledWith(sampleSpace.abstractStorageId);
+        });
+
+        it('reuses per-call getFileMemo populated during folder-backed descendant walks without duplicate getFile calls', async () => {
+          const folderSpace: DocumentLogSpace = {
+            id: 'opp-space-1',
+            typeId: 'proposals',
+            name: 'Opportunity Alpha',
+            abstractStorageId: 'folder-opp-root',
+          };
+          const getFile = vi.fn().mockImplementation(async (fileId: string): Promise<LogDiscoveryFileMetadata> => {
+            if (fileId === 'folder-opp-root') {
+              return { id: 'folder-opp-root', name: 'Opportunity Alpha', driveId: 'mkt-drive' };
+            }
+            if (fileId === 'folder-sub-1') {
+              return { id: 'folder-sub-1', name: '1 Admin', parents: ['folder-opp-root'] };
+            }
+            if (fileId === 'folder-sub-2') {
+              return { id: 'folder-sub-2', name: '6 Construction', parents: ['folder-opp-root'] };
+            }
+            throw new Error(`Unexpected fileId: ${fileId}`);
+          });
+          const searchSpreadsheets = vi.fn().mockResolvedValue([
+            {
+              id: 'log-1',
+              name: 'Opportunity Alpha Document Log',
+              parents: ['folder-sub-1'],
+              modifiedTime: '2026-10-15T12:00:00Z',
+            },
+            {
+              id: 'log-2',
+              name: 'Opportunity Alpha Document Log Old',
+              parents: ['folder-sub-2'],
+              modifiedTime: '2026-10-10T12:00:00Z',
+            },
+          ]);
+
+          const { service } = createService({
+            registry: { getSpaceFetchMethod: vi.fn().mockReturnValue('folders') },
+            discovery: { searchSpreadsheets, getFile },
+          });
+
+          const res = await service.resolveLog(folderSpace);
+          expect(res.status).toBe('ambiguous');
+          if (res.status === 'ambiguous') {
+            const byId = new Map(res.candidates.map((c) => [c.id, c]));
+            expect(byId.get('log-1')?.parentFolderName).toBe('1 Admin');
+            expect(byId.get('log-2')?.parentFolderName).toBe('6 Construction');
+          }
+
+          // folder-opp-root (scope check) + folder-sub-1 (once) + folder-sub-2 (once) = 3 total calls
+          expect(getFile).toHaveBeenCalledTimes(3);
+          expect(getFile.mock.calls.filter(([id]) => id === 'folder-sub-1')).toHaveLength(1);
+          expect(getFile.mock.calls.filter(([id]) => id === 'folder-sub-2')).toHaveLength(1);
+        });
+      });
     });
   });
 
@@ -1610,6 +1783,1435 @@ describe('DocumentLogService', () => {
           },
         })
       );
+    });
+  });
+
+  describe('requiresDocumentLog and queryUiContext', () => {
+    it('requiresDocumentLog returns true for configured logging types and false for non-logging or blank types', () => {
+      const { service } = createService();
+
+      expect(service.requiresDocumentLog('submittal-arch')).toBe(true);
+      expect(service.requiresDocumentLog('communication-project')).toBe(false);
+      expect(service.requiresDocumentLog('communication-proposal')).toBe(false);
+      expect(service.requiresDocumentLog('')).toBe(false);
+      expect(service.requiresDocumentLog('   ')).toBe(false);
+    });
+
+    it('queryUiContext returns undefined with zero Drive/Sheets calls for non-logging or missing documentTypeKey', async () => {
+      const searchSpreadsheets = vi.fn();
+      const insertRow = vi.fn();
+      const { service } = createService({
+        discovery: { searchSpreadsheets },
+        storage: { insertRow },
+      });
+
+      await expect(
+        service.queryUiContext({ documentTypeKey: 'communication-project', space: sampleSpace })
+      ).resolves.toBeUndefined();
+      await expect(
+        service.queryUiContext({ documentTypeKey: 'communication-proposal', space: sampleSpace })
+      ).resolves.toBeUndefined();
+      await expect(service.queryUiContext({ space: sampleSpace })).resolves.toBeUndefined();
+
+      expect(searchSpreadsheets).not.toHaveBeenCalled();
+      expect(insertRow).not.toHaveBeenCalled();
+    });
+
+    it('queryUiContext returns missing_space when space is absent without calling Drive', async () => {
+      const searchSpreadsheets = vi.fn();
+      const { service } = createService({
+        discovery: { searchSpreadsheets },
+      });
+
+      const res = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+      });
+
+      expect(res).toEqual({ status: 'missing_space' });
+      expect(searchSpreadsheets).not.toHaveBeenCalled();
+    });
+
+    it('queryUiContext wraps live resolveLog in try/catch and returns discovery_error on Drive failures', async () => {
+      const { service } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockRejectedValue(new Error('Drive API 503 Service Unavailable')),
+        },
+      });
+
+      const res = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+
+      expect(res).toEqual({
+        status: 'discovery_error',
+        spaceName: 'Harborview Hotel',
+        discoveryErrorMessage: 'Drive API 503 Service Unavailable',
+      });
+    });
+
+    it('queryUiContext renders copyNameTemplate and expected folder on missing status', async () => {
+      const { service } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([]),
+        },
+      });
+
+      const res = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+
+      expect(res).toEqual({
+        status: 'missing',
+        spaceName: 'Harborview Hotel',
+        targetFolderPath: '1 Admin',
+        targetFileName: 'Harborview Hotel Document Log',
+      });
+    });
+
+    it('queryUiContext returns activeCandidate on resolved with webViewLink and fallback URL when omitted', async () => {
+      const searchSpreadsheets = vi
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            id: 'log-with-link',
+            name: 'Harborview Hotel Document Log',
+            webViewLink: 'https://docs.google.com/spreadsheets/d/custom-link/edit',
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: 'log-without-link',
+            name: 'Harborview Hotel Document Log',
+          },
+        ]);
+
+      const { service } = createService({
+        discovery: { searchSpreadsheets },
+      });
+
+      const withLink = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+      expect(withLink).toEqual({
+        status: 'resolved',
+        spaceName: 'Harborview Hotel',
+        activeCandidate: {
+          name: 'Harborview Hotel Document Log',
+          url: 'https://docs.google.com/spreadsheets/d/custom-link/edit',
+        },
+        readStatus: 'idle_incomplete_id',
+        missingIdFields: ['Section', 'Number'],
+      });
+      expect('targetFolderPath' in withLink!).toBe(false);
+
+      const withoutLink = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+      expect(withoutLink).toEqual({
+        status: 'resolved',
+        spaceName: 'Harborview Hotel',
+        activeCandidate: {
+          name: 'Harborview Hotel Document Log',
+          url: 'https://docs.google.com/spreadsheets/d/log-without-link/edit',
+        },
+        readStatus: 'idle_incomplete_id',
+        missingIdFields: ['Section', 'Number'],
+      });
+      expect('targetFolderPath' in withoutLink!).toBe(false);
+    });
+
+    it('queryUiContext returns ambiguous with presentation-ready candidateOptions, matching selectedLogId, or ranked fallback when absent/stale, without leaking raw Drive metadata', async () => {
+      const { service } = createService({
+        registry: { getSpaceFetchMethod: vi.fn().mockReturnValue('shared_drives') },
+        discovery: {
+          resolveFolderPath: vi.fn().mockResolvedValue({ id: 'folder-admin', name: '1 Admin' }),
+          getFile: vi.fn().mockImplementation(async (fileId: string) => {
+            if (fileId === 'folder-admin') {
+              return { id: 'folder-admin', name: '1 Admin' };
+            }
+            if (fileId === 'folder-const') {
+              return { id: 'folder-const', name: '6 Construction' };
+            }
+            throw new Error('403 Forbidden');
+          }),
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            {
+              id: 'log-1',
+              name: 'Harborview Hotel Document Log',
+              parents: ['folder-admin'],
+              modifiedTime: '2026-10-19T14:30:00.000Z',
+              webViewLink: 'https://docs.google.com/spreadsheets/d/custom-log-1/edit',
+            },
+            {
+              id: 'log-2',
+              name: 'Harborview Hotel Document Log',
+              parents: ['folder-const'],
+              modifiedTime: '2026-10-12T08:00:00Z',
+            },
+            {
+              id: 'log-3',
+              name: 'Harborview Hotel Document Log Root',
+              parents: [sampleSpace.abstractStorageId],
+              modifiedTime: '2026-10-01T00:00:00Z',
+            },
+            {
+              id: 'log-4',
+              name: 'Harborview Hotel Document Log Undated',
+              parents: ['folder-const'],
+            },
+            {
+              id: 'log-5',
+              name: 'Harborview Hotel Document Log Plain',
+              parents: ['folder-forbidden'],
+            },
+          ]),
+        },
+      });
+
+      const fallbackRes = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+      expect(Value.Check(DocumentLogUiContextResultSchema, fallbackRes)).toBe(true);
+      expect(fallbackRes).toEqual({
+        status: 'ambiguous',
+        spaceName: 'Harborview Hotel',
+        candidateOptions: [
+          { text: 'Harborview Hotel Document Log (1 Admin · 2026-10-19)', value: 'log-1', selected: true },
+          { text: 'Harborview Hotel Document Log (6 Construction · 2026-10-12)', value: 'log-2', selected: false },
+          { text: 'Harborview Hotel Document Log Root (2026-10-01)', value: 'log-3', selected: false },
+          { text: 'Harborview Hotel Document Log Undated (6 Construction)', value: 'log-4', selected: false },
+          { text: 'Harborview Hotel Document Log Plain', value: 'log-5', selected: false },
+        ],
+        activeCandidate: {
+          name: 'Harborview Hotel Document Log',
+          url: 'https://docs.google.com/spreadsheets/d/custom-log-1/edit',
+        },
+        readStatus: 'idle_incomplete_id',
+        missingIdFields: ['Section', 'Number'],
+      });
+      expect('targetFolderPath' in fallbackRes!).toBe(false);
+
+      // Raw Drive metadata never leaks onto the presentation-ready UI context DTO
+      const serialized = JSON.stringify(fallbackRes);
+      expect(serialized).not.toContain('parentFolderName');
+      expect(serialized).not.toContain('modifiedTime');
+      expect(serialized).not.toContain('"parents"');
+
+      // Matching selectedLogId switches activeCandidate and selected option
+      const chosenRes = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        selectedLogId: 'log-2',
+      });
+      expect(chosenRes?.activeCandidate).toEqual({
+        name: 'Harborview Hotel Document Log',
+        url: 'https://docs.google.com/spreadsheets/d/log-2/edit',
+      });
+      expect(chosenRes?.candidateOptions).toEqual([
+        { text: 'Harborview Hotel Document Log (1 Admin · 2026-10-19)', value: 'log-1', selected: false },
+        { text: 'Harborview Hotel Document Log (6 Construction · 2026-10-12)', value: 'log-2', selected: true },
+        { text: 'Harborview Hotel Document Log Root (2026-10-01)', value: 'log-3', selected: false },
+        { text: 'Harborview Hotel Document Log Undated (6 Construction)', value: 'log-4', selected: false },
+        { text: 'Harborview Hotel Document Log Plain', value: 'log-5', selected: false },
+      ]);
+
+      // Stale selectedLogId (not in live candidates) falls back to ranked candidates[0]
+      const staleRes = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        selectedLogId: 'log-deleted-stale',
+      });
+      expect(staleRes?.activeCandidate).toEqual({
+        name: 'Harborview Hotel Document Log',
+        url: 'https://docs.google.com/spreadsheets/d/custom-log-1/edit',
+      });
+      expect(staleRes?.candidateOptions?.[0]?.selected).toBe(true);
+      expect(staleRes?.candidateOptions?.slice(1).every((o) => o.selected === false)).toBe(true);
+    });
+
+    it('queryUiContext resolves widget-suffixed keys before unsuffixed keys, trims before enrichment, and skips Sheets on idle_incomplete_id', async () => {
+      const readRows = vi.fn();
+      const { service } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-1', name: 'Harborview Hotel Document Log' },
+          ]),
+        },
+        storage: { readRows },
+      });
+
+      // Suffixed key cleared ('') must win over unsuffixed fallback ('071200') and skip Sheets
+      const clearedSuffixed = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        formData: {
+          'section_submittal-arch': '   ',
+          section: '071200',
+          'number_submittal-arch': ' 001 ',
+        },
+      });
+      expect(clearedSuffixed?.readStatus).toBe('idle_incomplete_id');
+      expect(clearedSuffixed?.missingIdFields).toEqual(['Section']);
+      expect(clearedSuffixed?.idGroup).toBeUndefined();
+      expect(readRows).not.toHaveBeenCalled();
+
+      // Missing number only
+      const missingNumber = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        formData: {
+          'section_submittal-arch': ' 071200 ',
+        },
+      });
+      expect(missingNumber?.readStatus).toBe('idle_incomplete_id');
+      expect(missingNumber?.missingIdFields).toEqual(['Number']);
+      expect(readRows).not.toHaveBeenCalled();
+    });
+
+    it('queryUiContext formats newest-first historyDisplay with 5-char HTML escaping in text (preserving = and falling back to "—") and unescaped plain labels', async () => {
+      const archLogWithHistory: DocumentLogSchema = {
+        ...logSchema,
+        historyDisplay: {
+          topLabel: 'Rev {{revision}} • {{section}}-{{number}} • {{status.key}} • {{title}}',
+          text: '<b>{{action.name}}</b> {{date}} ({{contact.key}}) — {{notes}}',
+          bottomLabel: '{{title}}',
+        },
+      };
+      const archTargetWithSpecials: LogTargetDocumentSchema = {
+        ...targetSchema,
+        options: {
+          statuses: [{ key: 'Open' }, { key: 'Closed' }],
+          actions: [
+            { key: 'REC', name: 'Received', order: '1' },
+            { key: 'RR', name: 'Revise & Resubmit', order: '5' },
+          ],
+          contacts: [
+            { key: 'MB', name: 'Meridian Builders' },
+            { key: 'A&B', name: 'A & B Tower' },
+          ],
+        },
+      };
+
+      const readRows = vi.fn().mockResolvedValue({
+        headers: ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link'],
+        formulaColumns: [],
+        rows: [
+          {
+            rowNumber: 6,
+            values: {
+              Status: 'Open',
+              Section: '071200',
+              Number: '001',
+              Revision: '0',
+              Title: 'Pipe <2" at A & B Tower',
+              Date: '260204',
+              Contact: 'MB',
+              Action: 'Received',
+              Notes: 'ratio=1:2 & \'ok\'',
+              'Calc Link': 'Link',
+            },
+            links: { 'Calc Link': 'https://drive.google.com/file/d/row-6/view' },
+          },
+          {
+            rowNumber: 7,
+            values: {
+              Status: 'Open',
+              Section: '071200',
+              Number: '001',
+              Revision: '1',
+              Title: 'Pipe <2" at A & B Tower',
+              Date: '260212',
+              Contact: 'A&B',
+              Action: 'Revise & Resubmit',
+              Notes: 'Check <detail> "A=B"',
+              'Calc Link': '',
+            },
+            links: { 'Calc Link': null },
+          },
+        ],
+      });
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(archLogWithHistory),
+          getTargetSchema: vi.fn().mockReturnValue(archTargetWithSpecials),
+        },
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-hist-1', name: 'A & B Tower Document Log' },
+          ]),
+        },
+        storage: { readRows },
+      });
+
+      const res = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        formData: {
+          'section_submittal-arch': ' 071200 ',
+          'number_submittal-arch': ' 001 ',
+        },
+      });
+
+      expect(Value.Check(DocumentLogUiContextResultSchema, res)).toBe(true);
+      expect(readRows).toHaveBeenCalledTimes(1);
+      expect(readRows).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: expect.objectContaining({ spreadsheetId: 'log-hist-1' }),
+          linkColumns: ['Calc Link'],
+        })
+      );
+
+      expect(res?.readStatus).toBe('ready');
+      expect(res?.idGroup).toBe('071200-001');
+      expect(res?.warningMessages).toBeUndefined();
+      // Newest-first (row 7 before row 6)
+      expect(res?.entries).toEqual([
+        {
+          topLabel: 'Rev 1 • 071200-001 • Open • Pipe <2" at A & B Tower',
+          text: '<b>Revise &amp; Resubmit</b> 260212 (A&amp;B) — Check &lt;detail&gt; &quot;A=B&quot;',
+          bottomLabel: 'Pipe <2" at A & B Tower',
+          valid: true,
+        },
+        {
+          topLabel: 'Rev 0 • 071200-001 • Open • Pipe <2" at A & B Tower',
+          text: '<b>Received</b> 260204 (MB) — ratio=1:2 &amp; &#39;ok&#39;',
+          bottomLabel: 'Pipe <2" at A & B Tower',
+          fileUri: 'https://drive.google.com/file/d/row-6/view',
+          valid: true,
+        },
+      ]);
+      // Preserves '=' without &#x3D;
+      expect(res?.entries?.[0].text).not.toContain('&#x3D;');
+      expect(res?.entries?.[1].text).not.toContain('&#x3D;');
+      // Plain text labels stay unescaped
+      expect(res?.entries?.[0].bottomLabel).not.toContain('&lt;');
+      expect(res?.entries?.[0].bottomLabel).not.toContain('&amp;');
+      expect('fileUri' in (res?.entries?.[0] ?? {})).toBe(false);
+
+      // Blank rendered text falls back to "—" and omitted historyDisplay uses a sensible HTML-escaped default format
+      const blankTextLogSchema: DocumentLogSchema = {
+        ...logSchema,
+        historyDisplay: { text: '<b>{{notes}}</b>' },
+      };
+      const { service: blankSvc } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(blankTextLogSchema),
+          getTargetSchema: vi.fn().mockReturnValue(archTargetWithSpecials),
+        },
+        discovery: {
+          searchSpreadsheets: vi
+            .fn()
+            .mockResolvedValue([{ id: 'log-blank', name: 'Harborview Hotel Document Log' }]),
+        },
+        storage: {
+          readRows: vi.fn().mockResolvedValue({
+            headers: ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action', 'Notes'],
+            formulaColumns: [],
+            rows: [
+              {
+                rowNumber: 6,
+                values: {
+                  Status: 'Open',
+                  Section: '071200',
+                  Number: '001',
+                  Revision: '0',
+                  Title: 'Pipe <2"',
+                  Date: '260204',
+                  Contact: 'MB',
+                  Action: 'Received',
+                  Notes: '',
+                },
+              },
+            ],
+          }),
+        },
+      });
+      const blankRes = await blankSvc.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        formData: { section: '071200', number: '001' },
+      });
+      expect(blankRes?.entries?.[0].text).toBe('—');
+
+      const { service: defaultFormatSvc } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(logSchema), // historyDisplay omitted
+          getTargetSchema: vi.fn().mockReturnValue(archTargetWithSpecials),
+        },
+        discovery: {
+          searchSpreadsheets: vi
+            .fn()
+            .mockResolvedValue([{ id: 'log-default', name: 'Harborview Hotel Document Log' }]),
+        },
+        storage: {
+          readRows: vi.fn().mockResolvedValue({
+            headers: ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action'],
+            formulaColumns: [],
+            rows: [
+              {
+                rowNumber: 6,
+                values: {
+                  Status: 'Open',
+                  Section: '071200',
+                  Number: '001',
+                  Revision: '0',
+                  Title: 'Pipe <2" & A=B',
+                  Date: '260204',
+                  Contact: 'MB',
+                  Action: 'Revise & Resubmit',
+                },
+              },
+            ],
+          }),
+        },
+      });
+      const defaultRes = await defaultFormatSvc.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        formData: { section: '071200', number: '001' },
+      });
+      expect(defaultRes?.readStatus).toBe('ready');
+      expect(defaultRes?.entries).toHaveLength(1);
+      expect(defaultRes?.entries?.[0].topLabel).toBe('071200-001-0');
+      expect(defaultRes?.entries?.[0].text).toContain('Revise &amp; Resubmit');
+      expect(defaultRes?.entries?.[0].text).not.toContain('&#x3D;');
+    });
+
+    it('queryUiContext enriches trimmed/lowercase Submittal FF&E specTag, queries selected ambiguous log, maps partialHydrationRows warnings, and degrades gracefully on Sheets read_error', async () => {
+      interface FixturePartialRow {
+        scenario: string;
+        rowCells: Record<string, string>;
+        linkFormula: string;
+      }
+      const fixture = JSON.parse(
+        fs.readFileSync(
+          path.resolve(__dirname, '../../../test/fixtures/document-log-sample-data.json'),
+          'utf-8'
+        )
+      ) as {
+        anonymizedEntities: {
+          contacts: Array<{ key: string; name: string; type: string }>;
+          vendors: Array<{ key: string; name: string; type: string }>;
+        };
+        submittalFfe: { partialHydrationRows: FixturePartialRow[] };
+      };
+
+      const ffeLogSchema: DocumentLogSchema = {
+        provider: 'google_sheets',
+        target: {
+          sheetName: 'Submittal FF&E',
+          rangeName: 'Log_Submittal_FFE',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        grouping: {
+          groupBy: 'idGroup',
+          sortBy: 'id',
+          groupSortOrder: 'asc',
+          rowSortOrder: 'asc',
+          duplicatePolicy: 'insert',
+        },
+        columns: {
+          Status: { template: '{{status.key}}' },
+          'Spec Tag': { template: '{{specTag.key}}' },
+          'Related Tag': { template: '{{relatedTag.key}}' },
+          Revision: { template: '{{revision}}' },
+          'Spec Title': { template: '{{specTitle}}', readOnly: true },
+          Vendor: { template: '{{vendor.name}}' },
+          Date: { template: '{{date}}' },
+          Contact: { template: '{{contact.key}}' },
+          Action: { template: '{{action.name}}' },
+          Notes: { template: '{{notes}}' },
+          'Calc Link': { source: 'fileLink', label: 'Link' },
+        },
+        historyDisplay: {
+          topLabel: 'Rev {{revision}} • {{specTag.key}} • {{status.key}}',
+          text: '<b>{{action.name}}</b> {{date}} ({{contact.key}})',
+          bottomLabel: '{{specTitle}} — {{vendor.name}}',
+        },
+      };
+
+      const ffeTargetSchema: LogTargetDocumentSchema = {
+        fields: [
+          { key: 'status', name: 'Status', type: 'string', required: true, options: { source: 'statuses', key: 'key' } },
+          { key: 'specTag', name: 'Spec Tag', type: 'string', required: true, options: { source: 'specs', key: 'key', allowUserInput: true } },
+          { key: 'relatedTag', name: 'Related Tag', type: 'string', required: false, options: { source: 'specs', key: 'key', allowUserInput: true } },
+          { key: 'revision', name: 'Revision', type: 'string', required: true },
+          { key: 'specTitle', name: 'Spec Title', type: 'string', required: true, linkedField: { sourceField: 'specTag', sourceProperty: 'name' } },
+          { key: 'vendor', name: 'Vendor', type: 'string', required: true, options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'date', name: 'Date', type: 'string', required: true },
+          { key: 'contact', name: 'Contact', type: 'string', required: true, options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'action', name: 'Action', type: 'string', required: true, options: { source: 'actions', key: 'key', name: 'name' } },
+          { key: 'notes', name: 'Notes', type: 'string', required: false },
+        ],
+        identity: {
+          idGroup: '{{specTag.key}}',
+          idDocument: '{{specTag.key}}-{{revision}}',
+          id: '{{specTag.key}}-{{revision}}-{{date}}-{{action.order}}',
+        },
+        options: {
+          statuses: [{ key: 'Open' }, { key: 'Closed' }, { key: 'Waiting' }],
+          specs: [
+            { key: 'CG104', name: 'BED - KING' },
+            { key: 'LT108', name: 'SCONCE' },
+          ],
+          vendors: fixture.anonymizedEntities.vendors,
+          contacts: fixture.anonymizedEntities.contacts,
+          actions: [
+            { key: 'REC', name: 'Received', order: '1' },
+            { key: 'REF', name: 'Referred', order: '2' },
+          ],
+        },
+      };
+
+      const partialFfeRow0 = fixture.submittalFfe.partialHydrationRows[0]; // LT108, Status "In Review", blank Vendor
+      const partialFfeRow1 = fixture.submittalFfe.partialHydrationRows[1]; // CG104, blank Revision, raw URL
+
+      const readRows = vi.fn().mockImplementation(async (req: { target: { spreadsheetId: string } }) => {
+        if (req.target.spreadsheetId === 'log-ffe-2') {
+          return {
+            headers: Object.keys(partialFfeRow0.rowCells),
+            formulaColumns: ['Spec Title'],
+            rows: [
+              {
+                rowNumber: 8,
+                values: partialFfeRow0.rowCells,
+                links: { 'Calc Link': 'https://drive.google.com/file/d/fixture-ffe-partial-vendor/view' },
+              },
+              {
+                rowNumber: 9,
+                values: partialFfeRow1.rowCells,
+                links: { 'Calc Link': 'https://drive.google.com/file/d/fixture-ffe-raw-url/view' },
+              },
+            ],
+          };
+        }
+        const sheetsErr = new Error('Named range "Log_Submittal_FFE" not found on sheet "Submittal FF&E".');
+        sheetsErr.name = 'GoogleSheetsNamedRangeNotFoundError';
+        throw sheetsErr;
+      });
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockImplementation((k) => (k === 'submittal-ffe' ? ffeLogSchema : undefined)),
+          getTargetSchema: vi.fn().mockImplementation((k) => (k === 'submittal-ffe' ? ffeTargetSchema : undefined)),
+        },
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-ffe-1', name: 'Harborview Hotel Document Log A', modifiedTime: '2026-10-19T12:00:00Z' },
+            { id: 'log-ffe-2', name: 'Harborview Hotel Document Log B', modifiedTime: '2026-10-10T12:00:00Z' },
+          ]),
+        },
+        storage: { readRows },
+      });
+
+      // Ambiguous log-ffe-2 selected + lowercase/untrimmed specTag ' lt108 ' -> partial_hydration with human-entered "In Review" visible!
+      const partialRes = await service.queryUiContext({
+        documentTypeKey: 'submittal-ffe',
+        space: sampleSpace,
+        selectedLogId: 'log-ffe-2',
+        formData: {
+          'specTag_submittal-ffe': ' lt108 ',
+        },
+      });
+      expect(Value.Check(DocumentLogUiContextResultSchema, partialRes)).toBe(true);
+      expect(partialRes?.status).toBe('ambiguous');
+      expect(partialRes?.readStatus).toBe('partial_hydration');
+      expect(partialRes?.idGroup).toBe('LT108');
+      expect(partialRes?.entries).toEqual([
+        {
+          topLabel: 'Rev 0 • LT108 • In Review',
+          text: '<b>Received</b> 260216 (HPG)',
+          bottomLabel: 'SCONCE —',
+          fileUri: 'https://drive.google.com/file/d/fixture-ffe-partial-vendor/view',
+          valid: false,
+        },
+      ]);
+      expect(partialRes?.warningMessages).toHaveLength(2);
+      expect(partialRes?.warningMessages?.every((m) => typeof m === 'string')).toBe(true);
+      expect(partialRes?.warningMessages?.[0]).toContain('Row 8');
+      expect(JSON.stringify(partialRes)).not.toContain('"rowNumber"');
+
+      // Ambiguous default log-ffe-1 -> read_error without leaking GoogleSheetsNamedRangeNotFoundError name
+      const errorRes = await service.queryUiContext({
+        documentTypeKey: 'submittal-ffe',
+        space: sampleSpace,
+        formData: {
+          'specTag_submittal-ffe': ' cg104 ',
+        },
+      });
+      expect(Value.Check(DocumentLogUiContextResultSchema, errorRes)).toBe(true);
+      expect(errorRes?.status).toBe('ambiguous');
+      expect(errorRes?.readStatus).toBe('read_error');
+      expect(errorRes?.idGroup).toBe('CG104');
+      expect(errorRes?.readErrorMessage).toContain('Named range "Log_Submittal_FFE" not found');
+      expect(JSON.stringify(errorRes)).not.toContain('GoogleSheetsNamedRangeNotFoundError');
+      expect(errorRes?.entries).toBeUndefined();
+    });
+
+    it('forwards non-empty readRows error messages verbatim without storage-specific stripping and falls back on blank errors', async () => {
+      const readRows = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('GoogleSheetsApiError: Upstream failure'))
+        .mockRejectedValueOnce(new Error('   '));
+
+      const { service } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-err-1', name: 'Harborview Hotel Document Log' },
+          ]),
+        },
+        storage: { readRows },
+      });
+
+      const verbatimRes = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        formData: {
+          section: '071200',
+          number: '001',
+        },
+      });
+      expect(verbatimRes?.readStatus).toBe('read_error');
+      expect(verbatimRes?.readErrorMessage).toBe('GoogleSheetsApiError: Upstream failure');
+
+      const blankRes = await service.queryUiContext({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        formData: {
+          section: '071200',
+          number: '001',
+        },
+      });
+      expect(blankRes?.readStatus).toBe('read_error');
+      expect(blankRes?.readErrorMessage).toBe('Unable to read Document Log history right now.');
+    });
+  });
+
+  describe('readLog', () => {
+    it('resolves log via resolveLog, collects fileLink columns, delegates to readRows, and hydrates valid and partial rows with readOnly columns, LookupFields, Identity keys, and warnings', async () => {
+      const searchSpreadsheets = vi.fn().mockResolvedValue([
+        { id: 'log-read-1', name: 'Harborview Hotel Document Log' },
+      ]);
+      const readRows = vi.fn().mockResolvedValue({
+        headers: [
+          'Status',
+          'Section',
+          'Number',
+          'Revision',
+          'Title',
+          'Date',
+          'Contact',
+          'Action',
+          'Notes',
+          'Calc Link',
+        ],
+        formulaColumns: [],
+        rows: [
+          {
+            rowNumber: 6,
+            values: {
+              Status: 'open',
+              Section: '071200',
+              Number: '001',
+              Revision: '0',
+              Title: 'Fluid-Applied Waterproofing',
+              Date: '260204',
+              Contact: 'Acme Corp',
+              Action: 'received',
+              Notes: '',
+              'Calc Link': 'Link',
+            },
+            links: {
+              'Calc Link': 'https://drive.google.com/file/d/arch-valid-1/view',
+            },
+          },
+          {
+            rowNumber: 7,
+            values: {
+              Status: 'Open',
+              Section: '071200',
+              Number: '002',
+              Revision: '1',
+              Title: 'Roofing Membrane',
+              Date: '',
+              Contact: 'MB',
+              Action: 'Approved',
+              Notes: 'Manual entry',
+              'Calc Link': '',
+            },
+            links: {
+              'Calc Link': null,
+            },
+          },
+        ],
+      });
+
+      const archReadOnlyLogSchema: DocumentLogSchema = {
+        ...logSchema,
+        columns: {
+          ...logSchema.columns,
+          Title: { template: '{{title}}', readOnly: true },
+        },
+      };
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockImplementation((k) =>
+            k === 'submittal-arch' ? archReadOnlyLogSchema : undefined
+          ),
+        },
+        discovery: { searchSpreadsheets },
+        storage: { readRows },
+      });
+
+      const result = await service.readLog({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+      });
+
+      expect(searchSpreadsheets).toHaveBeenCalledTimes(1);
+      expect(readRows).toHaveBeenCalledWith({
+        target: {
+          spreadsheetId: 'log-read-1',
+          sheetName: 'Submittal Arch',
+          rangeName: 'Log_Submittal_Arch',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        linkColumns: ['Calc Link'],
+      });
+
+      expect(result.spreadsheetId).toBe('log-read-1');
+      expect(result.sheetName).toBe('Submittal Arch');
+      expect(result.entries).toHaveLength(2);
+
+      const validEntry = result.entries[0];
+      expect(validEntry).toEqual({
+        rowNumber: 6,
+        valid: true,
+        fileUri: 'https://drive.google.com/file/d/arch-valid-1/view',
+        document: {
+          id: '071200-001-0-260204-1',
+          idDocument: '071200-001-0',
+          idGroup: '071200-001',
+          type: 'submittal-arch',
+          data: {
+            status: { key: 'Open' },
+            section: '071200',
+            number: '001',
+            revision: '0',
+            title: 'Fluid-Applied Waterproofing',
+            date: '260204',
+            contact: { key: 'Acme Corp', name: 'Acme Corp' },
+            action: { key: 'REC', name: 'Received', order: '1' },
+          },
+        },
+      });
+      expect('notes' in validEntry.document.data).toBe(false);
+      expect('calculated' in validEntry.document).toBe(false);
+
+      const partialEntry = result.entries[1];
+      expect(partialEntry.rowNumber).toBe(7);
+      expect(partialEntry.valid).toBe(false);
+      expect('fileUri' in partialEntry).toBe(false);
+      expect('date' in partialEntry.document.data).toBe(false);
+      expect('calculated' in partialEntry.document).toBe(false);
+      expect(partialEntry.document.idGroup).toBe('071200-002');
+      expect(partialEntry.document.idDocument).toBe('071200-002-1');
+      expect(partialEntry.document.id).toBe('071200-002-1--');
+      expect(partialEntry.document.data.action).toEqual({ key: 'Approved', name: 'Approved' });
+      expect(partialEntry.document.data.contact).toEqual({ key: 'MB', name: 'Meridian Builders' });
+      expect(partialEntry.document.data.notes).toBe('Manual entry');
+      expect(partialEntry.validationErrors).toHaveLength(2);
+
+      expect(result.warnings).toHaveLength(2);
+      expect(result.warnings.map((w) => ({ rowNumber: w.rowNumber, field: w.field }))).toEqual([
+        { rowNumber: 7, field: 'date' },
+        { rowNumber: 7, field: 'action' },
+      ]);
+    });
+
+    it('bypasses resolveLog and Drive search when selectedLogId is provided even if space is omitted', async () => {
+      const searchSpreadsheets = vi.fn();
+      const readRows = vi.fn().mockResolvedValue({
+        headers: ['Status', 'Section'],
+        formulaColumns: [],
+        rows: [],
+      });
+
+      const { service } = createService({
+        discovery: { searchSpreadsheets },
+        storage: { readRows },
+      });
+
+      const result = await service.readLog({
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: 'selected-log-77',
+      });
+
+      expect(searchSpreadsheets).not.toHaveBeenCalled();
+      expect(readRows).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: expect.objectContaining({ spreadsheetId: 'selected-log-77' }),
+        })
+      );
+      expect(result).toEqual({
+        spreadsheetId: 'selected-log-77',
+        sheetName: 'Submittal Arch',
+        entries: [],
+        warnings: [],
+      });
+    });
+
+    it('validates documentTypeKey before filterBy/values checks and enforces paired filterBy and values', async () => {
+      const { service, discovery, storage } = createService();
+
+      // Unknown documentTypeKey throws even with unpaired filterBy or values
+      await expect(
+        service.readLog({
+          documentTypeKey: 'unknown-type',
+          filterBy: 'idGroup',
+        })
+      ).rejects.toThrow(DocumentLogConfigurationError);
+
+      await expect(
+        service.readLog({
+          documentTypeKey: 'unknown-type',
+          values: ['071200-001'],
+        })
+      ).rejects.toThrow(DocumentLogConfigurationError);
+
+      // filterBy without values throws
+      await expect(
+        service.readLog({
+          documentTypeKey: 'submittal-arch',
+          selectedLogId: 'log-1',
+          filterBy: 'idGroup',
+        })
+      ).rejects.toThrow(DocumentLogConfigurationError);
+
+      // values without filterBy throws
+      await expect(
+        service.readLog({
+          documentTypeKey: 'submittal-arch',
+          selectedLogId: 'log-1',
+          values: ['071200-001'],
+        })
+      ).rejects.toThrow(DocumentLogConfigurationError);
+
+      await expect(
+        service.readLog({
+          documentTypeKey: 'submittal-arch',
+          selectedLogId: 'log-1',
+          values: '',
+        })
+      ).rejects.toThrow(DocumentLogConfigurationError);
+
+      expect(discovery.searchSpreadsheets).not.toHaveBeenCalled();
+      expect(storage.readRows).not.toHaveBeenCalled();
+    });
+
+    it('short-circuits with zero Drive or Sheets calls when filterBy is set and normalized values are empty', async () => {
+      const searchSpreadsheets = vi.fn();
+      const readRows = vi.fn();
+      const { service } = createService({
+        discovery: { searchSpreadsheets },
+        storage: { readRows },
+      });
+
+      for (const emptyValues of [[], '', ['  ', '\t']] as Array<string | string[]>) {
+        const result = await service.readLog({
+          documentTypeKey: 'submittal-arch',
+          filterBy: 'idGroup',
+          values: emptyValues,
+        });
+        expect(result).toEqual({
+          spreadsheetId: '',
+          sheetName: 'Submittal Arch',
+          entries: [],
+          warnings: [],
+        });
+      }
+
+      expect(searchSpreadsheets).not.toHaveBeenCalled();
+      expect(readRows).not.toHaveBeenCalled();
+    });
+
+    it('filters by idGroup, idDocument, and id case-insensitively on trimmed values, ignores unkeyable rows for "-", and scopes warnings to matched rows', async () => {
+      const ffeLogSchema: DocumentLogSchema = {
+        provider: 'google_sheets',
+        target: {
+          sheetName: 'Submittal FF&E',
+          rangeName: 'Log_Submittal_FFE',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        grouping: {
+          groupBy: 'idGroup',
+          sortBy: 'id',
+          groupSortOrder: 'asc',
+          rowSortOrder: 'asc',
+          duplicatePolicy: 'insert',
+        },
+        columns: {
+          Status: { template: '{{status.key}}' },
+          'Spec Tag': { template: '{{specTag.key}}' },
+          Revision: { template: '{{revision}}' },
+          'Spec Title': { template: '{{specTitle}}', readOnly: true },
+          Vendor: { template: '{{vendor.name}}' },
+          Date: { template: '{{date}}' },
+          Contact: { template: '{{contact.key}}' },
+          Action: { template: '{{action.name}}' },
+        },
+      };
+
+      const ffeTargetSchema: LogTargetDocumentSchema = {
+        fields: [
+          { key: 'status', name: 'Status', type: 'string', required: true, options: { source: 'statuses', key: 'key' } },
+          { key: 'specTag', name: 'Spec Tag', type: 'string', required: true, options: { source: 'specs', key: 'key', allowUserInput: true } },
+          { key: 'revision', name: 'Revision', type: 'string', required: true },
+          { key: 'specTitle', name: 'Spec Title', type: 'string', required: false },
+          { key: 'vendor', name: 'Vendor', type: 'string', required: true, options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'date', name: 'Date', type: 'string', required: true },
+          { key: 'contact', name: 'Contact', type: 'string', required: true, options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true } },
+          { key: 'action', name: 'Action', type: 'string', required: true, options: { source: 'actions', key: 'key', name: 'name' } },
+        ],
+        identity: {
+          idGroup: '{{specTag.key}}',
+          idDocument: '{{specTag.key}}-{{revision}}',
+          id: '{{specTag.key}}-{{revision}}-{{date}}-{{action.order}}',
+        },
+        options: {
+          statuses: [{ key: 'Open' }],
+          specs: [{ key: 'CG104', name: 'BED - KING' }],
+          vendors: [{ key: 'FDT', name: 'Fil Doux Textiles' }],
+          contacts: [{ key: 'BW', name: 'Benjamin West' }],
+          actions: [
+            { key: 'REC', name: 'Received', order: '1' },
+            { key: 'REF', name: 'Referred', order: '2' },
+          ],
+        },
+      };
+
+      const archRows = [
+        // Row 6: 071200-001 (partial, missing date -> warning on row 6)
+        {
+          rowNumber: 6,
+          values: {
+            Status: 'Open',
+            Section: '071200',
+            Number: '001',
+            Revision: '0',
+            Title: 'Waterproofing',
+            Date: '',
+            Contact: 'MB',
+            Action: 'REC',
+          },
+        },
+        // Row 7: 071200-002 (partial, invalid action -> warning on row 7)
+        {
+          rowNumber: 7,
+          values: {
+            Status: 'Open',
+            Section: '071200',
+            Number: '002',
+            Revision: '1',
+            Title: 'Flashing',
+            Date: '260205',
+            Contact: 'MB',
+            Action: 'BadAction',
+          },
+        },
+        // Row 8: Unkeyable note row (all identity fields blank -> idGroup/idDocument/id undefined, never '-')
+        {
+          rowNumber: 8,
+          values: {
+            Status: '',
+            Section: '',
+            Number: '',
+            Revision: '',
+            Title: 'General section note',
+            Date: '',
+            Contact: '',
+            Action: '',
+          },
+        },
+      ];
+
+      const ffeRows = [
+        {
+          rowNumber: 10,
+          values: {
+            Status: 'Open',
+            'Spec Tag': 'CG104',
+            Revision: '0',
+            'Spec Title': 'BED - KING',
+            Vendor: 'Fil Doux Textiles',
+            Date: '260120',
+            Contact: 'BW',
+            Action: 'Received',
+          },
+        },
+        {
+          rowNumber: 11,
+          values: {
+            Status: 'Open',
+            'Spec Tag': 'LT108',
+            Revision: '1',
+            'Spec Title': 'SCONCE',
+            Vendor: 'Fil Doux Textiles',
+            Date: '260121',
+            Contact: 'BW',
+            Action: 'Referred',
+          },
+        },
+      ];
+
+      const readRows = vi.fn().mockImplementation(({ target }: { target: { sheetName: string } }) =>
+        Promise.resolve({
+          headers: [],
+          formulaColumns: [],
+          rows: target.sheetName === 'Submittal FF&E' ? ffeRows : archRows,
+        })
+      );
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockImplementation((k) => {
+            if (k === 'submittal-arch') return logSchema;
+            if (k === 'submittal-ffe') return ffeLogSchema;
+            return undefined;
+          }),
+          getTargetSchema: vi.fn().mockImplementation((k) => {
+            if (k === 'submittal-arch') return targetSchema;
+            if (k === 'submittal-ffe') return ffeTargetSchema;
+            return undefined;
+          }),
+        },
+        storage: { readRows },
+      });
+
+      // idGroup match with whitespace + warning scoping to row 6 only (excluding row 7 and row 8 warnings)
+      const byGroup = await service.readLog({
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: 'log-filter-1',
+        filterBy: 'idGroup',
+        values: [' 071200-001 ', '  '],
+      });
+      expect(byGroup.entries.map((e) => e.rowNumber)).toEqual([6]);
+      expect(byGroup.warnings.map((w) => w.rowNumber)).toEqual([6]);
+
+      // Case-insensitive single-string filter on FF&E idGroup ('cg104')
+      const ffeByGroup = await service.readLog({
+        documentTypeKey: 'submittal-ffe',
+        selectedLogId: 'log-filter-1',
+        filterBy: 'idGroup',
+        values: 'cg104',
+      });
+      expect(ffeByGroup.entries.map((e) => e.rowNumber)).toEqual([10]);
+      expect(ffeByGroup.entries[0].document.idGroup).toBe('CG104');
+
+      // idDocument filter
+      const byDoc = await service.readLog({
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: 'log-filter-1',
+        filterBy: 'idDocument',
+        values: ['071200-002-1'],
+      });
+      expect(byDoc.entries.map((e) => e.rowNumber)).toEqual([7]);
+      expect(byDoc.warnings.map((w) => w.rowNumber)).toEqual([7]);
+
+      // id filter
+      const byId = await service.readLog({
+        documentTypeKey: 'submittal-ffe',
+        selectedLogId: 'log-filter-1',
+        filterBy: 'id',
+        values: ['lt108-1-260121-2'],
+      });
+      expect(byId.entries.map((e) => e.rowNumber)).toEqual([11]);
+
+      // Unkeyable note row has undefined identities and never matches idGroup = '-'
+      const fullArch = await service.readLog({
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: 'log-filter-1',
+      });
+      const noteEntry = fullArch.entries.find((e) => e.rowNumber === 8);
+      expect(noteEntry?.document.idGroup).toBeUndefined();
+      expect(noteEntry?.document.idDocument).toBeUndefined();
+      expect(noteEntry?.document.id).toBeUndefined();
+      expect(fullArch.warnings.some((w) => w.rowNumber === 8)).toBe(true);
+
+      const dashFilter = await service.readLog({
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: 'log-filter-1',
+        filterBy: 'idGroup',
+        values: ['-'],
+      });
+      expect(dashFilter.entries).toEqual([]);
+      expect(dashFilter.warnings).toEqual([]);
+    });
+
+    it('fails fast with DocumentLogMissingError, DocumentLogAmbiguousError, and DocumentLogConfigurationError when space and selectedLogId are omitted', async () => {
+      const missingService = createService({
+        discovery: { searchSpreadsheets: vi.fn().mockResolvedValue([]) },
+      }).service;
+
+      await expect(
+        missingService.readLog({
+          documentTypeKey: 'submittal-arch',
+          space: sampleSpace,
+        })
+      ).rejects.toThrow(DocumentLogMissingError);
+
+      const ambiguousService = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-1', name: 'Harborview Hotel Document Log' },
+            { id: 'log-2', name: 'Harborview Hotel Document Log Copy' },
+          ]),
+        },
+      }).service;
+
+      await expect(
+        ambiguousService.readLog({
+          documentTypeKey: 'submittal-arch',
+          space: sampleSpace,
+        })
+      ).rejects.toThrow(DocumentLogAmbiguousError);
+
+      await expect(
+        missingService.readLog({
+          documentTypeKey: 'submittal-arch',
+        })
+      ).rejects.toThrow(DocumentLogConfigurationError);
+
+      await expect(
+        missingService.readLog({
+          documentTypeKey: 'submittal-arch',
+          selectedLogId: '   ',
+        })
+      ).rejects.toThrow(DocumentLogConfigurationError);
+    });
+  });
+
+  describe('copyLog', () => {
+    it('ensures preferredFolderPath, evaluates copyNameTemplate, copies templateSpreadsheetId, and returns created: true when log is missing', async () => {
+      const ensureFolderPath = vi.fn().mockResolvedValue({
+        id: 'admin-folder-1',
+        name: '1 Admin',
+      });
+      const copiedCandidate = {
+        id: 'copied-log-1',
+        name: 'Harborview Hotel Document Log',
+        parents: ['admin-folder-1'],
+        webViewLink: 'https://docs.google.com/spreadsheets/d/copied-log-1/edit',
+      };
+      const copyFile = vi.fn().mockResolvedValue(copiedCandidate);
+
+      const { service } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([]),
+          ensureFolderPath,
+          copyFile,
+        },
+      });
+
+      const result = await service.copyLog(sampleSpace);
+
+      expect(ensureFolderPath).toHaveBeenCalledWith(sampleSpace.abstractStorageId, ['1 Admin']);
+      expect(copyFile).toHaveBeenCalledWith('template-123', {
+        targetFolderId: 'admin-folder-1',
+        newName: 'Harborview Hotel Document Log',
+      });
+      expect(result).toEqual({
+        created: true,
+        candidate: copiedCandidate,
+        folderPath: '1 Admin',
+      });
+    });
+
+    it('is idempotent when resolveLog returns resolved and does not call ensureFolderPath or copyFile', async () => {
+      const existingCandidate = {
+        id: 'existing-log-1',
+        name: 'Harborview Hotel Document Log',
+        parents: ['admin-folder-1'],
+        webViewLink: 'https://docs.google.com/spreadsheets/d/existing-log-1/edit',
+      };
+      const ensureFolderPath = vi.fn();
+      const copyFile = vi.fn();
+
+      const { service } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([existingCandidate]),
+          ensureFolderPath,
+          copyFile,
+        },
+      });
+
+      const result = await service.copyLog(sampleSpace);
+
+      expect(ensureFolderPath).not.toHaveBeenCalled();
+      expect(copyFile).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        created: false,
+        candidate: existingCandidate,
+        folderPath: '1 Admin',
+      });
+    });
+
+    it('is idempotent when resolveLog returns ambiguous and returns the ranked best candidate without copying', async () => {
+      const preferredFolderId = 'admin-folder-1';
+      const bestCandidate = {
+        id: 'log-best',
+        name: 'Harborview Hotel Document Log',
+        parents: [preferredFolderId],
+        modifiedTime: '2026-03-01T10:00:00.000Z',
+      };
+      const otherCandidate = {
+        id: 'log-other',
+        name: 'Harborview Hotel Document Log (Old)',
+        parents: ['other-folder'],
+        modifiedTime: '2026-04-01T10:00:00.000Z',
+      };
+      const ensureFolderPath = vi.fn();
+      const copyFile = vi.fn();
+
+      const { service } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([otherCandidate, bestCandidate]),
+          resolveFolderPath: vi.fn().mockResolvedValue({
+            id: preferredFolderId,
+            name: '1 Admin',
+          }),
+          ensureFolderPath,
+          copyFile,
+        },
+      });
+
+      const result = await service.copyLog(sampleSpace);
+
+      expect(ensureFolderPath).not.toHaveBeenCalled();
+      expect(copyFile).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        created: false,
+        candidate: bestCandidate,
+        folderPath: '1 Admin',
+      });
+    });
+
+    it('honors space-type preferredFolderPath override with multi-segment path', async () => {
+      const overrideConfig: DocumentLogDiscoveryConfig = {
+        ...discoveryConfig,
+        preferredFolderPath: 'Admin/Logs',
+        copyNameTemplate: '{{DocumentSpace.name}} Proposal Log',
+      };
+      const ensureFolderPath = vi.fn().mockResolvedValue({
+        id: 'nested-logs-folder',
+        name: 'Logs',
+      });
+      const copiedCandidate = {
+        id: 'copied-proposal-log',
+        name: 'Harborview Hotel Proposal Log',
+        parents: ['nested-logs-folder'],
+      };
+      const copyFile = vi.fn().mockResolvedValue(copiedCandidate);
+
+      const { service } = createService({
+        registry: {
+          getDiscoveryConfig: vi.fn().mockReturnValue(overrideConfig),
+        },
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([]),
+          ensureFolderPath,
+          copyFile,
+        },
+      });
+
+      const result = await service.copyLog(sampleSpace);
+
+      expect(ensureFolderPath).toHaveBeenCalledWith(sampleSpace.abstractStorageId, ['Admin', 'Logs']);
+      expect(copyFile).toHaveBeenCalledWith('template-123', {
+        targetFolderId: 'nested-logs-folder',
+        newName: 'Harborview Hotel Proposal Log',
+      });
+      expect(result).toEqual({
+        created: true,
+        candidate: copiedCandidate,
+        folderPath: 'Admin/Logs',
+      });
+    });
+
+    it('throws DocumentLogConfigurationError when discovery config, ensureFolderPath, or copyFile is missing', async () => {
+      const missingConfigService = createService({
+        registry: {
+          getDiscoveryConfig: vi.fn().mockReturnValue(undefined),
+        },
+        discovery: {
+          ensureFolderPath: vi.fn(),
+          copyFile: vi.fn(),
+        },
+      }).service;
+
+      await expect(missingConfigService.copyLog(sampleSpace)).rejects.toThrow(
+        DocumentLogConfigurationError
+      );
+
+      const missingEnsureService = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([]),
+          copyFile: vi.fn(),
+        },
+      }).service;
+
+      await expect(missingEnsureService.copyLog(sampleSpace)).rejects.toThrow(
+        DocumentLogConfigurationError
+      );
+
+      const missingCopyService = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([]),
+          ensureFolderPath: vi.fn(),
+        },
+      }).service;
+
+      await expect(missingCopyService.copyLog(sampleSpace)).rejects.toThrow(
+        DocumentLogConfigurationError
+      );
+    });
+
+    it('propagates Drive 403 errors from ensureFolderPath or copyFile untouched', async () => {
+      const folderForbiddenError = Object.assign(new Error('Insufficient permission for folder'), {
+        statusCode: 403,
+      });
+      const ensureFailureService = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([]),
+          ensureFolderPath: vi.fn().mockRejectedValue(folderForbiddenError),
+          copyFile: vi.fn(),
+        },
+      }).service;
+
+      await expect(ensureFailureService.copyLog(sampleSpace)).rejects.toBe(folderForbiddenError);
+
+      const copyForbiddenError = Object.assign(new Error('Insufficient permission to copy'), {
+        statusCode: 403,
+      });
+      const copyFailureService = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([]),
+          ensureFolderPath: vi.fn().mockResolvedValue({ id: 'admin-folder-1', name: '1 Admin' }),
+          copyFile: vi.fn().mockRejectedValue(copyForbiddenError),
+        },
+      }).service;
+
+      await expect(copyFailureService.copyLog(sampleSpace)).rejects.toBe(copyForbiddenError);
     });
   });
 });

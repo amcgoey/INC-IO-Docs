@@ -5,11 +5,13 @@ import type { GoogleAuth, OAuth2Client } from 'google-auth-library';
 import { google, type sheets_v4 } from 'googleapis';
 import {
   buildColumnIndexMap,
+  cellValueToCellData,
   gridRangeToA1,
   isCellEmpty,
   type CellValue,
   type PositiveTableTarget,
   type RowRecord,
+  type SheetCellInput,
 } from '../../../src/infrastructure/sheets';
 
 export const DEFAULT_LIVE_RETRY_OPTIONS = {
@@ -33,6 +35,14 @@ export interface FixtureWriteScenario extends FixtureSubmittalEntry {
   fileUri: string;
 }
 
+export interface FixturePartialHydrationRow {
+  scenario: string;
+  description: string;
+  rowCells: Record<string, string>;
+  linkFormula: string;
+  expectedIssues: string[];
+}
+
 export interface DocumentLogSampleFixture {
   metadata: { templateSpreadsheetId: string };
   submittalArch: {
@@ -40,12 +50,14 @@ export interface DocumentLogSampleFixture {
     rangeName: string;
     seedEntries: FixtureSubmittalEntry[];
     writeScenarios: FixtureWriteScenario[];
+    partialHydrationRows: FixturePartialHydrationRow[];
   };
   submittalFfe: {
     sheetName: string;
     rangeName: string;
     seedEntries: FixtureSubmittalEntry[];
     writeScenarios: FixtureWriteScenario[];
+    partialHydrationRows: FixturePartialHydrationRow[];
   };
 }
 
@@ -106,6 +118,33 @@ export function loadDocumentLogSampleFixture(fixturePath?: string): DocumentLogS
   const targetPath =
     fixturePath ?? path.resolve(__dirname, '../../fixtures/document-log-sample-data.json');
   return JSON.parse(fs.readFileSync(targetPath, 'utf-8')) as DocumentLogSampleFixture;
+}
+
+/**
+ * Converts a fixture partial-hydration row into raw `SheetCellInput` values keyed by header.
+ */
+export function partialHydrationRowToCellInputs(
+  row: FixturePartialHydrationRow
+): Record<string, SheetCellInput> {
+  const inputs: Record<string, SheetCellInput> = {};
+
+  for (const [header, value] of Object.entries(row.rowCells)) {
+    if (header === 'Calc Link') {
+      continue;
+    }
+    inputs[header] = value === '' ? null : value;
+  }
+
+  const trimmedLink = row.linkFormula.trim();
+  if (trimmedLink === '') {
+    inputs['Calc Link'] = null;
+  } else if (trimmedLink.startsWith('=')) {
+    inputs['Calc Link'] = { formula: trimmedLink };
+  } else {
+    inputs['Calc Link'] = trimmedLink;
+  }
+
+  return inputs;
 }
 
 /**
@@ -413,22 +452,22 @@ function collectFormulaRelCols(
   return formulaCols;
 }
 
-function buildContiguousClearRequests(params: {
+function buildContiguousUpdateCellsRequests(params: {
   sheetId: number;
   absRowIndex: number;
   rangeStartColumnIndex: number;
   columnCount: number;
-  formulaRelCols: ReadonlySet<number>;
+  getCellData: (relCol: number) => sheets_v4.Schema$CellData | undefined;
 }): sheets_v4.Schema$Request[] {
-  const { sheetId, absRowIndex, rangeStartColumnIndex, columnCount, formulaRelCols } = params;
+  const { sheetId, absRowIndex, rangeStartColumnIndex, columnCount, getCellData } = params;
   const requests: sheets_v4.Schema$Request[] = [];
   let runStart: number | null = null;
+  let runValues: sheets_v4.Schema$CellData[] = [];
 
   const flushRun = (runEndExclusive: number): void => {
     if (runStart === null) {
       return;
     }
-    const width = runEndExclusive - runStart;
     requests.push({
       updateCells: {
         range: {
@@ -438,23 +477,74 @@ function buildContiguousClearRequests(params: {
           startColumnIndex: rangeStartColumnIndex + runStart,
           endColumnIndex: rangeStartColumnIndex + runEndExclusive,
         },
-        rows: [{ values: Array.from({ length: width }, () => ({})) }],
+        rows: [{ values: runValues }],
         fields: 'userEnteredValue',
       },
     });
     runStart = null;
+    runValues = [];
   };
 
   for (let relCol = 0; relCol < columnCount; relCol++) {
-    if (formulaRelCols.has(relCol)) {
+    const cellData = getCellData(relCol);
+    if (cellData === undefined) {
       flushRun(relCol);
-    } else if (runStart === null) {
+      continue;
+    }
+    if (runStart === null) {
       runStart = relCol;
     }
+    runValues.push(cellData);
   }
   flushRun(columnCount);
 
   return requests;
+}
+
+async function resolvePreAnchorFormulaRelCols(params: {
+  sheetsApi: sheets_v4.Sheets;
+  target: PositiveTableTarget;
+  sheetTitle: string;
+  gridRange: sheets_v4.Schema$GridRange;
+  rangeStartRowIndex: number;
+  rangeStartColumnIndex: number;
+  topAnchorIndex: number;
+  columnCount: number;
+  retryOptions?: LiveSheetsRetryOptions | undefined;
+}): Promise<Set<number>> {
+  const {
+    sheetsApi,
+    target,
+    sheetTitle,
+    gridRange,
+    rangeStartRowIndex,
+    rangeStartColumnIndex,
+    topAnchorIndex,
+    columnCount,
+    retryOptions,
+  } = params;
+
+  if (topAnchorIndex <= 1) {
+    return new Set<number>();
+  }
+
+  const preAnchorA1Range = gridRangeToA1(sheetTitle, {
+    ...gridRange,
+    startRowIndex: rangeStartRowIndex + 1,
+    endRowIndex: rangeStartRowIndex + topAnchorIndex,
+    endColumnIndex: gridRange.endColumnIndex ?? rangeStartColumnIndex + columnCount,
+  });
+  const formulaResponse = await withSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.values.get({
+        spreadsheetId: target.spreadsheetId,
+        range: preAnchorA1Range,
+        valueRenderOption: 'FORMULA',
+      }),
+    retryOptions
+  );
+  const preAnchorRows = (formulaResponse.data.values as CellValue[][] | undefined) ?? [];
+  return collectFormulaRelCols(preAnchorRows, columnCount);
 }
 
 /**
@@ -496,26 +586,17 @@ export async function ensureClearedPositiveTable(
       ? gridRange.endColumnIndex - rangeStartColumnIndex
       : Math.max((formattedValues[0] ?? []).length, parsed.headers.length, 1);
 
-  let formulaRelCols = new Set<number>();
-  if (parsed.topAnchorIndex > 1) {
-    const preAnchorA1Range = gridRangeToA1(sheetTitle, {
-      ...gridRange,
-      startRowIndex: rangeStartRowIndex + 1,
-      endRowIndex: rangeStartRowIndex + parsed.topAnchorIndex,
-      endColumnIndex: gridRange.endColumnIndex ?? rangeStartColumnIndex + columnCount,
-    });
-    const formulaResponse = await withSheetsRetry(
-      () =>
-        sheetsApi.spreadsheets.values.get({
-          spreadsheetId: target.spreadsheetId,
-          range: preAnchorA1Range,
-          valueRenderOption: 'FORMULA',
-        }),
-      retryOptions
-    );
-    const preAnchorRows = (formulaResponse.data.values as CellValue[][] | undefined) ?? [];
-    formulaRelCols = collectFormulaRelCols(preAnchorRows, columnCount);
-  }
+  const formulaRelCols = await resolvePreAnchorFormulaRelCols({
+    sheetsApi,
+    target,
+    sheetTitle,
+    gridRange,
+    rangeStartRowIndex,
+    rangeStartColumnIndex,
+    topAnchorIndex: parsed.topAnchorIndex,
+    columnCount,
+    retryOptions,
+  });
 
   const absTopAnchor = rangeStartRowIndex + parsed.topAnchorIndex;
   const absBottomAnchor = rangeStartRowIndex + parsed.bottomAnchorIndex;
@@ -547,12 +628,12 @@ export async function ensureClearedPositiveTable(
   }
 
   requests.push(
-    ...buildContiguousClearRequests({
+    ...buildContiguousUpdateCellsRequests({
       sheetId,
       absRowIndex: absTopAnchor + 1,
       rangeStartColumnIndex,
       columnCount,
-      formulaRelCols,
+      getCellData: (relCol) => (formulaRelCols.has(relCol) ? undefined : {}),
     })
   );
 
@@ -566,6 +647,116 @@ export async function ensureClearedPositiveTable(
       retryOptions
     );
   }
+}
+
+/**
+ * Appends raw rows immediately before the bottom `<--->` anchor of a positive-terminated table,
+ * skipping pre-`<--->` formula-owned columns and absent headers, and returns 1-based row numbers.
+ */
+export async function appendRawPositiveTableRows(
+  sheetsApi: sheets_v4.Sheets,
+  target: PositiveTableTarget,
+  rows: ReadonlyArray<Readonly<Record<string, SheetCellInput>>>,
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<number[]> {
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const { sheetId, sheetTitle, gridRange, a1Range } = await resolvePositiveNamedRange(
+    sheetsApi,
+    target,
+    retryOptions
+  );
+  const formattedResponse = await withSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.values.get({
+        spreadsheetId: target.spreadsheetId,
+        range: a1Range,
+        valueRenderOption: 'FORMATTED_VALUE',
+      }),
+    retryOptions
+  );
+
+  const formattedValues = (formattedResponse.data.values as CellValue[][] | undefined) ?? [];
+  const rangeStartRowIndex = gridRange.startRowIndex ?? 0;
+  const rangeStartColumnIndex = gridRange.startColumnIndex ?? 0;
+  const parsed = parsePositiveBounds(formattedValues, target, rangeStartRowIndex);
+
+  const columnCount =
+    gridRange.endColumnIndex !== undefined && gridRange.endColumnIndex !== null
+      ? gridRange.endColumnIndex - rangeStartColumnIndex
+      : Math.max((formattedValues[0] ?? []).length, parsed.headers.length, 1);
+
+  const formulaRelCols = await resolvePreAnchorFormulaRelCols({
+    sheetsApi,
+    target,
+    sheetTitle,
+    gridRange,
+    rangeStartRowIndex,
+    rangeStartColumnIndex,
+    topAnchorIndex: parsed.topAnchorIndex,
+    columnCount,
+    retryOptions,
+  });
+
+  const absTopAnchor = rangeStartRowIndex + parsed.topAnchorIndex;
+  const absBottomAnchor = rangeStartRowIndex + parsed.bottomAnchorIndex;
+
+  const relColToHeader = new Map<number, string>();
+  for (const [header, relCol] of parsed.columnIndexMap.entries()) {
+    relColToHeader.set(relCol, header);
+  }
+
+  const requests: sheets_v4.Schema$Request[] = [
+    {
+      insertDimension: {
+        range: {
+          sheetId,
+          dimension: 'ROWS',
+          startIndex: absBottomAnchor,
+          endIndex: absBottomAnchor + rows.length,
+        },
+        inheritFromBefore: absBottomAnchor > absTopAnchor + 1,
+      },
+    },
+  ];
+
+  rows.forEach((rowData, rowOffset) => {
+    requests.push(
+      ...buildContiguousUpdateCellsRequests({
+        sheetId,
+        absRowIndex: absBottomAnchor + rowOffset,
+        rangeStartColumnIndex,
+        columnCount,
+        getCellData: (relCol) => {
+          if (formulaRelCols.has(relCol)) {
+            return undefined;
+          }
+          const header = relColToHeader.get(relCol);
+          if (!header || !Object.prototype.hasOwnProperty.call(rowData, header)) {
+            return undefined;
+          }
+          const rawValue = rowData[header];
+          if (rawValue === undefined) {
+            return undefined;
+          }
+          return cellValueToCellData(rawValue === '' ? null : rawValue);
+        },
+      })
+    );
+  });
+
+  await withSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.batchUpdate({
+        spreadsheetId: target.spreadsheetId,
+        requestBody: { requests },
+      }),
+    retryOptions
+  );
+
+  return rows.map((_, idx) => absBottomAnchor + idx + 1);
 }
 
 /**

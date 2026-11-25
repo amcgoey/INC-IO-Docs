@@ -5,6 +5,7 @@ import type {
   UiProcessSpaceProviderPort,
   UiProcessConfigProviderPort,
   UiProcessManifestPort,
+  UiProcessDocumentLogPort,
   UiProcessDocumentRunnerPort,
   UiProcessFormEvaluatorPort,
   UiProcessDocumentSpaceDto,
@@ -40,6 +41,7 @@ import {
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
   SELECT_EMAIL_MESSAGE_KEY,
+  SELECT_DOCUMENT_LOG_KEY,
   DRIVE_ROUTING_FALLBACK_NOTICE,
   DRIVE_METADATA_FALLBACK_NOTICE,
   hasProposalOpportunityMarkers,
@@ -48,13 +50,46 @@ import {
   resolveAttachmentId,
   parseGoogleDriveUrl,
   isGmailContext,
+  isInCardAction,
   isResetOrInitialLoad,
   sanitizeFormDataForSourceReset,
+  reconcileDocumentLogSelection,
   pruneFormDataForTypeSwitch,
   extractActiveTypeExistingData,
   type UiStateResolutionContext,
   type UiProcessSpaceItem,
 } from '../domain';
+
+function resolveValidatedSpaceDto(
+  params: {
+    formData?: Record<string, unknown> | undefined;
+    activeSpaceType: string;
+    config?: ProcessUiStateConfig | undefined;
+  },
+  spaces: UiProcessSpaceItem[],
+  missingSpaceError: string
+): { ok: true; space: UiProcessDocumentSpaceDto } | { ok: false; error: string } {
+  const spaceResolution = resolveSpace(params, spaces);
+  if (spaceResolution.collisionError) {
+    return { ok: false, error: spaceResolution.collisionError };
+  }
+  if (spaceResolution.notFoundError) {
+    return { ok: false, error: spaceResolution.notFoundError };
+  }
+  if (!spaceResolution.matchedSpace) {
+    return { ok: false, error: missingSpaceError };
+  }
+  const matchedSpace = spaceResolution.matchedSpace;
+  return {
+    ok: true,
+    space: {
+      id: matchedSpace.id,
+      name: matchedSpace.name,
+      typeId: matchedSpace.typeId ?? params.activeSpaceType,
+      abstractStorageId: matchedSpace.abstractStorageId ?? matchedSpace.id,
+    },
+  };
+}
 
 interface GmailDriveSelection {
   effectiveFileSource: string | undefined;
@@ -152,10 +187,22 @@ function buildSourceEmailDescriptor(
   };
 }
 
+function omitPreviousSelectedLogParam(
+  parameters?: Record<string, string>
+): Record<string, string> | undefined {
+  if (!parameters || !('previousSelectedLogId' in parameters)) {
+    return parameters;
+  }
+  const next = { ...parameters };
+  delete next.previousSelectedLogId;
+  return next;
+}
+
 export interface WorkspaceAddonAdapterOptions {
   spaceProvider: UiProcessSpaceProviderPort;
   configProvider?: UiProcessConfigProviderPort | undefined;
   manifestPort?: UiProcessManifestPort | undefined;
+  documentLogPort?: UiProcessDocumentLogPort | undefined;
   documentRunner?: UiProcessDocumentRunnerPort | undefined;
   formEvaluator?: UiProcessFormEvaluatorPort | undefined;
   gmailPort?: UiProcessGmailPort | undefined;
@@ -233,6 +280,35 @@ export function normalizeFormData(
   return normalized;
 }
 
+function extractErrorStatusCode(error: unknown, depth = 0): number | undefined {
+  if (!error || typeof error !== 'object') {
+    return undefined;
+  }
+  const err = error as {
+    statusCode?: unknown;
+    status?: unknown;
+    code?: unknown;
+    response?: { status?: unknown } | undefined;
+    cause?: unknown;
+  };
+  if (typeof err.statusCode === 'number') {
+    return err.statusCode;
+  }
+  if (typeof err.status === 'number') {
+    return err.status;
+  }
+  if (err.response && typeof err.response === 'object' && typeof err.response.status === 'number') {
+    return err.response.status;
+  }
+  if (typeof err.code === 'number') {
+    return err.code;
+  }
+  if (depth < 3 && err.cause !== undefined) {
+    return extractErrorStatusCode(err.cause, depth + 1);
+  }
+  return undefined;
+}
+
 export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
   private readonly gmailPort?: UiProcessGmailPort | undefined;
 
@@ -251,21 +327,14 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     let threadMessages: UiProcessGmailMessageDescriptor[] | undefined;
     let activeMsg: UiProcessGmailMessageDescriptor | undefined;
 
-    const inCardActions = new Set([
-      'onSpaceTypeChange',
-      'onDocumentTypeChange',
-      'onFormChange',
-      'onFileSourceChange',
-      'onEmailMessageChange',
-    ]);
-    const isInCardAction = actionName !== undefined && inCardActions.has(actionName);
+    const isInCard = isInCardAction(actionName);
 
     if (isGmail && this.gmailPort) {
       const gmailResolution = await this.resolveActiveGmailMessage({
         context,
         effectiveContext,
         actionName,
-        isInCardAction,
+        isInCardAction: isInCard,
       });
       threadMessages = gmailResolution.threadMessages;
       activeMsg = gmailResolution.activeMsg;
@@ -554,8 +623,33 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       }
     }
 
+    const postPass1SpaceResolution = resolveSpace(
+      {
+        formData: normalizedFormData,
+        activeSpaceType: currentSpaceType,
+        config,
+      },
+      spaces
+    );
+
+    const logSelectionReconciliation = reconcileDocumentLogSelection({
+      formData: normalizedFormData,
+      actionName,
+      parameters: effectiveContext.parameters,
+      currentSpaceId: postPass1SpaceResolution.spaceId,
+      isSourceReset: isSourceReset || isPass1Reset,
+    });
+    normalizedFormData = logSelectionReconciliation.formData;
+    if (logSelectionReconciliation.cleared && effectiveContext.parameters) {
+      effectiveContext = {
+        ...effectiveContext,
+        parameters: omitPreviousSelectedLogParam(effectiveContext.parameters),
+      };
+    }
+
     const isPass2Event =
       actionName !== 'processDocument' &&
+      actionName !== 'copyDocumentLog' &&
       actionName !== 'viewJson' &&
       (isSourceReset || isManualTypeSwitch);
 
@@ -572,15 +666,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           )
         : {};
 
-      const spaceResolution = resolveSpace(
-        {
-          formData: normalizedFormData,
-          activeSpaceType: currentSpaceType,
-          config,
-        },
-        spaces
-      );
-      const pass2SpaceId = spaceResolution.matchedSpace?.id;
+      const pass2SpaceId = postPass1SpaceResolution.matchedSpace?.id;
 
       const isGmailDriveUrlMode =
         isGmail && gmailDriveSelection.effectiveFileSource === 'Google Drive URL';
@@ -665,15 +751,23 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       statusMessages?: string[] | undefined;
       isUpdateCard?: boolean | undefined;
       hiddenFields?: string[] | undefined;
+      clearPreviousSelectedLogId?: boolean | undefined;
+      notification?: string | undefined;
     }): UiProcessResult => {
       const combinedValidationErrors = [
         ...(options.validationErrors ?? normalizedContext.validationErrors ?? []),
         ...collectionErrors,
       ];
+      const renderParameters = options.clearPreviousSelectedLogId
+        ? omitPreviousSelectedLogParam(normalizedContext.parameters)
+        : normalizedContext.parameters;
 
       const state = evaluateProcessUiState({
         context: {
           ...normalizedContext,
+          ...(renderParameters !== normalizedContext.parameters
+            ? { parameters: renderParameters }
+            : {}),
           ...(options.formData !== undefined ? { formData: options.formData } : {}),
           ...(combinedValidationErrors.length > 0 ? { validationErrors: combinedValidationErrors } : {}),
           ...(options.statusMessages !== undefined
@@ -701,11 +795,72 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         ...(options.hiddenFields !== undefined ? { hiddenFields: options.hiddenFields } : {}),
         ...(state.validationErrors ? { validationErrors: state.validationErrors } : {}),
         ...(state.statusMessages ? { statusMessages: state.statusMessages } : {}),
+        ...(options.notification !== undefined ? { notification: options.notification } : {}),
       };
     };
 
     const createErrorRenderResult = (validationErrors: string[]): UiProcessResult =>
       createRenderResult({ validationErrors, isUpdateCard: true });
+
+    if (actionName === 'copyDocumentLog') {
+      if (!this.options.documentLogPort) {
+        return createErrorRenderResult([
+          'Document Log provisioning is not configured for this workspace.',
+        ]);
+      }
+
+      const spaceResult = resolveValidatedSpaceDto(
+        {
+          formData: normalizedContext.formData,
+          activeSpaceType: currentSpaceType,
+          config,
+        },
+        spaces,
+        'Please select a Document Space before copying a Document Log.'
+      );
+      if (!spaceResult.ok) {
+        return createErrorRenderResult([spaceResult.error]);
+      }
+      const space = spaceResult.space;
+
+      try {
+        const copyResult = await this.options.documentLogPort.copyLog(space);
+        const notification = copyResult.created
+          ? `Created "${copyResult.candidate.name}" in "${copyResult.folderPath}".`
+          : `Document Log already exists: "${copyResult.candidate.name}".`;
+
+        let evaluatedFormData = normalizedContext.formData;
+        let hiddenFields: string[] | undefined;
+        if (formEvaluator) {
+          try {
+            const evaluation = await formEvaluator.evaluate(
+              normalizedContext.formData ?? {},
+              resolvedDocumentTypeKey
+            );
+            evaluatedFormData = evaluation.computedData;
+            hiddenFields = evaluation.hiddenFields;
+          } catch (e) {
+            console.warn('Form evaluation failed after copyDocumentLog:', e);
+          }
+        }
+
+        return createRenderResult({
+          formData: evaluatedFormData,
+          hiddenFields,
+          isUpdateCard: true,
+          notification,
+        });
+      } catch (error) {
+        if (extractErrorStatusCode(error) === 403) {
+          return createErrorRenderResult([
+            `Permission denied (403) while copying the Document Log template into "${space.name}". Ensure you have Contributor (or higher) access to the Shared Drive and permission to copy the Document Log template spreadsheet, then try again.`,
+          ]);
+        }
+        return createErrorRenderResult([
+          error instanceof Error ? error.message : 'Failed to copy Document Log',
+        ]);
+      }
+    }
 
     if (actionName === 'processDocument') {
       const currentUiState = evaluateProcessUiState({
@@ -871,34 +1026,71 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         }
       }
 
-      const spaceResolution = resolveSpace(
+      const spaceResult = resolveValidatedSpaceDto(
         {
           formData: normalizedContext.formData,
           activeSpaceType: currentSpaceType,
           config,
         },
-        spaces
+        spaces,
+        'Please select a Document Space.'
       );
-
-      if (spaceResolution.collisionError) {
-        return createErrorRenderResult([spaceResolution.collisionError]);
+      if (!spaceResult.ok) {
+        return createErrorRenderResult([spaceResult.error]);
       }
+      const space = spaceResult.space;
 
-      if (spaceResolution.notFoundError) {
-        return createErrorRenderResult([spaceResolution.notFoundError]);
+      let selectedLogId: string | undefined;
+      if (this.options.documentLogPort && resolvedDocumentTypeKey) {
+        try {
+          const needsLog = await this.options.documentLogPort.requiresDocumentLog(
+            resolvedDocumentTypeKey
+          );
+          if (needsLog) {
+            const logResolution = await this.options.documentLogPort.resolveLog(space);
+            if (logResolution.status === 'missing') {
+              return createErrorRenderResult([
+                `No DocumentLog spreadsheet found for space "${space.name}". Expected a DocumentLog spreadsheet in "${logResolution.expectedFolderPath}".`,
+              ]);
+            }
+            if (logResolution.status === 'ambiguous') {
+              const rawSelectedLog = normalizedContext.formData?.[SELECT_DOCUMENT_LOG_KEY];
+              const effectiveSelectedLogId =
+                typeof rawSelectedLog === 'string' && rawSelectedLog.trim().length > 0
+                  ? rawSelectedLog.trim()
+                  : undefined;
+
+              const matchedCandidate = effectiveSelectedLogId
+                ? logResolution.candidates.find((c) => c.id === effectiveSelectedLogId)
+                : undefined;
+
+              if (matchedCandidate) {
+                selectedLogId = matchedCandidate.id;
+              } else {
+                const cleanedFormData = { ...(normalizedContext.formData ?? {}) };
+                delete cleanedFormData[SELECT_DOCUMENT_LOG_KEY];
+                const candidateSummary = logResolution.candidates
+                  .map((c) => `"${c.name}" (${c.id})`)
+                  .join(', ');
+                return createRenderResult({
+                  formData: cleanedFormData,
+                  validationErrors: [
+                    `Multiple DocumentLog spreadsheets found for space "${space.name}": ${candidateSummary}. Please select a Document Log and try again.`,
+                  ],
+                  isUpdateCard: true,
+                  clearPreviousSelectedLogId: true,
+                });
+              }
+            } else {
+              selectedLogId = logResolution.candidate.id;
+            }
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : 'Failed to verify DocumentLog availability';
+          return createErrorRenderResult([message]);
+        }
       }
-
-      if (!spaceResolution.matchedSpace) {
-        return createErrorRenderResult(['Please select a Document Space.']);
-      }
-
-      const matchedSpace = spaceResolution.matchedSpace;
-      const space: UiProcessDocumentSpaceDto = {
-        id: matchedSpace.id,
-        name: matchedSpace.name,
-        typeId: matchedSpace.typeId ?? currentSpaceType,
-        abstractStorageId: matchedSpace.abstractStorageId ?? matchedSpace.id,
-      };
 
       const data = extractDocumentData(normalizedContext.formData);
 
@@ -911,6 +1103,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
               space,
               sourceFiles: activeSourceFiles,
               ...(selectedMessageId !== undefined ? { targetMessageId: selectedMessageId } : {}),
+              ...(selectedLogId !== undefined ? { selectedLogId } : {}),
             },
             'onSubmit'
           );

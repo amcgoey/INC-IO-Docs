@@ -17,6 +17,8 @@ import {
   type UiProcessGmailMessageDescriptor,
   type UiProcessSourceParserPort,
   type UiProcessSourceContext,
+  type UiProcessDocumentLogPort,
+  type UiProcessDocumentRunnerPort,
 } from '../ports';
 
 describe('WorkspaceAddonAdapter in ui-process-manager', () => {
@@ -2436,6 +2438,7 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         'onSpaceTypeChange',
         'onDocumentTypeChange',
         'onFileSourceChange',
+        'copyDocumentLog',
       ] as const;
 
       for (const actionName of inCardActions) {
@@ -5976,6 +5979,910 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(spaceSwitchResult.formData?.direction).toBe('IN');
       expect(spaceSwitchResult.formData?.computedSummary).toBe('261119-Proposal User Edit');
       expect(mockFormEvaluator.evaluate).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('DocumentLog pre-flight guard on processDocument', () => {
+    const buildSubmitEvent = (documentTypeKey: string): UiProcessEventContext => ({
+      actionName: 'processDocument',
+      selectedItems: [{ id: 'file-1', title: 'Submittal.pdf' }],
+      formData: {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentSpace_projects: 'Project Main',
+        SelectDocumentType_projects: documentTypeKey,
+        SelectFiles: ['file-1'],
+        [`title_${documentTypeKey}`]: 'Waterproofing',
+      },
+    });
+
+    it('skips resolveLog for non-logging DocumentTypes and runs documentRunner without selectedLogId', async () => {
+      const documentRunner: UiProcessDocumentRunnerPort = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(false),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner,
+        documentLogPort,
+      });
+
+      const result = await adapter.processUiEvent(buildSubmitEvent('communication-project'));
+      expect(result).toEqual({ type: 'notification', text: 'Document processed successfully' });
+      expect(documentLogPort.requiresDocumentLog).toHaveBeenCalledWith('communication-project');
+      expect(documentLogPort.resolveLog).not.toHaveBeenCalled();
+      expect(documentRunner.processDocument).toHaveBeenCalledWith(
+        expect.not.objectContaining({ selectedLogId: expect.anything() }),
+        'onSubmit'
+      );
+    });
+
+    it('blocks missing DocumentLog before documentRunner runs and returns updateCard error preserving formData', async () => {
+      const documentRunner: UiProcessDocumentRunnerPort = {
+        processDocument: vi.fn(),
+      };
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(true),
+        resolveLog: vi.fn().mockResolvedValue({
+          status: 'missing',
+          expectedFolderPath: '1 Admin',
+        }),
+        copyLog: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(buildSubmitEvent('invoice-project'))) as UiProcessRenderResult;
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.validationErrors?.[0]).toContain('Project Main');
+      expect(result.validationErrors?.[0]).toContain('1 Admin');
+      expect(result.formData?.title).toBe('Waterproofing');
+      expect(documentRunner.processDocument).not.toHaveBeenCalled();
+    });
+
+    it('blocks un-disambiguated ambiguous DocumentLog before documentRunner runs', async () => {
+      const documentRunner: UiProcessDocumentRunnerPort = {
+        processDocument: vi.fn(),
+      };
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(true),
+        resolveLog: vi.fn().mockResolvedValue({
+          status: 'ambiguous',
+          candidates: [
+            { id: 'log-1', name: 'Project Main Document Log' },
+            { id: 'log-2', name: 'Project Main Document Log v2' },
+          ],
+        }),
+        copyLog: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(buildSubmitEvent('invoice-project'))) as UiProcessRenderResult;
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.validationErrors?.[0]).toContain('Project Main Document Log');
+      expect(result.validationErrors?.[0]).toContain('Project Main Document Log v2');
+      expect(documentRunner.processDocument).not.toHaveBeenCalled();
+    });
+
+    it('catches pre-flight Drive errors and returns updateCard error rather than throwing', async () => {
+      const documentRunner: UiProcessDocumentRunnerPort = {
+        processDocument: vi.fn(),
+      };
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(true),
+        resolveLog: vi.fn().mockRejectedValue(new Error('Drive 403 Forbidden')),
+        copyLog: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(buildSubmitEvent('invoice-project'))) as UiProcessRenderResult;
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.validationErrors).toEqual(['Drive 403 Forbidden']);
+      expect(result.formData?.title).toBe('Waterproofing');
+      expect(documentRunner.processDocument).not.toHaveBeenCalled();
+    });
+
+    it('forwards selectedLogId on resolved pre-flight check into documentRunner.processDocument', async () => {
+      const documentRunner: UiProcessDocumentRunnerPort = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(true),
+        resolveLog: vi.fn().mockResolvedValue({
+          status: 'resolved',
+          candidate: { id: 'log-resolved-1', name: 'Project Main Document Log' },
+        }),
+        copyLog: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner,
+        documentLogPort,
+      });
+
+      const result = await adapter.processUiEvent(buildSubmitEvent('invoice-project'));
+      expect(result).toEqual({ type: 'notification', text: 'Document processed successfully' });
+      expect(documentLogPort.resolveLog).toHaveBeenCalledWith({
+        id: 'proj1',
+        name: 'Project Main',
+        typeId: 'projects',
+        abstractStorageId: 'proj1',
+      });
+      expect(documentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'invoice-project',
+          selectedLogId: 'log-resolved-1',
+        }),
+        'onSubmit'
+      );
+    });
+
+    it('forwards live selected candidate as selectedLogId on ambiguous pre-flight check while stripping SelectDocumentLog from Document.data (#351)', async () => {
+      const documentRunner: UiProcessDocumentRunnerPort = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      };
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(true),
+        resolveLog: vi.fn().mockResolvedValue({
+          status: 'ambiguous',
+          candidates: [
+            { id: 'log-1', name: 'Project Main Document Log' },
+            { id: 'log-2', name: 'Project Main Document Log v2' },
+          ],
+        }),
+        copyLog: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner,
+        documentLogPort,
+      });
+
+      const baseEvent = buildSubmitEvent('invoice-project');
+      const result = await adapter.processUiEvent({
+        ...baseEvent,
+        parameters: {
+          action: 'processDocument',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+        },
+        formData: {
+          ...baseEvent.formData,
+          SelectDocumentLog: 'log-2',
+        },
+      });
+
+      expect(result).toEqual({ type: 'notification', text: 'Document processed successfully' });
+      expect(documentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'invoice-project',
+          selectedLogId: 'log-2',
+        }),
+        'onSubmit'
+      );
+      const passedPayload = (documentRunner.processDocument as ReturnType<typeof vi.fn>).mock
+        .calls[0][0] as { data: Record<string, unknown> };
+      expect(passedPayload.data).not.toHaveProperty('SelectDocumentLog');
+    });
+
+    it('blocks stale or cross-space SelectDocumentLog on ambiguous pre-flight check, deletes SelectDocumentLog from formData, and returns updateCard error before documentRunner runs (#351)', async () => {
+      const documentRunner: UiProcessDocumentRunnerPort = {
+        processDocument: vi.fn(),
+      };
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(true),
+        resolveLog: vi.fn().mockResolvedValue({
+          status: 'ambiguous',
+          candidates: [
+            { id: 'log-1', name: 'Project Main Document Log' },
+            { id: 'log-2', name: 'Project Main Document Log v2' },
+          ],
+        }),
+        copyLog: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentRunner,
+        documentLogPort,
+      });
+
+      // 1. Stale selection (not in live candidates) with previousSelectedLogId also pointing to stale ID
+      const baseEvent = buildSubmitEvent('invoice-project');
+      const staleRes = (await adapter.processUiEvent({
+        ...baseEvent,
+        parameters: {
+          action: 'processDocument',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-deleted',
+        },
+        formData: {
+          ...baseEvent.formData,
+          SelectDocumentLog: 'log-deleted',
+        },
+      })) as UiProcessRenderResult;
+      expect(staleRes.type).toBe('render');
+      expect(staleRes.isUpdateCard).toBe(true);
+      expect(staleRes.validationErrors?.[0]).toContain('Multiple DocumentLog spreadsheets found');
+      expect(staleRes.formData).not.toHaveProperty('SelectDocumentLog');
+      expect(staleRes.formData?.title).toBe('Waterproofing');
+      expect(documentRunner.processDocument).not.toHaveBeenCalled();
+
+      // 2. Unblurred cross-space edit (previousSpaceId differs from resolved proj1) clears SelectDocumentLog even if ID collides
+      const crossSpaceRes = (await adapter.processUiEvent({
+        ...baseEvent,
+        parameters: {
+          action: 'processDocument',
+          previousSpaceId: 'proj-previous',
+          previousSelectedLogId: 'log-1',
+        },
+        formData: {
+          ...baseEvent.formData,
+          SelectDocumentLog: 'log-1',
+        },
+      })) as UiProcessRenderResult;
+      expect(crossSpaceRes.type).toBe('render');
+      expect(crossSpaceRes.isUpdateCard).toBe(true);
+      expect(crossSpaceRes.validationErrors?.[0]).toContain('Multiple DocumentLog spreadsheets found');
+      expect(crossSpaceRes.formData).not.toHaveProperty('SelectDocumentLog');
+      expect(crossSpaceRes.formData?.title).toBe('Waterproofing');
+      expect(documentRunner.processDocument).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('SelectDocumentLog lifecycle clearing & round-trip restoration (#351)', () => {
+    it('preserves SelectDocumentLog on direct onDocumentTypeChange and restores from previousSelectedLogId when absent on same-space round-trip', async () => {
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+      });
+
+      // Direct switch with SelectDocumentLog present
+      const directSwitch = (await adapter.processUiEvent({
+        actionName: 'onDocumentTypeChange',
+        parameters: {
+          action: 'onDocumentTypeChange',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectDocumentLog: 'log-2',
+        },
+      })) as UiProcessRenderResult;
+      expect(directSwitch.type).toBe('render');
+      expect(directSwitch.spaceId).toBe('proj1');
+      expect(directSwitch.formData?.SelectDocumentLog).toBe('log-2');
+
+      // Round-trip from non-logging type: SelectDocumentLog omitted from formData, restored via previousSelectedLogId
+      const roundTrip = (await adapter.processUiEvent({
+        actionName: 'onDocumentTypeChange',
+        parameters: {
+          action: 'onDocumentTypeChange',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'invoice-project',
+        },
+      })) as UiProcessRenderResult;
+      expect(roundTrip.type).toBe('render');
+      expect(roundTrip.spaceId).toBe('proj1');
+      expect(roundTrip.formData?.SelectDocumentLog).toBe('log-2');
+    });
+
+    it('clears SelectDocumentLog on onSpaceTypeChange, refresh, onFileSourceChange, onEmailMessageChange, Gmail Pass 1 Drive URL reset (even same space), and space change/clear', async () => {
+      const twoSpaceProvider: UiProcessSpaceProviderPort = {
+        getAllTypes: () => [
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: {
+              allowedDocumentTypes: ['communication-project', 'invoice-project'],
+              defaultDocumentType: 'communication-project',
+            },
+          },
+          {
+            id: 'proposals',
+            displayName: 'Proposals',
+            spaceSchema: {
+              allowedDocumentTypes: ['communication-proposal'],
+              defaultDocumentType: 'communication-proposal',
+            },
+          },
+        ],
+        getCollection: vi.fn().mockImplementation(async (typeId: string) => {
+          if (typeId === 'projects') {
+            return {
+              spaces: [
+                { id: 'proj1', name: 'Project Main', typeId: 'projects', abstractStorageId: 'proj1' },
+                { id: 'proj2', name: 'Project Two', typeId: 'projects', abstractStorageId: 'proj2' },
+              ],
+            };
+          }
+          return {
+            spaces: [
+              { id: 'prop1', name: 'Proposal One', typeId: 'proposals', abstractStorageId: 'prop1' },
+            ],
+          };
+        }),
+      };
+
+      const sourceParser: UiProcessSourceParserPort = {
+        inferRouting: vi.fn().mockResolvedValue({
+          spaceTypeId: 'projects',
+          spaceIdOrName: 'proj1',
+          documentTypeKey: 'invoice-project',
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: twoSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        sourceParser,
+      });
+
+      // 1. onSpaceTypeChange clears SelectDocumentLog
+      const spaceTypeRes = (await adapter.processUiEvent({
+        actionName: 'onSpaceTypeChange',
+        parameters: {
+          action: 'onSpaceTypeChange',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'proposals',
+          SelectDocumentLog: 'log-2',
+        },
+      })) as UiProcessRenderResult;
+      expect(spaceTypeRes.formData).not.toHaveProperty('SelectDocumentLog');
+
+      // 2. refresh clears SelectDocumentLog even when Pass 1 infers same space proj1
+      const refreshRes = (await adapter.processUiEvent({
+        actionName: 'refresh',
+        selectedItems: [{ id: 'file-1', title: 'doc.pdf' }],
+        parameters: {
+          action: 'refresh',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectDocumentLog: 'log-2',
+        },
+      })) as UiProcessRenderResult;
+      expect(refreshRes.formData).not.toHaveProperty('SelectDocumentLog');
+
+      // 3. onFileSourceChange clears SelectDocumentLog even when switching to empty Google Drive URL
+      const fileSourceRes = (await adapter.processUiEvent({
+        hostApp: 'GMAIL',
+        gmail: { messageId: 'msg-1', threadId: 'th-1' },
+        actionName: 'onFileSourceChange',
+        parameters: {
+          action: 'onFileSourceChange',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+          previousDriveUrl: '',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: '',
+          SelectDocumentLog: 'log-2',
+        },
+      })) as UiProcessRenderResult;
+      expect(fileSourceRes.formData).not.toHaveProperty('SelectDocumentLog');
+
+      // 4. onEmailMessageChange clears SelectDocumentLog
+      const emailChangeRes = (await adapter.processUiEvent({
+        hostApp: 'GMAIL',
+        gmail: { messageId: 'msg-1', threadId: 'th-1' },
+        actionName: 'onEmailMessageChange',
+        parameters: {
+          action: 'onEmailMessageChange',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+          previousMessageId: 'msg-1',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectEmailMessage: 'msg-2',
+          SelectDocumentLog: 'log-2',
+        },
+      })) as UiProcessRenderResult;
+      expect(emailChangeRes.formData).not.toHaveProperty('SelectDocumentLog');
+
+      // 5. Gmail Pass 1 Drive URL change clears SelectDocumentLog EVEN WHEN Pass 1 infers same space proj1
+      const driveUrlPass1Res = (await adapter.processUiEvent({
+        hostApp: 'GMAIL',
+        gmail: { messageId: 'msg-1', threadId: 'th-1' },
+        actionName: 'onFormChange',
+        parameters: {
+          action: 'onFormChange',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+          previousDriveUrl: '',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: 'https://drive.google.com/file/d/new-file-123/view',
+          SelectDocumentLog: 'log-2',
+        },
+      })) as UiProcessRenderResult;
+      expect(driveUrlPass1Res.spaceId).toBe('proj1');
+      expect(driveUrlPass1Res.formData).not.toHaveProperty('SelectDocumentLog');
+
+      // 6. Space switch (proj1 -> proj2) clears SelectDocumentLog
+      const spaceSwitchRes = (await adapter.processUiEvent({
+        actionName: 'onFormChange',
+        parameters: {
+          action: 'onFormChange',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Two',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectDocumentLog: 'log-2',
+        },
+      })) as UiProcessRenderResult;
+      expect(spaceSwitchRes.spaceId).toBe('proj2');
+      expect(spaceSwitchRes.formData).not.toHaveProperty('SelectDocumentLog');
+
+      // 7. Clearing space to blank (currentSpaceId becomes undefined) clears SelectDocumentLog
+      const spaceClearRes = (await adapter.processUiEvent({
+        actionName: 'onFormChange',
+        parameters: {
+          action: 'onFormChange',
+          previousSpaceId: 'proj1',
+          previousSelectedLogId: 'log-2',
+        },
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: '',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectDocumentLog: 'log-2',
+        },
+      })) as UiProcessRenderResult;
+      expect(spaceClearRes.spaceId).toBeUndefined();
+      expect(spaceClearRes.formData).not.toHaveProperty('SelectDocumentLog');
+    });
+  });
+
+  describe('copyDocumentLog action handling', () => {
+    const buildCopyEvent = (
+      overrides?: Partial<UiProcessEventContext>,
+      formDataOverrides?: Record<string, unknown>
+    ): UiProcessEventContext => ({
+      actionName: 'copyDocumentLog',
+      selectedItems: [{ id: 'file-1', title: 'Invoice.pdf' }],
+      formData: {
+        SelectDocumentSpaceType: 'projects',
+        SelectDocumentSpace_projects: 'Project Main',
+        SelectDocumentType_projects: 'invoice-project',
+        SelectFiles: ['file-1'],
+        title_invoice_project_placeholder: undefined,
+        'title_invoice-project': 'March Invoice',
+        ...formDataOverrides,
+      },
+      ...overrides,
+    });
+
+    it('returns updateCard error preserving formData when documentLogPort is not configured', async () => {
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+      });
+
+      const result = (await adapter.processUiEvent(buildCopyEvent())) as UiProcessRenderResult;
+      expect(Value.Check(UiProcessResultSchema, result)).toBe(true);
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBeUndefined();
+      expect(result.validationErrors).toEqual([
+        'Document Log provisioning is not configured for this workspace.',
+      ]);
+      expect(result.formData?.title).toBe('March Invoice');
+    });
+
+    it('validates resolveSpace collisionError before calling copyLog and preserves formData', async () => {
+      const collidingSpaceProvider: UiProcessSpaceProviderPort = {
+        getAllTypes: mockSpaceProvider.getAllTypes,
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [
+            { id: 'proj-a', name: 'Duplicate Project' },
+            { id: 'proj-b', name: 'duplicate project' },
+          ],
+        }),
+      };
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: collidingSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(
+        buildCopyEvent({}, { SelectDocumentSpace_projects: 'Duplicate Project' })
+      )) as UiProcessRenderResult;
+
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBeUndefined();
+      expect(result.validationErrors?.[0]).toContain('Multiple spaces match');
+      expect(result.formData?.title).toBe('March Invoice');
+      expect(documentLogPort.copyLog).not.toHaveBeenCalled();
+    });
+
+    it('validates resolveSpace notFoundError before calling copyLog and preserves formData', async () => {
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(
+        buildCopyEvent({}, { SelectDocumentSpace_projects: 'Nonexistent Space' })
+      )) as UiProcessRenderResult;
+
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBeUndefined();
+      expect(result.validationErrors?.[0]).toContain('was not found');
+      expect(result.formData?.title).toBe('March Invoice');
+      expect(documentLogPort.copyLog).not.toHaveBeenCalled();
+    });
+
+    it('validates missing space (!matchedSpace) before calling copyLog and preserves formData', async () => {
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn(),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(
+        buildCopyEvent({}, { SelectDocumentSpace_projects: '' })
+      )) as UiProcessRenderResult;
+
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBeUndefined();
+      expect(result.validationErrors).toEqual([
+        'Please select a Document Space before copying a Document Log.',
+      ]);
+      expect(result.formData?.title).toBe('March Invoice');
+      expect(documentLogPort.copyLog).not.toHaveBeenCalled();
+    });
+
+    it('calls copyLog with UiProcessDocumentSpaceDto, returns Created toast, and preserves formData and hiddenFields on created: true', async () => {
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn().mockResolvedValue({
+          created: true,
+          candidate: { id: 'new-log-1', name: 'Project Main Document Log' },
+          folderPath: '1 Admin',
+        }),
+      };
+      const formEvaluator: UiProcessFormEvaluatorPort = {
+        evaluate: vi.fn().mockResolvedValue({
+          computedData: {
+            SelectDocumentSpaceType: 'projects',
+            SelectDocumentSpace: 'Project Main',
+            SelectDocumentType: 'invoice-project',
+            SelectFiles: ['file-1'],
+            title: 'March Invoice',
+            computedTag: 'INV-001',
+          },
+          hiddenFields: ['internalNotes'],
+          disabledFields: [],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+        formEvaluator,
+      });
+
+      const result = (await adapter.processUiEvent(buildCopyEvent())) as UiProcessRenderResult;
+
+      expect(Value.Check(UiProcessResultSchema, result)).toBe(true);
+      expect(documentLogPort.copyLog).toHaveBeenCalledTimes(1);
+      expect(documentLogPort.copyLog).toHaveBeenCalledWith({
+        id: 'proj1',
+        name: 'Project Main',
+        typeId: 'projects',
+        abstractStorageId: 'proj1',
+      });
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBe('Created "Project Main Document Log" in "1 Admin".');
+      expect(result.validationErrors).toBeUndefined();
+      expect(result.formData?.title).toBe('March Invoice');
+      expect(result.formData?.computedTag).toBe('INV-001');
+      expect(result.hiddenFields).toEqual(['internalNotes']);
+    });
+
+    it('preserves succeeded copy notification even if formEvaluator throws', async () => {
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn().mockResolvedValue({
+          created: true,
+          candidate: { id: 'new-log-1', name: 'Project Main Document Log' },
+          folderPath: '1 Admin',
+        }),
+      };
+      const formEvaluator: UiProcessFormEvaluatorPort = {
+        evaluate: vi.fn().mockRejectedValue(new Error('Evaluator failure')),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+        formEvaluator,
+      });
+
+      const result = (await adapter.processUiEvent(buildCopyEvent())) as UiProcessRenderResult;
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBe('Created "Project Main Document Log" in "1 Admin".');
+      expect(result.formData?.title).toBe('March Invoice');
+      expect(result.hiddenFields).toBeUndefined();
+    });
+
+    it('returns idempotent notification when copyLog returns created: false while preserving formData', async () => {
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn().mockResolvedValue({
+          created: false,
+          candidate: { id: 'existing-log-1', name: 'Project Main Document Log' },
+          folderPath: '1 Admin',
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(buildCopyEvent())) as UiProcessRenderResult;
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBe('Document Log already exists: "Project Main Document Log".');
+      expect(result.validationErrors).toBeUndefined();
+      expect(result.formData?.title).toBe('March Invoice');
+    });
+
+    it('returns actionable 403 Shared Drive Contributor guidance for direct statusCode: 403 error and preserves formData', async () => {
+      const err403 = Object.assign(new Error('Forbidden'), { statusCode: 403 });
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn().mockRejectedValue(err403),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(buildCopyEvent())) as UiProcessRenderResult;
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBeUndefined();
+      expect(result.validationErrors?.[0]).toContain('403');
+      expect(result.validationErrors?.[0]).toContain('Project Main');
+      expect(result.validationErrors?.[0]).toContain('Contributor');
+      expect(result.validationErrors?.[0]).toContain('template');
+      expect(result.formData?.title).toBe('March Invoice');
+    });
+
+    it('detects nested cause statusCode: 403 and returns Shared Drive Contributor guidance', async () => {
+      const inner = { statusCode: 403 };
+      const outer = new Error('Drive API copy failed', { cause: inner });
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn().mockRejectedValue(outer),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(buildCopyEvent())) as UiProcessRenderResult;
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBeUndefined();
+      expect(result.validationErrors?.[0]).toContain('Permission denied (403)');
+      expect(result.validationErrors?.[0]).toContain('Contributor');
+      expect(result.formData?.title).toBe('March Invoice');
+    });
+
+    it('returns generic error message for non-403 errors while preserving formData', async () => {
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn().mockRejectedValue(new Error('Network timeout while copying template')),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent(buildCopyEvent())) as UiProcessRenderResult;
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBeUndefined();
+      expect(result.validationErrors).toEqual(['Network timeout while copying template']);
+      expect(result.formData?.title).toBe('March Invoice');
+    });
+
+    it('fetches Gmail thread messages and preserves Gmail attachments, email selection, and form inputs on copyDocumentLog', async () => {
+      const getThreadMessagesMock = vi.fn().mockResolvedValue([
+        {
+          id: 'msg-1',
+          from: 'Alice <alice@example.com>',
+          date: 'Mon, 19 Oct 2026 10:00:00 +0000',
+          attachments: [{ id: 'att-1', title: 'File1.pdf', mimeType: 'application/pdf' }],
+        },
+        {
+          id: 'msg-2',
+          from: 'Bob <bob@example.com>',
+          date: 'Tue, 20 Oct 2026 11:00:00 +0000',
+          attachments: [
+            { id: 'att-2a', title: 'Invoice.pdf', mimeType: 'application/pdf' },
+            { id: 'att-2b', title: 'Backup.pdf', mimeType: 'application/pdf' },
+          ],
+        },
+      ]);
+      const gmailPort: UiProcessGmailPort = {
+        getMessageAttachments: vi.fn(),
+        getThreadMessages: getThreadMessagesMock,
+      };
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn(),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn().mockResolvedValue({
+          created: true,
+          candidate: { id: 'log-gmail-1', name: 'Project Main Document Log' },
+          folderPath: '1 Admin',
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: mockSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        gmailPort,
+        documentLogPort,
+      });
+
+      const result = (await adapter.processUiEvent({
+        actionName: 'copyDocumentLog',
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-1',
+          threadId: 'th-copy',
+          accessToken: 'ya29.token',
+        },
+        selectedItems: [
+          { id: 'att-2a', title: 'Invoice.pdf', mimeType: 'application/pdf' },
+          { id: 'att-2b', title: 'Backup.pdf', mimeType: 'application/pdf' },
+        ],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'invoice-project',
+          SelectEmailMessage: 'msg-2',
+          SelectFileSource: 'Email Attachments',
+          SelectAttachments: ['att-2a'],
+          'title_invoice-project': 'Gmail Invoice',
+        },
+      })) as UiProcessRenderResult;
+
+      expect(getThreadMessagesMock).toHaveBeenCalledWith('th-copy', { skipCache: false });
+      expect(result.type).toBe('render');
+      expect(result.isUpdateCard).toBe(true);
+      expect(result.notification).toBe('Created "Project Main Document Log" in "1 Admin".');
+      expect(result.selectionState?.threadMessages).toHaveLength(2);
+      expect(result.selectionState?.files).toEqual([
+        { text: 'Invoice.pdf', value: 'att-2a', selected: true },
+        { text: 'Backup.pdf', value: 'att-2b', selected: false },
+      ]);
+      expect(result.formData?.SelectEmailMessage).toBe('msg-2');
+      expect(result.formData?.title).toBe('Gmail Invoice');
     });
   });
 });

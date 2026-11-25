@@ -8,6 +8,8 @@ import {
   getDocumentTypeWidgetName,
 } from '../features/schema-driven-ui/blocks/document-type-selection';
 import { wireWorkspaceAddonRoutes } from './workspace-addon.wiring';
+import { createUiProcessManagerWiring } from './ui-process-manager.wiring';
+import { createDocumentLogWiring } from './document-log.wiring';
 import { createSourceParserWiring } from './source-parser.wiring';
 import { ParseSchemaRegistryAdapter } from '../features/source-parser/adapters/parse-schema-registry.adapter';
 import { LogSchemaRegistryAdapter } from '../features/document-log';
@@ -624,5 +626,290 @@ describe('workspace-addon.wiring (S3)', () => {
     expect(readText('section')).toBe('071200');
     expect(readText('number')).toBe('001');
     expect(readText('revision')).toBe('1');
+  });
+
+  it('memoizes createDocumentSpaceService per request (calling getCollection once across UiProcessManager and UiContextQueryAdapter) and shares one registry initializer across consumers (#349)', async () => {
+    const server = createHttpServer();
+    const initSpy = vi.spyOn(LogSchemaRegistryAdapter.prototype, 'initialize');
+
+    const docTypeDef = {
+      key: 'submittal-arch',
+      name: 'Submittal Arch',
+      documentSchema: {
+        fields: [{ key: 'section', name: 'Section', type: 'string', required: true }],
+        identity: { idGroup: '{{section}}', id: '{{section}}' },
+      },
+      documentUiSchema: {
+        layout: ['section'],
+        fields: { section: { widget: 'textInput', label: 'Section' } },
+        events: { onSubmit: { catchAllWorkflow: 'LogOnly' } },
+      },
+      documentWorkflowConfig: {
+        workflows: [
+          {
+            name: 'LogOnly',
+            activitySequence: [{ type: 'WRITE_LOG', payload: {} }],
+          },
+        ],
+      },
+      documentLogSchema: {
+        provider: 'google_sheets',
+        target: {
+          sheetName: 'Submittal Arch',
+          rangeName: 'Log_Submittal_Arch',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        grouping: {
+          groupBy: 'idGroup',
+          sortBy: 'id',
+          groupSortOrder: 'asc',
+          rowSortOrder: 'asc',
+          duplicatePolicy: 'insert',
+        },
+        columns: {
+          Section: { template: '{{section}}' },
+        },
+      },
+    };
+
+    const manifestProvider = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./types/submittal-arch.json'],
+        DocumentSpaceTypes: [
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: {
+              allowedDocumentTypes: ['submittal-arch'],
+              defaultDocumentType: 'submittal-arch',
+            },
+            storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+          },
+          {
+            id: 'proposals',
+            displayName: 'Proposals',
+            spaceSchema: {
+              allowedDocumentTypes: ['submittal-arch'],
+              defaultDocumentType: 'submittal-arch',
+            },
+            storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+          },
+        ],
+        configuration: {
+          documentLog: {
+            preferredFolderPath: '1 Admin',
+            fileNameContains: 'Document Log',
+            excludePrefixes: ['Copy of '],
+            excludeSubstrings: ['Template'],
+            templateSpreadsheetId: 'tmpl-1',
+            copyNameTemplate: '{{DocumentSpace.name}} Document Log',
+          },
+        },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue(docTypeDef),
+    };
+
+    const getCollectionSpy = vi.fn().mockImplementation(async (typeId: string) => ({
+      type: {
+        id: typeId,
+        displayName: typeId,
+        spaceSchema: { allowedDocumentTypes: ['submittal-arch'], defaultDocumentType: 'submittal-arch' },
+        storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+      },
+      spaces:
+        typeId === 'projects'
+          ? [
+              {
+                id: 'space-proj-1',
+                typeId: 'projects',
+                name: 'Harborview',
+                abstractStorageId: 'drive-proj-1',
+              },
+            ]
+          : [],
+    }));
+
+    const createDocumentSpaceService = vi.fn().mockImplementation(
+      () =>
+        ({
+          getAllTypes: () => [
+            {
+              id: 'projects',
+              displayName: 'Projects',
+              spaceSchema: {
+                allowedDocumentTypes: ['submittal-arch'],
+                defaultDocumentType: 'submittal-arch',
+              },
+              storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+            },
+            {
+              id: 'proposals',
+              displayName: 'Proposals',
+              spaceSchema: {
+                allowedDocumentTypes: ['submittal-arch'],
+                defaultDocumentType: 'submittal-arch',
+              },
+              storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+            },
+          ],
+          getCollection: getCollectionSpy,
+        }) as unknown as DocumentSpaceService
+    );
+
+    const mockDriveClient = {
+      searchFiles: vi.fn().mockResolvedValue([
+        {
+          id: 'log-sheet-1',
+          name: 'Harborview Document Log',
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ]),
+    } as unknown as GoogleDriveClient;
+
+    const mockSheetsClient: SheetsClient = {
+      readTable: vi.fn(),
+      insertIntoGroupedList: vi.fn().mockResolvedValue({ rowNumber: 6, action: 'inserted' }),
+      readNamedRange: vi.fn(),
+      writeNamedRange: vi.fn(),
+    };
+
+    const documentLogWiring = createDocumentLogWiring({
+      manifestProvider,
+      driveClient: mockDriveClient,
+      sheetsClient: mockSheetsClient,
+    });
+
+    wireWorkspaceAddonRoutes({
+      server,
+      authVerifier: createAuthVerifier(),
+      manifestProvider,
+      createDocumentSpaceService,
+      documentLogWiring,
+      gmailClient: createGmailClient(),
+      createAdditionalActivityHandlers: (ctx) => [
+        documentLogWiring.createPerRequestActivityHandler(ctx),
+      ],
+    });
+
+    const onChangePayload = {
+      drive: { selectedItems: [{ id: 'file-1', title: 'Notes.pdf' }] },
+      commonEventObject: {
+        hostApp: 'DRIVE',
+        parameters: { action: 'onFormChange' },
+        formInputs: {
+          SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+          [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: ['Harborview'] } },
+          [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['submittal-arch'] } },
+          SelectFiles: { stringInputs: { value: ['file-1'] } },
+        },
+      },
+    };
+
+    // Request 1: UiProcessManager + UiContextQueryAdapter must invoke createDocumentSpaceService and getCollection('projects') ONLY ONCE
+    const res1 = await server.inject({
+      method: 'POST',
+      url: '/workspace/on-form-change',
+      headers: { authorization: 'Bearer valid' },
+      payload: onChangePayload,
+    });
+    expect(res1.statusCode).toBe(200);
+    expect(createDocumentSpaceService).toHaveBeenCalledTimes(1);
+    expect(getCollectionSpy).toHaveBeenCalledTimes(1);
+    expect(getCollectionSpy).toHaveBeenCalledWith('projects');
+    expect(initSpy).toHaveBeenCalledTimes(1);
+
+    const body1 = JSON.parse(res1.payload) as GoogleWorkspaceActionResponse;
+    const logSection = body1.action?.navigations?.[0]?.updateCard?.sections.find(
+      (s) => s.header === 'Document Log'
+    );
+    expect(logSection).toBeDefined();
+    expect(logSection?.widgets[0].decoratedText?.text).toContain('Harborview Document Log');
+
+    // Request 2: Distinct request constructs fresh space service and calls getCollection once more (zero cross-request caching)
+    const res2 = await server.inject({
+      method: 'POST',
+      url: '/workspace/on-form-change',
+      headers: { authorization: 'Bearer valid' },
+      payload: onChangePayload,
+    });
+    expect(res2.statusCode).toBe(200);
+    expect(createDocumentSpaceService).toHaveBeenCalledTimes(2);
+    expect(getCollectionSpy).toHaveBeenCalledTimes(2);
+    expect(initSpy).toHaveBeenCalledTimes(1);
+
+    initSpy.mockRestore();
+  });
+
+  it('wires uiContextQuery through createUiProcessManagerWiring default SchemaDrivenUiService path (#349)', async () => {
+    const mockSpaceService = {
+      getAllTypes: () => [
+        {
+          id: 'projects',
+          displayName: 'Projects',
+          spaceSchema: {
+            allowedDocumentTypes: ['submittal-arch'],
+            defaultDocumentType: 'submittal-arch',
+          },
+          storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+        },
+      ],
+      getCollection: vi.fn().mockResolvedValue({
+        spaces: [
+          {
+            id: 'space-1',
+            typeId: 'projects',
+            name: 'Harborview',
+            abstractStorageId: 'drive-1',
+          },
+        ],
+      }),
+    } as unknown as DocumentSpaceService;
+
+    const manifestProvider = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./types/submittal-arch.json'],
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        key: 'submittal-arch',
+        name: 'Submittal Arch',
+        documentSchema: { fields: [{ key: 'section', type: 'string' }] },
+        documentUiSchema: { layout: ['section'], fields: { section: { label: 'Section' } } },
+      }),
+    };
+
+    const uiContextQuery = {
+      queryContext: vi.fn().mockResolvedValue({
+        'document-log': {
+          status: 'missing',
+          spaceName: 'Harborview',
+          targetFolderPath: '1 Admin',
+          targetFileName: 'Harborview Document Log',
+        },
+      }),
+    };
+
+    const wiring = createUiProcessManagerWiring({
+      manifestProvider,
+      documentSpaceService: mockSpaceService,
+      uiContextQuery,
+    });
+
+    const response = (await wiring.requestScopedWrapper.processUiEvent({
+      actionName: 'onFormChange',
+      formData: {
+        SelectDocumentSpaceType: 'projects',
+        [getDocumentSpaceWidgetName('projects')]: 'Harborview',
+        [getDocumentTypeWidgetName('projects')]: 'submittal-arch',
+      },
+    })) as GoogleWorkspaceActionResponse;
+
+    expect(uiContextQuery.queryContext).toHaveBeenCalledTimes(1);
+    const updateCard = response.action.navigations?.[0]?.updateCard;
+    const logSection = updateCard?.sections.find((s) => s.header === 'Document Log');
+    expect(logSection).toBeDefined();
+    expect(logSection?.widgets).toHaveLength(2);
+    expect(logSection?.widgets[0].decoratedText?.text).toContain('Harborview Document Log');
+    expect(logSection?.widgets[1].buttonList?.buttons[0].text).toBe('Copy Log');
   });
 });

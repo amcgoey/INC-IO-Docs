@@ -9,6 +9,7 @@ import {
   getDocumentInfoWidgetName,
   extractSelectionItems,
 } from './document-info';
+import { PRIMARY_ACTION_BUTTON_COLOR } from './common';
 
 describe('Document Info Block', () => {
   describe('extractSelectionItems', () => {
@@ -649,8 +650,13 @@ describe('Document Info Block', () => {
       expect(Value.Check(UiViewSectionSchema, sectionWithStringAction)).toBe(true);
       expect(sectionWithStringAction.widgets).toHaveLength(2);
       expect(sectionWithStringAction.widgets[1].buttonList).toBeDefined();
+      expect(PRIMARY_ACTION_BUTTON_COLOR).toBeDefined();
       expect(sectionWithStringAction.widgets[1].buttonList?.buttons).toEqual([
-        { text: 'Process Document', onClick: { action: 'processDocument' } },
+        {
+          text: 'Process Document',
+          onClick: { action: 'processDocument' },
+          color: PRIMARY_ACTION_BUTTON_COLOR,
+        },
       ]);
 
       const sectionWithObjectAction = buildDocumentInfoSection(schema, undefined, {
@@ -660,7 +666,55 @@ describe('Document Info Block', () => {
       expect(Value.Check(UiViewSectionSchema, sectionWithObjectAction)).toBe(true);
       expect(sectionWithObjectAction.widgets).toHaveLength(2);
       expect(sectionWithObjectAction.widgets[1].buttonList?.buttons).toEqual([
-        { text: 'Process Document', onClick: { action: 'customProcess', parameters: { docId: '123' } } },
+        {
+          text: 'Process Document',
+          onClick: { action: 'customProcess', parameters: { docId: '123' } },
+          color: PRIMARY_ACTION_BUTTON_COLOR,
+        },
+      ]);
+    });
+
+    it('includes PRIMARY_ACTION_BUTTON_COLOR and omits disabled when processDisabled is false or undefined', () => {
+      const schema: AbstractDataSchema = {
+        fields: [{ key: 'title', type: 'string' }],
+      };
+
+      for (const processDisabled of [undefined, false] as const) {
+        const section = buildDocumentInfoSection(schema, undefined, {
+          onProcessAction: 'processDocument',
+          processDisabled,
+        });
+
+        expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+        const button = section.widgets[1].buttonList?.buttons[0];
+        expect(PRIMARY_ACTION_BUTTON_COLOR).toBeDefined();
+        expect(button).toEqual({
+          text: 'Process Document',
+          onClick: { action: 'processDocument' },
+          color: PRIMARY_ACTION_BUTTON_COLOR,
+        });
+        expect('disabled' in (button ?? {})).toBe(false);
+      }
+    });
+
+    it('sets disabled: true and PRIMARY_ACTION_BUTTON_COLOR when processDisabled is true', () => {
+      const schema: AbstractDataSchema = {
+        fields: [{ key: 'title', type: 'string' }],
+      };
+
+      const section = buildDocumentInfoSection(schema, undefined, {
+        onProcessAction: 'processDocument',
+        processDisabled: true,
+      });
+
+      expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+      expect(section.widgets[1].buttonList?.buttons).toEqual([
+        {
+          text: 'Process Document',
+          onClick: { action: 'processDocument' },
+          color: PRIMARY_ACTION_BUTTON_COLOR,
+          disabled: true,
+        },
       ]);
     });
 

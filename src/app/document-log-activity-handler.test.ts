@@ -42,14 +42,19 @@ describe('DocumentLogActivityHandler', () => {
     contextVariables: {},
   };
 
-  it('canHandle returns true only for WRITE_LOG', () => {
+  it('canHandle returns true only for WRITE_LOG and READ_LOG', () => {
     const mockService: DocumentLogPort = {
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
       resolveLog: vi.fn(),
+      copyLog: vi.fn(),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
+      readLog: vi.fn(),
       writeLog: vi.fn(),
     };
     const handler = new DocumentLogActivityHandler(mockService);
 
     expect(handler.canHandle({ type: 'WRITE_LOG', payload: {} })).toBe(true);
+    expect(handler.canHandle({ type: 'READ_LOG', payload: {} })).toBe(true);
     expect(handler.canHandle({ type: 'MOVE_FILE', payload: {} })).toBe(false);
   });
 
@@ -61,7 +66,14 @@ describe('DocumentLogActivityHandler', () => {
       action: 'inserted',
     });
     const handler = new DocumentLogActivityHandler(
-      { resolveLog: vi.fn(), writeLog },
+      {
+        requiresDocumentLog: vi.fn().mockReturnValue(true),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn(),
+        queryUiContext: vi.fn().mockResolvedValue(undefined),
+        readLog: vi.fn(),
+        writeLog,
+      },
       { selectedLogId: 'sheet-log-1' }
     );
 
@@ -95,7 +107,14 @@ describe('DocumentLogActivityHandler', () => {
       rowNumber: 8,
       action: 'inserted',
     });
-    const handler = new DocumentLogActivityHandler({ resolveLog: vi.fn(), writeLog });
+    const handler = new DocumentLogActivityHandler({
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      resolveLog: vi.fn(),
+      copyLog: vi.fn(),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
+      readLog: vi.fn(),
+      writeLog,
+    });
 
     const contextWithSteps: ActivityExecutionContext = {
       ...baseContext,
@@ -130,7 +149,14 @@ describe('DocumentLogActivityHandler', () => {
 
   it('fails fast when fileSourceStepId references an unexecuted step', async () => {
     const writeLog = vi.fn();
-    const handler = new DocumentLogActivityHandler({ resolveLog: vi.fn(), writeLog });
+    const handler = new DocumentLogActivityHandler({
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      resolveLog: vi.fn(),
+      copyLog: vi.fn(),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
+      readLog: vi.fn(),
+      writeLog,
+    });
 
     const output = await handler.handle(
       { type: 'WRITE_LOG', payload: { fileSourceStepId: 'missingStep' } },
@@ -146,7 +172,14 @@ describe('DocumentLogActivityHandler', () => {
 
   it('validates WRITE_LOG payload and rejects unknown keys or invalid fileSourceStepId', async () => {
     const writeLog = vi.fn();
-    const handler = new DocumentLogActivityHandler({ resolveLog: vi.fn(), writeLog });
+    const handler = new DocumentLogActivityHandler({
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      resolveLog: vi.fn(),
+      copyLog: vi.fn(),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
+      readLog: vi.fn(),
+      writeLog,
+    });
 
     const badPayloads: Activity[] = [
       { type: 'WRITE_LOG', payload: { unexpected: true } },
@@ -164,7 +197,11 @@ describe('DocumentLogActivityHandler', () => {
 
   it('maps domain/Sheets/Drive errors from writeLog into { success: false, error }', async () => {
     const handler = new DocumentLogActivityHandler({
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
       resolveLog: vi.fn(),
+      copyLog: vi.fn(),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
+      readLog: vi.fn(),
       writeLog: vi.fn().mockRejectedValue(
         new DocumentLogMissingError('Harborview Hotel', '1 Admin')
       ),
@@ -174,5 +211,170 @@ describe('DocumentLogActivityHandler', () => {
     expect(output.success).toBe(false);
     expect(output.error).toContain('Harborview Hotel');
     expect(output.error).toContain('1 Admin');
+  });
+
+  describe('READ_LOG', () => {
+    it('executes full-log READ_LOG with default outputVariable "logEntries", forwards selectedLogId and space, and populates entries, warnings, and documentLogRead metadata', async () => {
+      const sampleEntries = [
+        {
+          rowNumber: 6,
+          valid: true,
+          fileUri: 'https://drive.google.com/file/d/prior-1/view',
+          document: {
+            id: '071200-001-0-260204-1',
+            idDocument: '071200-001-0',
+            idGroup: '071200-001',
+            type: 'submittal-arch',
+            data: { title: 'Waterproofing' },
+          },
+        },
+      ];
+      const sampleWarnings = [
+        { rowNumber: 7, field: 'date', message: 'Field "date" is required.' },
+      ];
+      const readLog = vi.fn().mockResolvedValue({
+        spreadsheetId: 'log-sheet-1',
+        sheetName: 'Submittal Arch',
+        entries: sampleEntries,
+        warnings: sampleWarnings,
+      });
+
+      const handler = new DocumentLogActivityHandler(
+        {
+          requiresDocumentLog: vi.fn().mockReturnValue(true),
+          resolveLog: vi.fn(),
+          copyLog: vi.fn(),
+          queryUiContext: vi.fn().mockResolvedValue(undefined),
+          readLog,
+          writeLog: vi.fn(),
+        },
+        { selectedLogId: 'log-sheet-1' }
+      );
+
+      const output = await handler.handle({ type: 'READ_LOG', payload: {} }, baseContext);
+
+      expect(readLog).toHaveBeenCalledWith({
+        documentTypeKey: 'submittal-arch',
+        space: baseContext.document.space,
+        selectedLogId: 'log-sheet-1',
+      });
+      expect(output).toEqual({
+        success: true,
+        contextVariables: {
+          logEntries: sampleEntries,
+          logEntriesWarnings: sampleWarnings,
+          documentLogRead: {
+            spreadsheetId: 'log-sheet-1',
+            sheetName: 'Submittal Arch',
+            entryCount: 1,
+            warningCount: 1,
+          },
+        },
+      });
+    });
+
+    it('supports filtered READ_LOG and custom outputVariable', async () => {
+      const readLog = vi.fn().mockResolvedValue({
+        spreadsheetId: 'log-sheet-2',
+        sheetName: 'Submittal Arch',
+        entries: [],
+        warnings: [],
+      });
+
+      const handler = new DocumentLogActivityHandler({
+        requiresDocumentLog: vi.fn().mockReturnValue(true),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn(),
+        queryUiContext: vi.fn().mockResolvedValue(undefined),
+        readLog,
+        writeLog: vi.fn(),
+      });
+
+      const output = await handler.handle(
+        {
+          type: 'READ_LOG',
+          payload: {
+            filterBy: 'idGroup',
+            values: ['071200-001'],
+            outputVariable: 'priorSubmittals',
+          },
+        },
+        baseContext
+      );
+
+      expect(readLog).toHaveBeenCalledWith({
+        documentTypeKey: 'submittal-arch',
+        space: baseContext.document.space,
+        filterBy: 'idGroup',
+        values: ['071200-001'],
+      });
+      expect(output).toEqual({
+        success: true,
+        contextVariables: {
+          priorSubmittals: [],
+          priorSubmittalsWarnings: [],
+          documentLogRead: {
+            spreadsheetId: 'log-sheet-2',
+            sheetName: 'Submittal Arch',
+            entryCount: 0,
+            warningCount: 0,
+          },
+        },
+      });
+    });
+
+    it('validates READ_LOG payload (additionalProperties, paired filterBy/values, non-blank outputVariable, reserved names, missing context)', async () => {
+      const readLog = vi.fn();
+      const handler = new DocumentLogActivityHandler({
+        requiresDocumentLog: vi.fn().mockReturnValue(true),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn(),
+        queryUiContext: vi.fn().mockResolvedValue(undefined),
+        readLog,
+        writeLog: vi.fn(),
+      });
+
+      const badActivities: Activity[] = [
+        { type: 'READ_LOG', payload: { extraKey: true } },
+        { type: 'READ_LOG', payload: { filterBy: 'invalidKey', values: ['x'] } },
+        { type: 'READ_LOG', payload: { filterBy: 'idGroup' } },
+        { type: 'READ_LOG', payload: { values: ['071200-001'] } },
+        { type: 'READ_LOG', payload: { outputVariable: '' } },
+        { type: 'READ_LOG', payload: { outputVariable: '   ' } },
+        { type: 'READ_LOG', payload: { outputVariable: 'documentLogRead' } },
+        { type: 'READ_LOG', payload: { outputVariable: 'documentLogWrite' } },
+        { type: 'READ_LOG', payload: { outputVariable: ' documentLogRead ' } },
+      ];
+
+      for (const activity of badActivities) {
+        const output = await handler.handle(activity, baseContext);
+        expect(output.success).toBe(false);
+        expect(output.error).toBeDefined();
+      }
+
+      const missingContextOutput = await handler.handle({ type: 'READ_LOG', payload: {} });
+      expect(missingContextOutput).toEqual({
+        success: false,
+        error: expect.stringContaining('ActivityExecutionContext'),
+      });
+      expect(readLog).not.toHaveBeenCalled();
+    });
+
+    it('maps errors thrown by readLog into { success: false, error }', async () => {
+      const handler = new DocumentLogActivityHandler({
+        requiresDocumentLog: vi.fn().mockReturnValue(true),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn(),
+        queryUiContext: vi.fn().mockResolvedValue(undefined),
+        readLog: vi.fn().mockRejectedValue(
+          new DocumentLogMissingError('Harborview Hotel', '1 Admin')
+        ),
+        writeLog: vi.fn(),
+      });
+
+      const output = await handler.handle({ type: 'READ_LOG', payload: {} }, baseContext);
+      expect(output.success).toBe(false);
+      expect(output.error).toContain('Harborview Hotel');
+    });
   });
 });

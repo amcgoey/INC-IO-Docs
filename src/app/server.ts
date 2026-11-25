@@ -209,6 +209,7 @@ export function createApp(options?: AppOptions): AppInstance {
     ...(options?.documentLogService !== undefined
       ? { documentLogService: options.documentLogService }
       : {}),
+    documentLogWiring,
     createAdditionalActivityHandlers: (context) => [
       documentLogWiring.createPerRequestActivityHandler(context),
     ],

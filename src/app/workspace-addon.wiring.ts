@@ -14,7 +14,10 @@ import {
 import {
   createDocumentSpaceServiceFactory,
 } from './document-space.wiring';
-import type { DocumentSpaceService } from '../features/document-space/domain';
+import type {
+  DocumentSpaceCollection,
+  DocumentSpaceService,
+} from '../features/document-space/domain';
 import {
   createUiProcessManagerWiring,
   type DocumentServiceFactory,
@@ -48,7 +51,10 @@ import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-
 import type { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
 import type { SheetsClient } from '../infrastructure/sheets';
 import type { DocumentLogPort } from '../features/document-log';
-import { createDocumentLogWiring } from './document-log.wiring';
+import {
+  createDocumentLogWiring,
+  type DocumentLogWiring,
+} from './document-log.wiring';
 
 export interface WorkspaceAddonWiringOptions {
   server: HttpServer;
@@ -83,11 +89,34 @@ export interface WorkspaceAddonWiringOptions {
   docsClient?: GoogleDocsClient | undefined;
   sheetsClient?: SheetsClient | undefined;
   documentLogService?: DocumentLogPort | undefined;
+  documentLogWiring?: DocumentLogWiring | undefined;
   createAdditionalActivityHandlers?:
     | ((
         context: WorkspaceExecutionContext
       ) => readonly ActivityHandler[] | Promise<readonly ActivityHandler[]>)
     | undefined;
+}
+
+function wrapWithPerRequestCollectionCache(
+  service: DocumentSpaceService
+): DocumentSpaceService {
+  const collectionCache = new Map<string, Promise<DocumentSpaceCollection>>();
+  const proxy = Object.create(service) as DocumentSpaceService;
+  proxy.getCollection = (typeId: string): Promise<DocumentSpaceCollection> => {
+    const existing = collectionCache.get(typeId);
+    if (existing) {
+      return existing;
+    }
+    const pending = Promise.resolve()
+      .then(() => service.getCollection(typeId))
+      .catch((error) => {
+        collectionCache.delete(typeId);
+        throw error;
+      });
+    collectionCache.set(typeId, pending);
+    return pending;
+  };
+  return proxy;
 }
 
 function createRetryableInitializer(init: () => Promise<void>): () => Promise<void> {
@@ -138,25 +167,63 @@ export function wireWorkspaceAddonRoutes(
       }
     }
 
+    const rawCreateDocumentSpaceService = createDocumentSpaceService;
+    if (rawCreateDocumentSpaceService) {
+      const memoizedSpaceServices = new WeakMap<
+        WorkspaceExecutionContext,
+        Promise<DocumentSpaceService>
+      >();
+      createDocumentSpaceService = (
+        context: WorkspaceExecutionContext
+      ): Promise<DocumentSpaceService> => {
+        const existing = memoizedSpaceServices.get(context);
+        if (existing) {
+          return existing;
+        }
+        const pending = Promise.resolve()
+          .then(() => rawCreateDocumentSpaceService(context))
+          .then((service) => wrapWithPerRequestCollectionCache(service))
+          .catch((error) => {
+            memoizedSpaceServices.delete(context);
+            throw error;
+          });
+        memoizedSpaceServices.set(context, pending);
+        return pending;
+      };
+    }
+
+    const resolvedDocumentLogWiring =
+      options.documentLogWiring ??
+      (options.manifestProvider || options.sheetsClient || options.documentLogService
+        ? createDocumentLogWiring({
+            manifestProvider,
+            configProvider: appConfigProvider,
+            driveClient: options.driveClient,
+            sheetsClient: options.sheetsClient,
+            templateEvaluator: options.templateEvaluator,
+            documentLogService: options.documentLogService,
+          })
+        : undefined);
+
+    const ensureLogRegistryInitialized = resolvedDocumentLogWiring
+      ? createRetryableInitializer(() => resolvedDocumentLogWiring.logSchemaRegistry.initialize())
+      : undefined;
+
     let createAdditionalActivityHandlers = options.createAdditionalActivityHandlers;
-    if (
-      !createAdditionalActivityHandlers &&
-      (options.manifestProvider || options.sheetsClient || options.documentLogService)
-    ) {
-      const documentLogWiring = createDocumentLogWiring({
-        manifestProvider,
-        configProvider: appConfigProvider,
-        driveClient: options.driveClient,
-        sheetsClient: options.sheetsClient,
-        templateEvaluator: options.templateEvaluator,
-        documentLogService: options.documentLogService,
-      });
-      const ensureLogRegistryInitialized = createRetryableInitializer(() =>
-        documentLogWiring.logSchemaRegistry.initialize()
-      );
+    if (createAdditionalActivityHandlers && ensureLogRegistryInitialized) {
+      const providedHandlers = createAdditionalActivityHandlers;
       createAdditionalActivityHandlers = async (context: WorkspaceExecutionContext) => {
         await ensureLogRegistryInitialized();
-        return [documentLogWiring.createPerRequestActivityHandler(context)];
+        return providedHandlers(context);
+      };
+    } else if (
+      !createAdditionalActivityHandlers &&
+      resolvedDocumentLogWiring &&
+      ensureLogRegistryInitialized
+    ) {
+      createAdditionalActivityHandlers = async (context: WorkspaceExecutionContext) => {
+        await ensureLogRegistryInitialized();
+        return [resolvedDocumentLogWiring.createPerRequestActivityHandler(context)];
       };
     }
 
@@ -207,13 +274,37 @@ export function wireWorkspaceAddonRoutes(
       return adapter;
     };
 
+    const createDocumentLogPort =
+      resolvedDocumentLogWiring && ensureLogRegistryInitialized
+        ? (context: WorkspaceExecutionContext) =>
+            resolvedDocumentLogWiring.createUiProcessDocumentLogPort(context, {
+              ensureInitialized: ensureLogRegistryInitialized,
+            })
+        : undefined;
+
+    const getUiContextQueryAdapter =
+      resolvedDocumentLogWiring && ensureLogRegistryInitialized
+        ? (context: WorkspaceExecutionContext) =>
+            resolvedDocumentLogWiring.createUiContextQueryPort(context, {
+              getDocumentSpaceService: () =>
+                createDocumentSpaceService
+                  ? createDocumentSpaceService(context)
+                  : documentSpaceService!,
+              ensureInitialized: ensureLogRegistryInitialized,
+            })
+        : undefined;
+
     let createSchemaDrivenUiService = options.createSchemaDrivenUiService;
     if (!createSchemaDrivenUiService) {
       createSchemaDrivenUiService = (context: WorkspaceExecutionContext) => {
         const optionsFetcher = getDynamicOptionsAdapter(context);
+        const uiContextQuery = getUiContextQueryAdapter
+          ? getUiContextQueryAdapter(context)
+          : undefined;
         return createSchemaDrivenUiWiring({
           manifestProvider,
           optionsFetcher,
+          ...(uiContextQuery !== undefined ? { uiContextQuery } : {}),
         }).schemaDrivenUiService;
       };
     }
@@ -270,6 +361,7 @@ export function wireWorkspaceAddonRoutes(
       ...(options.compiledSchemaRegistry !== undefined ? { compiledSchemaRegistry: options.compiledSchemaRegistry } : {}),
       ...(options.documentSchemaRegistry !== undefined ? { documentSchemaRegistry: options.documentSchemaRegistry } : {}),
       ...(createSchemaDrivenUiService !== undefined ? { createSchemaDrivenUiService } : {}),
+      ...(createDocumentLogPort !== undefined ? { createDocumentLogPort } : {}),
       ...(options.driveClient !== undefined ? { driveClient: options.driveClient } : {}),
       gmailClient,
       ...(options.gmailPort !== undefined ? { gmailPort: options.gmailPort } : {}),

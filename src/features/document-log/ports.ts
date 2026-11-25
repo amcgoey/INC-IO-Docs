@@ -92,6 +92,16 @@ export const DocumentLogColumnBindingSchema = Type.Union([
 ]);
 export type DocumentLogColumnBinding = Static<typeof DocumentLogColumnBindingSchema>;
 
+export const DocumentLogHistoryDisplaySchema = Type.Object(
+  {
+    topLabel: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+    text: Type.String({ minLength: 1 }),
+    bottomLabel: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+export type DocumentLogHistoryDisplay = Static<typeof DocumentLogHistoryDisplaySchema>;
+
 export const DocumentLogSchemaSchema = Type.Object(
   {
     provider: Type.Literal('google_sheets'),
@@ -100,6 +110,9 @@ export const DocumentLogSchemaSchema = Type.Object(
     columns: Type.Record(Type.String({ minLength: 1 }), DocumentLogColumnBindingSchema, {
       minProperties: 1,
     }),
+    historyDisplay: Type.Optional(
+      Type.Union([DocumentLogHistoryDisplaySchema, Type.Undefined()])
+    ),
   },
   { additionalProperties: false }
 );
@@ -128,6 +141,7 @@ export const LogResolutionCandidateSchema = Type.Object({
   id: Type.String({ minLength: 1 }),
   name: Type.String({ minLength: 1 }),
   parents: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  parentFolderName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   webViewLink: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   modifiedTime: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
 });
@@ -186,6 +200,48 @@ export const WriteDocumentLogResultSchema = Type.Object({
 });
 export type WriteDocumentLogResult = Static<typeof WriteDocumentLogResultSchema>;
 
+export const LogFilterBySchema = Type.Union([
+  Type.Literal('idGroup'),
+  Type.Literal('idDocument'),
+  Type.Literal('id'),
+]);
+export type LogFilterBy = Static<typeof LogFilterBySchema>;
+
+export const ReadDocumentLogRequestSchema = Type.Object({
+  documentTypeKey: Type.String({ minLength: 1 }),
+  space: Type.Optional(Type.Union([DocumentLogSpaceSchema, Type.Undefined()])),
+  selectedLogId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  filterBy: Type.Optional(Type.Union([LogFilterBySchema, Type.Undefined()])),
+  values: Type.Optional(
+    Type.Union([Type.String(), Type.Array(Type.String()), Type.Undefined()])
+  ),
+});
+export type ReadDocumentLogRequest = Static<typeof ReadDocumentLogRequestSchema>;
+
+export const DocumentLogEntrySchema = Type.Object({
+  document: DocumentLogDocumentSchema,
+  valid: Type.Boolean(),
+  fileUri: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  rowNumber: Type.Number(),
+  validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+});
+export type DocumentLogEntry = Static<typeof DocumentLogEntrySchema>;
+
+export const RowHydrationWarningSchema = Type.Object({
+  rowNumber: Type.Number(),
+  field: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  message: Type.String(),
+});
+export type RowHydrationWarning = Static<typeof RowHydrationWarningSchema>;
+
+export const ReadDocumentLogResultSchema = Type.Object({
+  spreadsheetId: Type.String(),
+  sheetName: Type.String({ minLength: 1 }),
+  entries: Type.Array(DocumentLogEntrySchema),
+  warnings: Type.Array(RowHydrationWarningSchema),
+});
+export type ReadDocumentLogResult = Static<typeof ReadDocumentLogResultSchema>;
+
 export const LogTargetDocumentFieldOptionsSchema = Type.Object(
   {
     source: Type.String({ minLength: 1 }),
@@ -213,6 +269,8 @@ export const LogTargetDocumentFieldSchema = Type.Object(
     name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
     type: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
     required: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+    minLength: Type.Optional(Type.Union([Type.Number(), Type.Undefined()])),
+    pattern: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
     options: Type.Optional(Type.Union([LogTargetDocumentFieldOptionsSchema, Type.Undefined()])),
     linkedField: Type.Optional(Type.Union([LogTargetLinkedFieldSchema, Type.Undefined()])),
   },
@@ -364,10 +422,23 @@ export interface LogDiscoveryFolderMetadata {
   name: string;
 }
 
+export interface LogDiscoveryCopyFileOptions {
+  targetFolderId: string;
+  newName: string;
+}
+
 export interface LogDiscoveryPort {
   searchSpreadsheets(query: LogDiscoveryQuery): Promise<LogResolutionCandidate[]>;
   getFile?(fileId: string): Promise<LogDiscoveryFileMetadata>;
   resolveFolderPath?(rootFolderId: string, pathSegments: string[]): Promise<LogDiscoveryFolderMetadata>;
+  ensureFolderPath?(
+    rootFolderId: string,
+    pathSegments: string[]
+  ): Promise<LogDiscoveryFolderMetadata>;
+  copyFile?(
+    templateFileId: string,
+    options: LogDiscoveryCopyFileOptions
+  ): Promise<LogResolutionCandidate>;
 }
 
 export interface LogStorageTarget {
@@ -399,13 +470,139 @@ export interface InsertLogRowResult {
   action: 'inserted' | 'updated';
 }
 
+export interface ReadLogRowsRequest {
+  target: LogStorageTarget;
+  linkColumns?: string[] | undefined;
+}
+
+export interface ReadLogRow {
+  rowNumber: number;
+  values: LogRowValues;
+  links?: Record<string, string | null> | undefined;
+}
+
+export interface ReadLogRowsResult {
+  headers: string[];
+  formulaColumns: string[];
+  rows: ReadLogRow[];
+}
+
 export interface LogStoragePort {
   insertRow(request: InsertLogRowRequest): Promise<InsertLogRowResult>;
+  readRows(request: ReadLogRowsRequest): Promise<ReadLogRowsResult>;
 }
+
+// --- Pre-Submit UI Context DTOs ---
+
+export const QueryDocumentLogUiContextRequestSchema = Type.Object({
+  documentTypeKey: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  space: Type.Optional(Type.Union([DocumentLogSpaceSchema, Type.Undefined()])),
+  selectedLogId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  formData: Type.Optional(
+    Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])
+  ),
+});
+export type QueryDocumentLogUiContextRequest = Static<typeof QueryDocumentLogUiContextRequestSchema>;
+
+export const DocumentLogUiStatusSchema = Type.Union([
+  Type.Literal('missing_space'),
+  Type.Literal('missing'),
+  Type.Literal('resolved'),
+  Type.Literal('ambiguous'),
+  Type.Literal('discovery_error'),
+]);
+export type DocumentLogUiStatus = Static<typeof DocumentLogUiStatusSchema>;
+
+export const DocumentLogUiCandidateSchema = Type.Object(
+  {
+    name: Type.String({ minLength: 1 }),
+    url: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false }
+);
+export type DocumentLogUiCandidate = Static<typeof DocumentLogUiCandidateSchema>;
+
+export const DocumentLogUiCandidateOptionSchema = Type.Object(
+  {
+    text: Type.String(),
+    value: Type.String(),
+    selected: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+export type DocumentLogUiCandidateOption = Static<typeof DocumentLogUiCandidateOptionSchema>;
+
+export const DocumentLogUiReadStatusSchema = Type.Union([
+  Type.Literal('ready'),
+  Type.Literal('idle_incomplete_id'),
+  Type.Literal('read_error'),
+  Type.Literal('partial_hydration'),
+]);
+export type DocumentLogUiReadStatus = Static<typeof DocumentLogUiReadStatusSchema>;
+
+export const DocumentLogUiHistoryEntrySchema = Type.Object(
+  {
+    topLabel: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    text: Type.String(),
+    bottomLabel: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    fileUri: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    valid: Type.Boolean(),
+  },
+  { additionalProperties: false }
+);
+export type DocumentLogUiHistoryEntry = Static<typeof DocumentLogUiHistoryEntrySchema>;
+
+export const DocumentLogUiContextResultSchema = Type.Object(
+  {
+    status: DocumentLogUiStatusSchema,
+    spaceName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    targetFolderPath: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    targetFileName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    discoveryErrorMessage: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    candidateOptions: Type.Optional(
+      Type.Union([Type.Array(DocumentLogUiCandidateOptionSchema), Type.Undefined()])
+    ),
+    activeCandidate: Type.Optional(
+      Type.Union([DocumentLogUiCandidateSchema, Type.Undefined()])
+    ),
+    readStatus: Type.Optional(
+      Type.Union([DocumentLogUiReadStatusSchema, Type.Undefined()])
+    ),
+    idGroup: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    missingIdFields: Type.Optional(
+      Type.Union([Type.Array(Type.String()), Type.Undefined()])
+    ),
+    readErrorMessage: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    warningMessages: Type.Optional(
+      Type.Union([Type.Array(Type.String()), Type.Undefined()])
+    ),
+    entries: Type.Optional(
+      Type.Union([Type.Array(DocumentLogUiHistoryEntrySchema), Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
+export type DocumentLogUiContextResult = Static<typeof DocumentLogUiContextResultSchema>;
+
+export const CopyDocumentLogResultSchema = Type.Object(
+  {
+    created: Type.Boolean(),
+    candidate: LogResolutionCandidateSchema,
+    folderPath: Type.String(),
+  },
+  { additionalProperties: false }
+);
+export type CopyDocumentLogResult = Static<typeof CopyDocumentLogResultSchema>;
 
 // --- Driving Port ---
 
 export interface DocumentLogPort {
+  requiresDocumentLog(documentTypeKey: string): boolean;
   resolveLog(space: DocumentLogSpace): Promise<LogResolutionResult>;
+  copyLog(space: DocumentLogSpace): Promise<CopyDocumentLogResult>;
+  queryUiContext(
+    request: QueryDocumentLogUiContextRequest
+  ): Promise<DocumentLogUiContextResult | undefined>;
+  readLog(request: ReadDocumentLogRequest): Promise<ReadDocumentLogResult>;
   writeLog(request: WriteDocumentLogRequest): Promise<WriteDocumentLogResult>;
 }

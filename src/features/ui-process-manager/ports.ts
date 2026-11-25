@@ -24,12 +24,15 @@ import {
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
   SELECT_EMAIL_MESSAGE_KEY,
+  SELECT_DOCUMENT_LOG_KEY,
   EPHEMERAL_UI_SELECTION_KEYS,
   isSelectionKey,
   parseGoogleDriveUrl,
   extractSelectFilesSet,
   resolveAttachmentId,
   formatThreadEmailOptionLabel,
+  IN_CARD_ACTIONS,
+  isInCardAction,
   isResetOrInitialLoad,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
@@ -66,12 +69,15 @@ export {
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
   SELECT_EMAIL_MESSAGE_KEY,
+  SELECT_DOCUMENT_LOG_KEY,
   EPHEMERAL_UI_SELECTION_KEYS,
   isSelectionKey,
   parseGoogleDriveUrl,
   extractSelectFilesSet,
   resolveAttachmentId,
   formatThreadEmailOptionLabel,
+  IN_CARD_ACTIONS,
+  isInCardAction,
   isResetOrInitialLoad,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
@@ -97,6 +103,7 @@ export const UiProcessRenderResultSchema = Type.Object({
   validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   statusMessages: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  notification: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
 });
 export type UiProcessRenderResult = Static<typeof UiProcessRenderResultSchema>;
 
@@ -165,6 +172,42 @@ export interface UiProcessDocumentExecutionResult {
   error?: string | undefined;
 }
 
+export const UiProcessLogCandidateSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  name: Type.String({ minLength: 1 }),
+});
+export type UiProcessLogCandidate = Static<typeof UiProcessLogCandidateSchema>;
+
+export type UiProcessLogResolutionResult =
+  | {
+      status: 'missing';
+      expectedFolderPath: string;
+    }
+  | {
+      status: 'resolved';
+      candidate: UiProcessLogCandidate;
+    }
+  | {
+      status: 'ambiguous';
+      candidates: UiProcessLogCandidate[];
+    };
+
+export const UiProcessCopyDocumentLogResultSchema = Type.Object(
+  {
+    created: Type.Boolean(),
+    candidate: UiProcessLogCandidateSchema,
+    folderPath: Type.String(),
+  },
+  { additionalProperties: false }
+);
+export type UiProcessCopyDocumentLogResult = Static<typeof UiProcessCopyDocumentLogResultSchema>;
+
+export interface UiProcessDocumentLogPort {
+  requiresDocumentLog(documentTypeKey: string): Promise<boolean> | boolean;
+  resolveLog(space: UiProcessDocumentSpaceDto): Promise<UiProcessLogResolutionResult>;
+  copyLog(space: UiProcessDocumentSpaceDto): Promise<UiProcessCopyDocumentLogResult>;
+}
+
 export interface UiProcessDocumentRunnerPort {
   processDocument(
     payload: {
@@ -173,6 +216,7 @@ export interface UiProcessDocumentRunnerPort {
       space?: UiProcessDocumentSpaceDto | undefined;
       sourceFiles?: UiProcessSourceFileDto[] | undefined;
       targetMessageId?: string | undefined;
+      selectedLogId?: string | undefined;
     },
     eventName: string
   ): Promise<UiProcessDocumentExecutionResult>;

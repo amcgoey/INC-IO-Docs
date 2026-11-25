@@ -14,10 +14,20 @@ export type GoogleWorkspaceHeader = Static<typeof GoogleWorkspaceHeaderSchema>;
 export const GoogleWorkspaceHeaderOptionsSchema = GoogleWorkspaceHeaderSchema;
 export type GoogleWorkspaceHeaderOptions = GoogleWorkspaceHeader;
 
-export const GoogleWorkspaceTextParagraphWidgetSchema = Type.Object({
-  textParagraph: Type.Object({
+export const GoogleWorkspaceTextParagraphSchema = Type.Object(
+  {
     text: Type.String(),
-  }),
+    maxLines: Type.Optional(
+      Type.Union([Type.Integer({ minimum: 1 }), Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export type GoogleWorkspaceTextParagraph = Static<typeof GoogleWorkspaceTextParagraphSchema>;
+
+export const GoogleWorkspaceTextParagraphWidgetSchema = Type.Object({
+  textParagraph: GoogleWorkspaceTextParagraphSchema,
 });
 
 export type GoogleWorkspaceTextParagraphWidget = Static<typeof GoogleWorkspaceTextParagraphWidgetSchema>;
@@ -85,31 +95,106 @@ export const GoogleWorkspaceTextInputSchema = Type.Object({
 
 export type GoogleWorkspaceTextInput = Static<typeof GoogleWorkspaceTextInputSchema>;
 
-export const GoogleWorkspaceWidgetSchema = Type.Object({
-  textParagraph: Type.Optional(
-    Type.Union([
-      Type.Object({
-        text: Type.String(),
-      }),
-      Type.Undefined(),
-    ])
+export const GoogleWorkspaceColorSchema = Type.Object(
+  {
+    red: Type.Number({ minimum: 0, maximum: 1 }),
+    green: Type.Number({ minimum: 0, maximum: 1 }),
+    blue: Type.Number({ minimum: 0, maximum: 1 }),
+    alpha: Type.Optional(
+      Type.Union([Type.Number({ minimum: 0, maximum: 1 }), Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export type GoogleWorkspaceColor = Static<typeof GoogleWorkspaceColorSchema>;
+
+export const GoogleWorkspaceOpenLinkSchema = Type.Object(
+  {
+    url: Type.String({ minLength: 1 }),
+    openAs: Type.Optional(
+      Type.Union([Type.Literal('FULL_SIZE'), Type.Literal('OVERLAY'), Type.Undefined()])
+    ),
+    onClose: Type.Optional(
+      Type.Union([Type.Literal('NOTHING'), Type.Literal('RELOAD'), Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export type GoogleWorkspaceOpenLink = Static<typeof GoogleWorkspaceOpenLinkSchema>;
+
+export const GoogleWorkspaceOnClickSchema = Type.Union([
+  Type.Object(
+    {
+      action: GoogleWorkspaceActionSchema,
+    },
+    { additionalProperties: false }
   ),
-  buttonList: Type.Optional(
-    Type.Union([
-      Type.Object({
-        buttons: Type.Array(
-          Type.Object({
-            text: Type.String(),
-            onClick: Type.Optional(Type.Union([Type.Unknown(), Type.Undefined()])),
-          })
+  Type.Object(
+    {
+      openLink: GoogleWorkspaceOpenLinkSchema,
+    },
+    { additionalProperties: false }
+  ),
+]);
+
+export type GoogleWorkspaceOnClick = Static<typeof GoogleWorkspaceOnClickSchema>;
+
+export const GoogleWorkspaceButtonSchema = Type.Object(
+  {
+    text: Type.String(),
+    onClick: Type.Optional(Type.Union([GoogleWorkspaceOnClickSchema, Type.Undefined()])),
+    color: Type.Optional(Type.Union([GoogleWorkspaceColorSchema, Type.Undefined()])),
+    disabled: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+
+export type GoogleWorkspaceButton = Static<typeof GoogleWorkspaceButtonSchema>;
+
+export const GoogleWorkspaceDecoratedTextSchema = Type.Object(
+  {
+    topLabel: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    text: Type.String(),
+    wrapText: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+    bottomLabel: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    button: Type.Optional(Type.Union([GoogleWorkspaceButtonSchema, Type.Undefined()])),
+    onClick: Type.Optional(Type.Union([GoogleWorkspaceOnClickSchema, Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+
+export type GoogleWorkspaceDecoratedText = Static<typeof GoogleWorkspaceDecoratedTextSchema>;
+
+export const GoogleWorkspaceWidgetSchema = Type.Object(
+  {
+    textParagraph: Type.Optional(
+      Type.Union([GoogleWorkspaceTextParagraphSchema, Type.Undefined()])
+    ),
+    buttonList: Type.Optional(
+      Type.Union([
+        Type.Object(
+          {
+            buttons: Type.Array(GoogleWorkspaceButtonSchema),
+          },
+          { additionalProperties: false }
         ),
-      }),
-      Type.Undefined(),
-    ])
-  ),
-  selectionInput: Type.Optional(GoogleWorkspaceSelectionInputSchema),
-  textInput: Type.Optional(GoogleWorkspaceTextInputSchema),
-});
+        Type.Undefined(),
+      ])
+    ),
+    decoratedText: Type.Optional(
+      Type.Union([GoogleWorkspaceDecoratedTextSchema, Type.Undefined()])
+    ),
+    selectionInput: Type.Optional(
+      Type.Union([GoogleWorkspaceSelectionInputSchema, Type.Undefined()])
+    ),
+    textInput: Type.Optional(
+      Type.Union([GoogleWorkspaceTextInputSchema, Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
 
 export type GoogleWorkspaceWidget = Static<typeof GoogleWorkspaceWidgetSchema>;
 
@@ -233,7 +318,10 @@ export function buildNavigationAction(card: GoogleWorkspaceCard): GoogleWorkspac
   };
 }
 
-export function buildUpdateCardNavigationAction(card: GoogleWorkspaceCard): GoogleWorkspaceActionResponse {
+export function buildUpdateCardNavigationAction(
+  card: GoogleWorkspaceCard,
+  notification?: string | undefined
+): GoogleWorkspaceActionResponse {
   return {
     action: {
       navigations: [
@@ -241,6 +329,9 @@ export function buildUpdateCardNavigationAction(card: GoogleWorkspaceCard): Goog
           updateCard: card,
         },
       ],
+      ...(notification && notification.trim().length > 0
+        ? { notification: { text: notification } }
+        : {}),
     },
   };
 }

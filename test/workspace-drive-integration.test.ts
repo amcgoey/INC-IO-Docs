@@ -92,10 +92,12 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     });
 
     await app.initialize();
+    nock.disableNetConnect();
   });
 
   afterEach(() => {
     nock.cleanAll();
+    nock.enableNetConnect();
     vi.restoreAllMocks();
   });
 
@@ -153,6 +155,86 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       .get('/drive/v3/files')
       .query((q) => typeof q.q === 'string' && q.q.includes(`'${commFolderId}' in parents`) && q.q.includes(`name = '${contactName}'`))
       .reply(200, { files: [{ id: contactFolderId, name: contactName }] });
+  }
+
+  function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optional?: boolean }) {
+    const applyOpt = <T extends nock.Interceptor>(interceptor: T): T =>
+      options?.optional ? (interceptor.optionally() as T) : interceptor;
+
+    applyOpt(
+      nock('https://sheets.googleapis.com')
+        .get(`/v4/spreadsheets/${spreadsheetId}`)
+        .query(true)
+    ).reply(200, {
+      spreadsheetId,
+      sheets: [
+        { properties: { sheetId: 101, title: 'Submittal Arch' } },
+        { properties: { sheetId: 102, title: 'Submittal FF&E' } },
+      ],
+      namedRanges: [
+        {
+          namedRangeId: 'nr-arch',
+          name: 'Log_Submittal_Arch',
+          range: { sheetId: 101, startRowIndex: 2, endRowIndex: 21, startColumnIndex: 0, endColumnIndex: 11 },
+        },
+        {
+          namedRangeId: 'nr-ffe',
+          name: 'Log_Submittal_FFE',
+          range: { sheetId: 102, startRowIndex: 2, endRowIndex: 21, startColumnIndex: 0, endColumnIndex: 12 },
+        },
+      ],
+    });
+
+    applyOpt(
+      nock('https://sheets.googleapis.com')
+        .get(new RegExp(`/v4/spreadsheets/${spreadsheetId}/values/.*`))
+        .query((q) => q.valueRenderOption === 'FORMATTED_VALUE')
+    ).reply(200, (uri) => {
+      const isFfe = decodeURIComponent(uri).includes('Submittal FF&E');
+      const headers = isFfe
+        ? ['Status', 'Spec Tag', 'Related Tag', 'Revision', 'Spec Title', 'Vendor', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link']
+        : ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link'];
+      return { values: [headers, ['Formula Row'], ['<--->'], [], ['<--->']] };
+    });
+
+    applyOpt(
+      nock('https://sheets.googleapis.com')
+        .get(`/v4/spreadsheets/${spreadsheetId}/values:batchGet`)
+        .query((q) => q.valueRenderOption === 'FORMULA')
+    ).reply(200, {
+      valueRanges: [{ values: [['Formula Row']] }],
+    });
+  }
+
+  function mockDocumentLogSearch(options: {
+    sharedDriveId?: string;
+    fileId?: string;
+    name?: string;
+    webViewLink?: string;
+  } = {}) {
+    const sharedDriveId = options.sharedDriveId ?? 'projects-shared-drive-001';
+    const fileId = options.fileId ?? `log-${sharedDriveId}`;
+    const name = options.name ?? 'Projects Shared Drive 001 Document Log';
+    mockEmptyDocumentLogSheetsRead(fileId, { optional: true });
+    return nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query(
+        (q) =>
+          typeof q.q === 'string' &&
+          q.q.includes("name contains 'Document Log'") &&
+          q.driveId === sharedDriveId
+      )
+      .reply(200, {
+        files: [
+          {
+            id: fileId,
+            name,
+            mimeType: 'application/vnd.google-apps.spreadsheet',
+            webViewLink:
+              options.webViewLink ?? `https://docs.google.com/spreadsheets/d/${fileId}/edit`,
+          },
+        ],
+      });
   }
 
   describe('Driving Adapter: POST /workspace/drive-items-selected', () => {
@@ -313,6 +395,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     });
 
     it('infers submittal-arch from CSI filename in unmatched folder on drive-items-selected (Ticket #291)', async () => {
+      mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root', name: 'Active Projects Document Log' });
       const flatPdfBytes = await (await PDFDocument.create()).save();
       vi.spyOn(GoogleDriveClient.prototype, 'downloadFileMedia').mockResolvedValue(flatPdfBytes);
       vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => {
@@ -361,6 +444,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     });
 
     it('resolves shortcut target hierarchy and drive on drive-items-selected (Ticket #291)', async () => {
+      mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root', name: 'Active Projects Document Log' });
       const flatPdfBytes = await (await PDFDocument.create()).save();
       vi.spyOn(GoogleDriveClient.prototype, 'downloadFileMedia').mockResolvedValue(flatPdfBytes);
       vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => {
@@ -424,6 +508,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     it('applies multi-item selection precedence on drive-items-selected (Ticket #291)', async () => {
       nock.disableNetConnect();
       try {
+        mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root', name: 'Active Projects Document Log' });
         const flatPdfBytes = await (await PDFDocument.create()).save();
         vi.spyOn(GoogleDriveClient.prototype, 'downloadFileMedia').mockResolvedValue(flatPdfBytes);
         vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => {
@@ -497,6 +582,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     });
 
     it('retains partial hierarchy and falls back to filename without warning on parent folder 403 (Ticket #291)', async () => {
+      mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root', name: 'Active Projects Document Log' });
       const flatPdfBytes = await (await PDFDocument.create()).save();
       vi.spyOn(GoogleDriveClient.prototype, 'downloadFileMedia').mockResolvedValue(flatPdfBytes);
       vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => {
@@ -2911,6 +2997,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       vi.setSystemTime(new Date('2026-11-20T15:00:00Z'));
       const flatPdfBuffer = Buffer.from(await (await PDFDocument.create()).save());
 
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -3059,6 +3146,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       ];
 
       for (const tc of submittalCases) {
+        mockDocumentLogSearch();
         nock('https://www.googleapis.com')
           .get('/drive/v3/drives')
           .query(true)
@@ -3157,6 +3245,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       vi.setSystemTime(new Date('2026-11-20T15:00:00Z'));
       const flatPdfBuffer = Buffer.from(await (await PDFDocument.create()).save());
 
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -3290,6 +3379,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       ];
 
       for (const tc of ffeCases) {
+        mockDocumentLogSearch();
         nock('https://www.googleapis.com')
           .get('/drive/v3/drives')
           .query(true)
@@ -3421,6 +3511,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       for (const tc of cases) {
         const pdfBuffer = await buildStampedArchPdfBuffer(tc.label);
 
+        mockDocumentLogSearch();
         nock('https://www.googleapis.com')
           .get('/drive/v3/drives')
           .query(true)
@@ -3474,6 +3565,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       const flatPdfBuffer = Buffer.from(await (await PDFDocument.create()).save());
       const stampedPdfBuffer = await buildStampedArchPdfBuffer('Revise and Resubmit');
 
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -3609,6 +3701,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
           selectedAction: tc.rawDate === 'DATE' ? undefined : 'No Exceptions Taken',
         });
 
+        mockDocumentLogSearch();
         nock('https://www.googleapis.com')
           .get('/drive/v3/drives')
           .query(true)
@@ -3662,6 +3755,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         selectedAction: 'Revise and Resubmit',
       });
 
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -3808,6 +3902,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         includeFreeTextRemark: true,
       });
 
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -3875,6 +3970,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         selectedAction: 'No Exceptions Taken',
         dateText: '2026-11-21',
       });
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -3950,6 +4046,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       vi.spyOn(GoogleDriveClient.prototype, 'downloadFileMedia').mockResolvedValue(pdfBuffer);
 
       // 1. onDocumentTypeChange to submittal-arch with user-edited section and number
+      mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root', name: 'Active Projects Document Log' });
       const typeSwitchRes = await app.server.inject({
         method: 'POST',
         url: '/workspace/action',
@@ -4009,6 +4106,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       // 2. onSpaceTypeChange targeting projects (with submittal-arch resolved as space default) preserves user edits and re-evaluates reactive UiView
       allowedSpy.mockRestore();
       mockAllowedDocumentTypes(manifestProvider, 'projects', ['submittal-arch']);
+      mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root', name: 'Active Projects Document Log' });
       const spaceSwitchRes = await app.server.inject({
         method: 'POST',
         url: '/workspace/action',
@@ -4084,6 +4182,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     }
 
     it('renders PDF_FORM_ENCRYPTED_ERROR_MESSAGE and DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE in UiView while still populating Drive filename/date fields', async () => {
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -4141,6 +4240,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(nock.isDone()).toBe(true);
 
       // Corrupted PDF -> real PdfProcessor throws PdfCorruptedError on malformed bytes
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -4198,6 +4298,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       const stampedPdfBuffer = await buildStampedArchPdfBuffer('Revise and Resubmit');
 
       // 1. [Forbidden.pdf, Stamped_Cover.pdf] on onDocumentTypeChange -> form populates action RR + generalized notice
+      mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root', name: 'Active Projects Document Log' });
       nock('https://www.googleapis.com')
         .get('/drive/v3/files/forbidden-319')
         .query((q) => q.alt !== 'media')
@@ -4267,6 +4368,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(nock.isDone()).toBe(true);
 
       // 2. Drive 503 on downloadFileMedia during initial load (Pass 1 succeeds -> Pass 2 generalized notice appears once)
+      mockDocumentLogSearch();
       const getFileSpy = vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
         id: 'media-503-319',
         name: '071200-004_Outage_Cover.pdf',
@@ -4309,6 +4411,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     });
 
     it('renders formatAmbiguousFormFieldMessage in UiView for ambiguous form widgets while still populating Drive metadata fields', async () => {
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -4437,6 +4540,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         includeFreeTextRemark: true,
       });
 
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -4563,6 +4667,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
           dateText: '2026-11-21',
         });
 
+        mockDocumentLogSearch();
         nock('https://www.googleapis.com')
           .get('/drive/v3/drives')
           .query(true)
@@ -4754,6 +4859,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       ];
 
       for (const tc of cases) {
+        mockDocumentLogSearch();
         nock('https://www.googleapis.com')
           .get('/drive/v3/drives')
           .query(true)
@@ -4832,6 +4938,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
     it('pre-populates specTag, derived LinkedField specTitle, and revision on Submittal FF&E Google Doc cover sheet and handles 0-widget prose doc silently', async () => {
       // 1. Submittal FF&E cover sheet with CG104-A
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -4902,6 +5009,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(getFfeSel('action')).toBe('REC');
 
       // 2. Plain 0-widget prose Google Doc silently falls through to drive rules with zero error banners
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -4959,6 +5067,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
     it('resolves Drive shortcut to Google Doc and skips 0-widget candidates in multi-item selection', async () => {
       // 1. Shortcut pointing to a Google Doc cover sheet
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -5041,6 +5150,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       // 2. Multi-item [Flat_Drawing.pdf, Stamped_Cover_Doc] skips 0-widget PDF and binds to Stamped_Cover_Doc
       const flatPdfBytes = Buffer.from(await (await PDFDocument.create()).save());
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -5121,6 +5231,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
     it('degrades non-blockingly on Docs 403/503 transport failure and malformed 200 payload', async () => {
       // 1. Docs 403 -> single deduplicated DRIVE_METADATA_EXTRACT_ERROR_MESSAGE + Drive fallback still populates
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -5165,6 +5276,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       ).toBe('071200');
 
       // 2. Malformed 200 payload -> DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE + Drive fallback still populates
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -5218,6 +5330,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     });
 
     it('renders DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE on malformed 200 Docs payload while Drive metadata still populates', async () => {
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -5298,6 +5411,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
           body: { error: { code: 503, message: 'Service Unavailable' } },
         },
       ]) {
+        mockDocumentLogSearch();
         nock('https://www.googleapis.com')
           .get('/drive/v3/drives')
           .query(true)
@@ -5533,7 +5647,11 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       folderName: '6 Construction' | '3 FFE';
       tabs: Array<ReturnType<typeof buildSubmittalTab>>;
       mockDocs?: boolean;
+      mockLog?: boolean;
     }) {
+      if (options.mockLog !== false) {
+        mockDocumentLogSearch();
+      }
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -5818,6 +5936,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         folderName: '6 Construction',
         tabs: ambigTabs,
         mockDocs: false,
+        mockLog: false,
       });
       const toCommRes = await app.server.inject({
         method: 'POST',
@@ -6164,6 +6283,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       modifiedTime?: string;
       docPayload: Record<string, unknown>;
     }) {
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -6359,6 +6479,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
     it('skips 0-widget candidates in [Plain_Narrative_Doc, Stamped_Cover_Doc] and [Flat_Drawing.pdf, Stamped_Cover_Doc] with per-mimeType:id memoization', async () => {
       // 1. [Plain_Narrative_Doc, Stamped_Cover_Doc]
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -6456,6 +6577,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       // 2. [Flat_Drawing.pdf, Stamped_Cover_Doc]
       const flatPdfBytes = Buffer.from(await (await PDFDocument.create()).save());
+      mockDocumentLogSearch();
       nock('https://www.googleapis.com')
         .get('/drive/v3/drives')
         .query(true)
@@ -6633,6 +6755,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       ]);
 
       // Step 2 mocks: Follow-up onDocumentTypeChange to submittal-arch runs Pass 2 (form ?alt=media + drive hierarchy/metadata)
+      mockDocumentLogSearch();
       mockDriveHierarchy();
 
       nock('https://www.googleapis.com')

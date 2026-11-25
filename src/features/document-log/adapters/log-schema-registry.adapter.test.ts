@@ -217,24 +217,144 @@ describe('LogSchemaRegistryAdapter', () => {
     }
   });
 
-  it('rejects historyDisplay and extra properties on documentLogSchema (additionalProperties: false)', async () => {
-    const docWithHistory = createValidArchDocDef();
-    (docWithHistory.documentLogSchema as Record<string, unknown>).historyDisplay = {
-      topLabel: '{{section}}',
-      text: '{{title}}',
-      bottomLabel: '{{date}}',
+  it('rejects unknown extra properties on documentLogSchema and historyDisplay (additionalProperties: false)', async () => {
+    const docWithExtraRoot = createValidArchDocDef();
+    (docWithExtraRoot.documentLogSchema as Record<string, unknown>).unexpectedProp = true;
+
+    const adapterRoot = new LogSchemaRegistryAdapter(
+      {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: ['./document-types/submittal-arch.json'],
+          configuration: { documentLog: createValidDiscoveryConfig() },
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue(docWithExtraRoot),
+      },
+      parser
+    );
+    await expect(adapterRoot.initialize()).rejects.toThrow(DocumentLogConfigurationError);
+
+    const docWithExtraHistoryProp = createValidArchDocDef();
+    (docWithExtraHistoryProp.documentLogSchema as Record<string, unknown>).historyDisplay = {
+      text: '<b>{{action.name}}</b>',
+      extraProp: 'nope',
     };
 
-    const manifestProvider: RawManifestProviderPort = {
-      getRawManifest: vi.fn().mockResolvedValue({
-        documentTypes: ['./document-types/submittal-arch.json'],
-        configuration: { documentLog: createValidDiscoveryConfig() },
-      }),
-      readParsedSchema: vi.fn().mockResolvedValue(docWithHistory),
-    };
+    const adapterHistory = new LogSchemaRegistryAdapter(
+      {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: ['./document-types/submittal-arch.json'],
+          configuration: { documentLog: createValidDiscoveryConfig() },
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue(docWithExtraHistoryProp),
+      },
+      parser
+    );
+    await expect(adapterHistory.initialize()).rejects.toThrow(DocumentLogConfigurationError);
+  });
 
-    const adapter = new LogSchemaRegistryAdapter(manifestProvider, parser);
-    await expect(adapter.initialize()).rejects.toThrow(DocumentLogConfigurationError);
+  it('hydrates valid optional historyDisplay with safe Google Card HTML tags in text and static or tokenized plain text in topLabel/bottomLabel', async () => {
+    const validCases: Array<{ label: string; historyDisplay: Record<string, unknown> }> = [
+      {
+        label: 'full submittal-arch style with HTML formatting',
+        historyDisplay: {
+          topLabel: 'Rev {{revision}} • {{section}}-{{number}} • {{status.key}}',
+          text: '<b>{{action.name}}</b> {{date}} ({{contact.key}})',
+          bottomLabel: '{{title}}',
+        },
+      },
+      {
+        label: 'minimal text only with all allowlisted Google Card HTML tags',
+        historyDisplay: {
+          text: '<b>{{action.name}}</b> <i>{{date}}</i> <u>{{section}}</u> <s>{{number}}</s><br><font color="#b06000">{{status.key}}</font> <a href="https://example.com/docs">View</a> <time>{{date}}</time>',
+        },
+      },
+      {
+        label: 'static non-blank plain text (zero tokens) in topLabel and bottomLabel including raw < and &',
+        historyDisplay: {
+          topLabel: 'Submittal History & Notes <Arch>',
+          text: '<b>{{action.name}}</b><br/>{{title}}',
+          bottomLabel: 'Static plain label = OK',
+        },
+      },
+    ];
+
+    for (const testCase of validCases) {
+      const docDef = createValidArchDocDef();
+      (docDef.documentLogSchema as Record<string, unknown>).historyDisplay = testCase.historyDisplay;
+
+      const adapter = new LogSchemaRegistryAdapter(
+        {
+          getRawManifest: vi.fn().mockResolvedValue({
+            documentTypes: ['./document-types/submittal-arch.json'],
+            configuration: { documentLog: createValidDiscoveryConfig() },
+          }),
+          readParsedSchema: vi.fn().mockResolvedValue(docDef),
+        },
+        parser
+      );
+
+      await expect(adapter.initialize(), testCase.label).resolves.toBeUndefined();
+      expect(adapter.getDocumentLogSchema('submittal-arch')?.historyDisplay).toEqual(
+        testCase.historyDisplay
+      );
+    }
+  });
+
+  it('rejects invalid historyDisplay (blank strings, 0-token text, disallowed/unbalanced HTML, and invalid tokens across text/topLabel/bottomLabel)', async () => {
+    const invalidCases: Array<{ label: string; historyDisplay: unknown }> = [
+      { label: 'missing text', historyDisplay: { topLabel: '{{section}}' } },
+      { label: 'blank text', historyDisplay: { text: '   ' } },
+      { label: 'blank topLabel', historyDisplay: { topLabel: '   ', text: '{{title}}' } },
+      { label: 'blank bottomLabel', historyDisplay: { text: '{{title}}', bottomLabel: '   ' } },
+      { label: 'zero tokens in text', historyDisplay: { text: '<b>Static Only</b>' } },
+      { label: 'disallowed <script> tag', historyDisplay: { text: '<script>{{title}}</script>' } },
+      { label: 'disallowed <img> tag', historyDisplay: { text: '<img src="x">{{title}}' } },
+      { label: 'disallowed <div> tag', historyDisplay: { text: '<div>{{title}}</div>' } },
+      { label: 'HTML comment in text', historyDisplay: { text: '<!-- hi -->{{title}}' } },
+      { label: 'unclosed <b> tag', historyDisplay: { text: '<b>{{action.name}}' } },
+      { label: 'stray closing </b> tag', historyDisplay: { text: '{{action.name}}</b>' } },
+      { label: 'mismatched nested tags', historyDisplay: { text: '<b><i>{{action.name}}</b></i>' } },
+      { label: 'closing </br> tag', historyDisplay: { text: '{{action.name}}</br>' } },
+      { label: 'attribute on <b>', historyDisplay: { text: '<b onclick="x">{{action.name}}</b>' } },
+      { label: 'javascript href in <a>', historyDisplay: { text: '<a href="javascript:alert(1)">{{title}}</a>' } },
+      { label: '<a> missing href', historyDisplay: { text: '<a>{{title}}</a>' } },
+      { label: '<a> extra onclick attr', historyDisplay: { text: '<a href="https://example.com" onclick="x">{{title}}</a>' } },
+      { label: '<font> missing color', historyDisplay: { text: '<font>{{title}}</font>' } },
+      { label: '<font> disallowed attr', historyDisplay: { text: '<font style="color:red">{{title}}</font>' } },
+      { label: 'token inside HTML tag attribute', historyDisplay: { text: '<a href="{{title}}">Open</a>' } },
+      { label: 'raw < in HTML literal', historyDisplay: { text: '{{section}} < {{number}}' } },
+      { label: 'raw > in HTML literal', historyDisplay: { text: '{{section}} > {{number}}' } },
+      { label: 'CalculatedField in text', historyDisplay: { text: '{{fileName}}' } },
+      { label: 'CalculatedField in topLabel', historyDisplay: { topLabel: '{{fileName}}', text: '{{title}}' } },
+      { label: 'disallowed namespace in bottomLabel', historyDisplay: { text: '{{title}}', bottomLabel: '{{Document.id}}' } },
+      { label: 'logic block in text', historyDisplay: { text: '{{#if title}}{{title}}{{/if}}' } },
+      { label: 'helper in topLabel', historyDisplay: { topLabel: '{{upper section}}', text: '{{title}}' } },
+      { label: 'comment in bottomLabel', historyDisplay: { text: '{{title}}', bottomLabel: '{{! comment }}{{date}}' } },
+      { label: 'triple-stache in text', historyDisplay: { text: '{{{title}}}' } },
+      { label: 'invalid .prop on non-lookup in text', historyDisplay: { text: '{{title.key}}' } },
+      { label: 'unknown .prop on lookup in topLabel', historyDisplay: { topLabel: '{{action.badProp}}', text: '{{title}}' } },
+      { label: 'unknown field in bottomLabel', historyDisplay: { text: '{{title}}', bottomLabel: '{{nonExistent}}' } },
+    ];
+
+    for (const testCase of invalidCases) {
+      const docDef = createValidArchDocDef();
+      (docDef.documentLogSchema as Record<string, unknown>).historyDisplay = testCase.historyDisplay;
+
+      const adapter = new LogSchemaRegistryAdapter(
+        {
+          getRawManifest: vi.fn().mockResolvedValue({
+            documentTypes: ['./document-types/submittal-arch.json'],
+            configuration: { documentLog: createValidDiscoveryConfig() },
+          }),
+          readParsedSchema: vi.fn().mockResolvedValue(docDef),
+        },
+        parser
+      );
+
+      await expect(adapter.initialize(), `Expected failure for: ${testCase.label}`).rejects.toThrow(
+        DocumentLogConfigurationError
+      );
+    }
   });
 
   it('rejects invalid { template } column bindings (0-token, CalculatedField, Document.*, logic, helpers, comments, triple-stache, bad .prop)', async () => {
@@ -323,11 +443,65 @@ describe('LogSchemaRegistryAdapter', () => {
     await expect(adapter.initialize()).rejects.toThrow(/identity/i);
   });
 
-  it('fails fast when a DocumentType with WRITE_LOG step omits documentLogSchema', async () => {
-    const docDef = createValidArchDocDef();
-    delete (docDef as { documentLogSchema?: unknown }).documentLogSchema;
+  it('fails fast when a DocumentType with WRITE_LOG or READ_LOG step omits documentLogSchema', async () => {
+    const writeDocDef = createValidArchDocDef();
+    delete (writeDocDef as { documentLogSchema?: unknown }).documentLogSchema;
 
-    const manifestProvider: RawManifestProviderPort = {
+    const writeProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./document-types/submittal-arch.json'],
+        configuration: { documentLog: createValidDiscoveryConfig() },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue(writeDocDef),
+    };
+
+    const writeAdapter = new LogSchemaRegistryAdapter(writeProvider, parser);
+    await expect(writeAdapter.initialize()).rejects.toThrow(/documentLogSchema/i);
+
+    const readDocDef = createValidArchDocDef({
+      documentWorkflowConfig: {
+        workflows: [
+          {
+            name: 'LookupPriorLogs',
+            activitySequence: [{ type: 'READ_LOG', payload: {} }],
+          },
+        ],
+      },
+    });
+    delete (readDocDef as { documentLogSchema?: unknown }).documentLogSchema;
+
+    const readProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./document-types/submittal-arch.json'],
+        configuration: { documentLog: createValidDiscoveryConfig() },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue(readDocDef),
+    };
+
+    const readAdapter = new LogSchemaRegistryAdapter(readProvider, parser);
+    await expect(readAdapter.initialize()).rejects.toThrow(DocumentLogConfigurationError);
+    await expect(readAdapter.initialize()).rejects.toThrow(/READ_LOG.*documentLogSchema/i);
+  });
+
+  it('retains minLength and pattern on LogTargetDocumentFieldSchema and allows READ_LOG when documentLogSchema is present', async () => {
+    const docDef = createValidArchDocDef({
+      documentWorkflowConfig: {
+        workflows: [
+          {
+            name: 'LookupAndWrite',
+            activitySequence: [
+              { id: 'readPrior', type: 'READ_LOG', payload: { filterBy: 'idGroup', values: ['{{Document.idGroup}}'] } },
+              { type: 'WRITE_LOG', payload: {} },
+            ],
+          },
+        ],
+      },
+    });
+    (docDef.documentSchema.fields[1] as Record<string, unknown>).pattern = '^\\d{6}$';
+    (docDef.documentSchema.fields[3] as Record<string, unknown>).minLength = 1;
+    (docDef.documentSchema.fields[3] as Record<string, unknown>).pattern = '^.*\\S+.*$';
+
+    const provider: RawManifestProviderPort = {
       getRawManifest: vi.fn().mockResolvedValue({
         documentTypes: ['./document-types/submittal-arch.json'],
         configuration: { documentLog: createValidDiscoveryConfig() },
@@ -335,8 +509,15 @@ describe('LogSchemaRegistryAdapter', () => {
       readParsedSchema: vi.fn().mockResolvedValue(docDef),
     };
 
-    const adapter = new LogSchemaRegistryAdapter(manifestProvider, parser);
-    await expect(adapter.initialize()).rejects.toThrow(/documentLogSchema/i);
+    const adapter = new LogSchemaRegistryAdapter(provider, parser);
+    await expect(adapter.initialize()).resolves.toBeUndefined();
+
+    const target = adapter.getTargetSchema('submittal-arch');
+    const sectionField = target?.fields.find((f) => f.key === 'section');
+    const revisionField = target?.fields.find((f) => f.key === 'revision');
+    expect(sectionField?.pattern).toBe('^\\d{6}$');
+    expect(revisionField?.minLength).toBe(1);
+    expect(revisionField?.pattern).toBe('^.*\\S+.*$');
   });
 
   it('validates WRITE_LOG fileSourceStepId matches an earlier Activity.id in the same workflow', async () => {

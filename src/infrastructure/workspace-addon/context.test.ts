@@ -346,6 +346,19 @@ describe('Workspace Add-on Context', () => {
         const context = extractWorkspaceExecutionContext({}, undefined, { host: 123 } as unknown);
         expect(context.baseUrl).toBeUndefined();
       });
+
+      it('never parses SelectDocumentLog onto WorkspaceExecutionContext.selectedLogId (ADR 0020)', () => {
+        const context = extractWorkspaceExecutionContext({
+          commonEventObject: {
+            parameters: { selectedLogId: 'spoofed-param-id' },
+            formInputs: {
+              SelectDocumentLog: { stringInputs: { value: ['spoofed-form-id'] } },
+            },
+          },
+        });
+        expect(context.selectedLogId).toBeUndefined();
+        expect(context.formData?.SelectDocumentLog).toBe('spoofed-form-id');
+      });
     });
   });
 });

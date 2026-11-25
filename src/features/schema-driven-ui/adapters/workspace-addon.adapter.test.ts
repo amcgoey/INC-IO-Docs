@@ -7,8 +7,10 @@ import {
   GmailWorkspaceAddonAdapter,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
   createWorkspaceAddonViewSchema,
+  extractGmailActionParameters,
 } from './workspace-addon.adapter';
-import type { UiViewAdapterContext } from '../ports';
+import type { DocumentLogPanelContext, UiViewAdapterContext } from '../ports';
+import { PRIMARY_ACTION_BUTTON_COLOR } from '../blocks/common';
 
 describe('WorkspaceAddonAdapter', () => {
   let adapter: WorkspaceAddonAdapter;
@@ -342,8 +344,13 @@ describe('WorkspaceAddonAdapter', () => {
     expect(infoSection.header).toBe('Document Data');
     expect(infoSection.widgets).toHaveLength(2);
     expect(infoSection.widgets[0].textInput?.name).toBe('invoiceNumber_invoice');
+    expect(PRIMARY_ACTION_BUTTON_COLOR).toBeDefined();
     expect(infoSection.widgets[1].buttonList?.buttons).toEqual([
-      { text: 'Process Document', onClick: { action: 'processDocument' } },
+      {
+        text: 'Process Document',
+        onClick: { action: 'processDocument' },
+        color: PRIMARY_ACTION_BUTTON_COLOR,
+      },
     ]);
 
     const adminSection = view.sections[1];
@@ -751,6 +758,53 @@ describe('WorkspaceAddonAdapter', () => {
       const docTypeWidget = view.sections[0].widgets[2].selectionInput;
       expect(docTypeWidget?.items?.[0].text).toBe('Resolved Form');
       assertValidUiView(view);
+    });
+
+    it('forwards custom getActionParameters onto the missing Document Log Copy Log button', async () => {
+      const customParams = {
+        customKey: 'custom-value',
+        spaceMode: 'projects',
+      };
+      const getActionParameters = vi.fn(() => customParams);
+
+      const composer = createWorkspaceAddonViewSchema({
+        viewId: 'custom-card',
+        getActionParameters,
+      });
+
+      const context: UiViewAdapterContext = {
+        viewId: 'custom-card',
+        uiContext: {
+          'document-log': {
+            status: 'missing',
+            spaceName: 'Harborview Hotel',
+            targetFolderPath: '1 Admin',
+            targetFileName: 'Harborview Hotel Document Log',
+          },
+        },
+      };
+
+      const view = await composer(context);
+      assertValidUiView(view);
+      expect(getActionParameters).toHaveBeenCalledWith(context);
+
+      const logSection = view.sections.find((s) => s.header === 'Document Log');
+      expect(logSection).toBeDefined();
+      const buttonListWidget = logSection?.widgets.find((w) => w.buttonList !== undefined);
+      expect(buttonListWidget).toEqual({
+        buttonList: {
+          buttons: [
+            {
+              text: 'Copy Log',
+              color: PRIMARY_ACTION_BUTTON_COLOR,
+              onClick: {
+                action: 'copyDocumentLog',
+                parameters: customParams,
+              },
+            },
+          ],
+        },
+      });
     });
   });
 
@@ -1215,6 +1269,1063 @@ describe('WorkspaceAddonAdapter', () => {
       const infoSection = view.sections.find((s) => s.header === 'Document Data');
       expect(infoSection?.widgets[0].textInput?.onChangeAction).toEqual({
         action: 'onFormChange',
+      });
+    });
+  });
+
+  describe('Document Log contextKeys, section placement, and Process Document gating', () => {
+    const adapterEntries = [
+      {
+        label: 'WorkspaceAddonAdapter (Drive)',
+        viewId: WORKSPACE_ADDON_VIEW_ID,
+        createAdapter: () => new WorkspaceAddonAdapter(),
+      },
+      {
+        label: 'GmailWorkspaceAddonAdapter (Gmail)',
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        createAdapter: () => new GmailWorkspaceAddonAdapter(),
+      },
+    ] as const;
+
+    const buildBaseContext = (
+      viewId: string,
+      uiContext?: Record<string, unknown>
+    ): UiViewAdapterContext => ({
+      viewId,
+      selectionState: {
+        spaceTypes: [{ text: 'Projects', value: 'projects', selected: true }],
+        spaces: ['Harborview Hotel'],
+        documentTypes: [{ text: 'Submittal', value: 'submittal-arch', selected: true }],
+        files: [{ text: 'submittal.pdf', value: 'file-1', selected: true }],
+      },
+      documentTypeKey: 'submittal-arch',
+      documentSchema: {
+        fields: [{ key: 'title', type: 'string' }],
+      },
+      ...(uiContext !== undefined ? { uiContext } : {}),
+    });
+
+    const getProcessButton = (view: UiView) => {
+      const dataSection = view.sections.find((s) => s.header === 'Document Data');
+      const buttonListWidget = dataSection?.widgets.find((w) => w.buttonList !== undefined);
+      return buttonListWidget?.buttonList?.buttons.find((b) => b.text === 'Process Document');
+    };
+
+    it.each(adapterEntries)('$label declares contextKeys equal to ["document-log"]', ({ createAdapter }) => {
+      const instance = createAdapter();
+      expect(instance.contextKeys).toEqual(['document-log']);
+    });
+
+    it.each(adapterEntries)(
+      '$label omits Document Log section and keeps Process Document enabled when uiContext or uiContext["document-log"] is undefined',
+      async ({ viewId, createAdapter }) => {
+        const instance = createAdapter();
+
+        for (const uiContext of [undefined, {}, { 'document-log': undefined }]) {
+          const view = await instance.composeView(buildBaseContext(viewId, uiContext));
+          assertValidUiView(view);
+
+          const headers = view.sections.map((s) => s.header);
+          expect(headers).not.toContain('Document Log');
+          expect(headers.indexOf('Document Data')).toBe(headers.indexOf('File Selection') + 1);
+
+          const processButton = getProcessButton(view);
+          expect(PRIMARY_ACTION_BUTTON_COLOR).toBeDefined();
+          expect(processButton).toEqual({
+            text: 'Process Document',
+            onClick:
+              viewId === GMAIL_WORKSPACE_ADDON_VIEW_ID
+                ? {
+                    action: 'processDocument',
+                    parameters: {
+                      previousAttachments: JSON.stringify(['file-1']),
+                      previousDriveUrl: '',
+                    },
+                  }
+                : { action: 'processDocument' },
+            color: PRIMARY_ACTION_BUTTON_COLOR,
+          });
+          expect('disabled' in (processButton ?? {})).toBe(false);
+        }
+      }
+    );
+
+    const statusCases: ReadonlyArray<{
+      status: DocumentLogPanelContext['status'];
+      panel: DocumentLogPanelContext;
+      expectedDisabled: boolean;
+    }> = [
+      {
+        status: 'missing_space',
+        panel: { status: 'missing_space' },
+        expectedDisabled: true,
+      },
+      {
+        status: 'missing',
+        panel: {
+          status: 'missing',
+          spaceName: 'Harborview Hotel',
+          targetFolderPath: '1 Admin',
+          targetFileName: 'Harborview Hotel Document Log',
+        },
+        expectedDisabled: true,
+      },
+      {
+        status: 'discovery_error',
+        panel: {
+          status: 'discovery_error',
+          discoveryErrorMessage: 'Drive lookup failed',
+        },
+        expectedDisabled: false,
+      },
+      {
+        status: 'resolved',
+        panel: {
+          status: 'resolved',
+          spaceName: 'Harborview Hotel',
+          targetFolderPath: '1 Admin',
+          activeCandidate: {
+            name: 'Harborview Hotel Document Log',
+            url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+          },
+        },
+        expectedDisabled: false,
+      },
+    ];
+
+    it.each(statusCases)(
+      'renders Document Log section identically between File Selection and Document Data and gates Process Document for status: $status',
+      async ({ panel, expectedDisabled }) => {
+        const driveAdapter = new WorkspaceAddonAdapter();
+        const gmailAdapter = new GmailWorkspaceAddonAdapter();
+
+        const driveView = await driveAdapter.composeView(
+          buildBaseContext(WORKSPACE_ADDON_VIEW_ID, { 'document-log': panel })
+        );
+        const gmailView = await gmailAdapter.composeView(
+          buildBaseContext(GMAIL_WORKSPACE_ADDON_VIEW_ID, { 'document-log': panel })
+        );
+
+        assertValidUiView(driveView);
+        assertValidUiView(gmailView);
+
+        for (const view of [driveView, gmailView]) {
+          const headers = view.sections.map((s) => s.header);
+          const fileIdx = headers.indexOf('File Selection');
+          const logIdx = headers.indexOf('Document Log');
+          const dataIdx = headers.indexOf('Document Data');
+
+          expect(fileIdx).toBeGreaterThanOrEqual(0);
+          expect(logIdx).toBe(fileIdx + 1);
+          expect(dataIdx).toBe(logIdx + 1);
+
+          const processButton = getProcessButton(view);
+          expect(processButton?.color).toEqual(PRIMARY_ACTION_BUTTON_COLOR);
+          if (expectedDisabled) {
+            expect(processButton?.disabled).toBe(true);
+          } else {
+            expect(processButton?.disabled).toBeUndefined();
+            expect('disabled' in (processButton ?? {})).toBe(false);
+          }
+        }
+
+        const driveLogSection = driveView.sections.find((s) => s.header === 'Document Log');
+        const gmailLogSection = gmailView.sections.find((s) => s.header === 'Document Log');
+        expect(driveLogSection).toBeDefined();
+        expect(gmailLogSection).toBeDefined();
+
+        if (panel.status === 'missing') {
+          expect(driveLogSection?.widgets).toHaveLength(2);
+          expect(gmailLogSection?.widgets).toHaveLength(2);
+          expect(driveLogSection?.widgets[0]).toEqual(gmailLogSection?.widgets[0]);
+          expect(driveLogSection?.widgets[1]).toEqual({
+            buttonList: {
+              buttons: [
+                {
+                  text: 'Copy Log',
+                  color: PRIMARY_ACTION_BUTTON_COLOR,
+                  onClick: {
+                    action: 'copyDocumentLog',
+                  },
+                },
+              ],
+            },
+          });
+          expect(
+            'parameters' in
+              (driveLogSection?.widgets[1].buttonList?.buttons[0].onClick ?? {})
+          ).toBe(false);
+
+          expect(gmailLogSection?.widgets[1]).toEqual({
+            buttonList: {
+              buttons: [
+                {
+                  text: 'Copy Log',
+                  color: PRIMARY_ACTION_BUTTON_COLOR,
+                  onClick: {
+                    action: 'copyDocumentLog',
+                    parameters: {
+                      previousAttachments: '["file-1"]',
+                      previousDriveUrl: '',
+                    },
+                  },
+                },
+              ],
+            },
+          });
+        } else {
+          expect(driveLogSection).toEqual(gmailLogSection);
+        }
+      }
+    );
+
+    it('attaches previousSpaceId and previousSelectedLogId across all Drive and Gmail in-card actions (including SelectDocumentLog and extractGmailActionParameters) and omits them when absent', async () => {
+      const ambiguousPanel: DocumentLogPanelContext = {
+        status: 'ambiguous',
+        spaceName: 'Harborview Hotel',
+        candidateOptions: [
+          { text: 'Harborview Document Log (1 Admin · 2026-10-19)', value: 'log-1', selected: false },
+          { text: 'Harborview Document Log (6 Construction · 2026-10-12)', value: 'log-2', selected: true },
+        ],
+        activeCandidate: {
+          name: 'Harborview Document Log',
+          url: 'https://docs.google.com/spreadsheets/d/log-2/edit',
+        },
+      };
+
+      // 1. Drive adapter with spaceId + non-blank SelectDocumentLog
+      const driveAdapter = new WorkspaceAddonAdapter();
+      const driveView = await driveAdapter.composeView({
+        viewId: WORKSPACE_ADDON_VIEW_ID,
+        spaceId: 'space-harbor',
+        documentTypeKey: 'submittal-arch',
+        formData: {
+          SelectDocumentLog: 'log-2',
+        },
+        selectionState: {
+          spaceTypes: [{ text: 'Projects', value: 'projects', selected: true }],
+          spaces: ['Harborview Hotel'],
+          documentTypes: [{ text: 'Submittal Arch', value: 'submittal-arch', selected: true }],
+          files: [{ text: 'submittal.pdf', value: 'file-1', selected: true }],
+        },
+        documentSchema: {
+          fields: [{ key: 'section', type: 'string' }],
+        },
+        uiSchema: {
+          fields: {
+            section: { onChange: true },
+          },
+        },
+        uiContext: { 'document-log': ambiguousPanel },
+      });
+      assertValidUiView(driveView);
+
+      const expectedDriveParams = {
+        previousSpaceId: 'space-harbor',
+        previousSelectedLogId: 'log-2',
+      };
+      const driveDocType = driveView.sections.find((s) => s.header === 'Document Type');
+      expect(driveDocType?.widgets[0].selectionInput?.onChangeAction).toEqual({
+        action: 'onSpaceTypeChange',
+        parameters: expectedDriveParams,
+      });
+      expect(driveDocType?.widgets[1].textInput?.onChangeAction).toEqual({
+        action: 'onFormChange',
+        parameters: expectedDriveParams,
+      });
+      expect(driveDocType?.widgets[2].selectionInput?.onChangeAction).toEqual({
+        action: 'onDocumentTypeChange',
+        parameters: expectedDriveParams,
+      });
+
+      const driveLogSec = driveView.sections.find((s) => s.header === 'Document Log');
+      expect(driveLogSec?.widgets).toHaveLength(2);
+      expect(driveLogSec?.widgets[0].selectionInput?.name).toBe('SelectDocumentLog');
+      expect(driveLogSec?.widgets[0].selectionInput?.label).toBe('Document Log (2 found)');
+      expect(driveLogSec?.widgets[0].selectionInput?.onChangeAction).toEqual({
+        action: 'onFormChange',
+        parameters: expectedDriveParams,
+      });
+
+      const driveDataSec = driveView.sections.find((s) => s.header === 'Document Data');
+      expect(driveDataSec?.widgets[0].textInput?.onChangeAction).toEqual({
+        action: 'onFormChange',
+        parameters: expectedDriveParams,
+      });
+      const driveProcessBtn = getProcessButton(driveView);
+      expect(driveProcessBtn?.disabled).toBeUndefined();
+      expect(driveProcessBtn?.onClick).toEqual({
+        action: 'processDocument',
+        parameters: expectedDriveParams,
+      });
+
+      // 2. Drive adapter omits previousSpaceId / previousSelectedLogId when absent or blank
+      const driveNoLogView = await driveAdapter.composeView({
+        viewId: WORKSPACE_ADDON_VIEW_ID,
+        spaceId: 'space-harbor',
+        documentTypeKey: 'submittal-arch',
+        formData: {
+          SelectDocumentLog: '   ',
+        },
+        selectionState: {
+          spaceTypes: [{ text: 'Projects', value: 'projects', selected: true }],
+          spaces: ['Harborview Hotel'],
+          documentTypes: [{ text: 'Submittal Arch', value: 'submittal-arch', selected: true }],
+          files: [{ text: 'submittal.pdf', value: 'file-1', selected: true }],
+        },
+        documentSchema: { fields: [{ key: 'section', type: 'string' }] },
+      });
+      const driveNoLogDocType = driveNoLogView.sections.find((s) => s.header === 'Document Type');
+      expect(driveNoLogDocType?.widgets[2].selectionInput?.onChangeAction).toEqual({
+        action: 'onDocumentTypeChange',
+        parameters: { previousSpaceId: 'space-harbor' },
+      });
+      expect(getProcessButton(driveNoLogView)?.onClick).toEqual({
+        action: 'processDocument',
+        parameters: { previousSpaceId: 'space-harbor' },
+      });
+
+      // 3. Gmail adapter + extractGmailActionParameters includes previousSpaceId & previousSelectedLogId on all File Selection, Document Type, Document Log, Document Data, and Process Document actions
+      const gmailCtx: UiViewAdapterContext = {
+        viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+        spaceId: 'space-harbor',
+        documentTypeKey: 'submittal-arch',
+        formData: {
+          SelectEmailMessage: 'msg-1',
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: 'https://drive.google.com/file/d/abc/view',
+          SelectDocumentLog: 'log-2',
+        },
+        selectionState: {
+          spaceTypes: [{ text: 'Projects', value: 'projects', selected: true }],
+          spaces: ['Harborview Hotel'],
+          documentTypes: [{ text: 'Submittal Arch', value: 'submittal-arch', selected: true }],
+          fileSources: [
+            { text: 'Email Attachments', value: 'Email Attachments', selected: false },
+            { text: 'Google Drive URL', value: 'Google Drive URL', selected: true },
+          ],
+          files: [{ text: 'att-1.pdf', value: 'att-1', selected: true }],
+          threadMessages: [{ text: '(1) Alice | 261019', value: 'msg-1', selected: true }],
+        },
+        documentSchema: { fields: [{ key: 'section', type: 'string' }] },
+        uiSchema: { fields: { section: { onChange: true } } },
+        uiContext: { 'document-log': ambiguousPanel },
+      };
+
+      const expectedGmailParams = {
+        previousAttachments: JSON.stringify(['att-1']),
+        previousDriveUrl: 'https://drive.google.com/file/d/abc/view',
+        previousMessageId: 'msg-1',
+        previousSpaceId: 'space-harbor',
+        previousSelectedLogId: 'log-2',
+      };
+      expect(extractGmailActionParameters(gmailCtx)).toEqual(expectedGmailParams);
+
+      // Omitted when spaceId is undefined and SelectDocumentLog is absent
+      const { spaceId: _omittedSpaceId, ...gmailCtxWithoutSpace } = gmailCtx;
+      void _omittedSpaceId;
+      const gmailNoSpaceParams = extractGmailActionParameters({
+        ...gmailCtxWithoutSpace,
+        formData: {
+          SelectEmailMessage: 'msg-1',
+          InputDriveURL: '',
+        },
+      });
+      expect(gmailNoSpaceParams).toEqual({
+        previousAttachments: JSON.stringify(['att-1']),
+        previousDriveUrl: '',
+        previousMessageId: 'msg-1',
+      });
+      expect('previousSpaceId' in gmailNoSpaceParams).toBe(false);
+      expect('previousSelectedLogId' in gmailNoSpaceParams).toBe(false);
+
+      const gmailAdapter = new GmailWorkspaceAddonAdapter();
+      const gmailView = await gmailAdapter.composeView(gmailCtx);
+      assertValidUiView(gmailView);
+
+      const gmailFileSec = gmailView.sections.find((s) => s.header === 'File Selection');
+      expect(
+        gmailFileSec?.widgets.find((w) => w.selectionInput?.name === 'SelectEmailMessage')
+          ?.selectionInput?.onChangeAction
+      ).toEqual({
+        action: 'onEmailMessageChange',
+        parameters: expectedGmailParams,
+      });
+      expect(
+        gmailFileSec?.widgets.find((w) => w.selectionInput?.name === 'SelectFileSource')
+          ?.selectionInput?.onChangeAction
+      ).toEqual({
+        action: 'onFileSourceChange',
+        parameters: expectedGmailParams,
+      });
+      expect(
+        gmailFileSec?.widgets.find((w) => w.textInput?.name === 'InputDriveURL')?.textInput
+          ?.onChangeAction
+      ).toEqual({
+        action: 'onFormChange',
+        parameters: expectedGmailParams,
+      });
+
+      const gmailLogSec = gmailView.sections.find((s) => s.header === 'Document Log');
+      expect(gmailLogSec?.widgets[0].selectionInput?.name).toBe('SelectDocumentLog');
+      expect(gmailLogSec?.widgets[0].selectionInput?.onChangeAction).toEqual({
+        action: 'onFormChange',
+        parameters: expectedGmailParams,
+      });
+
+      const gmailProcessBtn = getProcessButton(gmailView);
+      expect(gmailProcessBtn?.disabled).toBeUndefined();
+      expect(gmailProcessBtn?.onClick).toEqual({
+        action: 'processDocument',
+        parameters: expectedGmailParams,
+      });
+    });
+
+    const readStatusGatingCases: ReadonlyArray<{
+      label: string;
+      panel: DocumentLogPanelContext;
+      expectedLogWidgetCount: number;
+    }> = [
+      {
+        label: 'resolved + readStatus: read_error',
+        panel: {
+          status: 'resolved',
+          spaceName: 'Harborview Hotel',
+          targetFolderPath: '1 Admin',
+          activeCandidate: {
+            name: 'Harborview Hotel Document Log',
+            url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+          },
+          readStatus: 'read_error',
+          idGroup: '071200-001',
+          readErrorMessage: 'Sheet read timed out',
+        },
+        expectedLogWidgetCount: 2,
+      },
+      {
+        label: 'resolved + readStatus: partial_hydration',
+        panel: {
+          status: 'resolved',
+          spaceName: 'Harborview Hotel',
+          targetFolderPath: '1 Admin',
+          activeCandidate: {
+            name: 'Harborview Hotel Document Log',
+            url: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+          },
+          readStatus: 'partial_hydration',
+          idGroup: '071200-001',
+          warningMessages: ['Skipped 1 malformed row'],
+          entries: [
+            {
+              text: '<b>Approved</b> 260212 (ARC)',
+              valid: true,
+            },
+          ],
+        },
+        expectedLogWidgetCount: 3,
+      },
+      {
+        label: 'ambiguous + readStatus: partial_hydration',
+        panel: {
+          status: 'ambiguous',
+          spaceName: 'Harborview Hotel',
+          candidateOptions: [
+            { text: 'Log A (1 Admin)', value: 'log-a', selected: true },
+            { text: 'Log B (6 Construction)', value: 'log-b', selected: false },
+          ],
+          activeCandidate: {
+            name: 'Log A',
+            url: 'https://docs.google.com/spreadsheets/d/log-a/edit',
+          },
+          readStatus: 'partial_hydration',
+          idGroup: '071200-001',
+          warningMessages: ['Skipped 1 malformed row'],
+          entries: [
+            {
+              text: '<b>Approved</b> 260212 (ARC)',
+              valid: true,
+            },
+          ],
+        },
+        expectedLogWidgetCount: 4,
+      },
+    ];
+
+    it.each(readStatusGatingCases)(
+      'keeps Process Document enabled (disabled omitted) for $label in both Drive and Gmail adapters',
+      async ({ panel, expectedLogWidgetCount }) => {
+        const driveAdapter = new WorkspaceAddonAdapter();
+        const gmailAdapter = new GmailWorkspaceAddonAdapter();
+
+        const driveView = await driveAdapter.composeView(
+          buildBaseContext(WORKSPACE_ADDON_VIEW_ID, { 'document-log': panel })
+        );
+        const gmailView = await gmailAdapter.composeView(
+          buildBaseContext(GMAIL_WORKSPACE_ADDON_VIEW_ID, { 'document-log': panel })
+        );
+
+        assertValidUiView(driveView);
+        assertValidUiView(gmailView);
+
+        for (const view of [driveView, gmailView]) {
+          const logSection = view.sections.find((s) => s.header === 'Document Log');
+          expect(logSection).toBeDefined();
+          expect(logSection?.widgets).toHaveLength(expectedLogWidgetCount);
+
+          const processButton = getProcessButton(view);
+          expect(processButton).toBeDefined();
+          expect(processButton?.disabled).toBeUndefined();
+          expect('disabled' in (processButton ?? {})).toBe(false);
+        }
+      }
+    );
+
+    it('enforces the hard 100-widget card cap guard end-to-end across Drive WorkspaceAddonAdapter and omits Document Log when fixedWidgetCount >= 100', async () => {
+      const driveAdapter = new WorkspaceAddonAdapter();
+      const activeUrl = 'https://docs.google.com/spreadsheets/d/log-1/edit';
+      const panelWith21Entries: DocumentLogPanelContext = {
+        status: 'resolved',
+        spaceName: 'Harborview Hotel',
+        targetFolderPath: '1 Admin',
+        activeCandidate: {
+          name: 'Harborview Hotel Document Log',
+          url: activeUrl,
+        },
+        readStatus: 'ready',
+        idGroup: '071200-001',
+        entries: Array.from({ length: 21 }, (_, idx) => ({
+          topLabel: `Submission ${21 - idx}`,
+          text: `<b>Revise &amp; Resubmit</b> 2602${String(idx + 1).padStart(2, '0')} (ARC)`,
+          bottomLabel: `Row ${idx + 1}`,
+          fileUri: `https://drive.google.com/file/d/entry-${idx + 1}/view`,
+          valid: true,
+        })),
+      };
+
+      // Fixed widgets: Document Type (3) + File Selection (1) + Document Data (73 fields + 1 Process Document button = 74) + Admin (1) = 79
+      const viewAtCap = await driveAdapter.composeView({
+        ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, { 'document-log': panelWith21Entries }),
+        documentSchema: {
+          fields: Array.from({ length: 73 }, (_, i) => ({
+            key: `field${i + 1}`,
+            type: 'string',
+          })),
+        },
+      });
+      assertValidUiView(viewAtCap);
+
+      const totalWidgets = viewAtCap.sections.reduce((sum, s) => sum + s.widgets.length, 0);
+      expect(totalWidgets).toBe(100);
+
+      const logSection = viewAtCap.sections.find((s) => s.header === 'Document Log');
+      expect(logSection).toBeDefined();
+      expect(logSection?.widgets).toHaveLength(21);
+      expect(logSection?.collapsible).toBe(true);
+      expect(logSection?.uncollapsibleWidgetsCount).toBe(1);
+      expect(logSection?.widgets[20].decoratedText).toEqual({
+        text: 'Showing 19 of 21 entries',
+        wrapText: true,
+        button: {
+          text: 'Open Log',
+          onClick: {
+            openLink: {
+              url: activeUrl,
+              openAs: 'FULL_SIZE',
+            },
+          },
+        },
+      });
+
+      // When fixedWidgetCount >= 100 (94 fields -> 3 + 1 + 95 + 1 = 100), Document Log is omitted cleanly
+      const viewOverFixedCap = await driveAdapter.composeView({
+        ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, { 'document-log': panelWith21Entries }),
+        documentSchema: {
+          fields: Array.from({ length: 94 }, (_, i) => ({
+            key: `field${i + 1}`,
+            type: 'string',
+          })),
+        },
+      });
+      assertValidUiView(viewOverFixedCap);
+      expect(viewOverFixedCap.sections.map((s) => s.header)).not.toContain('Document Log');
+    });
+
+    describe('Ticket #353 Seam 2 composer budget & section-order boundaries', () => {
+      const activeLogUrl = 'https://docs.google.com/spreadsheets/d/log-1/edit';
+
+      const buildStringFields = (count: number) =>
+        Array.from({ length: count }, (_, i) => ({
+          key: `field${i + 1}`,
+          type: 'string' as const,
+        }));
+
+      const buildHistoryEntries = (count: number) =>
+        Array.from({ length: count }, (_, idx) => ({
+          topLabel: `Submission ${count - idx}`,
+          text: `<b>Revise &amp; Resubmit</b> 2602${String(idx + 1).padStart(2, '0')} (ARC)`,
+          bottomLabel: `Row ${idx + 1}`,
+          fileUri: `https://drive.google.com/file/d/entry-${idx + 1}/view`,
+          valid: true,
+        }));
+
+      const buildResolvedReadyPanel = (entryCount: number): DocumentLogPanelContext => ({
+        status: 'resolved',
+        spaceName: 'Harborview Hotel',
+        targetFolderPath: '1 Admin',
+        activeCandidate: {
+          name: 'Harborview Hotel Document Log',
+          url: activeLogUrl,
+        },
+        readStatus: 'ready',
+        idGroup: '071200-001',
+        entries: buildHistoryEntries(entryCount),
+      });
+
+      const buildAmbiguousPartialPanel = (entryCount: number): DocumentLogPanelContext => ({
+        status: 'ambiguous',
+        spaceName: 'Harborview Hotel',
+        candidateOptions: [
+          { text: 'Log A (1 Admin)', value: 'log-a', selected: true },
+          { text: 'Log B (6 Construction)', value: 'log-b', selected: false },
+        ],
+        activeCandidate: {
+          name: 'Log A',
+          url: activeLogUrl,
+        },
+        readStatus: 'partial_hydration',
+        idGroup: '071200-001',
+        warningMessages: ['Skipped 1 malformed row'],
+        entries: buildHistoryEntries(entryCount),
+      });
+
+      const countTotalWidgets = (view: UiView): number =>
+        view.sections.reduce((sum, section) => sum + section.widgets.length, 0);
+
+      it('accounts for Drive fixed widgets (Status + Document Type + File Selection + Document Data + Admin = 79) and preserves section order at 21 and 20 entries', async () => {
+        const driveAdapter = new WorkspaceAddonAdapter();
+
+        // Fixed: Status (2) + Document Type (3) + File Selection (1) + Document Data (71 fields + 1 Process = 72) + Admin (1) = 79 -> maxWidgets = 21
+        const viewWith21Entries = await driveAdapter.composeView({
+          ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, {
+            'document-log': buildResolvedReadyPanel(21),
+          }),
+          statusMessages: ['Folder "Communications" was not found.'],
+          validationErrors: ['Document title is required'],
+          documentSchema: { fields: buildStringFields(71) },
+        });
+        assertValidUiView(viewWith21Entries);
+
+        expect(viewWith21Entries.sections.map((s) => s.header)).toEqual([
+          undefined,
+          'Document Type',
+          'File Selection',
+          'Document Log',
+          'Document Data',
+          'Admin',
+        ]);
+        expect(viewWith21Entries.sections[0].widgets).toHaveLength(2);
+        expect(viewWith21Entries.sections[1].widgets).toHaveLength(3);
+        expect(viewWith21Entries.sections[2].widgets).toHaveLength(1);
+        expect(viewWith21Entries.sections[4].widgets).toHaveLength(72);
+        expect(viewWith21Entries.sections[5].widgets).toHaveLength(1);
+        expect(countTotalWidgets(viewWith21Entries)).toBe(100);
+
+        const logWith21 = viewWith21Entries.sections[3];
+        expect(logWith21.widgets).toHaveLength(21);
+        expect(logWith21.collapsible).toBe(true);
+        expect(logWith21.uncollapsibleWidgetsCount).toBe(1);
+        expect(logWith21.widgets[20].decoratedText).toEqual({
+          text: 'Showing 19 of 21 entries',
+          wrapText: true,
+          button: {
+            text: 'Open Log',
+            onClick: {
+              openLink: {
+                url: activeLogUrl,
+                openAs: 'FULL_SIZE',
+              },
+            },
+          },
+        });
+        expect(getProcessButton(viewWith21Entries)?.disabled).toBeUndefined();
+
+        // Exact fit: 20 entries -> 20 rows + NO overflow notice, totalWidgets === 100
+        const viewWith20Entries = await driveAdapter.composeView({
+          ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, {
+            'document-log': buildResolvedReadyPanel(20),
+          }),
+          statusMessages: ['Folder "Communications" was not found.'],
+          validationErrors: ['Document title is required'],
+          documentSchema: { fields: buildStringFields(71) },
+        });
+        assertValidUiView(viewWith20Entries);
+
+        expect(viewWith20Entries.sections.map((s) => s.header)).toEqual([
+          undefined,
+          'Document Type',
+          'File Selection',
+          'Document Log',
+          'Document Data',
+          'Admin',
+        ]);
+        expect(countTotalWidgets(viewWith20Entries)).toBe(100);
+
+        const logWith20 = viewWith20Entries.sections[3];
+        expect(logWith20.widgets).toHaveLength(21);
+        expect(logWith20.collapsible).toBe(true);
+        expect(logWith20.uncollapsibleWidgetsCount).toBe(1);
+        expect(logWith20.widgets[20].decoratedText?.text).toBe('<b>Revise &amp; Resubmit</b> 260220 (ARC)');
+        expect(logWith20.widgets.some((w) => w.decoratedText?.text?.startsWith('Showing '))).toBe(false);
+      });
+
+      it('accounts for Gmail fixed widgets including 4-widget File Selection (fixedWidgetCount = 79 and 100) and preserves section order', async () => {
+        const gmailAdapter = new GmailWorkspaceAddonAdapter();
+        const gmailSelectionState = {
+          spaceTypes: [{ text: 'Projects', value: 'projects', selected: true }],
+          spaces: ['Harborview Hotel'],
+          documentTypes: [{ text: 'Submittal', value: 'submittal-arch', selected: true }],
+          threadMessages: [{ text: '(1) Alice | 261019', value: 'msg-1', selected: true }],
+          fileSources: [
+            { text: 'Email Attachments', value: 'Email Attachments', selected: true },
+            { text: 'Google Drive URL', value: 'Google Drive URL', selected: false },
+          ],
+          files: [{ text: 'submittal.pdf', value: 'file-1', selected: true }],
+        };
+
+        // Fixed: Status (1) + Document Type (3) + File Selection (4) + Document Data (69 fields + 1 Process = 70) + Admin (1) = 79 -> maxWidgets = 21
+        const viewAtCap = await gmailAdapter.composeView({
+          viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+          documentTypeKey: 'submittal-arch',
+          statusMessages: ['Verify attachment selection before submitting.'],
+          selectionState: gmailSelectionState,
+          documentSchema: { fields: buildStringFields(69) },
+          uiContext: { 'document-log': buildResolvedReadyPanel(21) },
+        });
+        assertValidUiView(viewAtCap);
+
+        expect(viewAtCap.sections.map((s) => s.header)).toEqual([
+          undefined,
+          'Document Type',
+          'File Selection',
+          'Document Log',
+          'Document Data',
+          'Admin',
+        ]);
+        expect(viewAtCap.sections[0].widgets).toHaveLength(1);
+        expect(viewAtCap.sections[1].widgets).toHaveLength(3);
+        expect(viewAtCap.sections[2].widgets).toHaveLength(4);
+        expect(viewAtCap.sections[4].widgets).toHaveLength(70);
+        expect(viewAtCap.sections[5].widgets).toHaveLength(1);
+        expect(countTotalWidgets(viewAtCap)).toBe(100);
+
+        const logAtCap = viewAtCap.sections[3];
+        expect(logAtCap.widgets).toHaveLength(21);
+        expect(logAtCap.collapsible).toBe(true);
+        expect(logAtCap.uncollapsibleWidgetsCount).toBe(1);
+        expect(logAtCap.widgets[20].decoratedText?.text).toBe('Showing 19 of 21 entries');
+
+        // Fixed = 100 (Status 1 + DocType 3 + FileSelection 4 + Document Data (90 fields + 1 Process = 91) + Admin 1 = 100) -> Document Log omitted
+        const viewAtFixed100 = await gmailAdapter.composeView({
+          viewId: GMAIL_WORKSPACE_ADDON_VIEW_ID,
+          documentTypeKey: 'submittal-arch',
+          statusMessages: ['Verify attachment selection before submitting.'],
+          selectionState: gmailSelectionState,
+          documentSchema: { fields: buildStringFields(90) },
+          uiContext: { 'document-log': buildResolvedReadyPanel(21) },
+        });
+        assertValidUiView(viewAtFixed100);
+
+        expect(viewAtFixed100.sections.map((s) => s.header)).toEqual([
+          undefined,
+          'Document Type',
+          'File Selection',
+          'Document Data',
+          'Admin',
+        ]);
+        expect(viewAtFixed100.sections[3].widgets).toHaveLength(91);
+        expect(viewAtFixed100.sections[4].widgets).toHaveLength(1);
+        expect(countTotalWidgets(viewAtFixed100)).toBe(100);
+      });
+
+      it('caps ample-budget history at 20 rows + 1 overflow notice for 25 entries', async () => {
+        const driveAdapter = new WorkspaceAddonAdapter();
+
+        // Fixed: DocType (3) + FileSelection (1) + Document Data (5 fields + 1 Process = 6) + Admin (1) = 11
+        const view = await driveAdapter.composeView({
+          ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, {
+            'document-log': buildResolvedReadyPanel(25),
+          }),
+          documentSchema: { fields: buildStringFields(5) },
+        });
+        assertValidUiView(view);
+
+        const logSection = view.sections.find((s) => s.header === 'Document Log');
+        expect(logSection).toBeDefined();
+        expect(logSection?.widgets).toHaveLength(22);
+        expect(logSection?.collapsible).toBe(true);
+        expect(logSection?.uncollapsibleWidgetsCount).toBe(1);
+        expect(logSection?.widgets[21].decoratedText).toEqual({
+          text: 'Showing 20 of 25 entries',
+          wrapText: true,
+          button: {
+            text: 'Open Log',
+            onClick: {
+              openLink: {
+                url: activeLogUrl,
+                openAs: 'FULL_SIZE',
+              },
+            },
+          },
+        });
+        expect(countTotalWidgets(view)).toBe(33);
+      });
+
+      it('handles rawBudget === 1 (0 rows + overflow notice, non-collapsible) and rawBudget === 0 (active widget only, no overflow)', async () => {
+        const driveAdapter = new WorkspaceAddonAdapter();
+
+        // rawBudget === 1: Fixed = 3 + 1 + (92 + 1) + 1 = 98 -> maxWidgets = 2 -> logFixedWidgets = 1, rawBudget = 1
+        const viewRawBudget1 = await driveAdapter.composeView({
+          ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, {
+            'document-log': buildResolvedReadyPanel(5),
+          }),
+          documentSchema: { fields: buildStringFields(92) },
+        });
+        assertValidUiView(viewRawBudget1);
+
+        const logBudget1 = viewRawBudget1.sections.find((s) => s.header === 'Document Log');
+        expect(logBudget1).toBeDefined();
+        expect(logBudget1?.widgets).toHaveLength(2);
+        expect('collapsible' in (logBudget1 ?? {})).toBe(false);
+        expect('uncollapsibleWidgetsCount' in (logBudget1 ?? {})).toBe(false);
+        expect(logBudget1?.widgets[1].decoratedText).toEqual({
+          text: 'Showing 0 of 5 entries',
+          wrapText: true,
+          button: {
+            text: 'Open Log',
+            onClick: {
+              openLink: {
+                url: activeLogUrl,
+                openAs: 'FULL_SIZE',
+              },
+            },
+          },
+        });
+        expect(countTotalWidgets(viewRawBudget1)).toBe(100);
+
+        // rawBudget === 0: Fixed = 3 + 1 + (93 + 1) + 1 = 99 -> maxWidgets = 1 -> logFixedWidgets = 1, rawBudget = 0
+        const viewRawBudget0 = await driveAdapter.composeView({
+          ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, {
+            'document-log': buildResolvedReadyPanel(5),
+          }),
+          documentSchema: { fields: buildStringFields(93) },
+        });
+        assertValidUiView(viewRawBudget0);
+
+        const logBudget0 = viewRawBudget0.sections.find((s) => s.header === 'Document Log');
+        expect(logBudget0).toBeDefined();
+        expect(logBudget0?.widgets).toHaveLength(1);
+        expect('collapsible' in (logBudget0 ?? {})).toBe(false);
+        expect('uncollapsibleWidgetsCount' in (logBudget0 ?? {})).toBe(false);
+        expect(logBudget0?.widgets[0].decoratedText?.text).toBe('<b>Harborview Hotel Document Log</b>');
+        expect(countTotalWidgets(viewRawBudget0)).toBe(100);
+      });
+
+      it('omits Document Log cleanly when maxWidgets < 0 (fixedWidgetCount = 101) without empty widgets violation', async () => {
+        const driveAdapter = new WorkspaceAddonAdapter();
+
+        // Fixed = Status (1) + DocType (3) + FileSelection (1) + Document Data (94 fields + 1 Process = 95) + Admin (1) = 101 -> maxWidgets = -1
+        const view = await driveAdapter.composeView({
+          ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, {
+            'document-log': buildResolvedReadyPanel(5),
+          }),
+          statusMessages: ['Status notice'],
+          documentSchema: { fields: buildStringFields(94) },
+        });
+        assertValidUiView(view);
+
+        expect(view.sections.map((s) => s.header)).toEqual([
+          undefined,
+          'Document Type',
+          'File Selection',
+          'Document Data',
+          'Admin',
+        ]);
+        expect(view.sections.every((s) => s.widgets.length > 0)).toBe(true);
+        expect(view.sections[3].widgets).toHaveLength(95);
+        expect(view.sections[4].widgets).toHaveLength(1);
+      });
+
+      it('clamps Document Log when maxWidgets < logFixedWidgets for ambiguous+partial_hydration (maxWidgets 2 and 1) and missing (maxWidgets 1)', async () => {
+        const driveAdapter = new WorkspaceAddonAdapter();
+
+        // ambiguous + partial_hydration (logFixedWidgets = 3) at fixedWidgetCount = 98 (92 fields) -> maxWidgets = 2
+        const ambiguousMax2 = await driveAdapter.composeView({
+          ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, {
+            'document-log': buildAmbiguousPartialPanel(5),
+          }),
+          documentSchema: { fields: buildStringFields(92) },
+        });
+        assertValidUiView(ambiguousMax2);
+
+        const logMax2 = ambiguousMax2.sections.find((s) => s.header === 'Document Log');
+        expect(logMax2?.widgets).toHaveLength(2);
+        expect(logMax2?.widgets[0].selectionInput?.name).toBe('SelectDocumentLog');
+        expect(logMax2?.widgets[1].decoratedText?.text).toBe('<b>Log A</b>');
+        expect('collapsible' in (logMax2 ?? {})).toBe(false);
+        expect('uncollapsibleWidgetsCount' in (logMax2 ?? {})).toBe(false);
+        expect(countTotalWidgets(ambiguousMax2)).toBe(100);
+
+        // ambiguous + partial_hydration at fixedWidgetCount = 99 (93 fields) -> maxWidgets = 1
+        const ambiguousMax1 = await driveAdapter.composeView({
+          ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, {
+            'document-log': buildAmbiguousPartialPanel(5),
+          }),
+          documentSchema: { fields: buildStringFields(93) },
+        });
+        assertValidUiView(ambiguousMax1);
+
+        const logMax1 = ambiguousMax1.sections.find((s) => s.header === 'Document Log');
+        expect(logMax1?.widgets).toHaveLength(1);
+        expect(logMax1?.widgets[0].selectionInput?.name).toBe('SelectDocumentLog');
+        expect('collapsible' in (logMax1 ?? {})).toBe(false);
+        expect('uncollapsibleWidgetsCount' in (logMax1 ?? {})).toBe(false);
+        expect(countTotalWidgets(ambiguousMax1)).toBe(100);
+
+        // missing (2 widgets) at fixedWidgetCount = 99 (93 fields) -> maxWidgets = 1, Process Document stays disabled
+        const missingMax1 = await driveAdapter.composeView({
+          ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, {
+            'document-log': {
+              status: 'missing',
+              spaceName: 'Harborview Hotel',
+              targetFolderPath: '1 Admin',
+              targetFileName: 'Harborview Hotel Document Log',
+            },
+          }),
+          documentSchema: { fields: buildStringFields(93) },
+        });
+        assertValidUiView(missingMax1);
+
+        const missingLog = missingMax1.sections.find((s) => s.header === 'Document Log');
+        expect(missingLog?.widgets).toHaveLength(1);
+        expect(missingLog?.widgets[0].decoratedText?.topLabel).toBe(
+          'No Document Log in Harborview Hotel'
+        );
+        expect(missingLog?.widgets[0].decoratedText?.text).toBe(
+          'Create <b>Harborview Hotel Document Log</b> in <b>Harborview Hotel</b>'
+        );
+        expect('collapsible' in (missingLog ?? {})).toBe(false);
+        expect('uncollapsibleWidgetsCount' in (missingLog ?? {})).toBe(false);
+        expect(countTotalWidgets(missingMax1)).toBe(100);
+        expect(getProcessButton(missingMax1)?.disabled).toBe(true);
+
+        // missing (2 widgets) at fixedWidgetCount = 98 (92 fields) -> maxWidgets = 2, Copy Log retained & Process Document stays disabled
+        const missingMax2 = await driveAdapter.composeView({
+          ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, {
+            'document-log': {
+              status: 'missing',
+              spaceName: 'Harborview Hotel',
+              targetFolderPath: '1 Admin',
+              targetFileName: 'Harborview Hotel Document Log',
+            },
+          }),
+          documentSchema: { fields: buildStringFields(92) },
+        });
+        assertValidUiView(missingMax2);
+
+        const missingLog2 = missingMax2.sections.find((s) => s.header === 'Document Log');
+        expect(missingLog2?.widgets).toHaveLength(2);
+        expect(missingLog2?.widgets[0].decoratedText).toBeDefined();
+        expect(missingLog2?.widgets[1].buttonList?.buttons[0].text).toBe('Copy Log');
+        expect(countTotalWidgets(missingMax2)).toBe(100);
+        expect(getProcessButton(missingMax2)?.disabled).toBe(true);
+      });
+
+      it('enforces ambiguous + partial_hydration overflow with uncollapsibleWidgetsCount: 3 at exact 100-widget cap and ample budget', async () => {
+        const driveAdapter = new WorkspaceAddonAdapter();
+
+        // Exact 100-widget cap: Fixed = 3 + 1 + (71 fields + 1 Process = 72) + 1 = 77 -> maxWidgets = 23, logFixedWidgets = 3, rawBudget = 20
+        const viewAtCap = await driveAdapter.composeView({
+          ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, {
+            'document-log': buildAmbiguousPartialPanel(21),
+          }),
+          documentSchema: { fields: buildStringFields(71) },
+        });
+        assertValidUiView(viewAtCap);
+
+        const logAtCap = viewAtCap.sections.find((s) => s.header === 'Document Log');
+        expect(logAtCap?.widgets).toHaveLength(23);
+        expect(logAtCap?.collapsible).toBe(true);
+        expect(logAtCap?.uncollapsibleWidgetsCount).toBe(3);
+        expect(logAtCap?.widgets[22].decoratedText).toEqual({
+          text: 'Showing 19 of 21 entries',
+          wrapText: true,
+          button: {
+            text: 'Open Log',
+            onClick: {
+              openLink: {
+                url: activeLogUrl,
+                openAs: 'FULL_SIZE',
+              },
+            },
+          },
+        });
+        expect(countTotalWidgets(viewAtCap)).toBe(100);
+
+        // Ample budget (5 fields -> fixedWidgetCount = 11) with 25 entries -> 3 fixed + 20 rows + 1 overflow = 24 widgets
+        const viewAmple = await driveAdapter.composeView({
+          ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, {
+            'document-log': buildAmbiguousPartialPanel(25),
+          }),
+          documentSchema: { fields: buildStringFields(5) },
+        });
+        assertValidUiView(viewAmple);
+
+        const logAmple = viewAmple.sections.find((s) => s.header === 'Document Log');
+        expect(logAmple?.widgets).toHaveLength(24);
+        expect(logAmple?.collapsible).toBe(true);
+        expect(logAmple?.uncollapsibleWidgetsCount).toBe(3);
+        expect(logAmple?.widgets[23].decoratedText?.text).toBe('Showing 20 of 25 entries');
+        expect(countTotalWidgets(viewAmple)).toBe(35);
+      });
+
+      it('enforces the 100-widget cap identically on the async displayNameResolver path (resolveAndBuildView)', async () => {
+        const resolverAdapter = new WorkspaceAddonAdapter({
+          getDisplayName: async (key: string) =>
+            key === 'submittal-arch' ? 'Submittal Architectural (Resolved)' : undefined,
+        });
+
+        // Fixed = Document Type (3) + File Selection (1) + Document Data (73 fields + 1 Process = 74) + Admin (1) = 79 -> maxWidgets = 21
+        const view = await resolverAdapter.composeView({
+          ...buildBaseContext(WORKSPACE_ADDON_VIEW_ID, {
+            'document-log': buildResolvedReadyPanel(21),
+          }),
+          documentSchema: { fields: buildStringFields(73) },
+        });
+        assertValidUiView(view);
+
+        const docTypeSection = view.sections.find((s) => s.header === 'Document Type');
+        expect(docTypeSection?.widgets[2].selectionInput?.items).toEqual([
+          { text: 'Submittal Architectural (Resolved)', value: 'submittal-arch', selected: true },
+        ]);
+
+        const logSection = view.sections.find((s) => s.header === 'Document Log');
+        expect(logSection?.widgets).toHaveLength(21);
+        expect(logSection?.collapsible).toBe(true);
+        expect(logSection?.uncollapsibleWidgetsCount).toBe(1);
+        expect(logSection?.widgets[20].decoratedText).toEqual({
+          text: 'Showing 19 of 21 entries',
+          wrapText: true,
+          button: {
+            text: 'Open Log',
+            onClick: {
+              openLink: {
+                url: activeLogUrl,
+                openAs: 'FULL_SIZE',
+              },
+            },
+          },
+        });
+        expect(countTotalWidgets(view)).toBe(100);
       });
     });
   });

@@ -1,11 +1,23 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import nock from 'nock';
-import { createDocumentLogWiring } from './document-log.wiring';
+import {
+  createDocumentLogWiring,
+  createUiProcessDocumentLogAdapter,
+} from './document-log.wiring';
 import {
   DocumentLogAmbiguousError,
+  DocumentLogError,
+  type DocumentLogPort,
   type RawManifestProviderPort,
 } from '../features/document-log';
-import type { SheetsClient } from '../infrastructure/sheets';
+import { DOCUMENT_LOG_CONTEXT_KEY } from '../features/schema-driven-ui/ports';
+import type { DocumentSpaceService } from '../features/document-space/domain';
+import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
+import {
+  GoogleSheetsApiError,
+  GoogleSheetsNamedRangeNotFoundError,
+  type SheetsClient,
+} from '../infrastructure/sheets';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 
 describe('document-log.wiring', () => {
@@ -188,7 +200,11 @@ describe('document-log.wiring', () => {
 
   it('honors options.documentLogService override across default and per-request factory', () => {
     const overrideService = {
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
       resolveLog: vi.fn(),
+      copyLog: vi.fn(),
+      readLog: vi.fn(),
       writeLog: vi.fn(),
     };
     const wiring = createDocumentLogWiring({
@@ -257,10 +273,10 @@ describe('document-log.wiring', () => {
     nock('https://sheets.googleapis.com', {
       reqheaders: { authorization: `Bearer ${perReqCredential}` },
     })
-      .get(/\/v4\/spreadsheets\/auth-log-1\/values\/.*/)
+      .get('/v4/spreadsheets/auth-log-1/values:batchGet')
       .query((q) => q.valueRenderOption === 'FORMULA')
       .reply(200, {
-        values: [[]],
+        valueRanges: [{ values: [[]] }],
       });
 
     nock('https://sheets.googleapis.com', {
@@ -715,8 +731,18 @@ describe('document-log.wiring', () => {
       rowNumber: 6,
       action: 'inserted',
     });
+    const defaultReadLog = vi.fn().mockResolvedValue({
+      spreadsheetId: 'default-sheet',
+      sheetName: 'Submittal Arch',
+      entries: [],
+      warnings: [],
+    });
     const defaultService = {
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
       resolveLog: vi.fn(),
+      copyLog: vi.fn(),
+      readLog: defaultReadLog,
       writeLog: defaultWriteLog,
     };
     const wiring = createDocumentLogWiring({
@@ -725,6 +751,7 @@ describe('document-log.wiring', () => {
     });
 
     const sampleActivity = { type: 'WRITE_LOG', payload: {} };
+    const sampleReadActivity = { type: 'READ_LOG', payload: {} };
     const sampleContext = {
       document: {
         type: 'submittal-arch',
@@ -737,6 +764,7 @@ describe('document-log.wiring', () => {
 
     const defaultHandler = wiring.createActivityHandler({ selectedLogId: 'static-selected-1' });
     expect(defaultHandler.canHandle(sampleActivity)).toBe(true);
+    expect(defaultHandler.canHandle(sampleReadActivity)).toBe(true);
     const defaultOutput = await defaultHandler.handle(sampleActivity, sampleContext);
     expect(defaultOutput).toEqual(expect.objectContaining({ success: true }));
     expect(defaultWriteLog).toHaveBeenCalledWith(
@@ -757,6 +785,27 @@ describe('document-log.wiring', () => {
       expect.objectContaining({ selectedLogId: 'ctx-selected-2' })
     );
 
+    const perReqReadOutput = await perReqWithDefaultOverride.handle(sampleReadActivity, sampleContext);
+    expect(perReqReadOutput).toEqual({
+      success: true,
+      contextVariables: {
+        logEntries: [],
+        logEntriesWarnings: [],
+        documentLogRead: {
+          spreadsheetId: 'default-sheet',
+          sheetName: 'Submittal Arch',
+          entryCount: 0,
+          warningCount: 0,
+        },
+      },
+    });
+    expect(defaultReadLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: 'ctx-selected-2',
+      })
+    );
+
     // Honors per-request overrides.documentLogService over options.documentLogService
     const overrideWriteLog = vi.fn().mockResolvedValue({
       spreadsheetId: 'override-req-sheet',
@@ -766,7 +815,16 @@ describe('document-log.wiring', () => {
     });
     const overrideHandler = wiring.createPerRequestActivityHandler(
       { selectedLogId: 'override-ctx-3' },
-      { documentLogService: { resolveLog: vi.fn(), writeLog: overrideWriteLog } }
+      {
+        documentLogService: {
+          requiresDocumentLog: vi.fn().mockReturnValue(true),
+          queryUiContext: vi.fn().mockResolvedValue(undefined),
+          resolveLog: vi.fn(),
+          copyLog: vi.fn(),
+          readLog: vi.fn(),
+          writeLog: overrideWriteLog,
+        },
+      }
     );
     const overrideOutput = await overrideHandler.handle(sampleActivity, sampleContext);
     expect(overrideOutput).toEqual({
@@ -895,5 +953,691 @@ describe('document-log.wiring', () => {
 
     expect(result.rowNumber).toBe(7);
     expect(evaluateOnly).toHaveBeenCalled();
+  });
+
+  it('wires readRows to sheetsClient.readTable with linkColumns and hydrates FORMULA =HYPERLINK cells over nock', async () => {
+    const mockSheetsClient: SheetsClient = {
+      readTable: vi.fn().mockResolvedValue({
+        headers: ['Status', 'Section', 'Calc Link'],
+        formulaColumns: [],
+        rows: [
+          {
+            rowNumber: 6,
+            values: { Status: 'Open', Section: '071200', 'Calc Link': 'Link' },
+            links: { 'Calc Link': 'https://drive.google.com/file/d/mock-read-1/view' },
+          },
+        ],
+      }),
+      insertIntoGroupedList: vi.fn(),
+      readNamedRange: vi.fn(),
+      writeNamedRange: vi.fn(),
+    };
+
+    const mockWiring = createDocumentLogWiring({
+      manifestProvider: createManifestProvider(),
+      sheetsClient: mockSheetsClient,
+    });
+    await mockWiring.logSchemaRegistry.initialize();
+
+    const mockReadResult = await mockWiring.documentLogService.readLog({
+      documentTypeKey: 'submittal-arch',
+      selectedLogId: 'sheet-read-1',
+    });
+
+    expect(mockSheetsClient.readTable).toHaveBeenCalledWith({
+      target: {
+        spreadsheetId: 'sheet-read-1',
+        sheetName: 'Submittal Arch',
+        rangeName: 'Log_Submittal_Arch',
+        extentMarker: '<--->',
+        groupDividerMarker: '---',
+      },
+      linkColumns: ['Calc Link'],
+    });
+    expect(mockReadResult.spreadsheetId).toBe('sheet-read-1');
+    expect(mockReadResult.sheetName).toBe('Submittal Arch');
+    expect(mockReadResult.entries).toHaveLength(1);
+    expect(mockReadResult.entries[0]).toEqual(
+      expect.objectContaining({
+        rowNumber: 6,
+        fileUri: 'https://drive.google.com/file/d/mock-read-1/view',
+        document: expect.objectContaining({
+          type: 'submittal-arch',
+          data: expect.objectContaining({
+            status: { key: 'Open' },
+            section: '071200',
+          }),
+        }),
+      })
+    );
+
+    const nockWiring = createDocumentLogWiring({
+      manifestProvider: createManifestProvider(),
+    });
+    await nockWiring.logSchemaRegistry.initialize();
+
+    const perReqCredential = 'ya29.per-request-read-cred';
+    nock('https://www.googleapis.com', {
+      reqheaders: { authorization: `Bearer ${perReqCredential}` },
+    })
+      .get('/drive/v3/files')
+      .query(true)
+      .reply(200, {
+        files: [
+          {
+            id: 'nock-read-log-1',
+            name: 'Harborview Hotel Document Log',
+            mimeType: 'application/vnd.google-apps.spreadsheet',
+          },
+        ],
+      });
+
+    nock('https://sheets.googleapis.com', {
+      reqheaders: { authorization: `Bearer ${perReqCredential}` },
+    })
+      .get('/v4/spreadsheets/nock-read-log-1')
+      .query(true)
+      .reply(200, {
+        spreadsheetId: 'nock-read-log-1',
+        sheets: [{ properties: { sheetId: 1, title: 'Submittal Arch' } }],
+        namedRanges: [
+          {
+            namedRangeId: 'nr-1',
+            name: 'Log_Submittal_Arch',
+            range: {
+              sheetId: 1,
+              startRowIndex: 2,
+              endRowIndex: 10,
+              startColumnIndex: 0,
+              endColumnIndex: 3,
+            },
+          },
+        ],
+      });
+
+    nock('https://sheets.googleapis.com', {
+      reqheaders: { authorization: `Bearer ${perReqCredential}` },
+    })
+      .get(/\/v4\/spreadsheets\/nock-read-log-1\/values\/.*/)
+      .query((q) => q.valueRenderOption === 'FORMATTED_VALUE')
+      .reply(200, {
+        values: [
+          ['Status', 'Section', 'Calc Link'],
+          [],
+          ['<--->'],
+          ['Open', '071200', 'Link'],
+          ['<--->'],
+        ],
+      });
+
+    nock('https://sheets.googleapis.com', {
+      reqheaders: { authorization: `Bearer ${perReqCredential}` },
+    })
+      .get('/v4/spreadsheets/nock-read-log-1/values:batchGet')
+      .query(
+        (q) =>
+          q.valueRenderOption === 'FORMULA' &&
+          Array.isArray(q.ranges) &&
+          q.ranges.length === 2
+      )
+      .reply(200, {
+        valueRanges: [
+          { values: [[]] },
+          {
+            values: [
+              ['=HYPERLINK("https://drive.google.com/file/d/nock-read-file-1/view", "Link")'],
+            ],
+          },
+        ],
+      });
+
+    const perRequestService = nockWiring.createDocumentLogService({
+      userOAuthToken: perReqCredential,
+    });
+    const nockResult = await perRequestService.readLog({
+      documentTypeKey: 'submittal-arch',
+      space: {
+        id: 'space-1',
+        typeId: 'projects',
+        name: 'Harborview Hotel',
+        abstractStorageId: 'drive-1',
+      },
+    });
+
+    expect(nockResult.spreadsheetId).toBe('nock-read-log-1');
+    expect(nockResult.sheetName).toBe('Submittal Arch');
+    expect(nockResult.entries).toHaveLength(1);
+    expect(nockResult.entries[0]).toEqual(
+      expect.objectContaining({
+        rowNumber: 6,
+        fileUri: 'https://drive.google.com/file/d/nock-read-file-1/view',
+        document: expect.objectContaining({
+          type: 'submittal-arch',
+          data: expect.objectContaining({
+            status: { key: 'Open' },
+            section: '071200',
+          }),
+        }),
+      })
+    );
+    expect(nock.isDone()).toBe(true);
+  });
+
+  it('wires ensureFolderPath and copyFile to GoogleDriveClient.ensureFolderPath and GoogleDriveClient.duplicate', async () => {
+    const mockDriveClient = {
+      searchFiles: vi.fn().mockResolvedValue([]),
+      ensureFolderPath: vi.fn().mockResolvedValue({
+        id: 'ensured-admin-1',
+        name: '1 Admin',
+        parents: ['drive-1'],
+      }),
+      duplicate: vi.fn().mockResolvedValue({
+        id: 'copied-log-99',
+        name: 'Harborview Hotel Document Log',
+        parents: ['ensured-admin-1'],
+        webViewLink: 'https://docs.google.com/spreadsheets/d/copied-log-99/edit',
+        modifiedTime: '2026-03-05T12:00:00.000Z',
+      }),
+    } as unknown as GoogleDriveClient;
+
+    const wiring = createDocumentLogWiring({
+      manifestProvider: createManifestProvider(),
+      driveClient: mockDriveClient,
+    });
+    await wiring.logSchemaRegistry.initialize();
+
+    const result = await wiring.documentLogService.copyLog({
+      id: 'space-1',
+      typeId: 'projects',
+      name: 'Harborview Hotel',
+      abstractStorageId: 'drive-1',
+    });
+
+    expect(mockDriveClient.ensureFolderPath).toHaveBeenCalledWith('drive-1', ['1 Admin']);
+    expect(mockDriveClient.duplicate).toHaveBeenCalledWith('tmpl-1', {
+      targetFolderId: 'ensured-admin-1',
+      newName: 'Harborview Hotel Document Log',
+    });
+    expect(result).toEqual({
+      created: true,
+      folderPath: '1 Admin',
+      candidate: {
+        id: 'copied-log-99',
+        name: 'Harborview Hotel Document Log',
+        parents: ['ensured-admin-1'],
+        webViewLink: 'https://docs.google.com/spreadsheets/d/copied-log-99/edit',
+        modifiedTime: '2026-03-05T12:00:00.000Z',
+      },
+    });
+  });
+
+  it('creates missing folder and copies template over nock, and stays idempotent when spreadsheet already exists', async () => {
+    const wiring = createDocumentLogWiring({
+      manifestProvider: createManifestProvider(),
+    });
+    await wiring.logSchemaRegistry.initialize();
+
+    const perReqCredential = 'ya29.copy-log-cred';
+    const driveScope = nock('https://www.googleapis.com', {
+      reqheaders: { authorization: `Bearer ${perReqCredential}` },
+    });
+
+    // 1. resolveLog spreadsheet search returns empty
+    driveScope
+      .get('/drive/v3/files')
+      .query(
+        (q) =>
+          q.driveId === 'drive-1' &&
+          q.corpora === 'drive' &&
+          typeof q.q === 'string' &&
+          q.q.includes('application/vnd.google-apps.spreadsheet')
+      )
+      .reply(200, { files: [] });
+
+    // 2. ensureFolderPath -> findOrCreateFolder checks existing folder '1 Admin'
+    driveScope
+      .get('/drive/v3/files')
+      .query(
+        (q) =>
+          typeof q.q === 'string' &&
+          q.q.includes("'drive-1' in parents") &&
+          q.q.includes("name = '1 Admin'") &&
+          q.q.includes("mimeType = 'application/vnd.google-apps.folder'")
+      )
+      .reply(200, { files: [] });
+
+    // 3. ensureFolderPath -> creates '1 Admin' folder via POST /drive/v3/files
+    driveScope
+      .post(
+        '/drive/v3/files',
+        (body: Record<string, unknown>) =>
+          body.name === '1 Admin' &&
+          body.mimeType === 'application/vnd.google-apps.folder' &&
+          Array.isArray(body.parents) &&
+          body.parents[0] === 'drive-1'
+      )
+      .query((q) => q.supportsAllDrives === 'true')
+      .reply(200, {
+        id: 'created-admin-folder-1',
+        name: '1 Admin',
+        parents: ['drive-1'],
+        mimeType: 'application/vnd.google-apps.folder',
+      });
+
+    // 4. duplicate -> copies template via POST /drive/v3/files/tmpl-1/copy
+    driveScope
+      .post(
+        '/drive/v3/files/tmpl-1/copy',
+        (body: Record<string, unknown>) =>
+          body.name === 'Harborview Hotel Document Log' &&
+          Array.isArray(body.parents) &&
+          body.parents[0] === 'created-admin-folder-1'
+      )
+      .query((q) => q.supportsAllDrives === 'true')
+      .reply(200, {
+        id: 'copied-sheet-1',
+        name: 'Harborview Hotel Document Log',
+        parents: ['created-admin-folder-1'],
+        mimeType: 'application/vnd.google-apps.spreadsheet',
+        webViewLink: 'https://docs.google.com/spreadsheets/d/copied-sheet-1/edit',
+      });
+
+    const perRequestService = wiring.createDocumentLogService({
+      userOAuthToken: perReqCredential,
+    });
+    const space = {
+      id: 'space-1',
+      typeId: 'projects',
+      name: 'Harborview Hotel',
+      abstractStorageId: 'drive-1',
+    };
+
+    const createdResult = await perRequestService.copyLog(space);
+    expect(createdResult).toEqual({
+      created: true,
+      folderPath: '1 Admin',
+      candidate: {
+        id: 'copied-sheet-1',
+        name: 'Harborview Hotel Document Log',
+        parents: ['created-admin-folder-1'],
+        webViewLink: 'https://docs.google.com/spreadsheets/d/copied-sheet-1/edit',
+      },
+    });
+    expect(nock.isDone()).toBe(true);
+
+    // 5. Idempotency: second call finds existing spreadsheet and performs no POST folder/copy calls
+    driveScope
+      .get('/drive/v3/files')
+      .query(
+        (q) =>
+          q.driveId === 'drive-1' &&
+          q.corpora === 'drive' &&
+          typeof q.q === 'string' &&
+          q.q.includes('application/vnd.google-apps.spreadsheet')
+      )
+      .reply(200, {
+        files: [
+          {
+            id: 'copied-sheet-1',
+            name: 'Harborview Hotel Document Log',
+            parents: ['created-admin-folder-1'],
+            mimeType: 'application/vnd.google-apps.spreadsheet',
+            webViewLink: 'https://docs.google.com/spreadsheets/d/copied-sheet-1/edit',
+          },
+        ],
+      });
+
+    const idempotentResult = await perRequestService.copyLog(space);
+    expect(idempotentResult).toEqual({
+      created: false,
+      folderPath: '1 Admin',
+      candidate: {
+        id: 'copied-sheet-1',
+        name: 'Harborview Hotel Document Log',
+        parents: ['created-admin-folder-1'],
+        webViewLink: 'https://docs.google.com/spreadsheets/d/copied-sheet-1/edit',
+      },
+    });
+    expect(nock.isDone()).toBe(true);
+  });
+
+  it('sanitizes GoogleSheets*Error into DocumentLogError in createSheetsStorageAdapter.readRows while re-throwing unrelated errors unchanged', async () => {
+    const readTable = vi.fn();
+    const mockSheetsClient: SheetsClient = {
+      readTable,
+      insertIntoGroupedList: vi.fn(),
+      readNamedRange: vi.fn(),
+      writeNamedRange: vi.fn(),
+    };
+    const mockDriveClient = {
+      searchFiles: vi.fn().mockResolvedValue([
+        {
+          id: 's1',
+          name: 'Harborview Hotel Document Log',
+          parents: ['admin-folder-1'],
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ]),
+    } as unknown as GoogleDriveClient;
+
+    const wiring = createDocumentLogWiring({
+      manifestProvider: createManifestProvider(),
+      driveClient: mockDriveClient,
+      sheetsClient: mockSheetsClient,
+    });
+    await wiring.logSchemaRegistry.initialize();
+
+    // Case A: GoogleSheetsNamedRangeNotFoundError with prefix -> DocumentLogError with stripped message and cause
+    const err1 = new GoogleSheetsNamedRangeNotFoundError(
+      'GoogleSheetsNamedRangeNotFoundError: Range missing'
+    );
+    readTable.mockRejectedValueOnce(err1);
+    const caughtA = await wiring.documentLogService
+      .readLog({ documentTypeKey: 'submittal-arch', selectedLogId: 's1' })
+      .catch((err: unknown) => err);
+    expect(caughtA).toBeInstanceOf(DocumentLogError);
+    expect((caughtA as DocumentLogError).message).toBe('Range missing');
+    expect((caughtA as DocumentLogError).cause).toBe(err1);
+
+    // Case B: GoogleSheetsApiError with blank message -> DocumentLogError with fallback message
+    readTable.mockRejectedValueOnce(new GoogleSheetsApiError('   '));
+    const caughtB = await wiring.documentLogService
+      .readLog({ documentTypeKey: 'submittal-arch', selectedLogId: 's1' })
+      .catch((err: unknown) => err);
+    expect(caughtB).toBeInstanceOf(DocumentLogError);
+    expect((caughtB as DocumentLogError).message).toBe('Unable to read Document Log storage.');
+
+    // Case C: Error with GoogleSheets* name and string GoogleSheets*Error -> neither leaks GoogleSheets*Error
+    const timeoutErr = new Error('GoogleSheetsTimeoutError: Timed out');
+    timeoutErr.name = 'GoogleSheetsTimeoutError';
+    readTable.mockRejectedValueOnce(timeoutErr);
+    readTable.mockRejectedValueOnce('GoogleSheetsQuotaError: Rate limit exceeded');
+
+    const uiResult = await wiring.documentLogService.queryUiContext({
+      documentTypeKey: 'submittal-arch',
+      space: {
+        id: 'space-1',
+        typeId: 'projects',
+        name: 'Harborview Hotel',
+        abstractStorageId: 'drive-1',
+      },
+      formData: {
+        section: '071200',
+        number: '001',
+      },
+    });
+    expect(uiResult).toMatchObject({
+      status: 'resolved',
+      readStatus: 'read_error',
+      readErrorMessage: 'Timed out',
+    });
+    expect(JSON.stringify(uiResult)).not.toContain('GoogleSheets');
+
+    const caughtC = await wiring.documentLogService
+      .readLog({ documentTypeKey: 'submittal-arch', selectedLogId: 's1' })
+      .catch((err: unknown) => err);
+    expect(caughtC).toBeInstanceOf(DocumentLogError);
+    expect((caughtC as DocumentLogError).message).toBe('Rate limit exceeded');
+    expect((caughtC as DocumentLogError).message).not.toContain('GoogleSheets');
+
+    // Case D: Unrelated error is re-thrown unchanged
+    const networkErr = new Error('ECONNRESET network failure');
+    readTable.mockRejectedValueOnce(networkErr);
+    const caughtD = await wiring.documentLogService
+      .readLog({ documentTypeKey: 'submittal-arch', selectedLogId: 's1' })
+      .catch((err: unknown) => err);
+    expect(caughtD).not.toBeInstanceOf(DocumentLogError);
+    expect(caughtD).toBe(networkErr);
+  });
+
+  it('createUiProcessDocumentLogAdapter delegates requiresDocumentLog, maps resolveLog (missing/resolved/ambiguous), and maps copyLog', async () => {
+    const space = {
+      id: 'space-1',
+      typeId: 'projects',
+      name: 'Harborview Hotel',
+      abstractStorageId: 'drive-1',
+    };
+    const mockService: DocumentLogPort = {
+      requiresDocumentLog: vi.fn((key: string) => key === 'submittal-arch'),
+      resolveLog: vi
+        .fn()
+        .mockResolvedValueOnce({
+          status: 'missing',
+          candidates: [],
+          expectedFolderPath: '1 Admin',
+        })
+        .mockResolvedValueOnce({
+          status: 'resolved',
+          candidate: {
+            id: 'log-1',
+            name: 'Harborview Hotel Document Log',
+            parents: ['folder-1'],
+            webViewLink: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+            modifiedTime: '2026-10-19T12:00:00Z',
+          },
+          candidates: [
+            {
+              id: 'log-1',
+              name: 'Harborview Hotel Document Log',
+              parents: ['folder-1'],
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          status: 'ambiguous',
+          candidates: [
+            {
+              id: 'log-a',
+              name: 'Log A',
+              parents: ['folder-1'],
+              webViewLink: 'https://docs.google.com/spreadsheets/d/log-a/edit',
+              modifiedTime: '2026-10-19T12:00:00Z',
+            },
+            {
+              id: 'log-b',
+              name: 'Log B',
+              parentFolderName: '6 Construction',
+            },
+          ],
+        }),
+      copyLog: vi.fn().mockResolvedValue({
+        created: true,
+        folderPath: '1 Admin',
+        candidate: {
+          id: 'log-copied',
+          name: 'Harborview Hotel Document Log',
+          parents: ['folder-1'],
+          webViewLink: 'https://docs.google.com/spreadsheets/d/log-copied/edit',
+          modifiedTime: '2026-10-20T00:00:00Z',
+        },
+      }),
+      queryUiContext: vi.fn(),
+      readLog: vi.fn(),
+      writeLog: vi.fn(),
+    };
+
+    const adapter = createUiProcessDocumentLogAdapter(mockService);
+
+    expect(adapter.requiresDocumentLog('submittal-arch')).toBe(true);
+    expect(adapter.requiresDocumentLog('rfi')).toBe(false);
+    expect(mockService.requiresDocumentLog).toHaveBeenCalledWith('submittal-arch');
+    expect(mockService.requiresDocumentLog).toHaveBeenCalledWith('rfi');
+
+    const missingRes = await adapter.resolveLog(space);
+    expect(missingRes).toEqual({
+      status: 'missing',
+      expectedFolderPath: '1 Admin',
+    });
+
+    const resolvedRes = await adapter.resolveLog(space);
+    expect(resolvedRes).toEqual({
+      status: 'resolved',
+      candidate: { id: 'log-1', name: 'Harborview Hotel Document Log' },
+    });
+    expect(JSON.stringify(resolvedRes)).not.toContain('webViewLink');
+    expect(JSON.stringify(resolvedRes)).not.toContain('parents');
+
+    const ambiguousRes = await adapter.resolveLog(space);
+    expect(ambiguousRes).toEqual({
+      status: 'ambiguous',
+      candidates: [
+        { id: 'log-a', name: 'Log A' },
+        { id: 'log-b', name: 'Log B' },
+      ],
+    });
+    expect(JSON.stringify(ambiguousRes)).not.toContain('parentFolderName');
+
+    const copyRes = await adapter.copyLog(space);
+    expect(copyRes).toEqual({
+      created: true,
+      folderPath: '1 Admin',
+      candidate: { id: 'log-copied', name: 'Harborview Hotel Document Log' },
+    });
+    expect(JSON.stringify(copyRes)).not.toContain('webViewLink');
+  });
+
+  it('createUiProcessDocumentLogPort and createUiContextQueryPort invoke ensureInitialized, honor overrides, authenticate per-request via WorkspaceExecutionContext, and memoize per-context via WeakMap', async () => {
+    const wiring = createDocumentLogWiring({
+      manifestProvider: createManifestProvider(),
+    });
+
+    const ctx1: WorkspaceExecutionContext = { userOAuthToken: 'ya29.ctx-token-1' };
+    const ctx2: WorkspaceExecutionContext = { userOAuthToken: 'ya29.ctx-token-2' };
+
+    const mockSpaceService = {
+      getAllTypes: vi.fn().mockReturnValue([
+        {
+          id: 'projects',
+          displayName: 'Projects',
+          spaceSchema: { allowedDocumentTypes: ['submittal-arch'] },
+          storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+        },
+      ]),
+      getCollection: vi.fn().mockResolvedValue({
+        type: {
+          id: 'projects',
+          displayName: 'Projects',
+          spaceSchema: { allowedDocumentTypes: ['submittal-arch'] },
+          storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+        },
+        spaces: [
+          {
+            id: 'space-1',
+            typeId: 'projects',
+            name: 'Harborview Hotel',
+            abstractStorageId: 'drive-1',
+          },
+        ],
+      }),
+    } as unknown as DocumentSpaceService;
+
+    const getDocumentSpaceService = vi.fn().mockReturnValue(mockSpaceService);
+    const ensureInitialized = vi.fn().mockImplementation(() => wiring.logSchemaRegistry.initialize());
+
+    // 1. WeakMap memoization per WorkspaceExecutionContext when overrides omitted
+    const port1a = wiring.createUiContextQueryPort(ctx1, {
+      getDocumentSpaceService,
+      ensureInitialized,
+    });
+    const port1b = wiring.createUiContextQueryPort(ctx1, {
+      getDocumentSpaceService,
+      ensureInitialized,
+    });
+    const port2 = wiring.createUiContextQueryPort(ctx2, {
+      getDocumentSpaceService,
+      ensureInitialized,
+    });
+    const port1Override = wiring.createUiContextQueryPort(ctx1, {
+      getDocumentSpaceService,
+      ensureInitialized,
+      overrides: {},
+    });
+
+    expect(port1a).toBe(port1b);
+    expect(port2).not.toBe(port1a);
+    expect(port1Override).not.toBe(port1a);
+
+    // 2. createUiProcessDocumentLogPort awaits ensureInitialized and authenticates via ctx1.userOAuthToken
+    nock('https://www.googleapis.com', {
+      reqheaders: { authorization: 'Bearer ya29.ctx-token-1' },
+    })
+      .get('/drive/v3/files')
+      .query(
+        (q) =>
+          q.driveId === 'drive-1' &&
+          typeof q.q === 'string' &&
+          q.q.includes("name contains 'Document Log'")
+      )
+      .reply(200, {
+        files: [
+          {
+            id: 'log-1',
+            name: 'Harborview Hotel Document Log',
+            mimeType: 'application/vnd.google-apps.spreadsheet',
+          },
+        ],
+      });
+
+    const processPort = await wiring.createUiProcessDocumentLogPort(ctx1, {
+      ensureInitialized,
+    });
+    expect(ensureInitialized).toHaveBeenCalledTimes(1);
+
+    const resolveResult = await processPort.resolveLog({
+      id: 'space-1',
+      typeId: 'projects',
+      name: 'Harborview Hotel',
+      abstractStorageId: 'drive-1',
+    });
+    expect(resolveResult).toEqual({
+      status: 'resolved',
+      candidate: { id: 'log-1', name: 'Harborview Hotel Document Log' },
+    });
+    expect(nock.isDone()).toBe(true);
+
+    // 3. createUiContextQueryPort with overrides invokes ensureInitialized and returns mapped DocumentLogPanelContext
+    const overrideDriveClient = {
+      searchFiles: vi.fn().mockResolvedValue([
+        {
+          id: 'log-override-1',
+          name: 'Harborview Hotel Document Log',
+          webViewLink: 'https://docs.google.com/spreadsheets/d/log-override-1/edit',
+        },
+      ]),
+    } as unknown as GoogleDriveClient;
+    const overrideSheetsClient: SheetsClient = {
+      readTable: vi.fn(),
+      insertIntoGroupedList: vi.fn(),
+      readNamedRange: vi.fn(),
+      writeNamedRange: vi.fn(),
+    };
+
+    const queryPortWithOverrides = wiring.createUiContextQueryPort(ctx1, {
+      getDocumentSpaceService,
+      ensureInitialized,
+      overrides: {
+        driveClient: overrideDriveClient,
+        sheetsClient: overrideSheetsClient,
+      },
+    });
+
+    const contextResult = await queryPortWithOverrides.queryContext([DOCUMENT_LOG_CONTEXT_KEY], {
+      documentTypeKey: 'submittal-arch',
+      spaceId: 'space-1',
+    });
+
+    expect(ensureInitialized).toHaveBeenCalledTimes(2);
+    expect(contextResult).toEqual({
+      [DOCUMENT_LOG_CONTEXT_KEY]: {
+        status: 'resolved',
+        spaceName: 'Harborview Hotel',
+        activeCandidate: {
+          name: 'Harborview Hotel Document Log',
+          url: 'https://docs.google.com/spreadsheets/d/log-override-1/edit',
+        },
+        readStatus: 'idle_incomplete_id',
+        missingIdFields: ['Section', 'Number'],
+      },
+    });
   });
 });

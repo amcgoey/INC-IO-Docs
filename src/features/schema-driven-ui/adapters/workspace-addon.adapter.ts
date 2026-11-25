@@ -1,19 +1,26 @@
-import type {
-  UiViewSchemaAdapterPort,
-  UiViewAdapterContext,
-  DocumentTypeDisplayNameResolverPort,
+import { Value } from '@sinclair/typebox/value';
+import {
+  DOCUMENT_LOG_CONTEXT_KEY,
+  DocumentLogPanelContextSchema,
+  type DocumentLogPanelContext,
+  type UiViewSchemaAdapterPort,
+  type UiViewAdapterContext,
+  type DocumentTypeDisplayNameResolverPort,
 } from '../ports';
 import type { UiView, UiViewSection } from '../domain';
 import {
   buildStatusMessageSection,
   buildDocumentTypeSelectionSection,
   buildFileSelectionSection,
+  buildDocumentLogSection,
   buildDocumentInfoSection,
   buildDocumentAdminSection,
+  SELECT_DOCUMENT_LOG_KEY,
 } from '../blocks';
 
 export const WORKSPACE_ADDON_VIEW_ID = 'drive-document-process-card';
 export const GMAIL_WORKSPACE_ADDON_VIEW_ID = 'gmail-document-process-card';
+const MAX_GOOGLE_WORKSPACE_CARD_WIDGETS = 100;
 
 export type SectionProducer = (context: UiViewAdapterContext) => UiViewSection | undefined;
 
@@ -28,18 +35,95 @@ export type WorkspaceAddonViewComposer = (
   displayNameResolver?: DocumentTypeDisplayNameResolverPort
 ) => Promise<UiView> | UiView;
 
+function extractDocumentLogPanelContext(
+  uiContext: Record<string, unknown> | undefined
+): DocumentLogPanelContext | undefined {
+  const raw = uiContext?.[DOCUMENT_LOG_CONTEXT_KEY];
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  if (!Value.Check(DocumentLogPanelContextSchema, raw)) {
+    const details = [...Value.Errors(DocumentLogPanelContextSchema, raw)]
+      .map((e) => `${e.path}: ${e.message}`)
+      .join(', ');
+    throw new Error(`Invalid uiContext["${DOCUMENT_LOG_CONTEXT_KEY}"]: ${details}`);
+  }
+  return raw;
+}
+
+export function extractSharedActionParameters(
+  ctx: UiViewAdapterContext
+): Record<string, string> {
+  const previousSpaceId =
+    typeof ctx.spaceId === 'string' && ctx.spaceId.trim().length > 0
+      ? ctx.spaceId.trim()
+      : undefined;
+  const rawSelectedLogId = ctx.formData?.[SELECT_DOCUMENT_LOG_KEY];
+  const previousSelectedLogId =
+    typeof rawSelectedLogId === 'string' && rawSelectedLogId.trim().length > 0
+      ? rawSelectedLogId.trim()
+      : undefined;
+
+  return {
+    ...(previousSpaceId !== undefined ? { previousSpaceId } : {}),
+    ...(previousSelectedLogId !== undefined ? { previousSelectedLogId } : {}),
+  };
+}
+
+function toOptionalActionParameters(
+  params: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!params || Object.keys(params).length === 0) {
+    return undefined;
+  }
+  return params;
+}
+
 function buildViewFromSections(
   viewId: string,
-  sectionsProducers: readonly SectionProducer[],
-  context: UiViewAdapterContext
+  fixedProducers: {
+    status: SectionProducer;
+    docType: SectionProducer;
+    fileSelection: SectionProducer;
+    docInfo: (ctx: UiViewAdapterContext, processDisabled: boolean) => UiViewSection | undefined;
+    admin: SectionProducer;
+  },
+  context: UiViewAdapterContext,
+  getActionParameters?: ((context: UiViewAdapterContext) => Record<string, unknown> | undefined) | undefined
 ): UiView {
-  const sections: UiViewSection[] = [];
-  for (const produceSection of sectionsProducers) {
-    const section = produceSection(context);
-    if (section) {
-      sections.push(section);
-    }
-  }
+  const logContext = extractDocumentLogPanelContext(context.uiContext);
+  const processDisabled =
+    logContext?.status === 'missing' || logContext?.status === 'missing_space';
+
+  const statusSection = fixedProducers.status(context);
+  const docTypeSection = fixedProducers.docType(context);
+  const fileSection = fixedProducers.fileSelection(context);
+  const docInfoSection = fixedProducers.docInfo(context, processDisabled);
+  const adminSection = fixedProducers.admin(context);
+
+  const fixedWidgetCount =
+    (statusSection?.widgets.length ?? 0) +
+    (docTypeSection?.widgets.length ?? 0) +
+    (fileSection?.widgets.length ?? 0) +
+    (docInfoSection?.widgets.length ?? 0) +
+    (adminSection?.widgets.length ?? 0);
+
+  const actionParams = getActionParameters ? getActionParameters(context) : undefined;
+  const documentLogSection = buildDocumentLogSection(logContext, {
+    maxWidgets: MAX_GOOGLE_WORKSPACE_CARD_WIDGETS - fixedWidgetCount,
+    ...(actionParams && Object.keys(actionParams).length > 0
+      ? { actionParameters: actionParams }
+      : {}),
+  });
+
+  const sections: UiViewSection[] = [
+    statusSection,
+    docTypeSection,
+    fileSection,
+    documentLogSection,
+    docInfoSection,
+    adminSection,
+  ].filter((section): section is UiViewSection => section !== undefined);
 
   return {
     id: viewId,
@@ -56,9 +140,16 @@ function buildViewFromSections(
 
 async function resolveAndBuildView(
   viewId: string,
-  sectionsProducers: readonly SectionProducer[],
+  fixedProducers: {
+    status: SectionProducer;
+    docType: SectionProducer;
+    fileSelection: SectionProducer;
+    docInfo: (ctx: UiViewAdapterContext, processDisabled: boolean) => UiViewSection | undefined;
+    admin: SectionProducer;
+  },
   context: UiViewAdapterContext,
-  displayNameResolver: DocumentTypeDisplayNameResolverPort
+  displayNameResolver: DocumentTypeDisplayNameResolverPort,
+  getActionParameters?: ((context: UiViewAdapterContext) => Record<string, unknown> | undefined) | undefined
 ): Promise<UiView> {
   const resolvedDocTypes = await Promise.all(
     context.selectionState!.documentTypes.map(async (docType) => {
@@ -78,7 +169,7 @@ async function resolveAndBuildView(
     },
   };
 
-  return buildViewFromSections(viewId, sectionsProducers, effectiveContext);
+  return buildViewFromSections(viewId, fixedProducers, effectiveContext, getActionParameters);
 }
 
 export function createWorkspaceAddonViewSchema(
@@ -94,6 +185,17 @@ export function createWorkspaceAddonViewSchema(
   context?: UiViewAdapterContext,
   displayNameResolver?: DocumentTypeDisplayNameResolverPort
 ): WorkspaceAddonViewComposer | Promise<UiView> | UiView {
+  const getMergedActionParameters = (
+    ctx: UiViewAdapterContext
+  ): Record<string, unknown> | undefined => {
+    const shared = extractSharedActionParameters(ctx);
+    const custom = config.getActionParameters ? config.getActionParameters(ctx) : undefined;
+    return toOptionalActionParameters({
+      ...shared,
+      ...(custom ?? {}),
+    });
+  };
+
   const fileSelectionProducer: SectionProducer =
     config.fileSelectionConfig ??
     ((ctx) =>
@@ -101,10 +203,10 @@ export function createWorkspaceAddonViewSchema(
         ? buildFileSelectionSection(ctx.selectionState, { formData: ctx.formData })
         : undefined);
 
-  const schema: readonly SectionProducer[] = [
+  const fixedProducers = {
     // 1. Status Section (status messages & validation errors)
-    (ctx) =>
-      (ctx.statusMessages?.length || ctx.validationErrors?.length)
+    status: (ctx: UiViewAdapterContext) =>
+      ctx.statusMessages?.length || ctx.validationErrors?.length
         ? buildStatusMessageSection({
             statusMessages: ctx.statusMessages,
             validationErrors: ctx.validationErrors,
@@ -112,11 +214,11 @@ export function createWorkspaceAddonViewSchema(
         : undefined,
 
     // 2. Document Type Selection Section
-    (ctx) => {
+    docType: (ctx: UiViewAdapterContext) => {
       if (!ctx.selectionState) {
         return undefined;
       }
-      const actionParams = config.getActionParameters ? config.getActionParameters(ctx) : undefined;
+      const actionParams = getMergedActionParameters(ctx);
       return buildDocumentTypeSelectionSection(ctx.selectionState, {
         onSpaceTypeChangeAction: {
           action: 'onSpaceTypeChange',
@@ -135,14 +237,14 @@ export function createWorkspaceAddonViewSchema(
     },
 
     // 3. File Selection Section
-    fileSelectionProducer,
+    fileSelection: fileSelectionProducer,
 
-    // 4. Document Info Section
-    (ctx) => {
+    // 4. Document Info Section (Document Log sits directly before this)
+    docInfo: (ctx: UiViewAdapterContext, processDisabled: boolean) => {
       if (!ctx.documentSchema) {
         return undefined;
       }
-      const actionParams = config.getActionParameters ? config.getActionParameters(ctx) : undefined;
+      const actionParams = getMergedActionParameters(ctx);
       return buildDocumentInfoSection(ctx.documentSchema, ctx.uiSchema, {
         sectionHeader: 'Document Data',
         formData: ctx.formData,
@@ -150,22 +252,36 @@ export function createWorkspaceAddonViewSchema(
         documentTypeKey: ctx.documentTypeKey,
         dynamicOptions: ctx.dynamicOptions,
         ...(actionParams ? { onChangeActionParameters: actionParams } : {}),
-        ...(ctx.documentTypeKey ? { onProcessAction: { action: 'processDocument' } } : {}),
+        ...(ctx.documentTypeKey
+          ? {
+              onProcessAction: {
+                action: 'processDocument',
+                ...(actionParams ? { parameters: actionParams } : {}),
+              },
+            }
+          : {}),
+        ...(processDisabled ? { processDisabled: true } : {}),
       });
     },
 
     // 5. Admin Section (always present)
-    () => buildDocumentAdminSection(),
-  ];
+    admin: () => buildDocumentAdminSection(),
+  };
 
   const compose: WorkspaceAddonViewComposer = (
     ctx: UiViewAdapterContext,
     resolver?: DocumentTypeDisplayNameResolverPort
   ): Promise<UiView> | UiView => {
     if (!resolver || !ctx.selectionState?.documentTypes) {
-      return buildViewFromSections(config.viewId, schema, ctx);
+      return buildViewFromSections(config.viewId, fixedProducers, ctx, getMergedActionParameters);
     }
-    return resolveAndBuildView(config.viewId, schema, ctx, resolver);
+    return resolveAndBuildView(
+      config.viewId,
+      fixedProducers,
+      ctx,
+      resolver,
+      getMergedActionParameters
+    );
   };
 
   if (context !== undefined) {
@@ -177,6 +293,7 @@ export function createWorkspaceAddonViewSchema(
 
 export class WorkspaceAddonAdapter implements UiViewSchemaAdapterPort {
   public readonly viewId = WORKSPACE_ADDON_VIEW_ID;
+  public readonly contextKeys = [DOCUMENT_LOG_CONTEXT_KEY] as const;
   private readonly composer: WorkspaceAddonViewComposer;
 
   constructor(
@@ -228,11 +345,13 @@ export function extractGmailActionParameters(ctx: UiViewAdapterContext): Record<
     ...(previousMessageId !== undefined && previousMessageId.trim().length > 0
       ? { previousMessageId: previousMessageId.trim() }
       : {}),
+    ...extractSharedActionParameters(ctx),
   };
 }
 
 export class GmailWorkspaceAddonAdapter implements UiViewSchemaAdapterPort {
   public readonly viewId = GMAIL_WORKSPACE_ADDON_VIEW_ID;
+  public readonly contextKeys = [DOCUMENT_LOG_CONTEXT_KEY] as const;
   private readonly composer: WorkspaceAddonViewComposer;
 
   constructor(

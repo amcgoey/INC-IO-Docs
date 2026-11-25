@@ -554,6 +554,234 @@ describe('GoogleDriveClient', () => {
     });
   });
 
+  describe('ensureFolderPath', () => {
+    it('returns root folder metadata via getFile when pathSegments is empty without calling files.list or files.create', async () => {
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: 'root-id',
+          name: 'RootFolder',
+          parents: [],
+        },
+      });
+
+      const folder = await client.ensureFolderPath('root-id', []);
+
+      expect(folder).toEqual({
+        id: 'root-id',
+        name: 'RootFolder',
+        parents: [],
+        mimeType: undefined,
+        webViewLink: undefined,
+      });
+      expect(mockDrive.files.get).toHaveBeenCalledWith({
+        fileId: 'root-id',
+        fields:
+          'id, name, parents, mimeType, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
+        supportsAllDrives: true,
+      });
+      expect(mockDrive.files.list).not.toHaveBeenCalled();
+      expect(mockDrive.files.create).not.toHaveBeenCalled();
+    });
+
+    it('creates missing nested segments sequentially and returns leaf metadata', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ data: { files: [] } })
+        .mockResolvedValueOnce({ data: { files: [] } });
+
+      (mockDrive.files.create as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          data: {
+            id: 'admin-id',
+            name: '1 Admin',
+            parents: ['root-id'],
+            mimeType: 'application/vnd.google-apps.folder',
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            id: 'submittals-id',
+            name: 'Submittals',
+            parents: ['admin-id'],
+            mimeType: 'application/vnd.google-apps.folder',
+            webViewLink: 'https://drive/submittals',
+          },
+        });
+
+      const folder = await client.ensureFolderPath('root-id', ['1 Admin', 'Submittals']);
+
+      expect(folder).toEqual({
+        id: 'submittals-id',
+        name: 'Submittals',
+        parents: ['admin-id'],
+        mimeType: 'application/vnd.google-apps.folder',
+        webViewLink: 'https://drive/submittals',
+      });
+
+      expect(mockDrive.files.list).toHaveBeenNthCalledWith(1, {
+        q: "'root-id' in parents and name = '1 Admin' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        fields: 'files(id, name, parents, mimeType, webViewLink)',
+        spaces: 'drive',
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true,
+      });
+      expect(mockDrive.files.create).toHaveBeenNthCalledWith(1, {
+        requestBody: {
+          name: '1 Admin',
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: ['root-id'],
+        },
+        fields: 'id, name, parents, mimeType, webViewLink',
+        supportsAllDrives: true,
+      });
+
+      expect(mockDrive.files.list).toHaveBeenNthCalledWith(2, {
+        q: "'admin-id' in parents and name = 'Submittals' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        fields: 'files(id, name, parents, mimeType, webViewLink)',
+        spaces: 'drive',
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true,
+      });
+      expect(mockDrive.files.create).toHaveBeenNthCalledWith(2, {
+        requestBody: {
+          name: 'Submittals',
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: ['admin-id'],
+        },
+        fields: 'id, name, parents, mimeType, webViewLink',
+        supportsAllDrives: true,
+      });
+    });
+
+    it('reuses existing folders and creates only missing deeper segments', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          data: {
+            files: [
+              {
+                id: 'existing-admin-id',
+                name: '1 Admin',
+                parents: ['root-id'],
+                mimeType: 'application/vnd.google-apps.folder',
+              },
+            ],
+          },
+        })
+        .mockResolvedValueOnce({ data: { files: [] } });
+
+      (mockDrive.files.create as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: {
+          id: 'new-submittals-id',
+          name: 'Submittals',
+          parents: ['existing-admin-id'],
+          mimeType: 'application/vnd.google-apps.folder',
+        },
+      });
+
+      const folder = await client.ensureFolderPath('root-id', ['1 Admin', 'Submittals']);
+
+      expect(folder).toEqual({
+        id: 'new-submittals-id',
+        name: 'Submittals',
+        parents: ['existing-admin-id'],
+        mimeType: 'application/vnd.google-apps.folder',
+        webViewLink: undefined,
+      });
+      expect(mockDrive.files.create).toHaveBeenCalledTimes(1);
+      expect(mockDrive.files.create).toHaveBeenCalledWith({
+        requestBody: {
+          name: 'Submittals',
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: ['existing-admin-id'],
+        },
+        fields: 'id, name, parents, mimeType, webViewLink',
+        supportsAllDrives: true,
+      });
+    });
+
+    it('propagates GoogleDriveAmbiguousPathError when a segment has > 1 matches', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: {
+          files: [
+            { id: 'f-1', name: 'Ambiguous', parents: ['root-id'] },
+            { id: 'f-2', name: 'Ambiguous', parents: ['root-id'] },
+          ],
+        },
+      });
+
+      await expect(client.ensureFolderPath('root-id', ['Ambiguous', 'Child'])).rejects.toThrow(
+        GoogleDriveAmbiguousPathError
+      );
+      expect(mockDrive.files.create).not.toHaveBeenCalled();
+    });
+
+    it('propagates GoogleDriveApiError with statusCode 403 when files.create returns HTTP 403', async () => {
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: { files: [] },
+      });
+      const apiError = Object.assign(new Error('Insufficient permissions'), { status: 403 });
+      (mockDrive.files.create as ReturnType<typeof vi.fn>).mockRejectedValueOnce(apiError);
+
+      await expect(client.ensureFolderPath('root-id', ['Restricted'])).rejects.toMatchObject({
+        name: 'GoogleDriveApiError',
+        statusCode: 403,
+      });
+    });
+
+    it('rejects blank or whitespace path segment', async () => {
+      await expect(client.ensureFolderPath('root-id', ['   '])).rejects.toThrow(
+        'Folder name must be a non-empty string'
+      );
+      expect(mockDrive.files.list).not.toHaveBeenCalled();
+      expect(mockDrive.files.create).not.toHaveBeenCalled();
+    });
+
+    it('forwards per-call options.auth to underlying Drive calls', async () => {
+      const customDriveMock = {
+        files: {
+          get: vi.fn().mockResolvedValue({
+            data: {
+              id: 'root-auth-id',
+              name: 'RootAuth',
+              parents: [],
+            },
+          }),
+          list: vi.fn().mockResolvedValue({ data: { files: [] } }),
+          create: vi.fn().mockResolvedValue({
+            data: {
+              id: 'created-auth-id',
+              name: 'Submittals',
+              parents: ['root-auth-id'],
+              mimeType: 'application/vnd.google-apps.folder',
+            },
+          }),
+        },
+      };
+      const driveSpy = vi
+        .spyOn(google, 'drive')
+        .mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
+
+      try {
+        const rootFolder = await client.ensureFolderPath('root-auth-id', [], {
+          auth: 'ya29.custom-token',
+        });
+        expect(rootFolder.id).toBe('root-auth-id');
+        expect(customDriveMock.files.get).toHaveBeenCalledTimes(1);
+
+        const createdFolder = await client.ensureFolderPath('root-auth-id', ['Submittals'], {
+          auth: 'ya29.custom-token',
+        });
+        expect(createdFolder.id).toBe('created-auth-id');
+        expect(customDriveMock.files.list).toHaveBeenCalledTimes(1);
+        expect(customDriveMock.files.create).toHaveBeenCalledTimes(1);
+        expect(mockDrive.files.get).not.toHaveBeenCalled();
+        expect(mockDrive.files.list).not.toHaveBeenCalled();
+        expect(mockDrive.files.create).not.toHaveBeenCalled();
+      } finally {
+        driveSpy.mockRestore();
+      }
+    });
+  });
+
   describe('rename', () => {
     it('renames file and returns updated metadata', async () => {
       (mockDrive.files.update as ReturnType<typeof vi.fn>).mockResolvedValue({

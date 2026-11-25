@@ -14,6 +14,7 @@ import {
   type RawManifestProviderPort,
   type UiProcessSpaceItem,
   type UiProcessDocumentSpaceDto,
+  type UiProcessDocumentLogPort,
   type UiProcessGmailPort,
   type UiProcessGmailMessageDescriptor,
   type UiProcessSourceParserPort,
@@ -25,6 +26,10 @@ import {
 import type {
   SchemaDrivenUiService,
   UiView,
+  UiViewButton,
+  UiViewColor,
+  UiViewOnClick,
+  UiViewOpenLink,
 } from '../features/schema-driven-ui/domain';
 import {
   translateUiViewToNavigationAction,
@@ -32,10 +37,14 @@ import {
   type UiView as WorkspaceUiView,
   type UiViewWidget,
   type UiAction,
+  type UiButton,
+  type UiColor,
+  type UiOnClick,
+  type UiOpenLink,
 } from '../infrastructure/workspace-addon/translator';
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
 import type { FormChangeEvaluatorFn as FormChangeEvaluator } from '../features/ui-process-manager';
-import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
+import type { OptionsFetcherPort, UiContextQueryPort } from '../features/schema-driven-ui/ports';
 import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import type {
   GmailThreadDetails,
@@ -106,6 +115,48 @@ function mapUiAction(
   };
 }
 
+function mapUiOpenLink(openLink: UiViewOpenLink): UiOpenLink {
+  return {
+    openLink: {
+      url: openLink.openLink.url,
+      ...(openLink.openLink.openAs !== undefined ? { openAs: openLink.openLink.openAs } : {}),
+      ...(openLink.openLink.onClose !== undefined ? { onClose: openLink.openLink.onClose } : {}),
+    },
+  };
+}
+
+function mapUiOnClick(
+  onClick: UiViewOnClick | undefined,
+  baseUrl?: string | undefined
+): UiOnClick | undefined {
+  if (!onClick) {
+    return undefined;
+  }
+  if ('openLink' in onClick) {
+    return mapUiOpenLink(onClick);
+  }
+  return mapUiAction(onClick, baseUrl);
+}
+
+function mapUiColor(color: UiViewColor): UiColor {
+  return {
+    red: color.red,
+    green: color.green,
+    blue: color.blue,
+    ...(color.alpha !== undefined ? { alpha: color.alpha } : {}),
+  };
+}
+
+function mapUiButton(btn: UiViewButton, baseUrl?: string | undefined): UiButton {
+  const mappedOnClick = mapUiOnClick(btn.onClick, baseUrl);
+  return {
+    text: btn.text,
+    ...(mappedOnClick !== undefined ? { onClick: mappedOnClick } : {}),
+    ...(btn.color !== undefined ? { color: mapUiColor(btn.color) } : {}),
+    ...(btn.disabled !== undefined ? { disabled: btn.disabled } : {}),
+  };
+}
+
 export function mapUiViewToWorkspaceUiView(view: UiView, baseUrl?: string | undefined): WorkspaceUiView {
   return {
     ...(view.id !== undefined ? { id: view.id } : {}),
@@ -128,7 +179,14 @@ export function mapUiViewToWorkspaceUiView(view: UiView, baseUrl?: string | unde
       widgets: section.widgets
         .map((widget): UiViewWidget | undefined => {
           if (widget.textParagraph) {
-            return { textParagraph: { text: widget.textParagraph.text } };
+            return {
+              textParagraph: {
+                text: widget.textParagraph.text,
+                ...(widget.textParagraph.maxLines !== undefined
+                  ? { maxLines: widget.textParagraph.maxLines }
+                  : {}),
+              },
+            };
           }
           if (widget.textInput) {
             const mappedAction = mapUiAction(widget.textInput.onChangeAction, baseUrl);
@@ -166,13 +224,21 @@ export function mapUiViewToWorkspaceUiView(view: UiView, baseUrl?: string | unde
           if (widget.buttonList) {
             return {
               buttonList: {
-                buttons: widget.buttonList.buttons.map((btn) => {
-                  const mappedOnClick = mapUiAction(btn.onClick, baseUrl);
-                  return {
-                    text: btn.text,
-                    ...(mappedOnClick !== undefined ? { onClick: mappedOnClick } : {}),
-                  };
-                }),
+                buttons: widget.buttonList.buttons.map((btn) => mapUiButton(btn, baseUrl)),
+              },
+            };
+          }
+          if (widget.decoratedText) {
+            const dt = widget.decoratedText;
+            const mappedOnClick = mapUiOnClick(dt.onClick, baseUrl);
+            return {
+              decoratedText: {
+                text: dt.text,
+                ...(dt.topLabel !== undefined ? { topLabel: dt.topLabel } : {}),
+                ...(dt.wrapText !== undefined ? { wrapText: dt.wrapText } : {}),
+                ...(dt.bottomLabel !== undefined ? { bottomLabel: dt.bottomLabel } : {}),
+                ...(dt.button !== undefined ? { button: mapUiButton(dt.button, baseUrl) } : {}),
+                ...(mappedOnClick !== undefined ? { onClick: mappedOnClick } : {}),
               },
             };
           }
@@ -212,6 +278,13 @@ export interface UiProcessManagerWiringOptions {
   evaluateFormChange?: FormChangeEvaluator | undefined;
   createOrchestrator?: UiProcessOrchestratorFactory | undefined;
   optionsFetcher?: OptionsFetcherPort | undefined;
+  uiContextQuery?: UiContextQueryPort | undefined;
+  documentLogPort?: UiProcessDocumentLogPort | undefined;
+  createDocumentLogPort?:
+    | ((
+        context: WorkspaceExecutionContext
+      ) => UiProcessDocumentLogPort | Promise<UiProcessDocumentLogPort>)
+    | undefined;
   driveClient?: GoogleDriveClient | undefined;
   gmailClient?: GoogleGmailClient | undefined;
   gmailPort?: UiProcessGmailPort | undefined;
@@ -306,7 +379,7 @@ export function createUiProcessRequestWrapper(
 
     const mappedView = mapUiViewToWorkspaceUiView(view, context.baseUrl);
     if (intent.isUpdateCard) {
-      return translateUiViewToUpdateCardAction(mappedView);
+      return translateUiViewToUpdateCardAction(mappedView, intent.notification);
     }
     return translateUiViewToNavigationAction(mappedView);
   };
@@ -412,6 +485,7 @@ export function createUiProcessManagerWiring(
       : createSchemaDrivenUiWiring({
           manifestProvider: options.manifestProvider,
           ...(options.optionsFetcher !== undefined ? { optionsFetcher: options.optionsFetcher } : {}),
+          ...(options.uiContextQuery !== undefined ? { uiContextQuery: options.uiContextQuery } : {}),
           ...(options.driveClient !== undefined ? { driveClient: options.driveClient } : {}),
         });
 
@@ -503,6 +577,7 @@ export function createUiProcessManagerWiring(
     spaceProvider: fallbackSpaceProvider,
     configProvider,
     manifestPort,
+    ...(options.documentLogPort !== undefined ? { documentLogPort: options.documentLogPort } : {}),
     documentRunner: fallbackDocumentRunner,
     formEvaluator,
     gmailPort,
@@ -519,9 +594,19 @@ export function createUiProcessManagerWiring(
     const token = context.userOAuthToken ?? context.gmail?.accessToken;
     const reqGmailPort: UiProcessGmailPort = options.gmailPort ?? createGmailPortForToken(gmailClient, token);
 
-    if (!options.createDocumentSpaceService && !options.createDocumentService && !options.createSourceParser && !token) {
+    if (
+      !options.createDocumentSpaceService &&
+      !options.createDocumentService &&
+      !options.createSourceParser &&
+      !options.createDocumentLogPort &&
+      !token
+    ) {
       return orchestrator;
     }
+
+    const reqDocumentLogPort: UiProcessDocumentLogPort | undefined = options.createDocumentLogPort
+      ? await options.createDocumentLogPort(context)
+      : options.documentLogPort;
 
     const reqSourceParser: UiProcessSourceParserPort | undefined = options.createSourceParser
       ? await options.createSourceParser(context)
@@ -545,7 +630,7 @@ export function createUiProcessManagerWiring(
       options.documentService || options.createDocumentService
         ? {
             processDocument: async (payload, eventName) => {
-              const { sourceFiles, targetMessageId, ...documentPayload } = payload;
+              const { sourceFiles, targetMessageId, selectedLogId, ...documentPayload } = payload;
               const space = toStructuredDocumentSpace(documentPayload.space);
               const targetDocPayload: DocumentModel = {
                 type: documentPayload.type,
@@ -564,6 +649,7 @@ export function createUiProcessManagerWiring(
                       },
                     }
                   : {}),
+                selectedLogId,
                 sourceFiles: activeSourceFiles,
                 selectedItems: activeSourceFiles.map((file) => ({
                   id: file.id,
@@ -593,6 +679,7 @@ export function createUiProcessManagerWiring(
       spaceProvider: reqSpaceProvider,
       configProvider,
       manifestPort,
+      ...(reqDocumentLogPort !== undefined ? { documentLogPort: reqDocumentLogPort } : {}),
       documentRunner: reqDocumentRunner,
       formEvaluator,
       gmailPort: reqGmailPort,

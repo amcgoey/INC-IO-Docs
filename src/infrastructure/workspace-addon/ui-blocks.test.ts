@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
+import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import {
   buildTitleBlock,
   buildStatusMessageBlock,
@@ -9,6 +10,9 @@ import {
   buildErrorCard,
   GoogleWorkspaceCardSchema,
   GoogleWorkspaceSectionSchema,
+  GoogleWorkspaceWidgetSchema,
+  GoogleWorkspaceTextParagraphWidgetSchema,
+  GoogleWorkspaceActionResponseSchema,
 } from './ui-blocks';
 
 describe('Workspace Add-on UI Blocks', () => {
@@ -171,6 +175,45 @@ describe('Workspace Add-on UI Blocks', () => {
         },
       });
     });
+
+    it('emits paired updateCard and notification when non-blank notification is provided and passes GoogleWorkspaceActionResponseSchema', () => {
+      const card = { header: { title: 'Card' }, sections: [] };
+      const notificationText = 'Created "Harborview Document Log" in "1 Admin".';
+      const action = buildUpdateCardNavigationAction(card, notificationText);
+
+      expect(action).toEqual({
+        action: {
+          navigations: [
+            {
+              updateCard: card,
+            },
+          ],
+          notification: {
+            text: notificationText,
+          },
+        },
+      });
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, action)).toBe(true);
+    });
+
+    it('omits notification key when notification is omitted, undefined, empty, or whitespace-only', () => {
+      const card = { header: { title: 'Card' }, sections: [] };
+
+      for (const blank of [undefined, '', '   ']) {
+        const action = buildUpdateCardNavigationAction(card, blank);
+        expect(action).toEqual({
+          action: {
+            navigations: [
+              {
+                updateCard: card,
+              },
+            ],
+          },
+        });
+        expect('notification' in action.action).toBe(false);
+        expect(Value.Check(GoogleWorkspaceActionResponseSchema, action)).toBe(true);
+      }
+    });
   });
 
   describe('buildErrorCard', () => {
@@ -235,6 +278,387 @@ describe('Workspace Add-on UI Blocks', () => {
       };
 
       expect(Value.Check(GoogleWorkspaceCardSchema, card)).toBe(true);
+    });
+
+    it('accepts textParagraph.maxLines as a positive integer across TextParagraph, Widget, and Card schemas', () => {
+      const widget = {
+        textParagraph: { text: 'Summary', maxLines: 3 },
+      };
+      const card = {
+        header: { title: 'Test' },
+        sections: [{ widgets: [widget] }],
+      };
+
+      expect(Value.Check(GoogleWorkspaceTextParagraphWidgetSchema, widget)).toBe(true);
+      expect(Value.Check(GoogleWorkspaceWidgetSchema, widget)).toBe(true);
+      expect(Value.Check(GoogleWorkspaceCardSchema, card)).toBe(true);
+    });
+
+    it('accepts textParagraph.maxLines: undefined under ExactOptionalPropertyTypes = true', () => {
+      const prev = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        expect(
+          Value.Check(GoogleWorkspaceWidgetSchema, {
+            textParagraph: { text: 'Summary', maxLines: undefined },
+          })
+        ).toBe(true);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prev;
+      }
+    });
+
+    it('rejects invalid textParagraph.maxLines values (0, -2, 2.5) on GoogleWorkspaceWidgetSchema', () => {
+      expect(
+        Value.Check(GoogleWorkspaceWidgetSchema, { textParagraph: { text: 'Summary', maxLines: 0 } })
+      ).toBe(false);
+      expect(
+        Value.Check(GoogleWorkspaceWidgetSchema, { textParagraph: { text: 'Summary', maxLines: -2 } })
+      ).toBe(false);
+      expect(
+        Value.Check(GoogleWorkspaceWidgetSchema, { textParagraph: { text: 'Summary', maxLines: 2.5 } })
+      ).toBe(false);
+    });
+
+    it('accepts buttonList.buttons[] with color and disabled on GoogleWorkspaceWidgetSchema and GoogleWorkspaceCardSchema', () => {
+      const widget = {
+        buttonList: {
+          buttons: [
+            {
+              text: 'Submit',
+              color: { red: 0.1, green: 0.45, blue: 0.91, alpha: 1 },
+              disabled: true,
+            },
+          ],
+        },
+      };
+      const card = {
+        header: { title: 'Test' },
+        sections: [{ widgets: [widget] }],
+      };
+
+      expect(Value.Check(GoogleWorkspaceWidgetSchema, widget)).toBe(true);
+      expect(Value.Check(GoogleWorkspaceCardSchema, card)).toBe(true);
+    });
+
+    it('accepts buttonList.buttons[] optional color, alpha, disabled, and onClick as undefined under ExactOptionalPropertyTypes = true', () => {
+      const prev = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        expect(
+          Value.Check(GoogleWorkspaceWidgetSchema, {
+            buttonList: {
+              buttons: [
+                {
+                  text: 'Alpha Undefined',
+                  color: { red: 0.2, green: 0.3, blue: 0.4, alpha: undefined },
+                  disabled: undefined,
+                  onClick: undefined,
+                },
+                {
+                  text: 'Color Undefined',
+                  color: undefined,
+                  disabled: undefined,
+                  onClick: undefined,
+                },
+              ],
+            },
+          })
+        ).toBe(true);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prev;
+      }
+    });
+
+    it('rejects out-of-bounds color channels, missing channel, non-boolean disabled, and unknown button properties on GoogleWorkspaceWidgetSchema', () => {
+      const makeButtonWidget = (button: Record<string, unknown>) => ({
+        buttonList: { buttons: [button] },
+      });
+
+      expect(
+        Value.Check(
+          GoogleWorkspaceWidgetSchema,
+          makeButtonWidget({ text: 'Btn', color: { red: -0.1, green: 0.5, blue: 0.5 } })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          GoogleWorkspaceWidgetSchema,
+          makeButtonWidget({ text: 'Btn', color: { red: 0.5, green: 0.5, blue: 1.01 } })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          GoogleWorkspaceWidgetSchema,
+          makeButtonWidget({ text: 'Btn', color: { red: 0.5, green: 0.5, blue: 0.5, alpha: 1.5 } })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          GoogleWorkspaceWidgetSchema,
+          makeButtonWidget({ text: 'Btn', color: { red: 0.5, green: 0.5 } })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          GoogleWorkspaceWidgetSchema,
+          makeButtonWidget({ text: 'Btn', disabled: 'true' })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          GoogleWorkspaceWidgetSchema,
+          makeButtonWidget({ text: 'Btn', type: 'FILLED' })
+        )
+      ).toBe(false);
+    });
+
+    it('accepts buttonList.buttons[].onClick as GoogleWorkspaceAction or openLink on Widget and Card schemas', () => {
+      const widget = {
+        buttonList: {
+          buttons: [
+            {
+              text: 'Server Action',
+              onClick: {
+                action: {
+                  function: '/workspace/action',
+                  parameters: [{ key: 'action', value: 'go' }],
+                  loadIndicator: 'SPINNER',
+                },
+              },
+            },
+            {
+              text: 'Open Sheet',
+              onClick: {
+                openLink: {
+                  url: 'https://docs.google.com/spreadsheets/d/123/edit',
+                  openAs: 'FULL_SIZE',
+                  onClose: 'RELOAD',
+                },
+              },
+            },
+          ],
+        },
+      };
+      const card = {
+        header: { title: 'Test' },
+        sections: [{ widgets: [widget] }],
+      };
+
+      expect(Value.Check(GoogleWorkspaceWidgetSchema, widget)).toBe(true);
+      expect(Value.Check(GoogleWorkspaceCardSchema, card)).toBe(true);
+    });
+
+    it('accepts buttonList.buttons[].onClick openLink with undefined optional properties under ExactOptionalPropertyTypes = true', () => {
+      const prev = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        expect(
+          Value.Check(GoogleWorkspaceWidgetSchema, {
+            buttonList: {
+              buttons: [
+                {
+                  text: 'Open Link',
+                  onClick: {
+                    openLink: {
+                      url: 'https://example.com',
+                      openAs: undefined,
+                      onClose: undefined,
+                    },
+                  },
+                },
+              ],
+            },
+          })
+        ).toBe(true);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prev;
+      }
+    });
+
+    it('rejects malformed onClick values on GoogleWorkspaceWidgetSchema', () => {
+      const makeOnClickWidget = (onClick: unknown) => ({
+        buttonList: { buttons: [{ text: 'Btn', onClick }] },
+      });
+
+      expect(
+        Value.Check(GoogleWorkspaceWidgetSchema, makeOnClickWidget({ action: 'invalid' }))
+      ).toBe(false);
+      expect(
+        Value.Check(GoogleWorkspaceWidgetSchema, makeOnClickWidget({ openLink: { url: '' } }))
+      ).toBe(false);
+      expect(
+        Value.Check(
+          GoogleWorkspaceWidgetSchema,
+          makeOnClickWidget({ openLink: { url: 'https://example.com', openAs: 'TAB' } })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          GoogleWorkspaceWidgetSchema,
+          makeOnClickWidget({ openLink: { url: 'https://example.com', onClose: 'REFRESH' } })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(
+          GoogleWorkspaceWidgetSchema,
+          makeOnClickWidget({
+            action: { function: '/a' },
+            openLink: { url: 'https://example.com' },
+          })
+        )
+      ).toBe(false);
+      expect(
+        Value.Check(GoogleWorkspaceWidgetSchema, makeOnClickWidget({ foo: 'bar' }))
+      ).toBe(false);
+    });
+
+    it('accepts minimal and full decoratedText on GoogleWorkspaceWidgetSchema and GoogleWorkspaceCardSchema', () => {
+      const minimalWidget = {
+        decoratedText: { text: '071200-001' },
+      };
+      const fullWidgetWithOpenLinkButton = {
+        decoratedText: {
+          topLabel: 'Submittal',
+          text: '071200-001 Waterproofing',
+          wrapText: true,
+          bottomLabel: '2026-11-24',
+          button: {
+            text: 'Open',
+            color: { red: 0.1, green: 0.45, blue: 0.91, alpha: 1 },
+            disabled: false,
+            onClick: {
+              openLink: {
+                url: 'https://docs.google.com/spreadsheets/d/123/edit',
+                openAs: 'FULL_SIZE',
+                onClose: 'RELOAD',
+              },
+            },
+          },
+          onClick: {
+            action: {
+              function: '/workspace/action',
+              parameters: [{ key: 'action', value: 'selectHistoryRow' }],
+              loadIndicator: 'SPINNER',
+            },
+          },
+        },
+      };
+      const fullWidgetWithActionButtonAndOpenLinkClick = {
+        decoratedText: {
+          text: 'RFI-042',
+          button: {
+            text: 'Approve',
+            disabled: true,
+            onClick: {
+              action: {
+                function: '/workspace/action',
+                parameters: [{ key: 'action', value: 'approveItem' }],
+              },
+            },
+          },
+          onClick: {
+            openLink: {
+              url: 'https://example.com/rfi/42',
+            },
+          },
+        },
+      };
+
+      expect(Value.Check(GoogleWorkspaceWidgetSchema, minimalWidget)).toBe(true);
+      expect(Value.Check(GoogleWorkspaceWidgetSchema, fullWidgetWithOpenLinkButton)).toBe(true);
+      expect(
+        Value.Check(GoogleWorkspaceWidgetSchema, fullWidgetWithActionButtonAndOpenLinkClick)
+      ).toBe(true);
+      expect(
+        Value.Check(GoogleWorkspaceCardSchema, {
+          header: { title: 'Test' },
+          sections: [
+            {
+              widgets: [
+                minimalWidget,
+                fullWidgetWithOpenLinkButton,
+                fullWidgetWithActionButtonAndOpenLinkClick,
+              ],
+            },
+          ],
+        })
+      ).toBe(true);
+    });
+
+    it('accepts decoratedText with undefined optional properties under ExactOptionalPropertyTypes = true', () => {
+      const prev = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        expect(
+          Value.Check(GoogleWorkspaceWidgetSchema, {
+            decoratedText: undefined,
+            textParagraph: { text: 'Fallback' },
+          })
+        ).toBe(true);
+        expect(
+          Value.Check(GoogleWorkspaceWidgetSchema, {
+            decoratedText: {
+              text: 'Entry',
+              topLabel: undefined,
+              wrapText: undefined,
+              bottomLabel: undefined,
+              button: undefined,
+              onClick: undefined,
+            },
+          })
+        ).toBe(true);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prev;
+      }
+    });
+
+    it('rejects columns, divider, Chat-only decoratedText/button fields, and malformed onClick on GoogleWorkspaceWidgetSchema', () => {
+      expect(Value.Check(GoogleWorkspaceWidgetSchema, { columns: { columnItems: [] } })).toBe(
+        false
+      );
+      expect(Value.Check(GoogleWorkspaceWidgetSchema, { divider: {} })).toBe(false);
+
+      expect(
+        Value.Check(GoogleWorkspaceWidgetSchema, {
+          decoratedText: { text: 'Entry', startIcon: { knownIcon: 'STAR' } },
+        })
+      ).toBe(false);
+      expect(
+        Value.Check(GoogleWorkspaceWidgetSchema, {
+          decoratedText: { text: 'Entry', endIcon: { knownIcon: 'STAR' } },
+        })
+      ).toBe(false);
+      expect(
+        Value.Check(GoogleWorkspaceWidgetSchema, {
+          decoratedText: { text: 'Entry', switchControl: { name: 'sw', value: '1' } },
+        })
+      ).toBe(false);
+
+      expect(
+        Value.Check(GoogleWorkspaceWidgetSchema, {
+          decoratedText: { text: 'Entry', button: { text: 'Btn', type: 'FILLED' } },
+        })
+      ).toBe(false);
+      expect(
+        Value.Check(GoogleWorkspaceWidgetSchema, {
+          decoratedText: { text: 'Entry', button: { text: 'Btn', icon: { knownIcon: 'STAR' } } },
+        })
+      ).toBe(false);
+
+      expect(
+        Value.Check(GoogleWorkspaceWidgetSchema, {
+          decoratedText: { text: 'Entry', onClick: { action: 'invalid' } },
+        })
+      ).toBe(false);
+      expect(
+        Value.Check(GoogleWorkspaceWidgetSchema, {
+          decoratedText: {
+            text: 'Entry',
+            button: { text: 'Btn', onClick: { action: 'invalid' } },
+          },
+        })
+      ).toBe(false);
     });
   });
 });

@@ -4,16 +4,22 @@ import {
   createGmailPortForToken,
   resolveActionRoute,
   createUiProcessRequestWrapper,
+  mapUiViewToWorkspaceUiView,
 } from './ui-process-manager.wiring';
+import { translateUiViewToWorkspaceCard } from '../infrastructure/workspace-addon/translator';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import type { DocumentSpaceService } from '../features/document-space/domain';
 import type { DocumentService } from '../features/document/domain';
-import type { SchemaDrivenUiService } from '../features/schema-driven-ui/domain';
+import type {
+  SchemaDrivenUiService,
+  UiView,
+} from '../features/schema-driven-ui/domain';
 import type { RawManifestProviderPort } from './schema-driven-ui.wiring';
 import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
 import type {
   UiProcessOrchestratorPort,
   UiProcessGmailPort,
+  UiProcessDocumentLogPort,
 } from '../features/ui-process-manager/ports';
 import type { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 
@@ -679,11 +685,69 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
 
       // Verify updateCard returned and baseUrl applied to action routes
       expect(result.action.navigations?.[0]?.updateCard).toBeDefined();
+      expect('notification' in result.action).toBe(false);
       const updateCard = result.action.navigations![0].updateCard!;
       const widget = updateCard.sections[0].widgets[0];
       expect(widget.textInput?.onChangeAction?.function).toBe(
         'https://my-host.internal/workspace/on-form-change'
       );
+    });
+
+    it('forwards intent.notification when intent.isUpdateCard === true into paired updateCard + notification response', async () => {
+      const notificationText = 'Created "Harborview Document Log" in "1 Admin".';
+      const mockOrchestrator = {
+        processUiEvent: vi.fn().mockResolvedValue({
+          type: 'render',
+          viewId: 'test-view',
+          isUpdateCard: true,
+          notification: notificationText,
+        }),
+      };
+      const mockSchemaDrivenUi = {
+        generateView: vi.fn().mockResolvedValue({
+          id: 'rendered-view',
+          header: { title: 'Updated View' },
+          sections: [
+            {
+              widgets: [{ textParagraph: { text: 'Log created' } }],
+            },
+          ],
+        }),
+      } as unknown as SchemaDrivenUiService;
+
+      const wrapper = createUiProcessRequestWrapper(mockOrchestrator, mockSchemaDrivenUi);
+      const result = (await wrapper({})) as GoogleWorkspaceActionResponse;
+
+      expect(result.action.navigations?.[0]?.updateCard?.header?.title).toBe('Updated View');
+      expect(result.action.notification).toEqual({ text: notificationText });
+    });
+
+    it('omits notification when intent.isUpdateCard === true and intent.notification is undefined', async () => {
+      const mockOrchestrator = {
+        processUiEvent: vi.fn().mockResolvedValue({
+          type: 'render',
+          viewId: 'test-view',
+          isUpdateCard: true,
+          notification: undefined,
+        }),
+      };
+      const mockSchemaDrivenUi = {
+        generateView: vi.fn().mockResolvedValue({
+          id: 'rendered-view',
+          header: { title: 'Updated View' },
+          sections: [
+            {
+              widgets: [{ textParagraph: { text: 'No notification' } }],
+            },
+          ],
+        }),
+      } as unknown as SchemaDrivenUiService;
+
+      const wrapper = createUiProcessRequestWrapper(mockOrchestrator, mockSchemaDrivenUi);
+      const result = (await wrapper({})) as GoogleWorkspaceActionResponse;
+
+      expect(result.action.navigations?.[0]?.updateCard?.header?.title).toBe('Updated View');
+      expect('notification' in result.action).toBe(false);
     });
 
     it('forwards hostApp and gmail context from WorkspaceExecutionContext to UiProcessEventContext', async () => {
@@ -1624,6 +1688,763 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           },
         ],
       });
+    });
+  });
+
+  describe('mapUiViewToWorkspaceUiView rich primitives (#347)', () => {
+    it('forwards textParagraph.maxLines cleanly into WorkspaceUiView and translateUiViewToWorkspaceCard', () => {
+      const uiView: UiView = {
+        id: 'rich-view',
+        sections: [
+          {
+            widgets: [
+              {
+                textParagraph: {
+                  text: 'Truncated summary',
+                  maxLines: 3,
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const workspaceUiView = mapUiViewToWorkspaceUiView(uiView);
+      expect(workspaceUiView.sections[0].widgets[0]).toEqual({
+        textParagraph: {
+          text: 'Truncated summary',
+          maxLines: 3,
+        },
+      });
+
+      const card = translateUiViewToWorkspaceCard(workspaceUiView);
+      expect(card.sections[0].widgets[0]).toEqual({
+        textParagraph: {
+          text: 'Truncated summary',
+          maxLines: 3,
+        },
+      });
+    });
+
+    it('omits maxLines key from WorkspaceUiView when textParagraph.maxLines is undefined', () => {
+      const uiView: UiView = {
+        id: 'rich-view-undefined-max-lines',
+        sections: [
+          {
+            widgets: [
+              {
+                textParagraph: {
+                  text: 'Full summary',
+                  maxLines: undefined,
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const workspaceUiView = mapUiViewToWorkspaceUiView(uiView);
+      const widget = workspaceUiView.sections[0].widgets[0];
+      expect(widget).toEqual({
+        textParagraph: {
+          text: 'Full summary',
+        },
+      });
+      expect('textParagraph' in widget && 'maxLines' in widget.textParagraph).toBe(false);
+    });
+
+    it('forwards button color (with alpha: 0 and omitted alpha) and disabled (true/false) into WorkspaceUiView and translateUiViewToWorkspaceCard', () => {
+      const uiView: UiView = {
+        id: 'rich-buttons-view',
+        sections: [
+          {
+            widgets: [
+              {
+                buttonList: {
+                  buttons: [
+                    {
+                      text: 'Alpha Zero Disabled',
+                      color: { red: 0.1, green: 0.45, blue: 0.91, alpha: 0 },
+                      disabled: true,
+                    },
+                    {
+                      text: 'Omitted Alpha Enabled',
+                      color: { red: 0.2, green: 0.3, blue: 0.4 },
+                      disabled: false,
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const workspaceUiView = mapUiViewToWorkspaceUiView(uiView);
+      expect(workspaceUiView.sections[0].widgets[0]).toEqual({
+        buttonList: {
+          buttons: [
+            {
+              text: 'Alpha Zero Disabled',
+              color: { red: 0.1, green: 0.45, blue: 0.91, alpha: 0 },
+              disabled: true,
+            },
+            {
+              text: 'Omitted Alpha Enabled',
+              color: { red: 0.2, green: 0.3, blue: 0.4 },
+              disabled: false,
+            },
+          ],
+        },
+      });
+
+      const card = translateUiViewToWorkspaceCard(workspaceUiView);
+      expect(card.sections[0].widgets[0]).toEqual({
+        buttonList: {
+          buttons: [
+            {
+              text: 'Alpha Zero Disabled',
+              color: { red: 0.1, green: 0.45, blue: 0.91, alpha: 0 },
+              disabled: true,
+            },
+            {
+              text: 'Omitted Alpha Enabled',
+              color: { red: 0.2, green: 0.3, blue: 0.4 },
+              disabled: false,
+            },
+          ],
+        },
+      });
+    });
+
+    it('omits alpha, color, and disabled keys from WorkspaceUiView buttons when undefined', () => {
+      const uiView: UiView = {
+        id: 'rich-buttons-undefined-view',
+        sections: [
+          {
+            widgets: [
+              {
+                buttonList: {
+                  buttons: [
+                    {
+                      text: 'Alpha Undefined',
+                      color: { red: 0.1, green: 0.2, blue: 0.3, alpha: undefined },
+                      disabled: undefined,
+                    },
+                    {
+                      text: 'Color Undefined',
+                      color: undefined,
+                      disabled: undefined,
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const workspaceUiView = mapUiViewToWorkspaceUiView(uiView);
+      const widget = workspaceUiView.sections[0].widgets[0];
+      expect('buttonList' in widget).toBe(true);
+      if (!('buttonList' in widget)) return;
+      const buttons = widget.buttonList.buttons as Array<Record<string, unknown>>;
+
+      expect(buttons[0]).toEqual({
+        text: 'Alpha Undefined',
+        color: { red: 0.1, green: 0.2, blue: 0.3 },
+      });
+      expect('alpha' in (buttons[0].color as Record<string, unknown>)).toBe(false);
+      expect('disabled' in buttons[0]).toBe(false);
+
+      expect(buttons[1]).toEqual({
+        text: 'Color Undefined',
+      });
+      expect('color' in buttons[1]).toBe(false);
+      expect('disabled' in buttons[1]).toBe(false);
+    });
+
+    it('maps server action with baseUrl while keeping openLink.url unrouted through mapUiViewToWorkspaceUiView and translateUiViewToWorkspaceCard', () => {
+      const uiView: UiView = {
+        id: 'rich-onclick-view',
+        sections: [
+          {
+            widgets: [
+              {
+                buttonList: {
+                  buttons: [
+                    {
+                      text: 'Copy Log',
+                      onClick: { action: 'copyDocumentLog' },
+                    },
+                    {
+                      text: 'Open Link',
+                      onClick: {
+                        openLink: {
+                          url: '/relative/never-routed',
+                          openAs: 'FULL_SIZE',
+                          onClose: 'NOTHING',
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const workspaceUiView = mapUiViewToWorkspaceUiView(uiView, 'https://addon.example.com');
+      expect(workspaceUiView.sections[0].widgets[0]).toEqual({
+        buttonList: {
+          buttons: [
+            {
+              text: 'Copy Log',
+              onClick: {
+                action: 'copyDocumentLog',
+                route: 'https://addon.example.com/workspace/action',
+              },
+            },
+            {
+              text: 'Open Link',
+              onClick: {
+                openLink: {
+                  url: '/relative/never-routed',
+                  openAs: 'FULL_SIZE',
+                  onClose: 'NOTHING',
+                },
+              },
+            },
+          ],
+        },
+      });
+
+      const card = translateUiViewToWorkspaceCard(workspaceUiView);
+      expect(card.sections[0].widgets[0]).toEqual({
+        buttonList: {
+          buttons: [
+            {
+              text: 'Copy Log',
+              onClick: {
+                action: {
+                  function: 'https://addon.example.com/workspace/action',
+                  parameters: [{ key: 'action', value: 'copyDocumentLog' }],
+                  loadIndicator: 'SPINNER',
+                },
+              },
+            },
+            {
+              text: 'Open Link',
+              onClick: {
+                openLink: {
+                  url: '/relative/never-routed',
+                  openAs: 'FULL_SIZE',
+                  onClose: 'NOTHING',
+                },
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    it('omits openAs and onClose keys from WorkspaceUiView button openLink when undefined', () => {
+      const uiView: UiView = {
+        id: 'rich-openlink-undefined-view',
+        sections: [
+          {
+            widgets: [
+              {
+                buttonList: {
+                  buttons: [
+                    {
+                      text: 'Open Minimal',
+                      onClick: {
+                        openLink: {
+                          url: 'https://example.com',
+                          openAs: undefined,
+                          onClose: undefined,
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const workspaceUiView = mapUiViewToWorkspaceUiView(uiView, 'https://addon.example.com');
+      const widget = workspaceUiView.sections[0].widgets[0];
+      expect('buttonList' in widget).toBe(true);
+      if (!('buttonList' in widget)) return;
+      const onClick = widget.buttonList.buttons[0].onClick as {
+        openLink: Record<string, unknown>;
+      };
+
+      expect(onClick).toEqual({
+        openLink: {
+          url: 'https://example.com',
+        },
+      });
+      expect('openAs' in onClick.openLink).toBe(false);
+      expect('onClose' in onClick.openLink).toBe(false);
+    });
+
+    it('maps decoratedText server actions with baseUrl while keeping openLink.url unrouted in both decoratedText.onClick and decoratedText.button.onClick', () => {
+      const uiView: UiView = {
+        id: 'rich-decorated-text-view',
+        sections: [
+          {
+            widgets: [
+              {
+                decoratedText: {
+                  topLabel: 'Submittal',
+                  text: '071200-001 Waterproofing',
+                  wrapText: true,
+                  bottomLabel: '2026-11-24',
+                  button: {
+                    text: 'Open Log',
+                    color: { red: 0.1, green: 0.45, blue: 0.91, alpha: 0.8 },
+                    disabled: false,
+                    onClick: {
+                      openLink: {
+                        url: '/log/123',
+                        openAs: 'FULL_SIZE',
+                        onClose: 'NOTHING',
+                      },
+                    },
+                  },
+                  onClick: {
+                    action: 'selectHistoryRow',
+                    parameters: { row: 4 },
+                  },
+                },
+              },
+              {
+                decoratedText: {
+                  text: 'Inverse Row',
+                  button: {
+                    text: 'Sync Row',
+                    disabled: true,
+                    onClick: {
+                      action: 'syncHistoryRow',
+                      parameters: { row: 5 },
+                    },
+                  },
+                  onClick: {
+                    openLink: {
+                      url: '/relative/row-5',
+                      openAs: 'OVERLAY',
+                      onClose: 'RELOAD',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const workspaceUiView = mapUiViewToWorkspaceUiView(uiView, 'https://addon.example.com');
+      expect(workspaceUiView.sections[0].widgets[0]).toEqual({
+        decoratedText: {
+          topLabel: 'Submittal',
+          text: '071200-001 Waterproofing',
+          wrapText: true,
+          bottomLabel: '2026-11-24',
+          button: {
+            text: 'Open Log',
+            color: { red: 0.1, green: 0.45, blue: 0.91, alpha: 0.8 },
+            disabled: false,
+            onClick: {
+              openLink: {
+                url: '/log/123',
+                openAs: 'FULL_SIZE',
+                onClose: 'NOTHING',
+              },
+            },
+          },
+          onClick: {
+            action: 'selectHistoryRow',
+            route: 'https://addon.example.com/workspace/action',
+            parameters: { row: '4' },
+          },
+        },
+      });
+      expect(workspaceUiView.sections[0].widgets[1]).toEqual({
+        decoratedText: {
+          text: 'Inverse Row',
+          button: {
+            text: 'Sync Row',
+            disabled: true,
+            onClick: {
+              action: 'syncHistoryRow',
+              route: 'https://addon.example.com/workspace/action',
+              parameters: { row: '5' },
+            },
+          },
+          onClick: {
+            openLink: {
+              url: '/relative/row-5',
+              openAs: 'OVERLAY',
+              onClose: 'RELOAD',
+            },
+          },
+        },
+      });
+
+      const card = translateUiViewToWorkspaceCard(workspaceUiView);
+      expect(card.sections[0].widgets[0]).toEqual({
+        decoratedText: {
+          topLabel: 'Submittal',
+          text: '071200-001 Waterproofing',
+          wrapText: true,
+          bottomLabel: '2026-11-24',
+          button: {
+            text: 'Open Log',
+            color: { red: 0.1, green: 0.45, blue: 0.91, alpha: 0.8 },
+            disabled: false,
+            onClick: {
+              openLink: {
+                url: '/log/123',
+                openAs: 'FULL_SIZE',
+                onClose: 'NOTHING',
+              },
+            },
+          },
+          onClick: {
+            action: {
+              function: 'https://addon.example.com/workspace/action',
+              parameters: [
+                { key: 'action', value: 'selectHistoryRow' },
+                { key: 'row', value: '4' },
+              ],
+              loadIndicator: 'SPINNER',
+            },
+          },
+        },
+      });
+      expect(card.sections[0].widgets[1]).toEqual({
+        decoratedText: {
+          text: 'Inverse Row',
+          button: {
+            text: 'Sync Row',
+            disabled: true,
+            onClick: {
+              action: {
+                function: 'https://addon.example.com/workspace/action',
+                parameters: [
+                  { key: 'action', value: 'syncHistoryRow' },
+                  { key: 'row', value: '5' },
+                ],
+                loadIndicator: 'SPINNER',
+              },
+            },
+          },
+          onClick: {
+            openLink: {
+              url: '/relative/row-5',
+              openAs: 'OVERLAY',
+              onClose: 'RELOAD',
+            },
+          },
+        },
+      });
+    });
+
+    it('omits all undefined optional properties from WorkspaceUiView decoratedText', () => {
+      const uiView: UiView = {
+        id: 'rich-decorated-text-undefined-view',
+        sections: [
+          {
+            widgets: [
+              {
+                decoratedText: {
+                  text: 'Minimal Row',
+                  topLabel: undefined,
+                  wrapText: undefined,
+                  bottomLabel: undefined,
+                  button: undefined,
+                  onClick: undefined,
+                },
+              },
+              {
+                decoratedText: {
+                  text: 'Row With Button',
+                  button: {
+                    text: 'Open',
+                    color: { red: 0.1, green: 0.2, blue: 0.3, alpha: undefined },
+                    disabled: undefined,
+                    onClick: {
+                      openLink: {
+                        url: 'https://example.com',
+                        openAs: undefined,
+                        onClose: undefined,
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const workspaceUiView = mapUiViewToWorkspaceUiView(uiView, 'https://addon.example.com');
+      const firstWidget = workspaceUiView.sections[0].widgets[0] as unknown as {
+        decoratedText?: Record<string, unknown>;
+      };
+      expect(firstWidget.decoratedText).toEqual({
+        text: 'Minimal Row',
+      });
+      expect('topLabel' in firstWidget.decoratedText!).toBe(false);
+      expect('wrapText' in firstWidget.decoratedText!).toBe(false);
+      expect('bottomLabel' in firstWidget.decoratedText!).toBe(false);
+      expect('button' in firstWidget.decoratedText!).toBe(false);
+      expect('onClick' in firstWidget.decoratedText!).toBe(false);
+
+      const secondWidget = workspaceUiView.sections[0].widgets[1] as unknown as {
+        decoratedText?: { button?: Record<string, unknown> };
+      };
+      const mappedButton = secondWidget.decoratedText?.button;
+      expect(mappedButton).toEqual({
+        text: 'Open',
+        color: { red: 0.1, green: 0.2, blue: 0.3 },
+        onClick: {
+          openLink: {
+            url: 'https://example.com',
+          },
+        },
+      });
+      expect('alpha' in (mappedButton!.color as Record<string, unknown>)).toBe(false);
+      expect('disabled' in mappedButton!).toBe(false);
+      expect(
+        'openAs' in ((mappedButton!.onClick as { openLink: Record<string, unknown> }).openLink)
+      ).toBe(false);
+      expect(
+        'onClose' in ((mappedButton!.onClick as { openLink: Record<string, unknown> }).openLink)
+      ).toBe(false);
+    });
+  });
+
+  describe('selectedLogId exclusive injection seam in reqDocumentRunner (ADR 0020)', () => {
+    it('assigns WorkspaceExecutionContext.selectedLogId exclusively from pre-flight resolved selectedLogId and overwrites untrusted context values', async () => {
+      const mockSpaceService = {
+        getAllTypes: () => [
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: {
+              allowedDocumentTypes: ['communication-project'],
+              defaultDocumentType: 'communication-project',
+            },
+            storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+          },
+        ],
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [
+            {
+              id: 'proj-1',
+              typeId: 'projects',
+              name: 'Project Main',
+              abstractStorageId: 'drive-proj-1',
+            },
+          ],
+        }),
+      } as unknown as DocumentSpaceService;
+
+      const capturedContexts: WorkspaceExecutionContext[] = [];
+      const mockDocService = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      } as unknown as DocumentService;
+
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(true),
+        resolveLog: vi.fn().mockResolvedValue({
+          status: 'resolved',
+          candidate: { id: 'validated-log-id', name: 'Project Main Document Log' },
+        }),
+        copyLog: vi.fn(),
+      };
+
+      const wiring = createUiProcessManagerWiring({
+        manifestProvider: mockManifestProvider,
+        createDocumentSpaceService: () => mockSpaceService,
+        createDocumentService: (ctx) => {
+          capturedContexts.push(ctx);
+          return mockDocService;
+        },
+        createDocumentLogPort: () => documentLogPort,
+      });
+
+      const response = await wiring.requestScopedWrapper.processUiEvent({
+        selectedLogId: 'spoofed-incoming-id',
+        actionName: 'processDocument',
+        selectedItems: [{ id: 'file-1', title: 'Submittal.pdf' }],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          [getDocumentSpaceWidgetName('projects')]: 'Project Main',
+          [getDocumentTypeWidgetName('projects')]: 'communication-project',
+          SelectFiles: ['file-1'],
+        },
+      });
+
+      expect(response).toEqual({
+        action: {
+          notification: { text: 'Document processed successfully' },
+        },
+      });
+      expect(capturedContexts).toHaveLength(1);
+      expect(capturedContexts[0].selectedLogId).toBe('validated-log-id');
+    });
+
+    it('clears untrusted incoming context.selectedLogId when document type does not require DocumentLog', async () => {
+      const mockSpaceService = {
+        getAllTypes: () => [
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: {
+              allowedDocumentTypes: ['communication-project'],
+              defaultDocumentType: 'communication-project',
+            },
+            storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+          },
+        ],
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [
+            {
+              id: 'proj-1',
+              typeId: 'projects',
+              name: 'Project Main',
+              abstractStorageId: 'drive-proj-1',
+            },
+          ],
+        }),
+      } as unknown as DocumentSpaceService;
+
+      const capturedContexts: WorkspaceExecutionContext[] = [];
+      const mockDocService = {
+        processDocument: vi.fn().mockResolvedValue({ success: true }),
+      } as unknown as DocumentService;
+
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(false),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn(),
+      };
+
+      const wiring = createUiProcessManagerWiring({
+        manifestProvider: mockManifestProvider,
+        createDocumentSpaceService: () => mockSpaceService,
+        createDocumentService: (ctx) => {
+          capturedContexts.push(ctx);
+          return mockDocService;
+        },
+        createDocumentLogPort: () => documentLogPort,
+      });
+
+      await wiring.requestScopedWrapper.processUiEvent({
+        selectedLogId: 'spoofed-incoming-id',
+        actionName: 'processDocument',
+        selectedItems: [{ id: 'file-1', title: 'Notes.pdf' }],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          [getDocumentSpaceWidgetName('projects')]: 'Project Main',
+          [getDocumentTypeWidgetName('projects')]: 'communication-project',
+          SelectFiles: ['file-1'],
+        },
+      });
+
+      expect(capturedContexts).toHaveLength(1);
+      expect(capturedContexts[0].selectedLogId).toBeUndefined();
+    });
+
+    it('forwards validated ambiguous SelectDocumentLog exclusively through reqDocumentRunner onto WorkspaceExecutionContext.selectedLogId while stripping it from Document.data (#351)', async () => {
+      const mockSpaceService = {
+        getAllTypes: () => [
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: {
+              allowedDocumentTypes: ['communication-project'],
+              defaultDocumentType: 'communication-project',
+            },
+            storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+          },
+        ],
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [
+            {
+              id: 'proj-1',
+              typeId: 'projects',
+              name: 'Project Main',
+              abstractStorageId: 'drive-proj-1',
+            },
+          ],
+        }),
+      } as unknown as DocumentSpaceService;
+
+      const capturedContexts: WorkspaceExecutionContext[] = [];
+      const mockProcessDocument = vi.fn().mockResolvedValue({ success: true });
+      const mockDocService = {
+        processDocument: mockProcessDocument,
+      } as unknown as DocumentService;
+
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(true),
+        resolveLog: vi.fn().mockResolvedValue({
+          status: 'ambiguous',
+          candidates: [
+            { id: 'log-1', name: 'Project Main Document Log' },
+            { id: 'log-2', name: 'Project Main Document Log Archive' },
+          ],
+        }),
+        copyLog: vi.fn(),
+      };
+
+      const wiring = createUiProcessManagerWiring({
+        manifestProvider: mockManifestProvider,
+        createDocumentSpaceService: () => mockSpaceService,
+        createDocumentService: (ctx) => {
+          capturedContexts.push(ctx);
+          return mockDocService;
+        },
+        createDocumentLogPort: () => documentLogPort,
+      });
+
+      const response = await wiring.requestScopedWrapper.processUiEvent({
+        selectedLogId: 'spoofed-incoming-id',
+        actionName: 'processDocument',
+        parameters: {
+          action: 'processDocument',
+          previousSpaceId: 'proj-1',
+          previousSelectedLogId: 'log-2',
+        },
+        selectedItems: [{ id: 'file-1', title: 'Submittal.pdf' }],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          [getDocumentSpaceWidgetName('projects')]: 'Project Main',
+          [getDocumentTypeWidgetName('projects')]: 'communication-project',
+          SelectFiles: ['file-1'],
+          SelectDocumentLog: 'log-2',
+          contact_communication_project: 'PMG',
+        },
+      });
+
+      expect(response).toEqual({
+        action: {
+          notification: { text: 'Document processed successfully' },
+        },
+      });
+      expect(capturedContexts).toHaveLength(1);
+      expect(capturedContexts[0].selectedLogId).toBe('log-2');
+      expect(mockProcessDocument).toHaveBeenCalledTimes(1);
+      const passedDoc = mockProcessDocument.mock.calls[0][0] as { data: Record<string, unknown> };
+      expect(passedDoc.data).not.toHaveProperty('SelectDocumentLog');
     });
   });
 });

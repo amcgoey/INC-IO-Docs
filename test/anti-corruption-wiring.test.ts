@@ -17,6 +17,7 @@ import {
   getDocumentSpaceWidgetName,
 } from '../src/features/schema-driven-ui/blocks/document-type-selection';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
+import { PRIMARY_ACTION_BUTTON_COLOR } from '../src/features/schema-driven-ui/blocks/common';
 
 describe('Anti-Corruption Wiring Integration', () => {
   const mockManifestProvider: RawManifestProviderPort = {
@@ -128,6 +129,7 @@ describe('Anti-Corruption Wiring Integration', () => {
     expect(pushCard.sections[3].widgets[2].buttonList?.buttons).toEqual([
       {
         text: 'Process Document',
+        color: PRIMARY_ACTION_BUTTON_COLOR,
         onClick: {
           action: {
             function: '/workspace/action',

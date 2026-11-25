@@ -225,6 +225,7 @@ export const SELECT_ATTACHMENTS_KEY = 'SelectAttachments';
 export const INPUT_DRIVE_URL_KEY = 'InputDriveURL';
 export const SAVE_EMAIL_TO_PDF_KEY = 'SaveEmailToPdf';
 export const SELECT_EMAIL_MESSAGE_KEY = 'SelectEmailMessage';
+export const SELECT_DOCUMENT_LOG_KEY = 'SelectDocumentLog';
 
 export const EPHEMERAL_UI_SELECTION_KEYS = new Set([
   SELECT_FILES_KEY,
@@ -233,6 +234,7 @@ export const EPHEMERAL_UI_SELECTION_KEYS = new Set([
   INPUT_DRIVE_URL_KEY,
   SAVE_EMAIL_TO_PDF_KEY,
   SELECT_EMAIL_MESSAGE_KEY,
+  SELECT_DOCUMENT_LOG_KEY,
 ]);
 
 export const SELECTION_KEY_PREFIX = 'SelectDocument';
@@ -339,15 +341,20 @@ export function isGmailContext(context?: {
   return context.hostApp?.toUpperCase() === 'GMAIL' || Boolean(context.gmail?.messageId);
 }
 
-const IN_CARD_ACTIONS = new Set([
+export const IN_CARD_ACTIONS: ReadonlySet<string> = new Set([
   'onSpaceTypeChange',
   'onDocumentTypeChange',
   'onFormChange',
   'onFileSourceChange',
   'onEmailMessageChange',
+  'copyDocumentLog',
   'processDocument',
   'viewJson',
 ]);
+
+export function isInCardAction(actionName: string | undefined): boolean {
+  return actionName !== undefined && IN_CARD_ACTIONS.has(actionName);
+}
 
 /**
  * Determines whether an event represents an initial card open or a refresh event
@@ -359,7 +366,7 @@ export function isResetOrInitialLoad(context?: ProcessUiStateEvent): boolean {
   }
   const action = context.actionName ?? context.parameters?.action;
   const isRefresh = action === 'refresh';
-  const hasInCardAction = action !== undefined && IN_CARD_ACTIONS.has(action);
+  const hasInCardAction = isInCardAction(action);
   const hasSelectionKeysInFormData = Boolean(
     context.formData &&
     Object.keys(context.formData).some((k) => isSelectionKey(k))
@@ -587,7 +594,78 @@ export function extractDocumentData(
 export function sanitizeFormDataForSourceReset(
   formData?: Record<string, unknown>
 ): Record<string, unknown> {
-  return filterFormData(formData, (key) => isSelectionKey(key) || key === 'spaceId');
+  return filterFormData(
+    formData,
+    (key) => (isSelectionKey(key) || key === 'spaceId') && key !== SELECT_DOCUMENT_LOG_KEY
+  );
+}
+
+export function reconcileDocumentLogSelection(params: {
+  formData: Record<string, unknown> | undefined;
+  actionName?: string | undefined;
+  parameters?: Record<string, string> | undefined;
+  currentSpaceId?: string | undefined;
+  isSourceReset?: boolean | undefined;
+}): { formData: Record<string, unknown> | undefined; cleared: boolean } {
+  const rawPrevSpace = params.parameters?.['previousSpaceId'];
+  const previousSpaceId =
+    typeof rawPrevSpace === 'string' && rawPrevSpace.trim().length > 0
+      ? rawPrevSpace.trim()
+      : undefined;
+
+  const shouldClear =
+    params.actionName === 'onSpaceTypeChange' ||
+    params.actionName === 'refresh' ||
+    params.actionName === 'onFileSourceChange' ||
+    params.actionName === 'onEmailMessageChange' ||
+    Boolean(params.isSourceReset) ||
+    (previousSpaceId !== undefined && previousSpaceId !== params.currentSpaceId);
+
+  if (shouldClear) {
+    if (params.formData && SELECT_DOCUMENT_LOG_KEY in params.formData) {
+      const nextFormData = { ...params.formData };
+      delete nextFormData[SELECT_DOCUMENT_LOG_KEY];
+      return { formData: nextFormData, cleared: true };
+    }
+    return { formData: params.formData, cleared: true };
+  }
+
+  const rawFormVal = params.formData?.[SELECT_DOCUMENT_LOG_KEY];
+  const activeFormVal =
+    typeof rawFormVal === 'string' && rawFormVal.trim().length > 0
+      ? rawFormVal.trim()
+      : undefined;
+
+  if (activeFormVal !== undefined) {
+    if (rawFormVal !== activeFormVal) {
+      return {
+        formData: { ...(params.formData ?? {}), [SELECT_DOCUMENT_LOG_KEY]: activeFormVal },
+        cleared: false,
+      };
+    }
+    return { formData: params.formData, cleared: false };
+  }
+
+  const rawPrevLog = params.parameters?.['previousSelectedLogId'];
+  const previousSelectedLogId =
+    typeof rawPrevLog === 'string' && rawPrevLog.trim().length > 0
+      ? rawPrevLog.trim()
+      : undefined;
+
+  if (previousSelectedLogId !== undefined) {
+    return {
+      formData: { ...(params.formData ?? {}), [SELECT_DOCUMENT_LOG_KEY]: previousSelectedLogId },
+      cleared: false,
+    };
+  }
+
+  if (params.formData && SELECT_DOCUMENT_LOG_KEY in params.formData) {
+    const nextFormData = { ...params.formData };
+    delete nextFormData[SELECT_DOCUMENT_LOG_KEY];
+    return { formData: nextFormData, cleared: false };
+  }
+
+  return { formData: params.formData, cleared: false };
 }
 
 export function isInactiveDocTypeFieldKey(
@@ -1112,6 +1190,20 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
 
   if (spaceResolution.spaceId === undefined) {
     delete effectiveFormData.spaceId;
+  }
+
+  const reconciledLog = reconcileDocumentLogSelection({
+    formData: effectiveFormData,
+    actionName: action,
+    parameters: context.parameters,
+    currentSpaceId: spaceResolution.spaceId,
+    isSourceReset: resetOrInitialLoad,
+  });
+  if (reconciledLog.formData && SELECT_DOCUMENT_LOG_KEY in reconciledLog.formData) {
+    // nosemgrep: domain-pass-through-read
+    effectiveFormData[SELECT_DOCUMENT_LOG_KEY] = reconciledLog.formData[SELECT_DOCUMENT_LOG_KEY];
+  } else {
+    delete effectiveFormData[SELECT_DOCUMENT_LOG_KEY];
   }
 
   if (spaceResolution.isIdMatch && spaceResolution.matchedSpace) {
