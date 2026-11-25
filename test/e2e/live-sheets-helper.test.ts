@@ -4,10 +4,12 @@ import type { sheets_v4 } from 'googleapis';
 import type { PositiveTableTarget } from '../../src/infrastructure/sheets';
 import {
   SHEET_ERROR_TOKENS,
+  appendRawPositiveTableRows,
   ensureClearedPositiveTable,
   findCleanDividerViolations,
   findSheetErrorTokens,
   inspectPositiveTableLayout,
+  partialHydrationRowToCellInputs,
 } from './utils/live-sheets-helper';
 
 function createMockSheetsApi(params: {
@@ -550,6 +552,519 @@ describe('live-sheets-helper', () => {
       });
 
       expect(violations.length).toBeGreaterThanOrEqual(4);
+    });
+  });
+
+  describe('partialHydrationRowToCellInputs', () => {
+    it('converts =HYPERLINK(...) linkFormula into formula input, preserves leading-zero strings, and maps empty strings to null', () => {
+      const inputs = partialHydrationRowToCellInputs({
+        scenario: 'leadingZeroAndFormula',
+        description: 'Partial row with leading-zero strings, empty cells, and HYPERLINK formula.',
+        rowCells: {
+          Status: 'Waiting',
+          Section: '071200',
+          Number: '001',
+          Revision: '0',
+          Title: 'Fluid-Applied Waterproofing Membrane',
+          Date: '260225',
+          Contact: 'MB',
+          Action: 'Referred',
+          Notes: '',
+          'Calc Link': 'Link',
+        },
+        linkFormula: '=HYPERLINK("https://drive.google.com/file/d/fixture-arch-partial-sec/view", "Link")',
+        expectedIssues: ['section'],
+      });
+
+      expect(inputs).toEqual({
+        Status: 'Waiting',
+        Section: '071200',
+        Number: '001',
+        Revision: '0',
+        Title: 'Fluid-Applied Waterproofing Membrane',
+        Date: '260225',
+        Contact: 'MB',
+        Action: 'Referred',
+        Notes: null,
+        'Calc Link': {
+          formula: '=HYPERLINK("https://drive.google.com/file/d/fixture-arch-partial-sec/view", "Link")',
+        },
+      });
+    });
+
+    it('converts raw https:// linkFormula to a plain string and blank/whitespace linkFormula to null', () => {
+      const rawUrlInputs = partialHydrationRowToCellInputs({
+        scenario: 'rawUrlLink',
+        description: 'Partial row with a raw URL string in Calc Link.',
+        rowCells: {
+          Status: 'Open',
+          Section: '071200',
+          Number: '001',
+          Revision: '1',
+          Title: 'Fluid-Applied Waterproofing Membrane',
+          Date: '260226',
+          Contact: 'ARC',
+          Action: 'Approved',
+          Notes: 'Legacy human label',
+          'Calc Link': 'https://drive.google.com/file/d/fixture-arch-raw-url/view',
+        },
+        linkFormula: 'https://drive.google.com/file/d/fixture-arch-raw-url/view',
+        expectedIssues: ['action'],
+      });
+
+      expect(rawUrlInputs['Calc Link']).toBe(
+        'https://drive.google.com/file/d/fixture-arch-raw-url/view'
+      );
+
+      const blankInputs = partialHydrationRowToCellInputs({
+        scenario: 'blankLink',
+        description: 'Partial row with blank Calc Link.',
+        rowCells: {
+          Status: 'Waiting',
+          Section: '071200',
+          Number: '001',
+          Revision: '1',
+          Title: 'Fluid-Applied Waterproofing Membrane',
+          Date: '',
+          Contact: 'PST',
+          Action: 'Referred',
+          Notes: 'Awaiting date confirmation',
+          'Calc Link': '',
+        },
+        linkFormula: '   ',
+        expectedIssues: ['date'],
+      });
+
+      expect(blankInputs['Calc Link']).toBeNull();
+      expect(blankInputs.Date).toBeNull();
+    });
+  });
+
+  describe('appendRawPositiveTableRows', () => {
+    it('returns [] and performs zero spreadsheets.get, values.get, or batchUpdate calls when rows is empty', async () => {
+      const { sheetsApi, getSpreadsheet, valuesGet, batchUpdate } = createMockSheetsApi({
+        formattedValues: [
+          ['Status', 'Section'],
+          [],
+          ['<--->'],
+          [],
+          ['<--->'],
+        ],
+      });
+
+      const insertedRowNumbers = await appendRawPositiveTableRows(sheetsApi, archTarget, []);
+
+      expect(insertedRowNumbers).toEqual([]);
+      expect(getSpreadsheet).not.toHaveBeenCalled();
+      expect(valuesGet).not.toHaveBeenCalled();
+      expect(batchUpdate).not.toHaveBeenCalled();
+    });
+
+    it('appends multiple raw rows before the bottom anchor with inheritFromBefore: true, skips formula-owned and absent columns, and returns 1-based row numbers', async () => {
+      const headers = [
+        'Status',
+        'Spec Tag',
+        'Related Tag',
+        'Revision',
+        'Spec Title',
+        'Vendor',
+        'Date',
+        'Contact',
+        'Action',
+        'Notes',
+        'Calc Link',
+      ];
+      const { sheetsApi, valuesGet, batchUpdate } = createMockSheetsApi({
+        sheetId: 202,
+        sheetTitle: 'Submittal FF&E',
+        rangeName: 'Log_Submittal_FFE',
+        gridRange: {
+          sheetId: 202,
+          startRowIndex: 2,
+          endRowIndex: 8,
+          startColumnIndex: 0,
+          endColumnIndex: 11,
+        },
+        formattedValues: [
+          headers,
+          ['', '', '', '', ''], // Row 4 (abs 3): formula row
+          ['<--->'], // Row 5 (abs 4): topAnchor
+          ['Open', 'CG104', 'FB127', '0', 'BED - KING', 'Keystone', '260120', 'HPG', 'Received', 'Note', 'Link'], // Row 6 (abs 5)
+          ['---'], // Row 7 (abs 6)
+          ['<--->'], // Row 8 (abs 7): bottomAnchor
+        ],
+        preAnchorFormulaValues: [
+          ['', '', '', '', '=ARRAYFORMULA(IF(B4:B="","",VLOOKUP(B4:B,Specs!A:B,2,FALSE)))'],
+        ],
+      });
+
+      const insertedRowNumbers = await appendRawPositiveTableRows(sheetsApi, ffeTarget, [
+        {
+          Status: 'In Review',
+          'Spec Tag': '001',
+          // 'Related Tag' intentionally absent
+          Revision: '0',
+          'Spec Title': 'SHOULD BE SKIPPED',
+          Vendor: '',
+          Date: '260216',
+          Contact: 'HPG',
+          Action: 'Received',
+          Notes: null,
+          'Calc Link': {
+            formula: '=HYPERLINK("https://drive.google.com/file/d/1/view", "Link")',
+          },
+        },
+        {
+          Status: 'Open',
+          'Spec Tag': 'CG104',
+          'Related Tag': 'FB127',
+          Revision: '',
+          Vendor: 'Keystone Casegoods',
+          Date: '260211',
+          Contact: 'ARC',
+          Action: 'Referred',
+          // 'Notes' intentionally absent
+          'Calc Link': 'https://drive.google.com/file/d/raw-url/view',
+        },
+      ]);
+
+      expect(insertedRowNumbers).toEqual([8, 9]);
+      expect(valuesGet).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-123',
+        range: "'Submittal FF&E'!A4:K4",
+        valueRenderOption: 'FORMULA',
+      });
+      expect(batchUpdate).toHaveBeenCalledTimes(1);
+
+      const requests = batchUpdate.mock.calls[0][0].requestBody.requests;
+      expect(requests).toEqual([
+        {
+          insertDimension: {
+            range: {
+              sheetId: 202,
+              dimension: 'ROWS',
+              startIndex: 7,
+              endIndex: 9,
+            },
+            inheritFromBefore: true,
+          },
+        },
+        {
+          updateCells: {
+            range: {
+              sheetId: 202,
+              startRowIndex: 7,
+              endRowIndex: 8,
+              startColumnIndex: 0,
+              endColumnIndex: 2,
+            },
+            rows: [
+              {
+                values: [
+                  { userEnteredValue: { stringValue: 'In Review' } },
+                  { userEnteredValue: { stringValue: '001' } },
+                ],
+              },
+            ],
+            fields: 'userEnteredValue',
+          },
+        },
+        {
+          updateCells: {
+            range: {
+              sheetId: 202,
+              startRowIndex: 7,
+              endRowIndex: 8,
+              startColumnIndex: 3,
+              endColumnIndex: 4,
+            },
+            rows: [{ values: [{ userEnteredValue: { stringValue: '0' } }] }],
+            fields: 'userEnteredValue',
+          },
+        },
+        {
+          updateCells: {
+            range: {
+              sheetId: 202,
+              startRowIndex: 7,
+              endRowIndex: 8,
+              startColumnIndex: 5,
+              endColumnIndex: 11,
+            },
+            rows: [
+              {
+                values: [
+                  {},
+                  { userEnteredValue: { stringValue: '260216' } },
+                  { userEnteredValue: { stringValue: 'HPG' } },
+                  { userEnteredValue: { stringValue: 'Received' } },
+                  {},
+                  {
+                    userEnteredValue: {
+                      formulaValue: '=HYPERLINK("https://drive.google.com/file/d/1/view", "Link")',
+                    },
+                  },
+                ],
+              },
+            ],
+            fields: 'userEnteredValue',
+          },
+        },
+        {
+          updateCells: {
+            range: {
+              sheetId: 202,
+              startRowIndex: 8,
+              endRowIndex: 9,
+              startColumnIndex: 0,
+              endColumnIndex: 4,
+            },
+            rows: [
+              {
+                values: [
+                  { userEnteredValue: { stringValue: 'Open' } },
+                  { userEnteredValue: { stringValue: 'CG104' } },
+                  { userEnteredValue: { stringValue: 'FB127' } },
+                  {},
+                ],
+              },
+            ],
+            fields: 'userEnteredValue',
+          },
+        },
+        {
+          updateCells: {
+            range: {
+              sheetId: 202,
+              startRowIndex: 8,
+              endRowIndex: 9,
+              startColumnIndex: 5,
+              endColumnIndex: 9,
+            },
+            rows: [
+              {
+                values: [
+                  { userEnteredValue: { stringValue: 'Keystone Casegoods' } },
+                  { userEnteredValue: { stringValue: '260211' } },
+                  { userEnteredValue: { stringValue: 'ARC' } },
+                  { userEnteredValue: { stringValue: 'Referred' } },
+                ],
+              },
+            ],
+            fields: 'userEnteredValue',
+          },
+        },
+        {
+          updateCells: {
+            range: {
+              sheetId: 202,
+              startRowIndex: 8,
+              endRowIndex: 9,
+              startColumnIndex: 10,
+              endColumnIndex: 11,
+            },
+            rows: [
+              {
+                values: [
+                  {
+                    userEnteredValue: {
+                      stringValue: 'https://drive.google.com/file/d/raw-url/view',
+                    },
+                  },
+                ],
+              },
+            ],
+            fields: 'userEnteredValue',
+          },
+        },
+      ]);
+    });
+
+    it('uses inheritFromBefore: false for empty positive tables (absBottomAnchor === absTopAnchor + 1) and respects a non-zero startColumnIndex and omitted endColumnIndex', async () => {
+      const {
+        sheetsApi: unboundedApi,
+        valuesGet: unboundedGet,
+        batchUpdate: unboundedBatch,
+      } = createMockSheetsApi({
+        sheetId: 303,
+        sheetTitle: 'Submittal Arch',
+        rangeName: 'Log_Submittal_Arch',
+        gridRange: {
+          sheetId: 303,
+          startRowIndex: 2,
+          endRowIndex: 6,
+          startColumnIndex: 0,
+        },
+        formattedValues: [
+          ['Status', 'Section', 'Title'],
+          ['', '', ''],
+          ['<--->'],
+          ['<--->'],
+        ],
+        preAnchorFormulaValues: [['', '', '=UPPER(C4)']],
+      });
+
+      const unboundedRows = await appendRawPositiveTableRows(unboundedApi, archTarget, [
+        {
+          Status: 'Open',
+          Section: '033000',
+          Title: 'Ignored Formula Col',
+        },
+      ]);
+
+      expect(unboundedRows).toEqual([6]);
+      expect(unboundedGet).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-123',
+        range: "'Submittal Arch'!A4:C4",
+        valueRenderOption: 'FORMULA',
+      });
+      expect(unboundedBatch.mock.calls[0][0].requestBody.requests).toEqual([
+        {
+          insertDimension: {
+            range: {
+              sheetId: 303,
+              dimension: 'ROWS',
+              startIndex: 5,
+              endIndex: 6,
+            },
+            inheritFromBefore: false,
+          },
+        },
+        {
+          updateCells: {
+            range: {
+              sheetId: 303,
+              startRowIndex: 5,
+              endRowIndex: 6,
+              startColumnIndex: 0,
+              endColumnIndex: 2,
+            },
+            rows: [
+              {
+                values: [
+                  { userEnteredValue: { stringValue: 'Open' } },
+                  { userEnteredValue: { stringValue: '033000' } },
+                ],
+              },
+            ],
+            fields: 'userEnteredValue',
+          },
+        },
+      ]);
+
+      const {
+        sheetsApi: offsetApi,
+        valuesGet: offsetGet,
+        batchUpdate: offsetBatch,
+      } = createMockSheetsApi({
+        sheetId: 304,
+        sheetTitle: 'Submittal Arch',
+        rangeName: 'Log_Submittal_Arch',
+        gridRange: {
+          sheetId: 304,
+          startRowIndex: 2,
+          endRowIndex: 6,
+          startColumnIndex: 1,
+          endColumnIndex: 4,
+        },
+        formattedValues: [
+          ['Status', 'Section', 'Title'],
+          ['', '', ''],
+          ['<--->'],
+          ['<--->'],
+        ],
+        preAnchorFormulaValues: [['', '', '=UPPER(D4)']],
+      });
+
+      const offsetRows = await appendRawPositiveTableRows(offsetApi, archTarget, [
+        {
+          Status: 'Open',
+          Section: '071200',
+          Title: 'Ignored Formula Col',
+        },
+      ]);
+
+      expect(offsetRows).toEqual([6]);
+      expect(offsetGet).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-123',
+        range: "'Submittal Arch'!B4:D4",
+        valueRenderOption: 'FORMULA',
+      });
+      expect(offsetBatch).toHaveBeenCalledTimes(1);
+      expect(offsetBatch.mock.calls[0][0].requestBody.requests).toEqual([
+        {
+          insertDimension: {
+            range: {
+              sheetId: 304,
+              dimension: 'ROWS',
+              startIndex: 5,
+              endIndex: 6,
+            },
+            inheritFromBefore: false,
+          },
+        },
+        {
+          updateCells: {
+            range: {
+              sheetId: 304,
+              startRowIndex: 5,
+              endRowIndex: 6,
+              startColumnIndex: 1,
+              endColumnIndex: 3,
+            },
+            rows: [
+              {
+                values: [
+                  { userEnteredValue: { stringValue: 'Open' } },
+                  { userEnteredValue: { stringValue: '071200' } },
+                ],
+              },
+            ],
+            fields: 'userEnteredValue',
+          },
+        },
+      ]);
+    });
+
+    it('retries HTTP 429 rate-limit errors with exponential backoff in appendRawPositiveTableRows', async () => {
+      let batchAttempts = 0;
+      const { sheetsApi, batchUpdate } = createMockSheetsApi({
+        gridRange: {
+          sheetId: 101,
+          startRowIndex: 2,
+          endRowIndex: 7,
+          startColumnIndex: 0,
+          endColumnIndex: 2,
+        },
+        formattedValues: [
+          ['Status', 'Section'],
+          [],
+          ['<--->'],
+          ['Open', '033000'],
+          ['<--->'],
+        ],
+      });
+      batchUpdate.mockImplementation(async () => {
+        batchAttempts++;
+        if (batchAttempts < 3) {
+          throw { statusCode: 429, message: 'Quota exceeded' };
+        }
+        return { data: {} };
+      });
+
+      const insertedRowNumbers = await appendRawPositiveTableRows(
+        sheetsApi,
+        archTarget,
+        [{ Status: 'Open', Section: '071200' }],
+        {
+          maxRetries: 3,
+          initialDelayMs: 1,
+          backoffFactor: 2,
+        }
+      );
+
+      expect(batchUpdate).toHaveBeenCalledTimes(3);
+      expect(insertedRowNumbers).toEqual([7]);
     });
   });
 });
