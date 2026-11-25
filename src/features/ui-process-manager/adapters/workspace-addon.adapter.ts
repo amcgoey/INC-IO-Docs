@@ -833,7 +833,11 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
       try {
         const copyResult = await this.options.documentLogPort.copyLog(space);
-        this.options.onLogCopied?.(space.abstractStorageId ?? space.id);
+        const primarySpaceId = space.abstractStorageId ?? space.id;
+        this.options.onLogCopied?.(primarySpaceId);
+        if (space.id && space.id !== primarySpaceId) {
+          this.options.onLogCopied?.(space.id);
+        }
         const notification = copyResult.created
           ? `Created "${copyResult.candidate.name}" in "${copyResult.folderPath}".`
           : `Document Log already exists: "${copyResult.candidate.name}".`;

@@ -267,6 +267,8 @@ interface MockSheetsState {
   batchUpdates: Array<{ spreadsheetId: string; requests: MockBatchRequest[] }>;
   grid?: Array<Array<SimCellValue>>;
   namedRange?: SimulatedNamedRange;
+  archStatusesRows?: SimCellValue[][];
+  archActionsRows?: SimCellValue[][];
 }
 
 function columnLettersToIndex(letters: string): number {
@@ -414,6 +416,26 @@ function applyBatchUpdate(
 }
 
 function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsClientOptions['sheets']> {
+  const archStatusesRows = state.archStatusesRows ?? [
+    ['Status'],
+    ['Open'],
+    ['Closed'],
+    ['Waiting'],
+    ['Manager'],
+    ['---'],
+  ];
+  const archActionsRows = state.archActionsRows ?? [
+    ['Action', 'Name', 'Suffix', 'Order'],
+    ['REC', 'Received', '', '1'],
+    ['REF', 'Referred', '_REF', '2'],
+    ['NR', 'Not Reviewed', '_NR', '3'],
+    ['REJ', 'Rejected', '_REJ', '4'],
+    ['RR', 'Revise & Resubmit', '_RR', '5'],
+    ['NOC', 'No Objections As Corrected', '_NOC', '6'],
+    ['NET', 'No Exceptions Taken', '_NET', '7'],
+    ['---', '', '', ''],
+  ];
+
   const getMetadata = vi.fn().mockImplementation(async ({ spreadsheetId }: { spreadsheetId: string }) => ({
     data: {
       spreadsheetId,
@@ -445,7 +467,7 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           range: {
             sheetId: 103,
             startRowIndex: 0,
-            endRowIndex: 6,
+            endRowIndex: archStatusesRows.length,
             startColumnIndex: 0,
             endColumnIndex: 1,
           },
@@ -456,7 +478,7 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           range: {
             sheetId: 103,
             startRowIndex: 0,
-            endRowIndex: 9,
+            endRowIndex: archActionsRows.length,
             startColumnIndex: 2,
             endColumnIndex: 6,
           },
@@ -484,19 +506,9 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
     if (range.includes('_Config Submittal Arch')) {
       const bounds = parseA1RangeBounds(range, 20, 10);
       if (bounds.startColumnIndex === 0) {
-        return [['Status'], ['Open'], ['Closed'], ['Waiting'], ['Manager'], ['---']];
+        return archStatusesRows;
       }
-      return [
-        ['Action', 'Name', 'Suffix', 'Order'],
-        ['REC', 'Received', '', '1'],
-        ['REF', 'Referred', '_REF', '2'],
-        ['NR', 'Not Reviewed', '_NR', '3'],
-        ['REJ', 'Rejected', '_REJ', '4'],
-        ['RR', 'Revise & Resubmit', '_RR', '5'],
-        ['NOC', 'No Objections As Corrected', '_NOC', '6'],
-        ['NET', 'No Exceptions Taken', '_NET', '7'],
-        ['---', '', '', ''],
-      ];
+      return archActionsRows;
     }
     if (state.grid) {
       const bounds = parseA1RangeBounds(
@@ -2857,8 +2869,7 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
       (e) => e.document.data.notes === 'Legacy human label'
     );
     expect(partialUnknownAction).toBeDefined();
-    // Until #359 validates dynamic optionSources against _Config in READ_LOG, fallback tuple is hydrated without a warning
-    expect(partialUnknownAction?.valid).toBe(true);
+    expect(partialUnknownAction?.valid).toBe(false);
     expect(partialUnknownAction?.document.data.action).toEqual({
       key: 'Approved',
       name: 'Approved',
@@ -2870,7 +2881,7 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
       archFull.warnings
         .filter((w) => w.rowNumber === partialUnknownAction?.rowNumber)
         .map((w) => w.field)
-    ).toEqual([]);
+    ).toEqual(sampleFixture.submittalArch.partialHydrationRows[1].expectedIssues);
 
     const partialMissingDate = archFull.entries.find(
       (e) => e.document.data.notes === 'Awaiting date confirmation'
@@ -2896,7 +2907,7 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
 
     const warnedRowNumbers = new Set(archFull.warnings.map((w) => w.rowNumber));
     expect(warnedRowNumbers.has(partialShortSec!.rowNumber)).toBe(true);
-    expect(warnedRowNumbers.has(partialUnknownAction!.rowNumber)).toBe(false);
+    expect(warnedRowNumbers.has(partialUnknownAction!.rowNumber)).toBe(true);
     expect(warnedRowNumbers.has(partialMissingDate!.rowNumber)).toBe(true);
     expect(warnedRowNumbers.has(unkeyableNoteRow!.rowNumber)).toBe(true);
 
@@ -2917,7 +2928,7 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
     );
     const matchedRows = new Set(archFiltered.entries.map((e) => e.rowNumber));
     expect(archFiltered.warnings.every((w) => matchedRows.has(w.rowNumber))).toBe(true);
-    expect(archFiltered.warnings.map((w) => w.field)).toEqual(['date']);
+    expect(archFiltered.warnings.map((w) => w.field)).toEqual(['action', 'date']);
     expect(
       archFiltered.warnings.some(
         (w) =>
@@ -3137,9 +3148,9 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
         priorTitle: 'Fluid-Applied Waterproofing Membrane',
         priorAction: 'Received',
         priorUri: 'https://drive.google.com/file/d/fixture-arch-071200-001-0-rec/view',
-        firstWarningField: 'date',
+        firstWarningField: 'action',
         entryCount: '7',
-        warningCount: '1',
+        warningCount: '2',
       },
     ]);
     expect(driveSdk.files.list).not.toHaveBeenCalled();
@@ -3201,6 +3212,161 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
     await expect(logWiring.logSchemaRegistry.initialize()).rejects.toThrow(
       /READ_LOG.*documentLogSchema/i
     );
+  });
+
+  it('hydrates restricted dynamic LookupFields (status, action) against live customized _Config tables so live matches hydrate valid:true with live Identity while default-only values emit RowHydrationWarnings (Ticket #359)', async () => {
+    const driveState: MockDriveState = {
+      searchResults: [
+        {
+          id: 'harborview-custom-config-log',
+          name: sampleFixture.space.expectedLogFileName,
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ],
+    };
+
+    const baseState = buildArchReadGridState();
+    const customGrid: SimCellValue[][] = [
+      [],
+      [],
+      [...sampleFixture.submittalArch.headers],
+      [],
+      ['<--->'],
+      [
+        'In Review',
+        '071200',
+        '001',
+        '0',
+        'Live Custom Config Entry',
+        '261125',
+        'PMG',
+        'Custom Action',
+        '',
+        '=HYPERLINK("https://drive.google.com/file/d/custom-valid/view", "Link")',
+      ],
+      [
+        'Open',
+        '071200',
+        '001',
+        '1',
+        'Default Status Only Entry',
+        '261125',
+        'PMG',
+        'Custom Action',
+        '',
+        null,
+      ],
+      [
+        'In Review',
+        '071200',
+        '001',
+        '2',
+        'Default Action Only Entry',
+        '261125',
+        'PMG',
+        'Received',
+        '',
+        null,
+      ],
+      ['<--->'],
+    ];
+
+    const customSheetsState: MockSheetsState = {
+      ...baseState,
+      grid: customGrid,
+      namedRange: {
+        ...baseState.namedRange!,
+        range: {
+          ...baseState.namedRange!.range,
+          endRowIndex: customGrid.length,
+        },
+      },
+      archStatusesRows: [['Status'], ['In Review'], ['---']],
+      archActionsRows: [
+        ['Action', 'Name', 'Suffix', 'Order'],
+        ['CUST', 'Custom Action', '_CUST', '9'],
+        ['---', '', '', ''],
+      ],
+    };
+
+    const wiring = createDocumentLogWiring({
+      manifestProvider,
+      driveClient: new GoogleDriveClient({
+        drive: createMockDriveSdk(driveState),
+        configProvider: manifestProvider,
+      }),
+      sheetsClient: new GoogleSheetsClient({
+        sheets: createMockSheetsSdk(customSheetsState),
+        configProvider: manifestProvider,
+      }),
+      configProvider: manifestProvider,
+      templateEvaluator: handlebars,
+    });
+    await wiring.logSchemaRegistry.initialize();
+
+    const readResult = await wiring.documentLogService.readLog({
+      documentTypeKey: 'submittal-arch',
+      space,
+    });
+
+    expect(readResult.entries).toHaveLength(3);
+
+    const validEntry = readResult.entries.find(
+      (e) => e.document.data.title === 'Live Custom Config Entry'
+    );
+    expect(validEntry).toBeDefined();
+    expect(validEntry?.valid).toBe(true);
+    expect(validEntry?.document.data.status).toEqual({ key: 'In Review' });
+    expect(validEntry?.document.data.action).toEqual({
+      key: 'CUST',
+      name: 'Custom Action',
+      suffix: '_CUST',
+      order: '9',
+    });
+    expect(validEntry?.document.id).toBe('071200-001-0-261125-9');
+    expect(validEntry?.fileUri).toBe('https://drive.google.com/file/d/custom-valid/view');
+
+    const invalidStatusEntry = readResult.entries.find(
+      (e) => e.document.data.title === 'Default Status Only Entry'
+    );
+    expect(invalidStatusEntry?.valid).toBe(false);
+    expect(invalidStatusEntry?.document.data.status).toEqual({ key: 'Open' });
+    expect(
+      readResult.warnings
+        .filter((w) => w.rowNumber === invalidStatusEntry?.rowNumber)
+        .map((w) => w.field)
+    ).toEqual(['status']);
+
+    const invalidActionEntry = readResult.entries.find(
+      (e) => e.document.data.title === 'Default Action Only Entry'
+    );
+    expect(invalidActionEntry?.valid).toBe(false);
+    expect(invalidActionEntry?.document.data.action).toEqual({
+      key: 'Received',
+      name: 'Received',
+    });
+    expect(
+      readResult.warnings
+        .filter((w) => w.rowNumber === invalidActionEntry?.rowNumber)
+        .map((w) => w.field)
+    ).toEqual(['action']);
+
+    expect(readResult.warnings).toHaveLength(2);
+
+    const uiContext = await wiring.documentLogService.queryUiContext({
+      documentTypeKey: 'submittal-arch',
+      space,
+      formData: {
+        [getDocumentInfoWidgetName('section', 'submittal-arch')]: '071200',
+        [getDocumentInfoWidgetName('number', 'submittal-arch')]: '001',
+      },
+    });
+    expect(uiContext?.status).toBe('resolved');
+    if (uiContext?.status === 'resolved') {
+      expect(uiContext.readStatus).toBe('partial_hydration');
+      expect(uiContext.warningMessages).toHaveLength(2);
+      expect(uiContext.entries).toHaveLength(3);
+    }
   });
 
   it('reads _Config option tables via DocumentLogPort + GoogleSheetsClient, parsing RFC 4180 aliasesColumn cells with "" escaped quotes and silently ignoring absent Aliases headers (Ticket #360)', async () => {

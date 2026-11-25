@@ -238,4 +238,92 @@ describe('lookup-options.wiring', () => {
       sourceKeys: ['statuses'],
     });
   });
+
+  it('resolves abstractStorageId consistently across optionsFetcher, dynamicValidator, canonicalProvider, and invalidate({ spaceId: abstractStorageId }) when space.id !== space.abstractStorageId', async () => {
+    const readOptionTables = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 'missing_log',
+        expectedFolderPath: '1 Admin',
+        tables: {},
+      })
+      .mockResolvedValueOnce({
+        status: 'ready',
+        spreadsheetId: 'new-log-1',
+        tables: {
+          statuses: {
+            status: 'ready',
+            tuples: [{ key: 'Open' }, { key: 'Closed' }],
+          },
+        },
+      });
+
+    const mockDocLogService = {
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      resolveLog: vi.fn(),
+      copyLog: vi.fn(),
+      queryUiContext: vi.fn(),
+      readLog: vi.fn(),
+      readOptionTables,
+      writeLog: vi.fn(),
+    };
+
+    const getCollection = vi.fn().mockResolvedValue({
+      spaces: [
+        {
+          id: 'sp-proposal-1',
+          typeId: 'proposals',
+          name: 'Proposal Alpha',
+          abstractStorageId: 'folder-opp-alpha',
+        },
+      ],
+    });
+
+    const wiring = createLookupOptionsWiring({
+      manifestProvider: {
+        getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./submittal.json'] }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'submittal-arch',
+          documentSchema: {
+            fields: [{ key: 'status', options: { source: 'statuses', key: 'key' } }],
+            optionSources: {
+              statuses: { provider: 'document_log', properties: ['key'] },
+            },
+          },
+        }),
+      },
+      getDocumentLogService: () => mockDocLogService,
+      getDocumentSpaceService: () =>
+        ({
+          getAllTypes: () => [{ id: 'proposals' }],
+          getCollection,
+        }) as never,
+    });
+
+    const ctx: WorkspaceExecutionContext = { hostApp: 'DRIVE' };
+    const fetcher = wiring.createOptionsFetcher(ctx);
+    const sharedLookup = wiring.getPerRequestLookupOptions(ctx);
+
+    const beforeCopy = await fetcher.fetchOptions([{ sourceKey: 'statuses' }], {
+      spaceId: 'sp-proposal-1',
+      documentTypeKey: 'submittal-arch',
+    });
+    expect(beforeCopy.statuses.status).toBe('missing_log');
+
+    // Copy Log invalidates using space.id (and/or abstractStorageId)
+    sharedLookup.invalidate({ spaceId: 'sp-proposal-1' });
+
+    const afterCopy = await fetcher.fetchOptions([{ sourceKey: 'statuses' }], {
+      spaceId: 'sp-proposal-1',
+      documentTypeKey: 'submittal-arch',
+    });
+    expect(afterCopy.statuses).toEqual({
+      status: 'ready',
+      items: [
+        { text: 'Open', value: 'Open' },
+        { text: 'Closed', value: 'Closed' },
+      ],
+    });
+    expect(readOptionTables).toHaveBeenCalledTimes(2);
+  });
 });

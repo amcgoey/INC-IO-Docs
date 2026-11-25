@@ -454,7 +454,7 @@ export interface DocumentLogServiceOptions {
 export class DocumentLogService implements DocumentLogPort {
   private readonly resolveLogMemo: Map<string, Promise<LogResolutionResult>> | undefined;
   private readonly optionTablesMemo:
-    | Map<string, Record<string, DocumentLogOptionTableSourceResult>>
+    | Map<string, Promise<DocumentLogOptionTableSourceResult>>
     | undefined;
 
   constructor(
@@ -899,7 +899,15 @@ export class DocumentLogService implements DocumentLogPort {
       targetFolderId: targetFolder.id,
       newName,
     });
-    this.resolveLogMemo?.delete(this.getResolveLogMemoKey(space));
+    if (this.resolveLogMemo) {
+      this.resolveLogMemo.delete(this.getResolveLogMemoKey(space));
+      const storageSuffix = `::${space.abstractStorageId.trim()}`;
+      for (const key of this.resolveLogMemo.keys()) {
+        if (key.endsWith(storageSuffix)) {
+          this.resolveLogMemo.delete(key);
+        }
+      }
+    }
 
     return {
       created: true,
@@ -1033,11 +1041,28 @@ export class DocumentLogService implements DocumentLogPort {
       ...(linkColumns.length > 0 ? { linkColumns } : {}),
     });
 
+    if (tableResult.rows.length === 0) {
+      return {
+        spreadsheetId,
+        sheetName: logSchema.target.sheetName,
+        entries: [],
+        warnings: [],
+      };
+    }
+
+    const { dynamicOptions, dynamicTableErrors } = await this.readBoundOptionTablesForHydration(
+      request.documentTypeKey,
+      spreadsheetId,
+      logSchema
+    );
+
     const hydrateRow = buildLogRowHydrator({
       documentTypeKey: request.documentTypeKey,
       logSchema,
       targetSchema,
       templateEvaluator: this.templateEvaluator,
+      dynamicOptions,
+      dynamicTableErrors,
     });
 
     const allEntries: DocumentLogEntry[] = [];
@@ -1129,50 +1154,13 @@ export class DocumentLogService implements DocumentLogPort {
         ? Array.from(new Set(request.sourceKeys))
         : Object.keys(optionBindings);
 
-    const tables: Record<string, DocumentLogOptionTableSourceResult> = {};
-    const targets: Array<{ key: string; sheetName: string; rangeName: string }> = [];
-
-    for (const sourceKey of requestedKeys) {
-      const binding = optionBindings[sourceKey];
-      if (!binding) {
-        tables[sourceKey] = {
-          status: 'config_error',
-          tuples: [],
-          errorMessage: `Missing optionBinding for "${sourceKey}" on DocumentType "${request.documentTypeKey}".`,
-        };
-        continue;
-      }
-      targets.push({
-        key: sourceKey,
-        sheetName: binding.sheetName,
-        rangeName: binding.rangeName,
-      });
-    }
-
-    if (targets.length > 0) {
-      if (!this.logStorage.readNamedRanges) {
-        throw new DocumentLogConfigurationError(
-          'LogStoragePort.readNamedRanges is required to read DocumentLog option tables.'
-        );
-      }
-      const batchEntries = await this.logStorage.readNamedRanges({
-        spreadsheetId,
-        targets,
-      });
-      for (const target of targets) {
-        const binding = optionBindings[target.key]!;
-        tables[target.key] = parseOptionTableEntry(target.key, binding, batchEntries[target.key]);
-      }
-    }
-
-    if (this.optionTablesMemo) {
-      const cacheKey = `${request.documentTypeKey}::${spreadsheetId}`;
-      const existing = this.optionTablesMemo.get(cacheKey);
-      this.optionTablesMemo.set(cacheKey, {
-        ...(existing ?? {}),
-        ...tables,
-      });
-    }
+    const tables = await this.loadOptionTableEntries(
+      request.documentTypeKey,
+      spreadsheetId,
+      logSchema,
+      requestedKeys,
+      { requireReadNamedRanges: true }
+    );
 
     return {
       status: 'ready',
@@ -1181,71 +1169,129 @@ export class DocumentLogService implements DocumentLogPort {
     };
   }
 
+  private async loadOptionTableEntries(
+    documentTypeKey: string,
+    spreadsheetId: string,
+    logSchema: DocumentLogSchema,
+    requestedKeys: readonly string[],
+    options?: { requireReadNamedRanges?: boolean | undefined }
+  ): Promise<Record<string, DocumentLogOptionTableSourceResult>> {
+    const optionBindings = logSchema.optionBindings ?? {};
+    const uniqueKeys = Array.from(new Set(requestedKeys));
+    if (uniqueKeys.length === 0) {
+      return {};
+    }
+
+    const pendingBySource: Record<string, Promise<DocumentLogOptionTableSourceResult>> = {};
+    const missingTargets: Array<{ key: string; sheetName: string; rangeName: string }> = [];
+
+    for (const sourceKey of uniqueKeys) {
+      const memoKey = `${documentTypeKey}::${spreadsheetId}::${sourceKey}`;
+      const existing = this.optionTablesMemo?.get(memoKey);
+      if (existing) {
+        pendingBySource[sourceKey] = existing;
+        continue;
+      }
+
+      const binding = optionBindings[sourceKey];
+      if (!binding) {
+        pendingBySource[sourceKey] = Promise.resolve({
+          status: 'config_error',
+          tuples: [],
+          errorMessage: `Missing optionBinding for "${sourceKey}" on DocumentType "${documentTypeKey}".`,
+        });
+        continue;
+      }
+
+      missingTargets.push({
+        key: sourceKey,
+        sheetName: binding.sheetName,
+        rangeName: binding.rangeName,
+      });
+    }
+
+    if (missingTargets.length > 0) {
+      if (!this.logStorage.readNamedRanges) {
+        if (options?.requireReadNamedRanges) {
+          throw new DocumentLogConfigurationError(
+            'LogStoragePort.readNamedRanges is required to read DocumentLog option tables.'
+          );
+        }
+      } else {
+        const batchPromise = this.logStorage.readNamedRanges({
+          spreadsheetId,
+          targets: missingTargets,
+        });
+
+        for (const target of missingTargets) {
+          const binding = optionBindings[target.key]!;
+          const memoKey = `${documentTypeKey}::${spreadsheetId}::${target.key}`;
+          const entryPromise = batchPromise
+            .then((batchEntries) => parseOptionTableEntry(target.key, binding, batchEntries[target.key]))
+            .catch((error) => {
+              this.optionTablesMemo?.delete(memoKey);
+              throw error;
+            });
+          this.optionTablesMemo?.set(memoKey, entryPromise);
+          pendingBySource[target.key] = entryPromise;
+        }
+      }
+    }
+
+    const tables: Record<string, DocumentLogOptionTableSourceResult> = {};
+    const entries = await Promise.all(
+      Object.entries(pendingBySource).map(async ([key, promise]) => [key, await promise] as const)
+    );
+    for (const [key, result] of entries) {
+      tables[key] = result;
+    }
+    return tables;
+  }
+
+  private async readBoundOptionTablesForHydration(
+    documentTypeKey: string,
+    spreadsheetId: string,
+    logSchema: DocumentLogSchema
+  ): Promise<{
+    dynamicOptions: Record<string, readonly LogTargetDocumentOptionTuple[]>;
+    dynamicTableErrors: Record<string, string>;
+  }> {
+    const keys = Object.keys(logSchema.optionBindings ?? {});
+    if (keys.length === 0) {
+      return { dynamicOptions: {}, dynamicTableErrors: {} };
+    }
+
+    const tableResults = await this.loadOptionTableEntries(
+      documentTypeKey,
+      spreadsheetId,
+      logSchema,
+      keys
+    );
+    const dynamicOptions: Record<string, readonly LogTargetDocumentOptionTuple[]> = {};
+    const dynamicTableErrors: Record<string, string> = {};
+    for (const [sourceKey, entry] of Object.entries(tableResults)) {
+      if (entry.status === 'ready') {
+        const { tuples } = entry;
+        dynamicOptions[sourceKey] = tuples;
+      } else {
+        const { errorMessage } = entry;
+        dynamicTableErrors[sourceKey] = errorMessage;
+      }
+    }
+    return { dynamicOptions, dynamicTableErrors };
+  }
+
   private async readBoundOptionTuples(
     documentTypeKey: string,
     spreadsheetId: string,
     logSchema: DocumentLogSchema
   ): Promise<Record<string, readonly LogTargetDocumentOptionTuple[]>> {
-    const { optionBindings } = logSchema;
-    if (!optionBindings) {
-      return {};
-    }
-
-    const keys = Object.keys(optionBindings);
-    if (keys.length === 0) {
-      return {};
-    }
-
-    const cacheKey = `${documentTypeKey}::${spreadsheetId}`;
-    const cachedTables = this.optionTablesMemo?.get(cacheKey);
-    const missingTargets: Array<{ key: string; sheetName: string; rangeName: string }> = [];
-    const tableResults: Record<string, DocumentLogOptionTableSourceResult> = {};
-
-    for (const sourceKey of keys) {
-      const cached = cachedTables?.[sourceKey];
-      if (cached) {
-        tableResults[sourceKey] = cached;
-      } else {
-        const binding = optionBindings[sourceKey];
-        if (binding) {
-          missingTargets.push({
-            key: sourceKey,
-            sheetName: binding.sheetName,
-            rangeName: binding.rangeName,
-          });
-        }
-      }
-    }
-
-    if (missingTargets.length > 0 && this.logStorage.readNamedRanges) {
-      const batchEntries = await this.logStorage.readNamedRanges({
-        spreadsheetId,
-        targets: missingTargets,
-      });
-      for (const target of missingTargets) {
-        const binding = optionBindings[target.key]!;
-        tableResults[target.key] = parseOptionTableEntry(
-          target.key,
-          binding,
-          batchEntries[target.key]
-        );
-      }
-      if (this.optionTablesMemo) {
-        this.optionTablesMemo.set(cacheKey, {
-          ...(cachedTables ?? {}),
-          ...tableResults,
-        });
-      }
-    }
-
-    const tuplesBySource: Record<string, readonly LogTargetDocumentOptionTuple[]> = {};
-    for (const [sourceKey, entry] of Object.entries(tableResults)) {
-      if (entry.status === 'ready') {
-        const { tuples } = entry;
-        tuplesBySource[sourceKey] = tuples;
-      }
-    }
-    return tuplesBySource;
+    const { dynamicOptions } = await this.readBoundOptionTablesForHydration(
+      documentTypeKey,
+      spreadsheetId,
+      logSchema
+    );
+    return dynamicOptions;
   }
 
   async writeLog(request: WriteDocumentLogRequest): Promise<WriteDocumentLogResult> {

@@ -15,6 +15,9 @@ import type {
   UiView,
 } from '../features/schema-driven-ui/domain';
 import type { RawManifestProviderPort } from './schema-driven-ui.wiring';
+import { createSchemaDrivenUiWiring } from './schema-driven-ui.wiring';
+import { createLookupOptionsWiring } from './lookup-options.wiring';
+import type { DocumentLogPort } from '../features/document-log';
 import type { OptionsFetcherPort } from '../features/schema-driven-ui/ports';
 import type {
   UiProcessOrchestratorPort,
@@ -2455,6 +2458,193 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       expect(mockProcessDocument).toHaveBeenCalledTimes(1);
       const passedDoc = mockProcessDocument.mock.calls[0][0] as { data: Record<string, unknown> };
       expect(passedDoc.data).not.toHaveProperty('SelectDocumentLog');
+    });
+  });
+
+  describe('copyDocumentLog LookupOptions invalidation seam (#359)', () => {
+    it('invalidates memoized missing_log for space.abstractStorageId before SchemaDrivenUi.generateView runs so ready options load immediately', async () => {
+      const localManifestProvider: RawManifestProviderPort = {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: ['./document-types/submittal-arch.json'],
+          configuration: {
+            workspace: {
+              defaultDocumentType: 'submittal-arch',
+              defaultDocumentSpaceType: 'projects',
+            },
+          },
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'submittal-arch',
+          name: 'Submittal Arch',
+          documentSchema: {
+            fields: [
+              {
+                key: 'status',
+                name: 'Status',
+                type: 'string',
+                options: { source: 'statuses', key: 'key' },
+              },
+            ],
+            optionSources: {
+              statuses: { provider: 'document_log', properties: ['key'] },
+            },
+          },
+          documentUiSchema: {
+            layout: ['status'],
+            fields: {
+              status: { widget: 'selectionInput', label: 'Status' },
+            },
+          },
+        }),
+      };
+
+      const mockSpaceService = {
+        getAllTypes: () => [
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: {
+              allowedDocumentTypes: ['submittal-arch'],
+              defaultDocumentType: 'submittal-arch',
+            },
+            storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+          },
+        ],
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [
+            {
+              id: 'proj-1',
+              typeId: 'projects',
+              name: 'Project Main',
+              abstractStorageId: 'drive-proj-1',
+            },
+          ],
+        }),
+      } as unknown as DocumentSpaceService;
+
+      let copied = false;
+      const callOrder: string[] = [];
+
+      const readOptionTables = vi.fn().mockImplementation(async () => {
+        if (!copied) {
+          return {
+            status: 'missing_log' as const,
+            expectedFolderPath: '1 Admin',
+            tables: {},
+          };
+        }
+        return {
+          status: 'ready' as const,
+          spreadsheetId: 'log-copied-1',
+          tables: {
+            statuses: {
+              status: 'ready' as const,
+              tuples: [{ key: 'Open' }, { key: 'In Review' }],
+            },
+          },
+        };
+      });
+
+      const mockDocLogService = {
+        readOptionTables,
+      } as unknown as DocumentLogPort;
+
+      const lookupOptionsWiring = createLookupOptionsWiring({
+        manifestProvider: localManifestProvider,
+        getDocumentLogService: () => mockDocLogService,
+        getDocumentSpaceService: () => mockSpaceService,
+      });
+
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(true),
+        resolveLog: vi.fn().mockImplementation(async () =>
+          copied
+            ? { status: 'resolved', candidate: { id: 'log-copied-1', name: 'Project Main Document Log' } }
+            : { status: 'missing', expectedFolderPath: '1 Admin' }
+        ),
+        copyLog: vi.fn().mockImplementation(async () => {
+          callOrder.push('copyLog');
+          copied = true;
+          return {
+            created: true,
+            candidate: { id: 'log-copied-1', name: 'Project Main Document Log' },
+            folderPath: '1 Admin',
+          };
+        }),
+      };
+
+      const requestContext: WorkspaceExecutionContext = {
+        hostApp: 'DRIVE',
+        actionName: 'copyDocumentLog',
+        parameters: { action: 'copyDocumentLog', previousSpaceId: 'proj-1' },
+        selectedItems: [{ id: 'file-1', title: '071200-001.pdf' }],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          [getDocumentSpaceWidgetName('projects')]: 'Project Main',
+          [getDocumentTypeWidgetName('projects')]: 'submittal-arch',
+          SelectFiles: ['file-1'],
+        },
+      };
+
+      // Pre-warm per-request LookupOptions memoization with missing_log in the same WorkspaceExecutionContext
+      const sharedLookup = lookupOptionsWiring.getPerRequestLookupOptions(requestContext);
+      const prewarmFetcher = lookupOptionsWiring.createOptionsFetcher(requestContext);
+      const prewarmResult = await prewarmFetcher.fetchOptions([{ sourceKey: 'statuses' }], {
+        spaceId: 'proj-1',
+        documentTypeKey: 'submittal-arch',
+      });
+      expect(prewarmResult.statuses.status).toBe('missing_log');
+      expect(readOptionTables).toHaveBeenCalledTimes(1);
+
+      const rawInvalidate = sharedLookup.invalidate.bind(sharedLookup);
+      const invalidateSpy = vi.spyOn(sharedLookup, 'invalidate').mockImplementation((scope) => {
+        callOrder.push(`invalidate:${scope?.spaceId ?? 'all'}`);
+        rawInvalidate(scope);
+      });
+
+      const wiring = createUiProcessManagerWiring({
+        manifestProvider: localManifestProvider,
+        createDocumentSpaceService: () => mockSpaceService,
+        createDocumentLogPort: () => documentLogPort,
+        getLookupOptionsInvalidator: (ctx) => lookupOptionsWiring.getPerRequestLookupOptions(ctx),
+        createSchemaDrivenUiService: (ctx) => {
+          const uiService = createSchemaDrivenUiWiring({
+            manifestProvider: localManifestProvider,
+            optionsFetcher: lookupOptionsWiring.createOptionsFetcher(ctx),
+          }).schemaDrivenUiService;
+          const originalGenerateView = uiService.generateView.bind(uiService);
+          vi.spyOn(uiService, 'generateView').mockImplementation(async (params) => {
+            callOrder.push('generateView');
+            return originalGenerateView(params);
+          });
+          return uiService;
+        },
+      });
+
+      const response = (await wiring.requestScopedWrapper.processUiEvent(
+        requestContext
+      )) as GoogleWorkspaceActionResponse;
+
+      expect(callOrder).toEqual([
+        'copyLog',
+        'invalidate:drive-proj-1',
+        'invalidate:proj-1',
+        'generateView',
+      ]);
+      expect(invalidateSpy).toHaveBeenCalledWith({ spaceId: 'drive-proj-1' });
+      expect(invalidateSpy).toHaveBeenCalledWith({ spaceId: 'proj-1' });
+      expect(readOptionTables).toHaveBeenCalledTimes(2);
+
+      const updateCard = response.action?.navigations?.[0]?.updateCard;
+      expect(updateCard).toBeDefined();
+      const dataSection = updateCard!.sections?.find((s) => s.header === 'Document Data');
+      const statusWidget = dataSection?.widgets?.find(
+        (w) => w.selectionInput?.name === getDocumentInfoWidgetName('status', 'submittal-arch')
+      );
+      expect(statusWidget?.selectionInput?.items).toEqual([
+        { text: 'Open', value: 'Open' },
+        { text: 'In Review', value: 'In Review' },
+      ]);
     });
   });
 });
