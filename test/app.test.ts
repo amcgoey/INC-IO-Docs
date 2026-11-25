@@ -3,14 +3,137 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createApp, type AppInstance, type CompositeManifestProvider } from '../src/app/server';
+import { wireDocumentServicesAndRoutes } from '../src/app/document.wiring';
+import { createDocumentLogWiring } from '../src/app/document-log.wiring';
+import { createHttpServer } from '../src/infrastructure/http';
+import { CompiledSchemaRegistry } from '../src/features/document/adapters/compiled-schema-registry';
+import { DocumentSchemaRegistryAdapter } from '../src/features/document/adapters/document-schema-registry';
+import { HandlebarsAdapter } from '../src/infrastructure/template-engine/handlebars-adapter';
+import { ensureEvaluationOrder } from '../src/infrastructure/validation/json-logic-graph';
 import type {
   DocumentSchemaRegistryPort,
   ActivityDispatcherPort,
+  DriveServicePort,
 } from '../src/features/document/ports';
 import type { DocumentType } from '../src/features/document/domain';
 import { GoogleDriveClient } from '../src/infrastructure/drive/drive-client';
 import { GoogleDocsClient, type GoogleDocsClientOptions } from '../src/infrastructure/docs';
+import { GoogleSheetsClient, type GoogleSheetsClientOptions } from '../src/infrastructure/sheets';
+import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
+
+function createArchOptionTablesSheetsMock(
+  manifestPath: string,
+  options?: {
+    getTables?: (spreadsheetId: string) => {
+      statuses: string[][];
+      actions: string[][];
+    };
+  }
+): {
+  sheetsClient: GoogleSheetsClient;
+  getSpy: ReturnType<typeof vi.fn>;
+  batchGetSpy: ReturnType<typeof vi.fn>;
+} {
+  const defaultStatuses = [['Status'], ['Open'], ['Closed'], ['Waiting'], ['Manager'], ['---']];
+  const defaultActions = [
+    ['Action', 'Name', 'Suffix', 'Order'],
+    ['REC', 'Received', '', '1'],
+    ['REF', 'Referred', '_REF', '2'],
+    ['NR', 'Not Reviewed', '_NR', '3'],
+    ['REJ', 'Rejected', '_REJ', '4'],
+    ['RR', 'Revise & Resubmit', '_RR', '5'],
+    ['NOC', 'No Objections As Corrected', '_NOC', '6'],
+    ['NET', 'No Exceptions Taken', '_NET', '7'],
+    ['---', '', '', ''],
+  ];
+
+  const getSpy = vi.fn().mockImplementation(async ({ spreadsheetId }: { spreadsheetId: string }) => {
+    const tables = options?.getTables?.(spreadsheetId) ?? {
+      statuses: defaultStatuses,
+      actions: defaultActions,
+    };
+    return {
+      data: {
+        spreadsheetId,
+        sheets: [
+          { properties: { sheetId: 101, title: 'Submittal Arch' } },
+          { properties: { sheetId: 103, title: '_Config Submittal Arch' } },
+        ],
+        namedRanges: [
+          {
+            namedRangeId: 'nr-log',
+            name: 'Log_Submittal_Arch',
+            range: {
+              sheetId: 101,
+              startRowIndex: 2,
+              endRowIndex: 10,
+              startColumnIndex: 0,
+              endColumnIndex: 10,
+            },
+          },
+          {
+            namedRangeId: 'nr-statuses',
+            name: 'Options_Submittal_Arch_Statuses',
+            range: {
+              sheetId: 103,
+              startRowIndex: 0,
+              endRowIndex: tables.statuses.length,
+              startColumnIndex: 0,
+              endColumnIndex: 1,
+            },
+          },
+          {
+            namedRangeId: 'nr-actions',
+            name: 'Options_Submittal_Arch_Actions',
+            range: {
+              sheetId: 103,
+              startRowIndex: 0,
+              endRowIndex: tables.actions.length,
+              startColumnIndex: 2,
+              endColumnIndex: 6,
+            },
+          },
+        ],
+      },
+    };
+  });
+
+  const batchGetSpy = vi.fn().mockImplementation(
+    async ({ spreadsheetId, ranges }: { spreadsheetId: string; ranges?: string[] }) => {
+      const tables = options?.getTables?.(spreadsheetId) ?? {
+        statuses: defaultStatuses,
+        actions: defaultActions,
+      };
+      return {
+        data: {
+          spreadsheetId,
+          valueRanges: (ranges ?? []).map((r) => ({
+            range: r,
+            values: r.includes('A1:') ? tables.statuses : tables.actions,
+          })),
+        },
+      };
+    }
+  );
+
+  const sheetsClient = new GoogleSheetsClient({
+    sheets: {
+      spreadsheets: {
+        get: getSpy,
+        batchUpdate: vi.fn().mockResolvedValue({ data: {} }),
+        values: {
+          get: vi.fn().mockResolvedValue({ data: { values: [] } }),
+          batchGet: batchGetSpy,
+          update: vi.fn().mockResolvedValue({ data: {} }),
+        },
+      },
+    } as unknown as NonNullable<GoogleSheetsClientOptions['sheets']>,
+    configProvider: new AppManifestProvider({ manifestPath }),
+  });
+
+  return { sheetsClient, getSpy, batchGetSpy };
+}
 
 describe('App integration tests', () => {
   let app: AppInstance;
@@ -558,10 +681,20 @@ describe('App integration tests', () => {
       };
 
       const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      const { sheetsClient } = createArchOptionTablesSheetsMock(manifestPath);
+      const searchSpy = vi.spyOn(GoogleDriveClient.prototype, 'searchFiles').mockResolvedValue([
+        {
+          id: 'arch-log-app-1',
+          name: 'Active Projects Document Log',
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ]);
+
       const prodApp = createApp({
         skipSpaceValidation: true,
         manifestPath,
         activityEngine: mockDispatcher,
+        sheetsClient,
       });
 
       await prodApp.initialize();
@@ -586,63 +719,67 @@ describe('App integration tests', () => {
         },
       };
 
-      const response = await prodApp.server.inject({
-        method: 'POST',
-        url: '/documents?eventName=onSubmit',
-        payload: archPayload,
-      });
+      try {
+        const response = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: archPayload,
+        });
 
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body.success).toBe(true);
-      expect(body.data.id).toBe('071200-001-A-261020-1');
-      expect(body.data.idDocument).toBe('071200-001-A');
-      expect(body.data.idGroup).toBe('071200-001');
-      expect(body.data.calculated.fileName).toBe('071200-001-A Waterproofing Specs - 261020 PMG');
-      expect(body.activities).toEqual([
-        {
-          type: 'MOVE_FILE',
-          payload: {
-            rootStorageId: 'space-projects-1',
-            parentPath: '6 Construction',
-            folderName: 'Submittals',
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.payload);
+        expect(body.success).toBe(true);
+        expect(body.data.id).toBe('071200-001-A-261020-1');
+        expect(body.data.idDocument).toBe('071200-001-A');
+        expect(body.data.idGroup).toBe('071200-001');
+        expect(body.data.calculated.fileName).toBe('071200-001-A Waterproofing Specs - 261020 PMG');
+        expect(body.activities).toEqual([
+          {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'space-projects-1',
+              parentPath: '6 Construction',
+              folderName: 'Submittals',
+            },
           },
-        },
-        {
-          type: 'WRITE_LOG',
-          payload: {},
-        },
-      ]);
-      expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
-        1,
-        {
-          type: 'MOVE_FILE',
-          payload: {
-            rootStorageId: 'space-projects-1',
-            parentPath: '6 Construction',
-            folderName: 'Submittals',
+          {
+            type: 'WRITE_LOG',
+            payload: {},
           },
-        },
-        {
-          document: body.data,
-          files: [],
-          stepOutputs: {},
-          contextVariables: {},
-        }
-      );
-      expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
-        2,
-        {
-          type: 'WRITE_LOG',
-          payload: {},
-        },
-        {
-          document: body.data,
-          files: [],
-          stepOutputs: {},
-          contextVariables: {},
-        }
-      );
+        ]);
+        expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+          1,
+          {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'space-projects-1',
+              parentPath: '6 Construction',
+              folderName: 'Submittals',
+            },
+          },
+          {
+            document: body.data,
+            files: [],
+            stepOutputs: {},
+            contextVariables: {},
+          }
+        );
+        expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+          2,
+          {
+            type: 'WRITE_LOG',
+            payload: {},
+          },
+          {
+            document: body.data,
+            files: [],
+            stepOutputs: {},
+            contextVariables: {},
+          }
+        );
+      } finally {
+        searchSpy.mockRestore();
+      }
     });
 
     it('submits submittal-ffe Document resolving identity, calculated fields, and workflow activity', async () => {
@@ -1754,6 +1891,266 @@ describe('App integration tests', () => {
       ]);
 
       listFoldersSpy.mockRestore();
+    });
+
+    it('POST /documents validates submittal-arch against batched _Config reads, preserves raw punctuation, rejects invalid restricted options, and avoids cross-request Sheets caching (#358)', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      let phase = 1;
+      const { sheetsClient, getSpy, batchGetSpy } = createArchOptionTablesSheetsMock(manifestPath, {
+        getTables: () => ({
+          statuses: phase === 1 ? [['Status'], ['Open'], ['---']] : [['Status'], ['Closed'], ['---']],
+          actions: [
+            ['Name', 'Order', 'Action', 'Suffix'],
+            ['No Objections As Corrected', '6', 'NOC', '_NOC'],
+            ['---', '', '', ''],
+          ],
+        }),
+      });
+      const searchSpy = vi.spyOn(GoogleDriveClient.prototype, 'searchFiles').mockResolvedValue([
+        {
+          id: 'arch-log-358',
+          name: 'Active Projects Document Log',
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ]);
+
+      const prodApp = createApp({
+        skipSpaceValidation: true,
+        manifestPath,
+        activityEngine: mockDispatcher,
+        sheetsClient,
+      });
+      await prodApp.initialize();
+
+      try {
+        // 1. Valid dynamic option (order-independent Row 0 headers + enrichment + raw punctuation preserved)
+        const validRes = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            type: 'submittal-arch',
+            space: {
+              id: 'space-projects-1',
+              name: 'Active Projects',
+              typeId: 'projects',
+              abstractStorageId: 'space-projects-1',
+            },
+            data: {
+              status: 'open',
+              section: '071200',
+              number: '002',
+              revision: 'A',
+              title: 'Sheet / Membrane: Waterproofing',
+              date: '261020',
+              contact: 'PMG',
+              action: 'NOC',
+              notes: 'Check "quoted" & slash/note',
+            },
+          },
+        });
+
+        expect(validRes.statusCode).toBe(200);
+        const validBody = JSON.parse(validRes.payload);
+        expect(validBody.data.data.status).toEqual({ key: 'Open' });
+        expect(validBody.data.data.action).toEqual({
+          key: 'NOC',
+          name: 'No Objections As Corrected',
+          suffix: '_NOC',
+          order: '6',
+        });
+        expect(validBody.data.id).toBe('071200-002-A-261020-6');
+        expect(validBody.data.calculated.fileName).toBe(
+          '071200-002-A Sheet / Membrane: Waterproofing - 261020 PMG_NOC'
+        );
+        expect(validBody.data.data.title).toBe('Sheet / Membrane: Waterproofing');
+        expect(validBody.data.data.notes).toBe('Check "quoted" & slash/note');
+        // Batched Sheets read: exactly 1 spreadsheets.get + 1 values:batchGet (FORMATTED_VALUE)
+        expect(getSpy).toHaveBeenCalledTimes(1);
+        expect(batchGetSpy).toHaveBeenCalledTimes(1);
+        expect(batchGetSpy.mock.calls[0][0].valueRenderOption).toBe('FORMATTED_VALUE');
+
+        // 2. Next request sees fresh _Config options (zero cross-request caching): "Open" now invalid
+        phase = 2;
+        const rejectedRes = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            type: 'submittal-arch',
+            space: {
+              id: 'space-projects-1',
+              name: 'Active Projects',
+              typeId: 'projects',
+              abstractStorageId: 'space-projects-1',
+            },
+            data: {
+              status: 'Open',
+              section: '071200',
+              number: '002',
+              revision: 'A',
+              title: 'Waterproofing',
+              date: '261020',
+              contact: 'PMG',
+              action: 'NOC',
+            },
+          },
+        });
+        expect(rejectedRes.statusCode).toBe(400);
+        const rejectedBody = JSON.parse(rejectedRes.payload);
+        expect(rejectedBody.success).toBe(false);
+        expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2); // only request 1 dispatched MOVE_FILE + WRITE_LOG
+      } finally {
+        searchSpy.mockRestore();
+      }
+    });
+
+    it('POST /documents on ambiguous DocumentSpace resolves option validation from candidates[0] while WRITE_LOG still rejects ambiguous_log (#358)', async () => {
+      const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      const { sheetsClient } = createArchOptionTablesSheetsMock(manifestPath, {
+        getTables: (spreadsheetId) =>
+          spreadsheetId === 'log-candidate-0'
+            ? {
+                statuses: [['Status'], ['Open'], ['---']],
+                actions: [
+                  ['Action', 'Name', 'Suffix', 'Order'],
+                  ['REC', 'Received', '', '1'],
+                  ['---', '', '', ''],
+                ],
+              }
+            : {
+                statuses: [['Status'], ['Closed'], ['---']],
+                actions: [
+                  ['Action', 'Name', 'Suffix', 'Order'],
+                  ['NET', 'No Exceptions Taken', '_NET', '7'],
+                  ['---', '', '', ''],
+                ],
+              },
+      });
+      const searchSpy = vi.spyOn(GoogleDriveClient.prototype, 'searchFiles').mockResolvedValue([
+        {
+          id: 'log-candidate-0',
+          name: 'Active Projects Document Log',
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+        {
+          id: 'log-candidate-1',
+          name: 'Active Projects Document Log (Old)',
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ]);
+      const folderSpy = vi.spyOn(GoogleDriveClient.prototype, 'findOrCreateFolder').mockResolvedValue({
+        id: 'folder-submittals',
+        name: 'Submittals',
+      });
+      const resolveFolderSpy = vi
+        .spyOn(GoogleDriveClient.prototype, 'resolveFolderPath')
+        .mockResolvedValue({ id: 'folder-admin', name: '1 Admin' });
+      const getFileSpy = vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
+        id: 'folder-parent',
+        name: '1 Admin',
+        mimeType: 'application/vnd.google-apps.folder',
+      });
+
+      const appManifest = new AppManifestProvider({ manifestPath });
+      const handlebars = new HandlebarsAdapter();
+      const docRegistry = new DocumentSchemaRegistryAdapter(
+        appManifest,
+        handlebars,
+        ensureEvaluationOrder
+      );
+      const compiledRegistry = new CompiledSchemaRegistry(docRegistry);
+      await compiledRegistry.initialize();
+
+      const driveClient = new GoogleDriveClient({ configProvider: appManifest });
+      const docLogWiring = createDocumentLogWiring({
+        manifestProvider: appManifest,
+        driveClient,
+        sheetsClient,
+        configProvider: appManifest,
+        templateEvaluator: handlebars,
+      });
+
+      const mockDriveService: DriveServicePort = {
+        getFile: vi.fn().mockResolvedValue({ id: 'doc-file-ambig', name: 'Waterproofing.pdf' }),
+        findOrCreateFolder: vi.fn().mockResolvedValue({ id: 'folder-submittals', name: 'Submittals' }),
+        resolveFolderPath: vi.fn().mockResolvedValue({ id: 'folder-admin', name: '1 Admin' }),
+        move: vi.fn().mockResolvedValue({ id: 'doc-file-ambig', webViewLink: 'https://drive.google.com/file/d/doc-file-ambig/view' }),
+        rename: vi.fn().mockResolvedValue({ id: 'doc-file-ambig', name: 'Waterproofing.pdf' }),
+        duplicate: vi.fn(),
+        searchFiles: vi.fn().mockResolvedValue([]),
+        downloadAsBuffer: vi.fn(),
+        saveBuffer: vi.fn(),
+        uploadStream: vi.fn(),
+      };
+
+      const server = createHttpServer();
+      const docService = wireDocumentServicesAndRoutes({
+        server,
+        driveClient,
+        driveService: mockDriveService,
+        configProvider: appManifest,
+        manifestProvider: appManifest,
+        documentSchemaRegistry: docRegistry,
+        templateEvaluator: handlebars,
+        compiledSchemaRegistry: compiledRegistry,
+        primaryTargetId: 'doc-file-ambig',
+        documentLogService: docLogWiring.documentLogService,
+        getDocumentLogService: (ctx) => docLogWiring.getPerRequestService(ctx),
+        ensureDocumentLogInitialized: () => docLogWiring.logSchemaRegistry.initialize(),
+        additionalActivityHandlers: [docLogWiring.createActivityHandler()],
+        createAdditionalActivityHandlers: (lookupOptions, requestContext) => [
+          docLogWiring.createPerRequestActivityHandler(requestContext, {
+            onWriteLogSuccess: () => lookupOptions.invalidate(),
+          }),
+        ],
+      });
+      if ('initialize' in docService && typeof docService.initialize === 'function') {
+        await docService.initialize();
+      }
+
+      try {
+        // Validation passes using candidates[0] ("Open" + "REC"), MOVE_FILE succeeds,
+        // and WRITE_LOG strictly rejects ambiguous_log.
+        const res = await server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            type: 'submittal-arch',
+            space: {
+              id: 'space-projects-1',
+              name: 'Active Projects',
+              typeId: 'projects',
+              abstractStorageId: 'space-projects-1',
+            },
+            data: {
+              status: 'Open',
+              section: '071200',
+              number: '002',
+              revision: 'A',
+              title: 'Waterproofing',
+              date: '261020',
+              contact: 'PMG',
+              action: 'REC',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(400);
+        const body = JSON.parse(res.payload);
+        expect(body.success).toBe(false);
+        expect(JSON.stringify(body.errors ?? '')).toContain('Multiple DocumentLog');
+        expect(JSON.stringify(body.errors ?? '')).not.toContain('not a valid option');
+        expect(mockDriveService.move).toHaveBeenCalledTimes(1);
+        // candidates[0] used for validation; WRITE_LOG reused per-request resolveLog (1 search total)
+        expect(searchSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        searchSpy.mockRestore();
+        folderSpy.mockRestore();
+        resolveFolderSpy.mockRestore();
+        getFileSpy.mockRestore();
+      }
     });
   });
 });

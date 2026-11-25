@@ -160,9 +160,12 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
   function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optional?: boolean }) {
     const applyOpt = <T extends nock.Interceptor>(interceptor: T): T =>
       options?.optional ? (interceptor.optionally() as T) : interceptor;
+    const sheetsScope = options?.optional
+      ? nock('https://sheets.googleapis.com').persist()
+      : nock('https://sheets.googleapis.com');
 
     applyOpt(
-      nock('https://sheets.googleapis.com')
+      sheetsScope
         .get(`/v4/spreadsheets/${spreadsheetId}`)
         .query(true)
     ).reply(200, {
@@ -170,6 +173,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       sheets: [
         { properties: { sheetId: 101, title: 'Submittal Arch' } },
         { properties: { sheetId: 102, title: 'Submittal FF&E' } },
+        { properties: { sheetId: 103, title: '_Config Submittal Arch' } },
       ],
       namedRanges: [
         {
@@ -182,11 +186,21 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
           name: 'Log_Submittal_FFE',
           range: { sheetId: 102, startRowIndex: 2, endRowIndex: 21, startColumnIndex: 0, endColumnIndex: 12 },
         },
+        {
+          namedRangeId: 'nr-arch-statuses',
+          name: 'Options_Submittal_Arch_Statuses',
+          range: { sheetId: 103, startRowIndex: 0, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
+        },
+        {
+          namedRangeId: 'nr-arch-actions',
+          name: 'Options_Submittal_Arch_Actions',
+          range: { sheetId: 103, startRowIndex: 0, endRowIndex: 9, startColumnIndex: 2, endColumnIndex: 6 },
+        },
       ],
     });
 
     applyOpt(
-      nock('https://sheets.googleapis.com')
+      sheetsScope
         .get(new RegExp(`/v4/spreadsheets/${spreadsheetId}/values/.*`))
         .query((q) => q.valueRenderOption === 'FORMATTED_VALUE')
     ).reply(200, (uri) => {
@@ -198,7 +212,42 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     });
 
     applyOpt(
-      nock('https://sheets.googleapis.com')
+      sheetsScope
+        .get(`/v4/spreadsheets/${spreadsheetId}/values:batchGet`)
+        .query((q) => q.valueRenderOption === 'FORMATTED_VALUE')
+    ).reply(200, (uri) => {
+      const requestedRanges = new URL(uri, 'https://sheets.googleapis.com').searchParams.getAll('ranges');
+      return {
+        valueRanges: requestedRanges.map((range) => {
+          if (range.includes('_Config Submittal Arch') && range.includes('A1:A6')) {
+            return {
+              range,
+              values: [['Status'], ['Open'], ['Closed'], ['Waiting'], ['Manager'], ['---']],
+            };
+          }
+          if (range.includes('_Config Submittal Arch') && range.includes('C1:F9')) {
+            return {
+              range,
+              values: [
+                ['Action', 'Name', 'Suffix', 'Order'],
+                ['REC', 'Received', '', '1'],
+                ['REF', 'Referred', '_REF', '2'],
+                ['NR', 'Not Reviewed', '_NR', '3'],
+                ['REJ', 'Rejected', '_REJ', '4'],
+                ['RR', 'Revise & Resubmit', '_RR', '5'],
+                ['NOC', 'No Objections As Corrected', '_NOC', '6'],
+                ['NET', 'No Exceptions Taken', '_NET', '7'],
+                ['---', '', '', ''],
+              ],
+            };
+          }
+          return { range, values: [] };
+        }),
+      };
+    });
+
+    applyOpt(
+      sheetsScope
         .get(`/v4/spreadsheets/${spreadsheetId}/values:batchGet`)
         .query((q) => q.valueRenderOption === 'FORMULA')
     ).reply(200, {

@@ -2,12 +2,19 @@ import {
   DriveOptionSourceAdapter,
   LookupOptionsService,
   ManifestLookupSchemaAdapter,
+  type DocumentLogOptionSourcePort,
   type DriveFolderListClient,
   type LookupDocumentSchema,
   type LookupManifestPort,
   type LookupOptionsPort,
+  type LookupSpaceContext,
   type RawLookupManifestProviderPort,
 } from '../features/lookup-options';
+import {
+  DocumentLogConfigurationError,
+  type DocumentLogPort,
+} from '../features/document-log';
+import type { DocumentSpaceService } from '../features/document-space/domain';
 import type {
   DocumentDynamicValidationPort,
   DocumentSchemaRegistryPort,
@@ -22,11 +29,22 @@ import type { AppConfigurationProviderPort } from '../features/document/ports';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 
+export type SpaceLookupResolver = (
+  spaceId: string,
+  formData?: Readonly<Record<string, unknown>>
+) => Promise<LookupSpaceContext | undefined>;
+
 export interface LookupOptionsWiringOptions {
   manifestProvider?: RawLookupManifestProviderPort | undefined;
   documentSchemaRegistry?: DocumentSchemaRegistryPort | undefined;
   driveClient?: DriveFolderListClient | undefined;
   configProvider?: AppConfigurationProviderPort | undefined;
+  documentLogService?: DocumentLogPort | undefined;
+  getDocumentLogService?: ((context: WorkspaceExecutionContext) => DocumentLogPort) | undefined;
+  ensureDocumentLogInitialized?: (() => Promise<void>) | undefined;
+  getDocumentSpaceService?:
+    | ((context: WorkspaceExecutionContext) => Promise<DocumentSpaceService> | DocumentSpaceService)
+    | undefined;
   timeoutMs?: number | undefined;
 }
 
@@ -96,8 +114,133 @@ function createLookupManifestPort(options: {
   return createEmptyManifestPort();
 }
 
+function createDocumentLogOptionSourceAdapter(
+  getDocumentLogService: () => DocumentLogPort,
+  ensureInitialized?: () => Promise<void>,
+  resolveSpace?: SpaceLookupResolver
+): DocumentLogOptionSourcePort {
+  return {
+    readOptionTables: async (params) => {
+      try {
+        if (ensureInitialized) {
+          await ensureInitialized();
+        }
+        let resolvedSpace = params.space;
+        if (
+          resolvedSpace &&
+          (!resolvedSpace.typeId || !resolvedSpace.name) &&
+          resolveSpace
+        ) {
+          const lookedUp = await resolveSpace(resolvedSpace.id);
+          if (lookedUp) {
+            resolvedSpace = lookedUp;
+          }
+        }
+        const service = getDocumentLogService();
+        if (!service.readOptionTables) {
+          return {
+            status: 'config_error',
+            errorMessage: 'DocumentLogPort.readOptionTables is not implemented.',
+            tables: {},
+          };
+        }
+        return await service.readOptionTables({
+          documentTypeKey: params.documentTypeKey,
+          ...(resolvedSpace !== undefined ? { space: resolvedSpace } : {}),
+          ...(params.selectedLogId !== undefined ? { selectedLogId: params.selectedLogId } : {}),
+          ...(params.sourceKeys !== undefined ? { sourceKeys: params.sourceKeys } : {}),
+        });
+      } catch (error) {
+        if (error instanceof DocumentLogConfigurationError) {
+          return {
+            status: 'config_error',
+            errorMessage: error.message,
+            tables: {},
+          };
+        }
+        throw error;
+      }
+    },
+  };
+}
+
+function createSpaceLookupResolver(
+  getSpaceService?: () => Promise<DocumentSpaceService> | DocumentSpaceService
+): SpaceLookupResolver | undefined {
+  if (!getSpaceService) {
+    return undefined;
+  }
+  return async (spaceId: string, formData?: Readonly<Record<string, unknown>>) => {
+    const trimmed = spaceId.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    const spaceService = await getSpaceService();
+    const allTypes = spaceService.getAllTypes();
+    const rawPreferredType = formData?.SelectDocumentSpaceType;
+    const preferredTypeId =
+      typeof rawPreferredType === 'string' && rawPreferredType.trim().length > 0
+        ? rawPreferredType.trim()
+        : undefined;
+
+    const orderedTypeIds: string[] = [];
+    if (preferredTypeId && allTypes.some((t) => t.id === preferredTypeId)) {
+      orderedTypeIds.push(preferredTypeId);
+    }
+    for (const spaceType of allTypes) {
+      if (spaceType.id !== preferredTypeId) {
+        orderedTypeIds.push(spaceType.id);
+      }
+    }
+
+    for (const typeId of orderedTypeIds) {
+      try {
+        const collection = await spaceService.getCollection(typeId);
+        const found = collection.spaces.find(
+          (s) => s.id === trimmed || s.abstractStorageId === trimmed
+        );
+        if (found) {
+          return {
+            id: found.id,
+            typeId: found.typeId,
+            name: found.name,
+            abstractStorageId: found.abstractStorageId,
+          };
+        }
+      } catch {
+        // Ignore unrelated space collection errors
+      }
+    }
+
+    return undefined;
+  };
+}
+
+async function resolveLookupSpace(
+  rawSpaceId: string | undefined,
+  explicitSpace: LookupSpaceContext | undefined,
+  formData: Readonly<Record<string, unknown>> | undefined,
+  resolveSpace?: SpaceLookupResolver
+): Promise<LookupSpaceContext | undefined> {
+  if (explicitSpace) {
+    return explicitSpace;
+  }
+  const trimmedSpace = rawSpaceId?.trim();
+  if (!trimmedSpace) {
+    return undefined;
+  }
+  if (resolveSpace) {
+    const resolved = await resolveSpace(trimmedSpace, formData);
+    if (resolved) {
+      return resolved;
+    }
+  }
+  return { id: trimmedSpace, abstractStorageId: trimmedSpace };
+}
+
 export function createOptionsFetcherAdapter(
-  lookupOptions: LookupOptionsPort
+  lookupOptions: LookupOptionsPort,
+  resolveSpace?: SpaceLookupResolver
 ): OptionsFetcherPort {
   return {
     fetchOptions: async (queries, context) => {
@@ -109,7 +252,12 @@ export function createOptionsFetcherAdapter(
         return results;
       }
 
-      const trimmedSpace = context.spaceId?.trim();
+      const space = await resolveLookupSpace(
+        context.spaceId,
+        undefined,
+        context.formData,
+        resolveSpace
+      );
       const rawSelectedLog =
         context.selectedLogId ??
         (typeof context.formData?.SelectDocumentLog === 'string'
@@ -122,7 +270,7 @@ export function createOptionsFetcherAdapter(
 
       const resolved = await lookupOptions.resolveOptions(
         {
-          ...(trimmedSpace ? { space: { id: trimmedSpace, abstractStorageId: trimmedSpace } } : {}),
+          ...(space !== undefined ? { space } : {}),
           documentTypeKey: context.documentTypeKey,
           ...(trimmedLogId !== undefined ? { selectedLogId: trimmedLogId } : {}),
         },
@@ -139,6 +287,7 @@ export function createOptionsFetcherAdapter(
           status: res.status,
           items: res.items,
           ...(res.targetPath !== undefined ? { targetPath: res.targetPath } : {}),
+          ...(res.errorMessage !== undefined ? { errorMessage: res.errorMessage } : {}),
         };
       }
 
@@ -148,11 +297,17 @@ export function createOptionsFetcherAdapter(
 }
 
 export function createDocumentDynamicValidationAdapter(
-  lookupOptions: LookupOptionsPort
+  lookupOptions: LookupOptionsPort,
+  resolveSpace?: SpaceLookupResolver
 ): DocumentDynamicValidationPort {
   return {
     validateExistence: async (queries, context) => {
-      const trimmedSpace = context.spaceId?.trim();
+      const space = await resolveLookupSpace(
+        context.spaceId,
+        context.space,
+        context.formData,
+        resolveSpace
+      );
       const rawSelectedLog =
         context.selectedLogId ??
         (typeof context.formData?.SelectDocumentLog === 'string'
@@ -165,7 +320,7 @@ export function createDocumentDynamicValidationAdapter(
 
       const resolved = await lookupOptions.validateFields(
         {
-          ...(trimmedSpace ? { space: { id: trimmedSpace, abstractStorageId: trimmedSpace } } : {}),
+          ...(space !== undefined ? { space } : {}),
           documentTypeKey: context.documentTypeKey ?? '',
           ...(trimmedLogId !== undefined ? { selectedLogId: trimmedLogId } : {}),
         },
@@ -194,17 +349,18 @@ export function createDocumentDynamicValidationAdapter(
 }
 
 export function createCanonicalOptionsProviderAdapter(
-  lookupOptions: LookupOptionsPort
+  lookupOptions: LookupOptionsPort,
+  resolveSpace?: SpaceLookupResolver
 ): CanonicalOptionsProviderPort {
   return {
     getCanonicalOptions: async (spaceId, field, documentTypeKey, selectedLogId) => {
-      const trimmedSpace = spaceId?.trim();
-      if (!trimmedSpace || !documentTypeKey) {
+      const space = await resolveLookupSpace(spaceId, undefined, undefined, resolveSpace);
+      if (!space || !documentTypeKey) {
         return [];
       }
       return lookupOptions.getCanonicalOptions(
         {
-          space: { id: trimmedSpace, abstractStorageId: trimmedSpace },
+          space,
           documentTypeKey,
           ...(selectedLogId !== undefined ? { selectedLogId } : {}),
         },
@@ -227,8 +383,16 @@ export function createLookupOptionsService(
       ...(options.configProvider !== undefined ? { configProvider: options.configProvider } : {}),
     });
 
+  const documentLogOptionSource = options.documentLogService
+    ? createDocumentLogOptionSourceAdapter(
+        () => options.documentLogService!,
+        options.ensureDocumentLogInitialized
+      )
+    : undefined;
+
   return new LookupOptionsService(manifestPort, {
     driveOptionSource: new DriveOptionSourceAdapter(driveClient),
+    ...(documentLogOptionSource !== undefined ? { documentLogOptionSource } : {}),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
   });
 }
@@ -242,6 +406,11 @@ export function createLookupOptionsWiring(
   });
   const perRequestInstances = new WeakMap<WorkspaceExecutionContext, LookupOptionsPort>();
 
+  const getSpaceResolver = (context: WorkspaceExecutionContext): SpaceLookupResolver | undefined =>
+    options.getDocumentSpaceService
+      ? createSpaceLookupResolver(() => options.getDocumentSpaceService!(context))
+      : undefined;
+
   const createLookupOptions = (context?: WorkspaceExecutionContext): LookupOptionsPort => {
     const oauthCredential = context?.userOAuthToken ?? context?.gmail?.accessToken;
     const driveClient: DriveFolderListClient = oauthCredential
@@ -252,8 +421,25 @@ export function createLookupOptionsWiring(
       : (options.driveClient ??
           new GoogleDriveClient({ configProvider: options.configProvider }));
 
+    const spaceResolver = context ? getSpaceResolver(context) : undefined;
+    const documentLogOptionSource =
+      context && options.getDocumentLogService
+        ? createDocumentLogOptionSourceAdapter(
+            () => options.getDocumentLogService!(context),
+            options.ensureDocumentLogInitialized,
+            spaceResolver
+          )
+        : options.documentLogService
+          ? createDocumentLogOptionSourceAdapter(
+              () => options.documentLogService!,
+              options.ensureDocumentLogInitialized,
+              spaceResolver
+            )
+          : undefined;
+
     return new LookupOptionsService(manifestPort, {
       driveOptionSource: new DriveOptionSourceAdapter(driveClient),
+      ...(documentLogOptionSource !== undefined ? { documentLogOptionSource } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     });
   };

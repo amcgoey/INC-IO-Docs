@@ -3534,4 +3534,102 @@ describe('GoogleSheetsClient', () => {
       ]);
     });
   });
+
+  describe('readNamedRangesBatch', () => {
+    it('reads multiple Named Ranges in 1 spreadsheets.get + 1 values.batchGet (FORMATTED_VALUE) and reports missing ranges per key', async () => {
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({
+        data: {
+          spreadsheetId: 'sheet-config-1',
+          sheets: [
+            { properties: { sheetId: 301, title: '_Config Submittal Arch' } },
+          ],
+          namedRanges: [
+            {
+              namedRangeId: 'nr-status',
+              name: 'Options_Submittal_Arch_Statuses',
+              range: { sheetId: 301, startRowIndex: 2, endRowIndex: 10, startColumnIndex: 0, endColumnIndex: 1 },
+            },
+            {
+              namedRangeId: 'nr-action',
+              name: '_Config Submittal Arch!Options_Submittal_Arch_Actions',
+              range: { sheetId: 301, startRowIndex: 2, endRowIndex: 12, startColumnIndex: 2, endColumnIndex: 6 },
+            },
+          ],
+        },
+      });
+      mockSheetsApi.spreadsheets.values.batchGet.mockResolvedValueOnce({
+        data: {
+          valueRanges: [
+            {
+              range: "'_Config Submittal Arch'!A3:A10",
+              values: [['Status'], ['Open'], ['Closed'], ['---']],
+            },
+            {
+              range: "'_Config Submittal Arch'!C3:F12",
+              values: [
+                ['Action', 'Name', 'Suffix', 'Order'],
+                ['REC', 'Received', '', '1'],
+                ['---'],
+              ],
+            },
+          ],
+        },
+      });
+
+      const client = new GoogleSheetsClient({ sheets: mockSheetsApi as unknown as sheets_v4.Sheets });
+      const result = await client.readNamedRangesBatch({
+        spreadsheetId: 'sheet-config-1',
+        targets: [
+          { key: 'statuses', sheetName: '_Config Submittal Arch', rangeName: 'Options_Submittal_Arch_Statuses' },
+          { key: 'actions', sheetName: '_Config Submittal Arch', rangeName: 'Options_Submittal_Arch_Actions' },
+          { key: 'missingNr', sheetName: '_Config Submittal Arch', rangeName: 'Options_Missing' },
+          { key: 'missingSheet', sheetName: '_MissingTab', rangeName: 'Options_Any' },
+        ],
+      });
+
+      expect(mockSheetsApi.spreadsheets.get).toHaveBeenCalledTimes(1);
+      expect(mockSheetsApi.spreadsheets.values.batchGet).toHaveBeenCalledTimes(1);
+      expect(mockSheetsApi.spreadsheets.values.batchGet).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-config-1',
+        ranges: ["'_Config Submittal Arch'!A3:A10", "'_Config Submittal Arch'!C3:F12"],
+        valueRenderOption: 'FORMATTED_VALUE',
+      });
+      expect(result.statuses).toEqual({
+        status: 'found',
+        values: [['Status'], ['Open'], ['Closed'], ['---']],
+      });
+      expect(result.actions).toEqual({
+        status: 'found',
+        values: [
+          ['Action', 'Name', 'Suffix', 'Order'],
+          ['REC', 'Received', '', '1'],
+          ['---'],
+        ],
+      });
+      expect(result.missingNr.status).toBe('missing_range');
+      expect(result.missingSheet.status).toBe('missing_range');
+    });
+
+    it('skips batchGet when all targets are missing and skips all API calls when targets are empty', async () => {
+      const client = new GoogleSheetsClient({ sheets: mockSheetsApi as unknown as sheets_v4.Sheets });
+
+      expect(await client.readNamedRangesBatch({ spreadsheetId: 's1', targets: [] })).toEqual({});
+      expect(mockSheetsApi.spreadsheets.get).not.toHaveBeenCalled();
+
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({
+        data: {
+          spreadsheetId: 's1',
+          sheets: [{ properties: { sheetId: 301, title: '_Config Submittal Arch' } }],
+          namedRanges: [],
+        },
+      });
+      const res = await client.readNamedRangesBatch({
+        spreadsheetId: 's1',
+        targets: [{ key: 'statuses', sheetName: '_Config Submittal Arch', rangeName: 'Options_Missing' }],
+      });
+      expect(mockSheetsApi.spreadsheets.get).toHaveBeenCalledTimes(1);
+      expect(mockSheetsApi.spreadsheets.values.batchGet).not.toHaveBeenCalled();
+      expect(res.statuses.status).toBe('missing_range');
+    });
+  });
 });

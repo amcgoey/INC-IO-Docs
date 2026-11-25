@@ -543,9 +543,31 @@ export interface ReadLogRowsResult {
   rows: ReadLogRow[];
 }
 
+export interface ReadNamedRangeTarget {
+  key: string;
+  sheetName: string;
+  rangeName: string;
+}
+
+export interface ReadNamedRangesRequest {
+  spreadsheetId: string;
+  targets: readonly ReadNamedRangeTarget[];
+}
+
+export type ReadNamedRangeEntry =
+  | {
+      status: 'found';
+      values: LogCellPrimitive[][];
+    }
+  | {
+      status: 'missing_range';
+      errorMessage: string;
+    };
+
 export interface LogStoragePort {
   insertRow(request: InsertLogRowRequest): Promise<InsertLogRowResult>;
   readRows(request: ReadLogRowsRequest): Promise<ReadLogRowsResult>;
+  readNamedRanges?(request: ReadNamedRangesRequest): Promise<Record<string, ReadNamedRangeEntry>>;
 }
 
 // --- Pre-Submit UI Context DTOs ---
@@ -650,6 +672,49 @@ export const CopyDocumentLogResultSchema = Type.Object(
 );
 export type CopyDocumentLogResult = Static<typeof CopyDocumentLogResultSchema>;
 
+// --- Option Table Read DTOs ---
+
+export interface ReadOptionTablesSpace {
+  id: string;
+  typeId?: string | undefined;
+  name?: string | undefined;
+  abstractStorageId?: string | undefined;
+}
+
+export interface ReadOptionTablesRequest {
+  documentTypeKey: string;
+  space?: ReadOptionTablesSpace | undefined;
+  selectedLogId?: string | undefined;
+  sourceKeys?: readonly string[] | undefined;
+}
+
+export type DocumentLogOptionTableSourceResult =
+  | {
+      status: 'ready';
+      tuples: LogTargetDocumentOptionTuple[];
+    }
+  | {
+      status: 'config_error';
+      tuples: [];
+      errorMessage: string;
+    };
+
+export type ReadOptionTablesResult =
+  | {
+      status: 'missing_space';
+      tables: Record<string, DocumentLogOptionTableSourceResult>;
+    }
+  | {
+      status: 'missing_log';
+      expectedFolderPath: string;
+      tables: Record<string, DocumentLogOptionTableSourceResult>;
+    }
+  | {
+      status: 'ready';
+      spreadsheetId: string;
+      tables: Record<string, DocumentLogOptionTableSourceResult>;
+    };
+
 // --- Driving Port ---
 
 export interface DocumentLogPort {
@@ -660,5 +725,6 @@ export interface DocumentLogPort {
     request: QueryDocumentLogUiContextRequest
   ): Promise<DocumentLogUiContextResult | undefined>;
   readLog(request: ReadDocumentLogRequest): Promise<ReadDocumentLogResult>;
+  readOptionTables?(request: ReadOptionTablesRequest): Promise<ReadOptionTablesResult>;
   writeLog(request: WriteDocumentLogRequest): Promise<WriteDocumentLogResult>;
 }

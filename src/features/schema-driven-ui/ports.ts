@@ -83,6 +83,7 @@ export const DynamicOptionResolutionSchema = Type.Object({
   status: DynamicOptionStatusSchema,
   items: Type.Array(DynamicOptionItemSchema),
   targetPath: Type.Optional(Type.String()),
+  errorMessage: Type.Optional(Type.String()),
 });
 
 export type DynamicOptionResolution = Static<typeof DynamicOptionResolutionSchema>;

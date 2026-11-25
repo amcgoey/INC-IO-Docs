@@ -1134,6 +1134,76 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
 
       expect(capturedContext?.statusMessages).toBeUndefined();
     });
+
+    it('formats source-specific statusMessages for document_log missing_log, config_error, and timeout without falling back to "root"', async () => {
+      const docLogDocSchema = {
+        fields: [
+          { key: 'status', type: 'string', options: { source: 'statuses', key: 'key' } },
+          { key: 'action', type: 'string', options: { source: 'actions', key: 'key', name: 'name' } },
+        ],
+        optionSources: {
+          statuses: { provider: 'document_log', properties: ['key'] },
+          actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
+        },
+      };
+      const docLogUiSchema = {
+        layout: ['status', 'action'],
+        fields: {
+          status: { widget: 'selectionInput', label: 'Status' },
+          action: { widget: 'selectionInput', label: 'Action' },
+        },
+      };
+
+      const manifestPort = createMockManifestPort({
+        getUiSchema: vi.fn().mockResolvedValue(docLogUiSchema),
+        getDocumentSchema: vi.fn().mockResolvedValue(docLogDocSchema),
+      });
+
+      const mockFetcher: OptionsFetcherPort = {
+        fetchOptions: vi
+          .fn()
+          .mockResolvedValueOnce({
+            statuses: { status: 'missing_log', items: [], targetPath: '1 Admin' },
+            actions: { status: 'missing_log', items: [], targetPath: '1 Admin' },
+          })
+          .mockResolvedValueOnce({
+            statuses: { status: 'ready', items: [{ text: 'Open', value: 'Open' }] },
+            actions: {
+              status: 'config_error',
+              items: [],
+              errorMessage: 'Named range "Options_Submittal_Arch_Actions" not found.',
+            },
+          })
+          .mockResolvedValueOnce({
+            statuses: { status: 'timeout', items: [] },
+            actions: { status: 'timeout', items: [] },
+          }),
+      };
+
+      let capturedContext: UiViewAdapterContext | undefined;
+      const adapter = createMockAdapter('doc-log-hints', undefined, async (ctx) => {
+        capturedContext = ctx;
+        return { id: 'doc-log-hints', sections: [] };
+      });
+
+      const service = new SchemaDrivenUiService(manifestPort, [adapter], mockFetcher);
+
+      await service.generateView({ viewId: 'doc-log-hints', documentTypeKey: 'submittal-arch' });
+      expect(capturedContext?.statusMessages).toEqual([
+        'Document Log not found in the selected Document Space. Click Copy Log to create one.',
+      ]);
+
+      await service.generateView({ viewId: 'doc-log-hints', documentTypeKey: 'submittal-arch' });
+      expect(capturedContext?.statusMessages).toEqual([
+        'Document Log option table configuration error for "Action" (actions): Named range "Options_Submittal_Arch_Actions" not found.',
+      ]);
+
+      await service.generateView({ viewId: 'doc-log-hints', documentTypeKey: 'submittal-arch' });
+      expect(capturedContext?.statusMessages).toEqual([
+        'Timed out loading Document Log options for "Status" (statuses).',
+        'Timed out loading Document Log options for "Action" (actions).',
+      ]);
+    });
   });
 
   describe('generateView UiContextQueryPort integration', () => {

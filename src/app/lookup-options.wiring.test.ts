@@ -159,4 +159,83 @@ describe('lookup-options.wiring', () => {
     ).toEqual([{ key: 'Acme Corp', name: 'Acme Corp' }]);
     expect(listFolders).toHaveBeenCalledTimes(1);
   });
+
+  it('wires document_log option source to DocumentLogPort.readOptionTables and resolves full space metadata via getDocumentSpaceService', async () => {
+    const readOptionTables = vi.fn().mockResolvedValue({
+      status: 'ready',
+      spreadsheetId: 'log-1',
+      tables: {
+        statuses: {
+          status: 'ready',
+          tuples: [{ key: 'Open' }, { key: 'Closed' }],
+        },
+      },
+    });
+    const mockDocLogService = {
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      resolveLog: vi.fn(),
+      copyLog: vi.fn(),
+      queryUiContext: vi.fn(),
+      readLog: vi.fn(),
+      readOptionTables,
+      writeLog: vi.fn(),
+    };
+
+    const getCollection = vi.fn().mockResolvedValue({
+      spaces: [
+        {
+          id: 'sp-1',
+          typeId: 'projects',
+          name: 'Harborview Hotel',
+          abstractStorageId: 'drive-root-1',
+        },
+      ],
+    });
+    const wiring = createLookupOptionsWiring({
+      manifestProvider: {
+        getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./submittal.json'] }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'submittal-arch',
+          documentSchema: {
+            fields: [
+              { key: 'status', options: { source: 'statuses', key: 'key' } },
+            ],
+            optionSources: {
+              statuses: { provider: 'document_log', properties: ['key'] },
+            },
+          },
+        }),
+      },
+      getDocumentLogService: () => mockDocLogService,
+      getDocumentSpaceService: () => ({
+        getAllTypes: () => [{ id: 'projects' }],
+        getCollection,
+      }) as never,
+    });
+
+    const ctx: WorkspaceExecutionContext = { hostApp: 'DRIVE' };
+    const fetcher = wiring.createOptionsFetcher(ctx);
+    const res = await fetcher.fetchOptions(
+      [{ sourceKey: 'statuses' }],
+      { spaceId: 'sp-1', documentTypeKey: 'submittal-arch' }
+    );
+
+    expect(res.statuses).toEqual({
+      status: 'ready',
+      items: [
+        { text: 'Open', value: 'Open' },
+        { text: 'Closed', value: 'Closed' },
+      ],
+    });
+    expect(readOptionTables).toHaveBeenCalledWith({
+      documentTypeKey: 'submittal-arch',
+      space: {
+        id: 'sp-1',
+        typeId: 'projects',
+        name: 'Harborview Hotel',
+        abstractStorageId: 'drive-root-1',
+      },
+      sourceKeys: ['statuses'],
+    });
+  });
 });

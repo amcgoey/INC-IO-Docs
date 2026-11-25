@@ -477,10 +477,18 @@ export class SchemaDrivenUiService {
         const rawRes = dynamicOptions[field.options.source];
         const resolution = normalizeDynamicOptionResolution(rawRes);
         if (resolution && resolution.status !== 'ready') {
+          const optionSource = resolvedDocSchema.optionSources?.[field.options.source];
+          const fieldLabel = resolvedUiSchema?.fields?.[fieldKey]?.label ?? field.key;
           const statusMessage = formatStatusSectionMessage(
             DEFAULT_MESSAGE_CATALOG,
             resolution.status,
-            resolution.targetPath
+            resolution.targetPath,
+            {
+              provider: optionSource?.provider,
+              sourceKey: field.options.source,
+              fieldLabel,
+              errorMessage: resolution.errorMessage,
+            }
           );
           if (statusMessage) {
             statusMessagesList.push(statusMessage);
