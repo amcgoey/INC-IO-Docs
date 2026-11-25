@@ -136,7 +136,7 @@ describe('schema-driven-ui ports', () => {
     it('validates DynamicOptionQuerySchema', () => {
       const query = {
         sourceKey: 'contactFolders',
-        config: {
+        optionSource: {
           provider: 'google_drive',
           method: 'list_folders',
           relativePath: '1 Admin/Communication',

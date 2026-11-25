@@ -826,7 +826,7 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
     expect(view.header).toBeUndefined();
   });
 
-  it('dispatches queries for fields with dynamicConfig to OptionsFetcherPort and populates dynamicOptions in adapterContext', async () => {
+  it('dispatches queries for fields referencing optionSources to OptionsFetcherPort and populates dynamicOptions in adapterContext', async () => {
     const docSchemaWithDynamic = {
       fields: [
         {
@@ -837,11 +837,6 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
             key: 'name',
             name: 'name',
             allowUserInput: true,
-            dynamicConfig: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: '1 Admin/Communication',
-            },
           },
         },
         {
@@ -856,6 +851,13 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
       ],
       options: {
         staticOptions: [{ val: 's1', text: 'Static 1' }],
+      },
+      optionSources: {
+        contactFolders: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: '1 Admin/Communication',
+        },
       },
     };
 
@@ -894,7 +896,7 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
       [
         {
           sourceKey: 'contactFolders',
-          config: {
+          optionSource: {
             provider: 'google_drive',
             method: 'list_folders',
             relativePath: '1 Admin/Communication',
@@ -903,6 +905,7 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
       ],
       {
         spaceId: 'space-folder-123',
+        documentTypeKey: 'communication-project',
         formData: { existingField: 'someValue' },
       }
     );
@@ -929,14 +932,16 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
             key: 'name',
             name: 'name',
             allowUserInput: true,
-            dynamicConfig: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: '1 Admin/Communication',
-            },
           },
         },
       ],
+      optionSources: {
+        contactFolders: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: '1 Admin/Communication',
+        },
+      },
     };
 
     const manifestPort = createMockManifestPort({
@@ -969,14 +974,16 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
       [
         {
           sourceKey: 'contactFolders',
-          config: {
+          optionSource: {
             provider: 'google_drive',
             method: 'list_folders',
             relativePath: '1 Admin/Communication',
           },
         },
       ],
-      {}
+      {
+        documentTypeKey: 'communication-project',
+      }
     );
 
     expect(capturedContext?.dynamicOptions).toEqual({
@@ -992,11 +999,6 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
           type: 'string',
           options: {
             source: 'contactFolders',
-            dynamicConfig: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: 'Communications',
-            },
           },
         },
         {
@@ -1004,11 +1006,6 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
           type: 'string',
           options: {
             source: 'secondaryContactFolders',
-            dynamicConfig: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: 'Communications',
-            },
           },
         },
         {
@@ -1016,11 +1013,6 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
           type: 'string',
           options: {
             source: 'vendorFolders',
-            dynamicConfig: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: 'Vendors',
-            },
           },
         },
         {
@@ -1028,14 +1020,31 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
           type: 'string',
           options: {
             source: 'hiddenFolders',
-            dynamicConfig: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: 'HiddenPath',
-            },
           },
         },
       ],
+      optionSources: {
+        contactFolders: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: 'Communications',
+        },
+        secondaryContactFolders: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: 'Communications',
+        },
+        vendorFolders: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: 'Vendors',
+        },
+        hiddenFolders: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: 'HiddenPath',
+        },
+      },
     };
 
     const multiDynamicUiSchema = {

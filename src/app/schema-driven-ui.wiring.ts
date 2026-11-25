@@ -7,7 +7,11 @@ import {
   type EvaluationOrderEnsurer,
 } from '../features/schema-driven-ui/adapters';
 import type { OptionsFetcherPort, UiContextQueryPort } from '../features/schema-driven-ui/ports';
-import { DynamicOptionsAdapter, type DynamicOptionsDriveClient } from './dynamic-options.adapter';
+import {
+  createLookupOptionsService,
+  createOptionsFetcherAdapter,
+} from './lookup-options.wiring';
+import type { DriveFolderListClient } from '../features/lookup-options';
 import { ensureEvaluationOrder } from '../infrastructure/validation/json-logic-graph';
 
 export type { RawManifestProviderPort };
@@ -17,7 +21,7 @@ export interface SchemaDrivenUiWiringOptions {
   evaluationOrderEnsurer?: EvaluationOrderEnsurer | undefined;
   optionsFetcher?: OptionsFetcherPort | undefined;
   uiContextQuery?: UiContextQueryPort | undefined;
-  driveClient?: DynamicOptionsDriveClient | undefined;
+  driveClient?: DriveFolderListClient | undefined;
 }
 
 export interface SchemaDrivenUiWiring {
@@ -39,7 +43,14 @@ export function createSchemaDrivenUiWiring(
   const gmailWorkspaceAddonAdapter = new GmailWorkspaceAddonAdapter(manifestAdapter);
   const optionsFetcher =
     options.optionsFetcher ??
-    (options.driveClient ? new DynamicOptionsAdapter(options.driveClient) : undefined);
+    (options.driveClient
+      ? createOptionsFetcherAdapter(
+          createLookupOptionsService({
+            manifestProvider: options.manifestProvider,
+            driveClient: options.driveClient,
+          })
+        )
+      : undefined);
   const service = new SchemaDrivenUiService(
     manifestAdapter,
     [workspaceAddonAdapter, gmailWorkspaceAddonAdapter],

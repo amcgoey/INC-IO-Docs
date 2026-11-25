@@ -91,6 +91,7 @@ export type InferredRoutingResult = Static<typeof InferredRoutingResultSchema>;
 export const ExtractFieldsRequestSchema = Type.Object({
   documentTypeKey: Type.String({ minLength: 1 }),
   spaceId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  selectedLogId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   context: SourceContextSchema,
   existingData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
 });
@@ -404,7 +405,6 @@ export const ParseTargetDocumentFieldOptionsSchema = Type.Object(
     key: Type.String(),
     name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
     allowUserInput: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
-    dynamicConfig: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
   },
   { additionalProperties: false }
 );
@@ -570,7 +570,9 @@ export interface FormTemplateParserPort {
 export interface CanonicalOptionsProviderPort {
   getCanonicalOptions(
     spaceId: string | undefined,
-    field: ParseTargetDocumentField
+    field: ParseTargetDocumentField,
+    documentTypeKey?: string | undefined,
+    selectedLogId?: string | undefined
   ): Promise<ParseTargetDocumentOptionTuple[]>;
 }
 

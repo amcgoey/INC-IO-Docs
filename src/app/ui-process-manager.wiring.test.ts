@@ -1078,14 +1078,16 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
                   key: 'name',
                   name: 'name',
                   allowUserInput: true,
-                  dynamicConfig: {
-                    provider: 'google_drive',
-                    method: 'list_folders',
-                    relativePath: '1 Admin/Communication',
-                  },
                 },
               },
             ],
+            optionSources: {
+              contactFolders: {
+                provider: 'google_drive',
+                method: 'list_folders',
+                relativePath: '1 Admin/Communication',
+              },
+            },
           },
           documentUiSchema: {
             layout: ['contact'],
@@ -1129,7 +1131,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         [
           {
             sourceKey: 'contactFolders',
-            config: {
+            optionSource: {
               provider: 'google_drive',
               method: 'list_folders',
               relativePath: '1 Admin/Communication',
@@ -1138,6 +1140,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         ],
         expect.objectContaining({
           spaceId: 'space-folder-xyz',
+          documentTypeKey: 'communication-project',
         })
       );
 
@@ -1184,7 +1187,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         [
           {
             sourceKey: 'contactFolders',
-            config: {
+            optionSource: {
               provider: 'google_drive',
               method: 'list_folders',
               relativePath: '1 Admin/Communication',
@@ -1193,6 +1196,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         ],
         expect.objectContaining({
           spaceId: 'new-space-folder-id',
+          documentTypeKey: 'communication-project',
         })
       );
 
@@ -2389,6 +2393,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       } as unknown as DocumentSpaceService;
 
       const capturedContexts: WorkspaceExecutionContext[] = [];
+      const capturedRequestContexts: Array<WorkspaceExecutionContext | undefined> = [];
       const mockProcessDocument = vi.fn().mockResolvedValue({ success: true });
       const mockDocService = {
         processDocument: mockProcessDocument,
@@ -2409,14 +2414,15 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       const wiring = createUiProcessManagerWiring({
         manifestProvider: mockManifestProvider,
         createDocumentSpaceService: () => mockSpaceService,
-        createDocumentService: (ctx) => {
+        createDocumentService: (ctx, reqCtx) => {
           capturedContexts.push(ctx);
+          capturedRequestContexts.push(reqCtx);
           return mockDocService;
         },
         createDocumentLogPort: () => documentLogPort,
       });
 
-      const response = await wiring.requestScopedWrapper.processUiEvent({
+      const outerContext: WorkspaceExecutionContext = {
         selectedLogId: 'spoofed-incoming-id',
         actionName: 'processDocument',
         parameters: {
@@ -2433,7 +2439,9 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           SelectDocumentLog: 'log-2',
           contact_communication_project: 'PMG',
         },
-      });
+      };
+
+      const response = await wiring.requestScopedWrapper.processUiEvent(outerContext);
 
       expect(response).toEqual({
         action: {
@@ -2442,6 +2450,8 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       });
       expect(capturedContexts).toHaveLength(1);
       expect(capturedContexts[0].selectedLogId).toBe('log-2');
+      expect(capturedContexts[0]).not.toBe(outerContext);
+      expect(capturedRequestContexts[0]).toBe(outerContext);
       expect(mockProcessDocument).toHaveBeenCalledTimes(1);
       const passedDoc = mockProcessDocument.mock.calls[0][0] as { data: Record<string, unknown> };
       expect(passedDoc.data).not.toHaveProperty('SelectDocumentLog');

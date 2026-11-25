@@ -94,7 +94,7 @@ describe('Document Ports & DTOs', () => {
       [
         {
           sourceKey: 'contactFolders',
-          config: { provider: 'google_drive', method: 'list_folders' },
+          fieldKey: 'contact',
           valueToValidate: 'Acme',
           queryId: 'contactFolders',
         },
@@ -108,7 +108,7 @@ describe('Document Ports & DTOs', () => {
   it('validates DynamicValidationQuerySchema with Value.Check', () => {
     const validQuery: DynamicValidationQuery = {
       sourceKey: 'contactFolders',
-      config: { provider: 'google_drive', method: 'list_folders' },
+      fieldKey: 'contact',
       valueToValidate: 'Acme',
       queryId: 'field_1',
     };
@@ -116,14 +116,12 @@ describe('Document Ports & DTOs', () => {
 
     const missingQueryId = {
       sourceKey: 'contactFolders',
-      config: { provider: 'google_drive', method: 'list_folders' },
       valueToValidate: 'Acme',
     };
     expect(Value.Check(DynamicValidationQuerySchema, missingQueryId)).toBe(false);
 
     const invalidQuery = {
       sourceKey: 123,
-      config: 'not-an-object',
       valueToValidate: true,
       queryId: 456,
     };

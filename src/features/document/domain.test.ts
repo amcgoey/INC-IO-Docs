@@ -795,8 +795,16 @@ describe('Document domain', () => {
     expect(Value.Check(DocumentFieldOptionType, optionWithInvalidAllowUserInput)).toBe(false);
   });
 
-  it('DocumentFieldOptionType accepts dynamicConfig only when allowUserInput is true', () => {
-    const validDynamicOption = {
+  it('DocumentFieldOptionType rejects legacy dynamicConfig', () => {
+    const validOption = {
+      source: 'contactFolders',
+      key: 'name',
+      name: 'name',
+      allowUserInput: true,
+    };
+    expect(Value.Check(DocumentFieldOptionType, validOption)).toBe(true);
+
+    const optionWithLegacyDynamicConfig = {
       source: 'contactFolders',
       key: 'name',
       name: 'name',
@@ -807,28 +815,7 @@ describe('Document domain', () => {
         relativePath: '1 Admin/Communication',
       },
     };
-    expect(Value.Check(DocumentFieldOptionType, validDynamicOption)).toBe(true);
-
-    const dynamicOptionMissingAllowUserInput = {
-      source: 'contactFolders',
-      key: 'name',
-      name: 'name',
-      dynamicConfig: {
-        provider: 'google_drive',
-      },
-    };
-    expect(Value.Check(DocumentFieldOptionType, dynamicOptionMissingAllowUserInput)).toBe(false);
-
-    const dynamicOptionWithAllowUserInputFalse = {
-      source: 'contactFolders',
-      key: 'name',
-      name: 'name',
-      allowUserInput: false,
-      dynamicConfig: {
-        provider: 'google_drive',
-      },
-    };
-    expect(Value.Check(DocumentFieldOptionType, dynamicOptionWithAllowUserInputFalse)).toBe(false);
+    expect(Value.Check(DocumentFieldOptionType, optionWithLegacyDynamicConfig)).toBe(false);
   });
 
   it('DocumentTypeSchema allows optional backend config stubs', () => {
@@ -6020,18 +6007,20 @@ describe('Document domain', () => {
               key: 'name',
               name: 'name',
               allowUserInput: true,
-              dynamicConfig: {
-                provider: 'google_drive',
-                method: 'list_folders',
-                relativePath: '1 Admin/Communication',
-              },
             },
           },
         ],
+        optionSources: {
+          contactFolders: {
+            provider: 'google_drive',
+            method: 'list_folders',
+            relativePath: '1 Admin/Communication',
+          },
+        },
       },
     };
 
-    it('enforces validation for fields with dynamicConfig and succeeds when valid', async () => {
+    it('enforces validation for fields with optionSources and succeeds when valid', async () => {
       const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
       const registry = createCustomRegistry([dynamicDocType]);
       const compiledRegistry = createMockCompiledRegistry(registry);
@@ -6069,11 +6058,7 @@ describe('Document domain', () => {
         [
           {
             sourceKey: 'contactFolders',
-            config: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: '1 Admin/Communication',
-            },
+            fieldKey: 'contact',
             valueToValidate: 'Acme Corp',
             queryId: 'contact',
             allowUserInput: true,
@@ -6081,6 +6066,7 @@ describe('Document domain', () => {
         ],
         expect.objectContaining({
           spaceId: 'drive-folder-123',
+          documentTypeKey: 'comm-project',
           formData: expect.objectContaining({
             title: 'Project Alpha',
             contact: 'Acme Corp',
@@ -6189,13 +6175,15 @@ describe('Document domain', () => {
                 key: 'name',
                 name: 'name',
                 allowUserInput: true,
-                dynamicConfig: {
-                  provider: 'google_drive',
-                  method: 'list_folders',
-                },
               },
             },
           ],
+          optionSources: {
+            contactFolders: {
+              provider: 'google_drive',
+              method: 'list_folders',
+            },
+          },
         },
       };
 
@@ -6268,22 +6256,14 @@ describe('Document domain', () => {
         [
           {
             sourceKey: 'contactFolders',
-            config: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: '1 Admin/Communication',
-            },
+            fieldKey: 'contact',
             valueToValidate: 'Acme Corp',
             queryId: 'contact_0',
             allowUserInput: true,
           },
           {
             sourceKey: 'contactFolders',
-            config: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: '1 Admin/Communication',
-            },
+            fieldKey: 'contact',
             valueToValidate: 'Missing Corp',
             queryId: 'contact_1',
             allowUserInput: true,
@@ -6474,14 +6454,16 @@ describe('Document domain', () => {
                   key: 'key',
                   name: 'name',
                   allowUserInput: true,
-                  dynamicConfig: {
-                    provider: 'google_drive',
-                    method: 'list_folders',
-                    relativePath: 'Communications',
-                  },
                 },
               },
             ],
+            optionSources: {
+              contactFolders: {
+                provider: 'google_drive',
+                method: 'list_folders',
+                relativePath: 'Communications',
+              },
+            },
           },
         };
 
@@ -6597,10 +6579,15 @@ describe('Document domain', () => {
               key: 'id',
               name: 'name',
               allowUserInput: true,
-              dynamicConfig: { searchPath: 'Vendors' },
             },
           },
         ],
+        optionSources: {
+          vendors: {
+            provider: 'google_drive',
+            relativePath: 'Vendors',
+          },
+        },
       },
     };
 

@@ -478,7 +478,6 @@ describe('SourceParser ports and schemas', () => {
           key: 'code',
           name: 'title',
           allowUserInput: true,
-          dynamicConfig: { provider: 'google_drive' },
         },
       })
     ).toBe(true);

@@ -5,7 +5,7 @@ import {
   type UiField,
   type UiViewAction,
   normalizeDynamicOptionResolution,
-  isDynamicOptionConfig,
+  isDynamicLookupField,
 } from '../domain';
 import type {
   AbstractDataSchema,
@@ -99,7 +99,7 @@ export function extractSelectionItems(
             text: opt.text,
             value: opt.value,
           }));
-        } else if (isDynamicOptionConfig(field.options)) {
+        } else if (isDynamicLookupField(field.options, dataSchema)) {
           const hint = formatFieldHint(DEFAULT_MESSAGE_CATALOG, resolution.status, resolution.targetPath);
           defaultItems = [{ text: hint ?? '', value: '' }];
         }
@@ -144,7 +144,7 @@ export function extractSelectionItems(
 const widgetBuilders: Record<string, WidgetBuilder> = {
   selectionInput: ({ field, label, widgetName, customProps, onChangeAction, formValue, dataSchema, dynamicOptions }) => {
     let baseItems: SelectionItem[];
-    if (isDynamicOptionConfig(field.options)) {
+    if (isDynamicLookupField(field.options, dataSchema)) {
       const rawRes = dynamicOptions?.[field.options.source];
       const resolution = normalizeDynamicOptionResolution(rawRes);
       if (resolution) {
@@ -191,7 +191,7 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
     let hintText = customProps.placeholder ?? customProps.hintText;
     let autocompleteItems: SelectionItem[] = [];
 
-    if (isDynamicOptionConfig(field.options)) {
+    if (isDynamicLookupField(field.options, dataSchema)) {
       const rawRes = dynamicOptions?.[field.options.source];
       const resolution = normalizeDynamicOptionResolution(rawRes);
       if (resolution) {

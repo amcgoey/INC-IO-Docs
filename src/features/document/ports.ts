@@ -72,7 +72,6 @@ export const FormDocumentFieldOptionType = Type.Object({
   key: Type.String(),
   name: Type.Optional(Type.String()),
   allowUserInput: Type.Optional(Type.Boolean()),
-  dynamicConfig: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 }, { additionalProperties: true });
 
 export type FormDocumentFieldOption = Static<typeof FormDocumentFieldOptionType>;
@@ -163,7 +162,7 @@ export interface DocumentServicePort {
 
 export const DynamicValidationQuerySchema = Type.Object({
   sourceKey: Type.String(),
-  config: Type.Record(Type.String(), Type.Unknown()),
+  fieldKey: Type.Optional(Type.String()),
   valueToValidate: Type.String(),
   queryId: Type.String(),
   allowUserInput: Type.Optional(Type.Boolean()),
@@ -176,6 +175,9 @@ export const DynamicValidationStatusSchema = Type.Union([
   Type.Literal('missing_space'),
   Type.Literal('path_not_found'),
   Type.Literal('ambiguous_path'),
+  Type.Literal('missing_log'),
+  Type.Literal('ambiguous_log'),
+  Type.Literal('config_error'),
   Type.Literal('option_not_found'),
   Type.Literal('ambiguous_option'),
   Type.Literal('timeout'),
@@ -188,6 +190,7 @@ export const DynamicValidationResultSchema = Type.Object({
   isValid: Type.Boolean(),
   status: Type.Optional(DynamicValidationStatusSchema),
   targetPath: Type.Optional(Type.String()),
+  matchedTuple: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   errorMessage: Type.Optional(Type.String()),
 });
 
@@ -200,6 +203,8 @@ export type DynamicValidationMessageFormatter = (
 
 export const DynamicValidationContextSchema = Type.Object({
   spaceId: Type.Optional(Type.String()),
+  documentTypeKey: Type.Optional(Type.String()),
+  selectedLogId: Type.Optional(Type.String()),
   formData: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 });
 

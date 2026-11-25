@@ -2014,7 +2014,6 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
               key: 'key',
               name: 'name',
               allowUserInput: true,
-              dynamicConfig: { provider: 'google_drive', relativePath: 'Contacts' },
             },
           },
           {
@@ -2037,6 +2036,9 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
             },
           },
         ],
+        optionSources: {
+          contactFolders: { provider: 'google_drive', relativePath: 'Contacts' },
+        },
         options: {
           specItems: [
             { code: '071200', title: 'Waterproofing', aliases: ['WP', 'dampproofing'] },
@@ -2131,7 +2133,9 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
         expect(result.fields.contact).toBe('Pavarini Construction');
         expect(mockCanonicalProvider.getCanonicalOptions).toHaveBeenCalledWith(
           'space-999',
-          expect.objectContaining({ key: 'contact' })
+          expect.objectContaining({ key: 'contact' }),
+          'test-doc',
+          undefined
         );
       });
 
@@ -2665,7 +2669,7 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
               {
                 key: 'vendor',
                 type: 'string',
-                options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true, dynamicConfig: { provider: 'google_drive' } },
+                options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true },
               },
               {
                 key: 'specTag',
@@ -2679,6 +2683,9 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
               },
               { key: 'revision', type: 'string', minLength: 1 },
             ],
+            optionSources: {
+              vendors: { provider: 'google_drive' },
+            },
             options: {
               actions: [{ key: 'REC', name: 'Received' }],
               contacts: [
@@ -5020,6 +5027,7 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
       formFields?: Record<string, { template: string; format?: 'date'; valueMap?: Record<string, string> }>;
       targetFields?: unknown[];
       options?: Record<string, unknown[]>;
+      optionSources?: Record<string, unknown>;
     }) {
       return {
         initialize: vi.fn(),
@@ -5067,6 +5075,7 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
             },
           ],
           options: overrides?.options ?? { actions: submittalActions },
+          ...(overrides?.optionSources !== undefined ? { optionSources: overrides.optionSources } : {}),
         }),
       };
     }
@@ -5294,7 +5303,6 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
               source: 'specs',
               key: 'key',
               name: 'name',
-              dynamicConfig: { provider: 'google_drive' },
             },
           },
           {
@@ -5305,6 +5313,9 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
           { key: 'flagTrue', type: 'string' },
           { key: 'flagFalse', type: 'string' },
         ],
+        optionSources: {
+          specs: { provider: 'google_drive' },
+        },
         options: {},
       });
 
@@ -6444,9 +6455,7 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
     const formTemplateParser = new HandlebarsAdapter();
 
     function makeFfeRegistry(options?: { dynamicSpecTag?: boolean; customFormTemplate?: string }) {
-      const specOptions = options?.dynamicSpecTag
-        ? { source: 'specs', key: 'key', dynamicConfig: { provider: 'google_sheets' }, allowUserInput: true }
-        : { source: 'specs', key: 'key', allowUserInput: true };
+      const specOptions = { source: 'specs', key: 'key', allowUserInput: true };
 
       return {
         initialize: vi.fn(),
@@ -6532,6 +6541,13 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
               { key: 'NET', name: 'No Exceptions Taken' },
             ],
           },
+          ...(options?.dynamicSpecTag
+            ? {
+                optionSources: {
+                  specs: { provider: 'document_log' as const, properties: ['key', 'name'] },
+                },
+              }
+            : {}),
         }),
       };
     }
@@ -6618,7 +6634,9 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
 
       expect(canonicalOptionsProvider.getCanonicalOptions).toHaveBeenCalledWith(
         'proj-dyn-1',
-        expect.objectContaining({ key: 'specTag' })
+        expect.objectContaining({ key: 'specTag' }),
+        'submittal-ffe',
+        undefined
       );
       expect(res.fields).toEqual({
         specTag: 'TA210',

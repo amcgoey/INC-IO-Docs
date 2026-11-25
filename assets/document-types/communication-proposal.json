@@ -15,12 +15,7 @@
           "source": "contactFolders",
           "key": "key",
           "name": "name",
-          "allowUserInput": true,
-          "dynamicConfig": {
-            "provider": "google_drive",
-            "method": "list_folders",
-            "relativePath": "Communications"
-          }
+          "allowUserInput": true
         }
       },
       {
@@ -74,6 +69,14 @@
           "name": "Outgoing"
         }
       ]
+    },
+    "optionSources": {
+      "contactFolders": {
+        "provider": "google_drive",
+        "method": "list_folders",
+        "relativePath": "Communications",
+        "properties": ["key", "name"]
+      }
     }
   },
   "storageContextConfig": {

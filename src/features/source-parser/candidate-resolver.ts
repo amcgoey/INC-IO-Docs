@@ -39,6 +39,8 @@ export interface YearMonthDay {
 export interface CanonicalOptionResolverDeps {
   canonicalOptionsProvider?: CanonicalOptionsProviderPort | undefined;
   parseSchemaRegistry?: ParseSchemaRegistryPort | undefined;
+  documentTypeKey?: string | undefined;
+  selectedLogId?: string | undefined;
 }
 
 export function escapeRegExp(value: string): string {
@@ -377,16 +379,18 @@ export function validateCandidateWithTuple(
   if (targetField.options !== undefined) {
     const { source: sourceKey, key: optKey, name: optName } = targetField.options;
     const keyProp = optKey ?? 'key';
-    const nameProp = optName ?? 'name';
     const optionTuples = targetSchema?.options?.[sourceKey] ?? [];
-    const matched = optionTuples.find((tuple) => {
-      const tupleKey = getTupleKey(tuple, keyProp);
-      const tupleName = getTupleName(tuple, nameProp);
-      return (
-        tupleKey === trimmed ||
-        (tupleName !== undefined && tupleName.toLowerCase() === trimmed.toLowerCase())
-      );
+    const normalized = trimmed.toLowerCase();
+    let matched = optionTuples.find((tuple) => {
+      const tupleKey = getTupleKey(tuple, keyProp).trim();
+      return tupleKey.length > 0 && tupleKey.toLowerCase() === normalized;
     });
+    if (!matched && optName !== undefined) {
+      matched = optionTuples.find((tuple) => {
+        const tupleName = getTupleName(tuple, optName)?.trim();
+        return tupleName !== undefined && tupleName.length > 0 && tupleName.toLowerCase() === normalized;
+      });
+    }
     if (!matched) {
       return undefined;
     }
@@ -670,12 +674,17 @@ export async function resolveCanonicalOptionFromCandidate(
 
   let canonicalTuples: ParseTargetDocumentOptionTuple[] = [];
 
-  if (targetField.options?.dynamicConfig) {
+  if (targetField.options?.source && targetSchema?.optionSources?.[targetField.options.source]) {
     const cleanSpace = spaceId ? spaceId.trim() : '';
     if (!cleanSpace || !deps?.canonicalOptionsProvider) {
       return undefined;
     }
-    canonicalTuples = await deps.canonicalOptionsProvider.getCanonicalOptions(cleanSpace, targetField);
+    canonicalTuples = await deps.canonicalOptionsProvider.getCanonicalOptions(
+      cleanSpace,
+      targetField,
+      deps.documentTypeKey,
+      deps.selectedLogId
+    );
   } else if (targetField.options?.source) {
     canonicalTuples = targetSchema?.options?.[targetField.options.source] ?? [];
   }

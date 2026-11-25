@@ -14,6 +14,9 @@ export const DEFAULT_MESSAGE_CATALOG: MessageCatalog = {
     empty: 'No options found',
     path_not_found: "Folder '{targetPath}' not found",
     ambiguous_path: "Ambiguous folder path '{targetPath}'",
+    missing_log: 'Copy Document Log to load options',
+    ambiguous_log: 'Select a Document Log first',
+    config_error: 'Option table configuration error',
     timeout: 'Timed out loading options',
     error: 'Error loading options',
   },
@@ -21,6 +24,9 @@ export const DEFAULT_MESSAGE_CATALOG: MessageCatalog = {
     path_not_found: 'Folder "{targetPath}" was not found in the selected Document Space.',
     ambiguous_path:
       'Multiple folders found along path "{targetPath}" in the selected Document Space. Please resolve this ambiguity in Google Drive manually.',
+    missing_log: 'Document Log not found in the selected Document Space. Click Copy Log to create one.',
+    ambiguous_log: 'Multiple Document Logs found in the selected Document Space. Please select one.',
+    config_error: 'Document Log option table configuration error.',
     timeout: 'Timed out loading options from "{targetPath}".',
     error: 'Failed to load options from "{targetPath}".',
   },
@@ -30,6 +36,9 @@ export const DEFAULT_MESSAGE_CATALOG: MessageCatalog = {
     path_not_found: 'Folder "{targetPath}" was not found in the selected Document Space.',
     ambiguous_path:
       'Multiple folders found along path "{targetPath}" in the selected Document Space. Please resolve this ambiguity in Google Drive manually.',
+    missing_log: 'Document Log not found in the selected Document Space.',
+    ambiguous_log: 'Multiple Document Logs found in the selected Document Space. Please select one.',
+    config_error: 'Document Log option table configuration error.',
     option_not_found: 'Option not found.',
     ambiguous_option:
       'Multiple folders found with this name. Please resolve this ambiguity in Google Drive manually.',

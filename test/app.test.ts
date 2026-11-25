@@ -1674,6 +1674,87 @@ describe('App integration tests', () => {
       expect(readText('number')).toBe('001');
       expect(readText('revision')).toBe('1');
     });
+
+    it('POST /documents uses fresh per-request LookupOptions (zero cross-request Drive caching) and key-then-name enrichment (#357)', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      const prodApp = createApp({
+        skipSpaceValidation: true,
+        manifestPath,
+        activityEngine: mockDispatcher,
+      });
+
+      await prodApp.initialize();
+
+      let callPhase = 1;
+      const listFoldersSpy = vi
+        .spyOn(GoogleDriveClient.prototype, 'listFolders')
+        .mockImplementation(async (options) => {
+          if (options?.parentFolderId === 'space-folder-proj-id') {
+            return { folders: [{ id: 'admin-folder-id', name: '1 Admin' }] };
+          }
+          if (options?.parentFolderId === 'admin-folder-id') {
+            return { folders: [{ id: 'comm-folder-id', name: 'Communication' }] };
+          }
+          if (options?.parentFolderId === 'comm-folder-id') {
+            return callPhase === 1
+              ? { folders: [{ id: 'c1', name: 'Jane Doe' }] }
+              : {
+                  folders: [
+                    { id: 'c1', name: 'Jane Doe' },
+                    { id: 'c1-dup', name: 'Jane Doe' },
+                  ],
+                };
+          }
+          return { folders: [] };
+        });
+
+      const payload = {
+        type: 'communication-project',
+        space: {
+          id: 'space-folder-proj-id',
+          name: 'Project Alpha',
+          typeId: 'projects',
+          abstractStorageId: 'space-folder-proj-id',
+        },
+        data: {
+          contact: '  jane doe  ',
+          date: '260825',
+          direction: 'OT',
+          description: 'Status check',
+        },
+      };
+
+      const firstRes = await prodApp.server.inject({
+        method: 'POST',
+        url: '/documents?eventName=onSubmit',
+        payload,
+      });
+      expect(firstRes.statusCode).toBe(200);
+      const firstBody = JSON.parse(firstRes.payload);
+      expect(firstBody.success).toBe(true);
+      expect(firstBody.data.data.contact).toEqual({ key: 'Jane Doe', name: 'Jane Doe' });
+      expect(firstBody.data.data.direction).toEqual({ key: 'OT', name: 'Outgoing' });
+
+      // Second POST /documents must NOT reuse cached Drive response from request 1
+      callPhase = 2;
+      const secondRes = await prodApp.server.inject({
+        method: 'POST',
+        url: '/documents?eventName=onSubmit',
+        payload,
+      });
+      expect(secondRes.statusCode).toBe(400);
+      const secondBody = JSON.parse(secondRes.payload);
+      expect(secondBody.success).toBe(false);
+      expect(secondBody.errors).toEqual([
+        'Multiple folders found with this name. Please resolve this ambiguity in Google Drive manually.',
+      ]);
+
+      listFoldersSpy.mockRestore();
+    });
   });
 });
 
