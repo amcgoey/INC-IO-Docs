@@ -510,6 +510,21 @@ export interface LogRowKey {
   sortKey: string;
 }
 
+export interface LogOptionWriteItem {
+  key: string;
+  values: Record<string, string>;
+}
+
+export interface LogOptionWriteTarget {
+  sheetName: string;
+  rangeName: string;
+  validationRangeName?: string | undefined;
+  endMarker: string;
+  columns: Record<string, string>;
+  keyProperty?: string | undefined;
+  items: readonly LogOptionWriteItem[];
+}
+
 export interface InsertLogRowRequest {
   target: LogStorageTarget;
   rowData: Record<string, LogCellInput>;
@@ -519,6 +534,8 @@ export interface InsertLogRowRequest {
   rowSortOrder?: DocumentLogSortOrder | undefined;
   duplicatePolicy?: DocumentLogDuplicatePolicy | undefined;
   readOnlyColumns?: string[] | undefined;
+  optionWrites?: readonly LogOptionWriteTarget[] | undefined;
+  templateSpreadsheetId?: string | undefined;
 }
 
 export interface InsertLogRowResult {

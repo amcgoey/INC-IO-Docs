@@ -1,6 +1,7 @@
 import type { GoogleAuth, OAuth2Client } from 'google-auth-library';
 import type { sheets_v4 } from 'googleapis';
 import { Type, type Static } from '@sinclair/typebox';
+import type { KeyedAsyncLock } from './keyed-lock';
 
 export const CellValueSchema = Type.Union([
   Type.String(),
@@ -77,6 +78,21 @@ export const InsertGroupedRowResultSchema = Type.Object({
 });
 export type InsertGroupedRowResult = Static<typeof InsertGroupedRowResultSchema>;
 
+export interface OptionTableWriteItem {
+  key: string;
+  values: Record<string, string>;
+}
+
+export interface OptionTableWriteTarget {
+  sheetName: string;
+  rangeName: string;
+  validationRangeName?: string | undefined;
+  endMarker: string;
+  columns: Record<string, string>;
+  keyProperty?: string | undefined;
+  items: readonly OptionTableWriteItem[];
+}
+
 export interface InsertPositiveGroupedRowRequest {
   target: PositiveTableTarget;
   rowData: Record<string, SheetCellInput>;
@@ -86,6 +102,8 @@ export interface InsertPositiveGroupedRowRequest {
   rowSortOrder?: 'asc' | 'desc' | undefined;
   duplicatePolicy?: 'insert' | 'upsert' | 'reject' | undefined;
   readOnlyColumns?: string[] | undefined;
+  optionWrites?: readonly OptionTableWriteTarget[] | undefined;
+  templateSpreadsheetId?: string | undefined;
 }
 
 export const ReadNamedRangeRequestSchema = NamedRangeTargetSchema;
@@ -142,6 +160,7 @@ export interface GoogleSheetsClientOptions {
   sheets?: sheets_v4.Sheets | undefined;
   retryOptions?: SheetsRetryOptions | undefined;
   configProvider?: SheetsConfigProvider | undefined;
+  lock?: KeyedAsyncLock | undefined;
 }
 
 export interface SheetsClient {

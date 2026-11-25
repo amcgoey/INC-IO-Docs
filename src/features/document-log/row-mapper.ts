@@ -450,6 +450,7 @@ export interface BuildLogRowHydratorParams {
   logSchema: DocumentLogSchema;
   targetSchema: LogTargetDocumentSchema;
   templateEvaluator: LogTemplateEvaluatorPort;
+  dynamicOptions?: Readonly<Record<string, readonly LogTargetDocumentOptionTuple[]>> | undefined;
 }
 
 export interface MapLogRowToDocumentParams extends BuildLogRowHydratorParams {
@@ -567,7 +568,7 @@ function validateHydratedRowFields(params: {
 export function buildLogRowHydrator(
   params: BuildLogRowHydratorParams
 ): (row: ReadLogRow) => MappedHydratedLogRow {
-  const { documentTypeKey, logSchema, targetSchema, templateEvaluator } = params;
+  const { documentTypeKey, logSchema, targetSchema, templateEvaluator, dynamicOptions } = params;
   const { mappings, fileLinkHeaders } = collectColumnReverseMappings(logSchema, targetSchema);
   const compiledPatterns = compileFieldPatterns(targetSchema);
 
@@ -582,6 +583,7 @@ export function buildLogRowHydrator(
   return (row: ReadLogRow): MappedHydratedLogRow => {
     const reconstructed = reconstructFieldsFromRow(row.values, mappings, targetSchema, {
       synthesizeInvalidLookupFallback: true,
+      dynamicOptions,
     });
     const { data } = reconstructed;
 

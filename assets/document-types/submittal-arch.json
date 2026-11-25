@@ -86,16 +86,6 @@
         "required": false
       }
     ],
-    "options": {
-      "contacts": [
-        { "key": "INC", "name": "INC Architecture and Design", "type": "INC" },
-        { "key": "PMG", "name": "Pavarini McGovern", "type": "Contractor" },
-        { "key": "FXC", "name": "FX Collaborative", "type": "Architect" },
-        { "key": "IE", "name": "Interface Engineering", "type": "MEP" },
-        { "key": "VLD", "name": "Ventresca Lighting Design", "type": "Lighting" },
-        { "key": "TT", "name": "Thorton Tomasetti", "type": "Structural" }
-      ]
-    },
     "optionSources": {
       "statuses": {
         "provider": "document_log",
@@ -104,6 +94,10 @@
       "actions": {
         "provider": "document_log",
         "properties": ["key", "name", "suffix", "order"]
+      },
+      "contacts": {
+        "provider": "document_log",
+        "properties": ["key", "name"]
       }
     },
     "calculatedFields": [
@@ -272,6 +266,16 @@
           "Name": "name",
           "Suffix": "suffix",
           "Order": "order"
+        }
+      },
+      "contacts": {
+        "sheetName": "_Config Submittal Arch",
+        "rangeName": "Options_Submittal_Arch_Contacts",
+        "validationRangeName": "Validation_Submittal_Arch_Contacts",
+        "endMarker": "---",
+        "columns": {
+          "Contact": "key",
+          "Name": "name"
         }
       }
     }

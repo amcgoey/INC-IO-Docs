@@ -6844,6 +6844,11 @@ describe('Document domain', () => {
         { key: 'REC', name: 'Received', suffix: '', order: '1' },
         { key: 'REF', name: 'Referred', suffix: '_REF', order: '2' },
       ];
+      const contactTuples: Array<Record<string, unknown>> = [
+        { key: 'INC', name: 'INC Architecture and Design' },
+        { key: 'PMG', name: 'Pavarini McGovern' },
+        { key: 'FXC', name: 'FX Collaborative' },
+      ];
 
       return {
         validateExistence: async (queries) => {
@@ -6857,15 +6862,22 @@ describe('Document domain', () => {
             }
           > = {};
           for (const query of queries) {
-            const tuples = query.sourceKey === 'statuses' ? statusTuples : actionTuples;
+            const tuples =
+              query.sourceKey === 'statuses'
+                ? statusTuples
+                : query.sourceKey === 'actions'
+                  ? actionTuples
+                  : contactTuples;
             const norm = query.valueToValidate.trim().toLowerCase();
             const match = tuples.find(
               (t) =>
                 String(t.key ?? '').toLowerCase() === norm ||
-                (query.sourceKey === 'actions' && String(t.name ?? '').toLowerCase() === norm)
+                (query.sourceKey !== 'statuses' && String(t.name ?? '').toLowerCase() === norm)
             );
             if (match) {
               out[query.queryId] = { isValid: true, status: 'valid', matchedTuple: match };
+            } else if (query.allowUserInput) {
+              out[query.queryId] = { isValid: true, status: 'valid' };
             } else {
               out[query.queryId] = {
                 isValid: false,
@@ -6937,7 +6949,6 @@ describe('Document domain', () => {
       expect(result.data.data.contact).toEqual({
         key: 'PMG',
         name: 'Pavarini McGovern',
-        type: 'Contractor',
       });
       expect(result.data.data.action).toEqual({
         key: 'REC',
@@ -7024,7 +7035,6 @@ describe('Document domain', () => {
       expect(result.data.data.contact).toEqual({
         key: 'FXC',
         name: 'FX Collaborative',
-        type: 'Architect',
       });
       expect(result.data.calculated?.fileName).toBe('071200-002-0 Dampproofing - 261103 FXC_REF');
       expect(result.data.id).toBe('071200-002-0-261103-2');
@@ -7213,6 +7223,59 @@ describe('Document domain', () => {
     const submittalFfeSchema: DocumentType = JSON.parse(fs.readFileSync(submittalFfePath, 'utf-8'));
     const handlebarsEvaluator = new HandlebarsAdapter();
 
+    const createSubmittalFfeDynamicValidator = (): DocumentDynamicValidationPort => {
+      const tuplesBySource: Record<string, Array<Record<string, unknown>>> = {
+        statuses: [{ key: 'Open' }, { key: 'Waiting' }, { key: 'Closed' }],
+        actions: [
+          { key: 'REC', name: 'Received', suffix: '', order: '1' },
+          { key: 'REF', name: 'Referred', suffix: '_REF', order: '2' },
+        ],
+        contacts: [
+          { key: 'INC', name: 'INC Architecture & Design' },
+          { key: 'BW', name: 'Benjamin West' },
+        ],
+        vendors: [
+          { key: 'BM', name: 'Berman Falk' },
+          { key: 'AL', name: 'Ashley Lighting' },
+        ],
+      };
+
+      return {
+        validateExistence: async (queries) => {
+          const out: Record<
+            string,
+            {
+              isValid: boolean;
+              status: 'valid' | 'option_not_found';
+              matchedTuple?: Record<string, unknown>;
+              errorMessage?: string;
+            }
+          > = {};
+          for (const query of queries) {
+            const tuples = tuplesBySource[query.sourceKey] ?? [];
+            const norm = query.valueToValidate.trim().toLowerCase();
+            const match = tuples.find(
+              (t) =>
+                String(t.key ?? '').toLowerCase() === norm ||
+                (query.sourceKey !== 'statuses' && String(t.name ?? '').toLowerCase() === norm)
+            );
+            if (match) {
+              out[query.queryId] = { isValid: true, status: 'valid', matchedTuple: match };
+            } else if (query.allowUserInput) {
+              out[query.queryId] = { isValid: true, status: 'valid' };
+            } else {
+              out[query.queryId] = {
+                isValid: false,
+                status: 'option_not_found',
+                errorMessage: `/${query.fieldKey ?? query.queryId}: Value "${query.valueToValidate}" is not a valid option for "${query.sourceKey}".`,
+              };
+            }
+          }
+          return out;
+        },
+      };
+    };
+
     it('passes DocumentTypeSchema validation and manifest template validation', () => {
       expect(Value.Check(DocumentTypeSchema, submittalFfeSchema)).toBe(true);
       const errors = validateManifestTemplates(submittalFfeSchema, handlebarsEvaluator);
@@ -7224,7 +7287,13 @@ describe('Document domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry = createCustomRegistry([submittalFfeSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        handlebarsEvaluator,
+        undefined,
+        createSubmittalFfeDynamicValidator()
+      );
       await service.initialize();
 
       const inputDoc: Document = {
@@ -7268,12 +7337,10 @@ describe('Document domain', () => {
       expect(result.data.data.vendor).toEqual({
         key: 'BM',
         name: 'Berman Falk',
-        type: 'Casegoods',
       });
       expect(result.data.data.contact).toEqual({
         key: 'BW',
         name: 'Benjamin West',
-        type: 'Procurement',
       });
       expect(result.data.data.action).toEqual({
         key: 'REF',
@@ -7314,7 +7381,13 @@ describe('Document domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry = createCustomRegistry([submittalFfeSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        handlebarsEvaluator,
+        undefined,
+        createSubmittalFfeDynamicValidator()
+      );
       await service.initialize();
 
       const inputDoc: Document = {
@@ -7353,7 +7426,13 @@ describe('Document domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry = createCustomRegistry([submittalFfeSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        handlebarsEvaluator,
+        undefined,
+        createSubmittalFfeDynamicValidator()
+      );
       await service.initialize();
 
       const inputDoc: Document = {
@@ -7403,7 +7482,13 @@ describe('Document domain', () => {
     it('rejects missing or whitespace-only required fields', async () => {
       const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
       const customRegistry = createCustomRegistry([submittalFfeSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        defaultEvaluator,
+        undefined,
+        createSubmittalFfeDynamicValidator()
+      );
       await service.initialize();
 
       // Missing specTag
@@ -7467,10 +7552,16 @@ describe('Document domain', () => {
       }
     });
 
-    it('rejects invalid static action and status choices', async () => {
+    it('rejects invalid dynamic action and status choices', async () => {
       const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
       const customRegistry = createCustomRegistry([submittalFfeSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        defaultEvaluator,
+        undefined,
+        createSubmittalFfeDynamicValidator()
+      );
       await service.initialize();
 
       // Invalid action

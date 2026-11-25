@@ -154,6 +154,28 @@ const CONFIG_ARCH_ACTION_VALUES = [
   ['---', '', '', ''],
 ];
 
+const CONFIG_ARCH_CONTACT_VALUES = [
+  ['Contact', 'Name', 'Contact Type'],
+  ['INC', 'INC Architecture and Design', 'INC'],
+  ['PMG', 'Pavarini McGovern', 'Contractor'],
+  ['---', '', ''],
+];
+
+const CONFIG_FFE_STATUS_VALUES = CONFIG_ARCH_STATUS_VALUES;
+const CONFIG_FFE_ACTION_VALUES = CONFIG_ARCH_ACTION_VALUES;
+const CONFIG_FFE_CONTACT_VALUES = [
+  ['Contact', 'Name', 'Contact Type'],
+  ['INC', 'INC Architecture & Design', 'INC'],
+  ['BW', 'Benjamin West', 'Procurement'],
+  ['---', '', ''],
+];
+const CONFIG_FFE_VENDOR_VALUES = [
+  ['Vendor', 'Name', 'Vendor Type'],
+  ['BM', 'Berman Falk', 'Casegoods'],
+  ['AL', 'Ashley Lighting', 'Lighting'],
+  ['---', '', ''],
+];
+
 function mockConfigSubmittalArchBatchGet(
   spreadsheetId: string,
   applyOpt: <T extends nock.Interceptor>(interceptor: T) => T = (i) => i
@@ -170,18 +192,30 @@ function mockConfigSubmittalArchBatchGet(
           : typeof q.ranges === 'string'
             ? q.ranges.split(',')
             : [];
-        return ranges.length > 0 && ranges.every((r) => String(r).includes('_Config Submittal Arch'));
+        return (
+          ranges.length > 0 &&
+          ranges.every((r) => String(r).includes('_Config Submittal Arch') || String(r).includes('_Config Submittal FF&E'))
+        );
       })
   ).reply(200, (uri) => {
     const url = new URL(uri, 'https://sheets.googleapis.com');
     const ranges = url.searchParams.getAll('ranges').flatMap((r) => r.split(','));
     return {
       valueRanges: ranges.map((range) => {
+        if (range.includes('_Config Submittal FF&E')) {
+          if (range.includes('A1:A6')) return { range, values: CONFIG_FFE_STATUS_VALUES };
+          if (range.includes('C1:F9')) return { range, values: CONFIG_FFE_ACTION_VALUES };
+          if (range.includes('H1:J')) return { range, values: CONFIG_FFE_CONTACT_VALUES };
+          if (range.includes('L1:N')) return { range, values: CONFIG_FFE_VENDOR_VALUES };
+        }
         if (range.includes('A1:A6')) {
           return { range, values: CONFIG_ARCH_STATUS_VALUES };
         }
         if (range.includes('C1:F9')) {
           return { range, values: CONFIG_ARCH_ACTION_VALUES };
+        }
+        if (range.includes('H1:J')) {
+          return { range, values: CONFIG_ARCH_CONTACT_VALUES };
         }
         return { range, values: [] };
       }),
@@ -204,6 +238,7 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
       { properties: { sheetId: 101, title: 'Submittal Arch' } },
       { properties: { sheetId: 102, title: 'Submittal FF&E' } },
       { properties: { sheetId: 103, title: '_Config Submittal Arch' } },
+      { properties: { sheetId: 104, title: '_Config Submittal FF&E' } },
     ],
     namedRanges: [
       {
@@ -225,6 +260,31 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
         namedRangeId: 'nr-arch-actions',
         name: 'Options_Submittal_Arch_Actions',
         range: { sheetId: 103, startRowIndex: 0, endRowIndex: 9, startColumnIndex: 2, endColumnIndex: 6 },
+      },
+      {
+        namedRangeId: 'nr-arch-contacts',
+        name: 'Options_Submittal_Arch_Contacts',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length, startColumnIndex: 7, endColumnIndex: 10 },
+      },
+      {
+        namedRangeId: 'nr-ffe-statuses',
+        name: 'Options_Submittal_FFE_Statuses',
+        range: { sheetId: 104, startRowIndex: 0, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
+      },
+      {
+        namedRangeId: 'nr-ffe-actions',
+        name: 'Options_Submittal_FFE_Actions',
+        range: { sheetId: 104, startRowIndex: 0, endRowIndex: 9, startColumnIndex: 2, endColumnIndex: 6 },
+      },
+      {
+        namedRangeId: 'nr-ffe-contacts',
+        name: 'Options_Submittal_FFE_Contacts',
+        range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_FFE_CONTACT_VALUES.length, startColumnIndex: 7, endColumnIndex: 10 },
+      },
+      {
+        namedRangeId: 'nr-ffe-vendors',
+        name: 'Options_Submittal_FFE_Vendors',
+        range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_FFE_VENDOR_VALUES.length, startColumnIndex: 11, endColumnIndex: 14 },
       },
     ],
   });
@@ -397,6 +457,17 @@ function mockSubmittalArchLogWrite(spreadsheetId: string) {
             endRowIndex: 9,
             startColumnIndex: 2,
             endColumnIndex: 6,
+          },
+        },
+        {
+          namedRangeId: 'nr-arch-contacts',
+          name: 'Options_Submittal_Arch_Contacts',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length,
+            startColumnIndex: 7,
+            endColumnIndex: 10,
           },
         },
       ],

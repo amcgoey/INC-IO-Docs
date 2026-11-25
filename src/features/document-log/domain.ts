@@ -17,6 +17,8 @@ import {
   type LogDiscoveryFileMetadata,
   type LogDiscoveryPort,
   type LogFilterBy,
+  type LogOptionWriteItem,
+  type LogOptionWriteTarget,
   type LogResolutionCandidate,
   type LogResolutionResult,
   type LogSchemaRegistryPort,
@@ -371,7 +373,7 @@ export interface DocumentLogServiceOptions {
 export class DocumentLogService implements DocumentLogPort {
   private readonly resolveLogMemo: Map<string, Promise<LogResolutionResult>> | undefined;
   private readonly optionTablesMemo:
-    | Map<string, Record<string, DocumentLogOptionTableSourceResult>>
+    | Map<string, Promise<DocumentLogOptionTableSourceResult>>
     | undefined;
 
   constructor(
@@ -939,22 +941,30 @@ export class DocumentLogService implements DocumentLogPort {
       }
     }
 
-    const tableResult = await this.logStorage.readRows({
-      target: {
-        spreadsheetId,
-        sheetName: logSchema.target.sheetName,
-        rangeName: logSchema.target.rangeName,
-        extentMarker: logSchema.target.extentMarker,
-        groupDividerMarker: logSchema.target.groupDividerMarker,
-      },
-      ...(linkColumns.length > 0 ? { linkColumns } : {}),
-    });
+    const [tableResult, boundOptions] = await Promise.all([
+      this.logStorage.readRows({
+        target: {
+          spreadsheetId,
+          sheetName: logSchema.target.sheetName,
+          rangeName: logSchema.target.rangeName,
+          extentMarker: logSchema.target.extentMarker,
+          groupDividerMarker: logSchema.target.groupDividerMarker,
+        },
+        ...(linkColumns.length > 0 ? { linkColumns } : {}),
+      }),
+      this.readBoundOptionTables(request.documentTypeKey, spreadsheetId, logSchema).catch(() => ({
+        tuplesBySource: {},
+        tableResults: {},
+      })),
+    ]);
+    const dynamicOptions = boundOptions.tuplesBySource;
 
     const hydrateRow = buildLogRowHydrator({
       documentTypeKey: request.documentTypeKey,
       logSchema,
       targetSchema,
       templateEvaluator: this.templateEvaluator,
+      dynamicOptions,
     });
 
     const allEntries: DocumentLogEntry[] = [];
@@ -1046,123 +1056,289 @@ export class DocumentLogService implements DocumentLogPort {
         ? Array.from(new Set(request.sourceKeys))
         : Object.keys(optionBindings);
 
-    const tables: Record<string, DocumentLogOptionTableSourceResult> = {};
-    const targets: Array<{ key: string; sheetName: string; rangeName: string }> = [];
-
-    for (const sourceKey of requestedKeys) {
-      const binding = optionBindings[sourceKey];
-      if (!binding) {
-        tables[sourceKey] = {
-          status: 'config_error',
-          tuples: [],
-          errorMessage: `Missing optionBinding for "${sourceKey}" on DocumentType "${request.documentTypeKey}".`,
-        };
-        continue;
-      }
-      targets.push({
-        key: sourceKey,
-        sheetName: binding.sheetName,
-        rangeName: binding.rangeName,
-      });
-    }
-
-    if (targets.length > 0) {
-      if (!this.logStorage.readNamedRanges) {
-        throw new DocumentLogConfigurationError(
-          'LogStoragePort.readNamedRanges is required to read DocumentLog option tables.'
-        );
-      }
-      const batchEntries = await this.logStorage.readNamedRanges({
-        spreadsheetId,
-        targets,
-      });
-      for (const target of targets) {
-        const binding = optionBindings[target.key]!;
-        tables[target.key] = parseOptionTableEntry(target.key, binding, batchEntries[target.key]);
-      }
-    }
-
-    if (this.optionTablesMemo) {
-      const cacheKey = `${request.documentTypeKey}::${spreadsheetId}`;
-      const existing = this.optionTablesMemo.get(cacheKey);
-      this.optionTablesMemo.set(cacheKey, {
-        ...(existing ?? {}),
-        ...tables,
-      });
-    }
+    const { tableResults } = await this.loadOptionTableEntries({
+      documentTypeKey: request.documentTypeKey,
+      spreadsheetId,
+      logSchema,
+      requestedKeys,
+      requireReadNamedRanges: true,
+    });
 
     return {
       status: 'ready',
       spreadsheetId,
-      tables,
+      tables: tableResults,
     };
   }
 
-  private async readBoundOptionTuples(
-    documentTypeKey: string,
-    spreadsheetId: string,
-    logSchema: DocumentLogSchema
-  ): Promise<Record<string, readonly LogTargetDocumentOptionTuple[]>> {
-    const { optionBindings } = logSchema;
-    if (!optionBindings) {
-      return {};
+  private async loadOptionTableEntries(params: {
+    documentTypeKey: string;
+    spreadsheetId: string;
+    logSchema: DocumentLogSchema;
+    requestedKeys: readonly string[];
+    requireReadNamedRanges: boolean;
+  }): Promise<{
+    tuplesBySource: Record<string, readonly LogTargetDocumentOptionTuple[]>;
+    tableResults: Record<string, DocumentLogOptionTableSourceResult>;
+  }> {
+    const { documentTypeKey, spreadsheetId, logSchema, requestedKeys, requireReadNamedRanges } =
+      params;
+    const optionBindings = logSchema.optionBindings ?? {};
+    if (requestedKeys.length === 0) {
+      return { tuplesBySource: {}, tableResults: {} };
     }
 
-    const keys = Object.keys(optionBindings);
-    if (keys.length === 0) {
-      return {};
-    }
-
-    const cacheKey = `${documentTypeKey}::${spreadsheetId}`;
-    const cachedTables = this.optionTablesMemo?.get(cacheKey);
+    const pendingPromises = new Map<string, Promise<DocumentLogOptionTableSourceResult>>();
     const missingTargets: Array<{ key: string; sheetName: string; rangeName: string }> = [];
-    const tableResults: Record<string, DocumentLogOptionTableSourceResult> = {};
 
-    for (const sourceKey of keys) {
-      const cached = cachedTables?.[sourceKey];
-      if (cached) {
-        tableResults[sourceKey] = cached;
-      } else {
-        const binding = optionBindings[sourceKey];
-        if (binding) {
-          missingTargets.push({
-            key: sourceKey,
-            sheetName: binding.sheetName,
-            rangeName: binding.rangeName,
-          });
-        }
-      }
-    }
-
-    if (missingTargets.length > 0 && this.logStorage.readNamedRanges) {
-      const batchEntries = await this.logStorage.readNamedRanges({
-        spreadsheetId,
-        targets: missingTargets,
-      });
-      for (const target of missingTargets) {
-        const binding = optionBindings[target.key]!;
-        tableResults[target.key] = parseOptionTableEntry(
-          target.key,
-          binding,
-          batchEntries[target.key]
+    for (const sourceKey of requestedKeys) {
+      const binding = optionBindings[sourceKey];
+      if (!binding) {
+        pendingPromises.set(
+          sourceKey,
+          Promise.resolve({
+            status: 'config_error',
+            tuples: [],
+            errorMessage: `Missing optionBinding for "${sourceKey}" on DocumentType "${documentTypeKey}".`,
+          })
         );
+        continue;
       }
-      if (this.optionTablesMemo) {
-        this.optionTablesMemo.set(cacheKey, {
-          ...(cachedTables ?? {}),
-          ...tableResults,
+
+      const memoKey = `${documentTypeKey}::${spreadsheetId}::${sourceKey}`;
+      const cachedPromise = this.optionTablesMemo?.get(memoKey);
+      if (cachedPromise) {
+        pendingPromises.set(sourceKey, cachedPromise);
+      } else {
+        missingTargets.push({
+          key: sourceKey,
+          sheetName: binding.sheetName,
+          rangeName: binding.rangeName,
         });
       }
     }
 
-    const tuplesBySource: Record<string, readonly LogTargetDocumentOptionTuple[]> = {};
-    for (const [sourceKey, entry] of Object.entries(tableResults)) {
-      if (entry.status === 'ready') {
-        const { tuples } = entry;
-        tuplesBySource[sourceKey] = tuples;
+    if (missingTargets.length > 0) {
+      if (!this.logStorage.readNamedRanges) {
+        if (requireReadNamedRanges) {
+          throw new DocumentLogConfigurationError(
+            'LogStoragePort.readNamedRanges is required to read DocumentLog option tables.'
+          );
+        }
+      } else {
+        const batchPromise = this.logStorage.readNamedRanges({
+          spreadsheetId,
+          targets: missingTargets,
+        });
+
+        for (const target of missingTargets) {
+          const memoKey = `${documentTypeKey}::${spreadsheetId}::${target.key}`;
+          const binding = optionBindings[target.key]!;
+          const entryPromise = batchPromise
+            .then((batchEntries) =>
+              parseOptionTableEntry(target.key, binding, batchEntries[target.key])
+            )
+            .catch((error) => {
+              this.optionTablesMemo?.delete(memoKey);
+              throw error;
+            });
+          this.optionTablesMemo?.set(memoKey, entryPromise);
+          pendingPromises.set(target.key, entryPromise);
+        }
       }
     }
-    return tuplesBySource;
+
+    const tableResults: Record<string, DocumentLogOptionTableSourceResult> = {};
+    const tuplesBySource: Record<string, readonly LogTargetDocumentOptionTuple[]> = {};
+
+    await Promise.all(
+      Array.from(pendingPromises.entries()).map(async ([sourceKey, promise]) => {
+        const result = await promise;
+        tableResults[sourceKey] = result;
+        if (result.status === 'ready') {
+          const { tuples } = result;
+          tuplesBySource[sourceKey] = tuples;
+        }
+      })
+    );
+
+    return { tuplesBySource, tableResults };
+  }
+
+  private async readBoundOptionTables(
+    documentTypeKey: string,
+    spreadsheetId: string,
+    logSchema: DocumentLogSchema
+  ): Promise<{
+    tuplesBySource: Record<string, readonly LogTargetDocumentOptionTuple[]>;
+    tableResults: Record<string, DocumentLogOptionTableSourceResult>;
+  }> {
+    const keys = Object.keys(logSchema.optionBindings ?? {});
+    return this.loadOptionTableEntries({
+      documentTypeKey,
+      spreadsheetId,
+      logSchema,
+      requestedKeys: keys,
+      requireReadNamedRanges: false,
+    });
+  }
+
+  private buildOptionWriteTargets(params: {
+    documentData: Readonly<Record<string, unknown>>;
+    enrichedData: Readonly<Record<string, unknown>>;
+    logSchema: DocumentLogSchema;
+    targetSchema: LogTargetDocumentSchema;
+    tableResults: Readonly<Record<string, DocumentLogOptionTableSourceResult>>;
+  }): LogOptionWriteTarget[] {
+    const { documentData, enrichedData, logSchema, targetSchema, tableResults } = params;
+    const { optionBindings } = logSchema;
+    if (!optionBindings) {
+      return [];
+    }
+
+    const coalescedBySource = new Map<string, Map<string, LogOptionWriteItem>>();
+    const sourceOrder: string[] = [];
+
+    for (const field of targetSchema.fields) {
+      const { options: fieldOptions } = field;
+      if (!fieldOptions?.allowUserInput) {
+        continue;
+      }
+      const { source: sourceKey, key: keyProp, name: nameProp } = fieldOptions;
+      const binding = optionBindings[sourceKey];
+      if (!binding) {
+        continue;
+      }
+      const rawInput = documentData[field.key];
+      const enrichedVal = enrichedData[field.key];
+
+      let keyStr = '';
+      let suppliedName = '';
+      if (enrichedVal !== null && typeof enrichedVal === 'object') {
+        const obj = enrichedVal as Record<string, unknown>;
+        if (obj[keyProp] !== undefined && obj[keyProp] !== null) {
+          keyStr = String(obj[keyProp]).trim();
+        }
+        if (nameProp && obj[nameProp] !== undefined && obj[nameProp] !== null) {
+          suppliedName = String(obj[nameProp]).trim();
+        }
+      } else if (typeof rawInput === 'string') {
+        keyStr = rawInput.trim();
+        suppliedName = keyStr;
+      }
+
+      if (keyStr.length === 0) {
+        continue;
+      }
+
+      const tableResult = tableResults[sourceKey];
+      if (!tableResult) {
+        continue;
+      }
+      if (tableResult.status === 'config_error') {
+        throw new DocumentLogConfigurationError(
+          `config_error: ${tableResult.errorMessage ?? `Option table "${binding.rangeName}" is misconfigured.`}`
+        );
+      }
+
+      const values: Record<string, string> = {
+        [keyProp]: keyStr,
+      };
+
+      for (const sibling of targetSchema.fields) {
+        if (sibling.linkedField?.sourceField !== field.key) {
+          continue;
+        }
+        const linkedRaw = enrichedData[sibling.key] ?? documentData[sibling.key];
+        if (typeof linkedRaw === 'string' && linkedRaw.trim().length > 0) {
+          values[sibling.linkedField.sourceProperty] = linkedRaw.trim();
+        }
+      }
+
+      if (nameProp && values[nameProp] === undefined) {
+        values[nameProp] = suppliedName.length > 0 ? suppliedName : keyStr;
+      }
+
+      let sourceMap = coalescedBySource.get(sourceKey);
+      if (!sourceMap) {
+        sourceMap = new Map<string, LogOptionWriteItem>();
+        coalescedBySource.set(sourceKey, sourceMap);
+        sourceOrder.push(sourceKey);
+      }
+
+      const normKey = keyStr.toLowerCase();
+      const existingItem = sourceMap.get(normKey);
+      if (existingItem) {
+        for (const [prop, val] of Object.entries(values)) {
+          if ((!existingItem.values[prop] || existingItem.values[prop].trim() === '') && val.trim().length > 0) {
+            existingItem.values[prop] = val;
+          }
+        }
+      } else {
+        sourceMap.set(normKey, { key: keyStr, values });
+      }
+    }
+
+    const targets: LogOptionWriteTarget[] = [];
+    for (const sourceKey of sourceOrder) {
+      const binding = optionBindings[sourceKey];
+      const tableResult = tableResults[sourceKey];
+      const sourceMap = coalescedBySource.get(sourceKey);
+      if (!binding || !tableResult || tableResult.status !== 'ready' || !sourceMap) {
+        continue;
+      }
+
+      const fieldForSource = targetSchema.fields.find((f) => f.options?.source === sourceKey);
+      const keyProp = fieldForSource?.options?.key ?? 'key';
+      const mappedProps = Array.from(new Set(Object.values(binding.columns)));
+
+      const existingByNormKey = new Map<string, LogTargetDocumentOptionTuple>();
+      for (const tuple of tableResult.tuples) {
+        const rawTupleKey = tuple[keyProp];
+        const norm =
+          rawTupleKey !== undefined && rawTupleKey !== null ? String(rawTupleKey).trim().toLowerCase() : '';
+        if (norm.length > 0 && !existingByNormKey.has(norm)) {
+          existingByNormKey.set(norm, tuple);
+        }
+      }
+
+      const itemsToWrite: LogOptionWriteItem[] = [];
+      for (const item of sourceMap.values()) {
+        const existingTuple = existingByNormKey.get(item.key.trim().toLowerCase());
+        if (!existingTuple) {
+          itemsToWrite.push(item);
+          continue;
+        }
+        const needsBackfill = mappedProps.some((prop) => {
+          const existingCell = existingTuple[prop];
+          const existingBlank =
+            existingCell === undefined ||
+            existingCell === null ||
+            String(existingCell).trim() === '';
+          const suppliedVal = (item.values[prop] ?? '').trim();
+          return existingBlank && suppliedVal.length > 0;
+        });
+        if (needsBackfill) {
+          itemsToWrite.push(item);
+        }
+      }
+
+      if (itemsToWrite.length > 0) {
+        targets.push({
+          sheetName: binding.sheetName,
+          rangeName: binding.rangeName,
+          ...(binding.validationRangeName !== undefined
+            ? { validationRangeName: binding.validationRangeName }
+            : {}),
+          endMarker: binding.endMarker,
+          columns: { ...binding.columns },
+          ...(keyProp !== 'key' ? { keyProperty: keyProp } : {}),
+          items: itemsToWrite,
+        });
+      }
+    }
+
+    return targets;
   }
 
   async writeLog(request: WriteDocumentLogRequest): Promise<WriteDocumentLogResult> {
@@ -1170,12 +1346,24 @@ export class DocumentLogService implements DocumentLogPort {
     const { logSchema, targetSchema } = this.requireSchemasForDocumentType(document.type);
 
     const spreadsheetId = await this.resolveSpreadsheetId(document.space, selectedLogId);
-    const dynamicOptions = await this.readBoundOptionTuples(
+    const { tuplesBySource: dynamicOptions, tableResults } = await this.readBoundOptionTables(
       document.type,
       spreadsheetId,
       logSchema
     );
     const enrichedData = enrichDocumentData(document.data, targetSchema, dynamicOptions);
+
+    const optionWrites = this.buildOptionWriteTargets({
+      documentData: document.data,
+      enrichedData,
+      logSchema,
+      targetSchema,
+      tableResults,
+    });
+    const templateSpreadsheetId =
+      optionWrites.length > 0
+        ? this.schemaRegistry.getDiscoveryConfig(document.space?.typeId)?.templateSpreadsheetId
+        : undefined;
 
     const { rowData, readOnlyColumns } = mapDocumentToLogRow({
       document,
@@ -1213,10 +1401,20 @@ export class DocumentLogService implements DocumentLogPort {
       rowKeyExtractor,
       ...(targetKeys !== null ? { targetKeys } : {}),
       ...(readOnlyColumns.length > 0 ? { readOnlyColumns } : {}),
+      ...(optionWrites.length > 0 ? { optionWrites } : {}),
+      ...(templateSpreadsheetId !== undefined ? { templateSpreadsheetId } : {}),
       groupSortOrder: logSchema.grouping.groupSortOrder,
       rowSortOrder: logSchema.grouping.rowSortOrder,
       duplicatePolicy: logSchema.grouping.duplicatePolicy,
     });
+
+    if (optionWrites.length > 0 && this.optionTablesMemo) {
+      for (const memoKey of this.optionTablesMemo.keys()) {
+        if (memoKey.includes(`::${spreadsheetId}::`)) {
+          this.optionTablesMemo.delete(memoKey);
+        }
+      }
+    }
 
     return {
       spreadsheetId,

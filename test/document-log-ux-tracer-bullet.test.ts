@@ -99,6 +99,13 @@ const CONFIG_ARCH_ACTION_VALUES = [
   ['---', '', '', ''],
 ];
 
+const CONFIG_ARCH_CONTACT_VALUES = [
+  ['Contact', 'Name', 'Contact Type'],
+  ['INC', 'INC Architecture and Design', 'INC'],
+  ['PMG', 'Pavarini McGovern', 'Contractor'],
+  ['---', '', ''],
+];
+
 function mockConfigSubmittalArchBatchGet(
   spreadsheetId: string,
   applyOpt: <T extends nock.Interceptor>(interceptor: T) => T = (i) => i
@@ -127,6 +134,9 @@ function mockConfigSubmittalArchBatchGet(
         }
         if (range.includes('C1:F9')) {
           return { range, values: CONFIG_ARCH_ACTION_VALUES };
+        }
+        if (range.includes('H1:J')) {
+          return { range, values: CONFIG_ARCH_CONTACT_VALUES };
         }
         return { range, values: [] };
       }),
@@ -170,6 +180,11 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
         namedRangeId: 'nr-arch-actions',
         name: 'Options_Submittal_Arch_Actions',
         range: { sheetId: 103, startRowIndex: 0, endRowIndex: 9, startColumnIndex: 2, endColumnIndex: 6 },
+      },
+      {
+        namedRangeId: 'nr-arch-contacts',
+        name: 'Options_Submittal_Arch_Contacts',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length, startColumnIndex: 7, endColumnIndex: 10 },
       },
     ],
   });
@@ -240,6 +255,17 @@ function mockSubmittalArchLogWrite(spreadsheetId: string) {
             endRowIndex: 9,
             startColumnIndex: 2,
             endColumnIndex: 6,
+          },
+        },
+        {
+          namedRangeId: 'nr-arch-contacts',
+          name: 'Options_Submittal_Arch_Contacts',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length,
+            startColumnIndex: 7,
+            endColumnIndex: 10,
           },
         },
       ],

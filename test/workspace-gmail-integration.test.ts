@@ -219,31 +219,140 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     vi.restoreAllMocks();
   });
 
+  const CONFIG_STATUSES = [
+    ['Status'],
+    ['Open'],
+    ['Closed'],
+    ['Waiting'],
+    ['Manager'],
+    ['Billed'],
+    ['---'],
+  ];
+
+  const CONFIG_ACTIONS = [
+    ['Action', 'Name', 'Suffix', 'Order'],
+    ['REC', 'Received', '', '1'],
+    ['REF', 'Referred', '_REF', '2'],
+    ['NR', 'Not Reviewed', '_NR', '3'],
+    ['REJ', 'Rejected', '_REJ', '4'],
+    ['RR', 'Revise & Resubmit', '_RR', '5'],
+    ['NOC', 'No Objections As Corrected', '_NOC', '6'],
+    ['NET', 'No Exceptions Taken', '_NET', '7'],
+    ['---', '', '', ''],
+  ];
+
+  const CONFIG_ARCH_CONTACTS = [
+    ['Contact', 'Name', 'Contact Type'],
+    ['INC', 'INC Architecture and Design', 'INC'],
+    ['PMG', 'Pavarini McGovern', 'Contractor'],
+    ['FXC', 'FX Collaborative', 'Architect'],
+    ['IE', 'Interface Engineering', 'MEP'],
+    ['VLD', 'Ventresca Lighting Design', 'Lighting'],
+    ['TT', 'Thornton Tomasetti', 'Structural'],
+    ['---', '', ''],
+  ];
+
+  const CONFIG_FFE_CONTACTS = [
+    ['Contact', 'Name', 'Contact Type'],
+    ['INC', 'INC Architecture & Design', 'INC'],
+    ['BW', 'Benjamin West', 'Procurement'],
+    ['VLD', 'Ventresca Lighting Design', 'Lighting'],
+    ['IHG', 'IHG Hotels & Resorts', 'Brand'],
+    ['---', '', ''],
+  ];
+
+  const CONFIG_FFE_VENDORS = [
+    ['Vendor', 'Name', 'Vendor Type'],
+    ['BM', 'Berman Falk', 'Casegoods'],
+    ['AL', 'Ashley Lighting', 'Lighting'],
+    ['Carn', 'Carnegie', 'Fabric'],
+    ['Delta', 'Delta', 'Fabric'],
+    ['FDT', 'Fil Doux Textiles', 'Fabric'],
+    ['LA', 'Light Annex', 'Lighting'],
+    ['MH', 'Mohawk', 'Fabric'],
+    ['---', '', ''],
+  ];
+
+  const CONFIG_ARCH_NAMED_RANGES = [
+    {
+      namedRangeId: 'nr-arch-statuses',
+      name: 'Options_Submittal_Arch_Statuses',
+      range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_STATUSES.length, startColumnIndex: 0, endColumnIndex: 1 },
+    },
+    {
+      namedRangeId: 'nr-arch-statuses-val',
+      name: 'Validation_Submittal_Arch_Statuses',
+      range: { sheetId: 103, startRowIndex: 1, endRowIndex: CONFIG_STATUSES.length - 1, startColumnIndex: 0, endColumnIndex: 1 },
+    },
+    {
+      namedRangeId: 'nr-arch-actions',
+      name: 'Options_Submittal_Arch_Actions',
+      range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ACTIONS.length, startColumnIndex: 2, endColumnIndex: 6 },
+    },
+    {
+      namedRangeId: 'nr-arch-contacts',
+      name: 'Options_Submittal_Arch_Contacts',
+      range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ARCH_CONTACTS.length, startColumnIndex: 7, endColumnIndex: 10 },
+    },
+    {
+      namedRangeId: 'nr-arch-contacts-val',
+      name: 'Validation_Submittal_Arch_Contacts',
+      range: { sheetId: 103, startRowIndex: 1, endRowIndex: CONFIG_ARCH_CONTACTS.length - 1, startColumnIndex: 7, endColumnIndex: 8 },
+    },
+  ];
+
+  const CONFIG_FFE_NAMED_RANGES = [
+    {
+      namedRangeId: 'nr-ffe-statuses',
+      name: 'Options_Submittal_FFE_Statuses',
+      range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_STATUSES.length, startColumnIndex: 0, endColumnIndex: 1 },
+    },
+    {
+      namedRangeId: 'nr-ffe-statuses-val',
+      name: 'Validation_Submittal_FFE_Statuses',
+      range: { sheetId: 104, startRowIndex: 1, endRowIndex: CONFIG_STATUSES.length - 1, startColumnIndex: 0, endColumnIndex: 1 },
+    },
+    {
+      namedRangeId: 'nr-ffe-actions',
+      name: 'Options_Submittal_FFE_Actions',
+      range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_ACTIONS.length, startColumnIndex: 2, endColumnIndex: 6 },
+    },
+    {
+      namedRangeId: 'nr-ffe-contacts',
+      name: 'Options_Submittal_FFE_Contacts',
+      range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_FFE_CONTACTS.length, startColumnIndex: 7, endColumnIndex: 10 },
+    },
+    {
+      namedRangeId: 'nr-ffe-contacts-val',
+      name: 'Validation_Submittal_FFE_Contacts',
+      range: { sheetId: 104, startRowIndex: 1, endRowIndex: CONFIG_FFE_CONTACTS.length - 1, startColumnIndex: 7, endColumnIndex: 8 },
+    },
+    {
+      namedRangeId: 'nr-ffe-vendors',
+      name: 'Options_Submittal_FFE_Vendors',
+      range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_FFE_VENDORS.length, startColumnIndex: 11, endColumnIndex: 14 },
+    },
+    {
+      namedRangeId: 'nr-ffe-vendors-val',
+      name: 'Validation_Submittal_FFE_Vendors',
+      range: { sheetId: 104, startRowIndex: 1, endRowIndex: CONFIG_FFE_VENDORS.length - 1, startColumnIndex: 11, endColumnIndex: 12 },
+    },
+  ];
+
   function buildSubmittalArchOptionBatchGetReply(uri: string) {
     const requestedRanges = new URL(uri, 'https://sheets.googleapis.com').searchParams.getAll('ranges');
     return {
       valueRanges: requestedRanges.map((range) => {
-        if (range.includes('_Config Submittal Arch') && range.includes('A1:A6')) {
-          return {
-            range,
-            values: [['Status'], ['Open'], ['Closed'], ['Waiting'], ['Manager'], ['---']],
-          };
+        if (range.includes('_Config Submittal Arch')) {
+          if (range.includes('A1:A')) return { range, values: CONFIG_STATUSES };
+          if (range.includes('C1:F')) return { range, values: CONFIG_ACTIONS };
+          if (range.includes('H1:J')) return { range, values: CONFIG_ARCH_CONTACTS };
         }
-        if (range.includes('_Config Submittal Arch') && range.includes('C1:F9')) {
-          return {
-            range,
-            values: [
-              ['Action', 'Name', 'Suffix', 'Order'],
-              ['REC', 'Received', '', '1'],
-              ['REF', 'Referred', '_REF', '2'],
-              ['NR', 'Not Reviewed', '_NR', '3'],
-              ['REJ', 'Rejected', '_REJ', '4'],
-              ['RR', 'Revise & Resubmit', '_RR', '5'],
-              ['NOC', 'No Objections As Corrected', '_NOC', '6'],
-              ['NET', 'No Exceptions Taken', '_NET', '7'],
-              ['---', '', '', ''],
-            ],
-          };
+        if (range.includes('_Config Submittal FF&E')) {
+          if (range.includes('A1:A')) return { range, values: CONFIG_STATUSES };
+          if (range.includes('C1:F')) return { range, values: CONFIG_ACTIONS };
+          if (range.includes('H1:J')) return { range, values: CONFIG_FFE_CONTACTS };
+          if (range.includes('L1:N')) return { range, values: CONFIG_FFE_VENDORS };
         }
         return { range, values: [] };
       }),
@@ -267,6 +376,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         { properties: { sheetId: 101, title: 'Submittal Arch' } },
         { properties: { sheetId: 102, title: 'Submittal FF&E' } },
         { properties: { sheetId: 103, title: '_Config Submittal Arch' } },
+        { properties: { sheetId: 104, title: '_Config Submittal FF&E' } },
       ],
       namedRanges: [
         {
@@ -279,16 +389,8 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           name: 'Log_Submittal_FFE',
           range: { sheetId: 102, startRowIndex: 2, endRowIndex: 21, startColumnIndex: 0, endColumnIndex: 12 },
         },
-        {
-          namedRangeId: 'nr-arch-statuses',
-          name: 'Options_Submittal_Arch_Statuses',
-          range: { sheetId: 103, startRowIndex: 0, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
-        },
-        {
-          namedRangeId: 'nr-arch-actions',
-          name: 'Options_Submittal_Arch_Actions',
-          range: { sheetId: 103, startRowIndex: 0, endRowIndex: 9, startColumnIndex: 2, endColumnIndex: 6 },
-        },
+        ...CONFIG_ARCH_NAMED_RANGES,
+        ...CONFIG_FFE_NAMED_RANGES,
       ],
     });
 
@@ -5849,28 +5951,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
                   endColumnIndex: 10,
                 },
               },
-              {
-                namedRangeId: 'nr-arch-statuses',
-                name: 'Options_Submittal_Arch_Statuses',
-                range: {
-                  sheetId: 103,
-                  startRowIndex: 0,
-                  endRowIndex: 6,
-                  startColumnIndex: 0,
-                  endColumnIndex: 1,
-                },
-              },
-              {
-                namedRangeId: 'nr-arch-actions',
-                name: 'Options_Submittal_Arch_Actions',
-                range: {
-                  sheetId: 103,
-                  startRowIndex: 0,
-                  endRowIndex: 9,
-                  startColumnIndex: 2,
-                  endColumnIndex: 6,
-                },
-              },
+              ...CONFIG_ARCH_NAMED_RANGES,
             ],
           });
 
@@ -6067,9 +6148,13 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         nock('https://sheets.googleapis.com')
           .get('/v4/spreadsheets/doc-log-proj-1')
           .query(true)
+          .times(2)
           .reply(200, {
             spreadsheetId: 'doc-log-proj-1',
-            sheets: [{ properties: { sheetId: 102, title: 'Submittal FF&E' } }],
+            sheets: [
+              { properties: { sheetId: 102, title: 'Submittal FF&E' } },
+              { properties: { sheetId: 104, title: '_Config Submittal FF&E' } },
+            ],
             namedRanges: [
               {
                 namedRangeId: 'nr-ffe',
@@ -6082,8 +6167,14 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
                   endColumnIndex: 11,
                 },
               },
+              ...CONFIG_FFE_NAMED_RANGES,
             ],
           });
+
+        nock('https://sheets.googleapis.com')
+          .get('/v4/spreadsheets/doc-log-proj-1/values:batchGet')
+          .query((q) => q.valueRenderOption === 'FORMATTED_VALUE')
+          .reply(200, (uri) => buildSubmittalArchOptionBatchGetReply(uri));
 
         nock('https://sheets.googleapis.com')
           .get(/\/v4\/spreadsheets\/doc-log-proj-1\/values\/.*/)

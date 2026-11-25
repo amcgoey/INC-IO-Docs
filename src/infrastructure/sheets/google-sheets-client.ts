@@ -6,6 +6,7 @@ import type {
   InsertGroupedRowResult,
   InsertPositiveGroupedRowRequest,
   NamedRangeTarget,
+  OptionTableWriteTarget,
   PositiveTableReadResult,
   PositiveTableRow,
   PositiveTableTarget,
@@ -28,8 +29,11 @@ import {
   GoogleSheetsDuplicateKeyError,
   GoogleSheetsExtentAnchorNotFoundError,
   GoogleSheetsNamedRangeNotFoundError,
+  GoogleSheetsOptionTableConfigError,
 } from './errors';
 import { KeyedAsyncLock } from './keyed-lock';
+
+const SHARED_SPREADSHEET_LOCK = new KeyedAsyncLock();
 
 function extractHttpStatusCode(error: unknown): number | undefined {
   if (!error || typeof error !== 'object') return undefined;
@@ -1386,17 +1390,19 @@ export class GoogleSheetsClient implements SheetsClient {
   private readonly sheetsApi: sheets_v4.Sheets;
   private readonly retryOptions: SheetsRetryOptions;
   private readonly configProvider?: SheetsConfigProvider | undefined;
-  private readonly lock = new KeyedAsyncLock();
+  private readonly lock: KeyedAsyncLock;
 
   constructor(optionsOrSheets: GoogleSheetsClientOptions | sheets_v4.Sheets = {}) {
     if ('spreadsheets' in optionsOrSheets) {
       this.sheetsApi = optionsOrSheets;
       this.retryOptions = {};
       this.configProvider = undefined;
+      this.lock = SHARED_SPREADSHEET_LOCK;
     } else {
       const options = optionsOrSheets;
       this.retryOptions = options.retryOptions ?? {};
       this.configProvider = options.configProvider;
+      this.lock = options.lock ?? SHARED_SPREADSHEET_LOCK;
 
       if (options.sheets) {
         this.sheetsApi = options.sheets;
@@ -1538,6 +1544,27 @@ export class GoogleSheetsClient implements SheetsClient {
     };
   }
 
+  private findOptionalNamedRange(
+    spreadsheet: sheets_v4.Schema$Spreadsheet,
+    target: NamedRangeTarget
+  ):
+    | {
+        sheetId: number;
+        sheetTitle: string;
+        namedRange: sheets_v4.Schema$NamedRange;
+        gridRange: sheets_v4.Schema$GridRange;
+      }
+    | undefined {
+    try {
+      return this.findNamedRange(spreadsheet, target);
+    } catch (error) {
+      if (error instanceof GoogleSheetsApiError) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
   private async resolveNamedRange(target: NamedRangeTarget): Promise<{
     sheetId: number;
     sheetTitle: string;
@@ -1546,6 +1573,20 @@ export class GoogleSheetsClient implements SheetsClient {
   }> {
     const spreadsheet = await this.getSpreadsheetMetadata(target.spreadsheetId);
     return this.findNamedRange(spreadsheet, target);
+  }
+
+  private async getSpreadsheetWithGridData(
+    spreadsheetId: string
+  ): Promise<sheets_v4.Schema$Spreadsheet> {
+    return await this.executeWithRetry(async () => {
+      const response = await this.sheetsApi.spreadsheets.get({
+        spreadsheetId,
+        includeGridData: true,
+        fields:
+          'sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(formattedValue,userEnteredFormat)))),namedRanges',
+      });
+      return response.data;
+    });
   }
 
   private async readValues(
@@ -1710,7 +1751,15 @@ export class GoogleSheetsClient implements SheetsClient {
 
   private async loadParsedPositiveTable(
     target: PositiveTableTarget,
-    linkColumns?: readonly string[]
+    linkColumns?: readonly string[],
+    preloaded?: {
+      resolvedRange: {
+        sheetId: number;
+        sheetTitle: string;
+        gridRange: sheets_v4.Schema$GridRange;
+      };
+      values: CellValue[][];
+    }
   ): Promise<{
     sheetId: number;
     rangeStartRowIndex: number;
@@ -1719,9 +1768,15 @@ export class GoogleSheetsClient implements SheetsClient {
     formulaColumns: string[];
     linksByRowNumber?: Map<number, Record<string, string | null>>;
   }> {
-    const { sheetId, sheetTitle, gridRange } = await this.resolveNamedRange(target);
-    const a1Range = gridRangeToA1(sheetTitle, gridRange);
-    const values = await this.readValues(target.spreadsheetId, a1Range, 'FORMATTED_VALUE');
+    const { sheetId, sheetTitle, gridRange } =
+      preloaded?.resolvedRange ?? (await this.resolveNamedRange(target));
+    const values =
+      preloaded?.values ??
+      (await this.readValues(
+        target.spreadsheetId,
+        gridRangeToA1(sheetTitle, gridRange),
+        'FORMATTED_VALUE'
+      ));
     const rangeStartRowIndex = gridRange.startRowIndex ?? 0;
     const rangeStartColumnIndex = gridRange.startColumnIndex ?? 0;
     const parsed = parsePositiveTable(values, target, rangeStartRowIndex);
@@ -1813,6 +1868,438 @@ export class GoogleSheetsClient implements SheetsClient {
     };
   }
 
+  private extractTemplateOptionRowFormats(
+    templateSpreadsheet: sheets_v4.Schema$Spreadsheet,
+    templateSpreadsheetId: string,
+    target: OptionTableWriteTarget,
+    targetHeaders: readonly string[],
+    targetWidth: number
+  ): Array<sheets_v4.Schema$CellFormat | undefined> | undefined {
+    const resolved = this.findOptionalNamedRange(templateSpreadsheet, {
+      spreadsheetId: templateSpreadsheetId,
+      sheetName: target.sheetName,
+      rangeName: target.rangeName,
+    });
+    if (!resolved) {
+      return undefined;
+    }
+
+    const sheet = (templateSpreadsheet.sheets ?? []).find(
+      (s) => s.properties?.sheetId === resolved.sheetId
+    );
+    if (!sheet?.data || sheet.data.length === 0) {
+      return undefined;
+    }
+
+    const startRow = resolved.gridRange.startRowIndex ?? 0;
+    const endRow = resolved.gridRange.endRowIndex;
+    const startCol = resolved.gridRange.startColumnIndex ?? 0;
+    const endCol = resolved.gridRange.endColumnIndex ?? startCol + targetWidth;
+    const width = Math.max(endCol - startCol, 0);
+    if (width === 0) {
+      return undefined;
+    }
+
+    const getTemplateRowCells = (absRow: number): sheets_v4.Schema$CellData[] | undefined => {
+      for (const gridData of sheet.data ?? []) {
+        const baseRow = gridData.startRow ?? 0;
+        const rowData = gridData.rowData ?? [];
+        if (absRow >= baseRow && absRow < baseRow + rowData.length) {
+          const baseCol = gridData.startColumn ?? 0;
+          const allCells = rowData[absRow - baseRow]?.values ?? [];
+          const relStart = startCol - baseCol;
+          if (relStart < 0) {
+            return undefined;
+          }
+          return allCells.slice(relStart, relStart + width);
+        }
+      }
+      return undefined;
+    };
+
+    const headerCells = getTemplateRowCells(startRow) ?? [];
+    const templateHeaderIndexByName = new Map<string, number>();
+    headerCells.forEach((cell, idx) => {
+      const name = (cell.formattedValue ?? '').trim().toLowerCase();
+      if (name.length > 0 && !templateHeaderIndexByName.has(name)) {
+        templateHeaderIndexByName.set(name, idx);
+      }
+    });
+
+    const maxScanRow =
+      endRow !== undefined && endRow !== null
+        ? endRow
+        : Math.max(...(sheet.data ?? []).map((gd) => (gd.startRow ?? 0) + (gd.rowData?.length ?? 0)));
+
+    let firstBlankFallbackRow: sheets_v4.Schema$CellData[] | undefined;
+    let chosenDataRow: sheets_v4.Schema$CellData[] | undefined;
+
+    for (let r = startRow + 1; r < maxScanRow; r++) {
+      const rowCells = getTemplateRowCells(r);
+      if (!rowCells) {
+        continue;
+      }
+      const trimmedValues = rowCells.map((c) => (c.formattedValue ?? '').trim());
+      if (trimmedValues.some((v) => v === target.endMarker)) {
+        break;
+      }
+      if (trimmedValues.some((v) => v.length > 0)) {
+        chosenDataRow = rowCells;
+        break;
+      }
+      if (!firstBlankFallbackRow) {
+        firstBlankFallbackRow = rowCells;
+      }
+    }
+
+    const sourceCells = chosenDataRow ?? firstBlankFallbackRow;
+    if (!sourceCells) {
+      return undefined;
+    }
+
+    return Array.from({ length: targetWidth }, (_, relCol) => {
+      const targetHeader = (targetHeaders[relCol] ?? '').trim().toLowerCase();
+      const tmplIdx =
+        targetHeader.length > 0 && templateHeaderIndexByName.has(targetHeader)
+          ? templateHeaderIndexByName.get(targetHeader)!
+          : relCol;
+      const fmt = sourceCells[tmplIdx]?.userEnteredFormat;
+      return fmt ? structuredClone(fmt) : undefined;
+    });
+  }
+
+  private async planOptionWriteRequests(params: {
+    spreadsheet: sheets_v4.Schema$Spreadsheet;
+    spreadsheetId: string;
+    optionWrites: readonly OptionTableWriteTarget[];
+    resolvedTargets: Array<{
+      target: OptionTableWriteTarget;
+      sheetId: number;
+      sheetTitle: string;
+      gridRange: sheets_v4.Schema$GridRange;
+      values: CellValue[][];
+    }>;
+    templateSpreadsheetId?: string | undefined;
+  }): Promise<sheets_v4.Schema$Request[]> {
+    const { spreadsheet, spreadsheetId, resolvedTargets, templateSpreadsheetId } = params;
+
+    interface PlannedTableWrite {
+      target: OptionTableWriteTarget;
+      sheetId: number;
+      gridRange: sheets_v4.Schema$GridRange;
+      headers: string[];
+      absTerminatorRowIndex: number;
+      hasExistingDataRow: boolean;
+      mappedColumns: Array<{ colRelIdx: number; propName: string }>;
+      newRows: Array<Record<number, string>>;
+      validationRange?:
+        | {
+            sheetId: number;
+            namedRange: sheets_v4.Schema$NamedRange;
+            gridRange: sheets_v4.Schema$GridRange;
+          }
+        | undefined;
+    }
+
+    const backfillRequests: sheets_v4.Schema$Request[] = [];
+    const plannedTableWrites: PlannedTableWrite[] = [];
+    let needsTemplateFormatting = false;
+
+    for (const entry of resolvedTargets) {
+      const { target, sheetId, gridRange, values } = entry;
+      if (values.length === 0) {
+        throw new GoogleSheetsOptionTableConfigError(
+          `Option table "${target.rangeName}" on sheet "${target.sheetName}" is missing headers and endMarker "${target.endMarker}".`
+        );
+      }
+
+      const rangeStartRowIndex = gridRange.startRowIndex ?? 0;
+      const rangeStartColIndex = gridRange.startColumnIndex ?? 0;
+      const headerRow = values[0] ?? [];
+      const headers = headerRow.map((c) => (c === null || c === undefined ? '' : String(c).trim()));
+      const headerIndexMap = new Map<string, number>();
+      headers.forEach((headerName, idx) => {
+        if (headerName.length > 0 && !headerIndexMap.has(headerName)) {
+          headerIndexMap.set(headerName, idx);
+        }
+      });
+
+      const mappedColumns: Array<{ colRelIdx: number; propName: string }> = [];
+      for (const [sheetHeader, propName] of Object.entries(target.columns)) {
+        const colRelIdx = headerIndexMap.get(sheetHeader.trim());
+        if (colRelIdx === undefined) {
+          throw new GoogleSheetsOptionTableConfigError(
+            `Option table "${target.rangeName}" on sheet "${target.sheetName}" is missing required header "${sheetHeader}".`
+          );
+        }
+        mappedColumns.push({ colRelIdx, propName });
+      }
+
+      const keyProp = target.keyProperty ?? 'key';
+      const keyColEntry =
+        mappedColumns.find((c) => c.propName === keyProp) ?? mappedColumns[0];
+      const keyColRelIdx = keyColEntry?.colRelIdx;
+
+      let terminatorRelIndex = -1;
+      for (let i = 1; i < values.length; i++) {
+        const row = values[i] ?? [];
+        const col0 = row[0] === null || row[0] === undefined ? '' : String(row[0]).trim();
+        const keyCell =
+          keyColRelIdx !== undefined && row[keyColRelIdx] !== null && row[keyColRelIdx] !== undefined
+            ? String(row[keyColRelIdx]).trim()
+            : '';
+        if (col0 === target.endMarker || keyCell === target.endMarker) {
+          terminatorRelIndex = i;
+          break;
+        }
+      }
+
+      if (terminatorRelIndex === -1) {
+        throw new GoogleSheetsOptionTableConfigError(
+          `Option table "${target.rangeName}" on sheet "${target.sheetName}" is missing endMarker "${target.endMarker}".`
+        );
+      }
+
+      let hasExistingDataRow = false;
+      const existingByNormKey = new Map<
+        string,
+        { absRowIndex: number; rowValues: string[] }
+      >();
+
+      for (let i = 1; i < terminatorRelIndex; i++) {
+        const row = values[i] ?? [];
+        const rowStrings = row.map((c) => (c === null || c === undefined ? '' : String(c).trim()));
+        if (rowStrings.some((s) => s.length > 0)) {
+          hasExistingDataRow = true;
+        }
+        const rawKey =
+          keyColRelIdx !== undefined && keyColRelIdx < rowStrings.length
+            ? rowStrings[keyColRelIdx]
+            : '';
+        if (rawKey.length === 0) {
+          continue;
+        }
+        const normKey = rawKey.toLowerCase();
+        if (!existingByNormKey.has(normKey)) {
+          existingByNormKey.set(normKey, {
+            absRowIndex: rangeStartRowIndex + i,
+            rowValues: rowStrings,
+          });
+        }
+      }
+
+      const newRows: Array<Record<number, string>> = [];
+      for (const item of target.items) {
+        const trimmedKey = item.key.trim();
+        if (trimmedKey.length === 0) {
+          continue;
+        }
+        const normKey = trimmedKey.toLowerCase();
+        const existing = existingByNormKey.get(normKey);
+
+        if (existing) {
+          for (const { colRelIdx, propName } of mappedColumns) {
+            const existingCell =
+              colRelIdx < existing.rowValues.length ? existing.rowValues[colRelIdx] : '';
+            const suppliedVal = (
+              item.values[propName] ?? (propName === keyProp ? trimmedKey : '')
+            ).trim();
+            if (existingCell === '' && suppliedVal.length > 0) {
+              while (existing.rowValues.length <= colRelIdx) {
+                existing.rowValues.push('');
+              }
+              existing.rowValues[colRelIdx] = suppliedVal;
+              backfillRequests.push({
+                updateCells: {
+                  range: {
+                    sheetId,
+                    startRowIndex: existing.absRowIndex,
+                    endRowIndex: existing.absRowIndex + 1,
+                    startColumnIndex: rangeStartColIndex + colRelIdx,
+                    endColumnIndex: rangeStartColIndex + colRelIdx + 1,
+                  },
+                  rows: [{ values: [{ userEnteredValue: { stringValue: suppliedVal } }] }],
+                  fields: 'userEnteredValue',
+                },
+              });
+            }
+          }
+          continue;
+        }
+
+        const newRowCells: Record<number, string> = {};
+        const newRowStrings: string[] = [];
+        for (const { colRelIdx, propName } of mappedColumns) {
+          const val = (item.values[propName] ?? (propName === keyProp ? trimmedKey : '')).trim();
+          if (val.length > 0) {
+            newRowCells[colRelIdx] = val;
+            while (newRowStrings.length <= colRelIdx) {
+              newRowStrings.push('');
+            }
+            newRowStrings[colRelIdx] = val;
+          }
+        }
+        newRows.push(newRowCells);
+        existingByNormKey.set(normKey, {
+          absRowIndex: rangeStartRowIndex + terminatorRelIndex + newRows.length - 1,
+          rowValues: newRowStrings,
+        });
+      }
+
+      if (newRows.length === 0) {
+        continue;
+      }
+
+      if (!hasExistingDataRow) {
+        needsTemplateFormatting = true;
+      }
+
+      const validationRange = target.validationRangeName
+        ? this.findOptionalNamedRange(spreadsheet, {
+            spreadsheetId,
+            sheetName: target.sheetName,
+            rangeName: target.validationRangeName,
+          })
+        : undefined;
+
+      plannedTableWrites.push({
+        target,
+        sheetId,
+        gridRange,
+        headers,
+        absTerminatorRowIndex: rangeStartRowIndex + terminatorRelIndex,
+        hasExistingDataRow,
+        mappedColumns,
+        newRows,
+        ...(validationRange !== undefined ? { validationRange } : {}),
+      });
+    }
+
+    const templateSpreadsheet =
+      needsTemplateFormatting && templateSpreadsheetId
+        ? await this.getSpreadsheetWithGridData(templateSpreadsheetId)
+        : undefined;
+
+    const requests: sheets_v4.Schema$Request[] = [...backfillRequests];
+
+    for (const plan of plannedTableWrites) {
+      const startCol = plan.gridRange.startColumnIndex ?? 0;
+      const maxMappedCol = Math.max(...plan.mappedColumns.map((c) => c.colRelIdx), 0);
+      const endCol = plan.gridRange.endColumnIndex ?? startCol + maxMappedCol + 1;
+      const tableWidth = Math.max(endCol - startCol, 1);
+
+      requests.push({
+        insertRange: {
+          range: {
+            sheetId: plan.sheetId,
+            startRowIndex: plan.absTerminatorRowIndex,
+            endRowIndex: plan.absTerminatorRowIndex + plan.newRows.length,
+            startColumnIndex: startCol,
+            endColumnIndex: endCol,
+          },
+          shiftDimension: 'ROWS',
+        },
+      });
+
+      const templateFormats =
+        !plan.hasExistingDataRow && templateSpreadsheet && templateSpreadsheetId
+          ? this.extractTemplateOptionRowFormats(
+              templateSpreadsheet,
+              templateSpreadsheetId,
+              plan.target,
+              plan.headers,
+              tableWidth
+            )
+          : undefined;
+
+      if (templateFormats) {
+        requests.push({
+          updateCells: {
+            range: {
+              sheetId: plan.sheetId,
+              startRowIndex: plan.absTerminatorRowIndex,
+              endRowIndex: plan.absTerminatorRowIndex + plan.newRows.length,
+              startColumnIndex: startCol,
+              endColumnIndex: endCol,
+            },
+            rows: plan.newRows.map((rowCells) => ({
+              values: Array.from({ length: tableWidth }, (_, relCol) => {
+                const strVal = rowCells[relCol];
+                const fmt = templateFormats[relCol];
+                return {
+                  ...(strVal !== undefined ? { userEnteredValue: { stringValue: strVal } } : {}),
+                  ...(fmt !== undefined ? { userEnteredFormat: fmt } : {}),
+                };
+              }),
+            })),
+            fields: 'userEnteredValue,userEnteredFormat',
+          },
+        });
+      } else {
+        const activeRelCols = Array.from(
+          new Set(
+            plan.newRows.flatMap((rowCells) =>
+              Object.keys(rowCells).map((k) => Number(k))
+            )
+          )
+        ).sort((a, b) => a - b);
+
+        let i = 0;
+        while (i < activeRelCols.length) {
+          const runStart = activeRelCols[i];
+          let runEnd = runStart + 1;
+          while (i + 1 < activeRelCols.length && activeRelCols[i + 1] === runEnd) {
+            i++;
+            runEnd = activeRelCols[i] + 1;
+          }
+          requests.push({
+            updateCells: {
+              range: {
+                sheetId: plan.sheetId,
+                startRowIndex: plan.absTerminatorRowIndex,
+                endRowIndex: plan.absTerminatorRowIndex + plan.newRows.length,
+                startColumnIndex: startCol + runStart,
+                endColumnIndex: startCol + runEnd,
+              },
+              rows: plan.newRows.map((rowCells) => ({
+                values: Array.from({ length: runEnd - runStart }, (_, offset) => {
+                  const strVal = rowCells[runStart + offset];
+                  return strVal !== undefined
+                    ? { userEnteredValue: { stringValue: strVal } }
+                    : {};
+                }),
+              })),
+              fields: 'userEnteredValue',
+            },
+          });
+          i++;
+        }
+      }
+
+      if (plan.validationRange) {
+        const valNr = plan.validationRange.namedRange;
+        const oldStart = plan.validationRange.gridRange.startRowIndex ?? plan.absTerminatorRowIndex;
+        requests.push({
+          updateNamedRange: {
+            namedRange: {
+              ...(valNr.namedRangeId !== undefined ? { namedRangeId: valNr.namedRangeId } : {}),
+              ...(valNr.name !== undefined ? { name: valNr.name } : {}),
+              range: {
+                ...plan.validationRange.gridRange,
+                sheetId: plan.validationRange.sheetId,
+                startRowIndex: oldStart,
+                endRowIndex: plan.absTerminatorRowIndex + plan.newRows.length,
+              },
+            },
+            fields: 'range',
+          },
+        });
+      }
+    }
+
+    return requests;
+  }
+
   /**
    * Inserts a row atomically inside a positive-terminated table under per-spreadsheet lock.
    */
@@ -1820,8 +2307,77 @@ export class GoogleSheetsClient implements SheetsClient {
     request: InsertPositiveGroupedRowRequest
   ): Promise<InsertGroupedRowResult> {
     return await this.lock.acquire(request.target.spreadsheetId, async () => {
+      const activeOptionWrites = (request.optionWrites ?? []).filter((w) => w.items.length > 0);
+      let optionRequests: sheets_v4.Schema$Request[] = [];
+      let preloadedLog:
+        | {
+            resolvedRange: {
+              sheetId: number;
+              sheetTitle: string;
+              gridRange: sheets_v4.Schema$GridRange;
+            };
+            values: CellValue[][];
+          }
+        | undefined;
+
+      if (activeOptionWrites.length > 0) {
+        const spreadsheet = await this.getSpreadsheetMetadata(request.target.spreadsheetId);
+        const logResolved = this.findNamedRange(spreadsheet, request.target);
+        const logA1 = gridRangeToA1(logResolved.sheetTitle, logResolved.gridRange);
+
+        const resolvedOptionMeta = activeOptionWrites.map((optTarget) => {
+          try {
+            const found = this.findNamedRange(spreadsheet, {
+              spreadsheetId: request.target.spreadsheetId,
+              sheetName: optTarget.sheetName,
+              rangeName: optTarget.rangeName,
+            });
+            return {
+              target: optTarget,
+              sheetId: found.sheetId,
+              sheetTitle: found.sheetTitle,
+              gridRange: found.gridRange,
+              a1Range: gridRangeToA1(found.sheetTitle, found.gridRange),
+            };
+          } catch (error) {
+            if (error instanceof GoogleSheetsApiError) {
+              throw new GoogleSheetsOptionTableConfigError(error.message, {
+                cause: error,
+                statusCode: error.statusCode,
+              });
+            }
+            throw error;
+          }
+        });
+
+        const batchValueRanges = await this.readBatchValues(
+          request.target.spreadsheetId,
+          [logA1, ...resolvedOptionMeta.map((m) => m.a1Range)],
+          'FORMATTED_VALUE'
+        );
+
+        preloadedLog = {
+          resolvedRange: logResolved,
+          values: (batchValueRanges[0]?.values as CellValue[][] | undefined) ?? [],
+        };
+
+        optionRequests = await this.planOptionWriteRequests({
+          spreadsheet,
+          spreadsheetId: request.target.spreadsheetId,
+          optionWrites: activeOptionWrites,
+          resolvedTargets: resolvedOptionMeta.map((meta, idx) => ({
+            target: meta.target,
+            sheetId: meta.sheetId,
+            sheetTitle: meta.sheetTitle,
+            gridRange: meta.gridRange,
+            values: (batchValueRanges[1 + idx]?.values as CellValue[][] | undefined) ?? [],
+          })),
+          templateSpreadsheetId: request.templateSpreadsheetId,
+        });
+      }
+
       const { sheetId, rangeStartRowIndex, rangeStartColumnIndex, parsed, formulaColumns } =
-        await this.loadParsedPositiveTable(request.target);
+        await this.loadParsedPositiveTable(request.target, undefined, preloadedLog);
 
       const protectedColumns = new Set([
         ...formulaColumns,
@@ -1829,7 +2385,7 @@ export class GoogleSheetsClient implements SheetsClient {
       ]);
       const dataRows = parsed.betweenRows.filter((row) => row.kind === 'data');
 
-      let requests: sheets_v4.Schema$Request[];
+      let logRequests: sheets_v4.Schema$Request[];
       let rowNumber: number;
       let action: 'inserted' | 'updated';
 
@@ -1848,7 +2404,7 @@ export class GoogleSheetsClient implements SheetsClient {
           target: request.target,
           extraClearRelCols: emptyPlan.extraClearRelCols,
         });
-        requests = [
+        logRequests = [
           ...emptyPlan.structuralRequests,
           ...makeUpdateCellsForRuns(sheetId, emptyPlan.targetAbsRowIndex, writableRuns),
         ];
@@ -1869,7 +2425,7 @@ export class GoogleSheetsClient implements SheetsClient {
           rowSortOrder: request.rowSortOrder ?? 'asc',
           duplicatePolicy: request.duplicatePolicy ?? 'insert',
         });
-        requests = groupedPlan.requests;
+        logRequests = groupedPlan.requests;
         rowNumber = groupedPlan.rowNumber;
         action = groupedPlan.action;
       } else {
@@ -1881,7 +2437,7 @@ export class GoogleSheetsClient implements SheetsClient {
           rangeStartColumnIndex,
           target: request.target,
         });
-        requests = [
+        logRequests = [
           makeInsertRowRequest(sheetId, absBottomAnchor, 1, true),
           ...makeUpdateCellsForRuns(sheetId, absBottomAnchor, writableRuns),
         ];
@@ -1889,6 +2445,7 @@ export class GoogleSheetsClient implements SheetsClient {
         action = 'inserted';
       }
 
+      const requests = [...optionRequests, ...logRequests];
       if (requests.length > 0) {
         await this.executeWithRetry(() =>
           this.sheetsApi.spreadsheets.batchUpdate({

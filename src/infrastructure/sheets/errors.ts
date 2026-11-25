@@ -51,4 +51,15 @@ export class GoogleSheetsDuplicateKeyError extends GoogleSheetsApiError {
   }
 }
 
+export class GoogleSheetsOptionTableConfigError extends GoogleSheetsApiError {
+  constructor(
+    message: string,
+    options?: { cause?: unknown; statusCode?: number | undefined }
+  ) {
+    super(message.startsWith('config_error') ? message : `config_error: ${message}`, options);
+    this.name = 'GoogleSheetsOptionTableConfigError';
+  }
+}
+
+
 
