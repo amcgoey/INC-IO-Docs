@@ -102,6 +102,25 @@ export const DocumentLogHistoryDisplaySchema = Type.Object(
 );
 export type DocumentLogHistoryDisplay = Static<typeof DocumentLogHistoryDisplaySchema>;
 
+export const DocumentLogOptionBindingSchema = Type.Object(
+  {
+    sheetName: Type.String({ minLength: 1 }),
+    rangeName: Type.String({ minLength: 1 }),
+    validationRangeName: Type.Optional(
+      Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])
+    ),
+    endMarker: Type.String({ minLength: 1 }),
+    columns: Type.Record(Type.String({ minLength: 1 }), Type.String({ minLength: 1 }), {
+      minProperties: 1,
+    }),
+    aliasesColumn: Type.Optional(
+      Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
+export type DocumentLogOptionBinding = Static<typeof DocumentLogOptionBindingSchema>;
+
 export const DocumentLogSchemaSchema = Type.Object(
   {
     provider: Type.Literal('google_sheets'),
@@ -112,6 +131,12 @@ export const DocumentLogSchemaSchema = Type.Object(
     }),
     historyDisplay: Type.Optional(
       Type.Union([DocumentLogHistoryDisplaySchema, Type.Undefined()])
+    ),
+    optionBindings: Type.Optional(
+      Type.Union([
+        Type.Record(Type.String({ minLength: 1 }), DocumentLogOptionBindingSchema),
+        Type.Undefined(),
+      ])
     ),
   },
   { additionalProperties: false }
@@ -296,6 +321,32 @@ export const LogTargetDocumentOptionTupleSchema = Type.Intersect([
 ]);
 export type LogTargetDocumentOptionTuple = Static<typeof LogTargetDocumentOptionTupleSchema>;
 
+export const LogTargetDocumentLogOptionSourceSchema = Type.Object(
+  {
+    provider: Type.Literal('document_log'),
+    properties: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  },
+  { additionalProperties: false }
+);
+
+export const LogTargetGoogleDriveOptionSourceSchema = Type.Object(
+  {
+    provider: Type.Literal('google_drive'),
+    method: Type.Optional(Type.Union([Type.Literal('list_folders'), Type.Undefined()])),
+    relativePath: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+    properties: Type.Optional(
+      Type.Union([Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }), Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export const LogTargetOptionSourceSchema = Type.Union([
+  LogTargetDocumentLogOptionSourceSchema,
+  LogTargetGoogleDriveOptionSourceSchema,
+]);
+export type LogTargetOptionSource = Static<typeof LogTargetOptionSourceSchema>;
+
 export const LogTargetDocumentSchemaSchema = Type.Object(
   {
     fields: Type.Array(LogTargetDocumentFieldSchema),
@@ -308,6 +359,12 @@ export const LogTargetDocumentSchemaSchema = Type.Object(
     options: Type.Optional(
       Type.Union([
         Type.Record(Type.String(), Type.Array(LogTargetDocumentOptionTupleSchema)),
+        Type.Undefined(),
+      ])
+    ),
+    optionSources: Type.Optional(
+      Type.Union([
+        Type.Record(Type.String({ minLength: 1 }), LogTargetOptionSourceSchema),
         Type.Undefined(),
       ])
     ),

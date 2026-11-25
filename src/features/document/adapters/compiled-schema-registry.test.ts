@@ -247,5 +247,35 @@ describe('CompiledSchemaRegistry', () => {
 
       expect(registry.get('invoice')).toBeDefined();
     });
+
+    it('compiles and validates document types using optionSources with allowUserInput: false', async () => {
+      const dynamicSubmittal: DocumentType = {
+        key: 'submittal-dynamic',
+        name: 'Submittal Dynamic',
+        documentSchema: {
+          fields: [
+            {
+              key: 'status',
+              name: 'Status',
+              type: 'string',
+              required: true,
+              options: { source: 'statuses', key: 'key', allowUserInput: false },
+            },
+          ],
+          optionSources: {
+            statuses: { provider: 'document_log', properties: ['key'] },
+          },
+        },
+      };
+      const registry = new CompiledSchemaRegistry({
+        loadAll: vi.fn().mockResolvedValue([dynamicSubmittal]),
+      });
+      await registry.initialize();
+
+      const check = registry.get('submittal-dynamic');
+      expect(check).toBeDefined();
+      expect(check?.Check({ status: 'Open' })).toBe(true);
+      expect(check?.Check({ status: 123 })).toBe(false);
+    });
   });
 });

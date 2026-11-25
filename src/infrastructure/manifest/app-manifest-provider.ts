@@ -53,6 +53,9 @@ export class AppManifestProvider {
   private cachedRawManifest: unknown = undefined;
   private cachedValidatedManifest: Manifest | undefined = undefined;
   private isManifestLoaded = false;
+  private manifestLoadPromise: Promise<Manifest> | undefined = undefined;
+  private readonly parsedSchemaCache = new Map<string, unknown>();
+  private readonly inFlightSchemaReads = new Map<string, Promise<unknown>>();
 
   constructor(options?: AppManifestProviderOptions) {
     const manifestPath = options?.manifestPath ?? process.env.APP_MANIFEST_PATH;
@@ -68,48 +71,60 @@ export class AppManifestProvider {
     if (this.isManifestLoaded && this.cachedValidatedManifest) {
       return this.cachedValidatedManifest;
     }
-    let manifestContent: string;
-    try {
-      manifestContent = await fs.readFile(this.manifestPath, 'utf-8');
-    } catch (err) {
-      throw new Error(
-        `Failed to read manifest file at "${this.manifestPath}": ${err instanceof Error ? err.message : String(err)}`,
-        { cause: err }
-      );
+    if (this.manifestLoadPromise) {
+      return this.manifestLoadPromise;
     }
-    const rawData = parseJson(manifestContent, {
-      filePath: this.manifestPath,
-      description: 'manifest file',
-    }) as Record<string, unknown>;
 
-    const validatedManifest = validateAndCleanSchema(
-      ManifestSchema,
-      rawData,
-      `Invalid manifest file structure at "${this.manifestPath}"`
-    );
-
-    const timeZone = validatedManifest.configuration?.workspace?.timeZone;
-    if (timeZone !== undefined) {
-      if (timeZone.trim().length === 0) {
-        throw new Error(
-          `Invalid workspace configuration at "${this.manifestPath}": timeZone must be a non-empty valid IANA timezone identifier`
-        );
-      }
+    this.manifestLoadPromise = (async () => {
+      let manifestContent: string;
       try {
-        new Intl.DateTimeFormat(undefined, { timeZone });
+        manifestContent = await fs.readFile(this.manifestPath, 'utf-8');
       } catch (err) {
         throw new Error(
-          `Invalid workspace configuration at "${this.manifestPath}": invalid IANA timeZone "${timeZone}"`,
+          `Failed to read manifest file at "${this.manifestPath}": ${err instanceof Error ? err.message : String(err)}`,
           { cause: err }
         );
       }
-    }
+      const rawData = parseJson(manifestContent, {
+        filePath: this.manifestPath,
+        description: 'manifest file',
+      }) as Record<string, unknown>;
 
-    this.cachedConfiguration = validatedManifest.configuration;
-    this.cachedRawManifest = rawData;
-    this.cachedValidatedManifest = validatedManifest;
-    this.isManifestLoaded = true;
-    return validatedManifest;
+      const validatedManifest = validateAndCleanSchema(
+        ManifestSchema,
+        rawData,
+        `Invalid manifest file structure at "${this.manifestPath}"`
+      );
+
+      const timeZone = validatedManifest.configuration?.workspace?.timeZone;
+      if (timeZone !== undefined) {
+        if (timeZone.trim().length === 0) {
+          throw new Error(
+            `Invalid workspace configuration at "${this.manifestPath}": timeZone must be a non-empty valid IANA timezone identifier`
+          );
+        }
+        try {
+          new Intl.DateTimeFormat(undefined, { timeZone });
+        } catch (err) {
+          throw new Error(
+            `Invalid workspace configuration at "${this.manifestPath}": invalid IANA timeZone "${timeZone}"`,
+            { cause: err }
+          );
+        }
+      }
+
+      this.cachedConfiguration = validatedManifest.configuration;
+      this.cachedRawManifest = rawData;
+      this.cachedValidatedManifest = validatedManifest;
+      this.isManifestLoaded = true;
+      return validatedManifest;
+    })();
+
+    try {
+      return await this.manifestLoadPromise;
+    } finally {
+      this.manifestLoadPromise = undefined;
+    }
   }
 
   async getDriveConfig(): Promise<DriveConfiguration | undefined> {
@@ -123,7 +138,9 @@ export class AppManifestProvider {
         );
       }
     }
-    return this.cachedConfiguration?.drive;
+    return this.cachedConfiguration?.drive !== undefined
+      ? structuredClone(this.cachedConfiguration.drive)
+      : undefined;
   }
 
   async getWorkspaceConfig(): Promise<WorkspaceConfiguration | undefined> {
@@ -137,7 +154,9 @@ export class AppManifestProvider {
         );
       }
     }
-    return this.cachedConfiguration?.workspace;
+    return this.cachedConfiguration?.workspace !== undefined
+      ? structuredClone(this.cachedConfiguration.workspace)
+      : undefined;
   }
 
   async getSheetsConfig(): Promise<SheetsConfiguration | undefined> {
@@ -151,7 +170,9 @@ export class AppManifestProvider {
         );
       }
     }
-    return this.cachedConfiguration?.sheets;
+    return this.cachedConfiguration?.sheets !== undefined
+      ? structuredClone(this.cachedConfiguration.sheets)
+      : undefined;
   }
 
   async getRawManifest(): Promise<unknown> {
@@ -165,25 +186,45 @@ export class AppManifestProvider {
         );
       }
     }
-    return this.cachedRawManifest;
+    return structuredClone(this.cachedRawManifest);
   }
 
   async readParsedSchema(relPath: string): Promise<unknown> {
     const manifestDir = path.dirname(this.manifestPath);
     const resolvedPath = path.resolve(manifestDir, relPath);
-    let content: string;
-    try {
-      content = await fs.readFile(resolvedPath, 'utf-8');
-    } catch (err) {
-      throw new Error(
-        `Failed to read DocumentType file "${relPath}" at "${resolvedPath}": ${err instanceof Error ? err.message : String(err)}`,
-        { cause: err }
-      );
+
+    if (this.parsedSchemaCache.has(resolvedPath)) {
+      return structuredClone(this.parsedSchemaCache.get(resolvedPath));
     }
-    return parseJson(content, {
-      filePath: resolvedPath,
-      description: `DocumentType file "${relPath}"`,
-    });
+
+    let inFlight = this.inFlightSchemaReads.get(resolvedPath);
+    if (!inFlight) {
+      inFlight = (async () => {
+        let content: string;
+        try {
+          content = await fs.readFile(resolvedPath, 'utf-8');
+        } catch (err) {
+          throw new Error(
+            `Failed to read DocumentType file "${relPath}" at "${resolvedPath}": ${err instanceof Error ? err.message : String(err)}`,
+            { cause: err }
+          );
+        }
+        const parsed = parseJson(content, {
+          filePath: resolvedPath,
+          description: `DocumentType file "${relPath}"`,
+        });
+        this.parsedSchemaCache.set(resolvedPath, parsed);
+        return parsed;
+      })();
+      this.inFlightSchemaReads.set(resolvedPath, inFlight);
+    }
+
+    try {
+      const result = await inFlight;
+      return structuredClone(result);
+    } finally {
+      this.inFlightSchemaReads.delete(resolvedPath);
+    }
   }
 }
 
