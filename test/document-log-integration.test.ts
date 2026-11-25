@@ -3368,4 +3368,151 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
       expect(uiContext.entries).toHaveLength(3);
     }
   });
+
+  it('reads _Config option tables via DocumentLogPort + GoogleSheetsClient, parsing RFC 4180 aliasesColumn cells with "" escaped quotes and silently ignoring absent Aliases headers (Ticket #360)', async () => {
+    const driveClient = new GoogleDriveClient({
+      drive: createMockDriveSdk({
+        searchResults: [{ id: 'log-360-sheet', name: 'Harborview Document Log' }],
+      }),
+      configProvider: manifestProvider,
+    });
+
+    const mockSheets = {
+      spreadsheets: {
+        get: vi.fn().mockResolvedValue({
+          data: {
+            spreadsheetId: 'log-360-sheet',
+            sheets: [{ properties: { sheetId: 201, title: '_Config' } }],
+            namedRanges: [
+              {
+                namedRangeId: 'nr-contacts',
+                name: 'Options_Contacts',
+                range: { sheetId: 201, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: 3 },
+              },
+              {
+                namedRangeId: 'nr-vendors',
+                name: 'Options_Vendors',
+                range: { sheetId: 201, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 4, endColumnIndex: 6 },
+              },
+            ],
+          },
+        }),
+        batchUpdate: vi.fn(),
+        values: {
+          get: vi.fn(),
+          batchGet: vi.fn().mockResolvedValue({
+            data: {
+              valueRanges: [
+                {
+                  values: [
+                    ['Contact', 'Name', 'Aliases'],
+                    ['PMG', 'Pavarini McGovern', '"Pavarini, McGovern", "ACME ""Corp""", PCNE, @pavarini.com'],
+                    ['INC', 'INC Architecture', ''],
+                    ['---', '', ''],
+                  ],
+                },
+                {
+                  values: [
+                    ['Vendor', 'Name'],
+                    ['CARN', 'Carnegie Fabrics'],
+                    ['---', ''],
+                  ],
+                },
+              ],
+            },
+          }),
+          update: vi.fn(),
+        },
+      },
+    } as unknown as NonNullable<GoogleSheetsClientOptions['sheets']>;
+
+    const sheetsClient = new GoogleSheetsClient({
+      sheets: mockSheets,
+      configProvider: manifestProvider,
+    });
+
+    const customManifestProvider: RawManifestProviderPort = {
+      getRawManifest: () => manifestProvider.getRawManifest(),
+      readParsedSchema: async (relPath: string) => {
+        const parsed = await manifestProvider.readParsedSchema(relPath);
+        if (!relPath.includes('submittal-arch')) {
+          return parsed;
+        }
+        const cloned = structuredClone(parsed) as Record<string, unknown>;
+        const docSchema = cloned.documentSchema as {
+          options?: Record<string, unknown>;
+          optionSources?: Record<string, unknown>;
+        };
+        if (docSchema.options) {
+          delete docSchema.options.contacts;
+        }
+        docSchema.optionSources = {
+          contacts: { provider: 'document_log', properties: ['key', 'name'] },
+          vendors: { provider: 'document_log', properties: ['key', 'name'] },
+        };
+        const logSchema = cloned.documentLogSchema as {
+          optionBindings?: Record<string, unknown>;
+        };
+        logSchema.optionBindings = {
+          contacts: {
+            sheetName: '_Config',
+            rangeName: 'Options_Contacts',
+            endMarker: '---',
+            columns: { Contact: 'key', Name: 'name' },
+            aliasesColumn: 'Aliases',
+          },
+          vendors: {
+            sheetName: '_Config',
+            rangeName: 'Options_Vendors',
+            endMarker: '---',
+            columns: { Vendor: 'key', Name: 'name' },
+            aliasesColumn: 'Aliases',
+          },
+        };
+        return cloned;
+      },
+    };
+
+    const logWiring = createDocumentLogWiring({
+      manifestProvider: customManifestProvider,
+      driveClient,
+      sheetsClient,
+      configProvider: manifestProvider,
+      templateEvaluator: handlebars,
+    });
+    await logWiring.logSchemaRegistry.initialize();
+
+    const docLogPort = logWiring.createDocumentLogService({});
+    const res = await docLogPort.readOptionTables!({
+      documentTypeKey: 'submittal-arch',
+      space: {
+        id: 'space-360',
+        typeId: 'projects',
+        name: 'Harborview',
+        abstractStorageId: 'space-360',
+      },
+    });
+
+    expect(res.status).toBe('ready');
+    if (res.status === 'ready') {
+      expect(res.tables.contacts).toEqual({
+        status: 'ready',
+        tuples: [
+          {
+            key: 'PMG',
+            name: 'Pavarini McGovern',
+            aliases: ['Pavarini, McGovern', 'ACME "Corp"', 'PCNE', '@pavarini.com'],
+          },
+          {
+            key: 'INC',
+            name: 'INC Architecture',
+          },
+        ],
+      });
+      expect(res.tables.vendors).toEqual({
+        status: 'ready',
+        tuples: [{ key: 'CARN', name: 'Carnegie Fabrics' }],
+      });
+    }
+  });
 });

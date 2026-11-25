@@ -690,10 +690,17 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         ...(isGmailDriveUrlMode ? { isDriveUrl: true } : {}),
       };
 
+      const pass2SelectedLogId =
+        typeof normalizedFormData?.[SELECT_DOCUMENT_LOG_KEY] === 'string' &&
+        normalizedFormData[SELECT_DOCUMENT_LOG_KEY].trim().length > 0
+          ? normalizedFormData[SELECT_DOCUMENT_LOG_KEY].trim()
+          : undefined;
+
       try {
         const extractedResult = await this.options.sourceParser.extractFields({
           documentTypeKey: resolvedDocumentTypeKey,
           ...(pass2SpaceId !== undefined ? { spaceId: pass2SpaceId } : {}),
+          ...(pass2SelectedLogId !== undefined ? { selectedLogId: pass2SelectedLogId } : {}),
           context: pass2Context,
           ...(isManualTypeSwitch ? { existingData: activeTypeExistingData } : {}),
         });

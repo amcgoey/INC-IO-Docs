@@ -315,6 +315,7 @@ export const LogTargetDocumentOptionTupleSchema = Type.Intersect([
   Type.Object({
     key: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
     name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    aliases: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   }),
   Type.Record(Type.String(), Type.Unknown()),
 ]);
