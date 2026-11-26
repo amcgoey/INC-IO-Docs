@@ -23,6 +23,7 @@ import type {
   ProcessUiStateConfig,
   UiProcessSpaceType,
   UiProcessDocumentExecutionOutcome,
+  UiProcessRenderResult,
 } from '../ports';
 import { DOCUMENT_SUCCESS_CARD_VIEW_ID } from '../ports';
 
@@ -1240,6 +1241,19 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       const data = extractDocumentData(normalizedContext.formData);
 
       try {
+        const buildSuccessCardRenderResult = (
+          executionOutcome: UiProcessDocumentExecutionOutcome
+        ): UiProcessRenderResult => ({
+          type: 'render',
+          viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+          ...(resolvedDocumentTypeKey !== undefined
+            ? { documentTypeKey: resolvedDocumentTypeKey }
+            : {}),
+          spaceId: space.id,
+          isUpdateCard: false,
+          executionOutcome,
+        });
+
         let result:
           | Awaited<ReturnType<NonNullable<typeof documentRunner>['processDocument']>>
           | undefined;
@@ -1255,57 +1269,43 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
             },
             'onSubmit'
           );
-
-          const rawNotices = result?.contextVariables?.notices;
-          const notices = Array.isArray(rawNotices)
-            ? rawNotices.filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
-            : [];
-
-          if (result && result.success === false) {
-            const validationErrors =
-              result.errors && result.errors.length > 0
-                ? result.errors
-                : result.executionOutcome?.errors && result.executionOutcome.errors.length > 0
-                  ? result.executionOutcome.errors
-                  : result.error
-                    ? [result.error]
-                    : ['Document validation failed'];
-
-            const outcome = result.executionOutcome;
-            const completedStepCount = outcome?.completedStepCount ?? 0;
-            const producedFiles =
-              outcome?.stepResults.flatMap((step) => step.files) ?? [];
-
-            if (outcome && (completedStepCount >= 1 || producedFiles.length >= 1)) {
-              const executionOutcome: UiProcessDocumentExecutionOutcome = {
-                ...outcome,
-                success: false,
-                notices: outcome.notices.length > 0 ? outcome.notices : notices,
-                errors: outcome.errors.length > 0 ? outcome.errors : validationErrors,
-              };
-              return {
-                type: 'render',
-                viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
-                ...(resolvedDocumentTypeKey !== undefined
-                  ? { documentTypeKey: resolvedDocumentTypeKey }
-                  : {}),
-                spaceId: space.id,
-                isUpdateCard: false,
-                executionOutcome,
-              };
-            }
-
-            return createErrorRenderResult(
-              validationErrors,
-              notices.length > 0 ? notices : undefined
-            );
-          }
         }
 
         const rawNotices = result?.contextVariables?.notices;
         const notices = Array.isArray(rawNotices)
           ? rawNotices.filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
           : [];
+
+        if (result && result.success === false) {
+          const validationErrors =
+            result.errors && result.errors.length > 0
+              ? result.errors
+              : result.executionOutcome?.errors && result.executionOutcome.errors.length > 0
+                ? result.executionOutcome.errors
+                : result.error
+                  ? [result.error]
+                  : ['Document validation failed'];
+
+          const outcome = result.executionOutcome;
+          const completedStepCount = outcome?.completedStepCount ?? 0;
+          const producedFiles =
+            outcome?.stepResults.flatMap((step) => step.files) ?? [];
+
+          if (outcome && (completedStepCount >= 1 || producedFiles.length >= 1)) {
+            return buildSuccessCardRenderResult({
+              ...outcome,
+              success: false,
+              notices: outcome.notices.length > 0 ? outcome.notices : notices,
+              errors: outcome.errors.length > 0 ? outcome.errors : validationErrors,
+            });
+          }
+
+          return createErrorRenderResult(
+            validationErrors,
+            notices.length > 0 ? notices : undefined
+          );
+        }
+
         const executionOutcome: UiProcessDocumentExecutionOutcome = result?.executionOutcome ?? {
           success: true,
           completedStepCount: 0,
@@ -1316,16 +1316,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           errors: [],
         };
 
-        return {
-          type: 'render',
-          viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
-          ...(resolvedDocumentTypeKey !== undefined
-            ? { documentTypeKey: resolvedDocumentTypeKey }
-            : {}),
-          spaceId: space.id,
-          isUpdateCard: false,
-          executionOutcome,
-        };
+        return buildSuccessCardRenderResult(executionOutcome);
       } catch (error) {
         const validationErrors = [error instanceof Error ? error.message : 'Document processing failed'];
         return createErrorRenderResult(validationErrors);

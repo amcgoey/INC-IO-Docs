@@ -34,6 +34,8 @@ import {
   buildDocumentTypeSchema,
   buildFieldSchema,
   formatEmailPdfFileName,
+  isFolderOnlyPlaceholderFileLocator,
+  findPrimaryFiledFile,
   type Activity,
   type ActivityExecutionContext,
   type ActivityOutput,
@@ -11287,6 +11289,85 @@ describe('Document domain', () => {
       }
       expect(corruptRun.driveService.saveBuffer).not.toHaveBeenCalled();
       expect(corruptRun.writeLogHandler.handle).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('isFolderOnlyPlaceholderFileLocator and findPrimaryFiledFile', () => {
+    it('identifies folder-only placeholders when id matches parentId with folder or undefined mimeType and preserves moved folders or real files', () => {
+      expect(
+        isFolderOnlyPlaceholderFileLocator({
+          id: 'folder-1',
+          parentId: 'folder-1',
+          mimeType: 'application/vnd.google-apps.folder',
+        })
+      ).toBe(true);
+
+      expect(
+        isFolderOnlyPlaceholderFileLocator({
+          id: ' folder-1 ',
+          parentId: 'folder-1',
+        })
+      ).toBe(true);
+
+      expect(
+        isFolderOnlyPlaceholderFileLocator({
+          id: 'moved-folder-1',
+          parentId: 'parent-folder-1',
+          mimeType: 'application/vnd.google-apps.folder',
+        })
+      ).toBe(false);
+
+      expect(
+        isFolderOnlyPlaceholderFileLocator({
+          id: 'file-1',
+          parentId: 'file-1',
+          mimeType: 'application/pdf',
+        })
+      ).toBe(false);
+
+      expect(
+        isFolderOnlyPlaceholderFileLocator({
+          id: '   ',
+          parentId: '   ',
+        })
+      ).toBe(false);
+
+      const placeholderWithFolderMime: FileLocator = {
+        id: 'folder-1',
+        name: 'Target Folder',
+        parentId: 'folder-1',
+        mimeType: 'application/vnd.google-apps.folder',
+        uri: 'https://drive.google.com/drive/folders/folder-1',
+      };
+      const placeholderWithUndefinedMime: FileLocator = {
+        id: 'folder-2',
+        name: 'Target Folder 2',
+        parentId: 'folder-2',
+        uri: 'https://drive.google.com/drive/folders/folder-2',
+      };
+      const movedFolder: FileLocator = {
+        id: 'moved-folder-1',
+        name: 'Moved Folder',
+        parentId: 'parent-folder-1',
+        mimeType: 'application/vnd.google-apps.folder',
+        uri: 'https://drive.google.com/drive/folders/moved-folder-1',
+      };
+      const filedPdf: FileLocator = {
+        id: 'file-1',
+        name: 'Submittal.pdf',
+        parentId: 'folder-1',
+        mimeType: 'application/pdf',
+        uri: 'https://drive.google.com/file/d/file-1/view',
+      };
+
+      expect(findPrimaryFiledFile(undefined)).toBeUndefined();
+      expect(findPrimaryFiledFile([])).toBeUndefined();
+      expect(findPrimaryFiledFile([placeholderWithFolderMime])).toBeUndefined();
+      expect(findPrimaryFiledFile([placeholderWithUndefinedMime])).toBeUndefined();
+      expect(
+        findPrimaryFiledFile([placeholderWithFolderMime, placeholderWithUndefinedMime, filedPdf])
+      ).toEqual(filedPdf);
+      expect(findPrimaryFiledFile([movedFolder, filedPdf])).toEqual(movedFolder);
     });
   });
 });

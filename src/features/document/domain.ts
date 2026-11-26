@@ -2325,5 +2325,30 @@ export function formatEmailPdfFileName(subject: string | undefined, messageId: s
   return `Email - ${cleanId}.pdf`;
 }
 
+/**
+ * Returns true when a FileLocator represents a target folder placeholder emitted by an empty MOVE_FILE step.
+ */
+export function isFolderOnlyPlaceholderFileLocator(
+  file: Pick<FileLocator, 'id' | 'parentId' | 'mimeType'>
+): boolean {
+  const id = file.id.trim();
+  const parentId = file.parentId?.trim();
+  return (
+    id.length > 0 &&
+    parentId !== undefined &&
+    id === parentId &&
+    (file.mimeType === undefined || file.mimeType === GOOGLE_FOLDER_MIME_TYPE)
+  );
+}
+
+/**
+ * Returns the first filed document FileLocator that is not a folder-only placeholder.
+ */
+export function findPrimaryFiledFile(
+  files: readonly FileLocator[] | undefined
+): FileLocator | undefined {
+  return files?.find((file) => !isFolderOnlyPlaceholderFileLocator(file));
+}
+
 
 

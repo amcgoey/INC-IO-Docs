@@ -21,6 +21,8 @@ import {
   DocumentUiSuccessSummarySchema,
   DocumentUiSuccessArtifactSchema,
   DocumentUiSuccessViewSchema,
+  isFolderOnlyPlaceholderFileLocator,
+  findPrimaryFiledFile,
   type DocumentFormFieldFormat,
   type DocumentFormFieldBinding,
   type DocumentFormSchema,
@@ -75,6 +77,8 @@ export {
   type DocumentUiSuccessArtifact,
   DocumentUiSuccessViewSchema,
   type DocumentUiSuccessView,
+  isFolderOnlyPlaceholderFileLocator,
+  findPrimaryFiledFile,
 };
 
 export type SchemaOrKeys =
