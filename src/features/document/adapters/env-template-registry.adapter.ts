@@ -6,6 +6,16 @@ import {
 
 export const REDACTED_TEMPLATE_ID_PLACEHOLDER = '[REDACTED_TEMPLATE_ID]';
 
+/**
+ * Redacts all occurrences of a confidential template Drive file ID from a message.
+ */
+export function redactTemplateId(message: string, secretId?: string): string {
+  if (!message || !secretId || !message.includes(secretId)) {
+    return message;
+  }
+  return message.split(secretId).join(REDACTED_TEMPLATE_ID_PLACEHOLDER);
+}
+
 export interface EnvTemplateRegistryAdapterDeps {
   getTemplatesConfig: () => Promise<Record<string, string> | undefined>;
   readEnvVar?: ((envVarName: string) => string | undefined) | undefined;
@@ -87,9 +97,7 @@ export class EnvTemplateRegistryAdapter implements TemplateRegistryPort {
     let redacted = message;
     const sortedSecrets = Array.from(secretsToRedact).sort((a, b) => b.length - a.length);
     for (const secret of sortedSecrets) {
-      if (secret.length > 0 && redacted.includes(secret)) {
-        redacted = redacted.split(secret).join(REDACTED_TEMPLATE_ID_PLACEHOLDER);
-      }
+      redacted = redactTemplateId(redacted, secret);
     }
     return redacted;
   }

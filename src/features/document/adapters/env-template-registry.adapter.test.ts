@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { EnvTemplateRegistryAdapter } from './env-template-registry.adapter';
+import {
+  EnvTemplateRegistryAdapter,
+  REDACTED_TEMPLATE_ID_PLACEHOLDER,
+  redactTemplateId,
+} from './env-template-registry.adapter';
 import { DocumentTemplateError } from '../ports';
 
 describe('EnvTemplateRegistryAdapter (#379)', () => {
@@ -47,5 +51,20 @@ describe('EnvTemplateRegistryAdapter (#379)', () => {
     await expect(adapter.resolveTemplate('submittalCoverSheet')).rejects.toThrow(
       /SUBMITTAL_COVER_SHEET_TEMPLATE_ID/
     );
+  });
+
+  it('redactTemplateId replaces all occurrences of a secretId and leaves messages unchanged when secretId is absent or empty', () => {
+    const confidentialTemplateId = 'synthetic-template-id-abc';
+    expect(
+      redactTemplateId(
+        `Error for ${confidentialTemplateId} and ${confidentialTemplateId}`,
+        confidentialTemplateId
+      )
+    ).toBe(
+      `Error for ${REDACTED_TEMPLATE_ID_PLACEHOLDER} and ${REDACTED_TEMPLATE_ID_PLACEHOLDER}`
+    );
+    expect(redactTemplateId('Unchanged message', confidentialTemplateId)).toBe('Unchanged message');
+    expect(redactTemplateId('Unchanged message', undefined)).toBe('Unchanged message');
+    expect(redactTemplateId('Unchanged message', '')).toBe('Unchanged message');
   });
 });

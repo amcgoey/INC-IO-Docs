@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import {
   AppManifestProvider,
+  createMaxInMemoryFileBytesProvider,
   DEFAULT_MAX_IN_MEMORY_FILE_BYTES,
   SheetsConfigurationSchema,
   WorkspaceConfigurationSchema,
@@ -509,6 +510,45 @@ describe('AppManifestProvider', () => {
 
       const provider = new AppManifestProvider({ manifestPath: zeroManifestPath });
       await expect(provider.getMaxInMemoryFileBytes()).rejects.toThrow(/invalid manifest/i);
+    });
+
+    it('createMaxInMemoryFileBytesProvider resolves direct override, nested configProvider, env, default, and validates positive finite numbers', async () => {
+      const fromDirectAndConfig = createMaxInMemoryFileBytesProvider({
+        getMaxInMemoryFileBytes: async () => 1024,
+        configProvider: {
+          getMaxInMemoryFileBytes: async () => 2048,
+        },
+      });
+      await expect(fromDirectAndConfig()).resolves.toBe(1024);
+
+      const fallbackToConfig = createMaxInMemoryFileBytesProvider({
+        getMaxInMemoryFileBytes: () => undefined,
+        configProvider: {
+          getMaxInMemoryFileBytes: async () => 2048,
+        },
+      });
+      await expect(fallbackToConfig()).resolves.toBe(2048);
+
+      vi.stubEnv('MAX_IN_MEMORY_FILE_BYTES', '4096');
+      const fallbackToEnv = createMaxInMemoryFileBytesProvider({
+        configProvider: {
+          getMaxInMemoryFileBytes: async () => undefined,
+        },
+      });
+      await expect(fallbackToEnv()).resolves.toBe(4096);
+
+      vi.unstubAllEnvs();
+      const fallbackToDefault = createMaxInMemoryFileBytesProvider();
+      await expect(fallbackToDefault()).resolves.toBe(DEFAULT_MAX_IN_MEMORY_FILE_BYTES);
+
+      for (const invalid of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+        const invalidProvider = createMaxInMemoryFileBytesProvider({
+          getMaxInMemoryFileBytes: () => invalid,
+        });
+        await expect(invalidProvider()).rejects.toThrow(
+          /Invalid maxInMemoryFileBytes configuration.*must be a positive finite number/
+        );
+      }
     });
   });
 

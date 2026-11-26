@@ -2649,6 +2649,30 @@ describe('GoogleDriveClient', () => {
         GoogleDriveFileTooLargeError
       );
     });
+
+    it('prefers direct getMaxInMemoryFileBytes over configProvider and rejects invalid values', async () => {
+      const overriddenClient = new GoogleDriveClient({
+        drive: mockDrive,
+        configProvider: {
+          getDriveConfig: vi.fn().mockResolvedValue(undefined),
+          getMaxInMemoryFileBytes: vi.fn().mockResolvedValue(1000),
+        },
+        getMaxInMemoryFileBytes: () => 5,
+      });
+
+      await expect(
+        overriddenClient.downloadFileMedia('too-large-direct', { knownSize: 6 })
+      ).rejects.toThrow(GoogleDriveFileTooLargeError);
+
+      const invalidClient = new GoogleDriveClient({
+        drive: mockDrive,
+        getMaxInMemoryFileBytes: () => 0,
+      });
+
+      await expect(invalidClient.downloadFileMedia('invalid-limit')).rejects.toThrow(
+        /Invalid maxInMemoryFileBytes configuration.*must be a positive finite number/
+      );
+    });
   });
 
   describe('saveBuffer', () => {

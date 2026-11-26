@@ -96,7 +96,7 @@ function countDocumentWidgets(doc: PDFDocument, acroForm: PDFAcroForm): number {
 /**
  * Inspects `Catalog.AcroForm` for `/XFA` before calling `doc.getForm()`.
  * - Rejects XFA unconditionally when `rejectAnyXfa` is true (cover-sheet templates or `xfaPolicy: 'error'`).
- * - Always rejects pure XFA (`hasXFA` with empty `/Fields` or zero widgets) with `PdfUnsupportedFormError`.
+ * - Always rejects pure XFA (`hasXFA` with empty `/Fields` and zero widgets) with `PdfUnsupportedFormError`.
  * - Allows hybrid XFA fallback when `xfaPolicy === 'fallbackHybrid'` by disconnecting `/XFA`.
  */
 export function precheckAndHandleXfa(
@@ -124,7 +124,7 @@ export function precheckAndHandleXfa(
   const fields = acroForm.Fields();
   const hasFields = fields !== undefined && fields.size() > 0;
   const widgetCount = countDocumentWidgets(doc, acroForm);
-  if (!hasFields || widgetCount === 0) {
+  if (!hasFields && widgetCount === 0) {
     throw new PdfUnsupportedFormError(
       `${options.roleLabel} uses pure XFA form data without AcroForm fields`,
       { reason: 'xfa', sourceRole: options.sourceRole }

@@ -1443,6 +1443,15 @@ describe('PdfProcessor', () => {
         PdfFileTooLargeError
       );
     });
+
+    it('rejects non-positive or non-finite maxInMemoryFileBytes overrides consistently', async () => {
+      const pdfBytes = await createSamplePdf(1);
+      const invalidProcessor = new PdfProcessor({ getMaxInMemoryFileBytes: () => -10 });
+
+      await expect(invalidProcessor.extractFormData(pdfBytes)).rejects.toThrow(
+        /Invalid maxInMemoryFileBytes configuration.*must be a positive finite number/
+      );
+    });
   });
 
   describe('insertPages', () => {
@@ -1834,6 +1843,65 @@ describe('PdfProcessor', () => {
       await expect(
         processor.insertPages(hybridBytes, coverBytes, { xfaPolicy: 'error' })
       ).rejects.toThrow(PdfUnsupportedFormError);
+    });
+
+    it('treats /XFA with non-empty /Fields (0 widgets) or empty /Fields with page widgets as hybrid XFA rather than pure XFA', async () => {
+      const coverBytes = await createAnonymizedSubmittalCoverSheetPdf();
+
+      // Case 1: /XFA + non-empty /Fields (field dict without /Subtype /Widget or /Rect) and 0 widgets
+      const fieldsOnlyDoc = await PDFDocument.create();
+      fieldsOnlyDoc.addPage([400, 400]);
+      const fieldsOnlyAcro = fieldsOnlyDoc.catalog.getOrCreateAcroForm();
+      const nonWidgetFieldRef = fieldsOnlyDoc.context.register(
+        fieldsOnlyDoc.context.obj({
+          FT: 'Tx',
+          T: PDFString.of('NonWidgetField'),
+          V: PDFString.of('FieldVal'),
+        })
+      );
+      fieldsOnlyAcro.addField(nonWidgetFieldRef);
+      fieldsOnlyAcro.dict.set(
+        PDFName.of('XFA'),
+        fieldsOnlyDoc.context.register(fieldsOnlyDoc.context.flateStream('<xdp/>'))
+      );
+      const fieldsOnlyBytes = await fieldsOnlyDoc.save({ updateFieldAppearances: false });
+
+      const graftedFieldsOnly = await processor.insertPages(fieldsOnlyBytes, coverBytes, {
+        formData: { 'Submittal No': 'HYB-FIELDS-001' },
+      });
+      const graftedFieldsOnlyDoc = await PDFDocument.load(graftedFieldsOnly);
+      expect(
+        graftedFieldsOnlyDoc.catalog.getAcroForm()?.dict.has(PDFName.of('XFA'))
+      ).toBe(false);
+      expect(graftedFieldsOnlyDoc.getPageCount()).toBe(2);
+
+      // Case 2: /XFA + empty /Fields + page widget annotation in /Annots
+      const pageWidgetDoc = await PDFDocument.create();
+      const page = pageWidgetDoc.addPage([400, 400]);
+      const pageWidgetAcro = pageWidgetDoc.catalog.getOrCreateAcroForm();
+      const widgetAnnotRef = pageWidgetDoc.context.register(
+        pageWidgetDoc.context.obj({
+          Type: 'Annot',
+          Subtype: 'Widget',
+          Rect: [20, 300, 120, 320],
+          P: page.ref,
+        })
+      );
+      page.node.set(PDFName.of('Annots'), pageWidgetDoc.context.obj([widgetAnnotRef]));
+      pageWidgetAcro.dict.set(
+        PDFName.of('XFA'),
+        pageWidgetDoc.context.register(pageWidgetDoc.context.flateStream('<xdp/>'))
+      );
+      const pageWidgetBytes = await pageWidgetDoc.save({ updateFieldAppearances: false });
+
+      const graftedPageWidget = await processor.insertPages(pageWidgetBytes, coverBytes, {
+        formData: { 'Submittal No': 'HYB-WIDGET-001' },
+      });
+      const graftedPageWidgetDoc = await PDFDocument.load(graftedPageWidget);
+      expect(
+        graftedPageWidgetDoc.catalog.getAcroForm()?.dict.has(PDFName.of('XFA'))
+      ).toBe(false);
+      expect(graftedPageWidgetDoc.getPageCount()).toBe(2);
     });
 
     it('detects active cryptographic signatures (ByteRange/Contents) and throws PdfUnsupportedFormError without touching unsigned PDFSignature fields', async () => {

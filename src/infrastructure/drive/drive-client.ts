@@ -2,10 +2,7 @@ import { Readable } from 'node:stream';
 import { google, type drive_v3 } from 'googleapis';
 import { GoogleAuth, OAuth2Client } from 'google-auth-library';
 import { Type } from '@sinclair/typebox';
-import {
-  DEFAULT_MAX_IN_MEMORY_FILE_BYTES,
-  resolveMaxInMemoryFileBytesFromEnv,
-} from '../manifest/app-manifest-provider';
+import { createMaxInMemoryFileBytesProvider } from '../manifest/app-manifest-provider';
 import { KeyedAsyncLock } from '../sheets/keyed-lock';
 
 const SHARED_DRIVE_FOLDER_LOCK = new KeyedAsyncLock();
@@ -309,15 +306,16 @@ export class GoogleDriveClient {
   private readonly defaultDrive: drive_v3.Drive;
   private readonly retryOptions: DriveRetryOptions;
   private readonly configProvider?: DriveConfigProvider | undefined;
-  private readonly getMaxInMemoryFileBytesFn?:
-    | (() => Promise<number | undefined> | number | undefined)
-    | undefined;
+  private readonly maxInMemoryFileBytesProvider: () => Promise<number>;
   private readonly folderLock: KeyedAsyncLock;
 
   constructor(options: GoogleDriveClientOptions = {}) {
     this.retryOptions = options.retryOptions ?? {};
     this.configProvider = options.configProvider;
-    this.getMaxInMemoryFileBytesFn = options.getMaxInMemoryFileBytes;
+    this.maxInMemoryFileBytesProvider = createMaxInMemoryFileBytesProvider({
+      configProvider: options.configProvider,
+      getMaxInMemoryFileBytes: options.getMaxInMemoryFileBytes,
+    });
     this.folderLock = options.folderLock ?? SHARED_DRIVE_FOLDER_LOCK;
 
     if (options.drive) {
@@ -404,26 +402,11 @@ export class GoogleDriveClient {
     return { id: file.id, name: file.name };
   }
 
-  private async resolveMaxInMemoryFileBytes(): Promise<number> {
-    const direct = this.getMaxInMemoryFileBytesFn
-      ? await this.getMaxInMemoryFileBytesFn()
-      : undefined;
-    const fromConfig =
-      direct === undefined && this.configProvider?.getMaxInMemoryFileBytes
-        ? await this.configProvider.getMaxInMemoryFileBytes()
-        : undefined;
-    const resolved =
-      direct ??
-      fromConfig ??
-      resolveMaxInMemoryFileBytesFromEnv() ??
-      DEFAULT_MAX_IN_MEMORY_FILE_BYTES;
-
-    if (typeof resolved !== 'number' || !Number.isFinite(resolved) || resolved <= 0) {
-      throw new Error(
-        `Invalid maxInMemoryFileBytes configuration "${String(resolved)}": must be a positive finite number`
-      );
+  private resolveMaxInMemoryFileBytes(): Promise<number> {
+    if (typeof this.maxInMemoryFileBytesProvider === 'function') {
+      return this.maxInMemoryFileBytesProvider();
     }
-    return resolved;
+    return createMaxInMemoryFileBytesProvider()();
   }
 
   private assertFileSizeWithinLimit(

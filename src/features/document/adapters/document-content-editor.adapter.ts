@@ -18,7 +18,7 @@ import {
   PdfFileTooLargeError,
   PdfUnsupportedFormError,
 } from '../../../infrastructure/pdf/errors';
-import { REDACTED_TEMPLATE_ID_PLACEHOLDER } from './env-template-registry.adapter';
+import { redactTemplateId } from './env-template-registry.adapter';
 
 export interface DocumentContentEditorAdapterDeps {
   driveService: DriveServicePort;
@@ -94,12 +94,10 @@ function toFileLocator(
 }
 
 function redactSourceSecret(message: string, sourceFileId: string, isTemplate?: boolean): string {
-  if (!isTemplate || !sourceFileId) {
+  if (!isTemplate) {
     return message;
   }
-  return message.includes(sourceFileId)
-    ? message.split(sourceFileId).join(REDACTED_TEMPLATE_ID_PLACEHOLDER)
-    : message;
+  return redactTemplateId(message, sourceFileId);
 }
 
 /**

@@ -19,7 +19,7 @@ import type {
   TemplateEvaluatorPort,
   TemplateRegistryPort,
 } from '../ports';
-import { REDACTED_TEMPLATE_ID_PLACEHOLDER } from './env-template-registry.adapter';
+import { redactTemplateId } from './env-template-registry.adapter';
 
 const InsertDataPayloadSchema = Type.Object(
   {
@@ -157,10 +157,7 @@ export class DocumentContentActivityHandler implements ActivityHandler {
   }
 
   private redactErrorMessage(message: string, secretId?: string): string {
-    let redacted = message;
-    if (secretId && redacted.includes(secretId)) {
-      redacted = redacted.split(secretId).join(REDACTED_TEMPLATE_ID_PLACEHOLDER);
-    }
+    let redacted = redactTemplateId(message, secretId);
     if (this.deps.templateRegistry?.redactSecrets) {
       redacted = this.deps.templateRegistry.redactSecrets(redacted);
     }
