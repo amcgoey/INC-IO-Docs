@@ -7,6 +7,7 @@ import {
   createDocumentFeatureWiring,
   createDocumentServiceFactory,
 } from '../../src/app/document.wiring';
+import { createLookupOptionsWiring } from '../../src/app/lookup-options.wiring';
 import type { DocumentServiceFactory } from '../../src/app/ui-process-manager.wiring';
 import type { CopyDocumentLogResult } from '../../src/features/document-log';
 import { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
@@ -20,13 +21,18 @@ import {
 import {
   DEFAULT_LIVE_RETRY_OPTIONS,
   appendRawPositiveTableRows,
+  clearOptionTableToEmpty,
   createLiveSheetsApi,
   ensureClearedPositiveTable,
   findCleanDividerViolations,
   findSheetErrorTokens,
+  findSideBySideTableShiftViolations,
   inspectPositiveTableLayout,
   loadDocumentLogSampleFixture,
   partialHydrationRowToCellInputs,
+  readNamedRangesFormattedValues,
+  readOptionTableGridFormats,
+  snapshotNamedRanges,
 } from './utils/live-sheets-helper';
 
 const sampleFixture = loadDocumentLogSampleFixture();
@@ -122,15 +128,36 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
     });
     await logWiring.logSchemaRegistry.initialize();
 
+    const lookupOptionsWiring = createLookupOptionsWiring({
+      manifestProvider,
+      documentSchemaRegistry,
+      driveClient: liveDriveClient,
+      configProvider: manifestProvider,
+      getDocumentLogService: (ctx) => logWiring.getPerRequestService(ctx),
+      ensureDocumentLogInitialized: () => logWiring.logSchemaRegistry.initialize(),
+    });
+
     documentServiceFactory = createDocumentServiceFactory({
+      manifestProvider,
       documentSchemaRegistry,
       templateEvaluator: handlebars,
       compiledSchemaRegistry,
       configProvider: manifestProvider,
       driveClient: liveDriveClient,
-      createAdditionalActivityHandlers: (context) => [
-        logWiring.createPerRequestActivityHandler(context),
-      ],
+      documentLogService: logWiring.documentLogService,
+      ensureDocumentLogInitialized: () => logWiring.logSchemaRegistry.initialize(),
+      getDynamicValidator: (requestContext) =>
+        lookupOptionsWiring.createDynamicValidator(requestContext),
+      createAdditionalActivityHandlers: (context, requestContext) => {
+        const effectiveCtx = requestContext ?? context;
+        const sharedLookup = lookupOptionsWiring.getPerRequestLookupOptions(effectiveCtx);
+        return [
+          logWiring.createPerRequestActivityHandler(effectiveCtx, {
+            ...(context.selectedLogId !== undefined ? { selectedLogId: context.selectedLogId } : {}),
+            onWriteLogSuccess: () => sharedLookup.invalidate(),
+          }),
+        ];
+      },
     });
 
     const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -871,4 +898,456 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
     expect(ffeFb127.entries[0].valid).toBe(true);
     expect(ffeFb127.warnings).toEqual([]);
   }, 90_000);
+
+  it('verifies live DocumentLog option reads, empty-table template formatting inheritance, Named Range expansion, VLOOKUP Spec Title resolution, and side-by-side _Config stability on a fresh copied template with finally cleanup', async () => {
+    const liveDriveClient = requireDriveClient();
+    const templateId = sampleFixture.metadata.templateSpreadsheetId;
+    const discoveryConfig = logWiring.logSchemaRegistry.getDiscoveryConfig('proposals');
+    expect(discoveryConfig?.templateSpreadsheetId).toBe(templateId);
+    const archLogSchema = logWiring.logSchemaRegistry.getDocumentLogSchema('submittal-arch');
+    const ffeLogSchema = logWiring.logSchemaRegistry.getDocumentLogSchema('submittal-ffe');
+    expect(archLogSchema).toBeDefined();
+    expect(ffeLogSchema).toBeDefined();
+    if (!archLogSchema || !ffeLogSchema) {
+      return;
+    }
+
+    const archContactsBinding = archLogSchema.optionBindings?.contacts;
+    const archStatusesBinding = archLogSchema.optionBindings?.statuses;
+    const archActionsBinding = archLogSchema.optionBindings?.actions;
+    const ffeSpecsBinding = ffeLogSchema.optionBindings?.specs;
+    const ffeVendorsBinding = ffeLogSchema.optionBindings?.vendors;
+    const ffeContactsBinding = ffeLogSchema.optionBindings?.contacts;
+    const ffeStatusesBinding = ffeLogSchema.optionBindings?.statuses;
+    const ffeActionsBinding = ffeLogSchema.optionBindings?.actions;
+    expect(archContactsBinding).toBeDefined();
+    expect(archStatusesBinding).toBeDefined();
+    expect(archActionsBinding).toBeDefined();
+    expect(ffeSpecsBinding).toBeDefined();
+    expect(ffeVendorsBinding).toBeDefined();
+    expect(ffeContactsBinding).toBeDefined();
+    expect(ffeStatusesBinding).toBeDefined();
+    expect(ffeActionsBinding).toBeDefined();
+    if (
+      !archContactsBinding ||
+      !archStatusesBinding ||
+      !archActionsBinding ||
+      !ffeSpecsBinding ||
+      !ffeVendorsBinding ||
+      !ffeContactsBinding ||
+      !ffeStatusesBinding ||
+      !ffeActionsBinding
+    ) {
+      return;
+    }
+
+    const runId = `opt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const localCleanupIds: string[] = [];
+    const trackLocal = (id: string | undefined): void => {
+      if (!id || id.trim().length === 0) return;
+      if (id === TEST_FOLDER_ID || id === templateId) return;
+      if (!localCleanupIds.includes(id)) localCleanupIds.push(id);
+    };
+
+    try {
+      const optSpaceName = `Harborview Options Live ${runId}`;
+      const optSpaceFolder = await liveDriveClient.findOrCreateFolder(TEST_FOLDER_ID!, optSpaceName);
+      trackLocal(optSpaceFolder.id);
+
+      const optSpace = {
+        id: `live-opt-space-${runId}`,
+        typeId: 'proposals',
+        name: optSpaceName,
+        abstractStorageId: optSpaceFolder.id,
+      };
+
+      const optCopy = await logWiring.documentLogService.copyLog(optSpace);
+      const optSpreadsheetId = optCopy.candidate.id;
+      const optAdminId = optCopy.candidate.parents?.[0];
+      if (optAdminId && optAdminId !== optSpaceFolder.id) {
+        trackLocal(optAdminId);
+      }
+      trackLocal(optSpreadsheetId);
+
+      expect(optCopy.created).toBe(true);
+      expect(optSpreadsheetId).not.toBe(templateId);
+
+      const optArchTarget: PositiveTableTarget = {
+        spreadsheetId: optSpreadsheetId,
+        sheetName: archLogSchema.target.sheetName,
+        rangeName: archLogSchema.target.rangeName,
+        extentMarker: archLogSchema.target.extentMarker,
+        groupDividerMarker: archLogSchema.target.groupDividerMarker,
+      };
+      const optFfeTarget: PositiveTableTarget = {
+        spreadsheetId: optSpreadsheetId,
+        sheetName: ffeLogSchema.target.sheetName,
+        rangeName: ffeLogSchema.target.rangeName,
+        extentMarker: ffeLogSchema.target.extentMarker,
+        groupDividerMarker: ffeLogSchema.target.groupDividerMarker,
+      };
+      await ensureClearedPositiveTable(sheetsApi, optArchTarget);
+      await ensureClearedPositiveTable(sheetsApi, optFfeTarget);
+
+      // 1) Live option reads from untouched copied firm template
+      const initialArchOptions = await logWiring.documentLogService.readOptionTables!({
+        documentTypeKey: 'submittal-arch',
+        space: optSpace,
+        selectedLogId: optSpreadsheetId,
+      });
+      expect(initialArchOptions.status).toBe('ready');
+      if (initialArchOptions.status !== 'ready') return;
+      expect(initialArchOptions.spreadsheetId).toBe(optSpreadsheetId);
+      expect(initialArchOptions.tables.statuses?.status).toBe('ready');
+      expect(initialArchOptions.tables.statuses?.tuples.length).toBeGreaterThan(0);
+      expect(initialArchOptions.tables.actions?.status).toBe('ready');
+      expect(initialArchOptions.tables.actions?.tuples.length).toBeGreaterThan(0);
+      expect(initialArchOptions.tables.contacts?.status).toBe('ready');
+      expect(initialArchOptions.tables.contacts?.tuples.length).toBeGreaterThan(0);
+
+      const initialFfeOptions = await logWiring.documentLogService.readOptionTables!({
+        documentTypeKey: 'submittal-ffe',
+        space: optSpace,
+        selectedLogId: optSpreadsheetId,
+      });
+      expect(initialFfeOptions.status).toBe('ready');
+      if (initialFfeOptions.status !== 'ready') return;
+      expect(initialFfeOptions.spreadsheetId).toBe(optSpreadsheetId);
+      for (const sourceKey of ['statuses', 'actions', 'contacts', 'vendors', 'specs']) {
+        expect(initialFfeOptions.tables[sourceKey]?.status).toBe('ready');
+        expect(initialFfeOptions.tables[sourceKey]?.tuples.length).toBeGreaterThan(0);
+      }
+
+      // Create source folders and PDFs for DocumentService.processDocument()
+      const constructionFolder = await liveDriveClient.findOrCreateFolder(
+        optSpaceFolder.id,
+        '6 Construction'
+      );
+      trackLocal(constructionFolder.id);
+      const ffeFolder = await liveDriveClient.findOrCreateFolder(optSpaceFolder.id, '3 FFE');
+      trackLocal(ffeFolder.id);
+
+      const dummyPdfBytes = Buffer.from(
+        '%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n',
+        'utf-8'
+      );
+      const optArchFile = await liveDriveClient.saveBuffer(dummyPdfBytes, {
+        action: 'create',
+        name: `Opt_Arch_${runId}.pdf`,
+        targetFolderId: optSpaceFolder.id,
+        mimeType: 'application/pdf',
+      });
+      trackLocal(optArchFile.id);
+      const optFfeFile = await liveDriveClient.saveBuffer(dummyPdfBytes, {
+        action: 'create',
+        name: `Opt_FFE_${runId}.pdf`,
+        targetFolderId: optSpaceFolder.id,
+        mimeType: 'application/pdf',
+      });
+      trackLocal(optFfeFile.id);
+
+      // 2) Clear Options_Submittal_Arch_Contacts to empty and verify empty-table formatting inheritance + NamedRange expansion + side-by-side stability
+      const templateContactsGrid = await readOptionTableGridFormats(sheetsApi, {
+        spreadsheetId: templateId,
+        sheetName: archContactsBinding.sheetName,
+        rangeName: archContactsBinding.rangeName,
+        endMarker: archContactsBinding.endMarker,
+      });
+      const templateDataRow = templateContactsGrid.dataRows.find((r) =>
+        r.cells.some((c) => c.formattedValue.trim().length > 0)
+      );
+      expect(templateDataRow).toBeDefined();
+      if (!templateDataRow) return;
+      expect(templateDataRow.cells.some((c) => c.userEnteredFormat !== undefined)).toBe(true);
+
+      const clearResult = await clearOptionTableToEmpty(sheetsApi, {
+        spreadsheetId: optSpreadsheetId,
+        sheetName: archContactsBinding.sheetName,
+        rangeName: archContactsBinding.rangeName,
+        validationRangeName: archContactsBinding.validationRangeName,
+        endMarker: archContactsBinding.endMarker,
+      });
+      expect(clearResult.absTerminatorRowIndex).toBeGreaterThan(0);
+
+      const clearedArchRead = await logWiring.documentLogService.readOptionTables!({
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: optSpreadsheetId,
+        sourceKeys: ['contacts'],
+      });
+      expect(clearedArchRead.status).toBe('ready');
+      if (clearedArchRead.status !== 'ready') return;
+      expect(clearedArchRead.tables.contacts?.tuples).toEqual([]);
+
+      const archConfigRanges = [
+        archStatusesBinding.rangeName,
+        ...(archStatusesBinding.validationRangeName ? [archStatusesBinding.validationRangeName] : []),
+        archActionsBinding.rangeName,
+        archContactsBinding.rangeName,
+        ...(archContactsBinding.validationRangeName ? [archContactsBinding.validationRangeName] : []),
+      ];
+      const archSnapshotsBefore = await snapshotNamedRanges(
+        sheetsApi,
+        optSpreadsheetId,
+        archConfigRanges,
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+      const archValuesBefore = await readNamedRangesFormattedValues(
+        sheetsApi,
+        optSpreadsheetId,
+        archSnapshotsBefore,
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+
+      const customArchContact = `T363C_${runId.slice(-4).toUpperCase()}`;
+      const optArchService = await documentServiceFactory({
+        selectedLogId: optSpreadsheetId,
+        sourceFiles: [{ id: optArchFile.id, name: optArchFile.name, mimeType: 'application/pdf' }],
+      });
+      const archSubmit = await optArchService.processDocument(
+        {
+          type: 'submittal-arch',
+          space: optSpace,
+          data: {
+            status: 'Open',
+            section: '071200',
+            number: '001',
+            revision: '0',
+            title: 'Empty Contacts Format Inheritance Test',
+            date: '260401',
+            contact: customArchContact,
+            action: 'REC',
+            notes: 'Ticket 363 empty table insert',
+          },
+        },
+        'onSubmit'
+      );
+      expect(archSubmit.success).toBe(true);
+      if (!archSubmit.success) return;
+      expect(archSubmit.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+
+      const archSnapshotsAfter = await snapshotNamedRanges(
+        sheetsApi,
+        optSpreadsheetId,
+        archConfigRanges,
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+      const archValuesAfter = await readNamedRangesFormattedValues(
+        sheetsApi,
+        optSpreadsheetId,
+        archSnapshotsAfter,
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+
+      expect(archSnapshotsAfter[archContactsBinding.rangeName].gridRange.endRowIndex).toBe(
+        (archSnapshotsBefore[archContactsBinding.rangeName].gridRange.endRowIndex ?? 0) + 1
+      );
+      if (archContactsBinding.validationRangeName) {
+        expect(
+          archSnapshotsAfter[archContactsBinding.validationRangeName].gridRange.endRowIndex
+        ).toBe(clearResult.absTerminatorRowIndex + 1);
+      }
+
+      const untouchedArchRanges = [
+        archStatusesBinding.rangeName,
+        ...(archStatusesBinding.validationRangeName ? [archStatusesBinding.validationRangeName] : []),
+        archActionsBinding.rangeName,
+      ];
+      expect(
+        findSideBySideTableShiftViolations({
+          beforeSnapshots: archSnapshotsBefore,
+          afterSnapshots: archSnapshotsAfter,
+          beforeValues: archValuesBefore,
+          afterValues: archValuesAfter,
+          rangeNames: untouchedArchRanges,
+        })
+      ).toEqual([]);
+
+      const copiedContactsGrid = await readOptionTableGridFormats(sheetsApi, {
+        spreadsheetId: optSpreadsheetId,
+        sheetName: archContactsBinding.sheetName,
+        rangeName: archContactsBinding.rangeName,
+        endMarker: archContactsBinding.endMarker,
+      });
+      const insertedContactRow = copiedContactsGrid.dataRows.find(
+        (r) => r.cells[0]?.formattedValue.trim() === customArchContact
+      );
+      expect(insertedContactRow).toBeDefined();
+      expect(insertedContactRow?.cells.map((c) => c.userEnteredFormat)).toEqual(
+        templateDataRow.cells.map((c) => c.userEnteredFormat)
+      );
+
+      const updatedArchRead = await logWiring.documentLogService.readOptionTables!({
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: optSpreadsheetId,
+        sourceKeys: ['contacts'],
+      });
+      expect(updatedArchRead.status).toBe('ready');
+      if (updatedArchRead.status !== 'ready') return;
+      expect(updatedArchRead.tables.contacts?.tuples).toContainEqual(
+        expect.objectContaining({ key: customArchContact, name: customArchContact })
+      );
+
+      // 3) Custom Spec Tag + Spec Title atomic WRITE_LOG, Validation_* expansion, VLOOKUP resolution, and side-by-side _Config Submittal FF&E stability
+      const ffeConfigRanges = [
+        ffeStatusesBinding.rangeName,
+        ...(ffeStatusesBinding.validationRangeName ? [ffeStatusesBinding.validationRangeName] : []),
+        ffeActionsBinding.rangeName,
+        ffeContactsBinding.rangeName,
+        ...(ffeContactsBinding.validationRangeName ? [ffeContactsBinding.validationRangeName] : []),
+        ffeVendorsBinding.rangeName,
+        ...(ffeVendorsBinding.validationRangeName ? [ffeVendorsBinding.validationRangeName] : []),
+        ffeSpecsBinding.rangeName,
+        ...(ffeSpecsBinding.validationRangeName ? [ffeSpecsBinding.validationRangeName] : []),
+      ];
+      const ffeSnapshotsBefore = await snapshotNamedRanges(
+        sheetsApi,
+        optSpreadsheetId,
+        ffeConfigRanges,
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+      const ffeValuesBefore = await readNamedRangesFormattedValues(
+        sheetsApi,
+        optSpreadsheetId,
+        ffeSnapshotsBefore,
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+
+      const customSpecTag = `ZZ${runId.slice(-4).toUpperCase()}`;
+      const customSpecTitle = `CUSTOM LIVE LOUNGE ${runId.slice(-4).toUpperCase()}`;
+      const customVendor = `Custom Live Millwork ${runId.slice(-4).toUpperCase()}`;
+      const customFfeContact = `T363F_${runId.slice(-4).toUpperCase()}`;
+
+      const optFfeService = await documentServiceFactory({
+        selectedLogId: optSpreadsheetId,
+        sourceFiles: [{ id: optFfeFile.id, name: optFfeFile.name, mimeType: 'application/pdf' }],
+      });
+      const ffeSubmit = await optFfeService.processDocument(
+        {
+          type: 'submittal-ffe',
+          space: optSpace,
+          data: {
+            status: 'Open',
+            specTag: customSpecTag,
+            revision: '0',
+            specTitle: customSpecTitle,
+            vendor: customVendor,
+            date: '260401',
+            contact: customFfeContact,
+            action: 'REC',
+            notes: 'Ticket 363 custom FF&E option write-back',
+          },
+        },
+        'onSubmit'
+      );
+      expect(ffeSubmit.success).toBe(true);
+      if (!ffeSubmit.success) return;
+      expect(ffeSubmit.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+
+      const ffeSnapshotsAfter = await snapshotNamedRanges(
+        sheetsApi,
+        optSpreadsheetId,
+        ffeConfigRanges,
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+      const ffeValuesAfter = await readNamedRangesFormattedValues(
+        sheetsApi,
+        optSpreadsheetId,
+        ffeSnapshotsAfter,
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+
+      for (const expandedRange of [
+        ffeSpecsBinding.rangeName,
+        ffeVendorsBinding.rangeName,
+        ffeContactsBinding.rangeName,
+      ]) {
+        expect(ffeSnapshotsAfter[expandedRange].gridRange.endRowIndex).toBe(
+          (ffeSnapshotsBefore[expandedRange].gridRange.endRowIndex ?? 0) + 1
+        );
+      }
+
+      for (const binding of [ffeSpecsBinding, ffeVendorsBinding, ffeContactsBinding]) {
+        if (!binding.validationRangeName) continue;
+        const rowsBefore = ffeValuesBefore[binding.rangeName] ?? [];
+        const termRel = rowsBefore.findIndex((r) =>
+          r.some((cell) => cell !== null && cell !== undefined && String(cell).trim() === binding.endMarker)
+        );
+        expect(termRel).toBeGreaterThan(0);
+        const absTerminatorBefore =
+          (ffeSnapshotsBefore[binding.rangeName].gridRange.startRowIndex ?? 0) + termRel;
+        expect(ffeSnapshotsAfter[binding.validationRangeName].gridRange.endRowIndex).toBe(
+          absTerminatorBefore + 1
+        );
+        expect(
+          ffeSnapshotsAfter[binding.validationRangeName].gridRange.endRowIndex
+        ).toBeGreaterThan(
+          ffeSnapshotsBefore[binding.validationRangeName].gridRange.endRowIndex ?? 0
+        );
+      }
+
+      const untouchedFfeRanges = [
+        ffeStatusesBinding.rangeName,
+        ...(ffeStatusesBinding.validationRangeName ? [ffeStatusesBinding.validationRangeName] : []),
+        ffeActionsBinding.rangeName,
+      ];
+      expect(
+        findSideBySideTableShiftViolations({
+          beforeSnapshots: ffeSnapshotsBefore,
+          afterSnapshots: ffeSnapshotsAfter,
+          beforeValues: ffeValuesBefore,
+          afterValues: ffeValuesAfter,
+          rangeNames: untouchedFfeRanges,
+        })
+      ).toEqual([]);
+
+      const ffeTableAfter = await sheetsClient.readTable({ target: optFfeTarget });
+      expect(ffeTableAfter.formulaColumns).toEqual(['Spec Title']);
+      expect(ffeTableAfter.rows).toHaveLength(1);
+      expect(ffeTableAfter.rows[0].values).toMatchObject({
+        'Spec Tag': customSpecTag,
+        'Spec Title': customSpecTitle,
+        Vendor: customVendor,
+        Contact: customFfeContact,
+      });
+      expect(findSheetErrorTokens(ffeTableAfter.rows[0].values)).toEqual([]);
+
+      const updatedFfeOptions = await logWiring.documentLogService.readOptionTables!({
+        documentTypeKey: 'submittal-ffe',
+        selectedLogId: optSpreadsheetId,
+      });
+      expect(updatedFfeOptions.status).toBe('ready');
+      if (updatedFfeOptions.status !== 'ready') return;
+      expect(updatedFfeOptions.tables.specs?.tuples).toContainEqual(
+        expect.objectContaining({ key: customSpecTag, name: customSpecTitle })
+      );
+      expect(updatedFfeOptions.tables.vendors?.tuples).toContainEqual(
+        expect.objectContaining({ key: customVendor, name: customVendor })
+      );
+      expect(updatedFfeOptions.tables.contacts?.tuples).toContainEqual(
+        expect.objectContaining({ key: customFfeContact, name: customFfeContact })
+      );
+
+      const ffeLogRead = await logWiring.documentLogService.readLog({
+        documentTypeKey: 'submittal-ffe',
+        selectedLogId: optSpreadsheetId,
+      });
+      expect(ffeLogRead.warnings).toEqual([]);
+      expect(ffeLogRead.entries).toHaveLength(1);
+      expect(ffeLogRead.entries[0].valid).toBe(true);
+      expect(ffeLogRead.entries[0].document.data).toMatchObject({
+        specTag: { key: customSpecTag, name: customSpecTitle },
+        specTitle: customSpecTitle,
+        vendor: { key: customVendor, name: customVendor },
+        contact: { key: customFfeContact, name: customFfeContact },
+      });
+    } finally {
+      for (const id of [...localCleanupIds].reverse()) {
+        try {
+          await liveDriveClient.trash(id);
+        } catch {
+          // Best-effort cleanup of every created artifact
+        }
+      }
+    }
+  }, 180_000);
 });
