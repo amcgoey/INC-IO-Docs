@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Readable } from 'node:stream';
 import {
   GoogleDriveClient,
   GoogleDriveApiError,
   GoogleDriveAmbiguousPathError,
+  GoogleDriveFileTooLargeError,
   GoogleDriveNotFoundError,
 } from './drive-client';
 import { google, type drive_v3 } from 'googleapis';
@@ -86,7 +88,7 @@ describe('GoogleDriveClient', () => {
       expect(mockDrive.files.get).toHaveBeenCalledWith({
         fileId: 'file-123',
         fields:
-          'id, name, parents, mimeType, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
+          'id, name, parents, mimeType, size, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
         supportsAllDrives: true,
       });
     });
@@ -292,7 +294,7 @@ describe('GoogleDriveClient', () => {
       expect(mockDrive.files.get).toHaveBeenCalledWith({
         fileId: 'file-123',
         fields:
-          'id, name, parents, mimeType, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
+          'id, name, parents, mimeType, size, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
         supportsAllDrives: true,
       });
 
@@ -400,7 +402,7 @@ describe('GoogleDriveClient', () => {
       expect(mockDrive.files.get).toHaveBeenCalledWith({
         fileId: 'file-123',
         fields:
-          'id, name, parents, mimeType, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
+          'id, name, parents, mimeType, size, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
         supportsAllDrives: true,
       });
       expect(mockDrive.files.update).not.toHaveBeenCalled();
@@ -468,7 +470,7 @@ describe('GoogleDriveClient', () => {
       expect(mockDrive.files.get).toHaveBeenCalledWith({
         fileId: 'root-id',
         fields:
-          'id, name, parents, mimeType, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
+          'id, name, parents, mimeType, size, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
         supportsAllDrives: true,
       });
     });
@@ -576,7 +578,7 @@ describe('GoogleDriveClient', () => {
       expect(mockDrive.files.get).toHaveBeenCalledWith({
         fileId: 'root-id',
         fields:
-          'id, name, parents, mimeType, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
+          'id, name, parents, mimeType, size, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
         supportsAllDrives: true,
       });
       expect(mockDrive.files.list).not.toHaveBeenCalled();
@@ -931,7 +933,7 @@ describe('GoogleDriveClient', () => {
       expect(mockDrive.files.get).toHaveBeenCalledWith({
         fileId: 'file-123',
         fields:
-          'id, name, parents, mimeType, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
+          'id, name, parents, mimeType, size, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
         supportsAllDrives: true,
       });
 
@@ -2042,7 +2044,7 @@ describe('GoogleDriveClient', () => {
       expect(mockDrive.files.get).toHaveBeenNthCalledWith(1, {
         fileId: 'file-pdf-1',
         fields:
-          'id, name, parents, mimeType, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
+          'id, name, parents, mimeType, size, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
         supportsAllDrives: true,
       });
       expect(mockDrive.files.get).toHaveBeenNthCalledWith(
@@ -2052,7 +2054,7 @@ describe('GoogleDriveClient', () => {
           alt: 'media',
           supportsAllDrives: true,
         },
-        { responseType: 'arraybuffer' }
+        { responseType: 'stream' }
       );
       expect(mockDrive.files.export).not.toHaveBeenCalled();
     });
@@ -2087,7 +2089,7 @@ describe('GoogleDriveClient', () => {
             fileId: 'gdoc-1',
             mimeType: 'application/pdf',
           },
-          { responseType: 'arraybuffer' }
+          { responseType: 'stream' }
         );
       }
     );
@@ -2141,7 +2143,7 @@ describe('GoogleDriveClient', () => {
           fileId: 'file-auth-1',
           mimeType: 'application/pdf',
         },
-        { responseType: 'arraybuffer' }
+        { responseType: 'stream' }
       );
       driveSpy.mockRestore();
     });
@@ -2268,7 +2270,7 @@ describe('GoogleDriveClient', () => {
           alt: 'media',
           supportsAllDrives: true,
         },
-        { responseType: 'arraybuffer' }
+        { responseType: 'stream' }
       );
       expect(mockDrive.files.export).not.toHaveBeenCalled();
 
@@ -2319,7 +2321,7 @@ describe('GoogleDriveClient', () => {
           alt: 'media',
           supportsAllDrives: true,
         },
-        { responseType: 'arraybuffer' }
+        { responseType: 'stream' }
       );
       driveSpy.mockRestore();
     });
@@ -2360,6 +2362,84 @@ describe('GoogleDriveClient', () => {
       expect(err).toBeInstanceOf(GoogleDriveApiError);
       expect(err.message).toMatch(/Google Drive API error in downloadFileMedia: Internal Server Error/);
       expect(err.statusCode).toBe(500);
+    });
+
+    it('rejects oversized downloads pre-flight via knownSize and during streaming reads without buffering full payload', async () => {
+      const guardedClient = new GoogleDriveClient({
+        drive: mockDrive,
+        configProvider: {
+          getDriveConfig: vi.fn().mockResolvedValue(undefined),
+          getMaxInMemoryFileBytes: vi.fn().mockResolvedValue(10),
+        },
+      });
+
+      await expect(
+        guardedClient.downloadFileMedia('too-large-known', { knownSize: 11 })
+      ).rejects.toThrow(GoogleDriveFileTooLargeError);
+      expect(mockDrive.files.get).not.toHaveBeenCalled();
+
+      let destroyed = false;
+      const oversizedStream = new Readable({
+        read() {
+          this.push(Buffer.from('123456'));
+          this.push(Buffer.from('789012'));
+          this.push(null);
+        },
+        destroy(err, cb) {
+          destroyed = true;
+          cb(err);
+        },
+      });
+
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: oversizedStream,
+      });
+
+      await expect(guardedClient.downloadFileMedia('too-large-stream')).rejects.toThrow(
+        GoogleDriveFileTooLargeError
+      );
+      expect(destroyed).toBe(true);
+    });
+
+    it('requests size in getFile and rejects oversized downloadAsBuffer before downloading media or exporting', async () => {
+      const guardedClient = new GoogleDriveClient({
+        drive: mockDrive,
+        configProvider: {
+          getDriveConfig: vi.fn().mockResolvedValue(undefined),
+          getMaxInMemoryFileBytes: vi.fn().mockResolvedValue(100),
+        },
+      });
+
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: {
+          id: 'big-pdf',
+          name: 'Big.pdf',
+          mimeType: 'application/pdf',
+          size: '101',
+        },
+      });
+
+      await expect(guardedClient.downloadAsBuffer('big-pdf')).rejects.toThrow(
+        GoogleDriveFileTooLargeError
+      );
+      expect(mockDrive.files.get).toHaveBeenCalledTimes(1);
+      expect(mockDrive.files.export).not.toHaveBeenCalled();
+
+      (mockDrive.files.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: {
+          id: 'small-gdoc',
+          name: 'LargeExport.gdoc',
+          mimeType: 'application/vnd.google-apps.document',
+        },
+      });
+      const exportStream = Readable.from([Buffer.alloc(60), Buffer.alloc(41)]);
+      (mockDrive.files.export as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: exportStream,
+      });
+
+      await expect(guardedClient.downloadAsBuffer('small-gdoc')).rejects.toThrow(
+        GoogleDriveFileTooLargeError
+      );
     });
   });
 

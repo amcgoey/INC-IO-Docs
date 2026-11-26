@@ -41,6 +41,11 @@ export interface AppInfrastructureArgs {
    * Port on which the container listens. Defaults to 8080.
    */
   port?: pulumi.Input<number>;
+
+  /**
+   * Maximum concurrent requests per Cloud Run instance. Defaults to 4 to bound peak PDF heap usage.
+   */
+  maxInstanceRequestConcurrency?: pulumi.Input<number>;
 }
 
 export class AppInfrastructure extends pulumi.ComponentResource {
@@ -68,6 +73,7 @@ export class AppInfrastructure extends pulumi.ComponentResource {
     const runtimeAccountName = args.runtimeAccountName ?? "addon-runtime";
     const port = args.port ?? 8080;
     const image = args.image ?? "us-docker.pkg.dev/cloudrun/container/hello";
+    const maxInstanceRequestConcurrency = args.maxInstanceRequestConcurrency ?? 4;
 
     // 1. Enable required GCP APIs
     const requiredApis = [
@@ -140,6 +146,7 @@ export class AppInfrastructure extends pulumi.ComponentResource {
         ingress: "INGRESS_TRAFFIC_ALL",
         template: {
           serviceAccount: runtimeServiceAccount.email,
+          maxInstanceRequestConcurrency,
           containers: [
             {
               image: image,

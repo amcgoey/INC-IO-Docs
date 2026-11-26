@@ -286,6 +286,9 @@ describe('DocumentType JSON files schema validation', () => {
 
       const driveConfig = await manifestProvider.getDriveConfig();
       expect(driveConfig?.defaultFolderName).toBe('Unfiled');
+
+      const maxInMemoryFileBytes = await manifestProvider.getMaxInMemoryFileBytes();
+      expect(maxInMemoryFileBytes).toBe(200 * 1024 * 1024);
     });
 
     it('should validate shared contacts and vendors AliasDictionaries and DocumentParseSchemas across all four DocumentTypes', async () => {

@@ -38,6 +38,7 @@ import type { HttpServer } from '../infrastructure/http';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 import { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
+import { createMaxInMemoryFileBytesProvider } from '../infrastructure/manifest/app-manifest-provider';
 import { GmailSourceFileHydratorAdapter } from '../features/document/adapters/gmail-source-file-hydrator.adapter';
 
 export interface DocumentFeatureWiringOptions {
@@ -166,11 +167,12 @@ export function createDocumentServiceFactory(
           : true;
 
       const gmailClient = options.gmailClient ?? new GoogleGmailClient();
+      const getMaxInMemoryFileBytes = createMaxInMemoryFileBytesProvider(options.configProvider);
       sourceFileHydrator = new GmailSourceFileHydratorAdapter(gmailClient, {
         auth,
         messageId,
         isFileSourceEmailAttachments,
-        pdfProcessor: options.pdfProcessor ?? new PdfProcessor(),
+        pdfProcessor: options.pdfProcessor ?? new PdfProcessor({ getMaxInMemoryFileBytes }),
       });
     }
 

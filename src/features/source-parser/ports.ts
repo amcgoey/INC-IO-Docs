@@ -4,6 +4,7 @@ export const DriveHierarchyNodeSchema = Type.Object({
   id: Type.String({ minLength: 1 }),
   name: Type.String({ minLength: 1 }),
   mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  size: Type.Optional(Type.Union([Type.Number(), Type.Undefined()])),
   createdTime: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   modifiedTime: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
 });
@@ -28,6 +29,7 @@ export const DriveSourceFileMetadataSchema = Type.Object({
   name: Type.String({ minLength: 1 }),
   parents: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  size: Type.Optional(Type.Union([Type.Number(), Type.Undefined()])),
   webViewLink: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   driveId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   createdTime: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
@@ -317,6 +319,7 @@ export const FormExtractTargetSchema = Type.Object(
   {
     id: Type.String({ minLength: 1 }),
     mimeType: Type.String({ minLength: 1 }),
+    size: Type.Optional(Type.Union([Type.Number(), Type.Undefined()])),
   },
   { additionalProperties: false }
 );
@@ -341,6 +344,7 @@ export const FormExtractOutcomeSchema = Type.Union([
   ),
   Type.Object({ status: Type.Literal('encrypted') }, { additionalProperties: false }),
   Type.Object({ status: Type.Literal('corrupted') }, { additionalProperties: false }),
+  Type.Object({ status: Type.Literal('file_too_large') }, { additionalProperties: false }),
   Type.Object({ status: Type.Literal('source_error') }, { additionalProperties: false }),
 ]);
 export type FormExtractOutcome = Static<typeof FormExtractOutcomeSchema>;
