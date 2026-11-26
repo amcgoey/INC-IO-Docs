@@ -163,12 +163,16 @@ describe("AppInfrastructure ComponentResource", () => {
     expect(runRes?.inputs.name).toBe("inc-io-docs-dev");
     expect(runRes?.inputs.project).toBe("inc-io-docs-dev");
 
-    // Check Cloud Run template serviceAccount attachment
+    // Check Cloud Run template serviceAccount attachment and concurrency limit
     const template = runRes?.inputs.template as {
       serviceAccount?: string;
+      maxInstanceRequestConcurrency?: number;
       containers?: Array<{ envs?: Array<{ name: string; value: string }> }>;
     };
     expect(template?.serviceAccount).toBe("addon-runtime@mock-project.iam.gserviceaccount.com");
+    expect(template?.maxInstanceRequestConcurrency).toBeGreaterThanOrEqual(4);
+    expect(template?.maxInstanceRequestConcurrency).toBeLessThanOrEqual(8);
+    expect(template?.maxInstanceRequestConcurrency).toBe(4);
 
     // Check Cloud Run container envs
     const envs = template?.containers?.[0]?.envs;
@@ -270,9 +274,11 @@ describe("AppInfrastructure ComponentResource", () => {
 
     const template = runRes?.inputs.template as {
       serviceAccount?: string;
+      maxInstanceRequestConcurrency?: number;
       containers?: Array<{ envs?: Array<{ name: string; value: string }> }>;
     };
     expect(template?.serviceAccount).toBe("addon-runtime@mock-project.iam.gserviceaccount.com");
+    expect(template?.maxInstanceRequestConcurrency).toBe(4);
     expect(template?.containers?.[0]?.envs).toContainEqual({
       name: "NODE_ENV",
       value: "production",

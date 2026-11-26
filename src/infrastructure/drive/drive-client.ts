@@ -2,6 +2,10 @@ import { Readable } from 'node:stream';
 import { google, type drive_v3 } from 'googleapis';
 import { GoogleAuth, OAuth2Client } from 'google-auth-library';
 import { Type } from '@sinclair/typebox';
+import {
+  DEFAULT_MAX_IN_MEMORY_FILE_BYTES,
+  resolveMaxInMemoryFileBytesFromEnv,
+} from '../manifest/app-manifest-provider';
 
 export interface DriveShortcutDetails {
   targetId?: string | undefined;
@@ -18,6 +22,7 @@ export interface DriveFileMetadata {
   name: string;
   parents?: string[] | undefined;
   mimeType?: string | undefined;
+  size?: number | undefined;
   webViewLink?: string | undefined;
   driveId?: string | undefined;
   createdTime?: string | undefined;
@@ -30,6 +35,7 @@ export const DriveFileMetadataSchema = Type.Object({
   name: Type.String({ minLength: 1 }),
   parents: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  size: Type.Optional(Type.Union([Type.Number(), Type.Undefined()])),
   webViewLink: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   driveId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   createdTime: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
@@ -131,6 +137,21 @@ export class GoogleDriveNotFoundError extends GoogleDriveApiError {
   }
 }
 
+export class GoogleDriveFileTooLargeError extends GoogleDriveApiError {
+  readonly fileSizeBytes?: number | undefined;
+  readonly maxBytes: number;
+
+  constructor(
+    message: string,
+    options: { fileSizeBytes?: number | undefined; maxBytes: number; cause?: unknown }
+  ) {
+    super(message, { cause: options.cause });
+    this.name = 'GoogleDriveFileTooLargeError';
+    this.fileSizeBytes = options.fileSizeBytes;
+    this.maxBytes = options.maxBytes;
+  }
+}
+
 export interface DriveRetryOptions {
   maxRetries?: number;
   initialDelayMs?: number;
@@ -144,10 +165,15 @@ export interface DriveConfigProvider {
     initialDelayMs?: number | undefined;
     backoffFactor?: number | undefined;
   } | undefined>;
+  getMaxInMemoryFileBytes?(): Promise<number | undefined>;
 }
 
 export interface DriveOperationOptions {
   auth?: string | undefined;
+}
+
+export interface DriveDownloadOptions extends DriveOperationOptions {
+  knownSize?: number | undefined;
 }
 
 export interface GoogleDriveClientOptions {
@@ -155,6 +181,9 @@ export interface GoogleDriveClientOptions {
   drive?: drive_v3.Drive | undefined;
   retryOptions?: DriveRetryOptions | undefined;
   configProvider?: DriveConfigProvider | undefined;
+  getMaxInMemoryFileBytes?:
+    | (() => Promise<number | undefined> | number | undefined)
+    | undefined;
 }
 
 function extractHttpStatusCode(error: unknown): number | undefined {
@@ -202,6 +231,52 @@ function isGoogleWorkspaceDocument(mimeType?: string): boolean {
   );
 }
 
+function parseOptionalByteSize(rawSize: unknown): number | undefined {
+  if (typeof rawSize === 'number') {
+    return Number.isFinite(rawSize) && rawSize >= 0 ? rawSize : undefined;
+  }
+  if (typeof rawSize === 'string') {
+    const trimmed = rawSize.trim();
+    if (/^\d+$/.test(trimmed)) {
+      const parsed = Number(trimmed);
+      return Number.isSafeInteger(parsed) ? parsed : undefined;
+    }
+  }
+  return undefined;
+}
+
+function isAsyncIterableStream(data: unknown): data is AsyncIterable<unknown> {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    Symbol.asyncIterator in data &&
+    typeof (data as AsyncIterable<unknown>)[Symbol.asyncIterator] === 'function'
+  );
+}
+
+function destroyStreamSafely(stream: unknown): void {
+  if (
+    typeof stream === 'object' &&
+    stream !== null &&
+    'destroy' in stream &&
+    typeof (stream as { destroy: unknown }).destroy === 'function'
+  ) {
+    (stream as { destroy: () => void }).destroy();
+  }
+}
+
+function extractContentLength(headers: unknown): number | undefined {
+  if (!headers || typeof headers !== 'object') {
+    return undefined;
+  }
+  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+    if (key.toLowerCase() === 'content-length') {
+      return parseOptionalByteSize(value);
+    }
+  }
+  return undefined;
+}
+
 function toUint8Array(data: unknown): Uint8Array {
   if (ArrayBuffer.isView(data)) {
     return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
@@ -226,10 +301,14 @@ export class GoogleDriveClient {
   private readonly defaultDrive: drive_v3.Drive;
   private readonly retryOptions: DriveRetryOptions;
   private readonly configProvider?: DriveConfigProvider | undefined;
+  private readonly getMaxInMemoryFileBytesFn?:
+    | (() => Promise<number | undefined> | number | undefined)
+    | undefined;
 
   constructor(options: GoogleDriveClientOptions = {}) {
     this.retryOptions = options.retryOptions ?? {};
     this.configProvider = options.configProvider;
+    this.getMaxInMemoryFileBytesFn = options.getMaxInMemoryFileBytes;
 
     if (options.drive) {
       this.defaultDrive = options.drive;
@@ -315,6 +394,79 @@ export class GoogleDriveClient {
     return { id: file.id, name: file.name };
   }
 
+  private async resolveMaxInMemoryFileBytes(): Promise<number> {
+    const direct = this.getMaxInMemoryFileBytesFn
+      ? await this.getMaxInMemoryFileBytesFn()
+      : undefined;
+    const fromConfig =
+      direct === undefined && this.configProvider?.getMaxInMemoryFileBytes
+        ? await this.configProvider.getMaxInMemoryFileBytes()
+        : undefined;
+    const resolved =
+      direct ??
+      fromConfig ??
+      resolveMaxInMemoryFileBytesFromEnv() ??
+      DEFAULT_MAX_IN_MEMORY_FILE_BYTES;
+
+    if (typeof resolved !== 'number' || !Number.isFinite(resolved) || resolved <= 0) {
+      throw new Error(
+        `Invalid maxInMemoryFileBytes configuration "${String(resolved)}": must be a positive finite number`
+      );
+    }
+    return resolved;
+  }
+
+  private assertFileSizeWithinLimit(
+    fileId: string,
+    sizeBytes: number | undefined,
+    maxBytes: number
+  ): void {
+    if (sizeBytes !== undefined && sizeBytes > maxBytes) {
+      throw new GoogleDriveFileTooLargeError(
+        `Google Drive file '${fileId}' (${sizeBytes} bytes) exceeds maximum in-memory size limit of ${maxBytes} bytes`,
+        { fileSizeBytes: sizeBytes, maxBytes }
+      );
+    }
+  }
+
+  private async readDownloadResponseWithinLimit(
+    fileId: string,
+    res: { data?: unknown; headers?: unknown },
+    maxBytes: number
+  ): Promise<Uint8Array> {
+    const contentLength = extractContentLength(res.headers);
+    if (contentLength !== undefined && contentLength > maxBytes) {
+      destroyStreamSafely(res.data);
+      throw new GoogleDriveFileTooLargeError(
+        `Google Drive file '${fileId}' (${contentLength} bytes) exceeds maximum in-memory size limit of ${maxBytes} bytes`,
+        { fileSizeBytes: contentLength, maxBytes }
+      );
+    }
+
+    if (isAsyncIterableStream(res.data)) {
+      const chunks: Uint8Array[] = [];
+      let totalBytes = 0;
+      for await (const chunk of res.data) {
+        const chunkBytes = toUint8Array(chunk);
+        totalBytes += chunkBytes.byteLength;
+        if (totalBytes > maxBytes) {
+          destroyStreamSafely(res.data);
+          throw new GoogleDriveFileTooLargeError(
+            `Google Drive file '${fileId}' stream exceeded maximum in-memory size limit of ${maxBytes} bytes`,
+            { fileSizeBytes: totalBytes, maxBytes }
+          );
+        }
+        chunks.push(chunkBytes);
+      }
+      const combined = Buffer.concat(chunks);
+      return new Uint8Array(combined.buffer, combined.byteOffset, combined.byteLength);
+    }
+
+    const bytes = toUint8Array(res.data);
+    this.assertFileSizeWithinLimit(fileId, bytes.byteLength, maxBytes);
+    return bytes;
+  }
+
   async getFile(fileId: string, options?: DriveOperationOptions): Promise<DriveFileMetadata> {
     const drive = this.getDrive(options?.auth);
     try {
@@ -322,7 +474,7 @@ export class GoogleDriveClient {
         drive.files.get({
           fileId,
           fields:
-            'id, name, parents, mimeType, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
+            'id, name, parents, mimeType, size, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
           supportsAllDrives: true,
         })
       );
@@ -339,11 +491,14 @@ export class GoogleDriveClient {
           }
         : undefined;
 
+      const size = parseOptionalByteSize(res.data.size);
+
       return {
         id,
         name,
         parents: res.data.parents ?? [],
         mimeType: res.data.mimeType ?? undefined,
+        ...(size !== undefined ? { size } : {}),
         webViewLink: res.data.webViewLink ?? undefined,
         driveId: res.data.driveId ?? undefined,
         createdTime: res.data.createdTime ?? undefined,
@@ -793,8 +948,11 @@ export class GoogleDriveClient {
 
   async downloadFileMedia(
     fileId: string,
-    options?: DriveOperationOptions
+    options?: DriveDownloadOptions
   ): Promise<Uint8Array> {
+    const maxBytes = await this.resolveMaxInMemoryFileBytes();
+    this.assertFileSizeWithinLimit(fileId, options?.knownSize, maxBytes);
+
     const drive = this.getDrive(options?.auth);
     try {
       const res = await this.executeWithRetry(() =>
@@ -804,10 +962,10 @@ export class GoogleDriveClient {
             alt: 'media',
             supportsAllDrives: true,
           },
-          { responseType: 'arraybuffer' }
+          { responseType: 'stream' }
         )
       );
-      return toUint8Array(res.data);
+      return await this.readDownloadResponseWithinLimit(fileId, res, maxBytes);
     } catch (error) {
       this.wrapApiError('downloadFileMedia', error);
     }
@@ -817,8 +975,10 @@ export class GoogleDriveClient {
     fileId: string,
     options?: DriveOperationOptions
   ): Promise<Uint8Array> {
+    const maxBytes = await this.resolveMaxInMemoryFileBytes();
     try {
       const file = await this.getFile(fileId, options);
+      this.assertFileSizeWithinLimit(fileId, file.size, maxBytes);
 
       if (isGoogleWorkspaceDocument(file.mimeType)) {
         const drive = this.getDrive(options?.auth);
@@ -828,14 +988,17 @@ export class GoogleDriveClient {
               fileId,
               mimeType: 'application/pdf',
             },
-            { responseType: 'arraybuffer' }
+            { responseType: 'stream' }
           )
         );
-        return toUint8Array(res.data);
+        return await this.readDownloadResponseWithinLimit(fileId, res, maxBytes);
       } else {
         try {
           return await this.downloadFileMedia(fileId, options);
         } catch (error) {
+          if (error instanceof GoogleDriveFileTooLargeError) {
+            throw error;
+          }
           if (
             error instanceof GoogleDriveApiError &&
             error.message.startsWith('Google Drive API error in downloadFileMedia: ')

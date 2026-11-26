@@ -12,6 +12,9 @@ export interface DriveFormExtractorDeps {
   driveMediaClient: DriveFormMediaClientPort;
   pdfProcessor: PdfFormExtractorPort;
   googleDocsFormReader?: GoogleDocsFormReaderPort | undefined;
+  getMaxInMemoryFileBytes?:
+    | (() => Promise<number | undefined> | number | undefined)
+    | undefined;
 }
 
 export class DriveFormExtractorAdapter implements FormExtractorPort {
@@ -32,7 +35,7 @@ export class DriveFormExtractorAdapter implements FormExtractorPort {
 
   private async loadFormFields(item: FormExtractTarget): Promise<FormExtractOutcome> {
     if (item.mimeType === 'application/pdf') {
-      return this.extractPdfFormFields(item.id);
+      return this.extractPdfFormFields(item);
     }
 
     if (item.mimeType === 'application/vnd.google-apps.document') {
@@ -42,11 +45,25 @@ export class DriveFormExtractorAdapter implements FormExtractorPort {
     return { status: 'ok', widgetCount: 0, fields: {} };
   }
 
-  private async extractPdfFormFields(fileId: string): Promise<FormExtractOutcome> {
+  private async extractPdfFormFields(item: FormExtractTarget): Promise<FormExtractOutcome> {
+    if (item.size !== undefined && this.deps.getMaxInMemoryFileBytes) {
+      const maxBytes = await this.deps.getMaxInMemoryFileBytes();
+      if (maxBytes !== undefined && item.size > maxBytes) {
+        return { status: 'file_too_large' };
+      }
+    }
+
     let bytes: Uint8Array;
     try {
-      bytes = await this.deps.driveMediaClient.downloadFileMedia(fileId);
-    } catch {
+      bytes = await this.deps.driveMediaClient.downloadFileMedia(item.id);
+    } catch (error: unknown) {
+      if (
+        error instanceof Error &&
+        (error.name === 'GoogleDriveFileTooLargeError' ||
+          error.name === 'DriveFileTooLargeError')
+      ) {
+        return { status: 'file_too_large' };
+      }
       return { status: 'source_error' };
     }
 
@@ -56,6 +73,9 @@ export class DriveFormExtractorAdapter implements FormExtractorPort {
     } catch (error: unknown) {
       if (error instanceof Error && error.name === 'PdfEncryptionError') {
         return { status: 'encrypted' };
+      }
+      if (error instanceof Error && error.name === 'PdfFileTooLargeError') {
+        return { status: 'file_too_large' };
       }
       return { status: 'corrupted' };
     }

@@ -1,5 +1,6 @@
 import {
   DriveServiceError,
+  DriveFileTooLargeError,
   AmbiguousPathSpecError,
   FileNotFoundError,
   type DriveContentSaveOptions,
@@ -14,8 +15,15 @@ interface DriveClientFileMetadata {
   name: string;
   parents?: string[] | undefined;
   mimeType?: string | undefined;
+  size?: number | undefined;
   webViewLink?: string | undefined;
   modifiedTime?: string | undefined;
+  shortcutDetails?:
+    | {
+        targetId?: string | undefined;
+        targetMimeType?: string | undefined;
+      }
+    | undefined;
 }
 
 interface DriveClientSearchParams {
@@ -86,8 +94,10 @@ function mapMetadataToResult(metadata: DriveClientFileMetadata): DriveFileResult
     name: metadata.name,
     parents: metadata.parents,
     mimeType: metadata.mimeType,
+    ...(metadata.size !== undefined ? { size: metadata.size } : {}),
     webViewLink: metadata.webViewLink,
     modifiedTime: metadata.modifiedTime,
+    ...(metadata.shortcutDetails !== undefined ? { shortcutDetails: metadata.shortcutDetails } : {}),
   };
 }
 
@@ -147,6 +157,19 @@ export class DriveServiceAdapter implements DriveServicePort {
             ? String((error as { message: unknown }).message)
             : String(error);
       throw new FileNotFoundError(baseMessage, { cause: error });
+    }
+
+    if (
+      errorName === 'GoogleDriveFileTooLargeError' ||
+      errorName === 'DriveFileTooLargeError'
+    ) {
+      const baseMessage =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'object' && error !== null && 'message' in error
+            ? String((error as { message: unknown }).message)
+            : String(error);
+      throw new DriveFileTooLargeError(baseMessage, { cause: error });
     }
 
     const statusCode = extractHttpStatusCode(error);

@@ -12,13 +12,78 @@ import { extractText } from 'unpdf';
 import {
   PdfCorruptedError,
   PdfEncryptionError,
+  PdfFileTooLargeError,
   PdfOutOfBoundsError,
   PdfProcessorError,
 } from './errors';
 import { EmailPdfRenderer } from './email-pdf-renderer';
 import type { EmailPdfRenderInput } from './types';
+import {
+  DEFAULT_MAX_IN_MEMORY_FILE_BYTES,
+  resolveMaxInMemoryFileBytesFromEnv,
+} from '../manifest/app-manifest-provider';
+
+export interface PdfProcessorOptions {
+  getMaxInMemoryFileBytes?:
+    | (() => Promise<number | undefined> | number | undefined)
+    | undefined;
+}
 
 export class PdfProcessor {
+  constructor(private readonly options?: PdfProcessorOptions) {}
+
+  private async resolveMaxInMemoryFileBytes(): Promise<number> {
+    const provided = this.options?.getMaxInMemoryFileBytes
+      ? await this.options.getMaxInMemoryFileBytes()
+      : undefined;
+    const resolved =
+      provided ??
+      resolveMaxInMemoryFileBytesFromEnv() ??
+      DEFAULT_MAX_IN_MEMORY_FILE_BYTES;
+    if (typeof resolved !== 'number' || !Number.isFinite(resolved) || resolved <= 0) {
+      throw new Error(
+        `Invalid maxInMemoryFileBytes configuration "${String(resolved)}": must be a positive finite number`
+      );
+    }
+    return resolved;
+  }
+
+  private async assertWithinByteLimit(buffers: readonly Uint8Array[]): Promise<void> {
+    const maxBytes = await this.resolveMaxInMemoryFileBytes();
+    let totalBytes = 0;
+    for (const buffer of buffers) {
+      totalBytes += buffer.byteLength;
+    }
+    if (totalBytes > maxBytes) {
+      throw new PdfFileTooLargeError(
+        `PDF cumulative payload size (${totalBytes} bytes) exceeds maximum in-memory size limit of ${maxBytes} bytes`,
+        { totalBytes, maxBytes }
+      );
+    }
+  }
+
+  private computeEmailPayloadBytes(email: EmailPdfRenderInput): number {
+    let total = 0;
+    const stringFields = [
+      email.subject,
+      email.from,
+      email.to,
+      email.cc,
+      email.date,
+      email.plainTextBody,
+      email.htmlBody,
+      ...(email.attachmentNames ?? []),
+    ];
+    for (const value of stringFields) {
+      if (typeof value === 'string') {
+        total += Buffer.byteLength(value, 'utf8');
+      }
+    }
+    for (const img of email.inlineImages ?? []) {
+      total += img.data.byteLength;
+    }
+    return total;
+  }
   /**
    * Safely loads a PDF document from an in-memory Uint8Array buffer,
    * translating any third-party parsing errors into standardized domain errors.
@@ -69,6 +134,8 @@ export class PdfProcessor {
    * @returns A promise that resolves to a `Uint8Array` containing the newly formed PDF.
    */
   async extractPages(buffer: Uint8Array, pages: number[]): Promise<Uint8Array> {
+    await this.assertWithinByteLimit([buffer]);
+
     if (pages.length === 0) {
       throw new PdfOutOfBoundsError(
         'At least one page must be specified for extraction'
@@ -125,6 +192,8 @@ export class PdfProcessor {
    * @returns A promise that resolves to a `Uint8Array` containing the combined PDF.
    */
   async mergeDocuments(buffers: Uint8Array[]): Promise<Uint8Array> {
+    await this.assertWithinByteLimit(buffers);
+
     if (buffers.length === 0) {
       throw new PdfCorruptedError(
         'Cannot merge an empty array of PDF buffers: at least one PDF buffer is required'
@@ -188,6 +257,8 @@ export class PdfProcessor {
   async extractFormData(
     buffer: Uint8Array
   ): Promise<Record<string, string | boolean | string[] | undefined>> {
+    await this.assertWithinByteLimit([buffer]);
+
     try {
       const srcDoc = await this.loadPdfDocument(buffer);
       const form = srcDoc.getForm();
@@ -270,6 +341,8 @@ export class PdfProcessor {
     buffer: Uint8Array,
     formData: Record<string, string | number | boolean | string[] | undefined | null>
   ): Promise<Uint8Array> {
+    await this.assertWithinByteLimit([buffer]);
+
     try {
       const srcDoc = await this.loadPdfDocument(buffer);
       const form = srcDoc.getForm();
@@ -394,8 +467,23 @@ export class PdfProcessor {
    * @returns A promise resolving to the binary Uint8Array of the generated PDF document.
    */
   async generateEmailPdf(email: EmailPdfRenderInput): Promise<Uint8Array> {
+    const maxBytes = await this.resolveMaxInMemoryFileBytes();
+    const totalBytes = this.computeEmailPayloadBytes(email);
+    if (totalBytes > maxBytes) {
+      throw new PdfFileTooLargeError(
+        `Email PDF payload size (${totalBytes} bytes) exceeds maximum in-memory size limit of ${maxBytes} bytes`,
+        { totalBytes, maxBytes }
+      );
+    }
     const renderer = new EmailPdfRenderer();
-    return await renderer.render(email);
+    const rendered = await renderer.render(email);
+    if (rendered.byteLength > maxBytes) {
+      throw new PdfFileTooLargeError(
+        `Rendered email PDF size (${rendered.byteLength} bytes) exceeds maximum in-memory size limit of ${maxBytes} bytes`,
+        { totalBytes: rendered.byteLength, maxBytes }
+      );
+    }
+    return rendered;
   }
 }
 

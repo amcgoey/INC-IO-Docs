@@ -22,6 +22,7 @@ import {
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import { GoogleDocsClient } from '../infrastructure/docs';
 import { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
+import { createMaxInMemoryFileBytesProvider } from '../infrastructure/manifest/app-manifest-provider';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
@@ -168,7 +169,9 @@ export function createSourceParserWiring(
     options.formTemplateParser ??
     resolveFormTemplateParser(options.templateEvaluator) ??
     new HandlebarsAdapter();
-  const pdfProcessor: PdfFormExtractorPort = options.pdfProcessor ?? new PdfProcessor();
+  const getMaxInMemoryFileBytes = createMaxInMemoryFileBytesProvider(options.configProvider);
+  const pdfProcessor: PdfFormExtractorPort =
+    options.pdfProcessor ?? new PdfProcessor({ getMaxInMemoryFileBytes });
   const parseSchemaRegistry: ParseSchemaRegistryPort = new ParseSchemaRegistryAdapter(
     options.manifestProvider,
     formTemplateParser
@@ -195,6 +198,7 @@ export function createSourceParserWiring(
       driveMediaClient: mediaClient!,
       pdfProcessor,
       googleDocsFormReader,
+      getMaxInMemoryFileBytes,
     });
   };
 
