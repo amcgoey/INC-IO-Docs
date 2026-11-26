@@ -614,6 +614,139 @@ export class DriveActivityHandler implements ActivityHandler {
     };
   }
 
+  private parseOptionalPayloadFileName(
+    activityType: 'MOVE_FILE' | 'DUPLICATE_FILE',
+    payload: Record<string, unknown>
+  ): string | undefined {
+    if (payload.fileName === undefined) {
+      return undefined;
+    }
+    if (typeof payload.fileName !== 'string' || payload.fileName.trim().length === 0) {
+      throw new DriveServiceError(
+        `DriveActivityHandler: ${activityType} payload.fileName must be a non-empty string`
+      );
+    }
+    return payload.fileName.trim();
+  }
+
+  private async hydrateContextSourceFilesIfNeeded(
+    targetSourceFiles: SourceFile[],
+    isFromContextSourceFiles: boolean,
+    processedFiles: FileLocator[]
+  ): Promise<{ ok: true; files: SourceFile[] } | { ok: false; output: ActivityOutput }> {
+    if (
+      !isFromContextSourceFiles ||
+      !this.sourceFileHydrator ||
+      !targetSourceFiles.some((f) => !(f.content instanceof Uint8Array))
+    ) {
+      return { ok: true, files: targetSourceFiles };
+    }
+    try {
+      return {
+        ok: true,
+        files: await this.sourceFileHydrator.hydrate(targetSourceFiles),
+      };
+    } catch (error) {
+      if (error instanceof DriveServiceError) {
+        return {
+          ok: false,
+          output: {
+            success: false,
+            error: error.message,
+            files: processedFiles,
+          },
+        };
+      }
+      throw error;
+    }
+  }
+
+  private validateRemoteSourceFileHydration(
+    sourceFile: SourceFile,
+    isFromContextSourceFiles: boolean,
+    payload: Record<string, unknown>,
+    processedFiles: FileLocator[]
+  ): ActivityOutput | undefined {
+    if (!isFromContextSourceFiles) {
+      return undefined;
+    }
+    if (this.isEmailPdf(sourceFile)) {
+      return {
+        success: false,
+        error: 'Could not generate the Email PDF. Please try again.',
+        files: processedFiles,
+      };
+    }
+    if (this.isUnhydratedEmailAttachment(sourceFile, payload)) {
+      return {
+        success: false,
+        error:
+          'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.',
+        files: processedFiles,
+      };
+    }
+    return undefined;
+  }
+
+  private async saveBinarySourceFile(
+    sourceFile: SourceFile & { content: Uint8Array },
+    leafFolder: DriveFileResult,
+    requestedFileName: string | undefined,
+    fileNamePrefix: string | undefined
+  ): Promise<FileLocator> {
+    const baseName =
+      requestedFileName !== undefined
+        ? resolveExtensionPreservingFileName(
+            requestedFileName,
+            sourceFile.name,
+            sourceFile.mimeType
+          )
+        : sourceFile.name || sourceFile.id;
+    const resolvedName = applyNonDoublingPrefix(baseName, fileNamePrefix);
+    const file = await this.driveService.saveBuffer(sourceFile.content, {
+      action: 'create',
+      targetFolderId: leafFolder.id,
+      name: resolvedName,
+      ...(sourceFile.mimeType !== undefined ? { mimeType: sourceFile.mimeType } : {}),
+    });
+    return this.createFileLocator(file, leafFolder.name, {
+      fallbackMimeType: sourceFile.mimeType,
+      fallbackParentId: leafFolder.id,
+      defaultEmptyUri: true,
+    });
+  }
+
+  private async enrichFileMetadataIfIncomplete(
+    fileId: string,
+    file: {
+      name?: string | undefined;
+      mimeType?: string | undefined;
+      webViewLink?: string | undefined;
+    },
+    fallbackName: string | undefined
+  ): Promise<{
+    name: string | undefined;
+    mimeType: string | undefined;
+    uri: string | undefined;
+  }> {
+    let uri = file.webViewLink;
+    let mimeType = file.mimeType;
+    let name = file.name || fallbackName;
+
+    if (!uri || !name) {
+      try {
+        const fileMeta = await this.driveService.getFile(fileId);
+        uri = uri ?? fileMeta.webViewLink;
+        mimeType = mimeType ?? fileMeta.mimeType;
+        name = name || fileMeta.name;
+      } catch {
+        // Ignore
+      }
+    }
+
+    return { name, mimeType, uri };
+  }
+
   private async handleMove(
     payload: Record<string, unknown>,
     context?: ActivityExecutionContext
@@ -663,15 +796,7 @@ export class DriveActivityHandler implements ActivityHandler {
       throw new Error('DriveActivityHandler: No fileId found in activity payload or execution context');
     }
 
-    let requestedFileName: string | undefined;
-    if (payload.fileName !== undefined) {
-      if (typeof payload.fileName !== 'string' || payload.fileName.trim().length === 0) {
-        throw new DriveServiceError(
-          'DriveActivityHandler: MOVE_FILE payload.fileName must be a non-empty string'
-        );
-      }
-      requestedFileName = payload.fileName.trim();
-    }
+    const requestedFileName = this.parseOptionalPayloadFileName('MOVE_FILE', payload);
 
     const fileMetadataCache = new Map<string, DriveFileResult>();
     const leafFolder = await this.resolveDestinationFolder(
@@ -686,63 +811,35 @@ export class DriveActivityHandler implements ActivityHandler {
 
     const movedFiles: FileLocator[] = [];
 
-    if (
-      isFromContextSourceFiles &&
-      this.sourceFileHydrator &&
-      targetSourceFiles.some((f) => !(f.content instanceof Uint8Array))
-    ) {
-      try {
-        targetSourceFiles = await this.sourceFileHydrator.hydrate(targetSourceFiles);
-      } catch (error) {
-        if (error instanceof DriveServiceError) {
-          return {
-            success: false,
-            error: error.message,
-            files: movedFiles,
-          };
-        }
-        throw error;
-      }
+    const hydration = await this.hydrateContextSourceFilesIfNeeded(
+      targetSourceFiles,
+      isFromContextSourceFiles,
+      movedFiles
+    );
+    if (!hydration.ok) {
+      return hydration.output;
     }
+    targetSourceFiles = hydration.files;
 
     for (const sourceFile of targetSourceFiles) {
       try {
         if (sourceFile.content instanceof Uint8Array) {
-          const resolvedName =
-            requestedFileName !== undefined
-              ? resolveExtensionPreservingFileName(
-                  requestedFileName,
-                  sourceFile.name,
-                  sourceFile.mimeType
-                )
-              : sourceFile.name || sourceFile.id;
-          const file = await this.driveService.saveBuffer(sourceFile.content, {
-            action: 'create',
-            targetFolderId: leafFolder.id,
-            name: resolvedName,
-            ...(sourceFile.mimeType !== undefined ? { mimeType: sourceFile.mimeType } : {}),
-          });
-          const fileLocator = this.createFileLocator(file, leafFolder.name, {
-            fallbackMimeType: sourceFile.mimeType,
-            fallbackParentId: leafFolder.id,
-            defaultEmptyUri: true,
-          });
+          const fileLocator = await this.saveBinarySourceFile(
+            { ...sourceFile, content: sourceFile.content },
+            leafFolder,
+            requestedFileName,
+            undefined
+          );
           movedFiles.push(fileLocator);
         } else {
-          if (isFromContextSourceFiles && this.isEmailPdf(sourceFile)) {
-            return {
-              success: false,
-              error: 'Could not generate the Email PDF. Please try again.',
-              files: movedFiles,
-            };
-          }
-
-          if (isFromContextSourceFiles && this.isUnhydratedEmailAttachment(sourceFile, payload)) {
-            return {
-              success: false,
-              error: 'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.',
-              files: movedFiles,
-            };
+          const hydrationError = this.validateRemoteSourceFileHydration(
+            sourceFile,
+            isFromContextSourceFiles,
+            payload,
+            movedFiles
+          );
+          if (hydrationError) {
+            return hydrationError;
           }
 
           const newName = await this.resolveTargetFileName(
@@ -758,20 +855,11 @@ export class DriveActivityHandler implements ActivityHandler {
               ? await this.driveService.move(sourceFile.id, leafFolder.id, { newName })
               : await this.driveService.move(sourceFile.id, leafFolder.id);
 
-          let uri = movedFile.webViewLink;
-          let mimeType = movedFile.mimeType;
-          let name = movedFile.name || newName;
-
-          if (!uri || !name) {
-            try {
-              const fileMeta = await this.driveService.getFile(sourceFile.id);
-              uri = uri ?? fileMeta.webViewLink;
-              mimeType = mimeType ?? fileMeta.mimeType;
-              name = name || fileMeta.name;
-            } catch {
-              // Ignore
-            }
-          }
+          const { name, mimeType, uri } = await this.enrichFileMetadataIfIncomplete(
+            sourceFile.id,
+            movedFile,
+            newName
+          );
 
           const fileLocator = this.createFileLocator(
             {
@@ -804,15 +892,7 @@ export class DriveActivityHandler implements ActivityHandler {
     payload: Record<string, unknown>,
     context?: ActivityExecutionContext
   ): Promise<ActivityOutput> {
-    let requestedFileName: string | undefined;
-    if (payload.fileName !== undefined) {
-      if (typeof payload.fileName !== 'string' || payload.fileName.trim().length === 0) {
-        throw new DriveServiceError(
-          'DriveActivityHandler: DUPLICATE_FILE payload.fileName must be a non-empty string'
-        );
-      }
-      requestedFileName = payload.fileName.trim();
-    }
+    const requestedFileName = this.parseOptionalPayloadFileName('DUPLICATE_FILE', payload);
 
     let fileNamePrefix: string | undefined;
     if (payload.fileNamePrefix !== undefined) {
@@ -879,24 +959,15 @@ export class DriveActivityHandler implements ActivityHandler {
 
     const duplicatedFiles: FileLocator[] = [];
 
-    if (
-      isFromContextSourceFiles &&
-      this.sourceFileHydrator &&
-      targetSourceFiles.some((f) => !(f.content instanceof Uint8Array))
-    ) {
-      try {
-        targetSourceFiles = await this.sourceFileHydrator.hydrate(targetSourceFiles);
-      } catch (error) {
-        if (error instanceof DriveServiceError) {
-          return {
-            success: false,
-            error: error.message,
-            files: duplicatedFiles,
-          };
-        }
-        throw error;
-      }
+    const hydration = await this.hydrateContextSourceFilesIfNeeded(
+      targetSourceFiles,
+      isFromContextSourceFiles,
+      duplicatedFiles
+    );
+    if (!hydration.ok) {
+      return hydration.output;
     }
+    targetSourceFiles = hydration.files;
 
     for (const sourceFile of targetSourceFiles) {
       try {
@@ -906,45 +977,25 @@ export class DriveActivityHandler implements ActivityHandler {
               'DriveActivityHandler: DUPLICATE_FILE requires a destination folder for binary source files'
             );
           }
-          const baseName =
-            requestedFileName !== undefined
-              ? resolveExtensionPreservingFileName(
-                  requestedFileName,
-                  sourceFile.name,
-                  sourceFile.mimeType
-                )
-              : sourceFile.name || sourceFile.id;
-          const resolvedName = applyNonDoublingPrefix(baseName, fileNamePrefix);
-          const file = await this.driveService.saveBuffer(sourceFile.content, {
-            action: 'create',
-            targetFolderId: leafFolder.id,
-            name: resolvedName,
-            ...(sourceFile.mimeType !== undefined ? { mimeType: sourceFile.mimeType } : {}),
-          });
           duplicatedFiles.push(
-            this.createFileLocator(file, leafFolder.name, {
-              fallbackMimeType: sourceFile.mimeType,
-              fallbackParentId: leafFolder.id,
-              defaultEmptyUri: true,
-            })
+            await this.saveBinarySourceFile(
+              { ...sourceFile, content: sourceFile.content },
+              leafFolder,
+              requestedFileName,
+              fileNamePrefix
+            )
           );
           continue;
         }
 
-        if (isFromContextSourceFiles && this.isEmailPdf(sourceFile)) {
-          return {
-            success: false,
-            error: 'Could not generate the Email PDF. Please try again.',
-            files: duplicatedFiles,
-          };
-        }
-
-        if (isFromContextSourceFiles && this.isUnhydratedEmailAttachment(sourceFile, payload)) {
-          return {
-            success: false,
-            error: 'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.',
-            files: duplicatedFiles,
-          };
+        const hydrationError = this.validateRemoteSourceFileHydration(
+          sourceFile,
+          isFromContextSourceFiles,
+          payload,
+          duplicatedFiles
+        );
+        if (hydrationError) {
+          return hydrationError;
         }
 
         const newName = await this.resolveTargetFileName(
@@ -965,20 +1016,11 @@ export class DriveActivityHandler implements ActivityHandler {
             ? await this.driveService.duplicate(sourceFile.id, duplicateOptions)
             : await this.driveService.duplicate(sourceFile.id);
 
-        let uri = duplicatedFile.webViewLink;
-        let mimeType = duplicatedFile.mimeType;
-        let name = duplicatedFile.name || newName;
-
-        if (!uri || !name) {
-          try {
-            const fileMeta = await this.driveService.getFile(duplicatedFile.id);
-            uri = uri ?? fileMeta.webViewLink;
-            mimeType = mimeType ?? fileMeta.mimeType;
-            name = name || fileMeta.name;
-          } catch {
-            // Ignore
-          }
-        }
+        const { name, mimeType, uri } = await this.enrichFileMetadataIfIncomplete(
+          duplicatedFile.id,
+          duplicatedFile,
+          newName
+        );
 
         const parentName = leafFolder?.name ?? duplicatedFile.parents?.[0] ?? '';
         const fileLocator = this.createFileLocator(

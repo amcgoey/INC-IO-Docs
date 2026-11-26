@@ -26,10 +26,7 @@ import type {
   PdfInsertPagesOptions,
   PdfMergeDocumentsOptions,
 } from './types';
-import {
-  DEFAULT_MAX_IN_MEMORY_FILE_BYTES,
-  resolveMaxInMemoryFileBytesFromEnv,
-} from '../manifest/app-manifest-provider';
+import { createMaxInMemoryFileBytesProvider } from '../manifest/app-manifest-provider';
 import {
   FAST_SAVE_OBJECTS_PER_TICK,
   graftPagesIntoTarget,
@@ -45,22 +42,17 @@ export interface PdfProcessorOptions {
 }
 
 export class PdfProcessor {
-  constructor(private readonly options?: PdfProcessorOptions) {}
+  private readonly maxInMemoryFileBytesProvider: () => Promise<number>;
 
-  private async resolveMaxInMemoryFileBytes(): Promise<number> {
-    const provided = this.options?.getMaxInMemoryFileBytes
-      ? await this.options.getMaxInMemoryFileBytes()
-      : undefined;
-    const resolved =
-      provided ??
-      resolveMaxInMemoryFileBytesFromEnv() ??
-      DEFAULT_MAX_IN_MEMORY_FILE_BYTES;
-    if (typeof resolved !== 'number' || !Number.isFinite(resolved) || resolved <= 0) {
-      throw new Error(
-        `Invalid maxInMemoryFileBytes configuration "${String(resolved)}": must be a positive finite number`
-      );
+  constructor(options?: PdfProcessorOptions) {
+    this.maxInMemoryFileBytesProvider = createMaxInMemoryFileBytesProvider(options);
+  }
+
+  private resolveMaxInMemoryFileBytes(): Promise<number> {
+    if (typeof this.maxInMemoryFileBytesProvider === 'function') {
+      return this.maxInMemoryFileBytesProvider();
     }
-    return resolved;
+    return createMaxInMemoryFileBytesProvider()();
   }
 
   private async assertWithinByteLimit(buffers: readonly Uint8Array[]): Promise<void> {

@@ -52,21 +52,54 @@ export function resolveMaxInMemoryFileBytesFromEnv(): number | undefined {
   return parsed;
 }
 
+export type MaxInMemoryFileBytesFn = () =>
+  | Promise<number | undefined>
+  | number
+  | undefined;
+
+export interface MaxInMemoryFileBytesConfigProvider {
+  getMaxInMemoryFileBytes?: MaxInMemoryFileBytesFn | undefined;
+}
+
+export interface MaxInMemoryFileBytesProviderOptions {
+  configProvider?: MaxInMemoryFileBytesConfigProvider | undefined;
+  getMaxInMemoryFileBytes?: MaxInMemoryFileBytesFn | undefined;
+}
+
 /**
- * Builds an async provider resolving the in-memory file byte limit from configProvider,
- * environment override, or the 200 MB default.
+ * Builds an async provider resolving the in-memory file byte limit from an optional direct
+ * override (`getMaxInMemoryFileBytes`), `configProvider`, environment override, or the
+ * 200 MB default, and validates that the resolved value is a positive finite number.
  */
 export function createMaxInMemoryFileBytesProvider(
-  configProvider?: { getMaxInMemoryFileBytes?: () => Promise<number | undefined> }
+  source?: MaxInMemoryFileBytesConfigProvider | MaxInMemoryFileBytesProviderOptions
 ): () => Promise<number> {
+  const nestedConfigProvider =
+    source !== undefined && 'configProvider' in source
+      ? source.configProvider
+      : undefined;
+
   return async (): Promise<number> => {
-    if (configProvider && typeof configProvider.getMaxInMemoryFileBytes === 'function') {
-      const configured = await configProvider.getMaxInMemoryFileBytes();
-      if (configured !== undefined) {
-        return configured;
-      }
+    let resolved: number | undefined;
+    if (source && typeof source.getMaxInMemoryFileBytes === 'function') {
+      resolved = await source.getMaxInMemoryFileBytes();
     }
-    return resolveMaxInMemoryFileBytesFromEnv() ?? DEFAULT_MAX_IN_MEMORY_FILE_BYTES;
+    if (
+      resolved === undefined &&
+      nestedConfigProvider &&
+      typeof nestedConfigProvider.getMaxInMemoryFileBytes === 'function'
+    ) {
+      resolved = await nestedConfigProvider.getMaxInMemoryFileBytes();
+    }
+    if (resolved === undefined) {
+      resolved = resolveMaxInMemoryFileBytesFromEnv() ?? DEFAULT_MAX_IN_MEMORY_FILE_BYTES;
+    }
+    if (typeof resolved !== 'number' || !Number.isFinite(resolved) || resolved <= 0) {
+      throw new Error(
+        `Invalid maxInMemoryFileBytes configuration "${String(resolved)}": must be a positive finite number`
+      );
+    }
+    return resolved;
   };
 }
 
