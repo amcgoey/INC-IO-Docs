@@ -188,6 +188,92 @@ describe('DocumentLogActivityHandler', () => {
     });
   });
 
+  it('leaves fileUri undefined when context.files or stepOutput.files contains only a folder-only placeholder and selects the next non-placeholder FileLocator.uri', async () => {
+    const writeLog = vi.fn().mockResolvedValue({
+      spreadsheetId: 'sheet-log-3',
+      sheetName: 'Submittal Arch',
+      rowNumber: 9,
+      action: 'inserted',
+    });
+    const handler = new DocumentLogActivityHandler({
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      resolveLog: vi.fn(),
+      copyLog: vi.fn(),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
+      readLog: vi.fn(),
+      writeLog,
+    });
+
+    const folderPlaceholderWithMime = {
+      id: 'folder-target-1',
+      name: 'Target Folder',
+      parentId: 'folder-target-1',
+      mimeType: 'application/vnd.google-apps.folder',
+      uri: 'https://drive.google.com/drive/folders/folder-target-1',
+    };
+    const folderPlaceholderWithoutMime = {
+      id: 'folder-target-2',
+      name: 'Target Folder 2',
+      parentId: 'folder-target-2',
+      uri: 'https://drive.google.com/drive/folders/folder-target-2',
+    };
+    const filedPdf = {
+      id: 'filed-pdf-1',
+      name: 'Filed.pdf',
+      parentId: 'folder-target-1',
+      mimeType: 'application/pdf',
+      uri: 'https://drive.google.com/file/d/filed-pdf-1/view',
+    };
+
+    const placeholderOnlyOutput = await handler.handle(
+      { type: 'WRITE_LOG', payload: {} },
+      {
+        ...baseContext,
+        files: [folderPlaceholderWithMime, folderPlaceholderWithoutMime],
+      }
+    );
+    expect(placeholderOnlyOutput.success).toBe(true);
+    expect(writeLog).toHaveBeenNthCalledWith(1, {
+      document: baseContext.document,
+    });
+
+    const stepPlaceholderOnlyOutput = await handler.handle(
+      { type: 'WRITE_LOG', payload: { fileSourceStepId: 'moveFiles' } },
+      {
+        ...baseContext,
+        files: [filedPdf],
+        stepOutputs: {
+          moveFiles: {
+            success: true,
+            files: [folderPlaceholderWithoutMime],
+          },
+        },
+      }
+    );
+    expect(stepPlaceholderOnlyOutput.success).toBe(true);
+    expect(writeLog).toHaveBeenNthCalledWith(2, {
+      document: baseContext.document,
+    });
+
+    const nextNonPlaceholderOutput = await handler.handle(
+      { type: 'WRITE_LOG', payload: { fileSourceStepId: 'moveFiles' } },
+      {
+        ...baseContext,
+        stepOutputs: {
+          moveFiles: {
+            success: true,
+            files: [folderPlaceholderWithMime, folderPlaceholderWithoutMime, filedPdf],
+          },
+        },
+      }
+    );
+    expect(nextNonPlaceholderOutput.success).toBe(true);
+    expect(writeLog).toHaveBeenNthCalledWith(3, {
+      document: baseContext.document,
+      fileUri: 'https://drive.google.com/file/d/filed-pdf-1/view',
+    });
+  });
+
   it('fails fast when fileSourceStepId references an unexecuted step', async () => {
     const writeLog = vi.fn();
     const handler = new DocumentLogActivityHandler({
