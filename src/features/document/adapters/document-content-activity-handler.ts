@@ -20,6 +20,7 @@ import type {
   TemplateRegistryPort,
 } from '../ports';
 import { redactTemplateId } from './env-template-registry.adapter';
+import { resolveDriveFolderUri } from './drive-folder-uri';
 
 const InsertDataPayloadSchema = Type.Object(
   {
@@ -86,6 +87,21 @@ export interface DocumentContentActivityHandlerDeps {
   templateRegistry?: TemplateRegistryPort | undefined;
 }
 
+function resolveMergedParentUri(
+  primary: FileLocator,
+  fallback: FileLocator,
+  resolvedParentId: string | undefined
+): string | undefined {
+  const parentChanged =
+    primary.parentId !== undefined &&
+    fallback.parentId !== undefined &&
+    primary.parentId !== fallback.parentId;
+  if (parentChanged) {
+    return primary.parentUri ?? resolveDriveFolderUri(resolvedParentId);
+  }
+  return fallback.parentUri ?? primary.parentUri ?? resolveDriveFolderUri(resolvedParentId);
+}
+
 function mergeFileLocatorMetadata(
   updated: FileLocator,
   original: FileLocator
@@ -93,6 +109,7 @@ function mergeFileLocatorMetadata(
   const name = updated.name || original.name;
   const parentId = updated.parentId ?? original.parentId;
   const parentName = updated.parentName ?? original.parentName;
+  const parentUri = resolveMergedParentUri(updated, original, parentId);
   const mimeType = updated.mimeType ?? original.mimeType;
   const uri = updated.uri ?? original.uri;
   return {
@@ -100,6 +117,7 @@ function mergeFileLocatorMetadata(
     name,
     ...(parentId !== undefined ? { parentId } : {}),
     ...(parentName !== undefined ? { parentName } : {}),
+    ...(parentUri !== undefined ? { parentUri } : {}),
     ...(mimeType !== undefined ? { mimeType } : {}),
     ...(uri !== undefined ? { uri } : {}),
   };
@@ -111,12 +129,14 @@ function toSiblingFileLocator(
 ): FileLocator {
   const parentId = sibling.parentId ?? originalTarget.parentId;
   const parentName = sibling.parentName ?? originalTarget.parentName;
+  const parentUri = resolveMergedParentUri(sibling, originalTarget, parentId);
   const mimeType = sibling.mimeType ?? 'application/pdf';
   return {
     id: sibling.id,
     name: sibling.name,
     ...(parentId !== undefined ? { parentId } : {}),
     ...(parentName !== undefined ? { parentName } : {}),
+    ...(parentUri !== undefined ? { parentUri } : {}),
     mimeType,
     ...(sibling.uri !== undefined ? { uri: sibling.uri } : {}),
   };

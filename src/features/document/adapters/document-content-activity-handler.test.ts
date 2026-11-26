@@ -127,6 +127,7 @@ describe('DocumentContentActivityHandler (#378)', () => {
       name: 'Submittal.pdf',
       parentId: 'folder-1',
       parentName: 'Submittals',
+      parentUri: 'https://drive.google.com/drive/folders/folder-1',
       mimeType: 'application/pdf',
       uri: 'https://drive/file-1',
     });
@@ -276,6 +277,7 @@ describe('DocumentContentActivityHandler (#378)', () => {
           name: '_071200-001.pdf',
           parentId: 'submittals-folder',
           parentName: 'Submittals',
+          parentUri: 'https://drive.google.com/drive/folders/submittals-folder',
           mimeType: 'application/pdf',
           uri: 'https://drive/dup-1',
         },
@@ -492,6 +494,7 @@ describe('DocumentContentActivityHandler (#378)', () => {
           name: '_071200-001 Transmittal.pdf',
           parentId: 'submittals-folder-1',
           parentName: 'Submittals',
+          parentUri: 'https://drive.google.com/drive/folders/submittals-folder-1',
           mimeType: 'application/pdf',
         },
       ]);
@@ -526,6 +529,129 @@ describe('DocumentContentActivityHandler (#378)', () => {
 
       expect(res.success).toBe(false);
       expect(res.error).toMatch(/fileName/i);
+    });
+
+    it('preserves and falls back parentUri across INSERT_DATA, in-place INSERT_PAGES, and createSiblingPdf (#384)', async () => {
+      const insertData = vi.fn().mockResolvedValue({
+        file: {
+          id: 'moved-1',
+          name: 'Submittal.pdf',
+          parentId: 'folder-closed',
+          mimeType: 'application/pdf',
+          uri: 'https://drive/moved-1',
+        },
+      });
+      const insertPages = vi
+        .fn()
+        .mockResolvedValueOnce({
+          file: {
+            id: 'dup-1',
+            name: '_Submittal.pdf',
+            parentId: 'folder-submittals',
+            mimeType: 'application/pdf',
+            uri: 'https://drive/dup-1',
+          },
+        })
+        .mockResolvedValueOnce({
+          file: {
+            id: 'sibling-1',
+            name: '_Submittal Transmittal.pdf',
+            parentId: 'folder-submittals',
+            mimeType: 'application/pdf',
+            uri: 'https://drive/sibling-1',
+          },
+          fallbackUsed: true,
+          unmodifiableReason: 'non_pdf',
+        });
+
+      const handler = new DocumentContentActivityHandler({
+        contentEditor: { insertData, insertPages },
+        documentSchemaRegistry: submittalRegistry,
+        templateEvaluator: handlebars,
+      });
+
+      const dataRes = await handler.handle(
+        { id: 'stampData', type: 'INSERT_DATA', payload: {} },
+        makeContext({
+          files: [
+            {
+              id: 'moved-1',
+              name: 'Submittal.pdf',
+              parentId: 'folder-closed',
+              parentName: '07 Thermal',
+              parentUri: 'https://drive.google.com/drive/u/0/folders/folder-closed',
+              mimeType: 'application/pdf',
+              uri: 'https://drive/moved-1',
+            },
+          ],
+        })
+      );
+      expect(dataRes.files?.[0]?.parentUri).toBe(
+        'https://drive.google.com/drive/u/0/folders/folder-closed'
+      );
+
+      const graftRes = await handler.handle(
+        {
+          id: 'insertCover',
+          type: 'INSERT_PAGES',
+          payload: { sourceStepId: 'coverStep', position: 'start' },
+        },
+        makeContext({
+          stepOutputs: {
+            coverStep: {
+              success: true,
+              files: [{ id: 'cover-1', name: 'Cover.pdf', mimeType: 'application/pdf' }],
+            },
+          },
+          files: [
+            {
+              id: 'dup-1',
+              name: '_Submittal.pdf',
+              parentId: 'folder-submittals',
+              parentName: 'Submittals',
+              parentUri: 'https://drive.google.com/drive/u/0/folders/folder-submittals',
+              mimeType: 'application/pdf',
+              uri: 'https://drive/dup-1',
+            },
+          ],
+        })
+      );
+      expect(graftRes.files?.[0]?.parentUri).toBe(
+        'https://drive.google.com/drive/u/0/folders/folder-submittals'
+      );
+
+      const siblingRes = await handler.handle(
+        {
+          id: 'insertCover',
+          type: 'INSERT_PAGES',
+          payload: {
+            sourceStepId: 'coverStep',
+            onUnmodifiableTarget: { strategy: 'createSiblingPdf', fileName: '_Submittal Transmittal.pdf' },
+          },
+        },
+        makeContext({
+          stepOutputs: {
+            coverStep: {
+              success: true,
+              files: [{ id: 'cover-1', name: 'Cover.pdf', mimeType: 'application/pdf' }],
+            },
+          },
+          files: [
+            {
+              id: 'dup-1',
+              name: '_Submittal.pdf',
+              parentId: 'folder-submittals',
+              parentName: 'Submittals',
+              parentUri: 'https://drive.google.com/drive/u/0/folders/folder-submittals',
+              mimeType: 'text/plain',
+              uri: 'https://drive/dup-1',
+            },
+          ],
+        })
+      );
+      expect(siblingRes.files?.[0]?.parentUri).toBe(
+        'https://drive.google.com/drive/u/0/folders/folder-submittals'
+      );
     });
   });
 });

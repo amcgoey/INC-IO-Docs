@@ -1133,6 +1133,20 @@ describe('App integration tests', () => {
         expect(getFileSpy).not.toHaveBeenCalled();
         expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
 
+        // 1b. Empty sourceFiles: [] rejected with HTTP 400 before Drive lookups or Step 1 (#384)
+        const emptyRes = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            ...basePayload,
+            sourceFiles: [],
+          },
+        });
+        expect(emptyRes.statusCode).toBe(400);
+        expect(JSON.parse(emptyRes.payload).success).toBe(false);
+        expect(getFileSpy).not.toHaveBeenCalled();
+        expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+
         // 2. Folder rejected with HTTP 400 before Drive mutations
         const folderRes = await prodApp.server.inject({
           method: 'POST',

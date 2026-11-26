@@ -40,6 +40,83 @@ function buildOpenLinkButton(text: string, url: string): UiViewButton {
   };
 }
 
+const GOOGLE_FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
+
+interface FolderDisplayEntry {
+  id: string;
+  name: string;
+  isFallbackName: boolean;
+  uri?: string | undefined;
+}
+
+function isFolderOnlyPlaceholder(file: ExecutionFileLocator): boolean {
+  const id = file.id.trim();
+  const parentId = file.parentId?.trim();
+  return (
+    id.length > 0 &&
+    parentId !== undefined &&
+    id === parentId &&
+    (file.mimeType === undefined || file.mimeType === GOOGLE_FOLDER_MIME_TYPE)
+  );
+}
+
+function collectFolders(
+  stepResults: NonNullable<UiViewAdapterContext['executionOutcome']>['stepResults']
+): FolderDisplayEntry[] {
+  const foldersById = new Map<string, FolderDisplayEntry>();
+
+  for (const step of stepResults) {
+    if (step.activityType === 'WRITE_LOG') {
+      continue;
+    }
+    for (const file of step.files) {
+      const parentId = file.parentId?.trim();
+      if (!parentId) {
+        continue;
+      }
+
+      const candidateName =
+        file.parentName?.trim() ||
+        (isFolderOnlyPlaceholder(file) ? file.name.trim() : '');
+      const candidateUri =
+        file.parentUri?.trim() ||
+        (isFolderOnlyPlaceholder(file) ? file.uri?.trim() : '') ||
+        undefined;
+
+      const existing = foldersById.get(parentId);
+      if (!existing) {
+        foldersById.set(parentId, {
+          id: parentId,
+          name: candidateName || parentId,
+          isFallbackName: candidateName.length === 0,
+          ...(candidateUri ? { uri: candidateUri } : {}),
+        });
+      } else {
+        if (existing.isFallbackName && candidateName.length > 0) {
+          existing.name = candidateName;
+          existing.isFallbackName = false;
+        }
+        if (!existing.uri && candidateUri) {
+          existing.uri = candidateUri;
+        }
+      }
+    }
+  }
+
+  return Array.from(foldersById.values());
+}
+
+function buildFolderWidget(folder: FolderDisplayEntry): UiViewWidget {
+  const trimmedUri = folder.uri?.trim();
+  return {
+    decoratedText: {
+      text: escapeCardHtml(folder.name),
+      wrapText: true,
+      ...(trimmedUri ? { button: buildOpenLinkButton('Open', trimmedUri) } : {}),
+    },
+  };
+}
+
 function resolveTokenString(
   data: Readonly<Record<string, unknown>>,
   parts: readonly string[]
@@ -173,6 +250,9 @@ function collectCreatedAndFiledItems(
   const items: CollectedArtifactItem[] = [];
 
   const pushUnique = (file: ExecutionFileLocator, roleLabel?: string) => {
+    if (isFolderOnlyPlaceholder(file)) {
+      return;
+    }
     const idKey = file.id.trim();
     if (idKey.length > 0 && seenIds.has(idKey)) {
       return;
@@ -301,6 +381,14 @@ export class DocumentSuccessCardAdapter implements UiViewSchemaAdapterPort {
       );
     } else if (outcome.logWrite !== undefined) {
       sections.push(buildFallbackLogSummarySection(outcome.logWrite));
+    }
+
+    const folders = collectFolders(outcome.stepResults);
+    if (folders.length > 0) {
+      sections.push({
+        header: 'Folders',
+        widgets: folders.map(buildFolderWidget),
+      });
     }
 
     const filedItems = collectCreatedAndFiledItems(

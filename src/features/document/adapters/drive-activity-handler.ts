@@ -19,6 +19,9 @@ import {
   type DriveServicePort,
   type SourceFileHydratorPort,
 } from '../ports';
+import { resolveDriveFolderUri } from './drive-folder-uri';
+
+const GOOGLE_FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
 
 export interface DriveActivityHandlerOptions {
   defaultFolderName?: string | undefined;
@@ -407,12 +410,17 @@ export class DriveActivityHandler implements ActivityHandler {
       }
 
       const matchedFile = results[0];
+      const parentId = matchedFile.parents?.[0];
+      const parentMeta = parentId
+        ? await this.resolveParentFolderMetadata(parentId)
+        : undefined;
+      const parentUri = resolveDriveFolderUri(parentId, parentMeta?.webViewLink);
       const fileLocator: FileLocator = {
         id: matchedFile.id,
         name: matchedFile.name,
-        ...(matchedFile.parents?.[0]
-          ? { parentId: matchedFile.parents[0], parentName: matchedFile.parents[0] }
-          : {}),
+        ...(parentId !== undefined ? { parentId } : {}),
+        ...(parentMeta?.name !== undefined ? { parentName: parentMeta.name } : {}),
+        ...(parentUri !== undefined ? { parentUri } : {}),
         ...(matchedFile.mimeType ? { mimeType: matchedFile.mimeType } : {}),
         ...(matchedFile.webViewLink ? { uri: matchedFile.webViewLink } : {}),
       };
@@ -709,9 +717,12 @@ export class DriveActivityHandler implements ActivityHandler {
       name: resolvedName,
       ...(sourceFile.mimeType !== undefined ? { mimeType: sourceFile.mimeType } : {}),
     });
+    const resolvedParentId = file.parents?.[0] ?? leafFolder.id;
     return this.createFileLocator(file, leafFolder.name, {
       fallbackMimeType: sourceFile.mimeType,
       fallbackParentId: leafFolder.id,
+      parentWebViewLink:
+        resolvedParentId === leafFolder.id ? leafFolder.webViewLink : undefined,
       defaultEmptyUri: true,
     });
   }
@@ -821,6 +832,23 @@ export class DriveActivityHandler implements ActivityHandler {
     }
     targetSourceFiles = hydration.files;
 
+    if (targetSourceFiles.length === 0) {
+      const folderUri = resolveDriveFolderUri(leafFolder.id, leafFolder.webViewLink);
+      return {
+        success: true,
+        files: [
+          {
+            id: leafFolder.id,
+            name: leafFolder.name,
+            parentId: leafFolder.id,
+            parentName: leafFolder.name,
+            ...(folderUri !== undefined ? { parentUri: folderUri, uri: folderUri } : {}),
+            mimeType: GOOGLE_FOLDER_MIME_TYPE,
+          },
+        ],
+      };
+    }
+
     for (const sourceFile of targetSourceFiles) {
       try {
         if (sourceFile.content instanceof Uint8Array) {
@@ -861,6 +889,7 @@ export class DriveActivityHandler implements ActivityHandler {
             newName
           );
 
+          const resolvedParentId = movedFile.parents?.[0] ?? leafFolder.id;
           const fileLocator = this.createFileLocator(
             {
               id: movedFile.id,
@@ -873,6 +902,8 @@ export class DriveActivityHandler implements ActivityHandler {
             {
               fallbackName: newName ?? sourceFile.name,
               fallbackParentId: leafFolder.id,
+              parentWebViewLink:
+                resolvedParentId === leafFolder.id ? leafFolder.webViewLink : undefined,
             }
           );
           movedFiles.push(fileLocator);
@@ -1022,7 +1053,23 @@ export class DriveActivityHandler implements ActivityHandler {
           newName
         );
 
-        const parentName = leafFolder?.name ?? duplicatedFile.parents?.[0] ?? '';
+        const resolvedParentId = leafFolder?.id ?? duplicatedFile.parents?.[0];
+        let parentName: string | undefined;
+        let parentWebViewLink: string | undefined;
+        if (leafFolder) {
+          parentName = leafFolder.name;
+          parentWebViewLink =
+            (duplicatedFile.parents?.[0] ?? leafFolder.id) === leafFolder.id
+              ? leafFolder.webViewLink
+              : undefined;
+        } else if (resolvedParentId) {
+          const parentMeta = await this.resolveParentFolderMetadata(
+            resolvedParentId,
+            fileMetadataCache
+          );
+          parentName = parentMeta.name;
+          parentWebViewLink = parentMeta.webViewLink;
+        }
         const fileLocator = this.createFileLocator(
           {
             id: duplicatedFile.id,
@@ -1035,7 +1082,8 @@ export class DriveActivityHandler implements ActivityHandler {
           {
             fallbackName: newName ?? sourceFile.name,
             fallbackMimeType: sourceFile.mimeType,
-            fallbackParentId: leafFolder?.id ?? duplicatedFile.parents?.[0],
+            fallbackParentId: resolvedParentId,
+            parentWebViewLink,
           }
         );
         duplicatedFiles.push(fileLocator);
@@ -1063,6 +1111,26 @@ export class DriveActivityHandler implements ActivityHandler {
     return fetched;
   }
 
+  private async resolveParentFolderMetadata(
+    parentId: string,
+    cache?: Map<string, DriveFileResult>
+  ): Promise<{ name?: string | undefined; webViewLink?: string | undefined }> {
+    try {
+      const meta = cache
+        ? await this.getCachedFileMetadata(parentId, cache)
+        : await this.driveService.getFile(parentId);
+      if (meta && meta.id === parentId) {
+        return {
+          ...(meta.name ? { name: meta.name } : {}),
+          ...(meta.webViewLink ? { webViewLink: meta.webViewLink } : {}),
+        };
+      }
+    } catch {
+      // Best-effort parent metadata enrichment; never fall back to raw folder ID
+    }
+    return {};
+  }
+
   private createFileLocator(
     file:
       | DriveFile
@@ -1073,23 +1141,29 @@ export class DriveActivityHandler implements ActivityHandler {
           mimeType?: string | undefined;
           webViewLink?: string | undefined;
         },
-    parentName: string,
+    parentName: string | undefined,
     options?: {
       fallbackMimeType?: string | undefined;
       fallbackName?: string | undefined;
       fallbackParentId?: string | undefined;
+      parentWebViewLink?: string | undefined;
       defaultEmptyUri?: boolean | undefined;
     }
   ): FileLocator {
     const resolvedMimeType = file.mimeType ?? options?.fallbackMimeType;
     const resolvedName = file.name || options?.fallbackName || '';
     const resolvedParentId = file.parents?.[0] ?? options?.fallbackParentId;
+    const resolvedParentUri = resolveDriveFolderUri(
+      resolvedParentId,
+      options?.parentWebViewLink
+    );
     const resolvedUri = file.webViewLink ?? (options?.defaultEmptyUri ? '' : undefined);
     return {
       id: file.id,
       name: resolvedName,
       ...(resolvedParentId !== undefined ? { parentId: resolvedParentId } : {}),
-      parentName,
+      ...(parentName !== undefined ? { parentName } : {}),
+      ...(resolvedParentUri !== undefined ? { parentUri: resolvedParentUri } : {}),
       ...(resolvedMimeType !== undefined ? { mimeType: resolvedMimeType } : {}),
       ...(resolvedUri !== undefined ? { uri: resolvedUri } : {}),
     };

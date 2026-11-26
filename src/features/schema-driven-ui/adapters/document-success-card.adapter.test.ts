@@ -369,6 +369,232 @@ describe('DocumentSuccessCardAdapter (#382)', () => {
     });
   });
 
+  describe('Folders section, placeholder exclusion, and moved user folders (#384)', () => {
+    it('renders Folders directly below Summary and above Created & Filed deduplicated strictly by parentId and omits Open button when parentUri is blank', async () => {
+      const adapter = new DocumentSuccessCardAdapter();
+
+      const view = await adapter.composeView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        documentTypeKey: 'submittal-arch',
+        executionOutcome: {
+          success: true,
+          workflowName: 'SubmittalReceived',
+          completedStepCount: 4,
+          spaceName: 'Harborview Tower',
+          documentData: {},
+          stepResults: [
+            {
+              stepId: 'moveOriginal',
+              activityType: 'MOVE_FILE',
+              files: [
+                {
+                  id: 'orig-1',
+                  name: '071200-001-0.pdf',
+                  parentId: 'folder-closed',
+                  parentName: '07 Thermal & Moisture',
+                  parentUri: 'https://drive.google.com/drive/folders/folder-closed',
+                  uri: 'https://drive.google.com/file/d/orig-1/view',
+                },
+              ],
+            },
+            {
+              stepId: 'duplicateForReview',
+              activityType: 'DUPLICATE_FILE',
+              files: [
+                {
+                  id: 'dup-1',
+                  name: '_071200-001-0.pdf',
+                  parentId: 'folder-submittals',
+                  parentName: 'Submittals <Review>',
+                  parentUri: '   ',
+                  uri: 'https://drive.google.com/file/d/dup-1/view',
+                },
+              ],
+            },
+            {
+              stepId: 'insertCoverSheet',
+              activityType: 'INSERT_PAGES',
+              files: [
+                {
+                  id: 'sibling-1',
+                  name: '_071200-001-0 Transmittal.pdf',
+                  parentId: 'folder-submittals',
+                  parentName: 'Submittals <Review>',
+                  parentUri: '',
+                  uri: 'https://drive.google.com/file/d/sibling-1/view',
+                },
+              ],
+            },
+            {
+              stepId: 'writeLog',
+              activityType: 'WRITE_LOG',
+              files: [
+                {
+                  id: 'log-1',
+                  name: 'Document Log',
+                  parentId: 'folder-admin-should-not-appear',
+                  parentName: '1 Admin',
+                  parentUri: 'https://drive.google.com/drive/folders/folder-admin-should-not-appear',
+                },
+              ],
+            },
+          ],
+          notices: [],
+          logWrite: {
+            sheetName: 'Submittal Arch',
+            sheetId: 0,
+            rowNumber: 5,
+            action: 'inserted',
+            uri: 'https://docs.google.com/spreadsheets/d/log-1/edit#gid=0&range=5:5',
+          },
+          errors: [],
+        },
+      });
+
+      assertValidUiView(view);
+
+      const headers = view.sections.map((s) => s.header);
+      const summaryIdx = headers.indexOf('Summary');
+      const foldersIdx = headers.indexOf('Folders');
+      const filesIdx = headers.indexOf('Created & Filed');
+      expect(summaryIdx).toBe(1);
+      expect(foldersIdx).toBe(2); // Directly below Summary
+      expect(filesIdx).toBe(3); // Directly above Created & Filed
+
+      const foldersSection = view.sections[foldersIdx];
+      expect(foldersSection?.widgets).toHaveLength(2);
+      expect(foldersSection?.widgets[0]?.decoratedText).toEqual({
+        text: '07 Thermal &amp; Moisture',
+        wrapText: true,
+        button: {
+          text: 'Open',
+          onClick: {
+            openLink: {
+              url: 'https://drive.google.com/drive/folders/folder-closed',
+              openAs: 'FULL_SIZE',
+            },
+          },
+        },
+      });
+      // Blank parentUri omits Open button and deduplicates folder-submittals across duplicate + sibling
+      expect(foldersSection?.widgets[1]?.decoratedText).toEqual({
+        text: 'Submittals &lt;Review&gt;',
+        wrapText: true,
+      });
+      expect('button' in (foldersSection?.widgets[1]?.decoratedText ?? {})).toBe(false);
+    });
+
+    it('excludes folder-only placeholder (id === parentId) from Created & Filed while rendering it in Folders', async () => {
+      const adapter = new DocumentSuccessCardAdapter();
+
+      const view = await adapter.composeView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        documentTypeKey: 'communication-project',
+        executionOutcome: {
+          success: true,
+          workflowName: 'FileCommProject',
+          completedStepCount: 1,
+          spaceName: 'Harborview Tower',
+          documentData: {},
+          stepResults: [
+            {
+              stepId: 'moveFiles',
+              activityType: 'MOVE_FILE',
+              files: [
+                {
+                  id: 'comm-folder-99',
+                  name: '261126 OT - No Attachments',
+                  parentId: 'comm-folder-99',
+                  parentName: '261126 OT - No Attachments',
+                  parentUri: 'https://drive.google.com/drive/folders/comm-folder-99',
+                  mimeType: 'application/vnd.google-apps.folder',
+                  uri: 'https://drive.google.com/drive/folders/comm-folder-99',
+                },
+              ],
+            },
+          ],
+          notices: [],
+          errors: [],
+        },
+      });
+
+      assertValidUiView(view);
+      const foldersSection = view.sections.find((s) => s.header === 'Folders');
+      expect(foldersSection?.widgets).toHaveLength(1);
+      expect(foldersSection?.widgets[0]?.decoratedText).toEqual({
+        text: '261126 OT - No Attachments',
+        wrapText: true,
+        button: {
+          text: 'Open',
+          onClick: {
+            openLink: {
+              url: 'https://drive.google.com/drive/folders/comm-folder-99',
+              openAs: 'FULL_SIZE',
+            },
+          },
+        },
+      });
+      expect(view.sections.find((s) => s.header === 'Created & Filed')).toBeUndefined();
+    });
+
+    it('keeps moved user Drive folders (id !== parentId) in Created & Filed with parentName bottomLabel while also surfacing destination folder in Folders', async () => {
+      const adapter = new DocumentSuccessCardAdapter();
+
+      const view = await adapter.composeView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        documentTypeKey: 'communication-project',
+        executionOutcome: {
+          success: true,
+          workflowName: 'FileCommProject',
+          completedStepCount: 1,
+          spaceName: 'Harborview Tower',
+          documentData: {},
+          stepResults: [
+            {
+              stepId: 'moveFiles',
+              activityType: 'MOVE_FILE',
+              files: [
+                {
+                  id: 'user-folder-1',
+                  name: 'Vendor Package',
+                  parentId: 'comm-dest-folder-1',
+                  parentName: '261126 IN - Vendor Package',
+                  parentUri: 'https://drive.google.com/drive/folders/comm-dest-folder-1',
+                  mimeType: 'application/vnd.google-apps.folder',
+                  uri: 'https://drive.google.com/drive/folders/user-folder-1',
+                },
+              ],
+            },
+          ],
+          notices: [],
+          errors: [],
+        },
+      });
+
+      assertValidUiView(view);
+      const foldersSection = view.sections.find((s) => s.header === 'Folders');
+      expect(foldersSection?.widgets).toHaveLength(1);
+      expect(foldersSection?.widgets[0]?.decoratedText?.text).toBe('261126 IN - Vendor Package');
+
+      const filesSection = view.sections.find((s) => s.header === 'Created & Filed');
+      expect(filesSection?.widgets).toHaveLength(1);
+      expect(filesSection?.widgets[0]?.decoratedText).toEqual({
+        text: 'Vendor Package',
+        wrapText: true,
+        bottomLabel: '261126 IN - Vendor Package',
+        button: {
+          text: 'Open',
+          onClick: {
+            openLink: {
+              url: 'https://drive.google.com/drive/folders/user-folder-1',
+              openAs: 'FULL_SIZE',
+            },
+          },
+        },
+      });
+    });
+  });
+
   describe('declarative successView summary & artifacts (#385)', () => {
     const parser = new HandlebarsAdapter();
 

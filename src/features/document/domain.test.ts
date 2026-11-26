@@ -247,11 +247,27 @@ describe('Document domain', () => {
     const fullFileLocator: FileLocator = {
       id: 'file-123',
       name: 'Report.pdf',
+      parentId: 'folder-123',
       parentName: 'DestinationFolder',
+      parentUri: 'https://drive.google.com/drive/folders/folder-123',
       mimeType: 'application/pdf',
       uri: 'https://drive.google.com/file/d/file-123/view',
     };
     expect(Value.Check(FileLocatorType, fullFileLocator)).toBe(true);
+    expect(
+      Value.Check(FileLocatorType, {
+        id: 'file-123',
+        name: 'Report.pdf',
+        parentUri: 12345,
+      })
+    ).toBe(false);
+    expect(
+      Value.Check(FileLocatorType, {
+        id: 'file-123',
+        name: 'Report.pdf',
+        parentUri: undefined,
+      })
+    ).toBe(true);
 
     const minimalFileLocator: FileLocator = {
       id: 'file-456',
@@ -8934,6 +8950,88 @@ describe('Document domain', () => {
       );
       expect(commRes.success).toBe(true);
     });
+
+    it('enforces allowEmptySourceFiles before Step 1 runs (#384)', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue({ success: true }),
+      };
+      const mockDriveService = createMockDriveService(async () => ({ id: 'f', name: 'f' }));
+      const explicitDisallowDocType: DocumentType = {
+        ...unguardedDocType,
+        key: 'explicit-disallow',
+        allowEmptySourceFiles: false,
+      };
+      const allowEmptyDocType: DocumentType = {
+        ...unguardedDocType,
+        key: 'allow-empty',
+        allowEmptySourceFiles: true,
+      };
+
+      const registry = createCustomRegistry([
+        guardedDocType,
+        explicitDisallowDocType,
+        allowEmptyDocType,
+      ]);
+      const service = new DocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        createMockCompiledRegistry(registry),
+        undefined,
+        undefined,
+        undefined,
+        mockDriveService
+      );
+      await service.initialize();
+
+      // 1. Omitted allowEmptySourceFiles (like submittal-arch) rejects sourceFiles: [] before Step 1
+      const emptyArrayRes = await service.processDocument(
+        {
+          type: 'submittal-arch',
+          data: { title: 'Waterproofing' },
+          sourceFiles: [],
+        },
+        'onSubmit'
+      );
+      expect(emptyArrayRes.success).toBe(false);
+      if (!emptyArrayRes.success) {
+        expect(emptyArrayRes.errors[0]).toMatch(/at least one source file|empty source files/i);
+      }
+      expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+
+      // 2. Explicit allowEmptySourceFiles: false rejects both sourceFiles: [] and omitted sourceFiles before Step 1
+      const explicitEmptyRes = await service.processDocument(
+        {
+          type: 'explicit-disallow',
+          data: { title: 'No Files' },
+          sourceFiles: [],
+        },
+        'onSubmit'
+      );
+      expect(explicitEmptyRes.success).toBe(false);
+
+      const explicitUndefinedRes = await service.processDocument(
+        {
+          type: 'explicit-disallow',
+          data: { title: 'Omitted Files' },
+        },
+        'onSubmit'
+      );
+      expect(explicitUndefinedRes.success).toBe(false);
+      expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+
+      // 3. allowEmptySourceFiles: true permits sourceFiles: []
+      const allowedRes = await service.processDocument(
+        {
+          type: 'allow-empty',
+          data: { title: 'Email Log Entry' },
+          sourceFiles: [],
+        },
+        'onSubmit'
+      );
+      expect(allowedRes.success).toBe(true);
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('SubmittalSent end-to-end workflow at DocumentService.processDocument() seam (#375)', () => {
@@ -9081,6 +9179,7 @@ describe('Document domain', () => {
           name: '081100-001-0 Hollow Metal Doors - 261104 PMG_NOC.pdf',
           parentId: 'folder-created-3',
           parentName: '08 Openings',
+          parentUri: 'https://drive.google.com/drive/folders/folder-created-3',
           mimeType: 'application/pdf',
           uri: 'https://drive.google.com/file/d/arch-file-375/view',
         },
@@ -9202,6 +9301,7 @@ describe('Document domain', () => {
         name: 'ac102-A Berman Falk - 261104 BW_REF',
         parentId: 'ffe-ac102',
         parentName: 'ac102',
+        parentUri: 'https://drive.google.com/drive/folders/ffe-ac102',
         mimeType: 'application/vnd.google-apps.document',
         uri: 'https://docs.google.com/document/d/ffe-doc-375/edit',
       });
@@ -9437,6 +9537,7 @@ describe('Document domain', () => {
         name: '_071200-001-0 Waterproofing - 261104 PMG.pdf',
         parentId: 'folder-created-1',
         parentName: 'Submittals',
+        parentUri: 'https://drive.google.com/drive/folders/folder-created-1',
         mimeType: 'application/pdf',
         uri: 'https://drive.google.com/file/d/arch-rec-1-review-copy/view',
       });
@@ -9561,6 +9662,7 @@ describe('Document domain', () => {
         name: 'CG104-A Berman Falk - 261104 INC.pdf',
         parentId: 'ffe-CG104',
         parentName: 'CG104',
+        parentUri: 'https://drive.google.com/drive/folders/ffe-CG104',
         mimeType: 'application/pdf',
         uri: 'https://drive.google.com/file/d/ffe-rec-1/view',
       });
@@ -9926,7 +10028,7 @@ describe('Document domain', () => {
           id: 'pdf-1-copy',
           name: '_Submittal.pdf',
           parentId: 'folder-root',
-          parentName: 'folder-root',
+          parentUri: 'https://drive.google.com/drive/folders/folder-root',
           mimeType: 'application/pdf',
           uri: 'https://drive.google.com/file/d/pdf-1-copy/view',
         },

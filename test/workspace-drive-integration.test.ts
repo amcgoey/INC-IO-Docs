@@ -833,11 +833,17 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       url: string;
     }
 
+    interface ExpectedSuccessFolder {
+      name: string;
+      url?: string | undefined;
+    }
+
     interface ExpectedSuccessCard {
       title: string;
       subtitle: string;
       workflowName: string;
       files: ExpectedSuccessFile[];
+      folders?: ExpectedSuccessFolder[] | undefined;
     }
 
     function expectDocumentSuccessCard(body: unknown, expected: ExpectedSuccessCard): void {
@@ -852,11 +858,41 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(pushCard).toBeDefined();
       expect(pushCard?.header.title).toBe(expected.title);
       expect(pushCard?.header.subtitle).toBe(expected.subtitle);
-      expect(pushCard?.sections).toHaveLength(expected.files.length > 0 ? 4 : 3);
+      const expectedFoldersCount = expected.folders
+        ? expected.folders.length
+        : new Set(expected.files.map((f) => f.parentName)).size;
+      const expectedSectionCount =
+        3 + (expectedFoldersCount > 0 ? 1 : 0) + (expected.files.length > 0 ? 1 : 0);
+      expect(pushCard?.sections).toHaveLength(expectedSectionCount);
       expect(pushCard?.sections[0]?.widgets[0]?.textParagraph?.text).toBe(
         `Filed via <b>${expected.workflowName}</b>`
       );
       expect(pushCard?.sections.find((s) => s.header === 'Summary')).toBeDefined();
+
+      const foldersSection = pushCard?.sections.find((s) => s.header === 'Folders');
+      if (expectedFoldersCount === 0) {
+        expect(foldersSection).toBeUndefined();
+      } else {
+        expect(foldersSection?.widgets).toHaveLength(expectedFoldersCount);
+        if (expected.folders) {
+          expected.folders.forEach((folder, index) => {
+            const decoratedText = foldersSection?.widgets[index]?.decoratedText;
+            expect(decoratedText?.text).toBe(folder.name);
+            expect(decoratedText?.wrapText).toBe(true);
+            if (folder.url) {
+              expect(decoratedText?.button).toEqual({
+                text: 'Open',
+                onClick: {
+                  openLink: {
+                    url: folder.url,
+                    openAs: 'FULL_SIZE',
+                  },
+                },
+              });
+            }
+          });
+        }
+      }
 
       const createdAndFiledSection = pushCard?.sections.find((s) => s.header === 'Created & Filed');
       if (expected.files.length === 0) {
@@ -1785,6 +1821,12 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         title: 'Communication Project Filed',
         subtitle: 'Active Projects',
         workflowName: 'FileCommProject',
+        folders: [
+          {
+            name: '260920 IN - Meeting Notes',
+            url: `https://drive.google.com/drive/folders/${newSubfolderId}`,
+          },
+        ],
         files: [],
       });
       expect(nock.isDone()).toBe(true);
