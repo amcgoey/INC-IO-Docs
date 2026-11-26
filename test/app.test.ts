@@ -922,6 +922,150 @@ describe('App integration tests', () => {
       }
     });
 
+    it('POST /documents enforces maxSourceFiles: 1, resolves Drive shortcuts, and rejects folders before Drive mutations on submittal-arch (#373)', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue({ success: true }),
+      };
+
+      const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      const { sheetsClient } = createArchOptionTablesSheetsMock(manifestPath);
+      const searchSpy = vi.spyOn(GoogleDriveClient.prototype, 'searchFiles').mockResolvedValue([
+        {
+          id: 'arch-log-app-guard',
+          name: 'Active Projects Document Log',
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ]);
+      const getFileSpy = vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(
+        async (fileId: string) => {
+          if (fileId === 'folder-submittal') {
+            return {
+              id: 'folder-submittal',
+              name: 'Some Folder',
+              mimeType: 'application/vnd.google-apps.folder',
+            };
+          }
+          if (fileId === 'shortcut-to-folder') {
+            return {
+              id: 'shortcut-to-folder',
+              name: 'Shortcut to Folder',
+              mimeType: 'application/vnd.google-apps.shortcut',
+              shortcutDetails: {
+                targetId: 'folder-submittal',
+                targetMimeType: 'application/vnd.google-apps.folder',
+              },
+            };
+          }
+          if (fileId === 'shortcut-to-pdf') {
+            return {
+              id: 'shortcut-to-pdf',
+              name: 'Shortcut to Submittal.pdf',
+              mimeType: 'application/vnd.google-apps.shortcut',
+              shortcutDetails: {
+                targetId: 'real-submittal-pdf',
+                targetMimeType: 'application/pdf',
+              },
+            };
+          }
+          return {
+            id: fileId,
+            name: 'Submittal.pdf',
+            mimeType: 'application/pdf',
+          };
+        }
+      );
+
+      const prodApp = createApp({
+        skipSpaceValidation: true,
+        manifestPath,
+        activityEngine: mockDispatcher,
+        sheetsClient,
+      });
+      await prodApp.initialize();
+
+      const basePayload = {
+        type: 'submittal-arch',
+        space: {
+          id: 'space-projects-1',
+          name: 'Active Projects',
+          typeId: 'projects',
+          abstractStorageId: 'space-projects-1',
+        },
+        data: {
+          status: 'Open',
+          section: '071200',
+          number: '001',
+          revision: 'A',
+          title: 'Waterproofing Specs',
+          date: '261020',
+          contact: 'PMG',
+          action: 'REC',
+        },
+      };
+
+      try {
+        // 1. > maxSourceFiles rejected with HTTP 400 before Drive lookups or mutations
+        const multiRes = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            ...basePayload,
+            sourceFiles: [{ id: 'file-1' }, { id: 'file-2' }],
+          },
+        });
+        expect(multiRes.statusCode).toBe(400);
+        expect(JSON.parse(multiRes.payload).success).toBe(false);
+        expect(getFileSpy).not.toHaveBeenCalled();
+        expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+
+        // 2. Folder rejected with HTTP 400 before Drive mutations
+        const folderRes = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            ...basePayload,
+            sourceFiles: [{ id: 'folder-submittal' }],
+          },
+        });
+        expect(folderRes.statusCode).toBe(400);
+        expect(JSON.parse(folderRes.payload).success).toBe(false);
+        expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+
+        // 3. Shortcut pointing to folder rejected with HTTP 400 before Drive mutations
+        const shortcutFolderRes = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            ...basePayload,
+            sourceFiles: [{ id: 'shortcut-to-folder' }],
+          },
+        });
+        expect(shortcutFolderRes.statusCode).toBe(400);
+        expect(JSON.parse(shortcutFolderRes.payload).success).toBe(false);
+        expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+
+        // 4. Shortcut pointing to valid PDF resolves target and succeeds
+        const shortcutFileRes = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            ...basePayload,
+            sourceFiles: [{ id: 'shortcut-to-pdf' }],
+          },
+        });
+        expect(shortcutFileRes.statusCode).toBe(200);
+        const shortcutFileBody = JSON.parse(shortcutFileRes.payload);
+        expect(shortcutFileBody.success).toBe(true);
+        expect(shortcutFileBody.data.sourceFiles).toEqual([
+          { id: 'real-submittal-pdf', name: 'Submittal.pdf', mimeType: 'application/pdf' },
+        ]);
+        expect(mockDispatcher.dispatch).toHaveBeenCalled();
+      } finally {
+        searchSpy.mockRestore();
+        getFileSpy.mockRestore();
+      }
+    });
+
     it('submits submittal-ffe Document resolving identity, calculated fields, and workflow activity', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),

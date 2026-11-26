@@ -1112,6 +1112,7 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
     nock('https://www.googleapis.com')
       .get('/drive/v3/files/arch-res-file')
       .query(true)
+      .times(2)
       .reply(200, {
         id: 'arch-res-file',
         name: '071200-001_Waterproofing.pdf',

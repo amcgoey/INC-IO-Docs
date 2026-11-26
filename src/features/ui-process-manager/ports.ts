@@ -156,6 +156,7 @@ export interface UiProcessManifestPort {
     docSchema?: unknown;
     uiSchema?: unknown;
     allowEmptySourceFiles?: boolean | undefined;
+    maxSourceFiles?: number | undefined;
   }>;
 }
 

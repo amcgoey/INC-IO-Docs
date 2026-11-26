@@ -367,6 +367,7 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
     nock('https://www.googleapis.com')
       .get(`/drive/v3/files/${FILE_ID}`)
       .query(true)
+      .times(2)
       .reply(200, {
         id: FILE_ID,
         name: FILE_NAME,

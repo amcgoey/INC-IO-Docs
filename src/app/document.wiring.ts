@@ -223,7 +223,9 @@ export function createDocumentServiceFactory(
       options.compiledSchemaRegistry,
       dynamicValidator,
       validationMessageFormatter,
-      context.selectedLogId
+      context.selectedLogId,
+      driveService,
+      isFileSourceEmailAttachments === true
     );
 
     await service.initialize();
@@ -337,7 +339,9 @@ export function wireDocumentServicesAndRoutes(
       options.templateEvaluator,
       compiledSchemaRegistry,
       dynamicValidator,
-      validationMessageFormatter
+      validationMessageFormatter,
+      undefined,
+      driveService
     );
   }
 
@@ -351,13 +355,17 @@ export function wireDocumentServicesAndRoutes(
         const reqContext: WorkspaceExecutionContext = {};
         const reqLookupOptions = buildDefaultLookupOptions(reqContext);
         const activityEngine = await buildActivityEngine(reqLookupOptions, reqContext);
+        const reqDriveService: DriveServicePort =
+          options.driveService ?? new DriveServiceAdapter(options.driveClient);
         const reqService = new DocumentService(
           activityEngine,
           options.documentSchemaRegistry,
           options.templateEvaluator,
           compiledSchemaRegistry,
           createDocumentDynamicValidationAdapter(reqLookupOptions),
-          validationMessageFormatter
+          validationMessageFormatter,
+          undefined,
+          reqDriveService
         );
         await reqService.initialize();
         return reqService;

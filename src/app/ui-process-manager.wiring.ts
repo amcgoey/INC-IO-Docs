@@ -19,6 +19,7 @@ import {
   type UiProcessGmailMessageDescriptor,
   type UiProcessSourceParserPort,
   type UiProcessLockedFieldsPort,
+  type UiProcessSourceFileDto,
 } from '../features/ui-process-manager';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import {
@@ -59,7 +60,22 @@ import type {
   DocumentDynamicValidationPort,
   DynamicValidationMessageFormatter,
   DocumentModel,
+  SourceFile,
 } from '../features/document/ports';
+
+function toDocumentSourceFiles(
+  sourceFiles: readonly UiProcessSourceFileDto[] | undefined
+): SourceFile[] | undefined {
+  if (sourceFiles === undefined) {
+    return undefined;
+  }
+  return sourceFiles.map((file) => ({
+    id: file.id,
+    ...(file.name !== undefined ? { name: file.name } : {}),
+    ...(file.mimeType !== undefined ? { mimeType: file.mimeType } : {}),
+    ...(file.content !== undefined ? { content: file.content } : {}),
+  }));
+}
 
 export function resolveActionRoute(route: string, baseUrl?: string): string {
   try {
@@ -567,10 +583,12 @@ export function createUiProcessManagerWiring(
     ? {
         processDocument: async (payload, eventName) => {
           const space = toStructuredDocumentSpace(payload.space);
+          const mappedSourceFiles = toDocumentSourceFiles(payload.sourceFiles);
           const documentPayload: DocumentModel = {
             type: payload.type,
             data: payload.data,
             ...(space ? { space } : {}),
+            ...(mappedSourceFiles !== undefined ? { sourceFiles: mappedSourceFiles } : {}),
           };
 
           return options.documentService!.processDocument(
@@ -647,10 +665,12 @@ export function createUiProcessManagerWiring(
             processDocument: async (payload, eventName) => {
               const { sourceFiles, targetMessageId, selectedLogId, ...documentPayload } = payload;
               const space = toStructuredDocumentSpace(documentPayload.space);
+              const mappedSourceFiles = toDocumentSourceFiles(sourceFiles);
               const targetDocPayload: DocumentModel = {
                 type: documentPayload.type,
                 data: documentPayload.data,
                 ...(space ? { space } : {}),
+                ...(mappedSourceFiles !== undefined ? { sourceFiles: mappedSourceFiles } : {}),
               };
 
               const activeSourceFiles = sourceFiles ?? [];

@@ -598,13 +598,55 @@ describe('DriveActivityHandler', () => {
           '260920 IN - Meeting Notes'
         );
         expect(mockDriveService.move).toHaveBeenCalledWith('sf-1', 'comm-folder-id');
+      });
+
+      it('prefers context.document.sourceFiles over constructor sourceFiles when provided (#373)', async () => {
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          id: 'submittals-folder-id',
+          name: 'Submittals',
+          parents: ['root-shared-drive-id'],
+        });
+        (mockDriveService.move as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          id: 'resolved-target-1',
+          name: 'Resolved.pdf',
+          parents: ['submittals-folder-id'],
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/resolved-target-1/view',
+        });
+
+        const sfHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [{ id: 'shortcut-1', name: 'Shortcut.pdf' }],
+        });
+
+        const result = await sfHandler.handle(
+          {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'root-shared-drive-id',
+              folderName: 'Submittals',
+            },
+          },
+          {
+            document: {
+              type: 'submittal-arch',
+              data: {},
+              sourceFiles: [{ id: 'resolved-target-1', name: 'Resolved.pdf', mimeType: 'application/pdf' }],
+            },
+            files: [],
+            stepOutputs: {},
+            contextVariables: {},
+          }
+        );
+
+        expect(result.success).toBe(true);
+        expect(mockDriveService.move).toHaveBeenCalledWith('resolved-target-1', 'submittals-folder-id');
         expect(result.files).toEqual([
           {
-            id: 'sf-1',
-            name: 'Original_Report.pdf',
-            parentName: '260920 IN - Meeting Notes',
+            id: 'resolved-target-1',
+            name: 'Resolved.pdf',
+            parentName: 'Submittals',
             mimeType: 'application/pdf',
-            uri: 'https://drive.google.com/file/d/sf-1/view',
+            uri: 'https://drive.google.com/file/d/resolved-target-1/view',
           },
         ]);
       });

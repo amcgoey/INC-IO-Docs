@@ -436,6 +436,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           contact: 'Alice Corp',
           date: '260920',
         },
+        sourceFiles: [{ id: 'file-123' }],
       },
       'onSubmit'
     );
@@ -1432,7 +1433,8 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       ]);
       expect(passedContext?.userOAuthToken).toBe('token-user-123');
 
-      // Verify activeDocService.processDocument received clean documentPayload without sourceFiles
+      // Verify activeDocService.processDocument receives forwarded sourceFiles on DocumentModel
+      // while ephemeral fields (targetMessageId, selectedLogId) remain stripped per ADR-0005/ADR-0020
       expect(mockProcessDocument).toHaveBeenCalledWith(
         {
           type: 'communication-project',
@@ -1446,12 +1448,19 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
             typeId: 'projects',
             abstractStorageId: 'proj-1',
           },
+          sourceFiles: [
+            {
+              id: 'file-2',
+              name: 'Second.png',
+              mimeType: 'image/png',
+            },
+          ],
         },
         'onSubmit'
       );
-      // Ensure sourceFiles is not present on documentPayload per ADR-0005
       const calledPayload = mockProcessDocument.mock.calls[0][0];
-      expect(calledPayload).not.toHaveProperty('sourceFiles');
+      expect(calledPayload).not.toHaveProperty('targetMessageId');
+      expect(calledPayload).not.toHaveProperty('selectedLogId');
     });
 
     it('instantiates DocumentService exactly once per request and dispatches processDocument', async () => {
