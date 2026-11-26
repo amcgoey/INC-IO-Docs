@@ -10,6 +10,7 @@ import type {
   DocumentServicePort,
   CompiledSchemaRegistryPort,
   DocumentDynamicValidationPort,
+  DocumentOptionTablePort,
   DynamicValidationMessageFormatter,
 } from '../features/document/ports';
 import {
@@ -22,6 +23,7 @@ import { DocumentService } from '../features/document/domain';
 import { CompiledSchemaRegistry } from '../features/document/adapters/compiled-schema-registry';
 import {
   createDocumentDynamicValidationAdapter,
+  createDocumentOptionTableAdapter,
   createLookupOptionsService,
 } from './lookup-options.wiring';
 import type { LookupOptionsPort } from '../features/lookup-options';
@@ -96,6 +98,8 @@ export interface CreateDocumentServiceFactoryOptions {
   pdfProcessor?: PdfProcessor | undefined;
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
   getDynamicValidator?: ((requestContext: WorkspaceExecutionContext) => DocumentDynamicValidationPort) | undefined;
+  optionTablePort?: DocumentOptionTablePort | undefined;
+  getOptionTablePort?: ((requestContext: WorkspaceExecutionContext) => DocumentOptionTablePort) | undefined;
   validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
   documentLogService?: DocumentLogPort | undefined;
   ensureDocumentLogInitialized?: (() => Promise<void>) | undefined;
@@ -195,20 +199,32 @@ export function createDocumentServiceFactory(
 
     const activityEngine = new ActivityEngine(handlers);
 
+    let fallbackLookupOptions: LookupOptionsPort | undefined;
+    const getFallbackLookupOptions = (): LookupOptionsPort => {
+      if (!fallbackLookupOptions) {
+        fallbackLookupOptions = createLookupOptionsService({
+          manifestProvider: options.manifestProvider,
+          documentSchemaRegistry: options.documentSchemaRegistry,
+          driveClient,
+          configProvider: options.configProvider,
+          documentLogService: options.documentLogService,
+          ensureDocumentLogInitialized: options.ensureDocumentLogInitialized,
+        });
+      }
+      return fallbackLookupOptions;
+    };
+
     const dynamicValidator =
       options.dynamicValidator ??
       (options.getDynamicValidator
         ? options.getDynamicValidator(effectiveRequestContext)
-        : createDocumentDynamicValidationAdapter(
-            createLookupOptionsService({
-              manifestProvider: options.manifestProvider,
-              documentSchemaRegistry: options.documentSchemaRegistry,
-              driveClient,
-              configProvider: options.configProvider,
-              documentLogService: options.documentLogService,
-              ensureDocumentLogInitialized: options.ensureDocumentLogInitialized,
-            })
-          ));
+        : createDocumentDynamicValidationAdapter(getFallbackLookupOptions()));
+
+    const optionTablePort =
+      options.optionTablePort ??
+      (options.getOptionTablePort
+        ? options.getOptionTablePort(effectiveRequestContext)
+        : createDocumentOptionTableAdapter(getFallbackLookupOptions()));
 
     const validationMessageFormatter =
       options.validationMessageFormatter ??
@@ -223,7 +239,10 @@ export function createDocumentServiceFactory(
       options.compiledSchemaRegistry,
       dynamicValidator,
       validationMessageFormatter,
-      context.selectedLogId
+      context.selectedLogId,
+      driveService,
+      isFileSourceEmailAttachments === true,
+      optionTablePort
     );
 
     await service.initialize();
@@ -244,6 +263,7 @@ export interface WireDocumentServicesOptions {
   compiledSchemaRegistry?: CompiledSchemaRegistryPort | undefined;
   primaryTargetId?: string | undefined;
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
+  optionTablePort?: DocumentOptionTablePort | undefined;
   validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
   documentLogService?: DocumentLogPort | undefined;
   getDocumentLogService?: ((context: WorkspaceExecutionContext) => DocumentLogPort) | undefined;
@@ -320,7 +340,10 @@ export function wireDocumentServicesAndRoutes(
       primaryTargetId: options.primaryTargetId,
     });
 
-    const lookupOptions = options.dynamicValidator ? undefined : buildDefaultLookupOptions();
+    const lookupOptions =
+      options.dynamicValidator && options.optionTablePort
+        ? undefined
+        : buildDefaultLookupOptions();
     const handlers: ActivityHandler[] = [
       driveActivityHandler,
       ...(options.additionalActivityHandlers ?? []),
@@ -330,6 +353,8 @@ export function wireDocumentServicesAndRoutes(
 
     const dynamicValidator =
       options.dynamicValidator ?? createDocumentDynamicValidationAdapter(lookupOptions!);
+    const optionTablePort =
+      options.optionTablePort ?? createDocumentOptionTableAdapter(lookupOptions!);
 
     documentService = new DocumentService(
       activityEngine,
@@ -337,7 +362,11 @@ export function wireDocumentServicesAndRoutes(
       options.templateEvaluator,
       compiledSchemaRegistry,
       dynamicValidator,
-      validationMessageFormatter
+      validationMessageFormatter,
+      undefined,
+      driveService,
+      undefined,
+      optionTablePort
     );
   }
 
@@ -351,13 +380,19 @@ export function wireDocumentServicesAndRoutes(
         const reqContext: WorkspaceExecutionContext = {};
         const reqLookupOptions = buildDefaultLookupOptions(reqContext);
         const activityEngine = await buildActivityEngine(reqLookupOptions, reqContext);
+        const reqDriveService: DriveServicePort =
+          options.driveService ?? new DriveServiceAdapter(options.driveClient);
         const reqService = new DocumentService(
           activityEngine,
           options.documentSchemaRegistry,
           options.templateEvaluator,
           compiledSchemaRegistry,
           createDocumentDynamicValidationAdapter(reqLookupOptions),
-          validationMessageFormatter
+          validationMessageFormatter,
+          undefined,
+          reqDriveService,
+          undefined,
+          options.optionTablePort ?? createDocumentOptionTableAdapter(reqLookupOptions)
         );
         await reqService.initialize();
         return reqService;

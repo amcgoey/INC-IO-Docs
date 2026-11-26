@@ -1,6 +1,7 @@
 {
   "key": "submittal-ffe",
   "name": "Submittal FF&E",
+  "maxSourceFiles": 1,
   "documentSchema": {
     "fields": [
       {
@@ -159,6 +160,16 @@
         "name": "Contact Chain",
         "key": "contactChain",
         "template": "{{contact.key}}"
+      },
+      {
+        "name": "Spec Tag Group",
+        "key": "specTagGroup",
+        "template": "{{specTag.key}}",
+        "transforms": [
+          { "type": "prefix", "length": 2 },
+          { "type": "uppercase" }
+        ],
+        "required": true
       }
     ],
     "identity": {

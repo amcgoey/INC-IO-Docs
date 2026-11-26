@@ -367,6 +367,7 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
     nock('https://www.googleapis.com')
       .get(`/drive/v3/files/${FILE_ID}`)
       .query(true)
+      .times(2)
       .reply(200, {
         id: FILE_ID,
         name: FILE_NAME,
@@ -381,6 +382,16 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
         name: '071200-001-0 Waterproofing & Drainage - 261120 PMG_NOC.pdf',
         webViewLink: `https://drive.google.com/file/d/${FILE_ID}/view`,
       });
+
+    const csiRows = [
+      ['Division Number', 'Division Folder'],
+      ['01', '01 General Requirements'],
+      ['03', '03 Concrete'],
+      ['07', '07 Thermal and Moisture Protection'],
+      ['08', '08 Openings'],
+      ['09', '09 Finishes'],
+      ['---', ''],
+    ];
 
     nock('https://sheets.googleapis.com')
       .get(`/v4/spreadsheets/${logId}`)
@@ -413,6 +424,11 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
             name: 'Options_Submittal_Arch_Contacts',
             range: { sheetId: 103, startRowIndex: 0, endRowIndex: contactsRows.length, startColumnIndex: 11, endColumnIndex: 14 },
           },
+          {
+            namedRangeId: 'nr-csi-divisions',
+            name: 'Options_Submittal_Arch_CSI_Divisions',
+            range: { sheetId: 103, startRowIndex: 0, endRowIndex: csiRows.length, startColumnIndex: 15, endColumnIndex: 17 },
+          },
         ],
       });
     nock('https://sheets.googleapis.com')
@@ -429,7 +445,9 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
               ? statusesRows
               : r.includes('E1:')
                 ? actionsRows
-                : contactsRows,
+                : r.includes('P1:')
+                  ? csiRows
+                  : contactsRows,
           })),
         };
       });

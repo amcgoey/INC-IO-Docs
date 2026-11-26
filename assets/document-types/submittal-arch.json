@@ -1,6 +1,7 @@
 {
   "key": "submittal-arch",
   "name": "Submittal Arch",
+  "maxSourceFiles": 1,
   "documentSchema": {
     "fields": [
       {
@@ -98,6 +99,10 @@
       "contacts": {
         "provider": "document_log",
         "properties": ["key", "name"]
+      },
+      "csiDivisions": {
+        "provider": "document_log",
+        "properties": ["key", "folder"]
       }
     },
     "calculatedFields": [
@@ -125,6 +130,20 @@
         "name": "Contact Chain",
         "key": "contactChain",
         "template": "{{contact.key}}"
+      },
+      {
+        "name": "CSI Division Folder",
+        "key": "csiDivisionFolder",
+        "template": "{{section}}",
+        "transforms": [
+          { "type": "prefix", "length": 2 }
+        ],
+        "lookup": {
+          "source": "csiDivisions",
+          "matchProperty": "key",
+          "resultProperty": "folder"
+        },
+        "required": true
       }
     ],
     "identity": {
@@ -278,6 +297,15 @@
           "Name": "name"
         },
         "aliasesColumn": "Aliases"
+      },
+      "csiDivisions": {
+        "sheetName": "_Config Submittal Arch",
+        "rangeName": "Options_Submittal_Arch_CSI_Divisions",
+        "endMarker": "---",
+        "columns": {
+          "Division Number": "key",
+          "Division Folder": "folder"
+        }
       }
     }
   },

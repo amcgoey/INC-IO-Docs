@@ -19,6 +19,7 @@ import type { HttpServer } from '../infrastructure/http';
 import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import type { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 import type { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
+import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 
 describe('document.wiring', () => {
   const dummyDocType: DocumentType = {
@@ -526,6 +527,83 @@ describe('document.wiring', () => {
       );
       expect(headlessResult.success).toBe(true);
       expect(staticHandle).toHaveBeenCalledTimes(1);
+    });
+
+    it('forwards optionTablePort / getOptionTablePort in createDocumentServiceFactory and wireDocumentServicesAndRoutes (#374)', async () => {
+      const calcLookupDocType: DocumentType = {
+        key: 'calc-wiring-test',
+        name: 'Calc Wiring Test',
+        documentSchema: {
+          fields: [{ key: 'section', name: 'Section', type: 'string', required: true }],
+          optionSources: {
+            csiDivisions: { provider: 'document_log', properties: ['key', 'folder'] },
+          },
+          calculatedFields: [
+            {
+              key: 'csiDivisionFolder',
+              template: '{{section}}',
+              transforms: [{ type: 'prefix', length: 2 }],
+              lookup: { source: 'csiDivisions', matchProperty: 'key', resultProperty: 'folder' },
+              required: true,
+            },
+          ],
+        },
+      };
+      const registry: DocumentSchemaRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([calcLookupDocType]),
+      };
+      const compiled = new CompiledSchemaRegistry(registry);
+      await compiled.initialize();
+
+      const mockOptionTablePort = {
+        resolveOptionTables: vi.fn().mockResolvedValue({
+          csiDivisions: {
+            status: 'ready' as const,
+            tuples: [{ key: '07', folder: '07 Thermal and Moisture Protection' }],
+          },
+        }),
+      };
+
+      const factory = createDocumentServiceFactory({
+        documentSchemaRegistry: registry,
+        templateEvaluator: new HandlebarsAdapter(),
+        compiledSchemaRegistry: compiled,
+        getOptionTablePort: () => mockOptionTablePort,
+      });
+
+      const perReqService = (await factory({} as WorkspaceExecutionContext)) as DocumentService;
+      const factoryRes = await perReqService.processDocument({
+        type: 'calc-wiring-test',
+        data: { section: '071200' },
+      });
+      expect(factoryRes.success).toBe(true);
+      if (factoryRes.success) {
+        expect(factoryRes.data.calculated?.csiDivisionFolder).toBe(
+          '07 Thermal and Moisture Protection'
+        );
+      }
+
+      const mockServer: HttpServer = { registerRoute: vi.fn() } as unknown as HttpServer;
+      const wiredService = wireDocumentServicesAndRoutes({
+        server: mockServer,
+        driveClient: {} as unknown as GoogleDriveClient,
+        configProvider: { getDriveConfig: vi.fn().mockResolvedValue(undefined) },
+        documentSchemaRegistry: registry,
+        templateEvaluator: new HandlebarsAdapter(),
+        optionTablePort: mockOptionTablePort,
+      }) as DocumentService;
+      await wiredService.initialize();
+
+      const wiredRes = await wiredService.processDocument({
+        type: 'calc-wiring-test',
+        data: { section: '071200' },
+      });
+      expect(wiredRes.success).toBe(true);
+      if (wiredRes.success) {
+        expect(wiredRes.data.calculated?.csiDivisionFolder).toBe(
+          '07 Thermal and Moisture Protection'
+        );
+      }
     });
   });
 });

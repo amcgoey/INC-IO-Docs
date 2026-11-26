@@ -17,6 +17,11 @@ import {
   type DynamicValidationStatus,
   type DynamicValidationResult,
   type DynamicValidationContext,
+  DocumentOptionTableStatusSchema,
+  DocumentOptionTableResolutionSchema,
+  DocumentOptionTableContextSchema,
+  type DocumentOptionTablePort,
+  type DocumentOptionTableResolution,
 } from './ports';
 
 describe('Document Ports & DTOs', () => {
@@ -55,6 +60,18 @@ describe('Document Ports & DTOs', () => {
     };
     expect(Value.Check(FormSchemaType, formSchemaWithAllowEmpty)).toBe(true);
     expect(formSchemaWithAllowEmpty.allowEmptySourceFiles).toBe(true);
+  });
+
+  it('FormSchemaType validates FormSchema definitions with maxSourceFiles', () => {
+    const formSchemaWithMax: FormSchema = {
+      key: 'submittal-arch',
+      name: 'Submittal Arch',
+      documentSchema: { fields: [] },
+      maxSourceFiles: 1,
+    };
+    expect(Value.Check(FormSchemaType, formSchemaWithMax)).toBe(true);
+    expect(formSchemaWithMax.maxSourceFiles).toBe(1);
+    expect(Value.Check(FormSchemaType, { ...formSchemaWithMax, maxSourceFiles: 0 })).toBe(false);
   });
 
 
@@ -213,6 +230,34 @@ describe('Document Ports & DTOs', () => {
     const result = await hydrator.hydrate([{ id: 'file-1', name: 'test.pdf' }]);
     expect(result).toHaveLength(1);
     expect(result[0].content).toEqual(new Uint8Array([1, 2, 3]));
+  });
+
+  it('DocumentOptionTablePort and schemas satisfy interface contract', async () => {
+    expect(Value.Check(DocumentOptionTableStatusSchema, 'ready')).toBe(true);
+    expect(Value.Check(DocumentOptionTableStatusSchema, 'config_error')).toBe(true);
+    expect(Value.Check(DocumentOptionTableStatusSchema, 'bogus')).toBe(false);
+
+    const resolution: DocumentOptionTableResolution = {
+      status: 'ready',
+      tuples: [{ key: '07', folder: '07 Thermal and Moisture Protection' }],
+    };
+    expect(Value.Check(DocumentOptionTableResolutionSchema, resolution)).toBe(true);
+    expect(
+      Value.Check(DocumentOptionTableContextSchema, {
+        spaceId: 'sp-1',
+        documentTypeKey: 'submittal-arch',
+      })
+    ).toBe(true);
+
+    const port: DocumentOptionTablePort = {
+      resolveOptionTables: async (sourceKeys) => ({
+        [sourceKeys[0]]: resolution,
+      }),
+    };
+    const resolved = await port.resolveOptionTables(['csiDivisions'], {
+      documentTypeKey: 'submittal-arch',
+    });
+    expect(resolved.csiDivisions.tuples[0].folder).toBe('07 Thermal and Moisture Protection');
   });
 });
 

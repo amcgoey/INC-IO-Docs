@@ -277,6 +277,8 @@ export function wireWorkspaceAddonRoutes(
           pdfProcessor: options.pdfProcessor,
           getDynamicValidator: (requestContext) =>
             lookupOptionsWiring.createDynamicValidator(requestContext),
+          getOptionTablePort: (requestContext) =>
+            lookupOptionsWiring.createOptionTableResolver(requestContext),
           ...(createAdditionalActivityHandlers !== undefined
             ? { createAdditionalActivityHandlers }
             : {}),

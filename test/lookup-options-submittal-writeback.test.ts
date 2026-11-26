@@ -353,10 +353,13 @@ function createFullMultiSim(spreadsheetId: string): MultiSpreadsheetSim {
         sheetId: 103,
         title: '_Config Submittal Arch',
         grid: [
-          ['Status', '', 'Action', 'Name', 'Suffix', 'Order', '', 'Contact', 'Name', 'Contact Type'].map(c),
-          ['Open', '', 'REC', 'Received', '', '1', '', 'INC', 'INC Architecture and Design', 'INC'].map(c),
-          ['Closed', '', 'NOC', 'No Objections As Corrected', '_NOC', '6', '', '---', '', ''].map(c),
-          ['---', '', '---', '', '', '', '', '', '', ''].map(c),
+          ['Status', '', 'Action', 'Name', 'Suffix', 'Order', '', 'Contact', 'Name', 'Contact Type', '', 'Division Number', 'Division Folder'].map(c),
+          ['Open', '', 'REC', 'Received', '', '1', '', 'INC', 'INC Architecture and Design', 'INC', '', '01', '01 General Requirements'].map(c),
+          ['Closed', '', 'NOC', 'No Objections As Corrected', '_NOC', '6', '', '---', '', '', '', '03', '03 Concrete'].map(c),
+          ['---', '', '---', '', '', '', '', '', '', '', '', '07', '07 Thermal and Moisture Protection'].map(c),
+          ['', '', '', '', '', '', '', '', '', '', '', '08', '08 Openings'].map(c),
+          ['', '', '', '', '', '', '', '', '', '', '', '09', '09 Finishes'].map(c),
+          ['', '', '', '', '', '', '', '', '', '', '', '---', ''].map(c),
         ],
       },
       {
@@ -406,6 +409,11 @@ function createFullMultiSim(spreadsheetId: string): MultiSpreadsheetSim {
         namedRangeId: 'nr-arch-val-contacts',
         name: 'Validation_Submittal_Arch_Contacts',
         range: { sheetId: 103, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 7, endColumnIndex: 8 },
+      },
+      {
+        namedRangeId: 'nr-arch-csi-divisions',
+        name: 'Options_Submittal_Arch_CSI_Divisions',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 7, startColumnIndex: 11, endColumnIndex: 13 },
       },
       {
         namedRangeId: 'nr-ffe-statuses',

@@ -161,6 +161,16 @@ const CONFIG_ARCH_CONTACT_VALUES = [
   ['---', '', ''],
 ];
 
+const CONFIG_ARCH_CSI_DIVISION_VALUES = [
+  ['Division Number', 'Division Folder'],
+  ['01', '01 General Requirements'],
+  ['03', '03 Concrete'],
+  ['07', '07 Thermal and Moisture Protection'],
+  ['08', '08 Openings'],
+  ['09', '09 Finishes'],
+  ['---', ''],
+];
+
 const CONFIG_FFE_STATUS_VALUES = CONFIG_ARCH_STATUS_VALUES;
 const CONFIG_FFE_ACTION_VALUES = CONFIG_ARCH_ACTION_VALUES;
 const CONFIG_FFE_CONTACT_VALUES = [
@@ -217,6 +227,9 @@ function mockConfigSubmittalArchBatchGet(
         if (range.includes('H1:J')) {
           return { range, values: CONFIG_ARCH_CONTACT_VALUES };
         }
+        if (range.includes('L1:M')) {
+          return { range, values: CONFIG_ARCH_CSI_DIVISION_VALUES };
+        }
         return { range, values: [] };
       }),
     };
@@ -265,6 +278,11 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
         namedRangeId: 'nr-arch-contacts',
         name: 'Options_Submittal_Arch_Contacts',
         range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length, startColumnIndex: 7, endColumnIndex: 10 },
+      },
+      {
+        namedRangeId: 'nr-arch-csi-divisions',
+        name: 'Options_Submittal_Arch_CSI_Divisions',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ARCH_CSI_DIVISION_VALUES.length, startColumnIndex: 11, endColumnIndex: 13 },
       },
       {
         namedRangeId: 'nr-ffe-statuses',
@@ -468,6 +486,17 @@ function mockSubmittalArchLogWrite(spreadsheetId: string) {
             endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length,
             startColumnIndex: 7,
             endColumnIndex: 10,
+          },
+        },
+        {
+          namedRangeId: 'nr-arch-csi-divisions',
+          name: 'Options_Submittal_Arch_CSI_Divisions',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_ARCH_CSI_DIVISION_VALUES.length,
+            startColumnIndex: 11,
+            endColumnIndex: 13,
           },
         },
       ],
@@ -1547,6 +1576,7 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
     nock('https://www.googleapis.com')
       .get('/drive/v3/files/file-ambig-351')
       .query(true)
+      .times(2)
       .reply(200, {
         id: 'file-ambig-351',
         name: '071200-001-A Waterproofing.pdf',

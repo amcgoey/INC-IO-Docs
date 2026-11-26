@@ -13,6 +13,8 @@ import {
   OptionSourceSchema,
   DocumentLogOptionSourceSchema,
   GoogleDriveOptionSourceSchema,
+  CalculatedFieldTransformSchema,
+  CalculatedFieldLookupSchema,
   type Activity,
   type ActivityExecutionContext,
   type ActivityOutput,
@@ -95,6 +97,13 @@ export const FormDocumentCalculatedFieldType = Type.Object({
   name: Type.Optional(Type.String()),
   template: Type.String(),
   description: Type.Optional(Type.String()),
+  transforms: Type.Optional(
+    Type.Union([Type.Array(CalculatedFieldTransformSchema, { minItems: 1 }), Type.Undefined()])
+  ),
+  lookup: Type.Optional(
+    Type.Union([CalculatedFieldLookupSchema, Type.Undefined()])
+  ),
+  required: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
 }, { additionalProperties: true });
 
 export type FormDocumentCalculatedField = Static<typeof FormDocumentCalculatedFieldType>;
@@ -117,6 +126,7 @@ export const FormSchemaType = Type.Object({
   documentSchema: FormDocumentSchemaType,
   documentUiSchema: Type.Optional(DocumentUiEventsSchema),
   allowEmptySourceFiles: Type.Optional(Type.Boolean()),
+  maxSourceFiles: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 
 export type FormSchema = Static<typeof FormSchemaType>;
@@ -225,6 +235,46 @@ export interface DocumentDynamicValidationPort {
   ): Promise<Record<string, DynamicValidationResult>>;
 }
 
+export const DocumentOptionTableStatusSchema = Type.Union([
+  Type.Literal('ready'),
+  Type.Literal('empty'),
+  Type.Literal('missing_space'),
+  Type.Literal('path_not_found'),
+  Type.Literal('ambiguous_path'),
+  Type.Literal('missing_log'),
+  Type.Literal('ambiguous_log'),
+  Type.Literal('config_error'),
+  Type.Literal('timeout'),
+  Type.Literal('error'),
+]);
+
+export type DocumentOptionTableStatus = Static<typeof DocumentOptionTableStatusSchema>;
+
+export const DocumentOptionTableResolutionSchema = Type.Object({
+  status: DocumentOptionTableStatusSchema,
+  tuples: Type.Array(Type.Record(Type.String(), Type.Unknown())),
+  targetPath: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  errorMessage: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+
+export type DocumentOptionTableResolution = Static<typeof DocumentOptionTableResolutionSchema>;
+
+export const DocumentOptionTableContextSchema = Type.Object({
+  spaceId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  space: Type.Optional(Type.Union([DynamicValidationSpaceSchema, Type.Undefined()])),
+  documentTypeKey: Type.String({ minLength: 1 }),
+  selectedLogId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+
+export type DocumentOptionTableContext = Static<typeof DocumentOptionTableContextSchema>;
+
+export interface DocumentOptionTablePort {
+  resolveOptionTables(
+    sourceKeys: readonly string[],
+    context: DocumentOptionTableContext
+  ): Promise<Record<string, DocumentOptionTableResolution>>;
+}
+
 
 export interface DocumentSchemaRegistryPort {
   loadAll(): Promise<DocumentType[]>;
@@ -290,6 +340,11 @@ export interface DriveSearchQuery {
   expectedParentPathNames?: string[] | undefined;
 }
 
+export interface DriveShortcutDetails {
+  targetId?: string | undefined;
+  targetMimeType?: string | undefined;
+}
+
 export interface DriveFileResult {
   id: string;
   name: string;
@@ -298,12 +353,7 @@ export interface DriveFileResult {
   size?: number | undefined;
   webViewLink?: string | undefined;
   modifiedTime?: string | undefined;
-  shortcutDetails?:
-    | {
-        targetId?: string | undefined;
-        targetMimeType?: string | undefined;
-      }
-    | undefined;
+  shortcutDetails?: DriveShortcutDetails | undefined;
 }
 
 export type DriveFile = DriveFileResult;
