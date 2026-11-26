@@ -5,7 +5,7 @@ import {
   type UiField,
   type UiViewAction,
   normalizeDynamicOptionResolution,
-  isDynamicOptionConfig,
+  isDynamicLookupField,
 } from '../domain';
 import type {
   AbstractDataSchema,
@@ -22,6 +22,7 @@ export interface DocumentInfoOptions {
   sectionHeader?: string | undefined;
   formData?: Record<string, unknown> | undefined;
   hiddenFields?: string[] | undefined;
+  lockedFields?: Record<string, string> | undefined;
   onProcessAction?: UiViewAction | string | undefined;
   processDisabled?: boolean | undefined;
   documentTypeKey?: string | undefined;
@@ -99,8 +100,18 @@ export function extractSelectionItems(
             text: opt.text,
             value: opt.value,
           }));
-        } else if (isDynamicOptionConfig(field.options)) {
-          const hint = formatFieldHint(DEFAULT_MESSAGE_CATALOG, resolution.status, resolution.targetPath);
+        } else if (isDynamicLookupField(field.options, dataSchema)) {
+          const optionSource = dataSchema?.optionSources?.[sourceKey];
+          const hint = formatFieldHint(
+            DEFAULT_MESSAGE_CATALOG,
+            resolution.status,
+            resolution.targetPath,
+            {
+              provider: optionSource?.provider,
+              sourceKey,
+              errorMessage: resolution.errorMessage,
+            }
+          );
           defaultItems = [{ text: hint ?? '', value: '' }];
         }
       }
@@ -144,14 +155,25 @@ export function extractSelectionItems(
 const widgetBuilders: Record<string, WidgetBuilder> = {
   selectionInput: ({ field, label, widgetName, customProps, onChangeAction, formValue, dataSchema, dynamicOptions }) => {
     let baseItems: SelectionItem[];
-    if (isDynamicOptionConfig(field.options)) {
+    if (isDynamicLookupField(field.options, dataSchema)) {
       const rawRes = dynamicOptions?.[field.options.source];
       const resolution = normalizeDynamicOptionResolution(rawRes);
       if (resolution) {
         if (resolution.status === 'ready') {
           baseItems = resolution.items.map((opt) => ({ text: opt.text, value: opt.value }));
         } else {
-          const hint = formatFieldHint(DEFAULT_MESSAGE_CATALOG, resolution.status, resolution.targetPath);
+          const optionSource = dataSchema?.optionSources?.[field.options.source];
+          const hint = formatFieldHint(
+            DEFAULT_MESSAGE_CATALOG,
+            resolution.status,
+            resolution.targetPath,
+            {
+              provider: optionSource?.provider,
+              sourceKey: field.options.source,
+              fieldLabel: label,
+              errorMessage: resolution.errorMessage,
+            }
+          );
           baseItems = [{ text: hint ?? '', value: '' }];
         }
       } else {
@@ -191,14 +213,25 @@ const widgetBuilders: Record<string, WidgetBuilder> = {
     let hintText = customProps.placeholder ?? customProps.hintText;
     let autocompleteItems: SelectionItem[] = [];
 
-    if (isDynamicOptionConfig(field.options)) {
+    if (isDynamicLookupField(field.options, dataSchema)) {
       const rawRes = dynamicOptions?.[field.options.source];
       const resolution = normalizeDynamicOptionResolution(rawRes);
       if (resolution) {
         if (resolution.status === 'ready') {
           autocompleteItems = resolution.items.map((opt) => ({ text: opt.text, value: opt.value }));
         } else {
-          hintText = formatFieldHint(DEFAULT_MESSAGE_CATALOG, resolution.status, resolution.targetPath);
+          const optionSource = dataSchema?.optionSources?.[field.options.source];
+          hintText = formatFieldHint(
+            DEFAULT_MESSAGE_CATALOG,
+            resolution.status,
+            resolution.targetPath,
+            {
+              provider: optionSource?.provider,
+              sourceKey: field.options.source,
+              fieldLabel: label,
+              errorMessage: resolution.errorMessage,
+            }
+          );
           autocompleteItems = [];
         }
       }
@@ -255,6 +288,23 @@ export function buildDocumentInfoSection(
 
     const uiField = uiSchema?.fields?.[fieldKey];
     const label = uiField?.label ?? camelCaseToTitleCase(field.key);
+    const rawLockedValue = options?.lockedFields?.[field.key];
+    const lockedValue =
+      typeof rawLockedValue === 'string' && rawLockedValue.trim().length > 0
+        ? rawLockedValue.trim()
+        : undefined;
+
+    if (lockedValue !== undefined) {
+      widgets.push({
+        decoratedText: {
+          topLabel: label,
+          text: lockedValue,
+          wrapText: true,
+        },
+      });
+      continue;
+    }
+
     const widgetType = uiField?.widget ?? inferDefaultWidget(field);
     const customProps = (uiField?.props as StandardWidgetCustomProps | undefined) ?? {};
 

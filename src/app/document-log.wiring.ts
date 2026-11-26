@@ -1,5 +1,6 @@
 import { OAuth2Client } from 'google-auth-library';
 import {
+  DocumentLogConfigurationError,
   DocumentLogError,
   DocumentLogService,
   LogSchemaRegistryAdapter,
@@ -20,6 +21,7 @@ import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import {
   GoogleSheetsApiError,
   GoogleSheetsClient,
+  GoogleSheetsOptionTableConfigError,
   type RowRecord,
   type SheetsClient,
   type SheetsConfigProvider,
@@ -35,6 +37,8 @@ export interface DocumentLogServiceRequestOverrides {
   driveClient?: GoogleDriveClient | undefined;
   sheetsClient?: SheetsClient | undefined;
   documentLogService?: DocumentLogPort | undefined;
+  selectedLogId?: string | undefined;
+  onWriteLogSuccess?: ((spaceId?: string) => void) | undefined;
 }
 
 export type DocumentLogServiceFactory = (
@@ -64,6 +68,10 @@ export interface DocumentLogWiring {
   logSchemaRegistry: LogSchemaRegistryPort;
   documentLogService: DocumentLogPort;
   createDocumentLogService: DocumentLogServiceFactory;
+  getPerRequestService: (
+    context: WorkspaceExecutionContext,
+    overrides?: DocumentLogServiceRequestOverrides
+  ) => DocumentLogPort;
   createActivityHandler: (options?: DocumentLogActivityHandlerOptions) => ActivityHandler;
   createPerRequestActivityHandler: DocumentLogActivityHandlerFactory;
   createUiProcessDocumentLogPort: (
@@ -243,30 +251,68 @@ function sanitizeSheetsErrorMessage(error: unknown): string {
 
 function createSheetsStorageAdapter(sheetsClient: SheetsClient): LogStoragePort {
   return {
-    insertRow: async (request) =>
-      sheetsClient.insertIntoGroupedList({
-        target: request.target,
-        rowData: request.rowData,
-        ...(request.rowKeyExtractor !== undefined
-          ? { rowKeyExtractor: (row: RowRecord) => request.rowKeyExtractor!(row) }
-          : {}),
-        ...(request.targetKeys !== undefined ? { targetKeys: request.targetKeys } : {}),
-        ...(request.groupSortOrder !== undefined
-          ? { groupSortOrder: request.groupSortOrder }
-          : {}),
-        ...(request.rowSortOrder !== undefined ? { rowSortOrder: request.rowSortOrder } : {}),
-        ...(request.duplicatePolicy !== undefined
-          ? { duplicatePolicy: request.duplicatePolicy }
-          : {}),
-        ...(request.readOnlyColumns !== undefined
-          ? { readOnlyColumns: request.readOnlyColumns }
-          : {}),
-      }),
+    insertRow: async (request) => {
+      try {
+        return await sheetsClient.insertIntoGroupedList({
+          target: request.target,
+          rowData: request.rowData,
+          ...(request.rowKeyExtractor !== undefined
+            ? { rowKeyExtractor: (row: RowRecord) => request.rowKeyExtractor!(row) }
+            : {}),
+          ...(request.targetKeys !== undefined ? { targetKeys: request.targetKeys } : {}),
+          ...(request.groupSortOrder !== undefined
+            ? { groupSortOrder: request.groupSortOrder }
+            : {}),
+          ...(request.rowSortOrder !== undefined ? { rowSortOrder: request.rowSortOrder } : {}),
+          ...(request.duplicatePolicy !== undefined
+            ? { duplicatePolicy: request.duplicatePolicy }
+            : {}),
+          ...(request.readOnlyColumns !== undefined
+            ? { readOnlyColumns: request.readOnlyColumns }
+            : {}),
+          ...(request.optionWrites !== undefined
+            ? { optionWrites: request.optionWrites }
+            : {}),
+          ...(request.templateSpreadsheetId !== undefined
+            ? { templateSpreadsheetId: request.templateSpreadsheetId }
+            : {}),
+        });
+      } catch (error) {
+        if (error instanceof GoogleSheetsOptionTableConfigError) {
+          throw new DocumentLogConfigurationError(sanitizeSheetsErrorMessage(error), {
+            cause: error,
+          });
+        }
+        throw error;
+      }
+    },
     readRows: async (request) => {
       try {
         return await sheetsClient.readTable({
           target: request.target,
           ...(request.linkColumns !== undefined ? { linkColumns: request.linkColumns } : {}),
+        });
+      } catch (error) {
+        if (
+          error instanceof GoogleSheetsApiError ||
+          (error instanceof Error &&
+            (SHEETS_ERROR_NAME_REGEX.test(error.name) ||
+              SHEETS_ERROR_PREFIX_REGEX.test(error.message))) ||
+          (typeof error === 'string' && SHEETS_ERROR_PREFIX_REGEX.test(error.trim()))
+        ) {
+          throw new DocumentLogError(sanitizeSheetsErrorMessage(error), { cause: error });
+        }
+        throw error;
+      }
+    },
+    readNamedRanges: async (request) => {
+      if (!sheetsClient.readNamedRangesBatch) {
+        throw new Error('SheetsClient.readNamedRangesBatch is not implemented.');
+      }
+      try {
+        return await sheetsClient.readNamedRangesBatch({
+          spreadsheetId: request.spreadsheetId,
+          targets: request.targets,
         });
       } catch (error) {
         if (
@@ -325,9 +371,10 @@ export function createDocumentLogWiring(
       templateParser
     );
 
-  const createDocumentLogService: DocumentLogServiceFactory = (
+  const buildDocumentLogService = (
     context: WorkspaceExecutionContext,
-    overrides?: DocumentLogServiceRequestOverrides
+    overrides?: DocumentLogServiceRequestOverrides,
+    memoizeResolvePerInstance = false
   ): DocumentLogPort => {
     if (overrides?.documentLogService) {
       return overrides.documentLogService;
@@ -357,21 +404,19 @@ export function createDocumentLogWiring(
       createDriveDiscoveryAdapter(reqDriveClient),
       createSheetsStorageAdapter(reqSheetsClient),
       templateEvaluator,
-      templateParser
+      templateParser,
+      memoizeResolvePerInstance ? { memoizeResolvePerInstance: true } : undefined
     );
   };
+
+  const createDocumentLogService: DocumentLogServiceFactory = (
+    context: WorkspaceExecutionContext,
+    overrides?: DocumentLogServiceRequestOverrides
+  ): DocumentLogPort => buildDocumentLogService(context, overrides, false);
 
   const createActivityHandler = (
     handlerOptions?: DocumentLogActivityHandlerOptions
   ): ActivityHandler => new DocumentLogActivityHandler(documentLogService, handlerOptions);
-
-  const createPerRequestActivityHandler: DocumentLogActivityHandlerFactory = (
-    context: WorkspaceExecutionContext,
-    overrides?: DocumentLogServiceRequestOverrides
-  ): ActivityHandler =>
-    new DocumentLogActivityHandler(createDocumentLogService(context, overrides), {
-      ...(context.selectedLogId !== undefined ? { selectedLogId: context.selectedLogId } : {}),
-    });
 
   const perRequestServices = new WeakMap<WorkspaceExecutionContext, DocumentLogPort>();
   const perRequestUiContextAdapters = new WeakMap<WorkspaceExecutionContext, UiContextQueryPort>();
@@ -380,15 +425,32 @@ export function createDocumentLogWiring(
     context: WorkspaceExecutionContext,
     overrides?: DocumentLogServiceRequestOverrides
   ): DocumentLogPort => {
-    if (overrides !== undefined) {
-      return createDocumentLogService(context, overrides);
+    const hasServiceOverrides =
+      overrides?.documentLogService !== undefined ||
+      overrides?.driveClient !== undefined ||
+      overrides?.sheetsClient !== undefined;
+    if (hasServiceOverrides) {
+      return buildDocumentLogService(context, overrides, true);
     }
     let service = perRequestServices.get(context);
     if (!service) {
-      service = createDocumentLogService(context);
+      service = buildDocumentLogService(context, undefined, true);
       perRequestServices.set(context, service);
     }
     return service;
+  };
+
+  const createPerRequestActivityHandler: DocumentLogActivityHandlerFactory = (
+    context: WorkspaceExecutionContext,
+    overrides?: DocumentLogServiceRequestOverrides
+  ): ActivityHandler => {
+    const effectiveSelectedLogId = overrides?.selectedLogId ?? context.selectedLogId;
+    return new DocumentLogActivityHandler(getPerRequestService(context, overrides), {
+      ...(effectiveSelectedLogId !== undefined ? { selectedLogId: effectiveSelectedLogId } : {}),
+      ...(overrides?.onWriteLogSuccess !== undefined
+        ? { onWriteLogSuccess: overrides.onWriteLogSuccess }
+        : {}),
+    });
   };
 
   const createUiProcessDocumentLogPort: DocumentLogWiring['createUiProcessDocumentLogPort'] = async (
@@ -432,6 +494,7 @@ export function createDocumentLogWiring(
     logSchemaRegistry,
     documentLogService,
     createDocumentLogService,
+    getPerRequestService,
     createActivityHandler,
     createPerRequestActivityHandler,
     createUiProcessDocumentLogPort,

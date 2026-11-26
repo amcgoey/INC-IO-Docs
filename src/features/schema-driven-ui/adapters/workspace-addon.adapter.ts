@@ -249,6 +249,7 @@ export function createWorkspaceAddonViewSchema(
         sectionHeader: 'Document Data',
         formData: ctx.formData,
         hiddenFields: ctx.hiddenFields,
+        ...(ctx.lockedFields !== undefined ? { lockedFields: ctx.lockedFields } : {}),
         documentTypeKey: ctx.documentTypeKey,
         dynamicOptions: ctx.dynamicOptions,
         ...(actionParams ? { onChangeActionParameters: actionParams } : {}),

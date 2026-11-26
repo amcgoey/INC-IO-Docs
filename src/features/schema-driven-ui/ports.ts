@@ -31,15 +31,29 @@ export const GenerateViewRequestSchema = Type.Object({
   statusMessages: Type.Optional(Type.Array(Type.String())),
   formData: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   hiddenFields: Type.Optional(Type.Array(Type.String())),
+  lockedFields: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
 });
 
 export type GenerateViewRequest = Static<typeof GenerateViewRequestSchema>;
 
 // --- Dynamic Option DTO Schemas & Port ---
 
+export const AbstractOptionSourceSchema = Type.Object(
+  {
+    provider: Type.Union([Type.Literal('document_log'), Type.Literal('google_drive')]),
+    method: Type.Optional(Type.Union([Type.Literal('list_folders'), Type.Undefined()])),
+    relativePath: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+    properties: Type.Optional(
+      Type.Union([Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }), Type.Undefined()])
+    ),
+  },
+  { additionalProperties: true }
+);
+export type AbstractOptionSource = Static<typeof AbstractOptionSourceSchema>;
+
 export const DynamicOptionQuerySchema = Type.Object({
   sourceKey: Type.String(),
-  config: Type.Record(Type.String(), Type.Unknown()),
+  optionSource: Type.Optional(AbstractOptionSourceSchema),
 });
 
 export type DynamicOptionQuery = Static<typeof DynamicOptionQuerySchema>;
@@ -57,6 +71,9 @@ export const DynamicOptionStatusSchema = Type.Union([
   Type.Literal('missing_space'),
   Type.Literal('path_not_found'),
   Type.Literal('ambiguous_path'),
+  Type.Literal('missing_log'),
+  Type.Literal('ambiguous_log'),
+  Type.Literal('config_error'),
   Type.Literal('timeout'),
   Type.Literal('error'),
 ]);
@@ -67,12 +84,15 @@ export const DynamicOptionResolutionSchema = Type.Object({
   status: DynamicOptionStatusSchema,
   items: Type.Array(DynamicOptionItemSchema),
   targetPath: Type.Optional(Type.String()),
+  errorMessage: Type.Optional(Type.String()),
 });
 
 export type DynamicOptionResolution = Static<typeof DynamicOptionResolutionSchema>;
 
 export const OptionsFetcherContextSchema = Type.Object({
   spaceId: Type.Optional(Type.String()),
+  documentTypeKey: Type.Optional(Type.String()),
+  selectedLogId: Type.Optional(Type.String()),
   formData: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 });
 
@@ -201,6 +221,12 @@ export type AbstractDataField = Static<typeof AbstractDataFieldSchema>;
 export const AbstractDataSchema = Type.Object({
   fields: Type.Array(AbstractDataFieldSchema),
   options: Type.Optional(Type.Record(Type.String(), Type.Array(Type.Unknown()))),
+  optionSources: Type.Optional(
+    Type.Union([
+      Type.Record(Type.String({ minLength: 1 }), AbstractOptionSourceSchema),
+      Type.Undefined(),
+    ])
+  ),
 });
 export type AbstractDataSchema = Static<typeof AbstractDataSchema>;
 

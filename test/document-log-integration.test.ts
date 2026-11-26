@@ -5,6 +5,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createApp, type AppOptions } from '../src/app/server';
 import { createDocumentLogWiring } from '../src/app/document-log.wiring';
 import {
+  createDocumentDynamicValidationAdapter,
+  createLookupOptionsService,
+} from '../src/app/lookup-options.wiring';
+import {
   createDocumentServiceFactory,
   wireDocumentServicesAndRoutes,
 } from '../src/app/document.wiring';
@@ -263,6 +267,8 @@ interface MockSheetsState {
   batchUpdates: Array<{ spreadsheetId: string; requests: MockBatchRequest[] }>;
   grid?: Array<Array<SimCellValue>>;
   namedRange?: SimulatedNamedRange;
+  archStatusesRows?: SimCellValue[][];
+  archActionsRows?: SimCellValue[][];
 }
 
 function columnLettersToIndex(letters: string): number {
@@ -409,13 +415,120 @@ function applyBatchUpdate(
   }
 }
 
+const CONFIG_STATUSES: SimCellValue[][] = [
+  ['Status'],
+  ['Open'],
+  ['Closed'],
+  ['Waiting'],
+  ['Manager'],
+  ['Billed'],
+  ['---'],
+];
+
+const CONFIG_ACTIONS: SimCellValue[][] = [
+  ['Action', 'Name', 'Suffix', 'Order'],
+  ['REC', 'Received', '', '1'],
+  ['REF', 'Referred', '_REF', '2'],
+  ['NR', 'Not Reviewed', '_NR', '3'],
+  ['REJ', 'Rejected', '_REJ', '4'],
+  ['RR', 'Revise & Resubmit', '_RR', '5'],
+  ['NOC', 'No Objections As Corrected', '_NOC', '6'],
+  ['NET', 'No Exceptions Taken', '_NET', '7'],
+  ['---', '', '', ''],
+];
+
+const CONFIG_ARCH_CONTACTS: SimCellValue[][] = [
+  ['Contact', 'Name', 'Contact Type'],
+  ['INC', 'INC Architecture and Design', 'INC'],
+  ['PMG', 'Pavarini McGovern', 'Contractor'],
+  ['FXC', 'FX Collaborative', 'Architect'],
+  ['IE', 'Interface Engineering', 'MEP'],
+  ['VLD', 'Ventresca Lighting Design', 'Lighting'],
+  ['TT', 'Thornton Tomasetti', 'Structural'],
+  ['ARC', 'Apex Architecture Studio', 'Architect'],
+  ['MB', 'Meridian Builders', 'Contractor'],
+  ['SME', 'Summit MEP Engineers', 'MEP'],
+  ['PST', 'Pillar Structural Consultants', 'Structural'],
+  ['LMD', 'Lumen Lighting Design', 'Lighting'],
+  ['HPG', 'Harbor Procurement Group', 'Procurement'],
+  ['OBR', 'Oceanview Brand Standards', 'Brand'],
+  ['---', '', ''],
+];
+
+const CONFIG_FFE_CONTACTS: SimCellValue[][] = [
+  ['Contact', 'Name', 'Contact Type'],
+  ['INC', 'INC Architecture & Design', 'INC'],
+  ['BW', 'Benjamin West', 'Procurement'],
+  ['VLD', 'Ventresca Lighting Design', 'Lighting'],
+  ['IHG', 'IHG Hotels & Resorts', 'Brand'],
+  ['ARC', 'Apex Architecture Studio', 'Architect'],
+  ['MB', 'Meridian Builders', 'Contractor'],
+  ['SME', 'Summit MEP Engineers', 'MEP'],
+  ['PST', 'Pillar Structural Consultants', 'Structural'],
+  ['LMD', 'Lumen Lighting Design', 'Lighting'],
+  ['HPG', 'Harbor Procurement Group', 'Procurement'],
+  ['OBR', 'Oceanview Brand Standards', 'Brand'],
+  ['---', '', ''],
+];
+
+const CONFIG_FFE_VENDORS: SimCellValue[][] = [
+  ['Vendor', 'Name', 'Vendor Type'],
+  ['BM', 'Berman Falk', 'Casegoods'],
+  ['AL', 'Ashley Lighting', 'Lighting'],
+  ['Carn', 'Carnegie', 'Fabric'],
+  ['Delta', 'Delta', 'Fabric'],
+  ['FDT', 'Fil Doux Textiles', 'Fabric'],
+  ['LA', 'Light Annex', 'Lighting'],
+  ['MH', 'Mohawk', 'Fabric'],
+  ['KC', 'Keystone Casegoods', 'Casegoods'],
+  ['CL', 'Crestline Lighting', 'Lighting'],
+  ['AT', 'Atlas Textiles', 'Fabric'],
+  ['VM', 'Vanguard Mills', 'Carpet'],
+  ['NF', 'Northstar Furnishings', 'Furniture'],
+  ['---', '', ''],
+];
+
+const CONFIG_FFE_SPECS: SimCellValue[][] = [
+  ['Spec Tag', 'Spec Title'],
+  ['AC102', 'HOOK'],
+  ['CG104', 'BED - KING'],
+  ['CP119', 'CARPET'],
+  ['FB127', 'FABRIC - LEATHER'],
+  ['LT108', 'SCONCE'],
+  ['LT159A', 'SCONCE - CORRIDOR'],
+  ['TA139', 'TABLE - WORK'],
+  ['---', ''],
+];
+
 function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsClientOptions['sheets']> {
+  const archStatusesRows = state.archStatusesRows ?? [
+    ['Status'],
+    ['Open'],
+    ['Closed'],
+    ['Waiting'],
+    ['Manager'],
+    ['---'],
+  ];
+  const archActionsRows = state.archActionsRows ?? [
+    ['Action', 'Name', 'Suffix', 'Order'],
+    ['REC', 'Received', '', '1'],
+    ['REF', 'Referred', '_REF', '2'],
+    ['NR', 'Not Reviewed', '_NR', '3'],
+    ['REJ', 'Rejected', '_REJ', '4'],
+    ['RR', 'Revise & Resubmit', '_RR', '5'],
+    ['NOC', 'No Objections As Corrected', '_NOC', '6'],
+    ['NET', 'No Exceptions Taken', '_NET', '7'],
+    ['---', '', '', ''],
+  ];
+
   const getMetadata = vi.fn().mockImplementation(async ({ spreadsheetId }: { spreadsheetId: string }) => ({
     data: {
       spreadsheetId,
       sheets: [
         { properties: { sheetId: 101, title: sampleFixture.submittalArch.sheetName } },
         { properties: { sheetId: 102, title: sampleFixture.submittalFfe.sheetName } },
+        { properties: { sheetId: 103, title: '_Config Submittal Arch' } },
+        { properties: { sheetId: 104, title: '_Config Submittal FF&E' } },
       ],
       namedRanges: [
         state.namedRange
@@ -434,6 +547,160 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
                 endColumnIndex: 10,
               },
             },
+        {
+          namedRangeId: 'nr-arch-statuses',
+          name: 'Options_Submittal_Arch_Statuses',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: archStatusesRows.length,
+            startColumnIndex: 0,
+            endColumnIndex: 1,
+          },
+        },
+        {
+          namedRangeId: 'nr-arch-statuses-val',
+          name: 'Validation_Submittal_Arch_Statuses',
+          range: {
+            sheetId: 103,
+            startRowIndex: 1,
+            endRowIndex: archStatusesRows.length - 1,
+            startColumnIndex: 0,
+            endColumnIndex: 1,
+          },
+        },
+        {
+          namedRangeId: 'nr-arch-actions',
+          name: 'Options_Submittal_Arch_Actions',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: archActionsRows.length,
+            startColumnIndex: 2,
+            endColumnIndex: 6,
+          },
+        },
+        {
+          namedRangeId: 'nr-arch-contacts',
+          name: 'Options_Submittal_Arch_Contacts',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_ARCH_CONTACTS.length,
+            startColumnIndex: 7,
+            endColumnIndex: 10,
+          },
+        },
+        {
+          namedRangeId: 'nr-arch-contacts-val',
+          name: 'Validation_Submittal_Arch_Contacts',
+          range: {
+            sheetId: 103,
+            startRowIndex: 1,
+            endRowIndex: CONFIG_ARCH_CONTACTS.length - 1,
+            startColumnIndex: 7,
+            endColumnIndex: 8,
+          },
+        },
+        {
+          namedRangeId: 'nr-ffe-statuses',
+          name: 'Options_Submittal_FFE_Statuses',
+          range: {
+            sheetId: 104,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_STATUSES.length,
+            startColumnIndex: 0,
+            endColumnIndex: 1,
+          },
+        },
+        {
+          namedRangeId: 'nr-ffe-statuses-val',
+          name: 'Validation_Submittal_FFE_Statuses',
+          range: {
+            sheetId: 104,
+            startRowIndex: 1,
+            endRowIndex: CONFIG_STATUSES.length - 1,
+            startColumnIndex: 0,
+            endColumnIndex: 1,
+          },
+        },
+        {
+          namedRangeId: 'nr-ffe-actions',
+          name: 'Options_Submittal_FFE_Actions',
+          range: {
+            sheetId: 104,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_ACTIONS.length,
+            startColumnIndex: 2,
+            endColumnIndex: 6,
+          },
+        },
+        {
+          namedRangeId: 'nr-ffe-contacts',
+          name: 'Options_Submittal_FFE_Contacts',
+          range: {
+            sheetId: 104,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_FFE_CONTACTS.length,
+            startColumnIndex: 7,
+            endColumnIndex: 10,
+          },
+        },
+        {
+          namedRangeId: 'nr-ffe-contacts-val',
+          name: 'Validation_Submittal_FFE_Contacts',
+          range: {
+            sheetId: 104,
+            startRowIndex: 1,
+            endRowIndex: CONFIG_FFE_CONTACTS.length - 1,
+            startColumnIndex: 7,
+            endColumnIndex: 8,
+          },
+        },
+        {
+          namedRangeId: 'nr-ffe-vendors',
+          name: 'Options_Submittal_FFE_Vendors',
+          range: {
+            sheetId: 104,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_FFE_VENDORS.length,
+            startColumnIndex: 11,
+            endColumnIndex: 14,
+          },
+        },
+        {
+          namedRangeId: 'nr-ffe-vendors-val',
+          name: 'Validation_Submittal_FFE_Vendors',
+          range: {
+            sheetId: 104,
+            startRowIndex: 1,
+            endRowIndex: CONFIG_FFE_VENDORS.length - 1,
+            startColumnIndex: 11,
+            endColumnIndex: 12,
+          },
+        },
+        {
+          namedRangeId: 'nr-ffe-specs',
+          name: 'Options_Submittal_FFE_Specs',
+          range: {
+            sheetId: 104,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_FFE_SPECS.length,
+            startColumnIndex: 15,
+            endColumnIndex: 17,
+          },
+        },
+        {
+          namedRangeId: 'nr-ffe-specs-val',
+          name: 'Validation_Submittal_FFE_Specs',
+          range: {
+            sheetId: 104,
+            startRowIndex: 1,
+            endRowIndex: CONFIG_FFE_SPECS.length - 1,
+            startColumnIndex: 15,
+            endColumnIndex: 16,
+          },
+        },
         ...(!state.namedRange
           ? [
               {
@@ -454,6 +721,38 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
   }));
 
   const sliceRowsForRange = (range: string, valueRenderOption?: string): SimCellValue[][] => {
+    if (range.includes('_Config Submittal Arch')) {
+      const bounds = parseA1RangeBounds(range, 30, 15);
+      if (bounds.startColumnIndex === 0) {
+        return archStatusesRows;
+      }
+      if (bounds.startColumnIndex === 2) {
+        return archActionsRows;
+      }
+      if (bounds.startColumnIndex === 7) {
+        return CONFIG_ARCH_CONTACTS;
+      }
+      return [];
+    }
+    if (range.includes('_Config Submittal FF&E')) {
+      const bounds = parseA1RangeBounds(range, 30, 17);
+      if (bounds.startColumnIndex === 0) {
+        return CONFIG_STATUSES;
+      }
+      if (bounds.startColumnIndex === 2) {
+        return CONFIG_ACTIONS;
+      }
+      if (bounds.startColumnIndex === 7) {
+        return CONFIG_FFE_CONTACTS;
+      }
+      if (bounds.startColumnIndex === 11) {
+        return CONFIG_FFE_VENDORS;
+      }
+      if (bounds.startColumnIndex === 15) {
+        return CONFIG_FFE_SPECS;
+      }
+      return [];
+    }
     if (state.grid) {
       const bounds = parseA1RangeBounds(
         range,
@@ -625,12 +924,23 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       ...(params.selectedLogId !== undefined ? { selectedLogId: params.selectedLogId } : {}),
     });
 
+    const lookupOptions = createLookupOptionsService({
+      manifestProvider: schemaManifestProvider,
+      documentSchemaRegistry: docSchemaRegistry,
+      driveClient,
+      configProvider: manifestProvider,
+      documentLogService: logWiring.documentLogService,
+      ensureDocumentLogInitialized: () => logWiring.logSchemaRegistry.initialize(),
+    });
     const activityEngine = new ActivityEngine([driveActivityHandler, logHandler]);
     const documentService = new DocumentService(
       activityEngine,
       docSchemaRegistry,
       handlebars,
-      compiledRegistry
+      compiledRegistry,
+      createDocumentDynamicValidationAdapter(lookupOptions),
+      undefined,
+      params.selectedLogId
     );
     await documentService.initialize();
 
@@ -999,7 +1309,9 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     );
 
     expect(result.success).toBe(true);
-    const cells = sheetsState.batchUpdates[0].requests[0].updateCells?.rows?.[0]?.values ?? [];
+    const cells =
+      sheetsState.batchUpdates[0].requests.find((r) => r.updateCells?.range?.sheetId === 101)
+        ?.updateCells?.rows?.[0]?.values ?? [];
     expect(cells[3]).toEqual({ userEnteredValue: { stringValue: '-100' } });
     expect(cells[4]).toEqual({ userEnteredValue: { stringValue: '=1+1' } });
     expect(cells[6]).toEqual({ userEnteredValue: { stringValue: '+CMD' } });
@@ -1178,6 +1490,36 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       copyLog: vi.fn(),
       queryUiContext: vi.fn().mockResolvedValue(undefined),
       readLog: vi.fn(),
+      readOptionTables: vi.fn().mockResolvedValue({
+        status: 'ready',
+        spreadsheetId: 'override-svc-sheet',
+        tables: {
+          statuses: {
+            status: 'ready',
+            tuples: [
+              { key: 'Open' },
+              { key: 'Closed' },
+              { key: 'Waiting' },
+              { key: 'Manager' },
+              { key: 'Billed' },
+            ],
+          },
+          actions: {
+            status: 'ready',
+            tuples: [
+              { key: 'REC', name: 'Received', suffix: '', order: '1' },
+              { key: 'NET', name: 'No Exceptions Taken', suffix: '_NET', order: '7' },
+            ],
+          },
+          contacts: {
+            status: 'ready',
+            tuples: [
+              { key: 'INC', name: 'INC Architecture and Design' },
+              { key: 'MB', name: 'Meridian Builders' },
+            ],
+          },
+        },
+      }),
       writeLog,
     };
 
@@ -1198,10 +1540,12 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       server: headlessServer,
       driveClient: new GoogleDriveClient({ drive: createMockDriveSdk({ searchResults: [] }) }),
       configProvider: manifestProvider,
+      manifestProvider,
       documentSchemaRegistry: headlessDocRegistry,
       templateEvaluator: handlebars,
       compiledSchemaRegistry: headlessCompiled,
       primaryTargetId: 'headless-file-1',
+      documentLogService: customDocLogService,
       additionalActivityHandlers: [customLogWiring.createActivityHandler()],
     });
     if ('initialize' in headlessService && typeof headlessService.initialize === 'function') {
@@ -2897,10 +3241,13 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
     expect(invalidStatusRow?.fileUri).toBe(
       'https://drive.google.com/file/d/fixture-ffe-partial-vendor/view'
     );
+    // statuses is a restricted live _Config option source (#359), so "In Review" warns alongside missing required vendor
     expect(ffeLt108.warnings.map((w) => w.field)).toEqual(['status', 'vendor']);
     expect(
-      invalidStatusRow?.validationErrors?.filter((msg) => msg.includes('"vendor"'))
-    ).toHaveLength(1);
+      invalidStatusRow?.validationErrors?.filter(
+        (msg) => msg.includes('"statuses"') || msg.includes('"vendor"')
+      )
+    ).toHaveLength(2);
 
     const ffeFull = await ffeWiring.documentLogService.readLog({
       documentTypeKey: 'submittal-ffe',
@@ -3089,6 +3436,10 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
         }
         const cloned = structuredClone(parsed) as Record<string, unknown>;
         delete cloned.documentLogSchema;
+        const docSchema = cloned.documentSchema as { optionSources?: unknown } | undefined;
+        if (docSchema) {
+          delete docSchema.optionSources;
+        }
         const workflowConfig = cloned.documentWorkflowConfig as {
           workflows: Array<{ name: string; activitySequence: unknown[] }>;
         };
@@ -3122,5 +3473,602 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
     await expect(logWiring.logSchemaRegistry.initialize()).rejects.toThrow(
       /READ_LOG.*documentLogSchema/i
     );
+  });
+
+  it('serializes concurrent DocumentLogPort.writeLog() calls across separate GoogleSheetsClient instances via process-shared KeyedAsyncLock without duplicating _Config option rows (Ticket #361)', async () => {
+    const spreadsheetId = 'concurrent-doclog-361';
+    const logGrid: SimCellValue[][] = [
+      [],
+      [],
+      ['Status', 'Section', 'Number', 'Revision', 'Title', 'Date', 'Contact', 'Action', 'Notes', 'Calc Link'],
+      ['Formula Row', '', '', '', '', '', '', '', '', ''],
+      ['<--->'],
+      [''],
+      ['<--->'],
+    ];
+    const configGrid: SimCellValue[][] = [
+      ['Status', '', 'Contact', 'Name', 'Contact Type', '', 'Action', 'Name', 'Suffix', 'Order'],
+      ['Open', '', 'INC', 'INC Architecture and Design', 'INC', '', 'REC', 'Received', '', '1'],
+      ['Closed', '', '---', '', '', '', '---', '', '', ''],
+      ['---', '', '', '', '', '', '', '', '', ''],
+    ];
+
+    const namedRanges = [
+      {
+        namedRangeId: 'nr-log',
+        name: 'Log_Submittal_Arch',
+        range: { sheetId: 101, startRowIndex: 2, endRowIndex: 7, startColumnIndex: 0, endColumnIndex: 10 },
+      },
+      {
+        namedRangeId: 'nr-statuses',
+        name: 'Options_Submittal_Arch_Statuses',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: 1 },
+      },
+      {
+        namedRangeId: 'nr-contacts',
+        name: 'Options_Submittal_Arch_Contacts',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 2, endColumnIndex: 5 },
+      },
+      {
+        namedRangeId: 'nr-val-contacts',
+        name: 'Validation_Submittal_Arch_Contacts',
+        range: { sheetId: 103, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 2, endColumnIndex: 3 },
+      },
+      {
+        namedRangeId: 'nr-actions',
+        name: 'Options_Submittal_Arch_Actions',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 6, endColumnIndex: 10 },
+      },
+    ];
+
+    const sliceRange = (a1Range: string): SimCellValue[][] => {
+      const sheetGrid = a1Range.includes('_Config Submittal Arch') ? configGrid : logGrid;
+      const bounds = parseA1RangeBounds(a1Range, sheetGrid.length, 10);
+      return sheetGrid.slice(bounds.startRowIndex, bounds.endRowIndex).map((row) => {
+        const out: SimCellValue[] = [];
+        for (let c = bounds.startColumnIndex; c < bounds.endColumnIndex; c++) {
+          out.push(row[c] ?? '');
+        }
+        while (out.length > 0 && (out[out.length - 1] === '' || out[out.length - 1] === null)) {
+          out.pop();
+        }
+        return out;
+      });
+    };
+
+    let releaseFirstWrite!: () => void;
+    const firstWriteGate = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
+    });
+    let firstBatchEntered!: () => void;
+    const firstBatchEnteredPromise = new Promise<void>((resolve) => {
+      firstBatchEntered = resolve;
+    });
+    let batchCount = 0;
+    const batchCallPayloads: Array<Array<Record<string, unknown>>> = [];
+
+    const multiSheetsSdk = {
+      spreadsheets: {
+        get: vi.fn().mockImplementation(async () => ({
+          data: {
+            spreadsheetId,
+            sheets: [
+              { properties: { sheetId: 101, title: 'Submittal Arch' } },
+              { properties: { sheetId: 103, title: '_Config Submittal Arch' } },
+            ],
+            namedRanges: namedRanges.map((nr) => ({ ...nr, range: { ...nr.range } })),
+          },
+        })),
+        values: {
+          get: vi.fn().mockImplementation(async ({ range }: { range: string }) => ({
+            data: { values: sliceRange(range) },
+          })),
+          batchGet: vi.fn().mockImplementation(async ({ ranges }: { ranges: string[] }) => ({
+            data: {
+              valueRanges: ranges.map((range) => ({ range, values: sliceRange(range) })),
+            },
+          })),
+          update: vi.fn().mockResolvedValue({ data: {} }),
+        },
+        batchUpdate: vi.fn().mockImplementation(
+          async (params: { requestBody: { requests: Array<Record<string, unknown>> } }) => {
+            batchCount++;
+            const currentCall = batchCount;
+            batchCallPayloads.push(params.requestBody.requests);
+            if (currentCall === 1) {
+              firstBatchEntered();
+              await firstWriteGate;
+            }
+            for (const req of params.requestBody.requests) {
+              const insDim = req.insertDimension as
+                | { range?: { sheetId?: number; startIndex?: number; endIndex?: number } }
+                | undefined;
+              if (insDim?.range) {
+                const { sheetId, startIndex = 0, endIndex = 0 } = insDim.range;
+                const grid = sheetId === 103 ? configGrid : logGrid;
+                const count = endIndex - startIndex;
+                for (let i = 0; i < count; i++) {
+                  grid.splice(startIndex, 0, []);
+                }
+                for (const nr of namedRanges) {
+                  if (nr.range.sheetId === sheetId && startIndex > nr.range.startRowIndex && startIndex < nr.range.endRowIndex) {
+                    nr.range.endRowIndex += count;
+                  }
+                }
+              }
+              const insRange = req.insertRange as
+                | { range?: { sheetId?: number; startRowIndex?: number; endRowIndex?: number; startColumnIndex?: number; endColumnIndex?: number } }
+                | undefined;
+              if (insRange?.range) {
+                const { sheetId, startRowIndex = 0, endRowIndex = 0, startColumnIndex = 0, endColumnIndex = 0 } = insRange.range;
+                const grid = sheetId === 103 ? configGrid : logGrid;
+                const count = endRowIndex - startRowIndex;
+                const prevLen = grid.length;
+                for (let i = 0; i < count; i++) grid.push([]);
+                for (let r = prevLen - 1; r >= startRowIndex; r--) {
+                  for (let c = startColumnIndex; c < endColumnIndex; c++) {
+                    while (grid[r + count]!.length <= c) grid[r + count]!.push('');
+                    grid[r + count]![c] = grid[r]?.[c] ?? '';
+                  }
+                }
+                for (let r = startRowIndex; r < endRowIndex; r++) {
+                  for (let c = startColumnIndex; c < endColumnIndex; c++) {
+                    while (grid[r]!.length <= c) grid[r]!.push('');
+                    grid[r]![c] = '';
+                  }
+                }
+                for (const nr of namedRanges) {
+                  if (
+                    nr.range.sheetId === sheetId &&
+                    nr.range.startColumnIndex >= startColumnIndex &&
+                    nr.range.endColumnIndex <= endColumnIndex &&
+                    startRowIndex > nr.range.startRowIndex &&
+                    startRowIndex < nr.range.endRowIndex
+                  ) {
+                    nr.range.endRowIndex += count;
+                  }
+                }
+              }
+              const updCells = req.updateCells as
+                | {
+                    range?: { sheetId?: number; startRowIndex?: number; startColumnIndex?: number };
+                    rows?: Array<{ values?: Array<{ userEnteredValue?: { stringValue?: string } }> }>;
+                  }
+                | undefined;
+              if (updCells?.range && updCells.rows) {
+                const grid = updCells.range.sheetId === 103 ? configGrid : logGrid;
+                const sr = updCells.range.startRowIndex ?? 0;
+                const sc = updCells.range.startColumnIndex ?? 0;
+                updCells.rows.forEach((row, rOff) => {
+                  while (grid.length <= sr + rOff) grid.push([]);
+                  const targetRow = grid[sr + rOff]!;
+                  (row.values ?? []).forEach((cell, cOff) => {
+                    while (targetRow.length <= sc + cOff) targetRow.push('');
+                    if (cell.userEnteredValue?.stringValue !== undefined) {
+                      targetRow[sc + cOff] = cell.userEnteredValue.stringValue;
+                    }
+                  });
+                });
+              }
+              const updNr = req.updateNamedRange as
+                | { namedRange?: { namedRangeId?: string; range?: { startRowIndex?: number; endRowIndex?: number } } }
+                | undefined;
+              if (updNr?.namedRange?.namedRangeId && updNr.namedRange.range) {
+                const existing = namedRanges.find((nr) => nr.namedRangeId === updNr.namedRange!.namedRangeId);
+                if (existing) {
+                  existing.range.startRowIndex = updNr.namedRange.range.startRowIndex ?? existing.range.startRowIndex;
+                  existing.range.endRowIndex = updNr.namedRange.range.endRowIndex ?? existing.range.endRowIndex;
+                }
+              }
+            }
+            return { data: {} };
+          }
+        ),
+      },
+    } as unknown as NonNullable<GoogleSheetsClientOptions['sheets']>;
+
+    const driveClient = new GoogleDriveClient({
+      drive: createMockDriveSdk({
+        searchResults: [{ id: spreadsheetId, name: 'Harborview Hotel Document Log', parents: ['folder-1'] }],
+      }),
+      configProvider: manifestProvider,
+    });
+
+    // Two distinct GoogleSheetsClient instances (mirroring per-request OAuth clients)
+    const wiring1 = createDocumentLogWiring({
+      manifestProvider,
+      driveClient,
+      sheetsClient: new GoogleSheetsClient({ sheets: multiSheetsSdk, configProvider: manifestProvider }),
+      configProvider: manifestProvider,
+      templateEvaluator: handlebars,
+    });
+    const wiring2 = createDocumentLogWiring({
+      manifestProvider,
+      driveClient,
+      sheetsClient: new GoogleSheetsClient({ sheets: multiSheetsSdk, configProvider: manifestProvider }),
+      configProvider: manifestProvider,
+      templateEvaluator: handlebars,
+    });
+    await Promise.all([
+      wiring1.logSchemaRegistry.initialize(),
+      wiring2.logSchemaRegistry.initialize(),
+    ]);
+
+    const space = {
+      id: sampleFixture.space.id,
+      typeId: sampleFixture.space.typeId,
+      name: sampleFixture.space.name,
+      abstractStorageId: sampleFixture.space.abstractStorageId,
+    };
+
+    const write1Promise = wiring1.documentLogService.writeLog({
+      document: {
+        type: 'submittal-arch',
+        space,
+        data: {
+          status: 'Open',
+          section: '071200',
+          number: '001',
+          revision: '0',
+          title: 'First Submittal',
+          date: '260204',
+          contact: 'Acme Builders',
+          action: 'REC',
+        },
+      },
+    });
+
+    await firstBatchEnteredPromise;
+
+    const write2Promise = wiring2.documentLogService.writeLog({
+      document: {
+        type: 'submittal-arch',
+        space,
+        data: {
+          status: 'Open',
+          section: '071200',
+          number: '002',
+          revision: '0',
+          title: 'Second Submittal',
+          date: '260204',
+          contact: 'acme builders',
+          action: 'REC',
+        },
+      },
+    });
+
+    releaseFirstWrite();
+    const [res1, res2] = await Promise.all([write1Promise, write2Promise]);
+
+    expect(res1.action).toBe('inserted');
+    expect(res2.action).toBe('inserted');
+    expect(batchCallPayloads).toHaveLength(2);
+    // First batch inserts Acme Builders into _Config; second batch sees it inside lock and emits 0 _Config mutations
+    expect(batchCallPayloads[0].some((r) => 'insertRange' in r)).toBe(true);
+    expect(batchCallPayloads[1].some((r) => 'insertRange' in r)).toBe(false);
+
+    // Only ONE Acme Builders row exists above '---' (never duplicated), Contact Type left blank
+    const contactsNr = namedRanges.find((nr) => nr.name === 'Options_Submittal_Arch_Contacts')!;
+    const contactRows = configGrid
+      .slice(contactsNr.range.startRowIndex, contactsNr.range.endRowIndex)
+      .map((r) => r.slice(2, 5));
+    expect(contactRows).toEqual([
+      ['Contact', 'Name', 'Contact Type'],
+      ['INC', 'INC Architecture and Design', 'INC'],
+      ['Acme Builders', 'Acme Builders', ''],
+      ['---', '', ''],
+    ]);
+    // Validation_Submittal_Arch_Contacts expanded from endRowIndex 2 -> 3 (not 4)
+    expect(namedRanges.find((nr) => nr.name === 'Validation_Submittal_Arch_Contacts')?.range).toMatchObject({
+      startRowIndex: 1,
+      endRowIndex: 3,
+    });
+    // Neighboring tables unshifted
+    expect(configGrid[3][0]).toBe('---');
+    expect(configGrid[2][6]).toBe('---');
+    // Both submittal rows written to Log_Submittal_Arch
+    expect(logGrid.filter((r) => r[0] === 'Open')).toHaveLength(2);
+  });
+
+  it('hydrates restricted dynamic LookupFields (status, action) against live customized _Config tables so live matches hydrate valid:true with live Identity while default-only values emit RowHydrationWarnings (Ticket #359)', async () => {
+    const driveState: MockDriveState = {
+      searchResults: [
+        {
+          id: 'harborview-custom-config-log',
+          name: sampleFixture.space.expectedLogFileName,
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ],
+    };
+
+    const baseState = buildArchReadGridState();
+    const customGrid: SimCellValue[][] = [
+      [],
+      [],
+      [...sampleFixture.submittalArch.headers],
+      [],
+      ['<--->'],
+      [
+        'In Review',
+        '071200',
+        '001',
+        '0',
+        'Live Custom Config Entry',
+        '261125',
+        'PMG',
+        'Custom Action',
+        '',
+        '=HYPERLINK("https://drive.google.com/file/d/custom-valid/view", "Link")',
+      ],
+      [
+        'Open',
+        '071200',
+        '001',
+        '1',
+        'Default Status Only Entry',
+        '261125',
+        'PMG',
+        'Custom Action',
+        '',
+        null,
+      ],
+      [
+        'In Review',
+        '071200',
+        '001',
+        '2',
+        'Default Action Only Entry',
+        '261125',
+        'PMG',
+        'Received',
+        '',
+        null,
+      ],
+      ['<--->'],
+    ];
+
+    const customSheetsState: MockSheetsState = {
+      ...baseState,
+      grid: customGrid,
+      namedRange: {
+        ...baseState.namedRange!,
+        range: {
+          ...baseState.namedRange!.range,
+          endRowIndex: customGrid.length,
+        },
+      },
+      archStatusesRows: [['Status'], ['In Review'], ['---']],
+      archActionsRows: [
+        ['Action', 'Name', 'Suffix', 'Order'],
+        ['CUST', 'Custom Action', '_CUST', '9'],
+        ['---', '', '', ''],
+      ],
+    };
+
+    const wiring = createDocumentLogWiring({
+      manifestProvider,
+      driveClient: new GoogleDriveClient({
+        drive: createMockDriveSdk(driveState),
+        configProvider: manifestProvider,
+      }),
+      sheetsClient: new GoogleSheetsClient({
+        sheets: createMockSheetsSdk(customSheetsState),
+        configProvider: manifestProvider,
+      }),
+      configProvider: manifestProvider,
+      templateEvaluator: handlebars,
+    });
+    await wiring.logSchemaRegistry.initialize();
+
+    const readResult = await wiring.documentLogService.readLog({
+      documentTypeKey: 'submittal-arch',
+      space,
+    });
+
+    expect(readResult.entries).toHaveLength(3);
+
+    const validEntry = readResult.entries.find(
+      (e) => e.document.data.title === 'Live Custom Config Entry'
+    );
+    expect(validEntry).toBeDefined();
+    expect(validEntry?.valid).toBe(true);
+    expect(validEntry?.document.data.status).toEqual({ key: 'In Review' });
+    expect(validEntry?.document.data.action).toEqual({
+      key: 'CUST',
+      name: 'Custom Action',
+      suffix: '_CUST',
+      order: '9',
+    });
+    expect(validEntry?.document.id).toBe('071200-001-0-261125-9');
+    expect(validEntry?.fileUri).toBe('https://drive.google.com/file/d/custom-valid/view');
+
+    const invalidStatusEntry = readResult.entries.find(
+      (e) => e.document.data.title === 'Default Status Only Entry'
+    );
+    expect(invalidStatusEntry?.valid).toBe(false);
+    expect(invalidStatusEntry?.document.data.status).toEqual({ key: 'Open' });
+    expect(
+      readResult.warnings
+        .filter((w) => w.rowNumber === invalidStatusEntry?.rowNumber)
+        .map((w) => w.field)
+    ).toEqual(['status']);
+
+    const invalidActionEntry = readResult.entries.find(
+      (e) => e.document.data.title === 'Default Action Only Entry'
+    );
+    expect(invalidActionEntry?.valid).toBe(false);
+    expect(invalidActionEntry?.document.data.action).toEqual({
+      key: 'Received',
+      name: 'Received',
+    });
+    expect(
+      readResult.warnings
+        .filter((w) => w.rowNumber === invalidActionEntry?.rowNumber)
+        .map((w) => w.field)
+    ).toEqual(['action']);
+
+    expect(readResult.warnings).toHaveLength(2);
+
+    const uiContext = await wiring.documentLogService.queryUiContext({
+      documentTypeKey: 'submittal-arch',
+      space,
+      formData: {
+        [getDocumentInfoWidgetName('section', 'submittal-arch')]: '071200',
+        [getDocumentInfoWidgetName('number', 'submittal-arch')]: '001',
+      },
+    });
+    expect(uiContext?.status).toBe('resolved');
+    if (uiContext?.status === 'resolved') {
+      expect(uiContext.readStatus).toBe('partial_hydration');
+      expect(uiContext.warningMessages).toHaveLength(2);
+      expect(uiContext.entries).toHaveLength(3);
+    }
+  });
+
+  it('reads _Config option tables via DocumentLogPort + GoogleSheetsClient, parsing RFC 4180 aliasesColumn cells with "" escaped quotes and silently ignoring absent Aliases headers (Ticket #360)', async () => {
+    const driveClient = new GoogleDriveClient({
+      drive: createMockDriveSdk({
+        searchResults: [{ id: 'log-360-sheet', name: 'Harborview Document Log' }],
+      }),
+      configProvider: manifestProvider,
+    });
+
+    const mockSheets = {
+      spreadsheets: {
+        get: vi.fn().mockResolvedValue({
+          data: {
+            spreadsheetId: 'log-360-sheet',
+            sheets: [{ properties: { sheetId: 201, title: '_Config' } }],
+            namedRanges: [
+              {
+                namedRangeId: 'nr-contacts',
+                name: 'Options_Contacts',
+                range: { sheetId: 201, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: 3 },
+              },
+              {
+                namedRangeId: 'nr-vendors',
+                name: 'Options_Vendors',
+                range: { sheetId: 201, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 4, endColumnIndex: 6 },
+              },
+            ],
+          },
+        }),
+        batchUpdate: vi.fn(),
+        values: {
+          get: vi.fn(),
+          batchGet: vi.fn().mockResolvedValue({
+            data: {
+              valueRanges: [
+                {
+                  values: [
+                    ['Contact', 'Name', 'Aliases'],
+                    ['PMG', 'Pavarini McGovern', '"Pavarini, McGovern", "ACME ""Corp""", PCNE, @pavarini.com'],
+                    ['INC', 'INC Architecture', ''],
+                    ['---', '', ''],
+                  ],
+                },
+                {
+                  values: [
+                    ['Vendor', 'Name'],
+                    ['CARN', 'Carnegie Fabrics'],
+                    ['---', ''],
+                  ],
+                },
+              ],
+            },
+          }),
+          update: vi.fn(),
+        },
+      },
+    } as unknown as NonNullable<GoogleSheetsClientOptions['sheets']>;
+
+    const sheetsClient = new GoogleSheetsClient({
+      sheets: mockSheets,
+      configProvider: manifestProvider,
+    });
+
+    const customManifestProvider: RawManifestProviderPort = {
+      getRawManifest: () => manifestProvider.getRawManifest(),
+      readParsedSchema: async (relPath: string) => {
+        const parsed = await manifestProvider.readParsedSchema(relPath);
+        if (!relPath.includes('submittal-arch')) {
+          return parsed;
+        }
+        const cloned = structuredClone(parsed) as Record<string, unknown>;
+        const docSchema = cloned.documentSchema as {
+          options?: Record<string, unknown>;
+          optionSources?: Record<string, unknown>;
+        };
+        if (docSchema.options) {
+          delete docSchema.options.contacts;
+        }
+        docSchema.optionSources = {
+          contacts: { provider: 'document_log', properties: ['key', 'name'] },
+          vendors: { provider: 'document_log', properties: ['key', 'name'] },
+        };
+        const logSchema = cloned.documentLogSchema as {
+          optionBindings?: Record<string, unknown>;
+        };
+        logSchema.optionBindings = {
+          contacts: {
+            sheetName: '_Config',
+            rangeName: 'Options_Contacts',
+            endMarker: '---',
+            columns: { Contact: 'key', Name: 'name' },
+            aliasesColumn: 'Aliases',
+          },
+          vendors: {
+            sheetName: '_Config',
+            rangeName: 'Options_Vendors',
+            endMarker: '---',
+            columns: { Vendor: 'key', Name: 'name' },
+            aliasesColumn: 'Aliases',
+          },
+        };
+        return cloned;
+      },
+    };
+
+    const logWiring = createDocumentLogWiring({
+      manifestProvider: customManifestProvider,
+      driveClient,
+      sheetsClient,
+      configProvider: manifestProvider,
+      templateEvaluator: handlebars,
+    });
+    await logWiring.logSchemaRegistry.initialize();
+
+    const docLogPort = logWiring.createDocumentLogService({});
+    const res = await docLogPort.readOptionTables!({
+      documentTypeKey: 'submittal-arch',
+      space: {
+        id: 'space-360',
+        typeId: 'projects',
+        name: 'Harborview',
+        abstractStorageId: 'space-360',
+      },
+    });
+
+    expect(res.status).toBe('ready');
+    if (res.status === 'ready') {
+      expect(res.tables.contacts).toEqual({
+        status: 'ready',
+        tuples: [
+          {
+            key: 'PMG',
+            name: 'Pavarini McGovern',
+            aliases: ['Pavarini, McGovern', 'ACME "Corp"', 'PCNE', '@pavarini.com'],
+          },
+          {
+            key: 'INC',
+            name: 'INC Architecture',
+          },
+        ],
+      });
+      expect(res.tables.vendors).toEqual({
+        status: 'ready',
+        tuples: [{ key: 'CARN', name: 'Carnegie Fabrics' }],
+      });
+    }
   });
 });

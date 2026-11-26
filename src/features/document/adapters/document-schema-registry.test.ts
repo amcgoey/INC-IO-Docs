@@ -773,5 +773,28 @@ describe('DocumentSchemaRegistryAdapter', () => {
         { key: 'v1', name: 'Vendor 1', customProp: 'hello' },
       ]);
     });
+
+    it('fails fast in loadAll when LookupField references unknown OptionSource or template/linkedField references undeclared property', async () => {
+      const unknownSourceDoc = {
+        key: 'bad-option-source',
+        name: 'Bad Option Source',
+        documentSchema: {
+          fields: [
+            {
+              key: 'status',
+              name: 'Status',
+              type: 'string',
+              required: true,
+              options: { source: 'missingSource', key: 'key' },
+            },
+          ],
+        },
+      };
+      const badAdapter = new DocumentSchemaRegistryAdapter(
+        createMockManifestProvider({ './schemas/bad-source.json': unknownSourceDoc }),
+        mockEvaluator
+      );
+      await expect(badAdapter.loadAll()).rejects.toThrow(/unknown OptionSource "missingSource"/i);
+    });
   });
 });

@@ -25,15 +25,30 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
   const applyOpt = <T extends nock.Interceptor>(interceptor: T): T =>
     options?.optional ? (interceptor.optionally() as T) : interceptor;
 
+  const statusesRows = [['Status'], ['Open'], ['Closed'], ['Waiting'], ['Manager'], ['---']];
+  const actionsRows = [
+    ['Action', 'Name', 'Suffix', 'Order'],
+    ['REC', 'Received', '', '1'],
+    ['REF', 'Referred', '_REF', '2'],
+    ['NR', 'Not Reviewed', '_NR', '3'],
+    ['REJ', 'Rejected', '_REJ', '4'],
+    ['RR', 'Revise & Resubmit', '_RR', '5'],
+    ['NOC', 'No Objections As Corrected', '_NOC', '6'],
+    ['NET', 'No Exceptions Taken', '_NET', '7'],
+    ['---', '', '', ''],
+  ];
+
   applyOpt(
     nock('https://sheets.googleapis.com')
       .get(`/v4/spreadsheets/${spreadsheetId}`)
       .query(true)
+      .times(options?.optional ? 2 : 2)
   ).reply(200, {
     spreadsheetId,
     sheets: [
       { properties: { sheetId: 101, title: 'Submittal Arch' } },
       { properties: { sheetId: 102, title: 'Submittal FF&E' } },
+      { properties: { sheetId: 103, title: '_Config Submittal Arch' } },
     ],
     namedRanges: [
       {
@@ -45,6 +60,16 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
         namedRangeId: 'nr-ffe',
         name: 'Log_Submittal_FFE',
         range: { sheetId: 102, startRowIndex: 2, endRowIndex: 21, startColumnIndex: 0, endColumnIndex: 12 },
+      },
+      {
+        namedRangeId: 'nr-arch-statuses',
+        name: 'Options_Submittal_Arch_Statuses',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
+      },
+      {
+        namedRangeId: 'nr-arch-actions',
+        name: 'Options_Submittal_Arch_Actions',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 9, startColumnIndex: 2, endColumnIndex: 6 },
       },
     ],
   });
@@ -67,6 +92,22 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
       .query((q) => q.valueRenderOption === 'FORMULA')
   ).reply(200, {
     valueRanges: [{ values: [['Formula Row']] }],
+  });
+
+  applyOpt(
+    nock('https://sheets.googleapis.com')
+      .get(`/v4/spreadsheets/${spreadsheetId}/values:batchGet`)
+      .query((q) => q.valueRenderOption === 'FORMATTED_VALUE')
+  ).reply(200, (uri) => {
+    const url = new URL(uri, 'https://sheets.googleapis.com');
+    const ranges = url.searchParams.getAll('ranges');
+    return {
+      spreadsheetId,
+      valueRanges: ranges.map((r) => ({
+        range: r,
+        values: r.includes('A1:') ? statusesRows : actionsRows,
+      })),
+    };
   });
 }
 
@@ -419,7 +460,7 @@ describe('Ticket #350 CQRS Integration: Idempotent User-Triggered Copy Log Provi
       .query(true)
       .reply(200, { drives: [{ id: driveId, name: spaceName }] });
 
-    // Both copyLog pre-check AND re-render queryUiContext resolve the existing log -> zero POST/copy calls allowed
+    // Per-request DocumentLogService memoizes resolveLog across copyLog pre-check & re-render -> 1 search, zero POST/copy calls
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
       .query(
@@ -428,7 +469,7 @@ describe('Ticket #350 CQRS Integration: Idempotent User-Triggered Copy Log Provi
           q.q.includes("name contains 'Document Log'") &&
           q.driveId === driveId
       )
-      .times(2)
+      .times(1)
       .reply(200, {
         files: [
           {
@@ -439,6 +480,8 @@ describe('Ticket #350 CQRS Integration: Idempotent User-Triggered Copy Log Provi
           },
         ],
       });
+
+    mockEmptyDocumentLogSheetsRead(existingSheetId, { optional: true });
 
     const res = await app.server.inject({
       method: 'POST',
@@ -520,16 +563,7 @@ describe('Ticket #350 CQRS Integration: Idempotent User-Triggered Copy Log Provi
         error: { code: 403, message: 'The user does not have sufficient permissions for this file.' },
       });
 
-    // Re-render live resolveLog still sees 0 logs -> missing state + Process Document remains disabled
-    nock('https://www.googleapis.com')
-      .get('/drive/v3/files')
-      .query(
-        (q) =>
-          typeof q.q === 'string' &&
-          q.q.includes("name contains 'Document Log'") &&
-          q.driveId === driveId
-      )
-      .reply(200, { files: [] });
+    // Re-render reuses per-request memoized resolveLog (still 0 logs -> missing state, 0 extra Drive searches)
 
     const res = await app.server.inject({
       method: 'POST',
@@ -811,18 +845,7 @@ describe('Ticket #350 CQRS Integration: Idempotent User-Triggered Copy Log Provi
       .query(true)
       .reply(403, { error: { code: 403, message: 'Insufficient permissions to create folder in Shared Drive' } });
 
-    // Post-error re-render resolveLog still sees 0 logs
-    nock('https://www.googleapis.com', {
-      reqheaders: { authorization: 'Bearer ya29.gmail-only-403' },
-    })
-      .get('/drive/v3/files')
-      .query(
-        (q) =>
-          typeof q.q === 'string' &&
-          q.q.includes("name contains 'Document Log'") &&
-          q.driveId === driveId
-      )
-      .reply(200, { files: [] });
+    // Post-error re-render reuses per-request memoized resolveLog (still 0 logs)
 
     const res = await app.server.inject({
       method: 'POST',

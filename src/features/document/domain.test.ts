@@ -15,6 +15,7 @@ import {
   LinkedFieldSchema,
   DocumentSchemaType,
   DocumentSchemaOptionTupleType,
+  OptionSourceSchema,
   DocumentIdentitySchemaType,
   CalculatedFieldType,
   SystemContextSchema,
@@ -794,8 +795,16 @@ describe('Document domain', () => {
     expect(Value.Check(DocumentFieldOptionType, optionWithInvalidAllowUserInput)).toBe(false);
   });
 
-  it('DocumentFieldOptionType accepts dynamicConfig only when allowUserInput is true', () => {
-    const validDynamicOption = {
+  it('DocumentFieldOptionType rejects legacy dynamicConfig', () => {
+    const validOption = {
+      source: 'contactFolders',
+      key: 'name',
+      name: 'name',
+      allowUserInput: true,
+    };
+    expect(Value.Check(DocumentFieldOptionType, validOption)).toBe(true);
+
+    const optionWithLegacyDynamicConfig = {
       source: 'contactFolders',
       key: 'name',
       name: 'name',
@@ -806,28 +815,7 @@ describe('Document domain', () => {
         relativePath: '1 Admin/Communication',
       },
     };
-    expect(Value.Check(DocumentFieldOptionType, validDynamicOption)).toBe(true);
-
-    const dynamicOptionMissingAllowUserInput = {
-      source: 'contactFolders',
-      key: 'name',
-      name: 'name',
-      dynamicConfig: {
-        provider: 'google_drive',
-      },
-    };
-    expect(Value.Check(DocumentFieldOptionType, dynamicOptionMissingAllowUserInput)).toBe(false);
-
-    const dynamicOptionWithAllowUserInputFalse = {
-      source: 'contactFolders',
-      key: 'name',
-      name: 'name',
-      allowUserInput: false,
-      dynamicConfig: {
-        provider: 'google_drive',
-      },
-    };
-    expect(Value.Check(DocumentFieldOptionType, dynamicOptionWithAllowUserInputFalse)).toBe(false);
+    expect(Value.Check(DocumentFieldOptionType, optionWithLegacyDynamicConfig)).toBe(false);
   });
 
   it('DocumentTypeSchema allows optional backend config stubs', () => {
@@ -871,6 +859,98 @@ describe('Document domain', () => {
 
       const invalidTuple = 'not-an-object';
       expect(Value.Check(DocumentSchemaOptionTupleType, invalidTuple)).toBe(false);
+    });
+
+    it('validates DocumentSchemaType.optionSources for document_log and google_drive providers alongside options and legacy dynamicConfig', () => {
+      expect(
+        Value.Check(OptionSourceSchema, {
+          provider: 'document_log',
+          properties: ['key', 'name', 'suffix', 'order'],
+        })
+      ).toBe(true);
+
+      expect(
+        Value.Check(OptionSourceSchema, {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: '1 Admin/Communication',
+        })
+      ).toBe(true);
+
+      // Invalid: document_log without properties or with empty properties
+      expect(Value.Check(OptionSourceSchema, { provider: 'document_log' })).toBe(false);
+      expect(Value.Check(OptionSourceSchema, { provider: 'document_log', properties: [] })).toBe(false);
+      // Invalid: unknown provider
+      expect(Value.Check(OptionSourceSchema, { provider: 'unknown_provider', properties: ['key'] })).toBe(false);
+      // Invalid: extra unknown property
+      expect(
+        Value.Check(OptionSourceSchema, { provider: 'document_log', properties: ['key'], sheetName: '_Config' })
+      ).toBe(false);
+
+      const schemaWithOptionSources = {
+        fields: [
+          {
+            key: 'status',
+            name: 'Status',
+            type: 'string',
+            required: true,
+            options: { source: 'statuses', key: 'key', allowUserInput: false },
+          },
+          {
+            key: 'contact',
+            name: 'Contact',
+            type: 'string',
+            required: true,
+            options: { source: 'contactFolders', key: 'key', name: 'name', allowUserInput: true },
+          },
+        ],
+        optionSources: {
+          statuses: { provider: 'document_log', properties: ['key'] },
+          contactFolders: {
+            provider: 'google_drive',
+            method: 'list_folders',
+            relativePath: '1 Admin/Communication',
+          },
+        },
+        options: {
+          direction: [{ key: 'IN', name: 'Incoming' }],
+        },
+      };
+      expect(Value.Check(DocumentSchemaType, schemaWithOptionSources)).toBe(true);
+    });
+
+    it('buildDocumentTypeSchema compiles dynamic LookupFields with allowUserInput: false as string instead of Type.Never()', () => {
+      const docType: DocumentType = {
+        key: 'submittal-arch',
+        name: 'Submittal Arch',
+        documentSchema: {
+          fields: [
+            {
+              key: 'status',
+              name: 'Status',
+              type: 'string',
+              required: true,
+              minLength: 1,
+              options: { source: 'statuses', key: 'key', allowUserInput: false },
+            },
+            {
+              key: 'action',
+              name: 'Action',
+              type: 'string',
+              required: true,
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+          ],
+          optionSources: {
+            statuses: { provider: 'document_log', properties: ['key'] },
+            actions: { provider: 'document_log', properties: ['key', 'name'] },
+          },
+        },
+      };
+
+      const compiled = TypeCompiler.Compile(buildDocumentTypeSchema(docType));
+      expect(compiled.Check({ status: 'Open', action: 'REC' })).toBe(true);
+      expect(compiled.Check({ status: '', action: 'REC' })).toBe(false);
     });
 
     it('validates DocumentSchemaType.options as optional Record<string, DocumentSchemaOptionTupleType[]>', () => {
@@ -2603,7 +2683,7 @@ describe('Document domain', () => {
       }
     });
 
-    it('sanitizes disallowed characters, control chars, and trailing dots/whitespace in string fields and synthesized lookup tuples before evaluating calculatedFields and identity', async () => {
+    it('preserves raw punctuation in Document.data and identity while scoping sanitizeFilePath strictly to file path assembly in workflow activities', async () => {
       const mockDispatcher: ActivityDispatcherPort = {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
@@ -2662,6 +2742,31 @@ describe('Document domain', () => {
               ],
             },
           },
+          storageContextConfig: {
+            basePath: '1 Admin/Communication',
+          },
+          documentUiSchema: {
+            events: {
+              onSubmit: { catchAllWorkflow: 'FileComm' },
+            },
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'FileComm',
+                activitySequence: [
+                  {
+                    type: 'MOVE_FILE',
+                    payload: {
+                      rootStorageId: '{{Document.space.abstractStorageId}}',
+                      parentPath: '{{StorageContext.basePath}}',
+                      folderName: '{{Document.data.contact.key}}/{{Document.calculated.commFolderName}}',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
         },
       ];
 
@@ -2669,33 +2774,47 @@ describe('Document domain', () => {
       const service = createDocumentService(mockDispatcher, customRegistry, new HandlebarsAdapter());
       await service.initialize();
 
-      // Test with disallowed path characters: / \ : * ? " < > | and control char \x07, plus trailing dots and whitespace
+      const rawContact = 'Client: /Bad*Name?|With<Disallowed>"Chars\\And\x07Control. .';
+      const rawDescription = 'Meeting / Discussion: Issue *123? ...';
       const inputDocument: Document = {
         type: 'comm-project',
+        space: {
+          id: 'sp-1',
+          name: 'Space 1',
+          typeId: 'projects',
+          abstractStorageId: 'drive-root-1',
+        },
         data: {
-          contact: '  Client: /Bad*Name?|With<Disallowed>"Chars\\And\x07Control. . ',
+          contact: `  ${rawContact} `,
           date: '260920',
           direction: 'IN',
-          description: '  Meeting / Discussion: Issue *123? ...  ',
+          description: rawDescription,
         },
       };
 
-      const result = await service.processDocument(inputDocument);
+      const result = await service.processDocument(inputDocument, 'onSubmit');
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      const expectedContact = 'Client- -Bad-Name--With-Disallowed--Chars-And-Control';
-      const expectedDescription = 'Meeting - Discussion- Issue -123-';
-      const expectedCommFolder = '260920 IN - Meeting - Discussion- Issue -123-';
-
+      // Raw non-path characters and punctuation are preserved in Document.data, calculatedFields, and identity
       expect(result.data.data.contact).toEqual({
-        key: expectedContact,
-        name: expectedContact,
+        key: rawContact,
+        name: rawContact,
       });
-      expect(result.data.data.description).toBe(expectedDescription);
-      expect(result.data.calculated?.commFolderName).toBe(expectedCommFolder);
-      expect(result.data.id).toBe(`${expectedContact}-260920-IN-${expectedDescription}`);
-      expect(result.data.idGroup).toBe(expectedContact);
+      expect(result.data.data.description).toBe(rawDescription);
+      expect(result.data.calculated?.commFolderName).toBe(`260920 IN - ${rawDescription}`);
+      expect(result.data.id).toBe(`${rawContact}-260920-IN-${rawDescription}`);
+      expect(result.data.idGroup).toBe(rawContact);
+
+      // File path assembly sanitizes interpolated Document values while preserving template '/' separators
+      expect(result.activities[0]).toEqual({
+        type: 'MOVE_FILE',
+        payload: {
+          rootStorageId: 'drive-root-1',
+          parentPath: '1 Admin/Communication',
+          folderName: 'Client- -Bad-Name--With-Disallowed--Chars-And-Control/260920 IN - Meeting - Discussion- Issue -123-',
+        },
+      });
     });
 
     it('passes enriched tuple context seamlessly to Handlebars evaluator for calculatedFields and identity', async () => {
@@ -5467,6 +5586,158 @@ describe('Document domain', () => {
       });
     });
 
+    describe('optionSources referential integrity and template property validation', () => {
+      it('rejects LookupField referencing an unknown OptionSource', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'unknown-source-doc',
+          name: 'Unknown Source Doc',
+          documentSchema: {
+            fields: [
+              {
+                key: 'status',
+                name: 'Status',
+                type: 'string',
+                required: true,
+                options: { source: 'statuses', key: 'key' },
+              },
+            ],
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toContain('Field "status" references unknown OptionSource "statuses".');
+      });
+
+      it('rejects duplicate source key across options and optionSources', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'dup-source-doc',
+          name: 'Dup Source Doc',
+          documentSchema: {
+            fields: [
+              {
+                key: 'status',
+                name: 'Status',
+                type: 'string',
+                required: true,
+                options: { source: 'statuses', key: 'key' },
+              },
+            ],
+            options: {
+              statuses: [{ key: 'Open' }],
+            },
+            optionSources: {
+              statuses: { provider: 'document_log', properties: ['key'] },
+            },
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toContain(
+          'Option source "statuses" cannot be declared in both documentSchema.options and documentSchema.optionSources.'
+        );
+      });
+
+      it('rejects LookupField options.key/options.name and LinkedField.sourceProperty undeclared in OptionSource.properties', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'undeclared-prop-doc',
+          name: 'Undeclared Prop Doc',
+          documentSchema: {
+            fields: [
+              {
+                key: 'specTag',
+                name: 'Spec Tag',
+                type: 'string',
+                required: true,
+                options: { source: 'specs', key: 'code', name: 'title', allowUserInput: true },
+              },
+              {
+                key: 'specTitle',
+                name: 'Spec Title',
+                type: 'string',
+                required: true,
+                linkedField: { sourceField: 'specTag', sourceProperty: 'description' },
+              },
+            ],
+            optionSources: {
+              specs: { provider: 'document_log', properties: ['key', 'name'] },
+            },
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toContain(
+          'Field "specTag" options.key "code" is not declared in OptionSource "specs" properties.'
+        );
+        expect(errors).toContain(
+          'Field "specTag" options.name "title" is not declared in OptionSource "specs" properties.'
+        );
+        expect(errors).toContain(
+          'Field "specTitle" has invalid linkedField: sourceProperty "description" does not exist on sourceField "specTag" options.'
+        );
+      });
+
+      it('allows declared OptionSource.properties in templates and LinkedField, and rejects undeclared template properties', () => {
+        const evaluator = createEvaluator();
+        const validManifest: DocumentType = {
+          key: 'valid-option-sources-doc',
+          name: 'Valid Option Sources Doc',
+          documentSchema: {
+            fields: [
+              {
+                key: 'action',
+                name: 'Action',
+                type: 'string',
+                required: true,
+                options: { source: 'actions', key: 'key', name: 'name', allowUserInput: false },
+              },
+              {
+                key: 'specTag',
+                name: 'Spec Tag',
+                type: 'string',
+                required: true,
+                options: { source: 'specs', key: 'key', allowUserInput: true },
+              },
+              {
+                key: 'specTitle',
+                name: 'Spec Title',
+                type: 'string',
+                required: true,
+                linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+              },
+            ],
+            optionSources: {
+              actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
+              specs: { provider: 'document_log', properties: ['key', 'name'] },
+            },
+            calculatedFields: [
+              { key: 'fileName', template: '{{specTag.key}}{{action.suffix}}' },
+            ],
+            identity: {
+              id: '{{specTag.key}}-{{action.order}}',
+            },
+          },
+        };
+        expect(validateManifestTemplates(validManifest, evaluator)).toEqual([]);
+
+        const invalidTemplateManifest: DocumentType = {
+          ...validManifest,
+          documentSchema: {
+            ...validManifest.documentSchema,
+            calculatedFields: [
+              { key: 'fileName', template: '{{specTag.key}}-{{action.nonExistent}}' },
+            ],
+          },
+        };
+        const errors = validateManifestTemplates(invalidTemplateManifest, evaluator);
+        expect(errors).toEqual([
+          'Invalid template at "documentSchema.calculatedFields[0].template": references unknown fields or is malformed.',
+        ]);
+      });
+    });
+
     describe('Activity.id and WRITE_LOG fileSourceStepId validation', () => {
       it('rejects Activity.id violating ^[A-Za-z_][A-Za-z0-9_-]*$', () => {
         const evaluator = createEvaluator();
@@ -5775,18 +6046,20 @@ describe('Document domain', () => {
               key: 'name',
               name: 'name',
               allowUserInput: true,
-              dynamicConfig: {
-                provider: 'google_drive',
-                method: 'list_folders',
-                relativePath: '1 Admin/Communication',
-              },
             },
           },
         ],
+        optionSources: {
+          contactFolders: {
+            provider: 'google_drive',
+            method: 'list_folders',
+            relativePath: '1 Admin/Communication',
+          },
+        },
       },
     };
 
-    it('enforces validation for fields with dynamicConfig and succeeds when valid', async () => {
+    it('enforces validation for fields with optionSources and succeeds when valid', async () => {
       const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
       const registry = createCustomRegistry([dynamicDocType]);
       const compiledRegistry = createMockCompiledRegistry(registry);
@@ -5824,11 +6097,7 @@ describe('Document domain', () => {
         [
           {
             sourceKey: 'contactFolders',
-            config: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: '1 Admin/Communication',
-            },
+            fieldKey: 'contact',
             valueToValidate: 'Acme Corp',
             queryId: 'contact',
             allowUserInput: true,
@@ -5836,6 +6105,7 @@ describe('Document domain', () => {
         ],
         expect.objectContaining({
           spaceId: 'drive-folder-123',
+          documentTypeKey: 'comm-project',
           formData: expect.objectContaining({
             title: 'Project Alpha',
             contact: 'Acme Corp',
@@ -5944,13 +6214,15 @@ describe('Document domain', () => {
                 key: 'name',
                 name: 'name',
                 allowUserInput: true,
-                dynamicConfig: {
-                  provider: 'google_drive',
-                  method: 'list_folders',
-                },
               },
             },
           ],
+          optionSources: {
+            contactFolders: {
+              provider: 'google_drive',
+              method: 'list_folders',
+            },
+          },
         },
       };
 
@@ -6023,22 +6295,14 @@ describe('Document domain', () => {
         [
           {
             sourceKey: 'contactFolders',
-            config: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: '1 Admin/Communication',
-            },
+            fieldKey: 'contact',
             valueToValidate: 'Acme Corp',
             queryId: 'contact_0',
             allowUserInput: true,
           },
           {
             sourceKey: 'contactFolders',
-            config: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: '1 Admin/Communication',
-            },
+            fieldKey: 'contact',
             valueToValidate: 'Missing Corp',
             queryId: 'contact_1',
             allowUserInput: true,
@@ -6229,14 +6493,16 @@ describe('Document domain', () => {
                   key: 'key',
                   name: 'name',
                   allowUserInput: true,
-                  dynamicConfig: {
-                    provider: 'google_drive',
-                    method: 'list_folders',
-                    relativePath: 'Communications',
-                  },
                 },
               },
             ],
+            optionSources: {
+              contactFolders: {
+                provider: 'google_drive',
+                method: 'list_folders',
+                relativePath: 'Communications',
+              },
+            },
           },
         };
 
@@ -6352,10 +6618,15 @@ describe('Document domain', () => {
               key: 'id',
               name: 'name',
               allowUserInput: true,
-              dynamicConfig: { searchPath: 'Vendors' },
             },
           },
         ],
+        optionSources: {
+          vendors: {
+            provider: 'google_drive',
+            relativePath: 'Vendors',
+          },
+        },
       },
     };
 
@@ -6472,12 +6743,153 @@ describe('Document domain', () => {
       expect(result.success).toBe(false);
       expect(result.errors).toEqual(['Vendor does not exist']);
     });
+
+    it('rejects invalid restricted dynamic LookupField values and skips validation for blank optional dynamic fields', async () => {
+      const restrictedDocType: DocumentType = {
+        key: 'restricted-dyn-doc',
+        name: 'Restricted Dynamic Doc',
+        documentSchema: {
+          fields: [
+            {
+              key: 'action',
+              name: 'Action',
+              type: 'string',
+              required: true,
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+            {
+              key: 'relatedTag',
+              name: 'Related Tag',
+              type: 'string',
+              required: false,
+              options: { source: 'specs', key: 'key', allowUserInput: true },
+            },
+          ],
+          optionSources: {
+            actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
+            specs: { provider: 'document_log', properties: ['key', 'name'] },
+          },
+        },
+      };
+
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const customRegistry = createCustomRegistry([restrictedDocType]);
+      const mockDynamicValidator: DocumentDynamicValidationPort = {
+        validateExistence: vi.fn().mockImplementation(async (queries) => {
+          const out: Record<string, { isValid: boolean; status: 'valid' | 'option_not_found' }> = {};
+          for (const q of queries) {
+            out[q.queryId] =
+              q.valueToValidate === 'REC'
+                ? { isValid: true, status: 'valid' }
+                : { isValid: false, status: 'option_not_found' };
+          }
+          return out;
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        defaultEvaluator,
+        undefined,
+        mockDynamicValidator
+      );
+      await service.initialize();
+
+      const validWithBlankOptional: DocumentModel = {
+        type: 'restricted-dyn-doc',
+        space: { id: 'sp-1', name: 'Space 1', typeId: 'projects', abstractStorageId: 'drive-1' },
+        data: { action: 'REC', relatedTag: '' },
+      };
+      const validRes = await service.validateDocument(validWithBlankOptional);
+      expect(validRes.success).toBe(true);
+      expect(mockDynamicValidator.validateExistence).toHaveBeenCalledWith(
+        [
+          {
+            sourceKey: 'actions',
+            fieldKey: 'action',
+            valueToValidate: 'REC',
+            queryId: 'action',
+          },
+        ],
+        expect.objectContaining({
+          spaceId: 'drive-1',
+          space: validWithBlankOptional.space,
+          documentTypeKey: 'restricted-dyn-doc',
+        })
+      );
+
+      const invalidRes = await service.validateDocument({
+        type: 'restricted-dyn-doc',
+        space: { id: 'sp-1', name: 'Space 1', typeId: 'projects', abstractStorageId: 'drive-1' },
+        data: { action: 'BOGUS' },
+      });
+      expect(invalidRes.success).toBe(false);
+      expect(invalidRes.errors).toEqual(['Option not found.']);
+    });
   });
 
   describe('Submittal Arch (submittal-arch) DocumentType filing and validation', () => {
     const submittalArchPath = path.resolve(__dirname, '../../../assets/document-types/submittal-arch.json');
     const submittalArchSchema: DocumentType = JSON.parse(fs.readFileSync(submittalArchPath, 'utf-8'));
     const handlebarsEvaluator = new HandlebarsAdapter();
+
+    const createSubmittalArchDynamicValidator = (): DocumentDynamicValidationPort => {
+      const statusTuples: Array<Record<string, unknown>> = [
+        { key: 'Open' },
+        { key: 'Waiting' },
+        { key: 'Closed' },
+      ];
+      const actionTuples: Array<Record<string, unknown>> = [
+        { key: 'REC', name: 'Received', suffix: '', order: '1' },
+        { key: 'REF', name: 'Referred', suffix: '_REF', order: '2' },
+      ];
+      const contactTuples: Array<Record<string, unknown>> = [
+        { key: 'INC', name: 'INC Architecture and Design' },
+        { key: 'PMG', name: 'Pavarini McGovern' },
+        { key: 'FXC', name: 'FX Collaborative' },
+      ];
+
+      return {
+        validateExistence: async (queries) => {
+          const out: Record<
+            string,
+            {
+              isValid: boolean;
+              status: 'valid' | 'option_not_found';
+              matchedTuple?: Record<string, unknown>;
+              errorMessage?: string;
+            }
+          > = {};
+          for (const query of queries) {
+            const tuples =
+              query.sourceKey === 'statuses'
+                ? statusTuples
+                : query.sourceKey === 'actions'
+                  ? actionTuples
+                  : contactTuples;
+            const norm = query.valueToValidate.trim().toLowerCase();
+            const match = tuples.find(
+              (t) =>
+                String(t.key ?? '').toLowerCase() === norm ||
+                (query.sourceKey !== 'statuses' && String(t.name ?? '').toLowerCase() === norm)
+            );
+            if (match) {
+              out[query.queryId] = { isValid: true, status: 'valid', matchedTuple: match };
+            } else if (query.allowUserInput) {
+              out[query.queryId] = { isValid: true, status: 'valid' };
+            } else {
+              out[query.queryId] = {
+                isValid: false,
+                status: 'option_not_found',
+                errorMessage: `/${query.fieldKey ?? query.queryId}: Value "${query.valueToValidate}" is not a valid option for "${query.sourceKey}".`,
+              };
+            }
+          }
+          return out;
+        },
+      };
+    };
 
     it('passes DocumentTypeSchema validation and manifest template validation', () => {
       expect(Value.Check(DocumentTypeSchema, submittalArchSchema)).toBe(true);
@@ -6490,7 +6902,13 @@ describe('Document domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry = createCustomRegistry([submittalArchSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        handlebarsEvaluator,
+        undefined,
+        createSubmittalArchDynamicValidator()
+      );
       await service.initialize();
 
       const inputDoc: Document = {
@@ -6531,7 +6949,6 @@ describe('Document domain', () => {
       expect(result.data.data.contact).toEqual({
         key: 'PMG',
         name: 'Pavarini McGovern',
-        type: 'Contractor',
       });
       expect(result.data.data.action).toEqual({
         key: 'REC',
@@ -6576,7 +6993,13 @@ describe('Document domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry = createCustomRegistry([submittalArchSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        handlebarsEvaluator,
+        undefined,
+        createSubmittalArchDynamicValidator()
+      );
       await service.initialize();
 
       const inputDoc: Document = {
@@ -6612,7 +7035,6 @@ describe('Document domain', () => {
       expect(result.data.data.contact).toEqual({
         key: 'FXC',
         name: 'FX Collaborative',
-        type: 'Architect',
       });
       expect(result.data.calculated?.fileName).toBe('071200-002-0 Dampproofing - 261103 FXC_REF');
       expect(result.data.id).toBe('071200-002-0-261103-2');
@@ -6623,7 +7045,13 @@ describe('Document domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry = createCustomRegistry([submittalArchSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        handlebarsEvaluator,
+        undefined,
+        createSubmittalArchDynamicValidator()
+      );
       await service.initialize();
 
       const inputDoc: Document = {
@@ -6736,10 +7164,16 @@ describe('Document domain', () => {
       }
     });
 
-    it('rejects invalid static action and status choices', async () => {
+    it('rejects invalid dynamic action and status choices', async () => {
       const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
       const customRegistry = createCustomRegistry([submittalArchSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        defaultEvaluator,
+        undefined,
+        createSubmittalArchDynamicValidator()
+      );
       await service.initialize();
 
       // Invalid action
@@ -6789,6 +7223,66 @@ describe('Document domain', () => {
     const submittalFfeSchema: DocumentType = JSON.parse(fs.readFileSync(submittalFfePath, 'utf-8'));
     const handlebarsEvaluator = new HandlebarsAdapter();
 
+    const createSubmittalFfeDynamicValidator = (): DocumentDynamicValidationPort => {
+      const tuplesBySource: Record<string, Array<Record<string, unknown>>> = {
+        statuses: [{ key: 'Open' }, { key: 'Waiting' }, { key: 'Closed' }],
+        actions: [
+          { key: 'REC', name: 'Received', suffix: '', order: '1' },
+          { key: 'REF', name: 'Referred', suffix: '_REF', order: '2' },
+        ],
+        contacts: [
+          { key: 'INC', name: 'INC Architecture & Design' },
+          { key: 'BW', name: 'Benjamin West' },
+        ],
+        vendors: [
+          { key: 'BM', name: 'Berman Falk' },
+          { key: 'AL', name: 'Ashley Lighting' },
+        ],
+        specs: [
+          { key: 'AC102', name: 'HOOK' },
+          { key: 'CG104', name: 'BED - KING' },
+          { key: 'BLANK-TAG', name: '' },
+        ],
+      };
+
+      return {
+        validateExistence: async (queries) => {
+          const out: Record<
+            string,
+            {
+              isValid: boolean;
+              status: 'valid' | 'option_not_found';
+              matchedTuple?: Record<string, unknown>;
+              errorMessage?: string;
+            }
+          > = {};
+          for (const query of queries) {
+            const tuples = tuplesBySource[query.sourceKey] ?? [];
+            const norm = query.valueToValidate.trim().toLowerCase();
+            const match = tuples.find(
+              (t) =>
+                String(t.key ?? '').toLowerCase() === norm ||
+                (query.sourceKey !== 'statuses' &&
+                  query.sourceKey !== 'specs' &&
+                  String(t.name ?? '').toLowerCase() === norm)
+            );
+            if (match) {
+              out[query.queryId] = { isValid: true, status: 'valid', matchedTuple: match };
+            } else if (query.allowUserInput) {
+              out[query.queryId] = { isValid: true, status: 'valid' };
+            } else {
+              out[query.queryId] = {
+                isValid: false,
+                status: 'option_not_found',
+                errorMessage: `/${query.fieldKey ?? query.queryId}: Value "${query.valueToValidate}" is not a valid option for "${query.sourceKey}".`,
+              };
+            }
+          }
+          return out;
+        },
+      };
+    };
+
     it('passes DocumentTypeSchema validation and manifest template validation', () => {
       expect(Value.Check(DocumentTypeSchema, submittalFfeSchema)).toBe(true);
       const errors = validateManifestTemplates(submittalFfeSchema, handlebarsEvaluator);
@@ -6800,7 +7294,13 @@ describe('Document domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry = createCustomRegistry([submittalFfeSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        handlebarsEvaluator,
+        undefined,
+        createSubmittalFfeDynamicValidator()
+      );
       await service.initialize();
 
       const inputDoc: Document = {
@@ -6844,12 +7344,10 @@ describe('Document domain', () => {
       expect(result.data.data.vendor).toEqual({
         key: 'BM',
         name: 'Berman Falk',
-        type: 'Casegoods',
       });
       expect(result.data.data.contact).toEqual({
         key: 'BW',
         name: 'Benjamin West',
-        type: 'Procurement',
       });
       expect(result.data.data.action).toEqual({
         key: 'REF',
@@ -6890,7 +7388,13 @@ describe('Document domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry = createCustomRegistry([submittalFfeSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        handlebarsEvaluator,
+        undefined,
+        createSubmittalFfeDynamicValidator()
+      );
       await service.initialize();
 
       const inputDoc: Document = {
@@ -6929,7 +7433,13 @@ describe('Document domain', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const customRegistry = createCustomRegistry([submittalFfeSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, handlebarsEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        handlebarsEvaluator,
+        undefined,
+        createSubmittalFfeDynamicValidator()
+      );
       await service.initialize();
 
       const inputDoc: Document = {
@@ -6979,7 +7489,13 @@ describe('Document domain', () => {
     it('rejects missing or whitespace-only required fields', async () => {
       const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
       const customRegistry = createCustomRegistry([submittalFfeSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        defaultEvaluator,
+        undefined,
+        createSubmittalFfeDynamicValidator()
+      );
       await service.initialize();
 
       // Missing specTag
@@ -7022,12 +7538,12 @@ describe('Document domain', () => {
         expect(revisionResult.errors.some((err) => err.includes('/revision:'))).toBe(true);
       }
 
-      // Whitespace specTitle
+      // Whitespace specTitle on custom specTag
       const whitespaceTitleDoc: Document = {
         type: 'submittal-ffe',
         data: {
           status: 'Open',
-          specTag: 'AC102',
+          specTag: 'CUSTOM-99',
           revision: '1',
           specTitle: '   ',
           vendor: 'BM',
@@ -7043,10 +7559,128 @@ describe('Document domain', () => {
       }
     });
 
-    it('rejects invalid static action and status choices', async () => {
+    it('authoritatively re-derives non-blank LinkedField specTitle when known specTag is submitted (omitted or overridden) and requires specTitle when custom or blank-property', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const customRegistry = createCustomRegistry([submittalFfeSchema]);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        handlebarsEvaluator,
+        undefined,
+        createSubmittalFfeDynamicValidator()
+      );
+      await service.initialize();
+
+      // 1. Omitted specTitle (e.g. decoratedText in UI or minimal POST /documents) with known specTag
+      const omittedTitleRes = await service.processDocument(
+        {
+          type: 'submittal-ffe',
+          data: {
+            status: 'Open',
+            specTag: 'AC102',
+            revision: '0',
+            vendor: 'BM',
+            date: '261102',
+            contact: 'INC',
+            action: 'REC',
+          },
+          space: {
+            id: 'proj-001',
+            name: '123 Main Street',
+            typeId: 'projects',
+            abstractStorageId: 'drive-folder-root',
+          },
+        },
+        'onSubmit'
+      );
+      expect(omittedTitleRes.success).toBe(true);
+      if (!omittedTitleRes.success) return;
+      expect(omittedTitleRes.data.data.specTitle).toBe('HOOK');
+      expect(omittedTitleRes.data.data.specTag).toEqual({ key: 'AC102', name: 'HOOK' });
+
+      // 2. Mismatched specTitle submitted alongside lowercase known specTag -> authoritatively overwritten
+      const overriddenTitleRes = await service.processDocument(
+        {
+          type: 'submittal-ffe',
+          data: {
+            status: 'Open',
+            specTag: 'cg104',
+            revision: '0',
+            specTitle: 'Caller Supplied Override',
+            vendor: 'BM',
+            date: '261102',
+            contact: 'INC',
+            action: 'REC',
+          },
+          space: {
+            id: 'proj-001',
+            name: '123 Main Street',
+            typeId: 'projects',
+            abstractStorageId: 'drive-folder-root',
+          },
+        },
+        'onSubmit'
+      );
+      expect(overriddenTitleRes.success).toBe(true);
+      if (!overriddenTitleRes.success) return;
+      expect(overriddenTitleRes.data.data.specTitle).toBe('BED - KING');
+      expect(overriddenTitleRes.data.data.specTag).toEqual({ key: 'CG104', name: 'BED - KING' });
+
+      // 3. Known specTag with blank Spec Title in table + omitted specTitle -> fails validation
+      const blankPropRes = await service.processDocument(
+        {
+          type: 'submittal-ffe',
+          data: {
+            status: 'Open',
+            specTag: 'BLANK-TAG',
+            revision: '0',
+            vendor: 'BM',
+            date: '261102',
+            contact: 'INC',
+            action: 'REC',
+          },
+        },
+        'onSubmit'
+      );
+      expect(blankPropRes.success).toBe(false);
+      if (!blankPropRes.success) {
+        expect(blankPropRes.errors.some((err) => err.includes('/specTitle'))).toBe(true);
+      }
+
+      // 4. Custom specTag + omitted specTitle -> fails validation
+      const customOmittedRes = await service.processDocument(
+        {
+          type: 'submittal-ffe',
+          data: {
+            status: 'Open',
+            specTag: 'NEW-999',
+            revision: '0',
+            vendor: 'BM',
+            date: '261102',
+            contact: 'INC',
+            action: 'REC',
+          },
+        },
+        'onSubmit'
+      );
+      expect(customOmittedRes.success).toBe(false);
+      if (!customOmittedRes.success) {
+        expect(customOmittedRes.errors.some((err) => err.includes('/specTitle'))).toBe(true);
+      }
+    });
+
+    it('rejects invalid dynamic action and status choices', async () => {
       const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
       const customRegistry = createCustomRegistry([submittalFfeSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        defaultEvaluator,
+        undefined,
+        createSubmittalFfeDynamicValidator()
+      );
       await service.initialize();
 
       // Invalid action

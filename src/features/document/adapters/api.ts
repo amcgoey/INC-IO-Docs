@@ -27,7 +27,8 @@ export interface HttpServer {
 }
 
 export interface DocumentFeatureApiOptions {
-  service: DocumentServicePort;
+  service?: DocumentServicePort | undefined;
+  createService?: (() => DocumentServicePort | Promise<DocumentServicePort>) | undefined;
 }
 
 function toInternalServerErrorResponse(error: unknown, fallbackMessage: string): HttpResponse {
@@ -41,7 +42,7 @@ function toInternalServerErrorResponse(error: unknown, fallbackMessage: string):
 }
 
 export function registerDocumentFeatureRoutes(router: HttpServer, opts: DocumentFeatureApiOptions): void {
-  const { service } = opts;
+  const { service, createService } = opts;
 
   router.registerRoute({
     method: 'POST',
@@ -50,7 +51,14 @@ export function registerDocumentFeatureRoutes(router: HttpServer, opts: Document
       try {
         const query = request.query as Record<string, string | undefined> | undefined;
         const eventName = typeof query === 'object' && query !== null ? query.eventName : undefined;
-        const result = await service.processDocument(request.body, eventName);
+        const targetService = createService ? await createService() : service;
+        if (!targetService) {
+          return toInternalServerErrorResponse(
+            new Error('DocumentService is not configured'),
+            'Failed to process document'
+          );
+        }
+        const result = await targetService.processDocument(request.body, eventName);
         return {
           status: result.success ? 200 : 400,
           body: result,

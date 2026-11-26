@@ -68,6 +68,26 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
 
     for (const relPath of rawManifest?.documentTypes ?? []) {
       const rawDocumentType = await this.manifestProvider.readParsedSchema(relPath);
+      const rawFields = (rawDocumentType as { documentSchema?: { fields?: unknown } })?.documentSchema?.fields;
+      if (Array.isArray(rawFields)) {
+        for (const rawField of rawFields) {
+          if (rawField && typeof rawField === 'object') {
+            const rawOptions = (rawField as { options?: unknown }).options;
+            if (
+              rawOptions !== null &&
+              typeof rawOptions === 'object' &&
+              'dynamicConfig' in rawOptions &&
+              (rawOptions as { dynamicConfig?: unknown }).dynamicConfig !== undefined
+            ) {
+              const fieldKey = (rawField as { key?: unknown }).key;
+              const docKey = extractKey(rawDocumentType);
+              throw new Error(
+                `Invalid DocumentType schema${docKey}: Field "${String(fieldKey ?? '')}" uses legacy options.dynamicConfig which is no longer supported; use documentSchema.optionSources instead.`
+              );
+            }
+          }
+        }
+      }
       const cloned = structuredClone(rawDocumentType);
       const cleaned = Value.Clean(DocumentTypeSchema, cloned);
       if (!Value.Check(DocumentTypeSchema, cleaned)) {

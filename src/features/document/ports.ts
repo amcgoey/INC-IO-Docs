@@ -10,6 +10,9 @@ import {
   OPTION_NOT_FOUND_MSG,
   VALIDATION_TIMEOUT_MSG,
   LinkedFieldSchema,
+  OptionSourceSchema,
+  DocumentLogOptionSourceSchema,
+  GoogleDriveOptionSourceSchema,
   type Activity,
   type ActivityExecutionContext,
   type ActivityOutput,
@@ -22,6 +25,9 @@ import {
   type Document,
   type DocumentModel,
   type LinkedField,
+  type OptionSource,
+  type DocumentLogOptionSource,
+  type GoogleDriveOptionSource,
 } from './domain';
 
 export {
@@ -36,6 +42,12 @@ export {
   VALIDATION_TIMEOUT_MSG,
   LinkedFieldSchema,
   type LinkedField,
+  OptionSourceSchema,
+  type OptionSource,
+  DocumentLogOptionSourceSchema,
+  type DocumentLogOptionSource,
+  GoogleDriveOptionSourceSchema,
+  type GoogleDriveOptionSource,
 };
 
 export type SchemaOrKeys =
@@ -60,7 +72,6 @@ export const FormDocumentFieldOptionType = Type.Object({
   key: Type.String(),
   name: Type.Optional(Type.String()),
   allowUserInput: Type.Optional(Type.Boolean()),
-  dynamicConfig: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 }, { additionalProperties: true });
 
 export type FormDocumentFieldOption = Static<typeof FormDocumentFieldOptionType>;
@@ -93,6 +104,9 @@ export const FormDocumentSchemaType = Type.Object({
   calculatedFields: Type.Optional(Type.Array(FormDocumentCalculatedFieldType)),
   identity: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   options: Type.Optional(Type.Record(Type.String(), Type.Array(Type.Record(Type.String(), Type.Unknown())))),
+  optionSources: Type.Optional(
+    Type.Union([Type.Record(Type.String({ minLength: 1 }), OptionSourceSchema), Type.Undefined()])
+  ),
 }, { additionalProperties: true });
 
 export type FormDocumentSchema = Static<typeof FormDocumentSchemaType>;
@@ -148,7 +162,7 @@ export interface DocumentServicePort {
 
 export const DynamicValidationQuerySchema = Type.Object({
   sourceKey: Type.String(),
-  config: Type.Record(Type.String(), Type.Unknown()),
+  fieldKey: Type.Optional(Type.String()),
   valueToValidate: Type.String(),
   queryId: Type.String(),
   allowUserInput: Type.Optional(Type.Boolean()),
@@ -161,6 +175,9 @@ export const DynamicValidationStatusSchema = Type.Union([
   Type.Literal('missing_space'),
   Type.Literal('path_not_found'),
   Type.Literal('ambiguous_path'),
+  Type.Literal('missing_log'),
+  Type.Literal('ambiguous_log'),
+  Type.Literal('config_error'),
   Type.Literal('option_not_found'),
   Type.Literal('ambiguous_option'),
   Type.Literal('timeout'),
@@ -173,6 +190,7 @@ export const DynamicValidationResultSchema = Type.Object({
   isValid: Type.Boolean(),
   status: Type.Optional(DynamicValidationStatusSchema),
   targetPath: Type.Optional(Type.String()),
+  matchedTuple: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   errorMessage: Type.Optional(Type.String()),
 });
 
@@ -183,8 +201,18 @@ export type DynamicValidationMessageFormatter = (
   targetPath?: string
 ) => string;
 
+export const DynamicValidationSpaceSchema = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  typeId: Type.String(),
+  abstractStorageId: Type.String(),
+});
+
 export const DynamicValidationContextSchema = Type.Object({
   spaceId: Type.Optional(Type.String()),
+  space: Type.Optional(DynamicValidationSpaceSchema),
+  documentTypeKey: Type.Optional(Type.String()),
+  selectedLogId: Type.Optional(Type.String()),
   formData: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 });
 

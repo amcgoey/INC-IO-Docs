@@ -1,6 +1,7 @@
 import type { GoogleAuth, OAuth2Client } from 'google-auth-library';
 import type { sheets_v4 } from 'googleapis';
 import { Type, type Static } from '@sinclair/typebox';
+import type { KeyedAsyncLock } from './keyed-lock';
 
 export const CellValueSchema = Type.Union([
   Type.String(),
@@ -77,6 +78,23 @@ export const InsertGroupedRowResultSchema = Type.Object({
 });
 export type InsertGroupedRowResult = Static<typeof InsertGroupedRowResultSchema>;
 
+export const OptionTableWriteItemSchema = Type.Object({
+  key: Type.String(),
+  values: Type.Record(Type.String(), Type.String()),
+});
+export type OptionTableWriteItem = Static<typeof OptionTableWriteItemSchema>;
+
+export const OptionTableWriteTargetSchema = Type.Object({
+  sheetName: Type.String(),
+  rangeName: Type.String(),
+  validationRangeName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  endMarker: Type.String(),
+  columns: Type.Record(Type.String(), Type.String()),
+  keyProperty: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  items: Type.Array(OptionTableWriteItemSchema),
+});
+export type OptionTableWriteTarget = Static<typeof OptionTableWriteTargetSchema>;
+
 export interface InsertPositiveGroupedRowRequest {
   target: PositiveTableTarget;
   rowData: Record<string, SheetCellInput>;
@@ -86,10 +104,37 @@ export interface InsertPositiveGroupedRowRequest {
   rowSortOrder?: 'asc' | 'desc' | undefined;
   duplicatePolicy?: 'insert' | 'upsert' | 'reject' | undefined;
   readOnlyColumns?: string[] | undefined;
+  optionWrites?: readonly OptionTableWriteTarget[] | undefined;
+  templateSpreadsheetId?: string | undefined;
 }
 
 export const ReadNamedRangeRequestSchema = NamedRangeTargetSchema;
 export type ReadNamedRangeRequest = Static<typeof ReadNamedRangeRequestSchema>;
+
+export const BatchNamedRangeTargetSchema = Type.Object({
+  key: Type.String({ minLength: 1 }),
+  sheetName: Type.String({ minLength: 1 }),
+  rangeName: Type.String({ minLength: 1 }),
+});
+export type BatchNamedRangeTarget = Static<typeof BatchNamedRangeTargetSchema>;
+
+export const ReadNamedRangesBatchRequestSchema = Type.Object({
+  spreadsheetId: Type.String(),
+  targets: Type.Array(BatchNamedRangeTargetSchema),
+});
+export type ReadNamedRangesBatchRequest = Static<typeof ReadNamedRangesBatchRequestSchema>;
+
+export const ReadNamedRangeBatchEntrySchema = Type.Union([
+  Type.Object({
+    status: Type.Literal('found'),
+    values: Type.Array(Type.Array(CellValueSchema)),
+  }),
+  Type.Object({
+    status: Type.Literal('missing_range'),
+    errorMessage: Type.String(),
+  }),
+]);
+export type ReadNamedRangeBatchEntry = Static<typeof ReadNamedRangeBatchEntrySchema>;
 
 export const WriteNamedRangeRequestSchema = Type.Intersect([
   NamedRangeTargetSchema,
@@ -120,11 +165,15 @@ export interface GoogleSheetsClientOptions {
   sheets?: sheets_v4.Sheets | undefined;
   retryOptions?: SheetsRetryOptions | undefined;
   configProvider?: SheetsConfigProvider | undefined;
+  lock?: KeyedAsyncLock | undefined;
 }
 
 export interface SheetsClient {
   readTable(request: ReadPositiveTableRequest): Promise<PositiveTableReadResult>;
   insertIntoGroupedList(request: InsertPositiveGroupedRowRequest): Promise<InsertGroupedRowResult>;
   readNamedRange(request: ReadNamedRangeRequest): Promise<CellValue[][]>;
+  readNamedRangesBatch?(
+    request: ReadNamedRangesBatchRequest
+  ): Promise<Record<string, ReadNamedRangeBatchEntry>>;
   writeNamedRange(request: WriteNamedRangeRequest): Promise<void>;
 }

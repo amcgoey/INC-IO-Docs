@@ -326,15 +326,15 @@ function validateOrThrow<T extends TSchema>(schema: T, value: unknown, errorMess
   }
 }
 
-export function isDynamicOptionConfig(
-  options: unknown
-): options is { source: string; dynamicConfig: Record<string, unknown> } {
+export function isDynamicLookupField(
+  options: unknown,
+  docSchema?: { optionSources?: Record<string, unknown> | undefined }
+): options is { source: string } {
   if (!options || typeof options !== 'object') return false;
   const record = options as Record<string, unknown>;
   return (
     typeof record.source === 'string' &&
-    typeof record.dynamicConfig === 'object' &&
-    record.dynamicConfig !== null
+    docSchema?.optionSources?.[record.source] !== undefined
   );
 }
 
@@ -407,19 +407,27 @@ export class SchemaDrivenUiService {
         for (const field of resolvedDocSchema.fields) {
           // nosemgrep: domain-pass-through-read
           const options = field.options;
-          if (isDynamicOptionConfig(options)) {
+          if (isDynamicLookupField(options, resolvedDocSchema)) {
             if (!queries.some((q) => q.sourceKey === options.source)) {
+              const optionSource = resolvedDocSchema.optionSources?.[options.source];
               queries.push({
                 sourceKey: options.source,
-                config: options.dynamicConfig,
+                ...(optionSource !== undefined ? { optionSource } : {}),
               });
             }
           }
         }
 
         if (queries.length > 0) {
+          const rawSelectedLogId = request.formData?.['SelectDocumentLog'];
+          const selectedLogId =
+            typeof rawSelectedLogId === 'string' && rawSelectedLogId.trim().length > 0
+              ? rawSelectedLogId.trim()
+              : undefined;
           dynamicOptionsPromise = this.optionsFetcher.fetchOptions(queries, {
             ...(resolvedSpaceId !== undefined ? { spaceId: resolvedSpaceId } : {}),
+            documentTypeKey: request.documentTypeKey,
+            ...(selectedLogId !== undefined ? { selectedLogId } : {}),
             ...(request.formData !== undefined ? { formData: request.formData } : {}),
           });
         }
@@ -462,17 +470,25 @@ export class SchemaDrivenUiService {
 
       for (const fieldKey of visibleLayout) {
         const field = fieldMap.get(fieldKey);
-        if (!field || !isDynamicOptionConfig(field.options)) {
+        if (!field || !isDynamicLookupField(field.options, resolvedDocSchema)) {
           continue;
         }
 
         const rawRes = dynamicOptions[field.options.source];
         const resolution = normalizeDynamicOptionResolution(rawRes);
         if (resolution && resolution.status !== 'ready') {
+          const optionSource = resolvedDocSchema.optionSources?.[field.options.source];
+          const fieldLabel = resolvedUiSchema?.fields?.[fieldKey]?.label ?? field.key;
           const statusMessage = formatStatusSectionMessage(
             DEFAULT_MESSAGE_CATALOG,
             resolution.status,
-            resolution.targetPath
+            resolution.targetPath,
+            {
+              provider: optionSource?.provider,
+              sourceKey: field.options.source,
+              fieldLabel,
+              errorMessage: resolution.errorMessage,
+            }
           );
           if (statusMessage) {
             statusMessagesList.push(statusMessage);

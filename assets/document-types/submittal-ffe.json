@@ -112,73 +112,27 @@
         "required": false
       }
     ],
-    "options": {
-      "statuses": [
-        { "key": "Open" },
-        { "key": "Closed" },
-        { "key": "Waiting" },
-        { "key": "Manager" },
-        { "key": "Billed" }
-      ],
-      "actions": [
-        { "key": "REC", "name": "Received", "suffix": "", "order": "1" },
-        { "key": "REF", "name": "Referred", "suffix": "_REF", "order": "2" },
-        { "key": "NR", "name": "Not Reviewed", "suffix": "_NR", "order": "3" },
-        { "key": "REJ", "name": "Rejected", "suffix": "_REJ", "order": "4" },
-        { "key": "RR", "name": "Revise & Resubmit", "suffix": "_RR", "order": "5" },
-        { "key": "NOC", "name": "No Objections As Corrected", "suffix": "_NOC", "order": "6" },
-        { "key": "NET", "name": "No Exceptions Taken", "suffix": "_NET", "order": "7" }
-      ],
-      "contacts": [
-        { "key": "INC", "name": "INC Architecture & Design", "type": "INC" },
-        { "key": "BW", "name": "Benjamin West", "type": "Procurement" },
-        { "key": "VLD", "name": "Ventresca Lighting Design", "type": "Lighting" },
-        { "key": "IHG", "name": "IHG Hotels & Resorts", "type": "Brand" }
-      ],
-      "vendors": [
-        { "key": "BM", "name": "Berman Falk", "type": "Casegoods" },
-        { "key": "AL", "name": "Ashley Lighting", "type": "Lighting" },
-        { "key": "Carn", "name": "Carnegie", "type": "Fabric" },
-        { "key": "Delta", "name": "Delta", "type": "Fabric" },
-        { "key": "FDT", "name": "Fil Doux Textiles", "type": "Fabric" },
-        { "key": "LA", "name": "Light Annex", "type": "Lighting" },
-        { "key": "MH", "name": "Mohawk", "type": "Fabric" }
-      ],
-      "specs": [
-        { "key": "AC102", "name": "HOOK" },
-        { "key": "CG104", "name": "BED - KING" },
-        { "key": "CG126", "name": "BED - DOUBLE QUEEN" },
-        { "key": "CG138", "name": "CREDENZA" },
-        { "key": "CG138M", "name": "CREDENZA - MIRRORED" },
-        { "key": "CP112", "name": "CARPET - CORRIDOR" },
-        { "key": "CP119", "name": "CARPET" },
-        { "key": "FB127", "name": "FABRIC - LEATHER" },
-        { "key": "FB132", "name": "FABRIC - WOVEN" },
-        { "key": "FB132B", "name": "FABRIC - WOVEN" },
-        { "key": "FB135", "name": "FABRIC - LEATHER" },
-        { "key": "FB141", "name": "FABRIC - WOVEN" },
-        { "key": "FB149", "name": "FABRIC - LEATHER" },
-        { "key": "FB156", "name": "FABRIC - LEATHER" },
-        { "key": "FB158", "name": "FABRIC - WOVEN" },
-        { "key": "FB174", "name": "FABRIC - BLACKOUT" },
-        { "key": "FB198", "name": "FABRIC - SHEER" },
-        { "key": "LT108", "name": "SCONCE" },
-        { "key": "LT125", "name": "TABLE LAMP" },
-        { "key": "LT134", "name": "SCONCE" },
-        { "key": "LT136", "name": "SCONCE - HEADBOARD" },
-        { "key": "LT150", "name": "PENDANT" },
-        { "key": "LT159A", "name": "SCONCE - CORRIDOR" },
-        { "key": "LT159B", "name": "SCONCE - CORRIDOR" },
-        { "key": "LT162", "name": "PENDANT" },
-        { "key": "MI132", "name": "MIRROR - VANITY" },
-        { "key": "MI166", "name": "MIRROR - FULL LENGTH" },
-        { "key": "SE145A", "name": "CHAISE" },
-        { "key": "SE145B", "name": "CHAISE - OPEN BACK" },
-        { "key": "SE145C", "name": "CHAISE - HYBRID" },
-        { "key": "SE167", "name": "CHAISE - SMALL" },
-        { "key": "TA139", "name": "TABLE - WORK" },
-        { "key": "TA139B", "name": "TABLE - WORK - SMALL" }
-      ]
+    "optionSources": {
+      "statuses": {
+        "provider": "document_log",
+        "properties": ["key"]
+      },
+      "actions": {
+        "provider": "document_log",
+        "properties": ["key", "name", "suffix", "order"]
+      },
+      "contacts": {
+        "provider": "document_log",
+        "properties": ["key", "name"]
+      },
+      "vendors": {
+        "provider": "document_log",
+        "properties": ["key", "name"]
+      },
+      "specs": {
+        "provider": "document_log",
+        "properties": ["key", "name"]
+      }
     },
     "calculatedFields": [
       {
@@ -331,6 +285,61 @@
       "topLabel": "Rev {{revision}} • {{specTag.key}} • {{status.key}}",
       "text": "<b>{{action.name}}</b> {{date}} ({{contact.key}})",
       "bottomLabel": "{{specTitle}} — {{vendor.name}}"
+    },
+    "optionBindings": {
+      "statuses": {
+        "sheetName": "_Config Submittal FF&E",
+        "rangeName": "Options_Submittal_FFE_Statuses",
+        "validationRangeName": "Validation_Submittal_FFE_Statuses",
+        "endMarker": "---",
+        "columns": {
+          "Status": "key"
+        }
+      },
+      "actions": {
+        "sheetName": "_Config Submittal FF&E",
+        "rangeName": "Options_Submittal_FFE_Actions",
+        "endMarker": "---",
+        "columns": {
+          "Action": "key",
+          "Name": "name",
+          "Suffix": "suffix",
+          "Order": "order"
+        }
+      },
+      "contacts": {
+        "sheetName": "_Config Submittal FF&E",
+        "rangeName": "Options_Submittal_FFE_Contacts",
+        "validationRangeName": "Validation_Submittal_FFE_Contacts",
+        "endMarker": "---",
+        "columns": {
+          "Contact": "key",
+          "Name": "name"
+        },
+        "aliasesColumn": "Aliases"
+      },
+      "vendors": {
+        "sheetName": "_Config Submittal FF&E",
+        "rangeName": "Options_Submittal_FFE_Vendors",
+        "validationRangeName": "Validation_Submittal_FFE_Vendors",
+        "endMarker": "---",
+        "columns": {
+          "Vendor": "key",
+          "Name": "name"
+        },
+        "aliasesColumn": "Aliases"
+      },
+      "specs": {
+        "sheetName": "_Config Submittal FF&E",
+        "rangeName": "Options_Submittal_FFE_Specs",
+        "validationRangeName": "Validation_Submittal_FFE_Specs",
+        "endMarker": "---",
+        "columns": {
+          "Spec Tag": "key",
+          "Spec Title": "name"
+        },
+        "aliasesColumn": "Aliases"
+      }
     }
   },
   "documentFormSchema": {

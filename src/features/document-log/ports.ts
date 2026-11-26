@@ -102,6 +102,25 @@ export const DocumentLogHistoryDisplaySchema = Type.Object(
 );
 export type DocumentLogHistoryDisplay = Static<typeof DocumentLogHistoryDisplaySchema>;
 
+export const DocumentLogOptionBindingSchema = Type.Object(
+  {
+    sheetName: Type.String({ minLength: 1 }),
+    rangeName: Type.String({ minLength: 1 }),
+    validationRangeName: Type.Optional(
+      Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])
+    ),
+    endMarker: Type.String({ minLength: 1 }),
+    columns: Type.Record(Type.String({ minLength: 1 }), Type.String({ minLength: 1 }), {
+      minProperties: 1,
+    }),
+    aliasesColumn: Type.Optional(
+      Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
+export type DocumentLogOptionBinding = Static<typeof DocumentLogOptionBindingSchema>;
+
 export const DocumentLogSchemaSchema = Type.Object(
   {
     provider: Type.Literal('google_sheets'),
@@ -112,6 +131,12 @@ export const DocumentLogSchemaSchema = Type.Object(
     }),
     historyDisplay: Type.Optional(
       Type.Union([DocumentLogHistoryDisplaySchema, Type.Undefined()])
+    ),
+    optionBindings: Type.Optional(
+      Type.Union([
+        Type.Record(Type.String({ minLength: 1 }), DocumentLogOptionBindingSchema),
+        Type.Undefined(),
+      ])
     ),
   },
   { additionalProperties: false }
@@ -248,7 +273,6 @@ export const LogTargetDocumentFieldOptionsSchema = Type.Object(
     key: Type.String({ minLength: 1 }),
     name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
     allowUserInput: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
-    dynamicConfig: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
   },
   { additionalProperties: false }
 );
@@ -291,10 +315,37 @@ export const LogTargetDocumentOptionTupleSchema = Type.Intersect([
   Type.Object({
     key: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
     name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    aliases: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   }),
   Type.Record(Type.String(), Type.Unknown()),
 ]);
 export type LogTargetDocumentOptionTuple = Static<typeof LogTargetDocumentOptionTupleSchema>;
+
+export const LogTargetDocumentLogOptionSourceSchema = Type.Object(
+  {
+    provider: Type.Literal('document_log'),
+    properties: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  },
+  { additionalProperties: false }
+);
+
+export const LogTargetGoogleDriveOptionSourceSchema = Type.Object(
+  {
+    provider: Type.Literal('google_drive'),
+    method: Type.Optional(Type.Union([Type.Literal('list_folders'), Type.Undefined()])),
+    relativePath: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+    properties: Type.Optional(
+      Type.Union([Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }), Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export const LogTargetOptionSourceSchema = Type.Union([
+  LogTargetDocumentLogOptionSourceSchema,
+  LogTargetGoogleDriveOptionSourceSchema,
+]);
+export type LogTargetOptionSource = Static<typeof LogTargetOptionSourceSchema>;
 
 export const LogTargetDocumentSchemaSchema = Type.Object(
   {
@@ -308,6 +359,12 @@ export const LogTargetDocumentSchemaSchema = Type.Object(
     options: Type.Optional(
       Type.Union([
         Type.Record(Type.String(), Type.Array(LogTargetDocumentOptionTupleSchema)),
+        Type.Undefined(),
+      ])
+    ),
+    optionSources: Type.Optional(
+      Type.Union([
+        Type.Record(Type.String({ minLength: 1 }), LogTargetOptionSourceSchema),
         Type.Undefined(),
       ])
     ),
@@ -454,6 +511,23 @@ export interface LogRowKey {
   sortKey: string;
 }
 
+export const LogOptionWriteItemSchema = Type.Object({
+  key: Type.String(),
+  values: Type.Record(Type.String(), Type.String()),
+});
+export type LogOptionWriteItem = Static<typeof LogOptionWriteItemSchema>;
+
+export const LogOptionWriteTargetSchema = Type.Object({
+  sheetName: Type.String(),
+  rangeName: Type.String(),
+  validationRangeName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  endMarker: Type.String(),
+  columns: Type.Record(Type.String(), Type.String()),
+  keyProperty: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  items: Type.Array(LogOptionWriteItemSchema),
+});
+export type LogOptionWriteTarget = Static<typeof LogOptionWriteTargetSchema>;
+
 export interface InsertLogRowRequest {
   target: LogStorageTarget;
   rowData: Record<string, LogCellInput>;
@@ -463,6 +537,8 @@ export interface InsertLogRowRequest {
   rowSortOrder?: DocumentLogSortOrder | undefined;
   duplicatePolicy?: DocumentLogDuplicatePolicy | undefined;
   readOnlyColumns?: string[] | undefined;
+  optionWrites?: readonly LogOptionWriteTarget[] | undefined;
+  templateSpreadsheetId?: string | undefined;
 }
 
 export interface InsertLogRowResult {
@@ -487,9 +563,35 @@ export interface ReadLogRowsResult {
   rows: ReadLogRow[];
 }
 
+export const ReadNamedRangeTargetSchema = Type.Object({
+  key: Type.String(),
+  sheetName: Type.String(),
+  rangeName: Type.String(),
+});
+export type ReadNamedRangeTarget = Static<typeof ReadNamedRangeTargetSchema>;
+
+export const ReadNamedRangesRequestSchema = Type.Object({
+  spreadsheetId: Type.String(),
+  targets: Type.Array(ReadNamedRangeTargetSchema),
+});
+export type ReadNamedRangesRequest = Static<typeof ReadNamedRangesRequestSchema>;
+
+export const ReadNamedRangeEntrySchema = Type.Union([
+  Type.Object({
+    status: Type.Literal('found'),
+    values: Type.Array(Type.Array(LogCellPrimitiveSchema)),
+  }),
+  Type.Object({
+    status: Type.Literal('missing_range'),
+    errorMessage: Type.String(),
+  }),
+]);
+export type ReadNamedRangeEntry = Static<typeof ReadNamedRangeEntrySchema>;
+
 export interface LogStoragePort {
   insertRow(request: InsertLogRowRequest): Promise<InsertLogRowResult>;
   readRows(request: ReadLogRowsRequest): Promise<ReadLogRowsResult>;
+  readNamedRanges?(request: ReadNamedRangesRequest): Promise<Record<string, ReadNamedRangeEntry>>;
 }
 
 // --- Pre-Submit UI Context DTOs ---
@@ -594,6 +696,55 @@ export const CopyDocumentLogResultSchema = Type.Object(
 );
 export type CopyDocumentLogResult = Static<typeof CopyDocumentLogResultSchema>;
 
+// --- Option Table Read DTOs ---
+
+export const ReadOptionTablesSpaceSchema = Type.Object({
+  id: Type.String(),
+  typeId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  abstractStorageId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type ReadOptionTablesSpace = Static<typeof ReadOptionTablesSpaceSchema>;
+
+export const ReadOptionTablesRequestSchema = Type.Object({
+  documentTypeKey: Type.String(),
+  space: Type.Optional(Type.Union([ReadOptionTablesSpaceSchema, Type.Undefined()])),
+  selectedLogId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  sourceKeys: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+});
+export type ReadOptionTablesRequest = Static<typeof ReadOptionTablesRequestSchema>;
+
+export const DocumentLogOptionTableSourceResultSchema = Type.Union([
+  Type.Object({
+    status: Type.Literal('ready'),
+    tuples: Type.Array(LogTargetDocumentOptionTupleSchema),
+  }),
+  Type.Object({
+    status: Type.Literal('config_error'),
+    tuples: Type.Tuple([]),
+    errorMessage: Type.String(),
+  }),
+]);
+export type DocumentLogOptionTableSourceResult = Static<typeof DocumentLogOptionTableSourceResultSchema>;
+
+export const ReadOptionTablesResultSchema = Type.Union([
+  Type.Object({
+    status: Type.Literal('missing_space'),
+    tables: Type.Record(Type.String(), DocumentLogOptionTableSourceResultSchema),
+  }),
+  Type.Object({
+    status: Type.Literal('missing_log'),
+    expectedFolderPath: Type.String(),
+    tables: Type.Record(Type.String(), DocumentLogOptionTableSourceResultSchema),
+  }),
+  Type.Object({
+    status: Type.Literal('ready'),
+    spreadsheetId: Type.String(),
+    tables: Type.Record(Type.String(), DocumentLogOptionTableSourceResultSchema),
+  }),
+]);
+export type ReadOptionTablesResult = Static<typeof ReadOptionTablesResultSchema>;
+
 // --- Driving Port ---
 
 export interface DocumentLogPort {
@@ -604,5 +755,6 @@ export interface DocumentLogPort {
     request: QueryDocumentLogUiContextRequest
   ): Promise<DocumentLogUiContextResult | undefined>;
   readLog(request: ReadDocumentLogRequest): Promise<ReadDocumentLogResult>;
+  readOptionTables?(request: ReadOptionTablesRequest): Promise<ReadOptionTablesResult>;
   writeLog(request: WriteDocumentLogRequest): Promise<WriteDocumentLogResult>;
 }

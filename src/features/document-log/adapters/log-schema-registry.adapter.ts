@@ -10,6 +10,7 @@ import {
   LogTargetDocumentFieldSchema,
   LogTargetDocumentOptionTupleSchema,
   LogTargetDocumentSchemaSchema,
+  LogTargetOptionSourceSchema,
   type DocumentLogDiscoveryConfig,
   type DocumentLogDiscoveryConfigOverride,
   type DocumentLogHistoryDisplay,
@@ -21,6 +22,7 @@ import {
   type LogTargetDocumentField,
   type LogTargetDocumentOptionTuple,
   type LogTargetDocumentSchema,
+  type LogTargetOptionSource,
   type LogTemplateParserPort,
   type RawManifestProviderPort,
 } from '../ports';
@@ -196,6 +198,18 @@ function buildTargetDocumentSchema(
     if (!rawField || typeof rawField !== 'object') {
       continue;
     }
+    const rawOptions = (rawField as { options?: unknown }).options;
+    if (
+      rawOptions !== null &&
+      typeof rawOptions === 'object' &&
+      'dynamicConfig' in rawOptions &&
+      (rawOptions as { dynamicConfig?: unknown }).dynamicConfig !== undefined
+    ) {
+      const fieldKey = (rawField as { key?: unknown }).key;
+      throw new DocumentLogConfigurationError(
+        `Field "${String(fieldKey ?? '')}" in "${relPath}" uses legacy options.dynamicConfig which is no longer supported; use documentSchema.optionSources instead`
+      );
+    }
     const cleanedField = Value.Clean(LogTargetDocumentFieldSchema, structuredClone(rawField));
     if (Value.Check(LogTargetDocumentFieldSchema, cleanedField)) {
       knownFieldKeys.add(cleanedField.key);
@@ -253,11 +267,62 @@ function buildTargetDocumentSchema(
     }
   }
 
+  const rawOptionSources = rawDocSchema?.optionSources;
+  let cleanedOptionSources: Record<string, LogTargetOptionSource> | undefined;
+  if (rawOptionSources !== undefined) {
+    if (
+      rawOptionSources === null ||
+      typeof rawOptionSources !== 'object' ||
+      Array.isArray(rawOptionSources)
+    ) {
+      throw new DocumentLogConfigurationError(
+        `Invalid documentSchema.optionSources in "${relPath}": must be an object`
+      );
+    }
+    cleanedOptionSources = {};
+    for (const [sourceKey, rawSource] of Object.entries(
+      rawOptionSources as Record<string, unknown>
+    )) {
+      assertNonBlankString(
+        sourceKey,
+        `documentSchema.optionSources key in "${relPath}"`
+      );
+      if (!Value.Check(LogTargetOptionSourceSchema, rawSource)) {
+        const details = formatTypeboxErrors(
+          Value.Errors(LogTargetOptionSourceSchema, rawSource)
+        );
+        throw new DocumentLogConfigurationError(
+          `Invalid documentSchema.optionSources["${sourceKey}"] in "${relPath}": ${details}`
+        );
+      }
+      const typedSource = structuredClone(rawSource) as LogTargetOptionSource;
+      if (typedSource.properties !== undefined) {
+        for (const prop of typedSource.properties) {
+          assertNonBlankString(
+            prop,
+            `documentSchema.optionSources["${sourceKey}"].properties[] in "${relPath}"`
+          );
+        }
+      }
+      if (
+        typedSource.provider === 'google_drive' &&
+        typedSource.relativePath !== undefined
+      ) {
+        assertNonBlankString(
+          typedSource.relativePath,
+          `documentSchema.optionSources["${sourceKey}"].relativePath in "${relPath}"`
+        );
+      }
+      cleanedOptionSources[sourceKey] = typedSource;
+    }
+  }
+
   const candidateTargetSchema: LogTargetDocumentSchema = {
     fields: targetFields,
     ...(targetCalcFields.length > 0 ? { calculatedFields: targetCalcFields } : {}),
     ...(identity !== undefined ? { identity } : {}),
     ...(cleanedOptions !== undefined ? { options: cleanedOptions } : {}),
+    ...(cleanedOptionSources !== undefined ? { optionSources: cleanedOptionSources } : {}),
   };
 
   if (!Value.Check(LogTargetDocumentSchemaSchema, candidateTargetSchema)) {
@@ -500,7 +565,24 @@ function validateStage1TemplateTokens(params: {
         );
       }
 
-      if (targetField.options.dynamicConfig === undefined) {
+      const optionSource = targetSchema.optionSources?.[targetField.options.source];
+      if (optionSource !== undefined) {
+        if (optionSource.properties !== undefined) {
+          if (!optionSource.properties.includes(property)) {
+            throw new DocumentLogConfigurationError(
+              `${contextLabel} accesses unknown property ".${property}" on LookupField "${fieldKey}"`
+            );
+          }
+        } else {
+          const keyProp = targetField.options.key;
+          const nameProp = targetField.options.name ?? keyProp;
+          if (property !== keyProp && property !== nameProp) {
+            throw new DocumentLogConfigurationError(
+              `${contextLabel} accesses unknown property ".${property}" on LookupField "${fieldKey}"`
+            );
+          }
+        }
+      } else {
         const staticTuples = targetSchema.options?.[targetField.options.source];
         if (staticTuples !== undefined) {
           const keyProp = targetField.options.key;
@@ -669,6 +751,74 @@ function validateDocumentLogSchema(params: {
       knownFieldKeys,
       calcFieldKeys,
     });
+  }
+
+  const optionBindings = logSchema.optionBindings;
+  if (optionBindings !== undefined) {
+    for (const [sourceKey, binding] of Object.entries(optionBindings)) {
+      assertNonBlankString(sourceKey, `documentLogSchema.optionBindings key in "${relPath}"`);
+      assertNonBlankString(
+        binding.sheetName,
+        `documentLogSchema.optionBindings["${sourceKey}"].sheetName in "${relPath}"`
+      );
+      assertNonBlankString(
+        binding.rangeName,
+        `documentLogSchema.optionBindings["${sourceKey}"].rangeName in "${relPath}"`
+      );
+      if (binding.validationRangeName !== undefined) {
+        assertNonBlankString(
+          binding.validationRangeName,
+          `documentLogSchema.optionBindings["${sourceKey}"].validationRangeName in "${relPath}"`
+        );
+      }
+      assertNonBlankString(
+        binding.endMarker,
+        `documentLogSchema.optionBindings["${sourceKey}"].endMarker in "${relPath}"`
+      );
+      for (const [headerName, propName] of Object.entries(binding.columns)) {
+        assertNonBlankString(
+          headerName,
+          `documentLogSchema.optionBindings["${sourceKey}"].columns header in "${relPath}"`
+        );
+        assertNonBlankString(
+          propName,
+          `documentLogSchema.optionBindings["${sourceKey}"].columns["${headerName}"] in "${relPath}"`
+        );
+      }
+      if (binding.aliasesColumn !== undefined) {
+        assertNonBlankString(
+          binding.aliasesColumn,
+          `documentLogSchema.optionBindings["${sourceKey}"].aliasesColumn in "${relPath}"`
+        );
+      }
+      const optionSource = targetSchema.optionSources?.[sourceKey];
+      if (!optionSource || optionSource.provider !== 'document_log') {
+        throw new DocumentLogConfigurationError(
+          `documentLogSchema.optionBindings["${sourceKey}"] in "${relPath}" does not match a document_log OptionSource in documentSchema.optionSources`
+        );
+      }
+    }
+  }
+
+  for (const [sourceKey, optionSource] of Object.entries(targetSchema.optionSources ?? {})) {
+    if (optionSource.provider !== 'document_log') {
+      continue;
+    }
+    const binding = optionBindings?.[sourceKey];
+    if (!binding) {
+      throw new DocumentLogConfigurationError(
+        `documentLogSchema.optionBindings in "${relPath}" is missing binding for document_log OptionSource "${sourceKey}"`
+      );
+    }
+    const mappedProperties = new Set(Object.values(binding.columns));
+    const missingProperties = optionSource.properties.filter(
+      (prop) => !mappedProperties.has(prop)
+    );
+    if (missingProperties.length > 0) {
+      throw new DocumentLogConfigurationError(
+        `documentLogSchema.optionBindings["${sourceKey}"] in "${relPath}" is missing column mappings for declared properties: ${missingProperties.join(', ')}`
+      );
+    }
   }
 
   return structuredClone(logSchema);
@@ -868,7 +1018,15 @@ export class LogSchemaRegistryAdapter implements LogSchemaRegistryPort {
       nextTargetSchemas.set(documentTypeKey, targetSchema);
 
       const hasDocumentLogSchema = docDef.documentLogSchema !== undefined;
-      if (hasDocumentLogSchema) {
+      if (!hasDocumentLogSchema) {
+        for (const [sourceKey, optionSource] of Object.entries(targetSchema.optionSources ?? {})) {
+          if (optionSource.provider === 'document_log') {
+            throw new DocumentLogConfigurationError(
+              `DocumentType "${relPath}" declares document_log OptionSource "${sourceKey}" without declaring documentLogSchema`
+            );
+          }
+        }
+      } else {
         const validatedLogSchema = validateDocumentLogSchema({
           rawLogSchema: docDef.documentLogSchema,
           relPath,

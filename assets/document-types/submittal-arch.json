@@ -86,31 +86,19 @@
         "required": false
       }
     ],
-    "options": {
-      "statuses": [
-        { "key": "Open" },
-        { "key": "Closed" },
-        { "key": "Waiting" },
-        { "key": "Manager" },
-        { "key": "Billed" }
-      ],
-      "actions": [
-        { "key": "REC", "name": "Received", "suffix": "", "order": "1" },
-        { "key": "REF", "name": "Referred", "suffix": "_REF", "order": "2" },
-        { "key": "NR", "name": "Not Reviewed", "suffix": "_NR", "order": "3" },
-        { "key": "REJ", "name": "Rejected", "suffix": "_REJ", "order": "4" },
-        { "key": "RR", "name": "Revise & Resubmit", "suffix": "_RR", "order": "5" },
-        { "key": "NOC", "name": "No Objections As Corrected", "suffix": "_NOC", "order": "6" },
-        { "key": "NET", "name": "No Exceptions Taken", "suffix": "_NET", "order": "7" }
-      ],
-      "contacts": [
-        { "key": "INC", "name": "INC Architecture and Design", "type": "INC" },
-        { "key": "PMG", "name": "Pavarini McGovern", "type": "Contractor" },
-        { "key": "FXC", "name": "FX Collaborative", "type": "Architect" },
-        { "key": "IE", "name": "Interface Engineering", "type": "MEP" },
-        { "key": "VLD", "name": "Ventresca Lighting Design", "type": "Lighting" },
-        { "key": "TT", "name": "Thorton Tomasetti", "type": "Structural" }
-      ]
+    "optionSources": {
+      "statuses": {
+        "provider": "document_log",
+        "properties": ["key"]
+      },
+      "actions": {
+        "provider": "document_log",
+        "properties": ["key", "name", "suffix", "order"]
+      },
+      "contacts": {
+        "provider": "document_log",
+        "properties": ["key", "name"]
+      }
     },
     "calculatedFields": [
       {
@@ -258,6 +246,39 @@
       "topLabel": "Rev {{revision}} • {{section}}-{{number}} • {{status.key}}",
       "text": "<b>{{action.name}}</b> {{date}} ({{contact.key}})",
       "bottomLabel": "{{title}}"
+    },
+    "optionBindings": {
+      "statuses": {
+        "sheetName": "_Config Submittal Arch",
+        "rangeName": "Options_Submittal_Arch_Statuses",
+        "validationRangeName": "Validation_Submittal_Arch_Statuses",
+        "endMarker": "---",
+        "columns": {
+          "Status": "key"
+        }
+      },
+      "actions": {
+        "sheetName": "_Config Submittal Arch",
+        "rangeName": "Options_Submittal_Arch_Actions",
+        "endMarker": "---",
+        "columns": {
+          "Action": "key",
+          "Name": "name",
+          "Suffix": "suffix",
+          "Order": "order"
+        }
+      },
+      "contacts": {
+        "sheetName": "_Config Submittal Arch",
+        "rangeName": "Options_Submittal_Arch_Contacts",
+        "validationRangeName": "Validation_Submittal_Arch_Contacts",
+        "endMarker": "---",
+        "columns": {
+          "Contact": "key",
+          "Name": "name"
+        },
+        "aliasesColumn": "Aliases"
+      }
     }
   },
   "documentFormSchema": {

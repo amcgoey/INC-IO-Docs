@@ -18,6 +18,7 @@ import {
   type UiProcessGmailPort,
   type UiProcessGmailMessageDescriptor,
   type UiProcessSourceParserPort,
+  type UiProcessLockedFieldsPort,
 } from '../features/ui-process-manager';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import {
@@ -255,7 +256,8 @@ export type DocumentSpaceServiceFactory = (
 ) => DocumentSpaceService | Promise<DocumentSpaceService>;
 
 export type DocumentServiceFactory = (
-  context: WorkspaceExecutionContext
+  context: WorkspaceExecutionContext,
+  requestContext?: WorkspaceExecutionContext
 ) => InjectedDocumentService | Promise<InjectedDocumentService>;
 
 export type SchemaDrivenUiServiceFactory = (
@@ -295,6 +297,13 @@ export interface UiProcessManagerWiringOptions {
   pdfProcessor?: PdfProcessor | undefined;
   sourceParser?: UiProcessSourceParserPort | undefined;
   createSourceParser?: ((context: WorkspaceExecutionContext) => UiProcessSourceParserPort | Promise<UiProcessSourceParserPort>) | undefined;
+  lockedFieldsResolver?: UiProcessLockedFieldsPort | undefined;
+  createLockedFieldsResolver?:
+    | ((context: WorkspaceExecutionContext) => UiProcessLockedFieldsPort | Promise<UiProcessLockedFieldsPort>)
+    | undefined;
+  getLookupOptionsInvalidator?:
+    | ((context: WorkspaceExecutionContext) => { invalidate(scope?: { spaceId?: string | undefined }): void })
+    | undefined;
 }
 
 export type UiProcessOrchestratorResolver = (
@@ -357,6 +366,7 @@ export function createUiProcessRequestWrapper(
       ...(intent.statusMessages !== undefined ? { statusMessages: intent.statusMessages } : {}),
       ...(intent.formData !== undefined ? { formData: intent.formData } : {}),
       ...(intent.hiddenFields !== undefined ? { hiddenFields: intent.hiddenFields } : {}),
+      ...(intent.lockedFields !== undefined ? { lockedFields: intent.lockedFields } : {}),
       ...(intent.selectionState !== undefined
         ? {
             selectionState: {
@@ -582,6 +592,9 @@ export function createUiProcessManagerWiring(
     formEvaluator,
     gmailPort,
     ...(options.sourceParser !== undefined ? { sourceParser: options.sourceParser } : {}),
+    ...(options.lockedFieldsResolver !== undefined
+      ? { lockedFieldsResolver: options.lockedFieldsResolver }
+      : {}),
   });
 
   const orchestratorResolver: UiProcessOrchestratorResolver = async (
@@ -598,7 +611,9 @@ export function createUiProcessManagerWiring(
       !options.createDocumentSpaceService &&
       !options.createDocumentService &&
       !options.createSourceParser &&
+      !options.createLockedFieldsResolver &&
       !options.createDocumentLogPort &&
+      !options.getLookupOptionsInvalidator &&
       !token
     ) {
       return orchestrator;
@@ -659,7 +674,7 @@ export function createUiProcessManagerWiring(
               };
 
               const docService = options.createDocumentService
-                ? await options.createDocumentService(activeContext)
+                ? await options.createDocumentService(activeContext, context)
                 : options.documentService;
 
               if (!docService) {
@@ -675,6 +690,15 @@ export function createUiProcessManagerWiring(
         : undefined;
 
 
+    const lookupInvalidator = options.getLookupOptionsInvalidator
+      ? options.getLookupOptionsInvalidator(context)
+      : undefined;
+
+    const reqLockedFieldsResolver: UiProcessLockedFieldsPort | undefined =
+      options.createLockedFieldsResolver
+        ? await options.createLockedFieldsResolver(context)
+        : options.lockedFieldsResolver;
+
     return new WorkspaceAddonAdapter({
       spaceProvider: reqSpaceProvider,
       configProvider,
@@ -684,6 +708,12 @@ export function createUiProcessManagerWiring(
       formEvaluator,
       gmailPort: reqGmailPort,
       ...(reqSourceParser !== undefined ? { sourceParser: reqSourceParser } : {}),
+      ...(reqLockedFieldsResolver !== undefined
+        ? { lockedFieldsResolver: reqLockedFieldsResolver }
+        : {}),
+      ...(lookupInvalidator !== undefined
+        ? { onLogCopied: (spaceId: string) => lookupInvalidator.invalidate({ spaceId }) }
+        : {}),
     });
   };
 

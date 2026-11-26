@@ -25,7 +25,7 @@ The declarative blueprint within a `DocumentType` mapping structured document fo
 _Avoid_: PdfFormSchema, PdfConfig, AcroFormMapping, StampSchema
 
 **DocumentLogSchema**:
-The declarative blueprint within a `DocumentType` defining how that `DocumentType` binds to a `DocumentSpace`'s `DocumentLog` and how `Document` fields, calculated values, identities, and filed links map to and from it. Separated from the core domain.
+The declarative blueprint within a `DocumentType` defining how that `DocumentType` binds to a `DocumentSpace`'s `DocumentLog` — mapping `Document` fields, calculated values, identities, and filed links to log rows, and binding `LookupField` option sources to `DocumentLog` option tables. Separated from the core domain.
 _Avoid_: logConfig, sheetConfig, loggingSchema, DocumentLogConfig
 
 **DocumentSpaceType**:
@@ -84,7 +84,7 @@ A `DocumentField` that links to static or dynamically sourced option tuples (and
 _Avoid_: ListField
 
 **LinkedField**:
-A `DocumentField` whose default value is derived from a property of a sibling `LookupField` option tuple, automatically locking in the UI when a known option is selected and unlocking for custom user input when a custom lookup value is entered.
+A `DocumentField` whose default value is derived from a property of a sibling `LookupField` option tuple, automatically locking in the UI when a known option with a non-blank property value is selected and unlocking for custom user input when the lookup value is custom, blank, or has a blank derived property.
 _Avoid_: DependentField, AutoFillField
 
 **StorageContext**:
@@ -125,3 +125,15 @@ _Avoid_: PrePopulator, ContextExtractor, FieldExtractor
 **AliasDictionary**:
 A shared, option-source-scoped mapping of canonical `LookupField` option keys to alternate recognition phrases and email domains, referenced from the `Manifest` to resolve external entities across `DocumentType`s without polluting `DocumentSchema`.
 _Avoid_: MatchList, SynonymMap, LookupMap
+
+**LookupOptions**:
+The domain feature responsible for resolving, validating, and enriching `LookupField` option tuples and deriving `LinkedField` values across static `DocumentSchema` lists, `DocumentLog`, and storage providers.
+_Avoid_: DynamicOptions, OptionService, OptionsRegistry
+
+**OptionSource**:
+A storage-agnostic declaration inside `DocumentSchema` defining a dynamic option provider (`document_log` or `google_drive`) and its expected tuple properties.
+_Avoid_: DynamicConfig, OptionProviderConfig
+
+**OptionBinding**:
+A storage-specific declaration inside `DocumentLogSchema` mapping an `OptionSource` key to a spreadsheet tab, Named Range, optional companion `validationRangeName`, sentinel `endMarker`, header-to-property column map, and optional RFC 4180 CSV `aliasesColumn`.
+_Avoid_: SheetOptionConfig, OptionTableConfig

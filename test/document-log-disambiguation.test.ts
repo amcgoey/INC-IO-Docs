@@ -133,6 +133,96 @@ function mockDriveFileRead(options: {
   }
 }
 
+const CONFIG_ARCH_STATUS_VALUES = [
+  ['Status'],
+  ['Open'],
+  ['Closed'],
+  ['Waiting'],
+  ['Manager'],
+  ['---'],
+];
+
+const CONFIG_ARCH_ACTION_VALUES = [
+  ['Action', 'Name', 'Suffix', 'Order'],
+  ['REC', 'Received', '', '1'],
+  ['REF', 'Referred', '_REF', '2'],
+  ['NR', 'Not Reviewed', '_NR', '3'],
+  ['REJ', 'Rejected', '_REJ', '4'],
+  ['RR', 'Revise & Resubmit', '_RR', '5'],
+  ['NOC', 'No Objections As Corrected', '_NOC', '6'],
+  ['NET', 'No Exceptions Taken', '_NET', '7'],
+  ['---', '', '', ''],
+];
+
+const CONFIG_ARCH_CONTACT_VALUES = [
+  ['Contact', 'Name', 'Contact Type'],
+  ['INC', 'INC Architecture and Design', 'INC'],
+  ['PMG', 'Pavarini McGovern', 'Contractor'],
+  ['---', '', ''],
+];
+
+const CONFIG_FFE_STATUS_VALUES = CONFIG_ARCH_STATUS_VALUES;
+const CONFIG_FFE_ACTION_VALUES = CONFIG_ARCH_ACTION_VALUES;
+const CONFIG_FFE_CONTACT_VALUES = [
+  ['Contact', 'Name', 'Contact Type'],
+  ['INC', 'INC Architecture & Design', 'INC'],
+  ['BW', 'Benjamin West', 'Procurement'],
+  ['---', '', ''],
+];
+const CONFIG_FFE_VENDOR_VALUES = [
+  ['Vendor', 'Name', 'Vendor Type'],
+  ['BM', 'Berman Falk', 'Casegoods'],
+  ['AL', 'Ashley Lighting', 'Lighting'],
+  ['---', '', ''],
+];
+
+function mockConfigSubmittalArchBatchGet(
+  spreadsheetId: string,
+  applyOpt: <T extends nock.Interceptor>(interceptor: T) => T = (i) => i
+) {
+  applyOpt(
+    nock('https://sheets.googleapis.com')
+      .get(`/v4/spreadsheets/${spreadsheetId}/values:batchGet`)
+      .query((q) => {
+        if (q.valueRenderOption !== 'FORMATTED_VALUE') {
+          return false;
+        }
+        const ranges = Array.isArray(q.ranges)
+          ? q.ranges
+          : typeof q.ranges === 'string'
+            ? q.ranges.split(',')
+            : [];
+        return (
+          ranges.length > 0 &&
+          ranges.every((r) => String(r).includes('_Config Submittal Arch') || String(r).includes('_Config Submittal FF&E'))
+        );
+      })
+  ).reply(200, (uri) => {
+    const url = new URL(uri, 'https://sheets.googleapis.com');
+    const ranges = url.searchParams.getAll('ranges').flatMap((r) => r.split(','));
+    return {
+      valueRanges: ranges.map((range) => {
+        if (range.includes('_Config Submittal FF&E')) {
+          if (range.includes('A1:A6')) return { range, values: CONFIG_FFE_STATUS_VALUES };
+          if (range.includes('C1:F9')) return { range, values: CONFIG_FFE_ACTION_VALUES };
+          if (range.includes('H1:J')) return { range, values: CONFIG_FFE_CONTACT_VALUES };
+          if (range.includes('L1:N')) return { range, values: CONFIG_FFE_VENDOR_VALUES };
+        }
+        if (range.includes('A1:A6')) {
+          return { range, values: CONFIG_ARCH_STATUS_VALUES };
+        }
+        if (range.includes('C1:F9')) {
+          return { range, values: CONFIG_ARCH_ACTION_VALUES };
+        }
+        if (range.includes('H1:J')) {
+          return { range, values: CONFIG_ARCH_CONTACT_VALUES };
+        }
+        return { range, values: [] };
+      }),
+    };
+  });
+}
+
 function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optional?: boolean }) {
   const applyOpt = <T extends nock.Interceptor>(interceptor: T): T =>
     options?.optional ? (interceptor.optionally() as T) : interceptor;
@@ -141,11 +231,14 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
     nock('https://sheets.googleapis.com')
       .get(`/v4/spreadsheets/${spreadsheetId}`)
       .query(true)
+      .times(2)
   ).reply(200, {
     spreadsheetId,
     sheets: [
       { properties: { sheetId: 101, title: 'Submittal Arch' } },
       { properties: { sheetId: 102, title: 'Submittal FF&E' } },
+      { properties: { sheetId: 103, title: '_Config Submittal Arch' } },
+      { properties: { sheetId: 104, title: '_Config Submittal FF&E' } },
     ],
     namedRanges: [
       {
@@ -158,8 +251,45 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
         name: 'Log_Submittal_FFE',
         range: { sheetId: 102, startRowIndex: 2, endRowIndex: 21, startColumnIndex: 0, endColumnIndex: 12 },
       },
+      {
+        namedRangeId: 'nr-arch-statuses',
+        name: 'Options_Submittal_Arch_Statuses',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
+      },
+      {
+        namedRangeId: 'nr-arch-actions',
+        name: 'Options_Submittal_Arch_Actions',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 9, startColumnIndex: 2, endColumnIndex: 6 },
+      },
+      {
+        namedRangeId: 'nr-arch-contacts',
+        name: 'Options_Submittal_Arch_Contacts',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length, startColumnIndex: 7, endColumnIndex: 10 },
+      },
+      {
+        namedRangeId: 'nr-ffe-statuses',
+        name: 'Options_Submittal_FFE_Statuses',
+        range: { sheetId: 104, startRowIndex: 0, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
+      },
+      {
+        namedRangeId: 'nr-ffe-actions',
+        name: 'Options_Submittal_FFE_Actions',
+        range: { sheetId: 104, startRowIndex: 0, endRowIndex: 9, startColumnIndex: 2, endColumnIndex: 6 },
+      },
+      {
+        namedRangeId: 'nr-ffe-contacts',
+        name: 'Options_Submittal_FFE_Contacts',
+        range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_FFE_CONTACT_VALUES.length, startColumnIndex: 7, endColumnIndex: 10 },
+      },
+      {
+        namedRangeId: 'nr-ffe-vendors',
+        name: 'Options_Submittal_FFE_Vendors',
+        range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_FFE_VENDOR_VALUES.length, startColumnIndex: 11, endColumnIndex: 14 },
+      },
     ],
   });
+
+  mockConfigSubmittalArchBatchGet(spreadsheetId, applyOpt);
 
   applyOpt(
     nock('https://sheets.googleapis.com')
@@ -288,9 +418,13 @@ function mockSubmittalArchLogWrite(spreadsheetId: string) {
   nock('https://sheets.googleapis.com')
     .get(`/v4/spreadsheets/${spreadsheetId}`)
     .query(true)
+    .times(2)
     .reply(200, {
       spreadsheetId,
-      sheets: [{ properties: { sheetId: 101, title: 'Submittal Arch' } }],
+      sheets: [
+        { properties: { sheetId: 101, title: 'Submittal Arch' } },
+        { properties: { sheetId: 103, title: '_Config Submittal Arch' } },
+      ],
       namedRanges: [
         {
           namedRangeId: 'nr-arch',
@@ -303,8 +437,43 @@ function mockSubmittalArchLogWrite(spreadsheetId: string) {
             endColumnIndex: 11,
           },
         },
+        {
+          namedRangeId: 'nr-arch-statuses',
+          name: 'Options_Submittal_Arch_Statuses',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: 6,
+            startColumnIndex: 0,
+            endColumnIndex: 1,
+          },
+        },
+        {
+          namedRangeId: 'nr-arch-actions',
+          name: 'Options_Submittal_Arch_Actions',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: 9,
+            startColumnIndex: 2,
+            endColumnIndex: 6,
+          },
+        },
+        {
+          namedRangeId: 'nr-arch-contacts',
+          name: 'Options_Submittal_Arch_Contacts',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length,
+            startColumnIndex: 7,
+            endColumnIndex: 10,
+          },
+        },
       ],
     });
+
+  mockConfigSubmittalArchBatchGet(spreadsheetId);
 
   nock('https://sheets.googleapis.com')
     .get(new RegExp(`/v4/spreadsheets/${spreadsheetId}/values/.*`))
@@ -1532,7 +1701,7 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
     mockAmbiguousDocumentLogDiscovery({
       driveId: DRIVE_ID,
       spaceName: SPACE_NAME,
-      times: 2, // pre-flight resolveLog + re-render queryUiContext
+      times: 1, // pre-flight resolveLog (memoized for re-render queryUiContext + readOptionTables)
     });
 
     const absentRes = await app.server.inject({
@@ -1576,7 +1745,7 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
     mockAmbiguousDocumentLogDiscovery({
       driveId: DRIVE_ID,
       spaceName: SPACE_NAME,
-      times: 2,
+      times: 1,
     });
 
     const staleRes = await app.server.inject({
@@ -1640,7 +1809,7 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
     mockAmbiguousDocumentLogDiscovery({
       driveId: 'drive-space-b',
       spaceName: 'Space B',
-      times: 2,
+      times: 1,
       adminFolderId: 'folder-b-admin',
       folders: [
         { id: 'folder-b-admin', name: '1 Admin' },

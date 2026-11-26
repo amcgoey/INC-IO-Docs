@@ -25,7 +25,7 @@ import {
   type SchemaDrivenUiServiceFactory,
 } from './ui-process-manager.wiring';
 import { createSchemaDrivenUiWiring } from './schema-driven-ui.wiring';
-import { DynamicOptionsAdapter } from './dynamic-options.adapter';
+import { createLookupOptionsWiring } from './lookup-options.wiring';
 import type { RawManifestProviderPort } from '../features/ui-process-manager';
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
 import type {
@@ -90,9 +90,11 @@ export interface WorkspaceAddonWiringOptions {
   sheetsClient?: SheetsClient | undefined;
   documentLogService?: DocumentLogPort | undefined;
   documentLogWiring?: DocumentLogWiring | undefined;
+  lookupTimeoutMs?: number | undefined;
   createAdditionalActivityHandlers?:
     | ((
-        context: WorkspaceExecutionContext
+        context: WorkspaceExecutionContext,
+        requestContext?: WorkspaceExecutionContext
       ) => readonly ActivityHandler[] | Promise<readonly ActivityHandler[]>)
     | undefined;
 }
@@ -209,21 +211,53 @@ export function wireWorkspaceAddonRoutes(
       ? createRetryableInitializer(() => resolvedDocumentLogWiring.logSchemaRegistry.initialize())
       : undefined;
 
+    const lookupOptionsWiring = createLookupOptionsWiring({
+      manifestProvider,
+      documentSchemaRegistry: options.documentSchemaRegistry,
+      driveClient: options.driveClient,
+      configProvider: appConfigProvider,
+      ...(options.lookupTimeoutMs !== undefined ? { timeoutMs: options.lookupTimeoutMs } : {}),
+      ...(resolvedDocumentLogWiring
+        ? {
+            getDocumentLogService: (ctx) => resolvedDocumentLogWiring.getPerRequestService(ctx),
+            ensureDocumentLogInitialized: ensureLogRegistryInitialized,
+          }
+        : {}),
+      ...(createDocumentSpaceService
+        ? { getDocumentSpaceService: (ctx) => createDocumentSpaceService!(ctx) }
+        : options.documentSpaceService
+          ? { getDocumentSpaceService: () => options.documentSpaceService! }
+          : {}),
+    });
+
     let createAdditionalActivityHandlers = options.createAdditionalActivityHandlers;
     if (createAdditionalActivityHandlers && ensureLogRegistryInitialized) {
       const providedHandlers = createAdditionalActivityHandlers;
-      createAdditionalActivityHandlers = async (context: WorkspaceExecutionContext) => {
+      createAdditionalActivityHandlers = async (
+        context: WorkspaceExecutionContext,
+        requestContext?: WorkspaceExecutionContext
+      ) => {
         await ensureLogRegistryInitialized();
-        return providedHandlers(context);
+        return providedHandlers(context, requestContext);
       };
     } else if (
       !createAdditionalActivityHandlers &&
       resolvedDocumentLogWiring &&
       ensureLogRegistryInitialized
     ) {
-      createAdditionalActivityHandlers = async (context: WorkspaceExecutionContext) => {
+      createAdditionalActivityHandlers = async (
+        context: WorkspaceExecutionContext,
+        requestContext?: WorkspaceExecutionContext
+      ) => {
         await ensureLogRegistryInitialized();
-        return [resolvedDocumentLogWiring.createPerRequestActivityHandler(context)];
+        const effectiveCtx = requestContext ?? context;
+        const sharedLookup = lookupOptionsWiring.getPerRequestLookupOptions(effectiveCtx);
+        return [
+          resolvedDocumentLogWiring.createPerRequestActivityHandler(effectiveCtx, {
+            ...(context.selectedLogId !== undefined ? { selectedLogId: context.selectedLogId } : {}),
+            onWriteLogSuccess: () => sharedLookup.invalidate(),
+          }),
+        ];
       };
     }
 
@@ -233,6 +267,7 @@ export function wireWorkspaceAddonRoutes(
         createDocumentService = () => options.documentService!;
       } else if (options.documentSchemaRegistry && options.compiledSchemaRegistry) {
         createDocumentService = createDocumentServiceFactory({
+          manifestProvider,
           documentSchemaRegistry: options.documentSchemaRegistry,
           templateEvaluator: options.templateEvaluator ?? new HandlebarsAdapter(),
           compiledSchemaRegistry: options.compiledSchemaRegistry,
@@ -240,6 +275,8 @@ export function wireWorkspaceAddonRoutes(
           driveClient: options.driveClient,
           gmailClient,
           pdfProcessor: options.pdfProcessor,
+          getDynamicValidator: (requestContext) =>
+            lookupOptionsWiring.createDynamicValidator(requestContext),
           ...(createAdditionalActivityHandlers !== undefined
             ? { createAdditionalActivityHandlers }
             : {}),
@@ -255,24 +292,6 @@ export function wireWorkspaceAddonRoutes(
             getCollection: async () => ({ spaces: [] }),
           } as unknown as DocumentSpaceService)
         : undefined);
-
-    const dynamicOptionsAdapters = new WeakMap<WorkspaceExecutionContext, DynamicOptionsAdapter>();
-
-    const getDynamicOptionsAdapter = (context: WorkspaceExecutionContext): DynamicOptionsAdapter => {
-      let adapter = dynamicOptionsAdapters.get(context);
-      if (!adapter) {
-        const oauthCredential = context.userOAuthToken ?? context.gmail?.accessToken;
-        const driveClient = oauthCredential
-          ? new GoogleDriveClient({
-              auth: oauthCredential,
-              configProvider: appConfigProvider,
-            })
-          : (options.driveClient ?? new GoogleDriveClient({ configProvider: appConfigProvider }));
-        adapter = new DynamicOptionsAdapter(driveClient);
-        dynamicOptionsAdapters.set(context, adapter);
-      }
-      return adapter;
-    };
 
     const createDocumentLogPort =
       resolvedDocumentLogWiring && ensureLogRegistryInitialized
@@ -297,7 +316,7 @@ export function wireWorkspaceAddonRoutes(
     let createSchemaDrivenUiService = options.createSchemaDrivenUiService;
     if (!createSchemaDrivenUiService) {
       createSchemaDrivenUiService = (context: WorkspaceExecutionContext) => {
-        const optionsFetcher = getDynamicOptionsAdapter(context);
+        const optionsFetcher = lookupOptionsWiring.createOptionsFetcher(context);
         const uiContextQuery = getUiContextQueryAdapter
           ? getUiContextQueryAdapter(context)
           : undefined;
@@ -333,7 +352,8 @@ export function wireWorkspaceAddonRoutes(
         ...(options.templateEvaluator !== undefined
           ? { templateEvaluator: options.templateEvaluator }
           : {}),
-        getCanonicalOptionsProvider: (ctx) => getDynamicOptionsAdapter(ctx),
+        getCanonicalOptionsProvider: (ctx) =>
+          lookupOptionsWiring.createCanonicalOptionsProvider(ctx),
       });
       sourceParser = sourceParserWiring.sourceParser;
       const ensureParseRegistryInitialized = createRetryableInitializer(() =>
@@ -341,13 +361,15 @@ export function wireWorkspaceAddonRoutes(
       );
       createSourceParser = async (context: WorkspaceExecutionContext) => {
         await ensureParseRegistryInitialized();
-        const adapter = getDynamicOptionsAdapter(context);
-        return sourceParserWiring.createSourceParser(context, { canonicalOptionsProvider: adapter });
+        const canonicalOptionsProvider =
+          lookupOptionsWiring.createCanonicalOptionsProvider(context);
+        return sourceParserWiring.createSourceParser(context, { canonicalOptionsProvider });
       };
     } else if (rawCreateSourceParser) {
       createSourceParser = (context: WorkspaceExecutionContext) => {
-        const adapter = getDynamicOptionsAdapter(context);
-        return rawCreateSourceParser(context, { canonicalOptionsProvider: adapter });
+        const canonicalOptionsProvider =
+          lookupOptionsWiring.createCanonicalOptionsProvider(context);
+        return rawCreateSourceParser(context, { canonicalOptionsProvider });
       };
     }
 
@@ -368,6 +390,8 @@ export function wireWorkspaceAddonRoutes(
       ...(options.pdfProcessor !== undefined ? { pdfProcessor: options.pdfProcessor } : {}),
       ...(sourceParser !== undefined ? { sourceParser } : {}),
       ...(createSourceParser !== undefined ? { createSourceParser } : {}),
+      createLockedFieldsResolver: (ctx) => lookupOptionsWiring.createLockedFieldsResolver(ctx),
+      getLookupOptionsInvalidator: (ctx) => lookupOptionsWiring.getPerRequestLookupOptions(ctx),
       evaluateFormChange,
     });
     uiOrchestrator = uiProcessWiring.requestScopedWrapper;

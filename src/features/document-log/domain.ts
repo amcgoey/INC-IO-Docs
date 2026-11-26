@@ -4,6 +4,8 @@ import {
   DocumentLogMissingError,
   type CopyDocumentLogResult,
   type DocumentLogEntry,
+  type DocumentLogOptionBinding,
+  type DocumentLogOptionTableSourceResult,
   type DocumentLogPort,
   type DocumentLogSchema,
   type DocumentLogSpace,
@@ -11,19 +13,26 @@ import {
   type DocumentLogUiContextResult,
   type DocumentLogUiHistoryEntry,
   type DocumentLogUiReadStatus,
+  type LogCellPrimitive,
   type LogDiscoveryFileMetadata,
   type LogDiscoveryPort,
   type LogFilterBy,
+  type LogOptionWriteItem,
+  type LogOptionWriteTarget,
   type LogResolutionCandidate,
   type LogResolutionResult,
   type LogSchemaRegistryPort,
   type LogStoragePort,
+  type LogTargetDocumentOptionTuple,
   type LogTargetDocumentSchema,
   type LogTemplateEvaluatorPort,
   type LogTemplateParserPort,
   type QueryDocumentLogUiContextRequest,
   type ReadDocumentLogRequest,
   type ReadDocumentLogResult,
+  type ReadNamedRangeEntry,
+  type ReadOptionTablesRequest,
+  type ReadOptionTablesResult,
   type RowHydrationWarning,
   type WriteDocumentLogRequest,
   type WriteDocumentLogResult,
@@ -234,17 +243,233 @@ function formatReadErrorMessage(error: unknown): string {
   return raw.length > 0 ? raw : 'Unable to read Document Log history right now.';
 }
 
+function cellToTrimmedString(cell: LogCellPrimitive | undefined): string {
+  if (cell === null || cell === undefined) {
+    return '';
+  }
+  return String(cell).trim();
+}
+
+/**
+ * Parses an optional `_Config` `aliasesColumn` cell as RFC 4180 CSV with `""` escaped quotes,
+ * returning trimmed non-empty alias strings.
+ */
+function parseRfc4180CsvList(cell: LogCellPrimitive | undefined): string[] {
+  const raw = cellToTrimmedString(cell);
+  if (raw.length === 0) {
+    return [];
+  }
+
+  const values: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  let atFieldStart = true;
+  let afterClosingQuote = false;
+
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (i + 1 < raw.length && raw[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = false;
+          afterClosingQuote = true;
+        }
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    if (ch === ',') {
+      const trimmed = current.trim();
+      if (trimmed.length > 0) {
+        values.push(trimmed);
+      }
+      current = '';
+      atFieldStart = true;
+      afterClosingQuote = false;
+      continue;
+    }
+
+    if (atFieldStart && /\s/.test(ch)) {
+      continue;
+    }
+
+    if (atFieldStart && ch === '"') {
+      inQuotes = true;
+      atFieldStart = false;
+      continue;
+    }
+
+    if (afterClosingQuote && /\s/.test(ch)) {
+      continue;
+    }
+
+    atFieldStart = false;
+    afterClosingQuote = false;
+    current += ch;
+  }
+
+  const trimmed = current.trim();
+  if (trimmed.length > 0) {
+    values.push(trimmed);
+  }
+
+  return values;
+}
+
+function parseOptionTableEntry(
+  sourceKey: string,
+  binding: DocumentLogOptionBinding,
+  entry: ReadNamedRangeEntry | undefined
+): DocumentLogOptionTableSourceResult {
+  if (!entry || entry.status === 'missing_range') {
+    return {
+      status: 'config_error',
+      tuples: [],
+      errorMessage:
+        entry?.errorMessage ??
+        `Named range "${binding.rangeName}" not found on sheet "${binding.sheetName}".`,
+    };
+  }
+
+  const { values: rows } = entry;
+  if (rows.length === 0) {
+    return {
+      status: 'config_error',
+      tuples: [],
+      errorMessage: `Option table "${binding.rangeName}" on sheet "${binding.sheetName}" is missing headers and endMarker "${binding.endMarker}".`,
+    };
+  }
+
+  const headerRow = rows[0] ?? [];
+  const headerIndexMap = new Map<string, number>();
+  headerRow.forEach((cell, idx) => {
+    const headerName = cellToTrimmedString(cell);
+    if (headerName.length > 0 && !headerIndexMap.has(headerName)) {
+      headerIndexMap.set(headerName, idx);
+    }
+  });
+
+  const columnEntries: Array<{ colIdx: number; propName: string }> = [];
+  for (const [sheetHeader, propName] of Object.entries(binding.columns)) {
+    const colIdx = headerIndexMap.get(sheetHeader.trim());
+    if (colIdx === undefined) {
+      return {
+        status: 'config_error',
+        tuples: [],
+        errorMessage: `Option table "${binding.rangeName}" (${sourceKey}) is missing required header "${sheetHeader}".`,
+      };
+    }
+    columnEntries.push({ colIdx, propName });
+  }
+
+  const keyColumnEntry =
+    columnEntries.find((c) => c.propName === 'key') ?? columnEntries[0];
+  const keyColIdx = keyColumnEntry !== undefined ? keyColumnEntry.colIdx : undefined;
+  const dedupProp = keyColumnEntry !== undefined ? keyColumnEntry.propName : 'key';
+  const aliasesColIdx =
+    binding.aliasesColumn !== undefined
+      ? headerIndexMap.get(binding.aliasesColumn.trim())
+      : undefined;
+
+  let terminatorIndex = -1;
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i] ?? [];
+    const col0Text = cellToTrimmedString(row[0]);
+    const keyColText = keyColIdx !== undefined ? cellToTrimmedString(row[keyColIdx]) : '';
+    if (col0Text === binding.endMarker || keyColText === binding.endMarker) {
+      terminatorIndex = i;
+      break;
+    }
+  }
+
+  if (terminatorIndex === -1) {
+    return {
+      status: 'config_error',
+      tuples: [],
+      errorMessage: `Option table "${binding.rangeName}" on sheet "${binding.sheetName}" is missing endMarker "${binding.endMarker}".`,
+    };
+  }
+
+  const tuples: LogTargetDocumentOptionTuple[] = [];
+  const seenKeys = new Set<string>();
+
+  for (let i = 1; i < terminatorIndex; i++) {
+    const row = rows[i] ?? [];
+    const isEntireRowBlank = row.every((cell) => cellToTrimmedString(cell) === '');
+    if (isEntireRowBlank) {
+      continue;
+    }
+
+    const tuple: LogTargetDocumentOptionTuple = {};
+    let hasNonBlankMapped = false;
+    for (const { colIdx, propName } of columnEntries) {
+      const value = cellToTrimmedString(colIdx < row.length ? row[colIdx] : undefined);
+      if (value.length > 0) {
+        hasNonBlankMapped = true;
+      }
+      tuple[propName] = value;
+    }
+
+    if (!hasNonBlankMapped) {
+      continue;
+    }
+
+    const rawKey = typeof tuple[dedupProp] === 'string' ? tuple[dedupProp].trim() : '';
+    if (rawKey.length === 0) {
+      continue;
+    }
+
+    const normalizedKey = rawKey.toLowerCase();
+    if (seenKeys.has(normalizedKey)) {
+      continue;
+    }
+    seenKeys.add(normalizedKey);
+    if (aliasesColIdx !== undefined) {
+      const parsedAliases = parseRfc4180CsvList(
+        aliasesColIdx < row.length ? row[aliasesColIdx] : undefined
+      );
+      if (parsedAliases.length > 0) {
+        tuple.aliases = parsedAliases;
+      }
+    }
+    tuples.push(tuple);
+  }
+
+  return {
+    status: 'ready',
+    tuples,
+  };
+}
+
+export interface DocumentLogServiceOptions {
+  memoizeResolvePerInstance?: boolean | undefined;
+}
+
 /**
  * Core domain service managing live DocumentLog discovery and Document dehydration/write orchestration.
  */
 export class DocumentLogService implements DocumentLogPort {
+  private readonly resolveLogMemo: Map<string, Promise<LogResolutionResult>> | undefined;
+  private readonly optionTablesMemo:
+    | Map<string, Promise<DocumentLogOptionTableSourceResult>>
+    | undefined;
+
   constructor(
     private readonly schemaRegistry: LogSchemaRegistryPort,
     private readonly logDiscovery: LogDiscoveryPort,
     private readonly logStorage: LogStoragePort,
     private readonly templateEvaluator: LogTemplateEvaluatorPort,
-    private readonly templateParser?: LogTemplateParserPort
-  ) {}
+    private readonly templateParser?: LogTemplateParserPort,
+    options?: DocumentLogServiceOptions
+  ) {
+    this.resolveLogMemo = options?.memoizeResolvePerInstance ? new Map() : undefined;
+    this.optionTablesMemo = options?.memoizeResolvePerInstance ? new Map() : undefined;
+  }
 
   private resolveTemplateParser(): LogTemplateParserPort {
     if (this.templateParser) {
@@ -497,7 +722,30 @@ export class DocumentLogService implements DocumentLogPort {
     }
   }
 
+  private getResolveLogMemoKey(space: DocumentLogSpace): string {
+    return `${space.typeId.trim()}::${space.abstractStorageId.trim()}`;
+  }
+
   async resolveLog(space: DocumentLogSpace): Promise<LogResolutionResult> {
+    if (!this.resolveLogMemo) {
+      return this.executeResolveLog(space);
+    }
+
+    const memoKey = this.getResolveLogMemoKey(space);
+    const existing = this.resolveLogMemo.get(memoKey);
+    if (existing) {
+      return existing;
+    }
+
+    const pending = this.executeResolveLog(space).catch((error) => {
+      this.resolveLogMemo?.delete(memoKey);
+      throw error;
+    });
+    this.resolveLogMemo.set(memoKey, pending);
+    return pending;
+  }
+
+  private async executeResolveLog(space: DocumentLogSpace): Promise<LogResolutionResult> {
     const discoveryConfig = this.schemaRegistry.getDiscoveryConfig(space.typeId);
     if (!discoveryConfig) {
       throw new DocumentLogConfigurationError(
@@ -653,6 +901,15 @@ export class DocumentLogService implements DocumentLogPort {
       targetFolderId: targetFolder.id,
       newName,
     });
+    if (this.resolveLogMemo) {
+      this.resolveLogMemo.delete(this.getResolveLogMemoKey(space));
+      const storageSuffix = `::${space.abstractStorageId.trim()}`;
+      for (const key of this.resolveLogMemo.keys()) {
+        if (key.endsWith(storageSuffix)) {
+          this.resolveLogMemo.delete(key);
+        }
+      }
+    }
 
     return {
       created: true,
@@ -786,11 +1043,28 @@ export class DocumentLogService implements DocumentLogPort {
       ...(linkColumns.length > 0 ? { linkColumns } : {}),
     });
 
+    if (tableResult.rows.length === 0) {
+      return {
+        spreadsheetId,
+        sheetName: logSchema.target.sheetName,
+        entries: [],
+        warnings: [],
+      };
+    }
+
+    const { dynamicOptions, dynamicTableErrors } = await this.readBoundOptionTablesForHydration(
+      request.documentTypeKey,
+      spreadsheetId,
+      logSchema
+    );
+
     const hydrateRow = buildLogRowHydrator({
       documentTypeKey: request.documentTypeKey,
       logSchema,
       targetSchema,
       templateEvaluator: this.templateEvaluator,
+      dynamicOptions,
+      dynamicTableErrors,
     });
 
     const allEntries: DocumentLogEntry[] = [];
@@ -830,12 +1104,421 @@ export class DocumentLogService implements DocumentLogPort {
     };
   }
 
+  /**
+   * Reads all requested `_Config` option tables from the active `DocumentLog` spreadsheet in one
+   * batched storage read, resolving omitted or stale `selectedLogId` to `candidates[0]` when `ambiguous`.
+   */
+  async readOptionTables(request: ReadOptionTablesRequest): Promise<ReadOptionTablesResult> {
+    const { logSchema } = this.requireSchemasForDocumentType(request.documentTypeKey);
+
+    const trimmedSelectedId = request.selectedLogId?.trim();
+    const spaceStorageId = (request.space?.abstractStorageId ?? request.space?.id ?? '').trim();
+
+    if (spaceStorageId.length === 0 && (!trimmedSelectedId || trimmedSelectedId.length === 0)) {
+      return {
+        status: 'missing_space',
+        tables: {},
+      };
+    }
+
+    let spreadsheetId: string;
+    if (spaceStorageId.length > 0) {
+      const normalizedSpace: DocumentLogSpace = {
+        id: request.space?.id?.trim() || spaceStorageId,
+        typeId: request.space?.typeId?.trim() ?? '',
+        name: request.space?.name?.trim() ?? '',
+        abstractStorageId: spaceStorageId,
+      };
+      const resolution = await this.resolveLog(normalizedSpace);
+      if (resolution.status === 'missing') {
+        return {
+          status: 'missing_log',
+          expectedFolderPath: resolution.expectedFolderPath,
+          tables: {},
+        };
+      }
+      if (resolution.status === 'resolved') {
+        spreadsheetId = resolution.candidate.id.trim();
+      } else {
+        const active =
+          (trimmedSelectedId
+            ? resolution.candidates.find((c) => c.id === trimmedSelectedId)
+            : undefined) ?? resolution.candidates[0];
+        spreadsheetId = active.id.trim();
+      }
+    } else {
+      spreadsheetId = trimmedSelectedId!;
+    }
+
+    const optionBindings = logSchema.optionBindings ?? {};
+    const requestedKeys =
+      request.sourceKeys && request.sourceKeys.length > 0
+        ? Array.from(new Set(request.sourceKeys))
+        : Object.keys(optionBindings);
+
+    const { tableResults } = await this.loadOptionTableEntries({
+      documentTypeKey: request.documentTypeKey,
+      spreadsheetId,
+      logSchema,
+      requestedKeys,
+      requireReadNamedRanges: true,
+    });
+
+    return {
+      status: 'ready',
+      spreadsheetId,
+      tables: tableResults,
+    };
+  }
+
+  private async loadOptionTableEntries(params: {
+    documentTypeKey: string;
+    spreadsheetId: string;
+    logSchema: DocumentLogSchema;
+    requestedKeys: readonly string[];
+    requireReadNamedRanges: boolean;
+  }): Promise<{
+    tuplesBySource: Record<string, readonly LogTargetDocumentOptionTuple[]>;
+    tableResults: Record<string, DocumentLogOptionTableSourceResult>;
+  }> {
+    const { documentTypeKey, spreadsheetId, logSchema, requestedKeys, requireReadNamedRanges } =
+      params;
+    const optionBindings = logSchema.optionBindings ?? {};
+    const uniqueKeys = Array.from(new Set(requestedKeys));
+    if (uniqueKeys.length === 0) {
+      return { tuplesBySource: {}, tableResults: {} };
+    }
+
+    const pendingPromises = new Map<string, Promise<DocumentLogOptionTableSourceResult>>();
+    const missingTargets: Array<{ key: string; sheetName: string; rangeName: string }> = [];
+
+    for (const sourceKey of uniqueKeys) {
+      const memoKey = `${documentTypeKey}::${spreadsheetId}::${sourceKey}`;
+      const existing = this.optionTablesMemo?.get(memoKey);
+      if (existing) {
+        pendingPromises.set(sourceKey, existing);
+        continue;
+      }
+
+      const binding = optionBindings[sourceKey];
+      if (!binding) {
+        pendingPromises.set(
+          sourceKey,
+          Promise.resolve({
+            status: 'config_error',
+            tuples: [],
+            errorMessage: `Missing optionBinding for "${sourceKey}" on DocumentType "${documentTypeKey}".`,
+          })
+        );
+        continue;
+      }
+
+      missingTargets.push({
+        key: sourceKey,
+        sheetName: binding.sheetName,
+        rangeName: binding.rangeName,
+      });
+    }
+
+    if (missingTargets.length > 0) {
+      if (!this.logStorage.readNamedRanges) {
+        if (requireReadNamedRanges) {
+          throw new DocumentLogConfigurationError(
+            'LogStoragePort.readNamedRanges is required to read DocumentLog option tables.'
+          );
+        }
+      } else {
+        const batchPromise = this.logStorage.readNamedRanges({
+          spreadsheetId,
+          targets: missingTargets,
+        });
+
+        for (const target of missingTargets) {
+          const binding = optionBindings[target.key]!;
+          const memoKey = `${documentTypeKey}::${spreadsheetId}::${target.key}`;
+          const entryPromise = batchPromise
+            .then((batchEntries) =>
+              parseOptionTableEntry(target.key, binding, batchEntries[target.key])
+            )
+            .catch((error) => {
+              this.optionTablesMemo?.delete(memoKey);
+              throw error;
+            });
+          this.optionTablesMemo?.set(memoKey, entryPromise);
+          pendingPromises.set(target.key, entryPromise);
+        }
+      }
+    }
+
+    const tableResults: Record<string, DocumentLogOptionTableSourceResult> = {};
+    const tuplesBySource: Record<string, readonly LogTargetDocumentOptionTuple[]> = {};
+
+    await Promise.all(
+      Array.from(pendingPromises.entries()).map(async ([sourceKey, promise]) => {
+        const result = await promise;
+        tableResults[sourceKey] = result;
+        if (result.status === 'ready') {
+          const { tuples } = result;
+          tuplesBySource[sourceKey] = tuples;
+        }
+      })
+    );
+
+    return { tuplesBySource, tableResults };
+  }
+
+  private async readBoundOptionTables(
+    documentTypeKey: string,
+    spreadsheetId: string,
+    logSchema: DocumentLogSchema
+  ): Promise<{
+    tuplesBySource: Record<string, readonly LogTargetDocumentOptionTuple[]>;
+    tableResults: Record<string, DocumentLogOptionTableSourceResult>;
+  }> {
+    const keys = Object.keys(logSchema.optionBindings ?? {});
+    return this.loadOptionTableEntries({
+      documentTypeKey,
+      spreadsheetId,
+      logSchema,
+      requestedKeys: keys,
+      requireReadNamedRanges: false,
+    });
+  }
+
+  private async readBoundOptionTablesForHydration(
+    documentTypeKey: string,
+    spreadsheetId: string,
+    logSchema: DocumentLogSchema
+  ): Promise<{
+    dynamicOptions: Record<string, readonly LogTargetDocumentOptionTuple[]>;
+    dynamicTableErrors: Record<string, string>;
+  }> {
+    const keys = Object.keys(logSchema.optionBindings ?? {});
+    if (keys.length === 0) {
+      return { dynamicOptions: {}, dynamicTableErrors: {} };
+    }
+
+    const { tuplesBySource: dynamicOptions, tableResults } = await this.loadOptionTableEntries({
+      documentTypeKey,
+      spreadsheetId,
+      logSchema,
+      requestedKeys: keys,
+      requireReadNamedRanges: false,
+    });
+    const dynamicTableErrors: Record<string, string> = {};
+    for (const [sourceKey, entry] of Object.entries(tableResults)) {
+      if (entry.status !== 'ready') {
+        const { errorMessage } = entry;
+        dynamicTableErrors[sourceKey] = errorMessage;
+      }
+    }
+    return { dynamicOptions, dynamicTableErrors };
+  }
+
+  private buildOptionWriteTargets(params: {
+    documentData: Readonly<Record<string, unknown>>;
+    enrichedData: Readonly<Record<string, unknown>>;
+    logSchema: DocumentLogSchema;
+    targetSchema: LogTargetDocumentSchema;
+    tableResults: Readonly<Record<string, DocumentLogOptionTableSourceResult>>;
+  }): LogOptionWriteTarget[] {
+    const { documentData, enrichedData, logSchema, targetSchema, tableResults } = params;
+    const { optionBindings } = logSchema;
+    if (!optionBindings) {
+      return [];
+    }
+
+    interface PendingOptionWrite {
+      item: LogOptionWriteItem;
+      defaultNameProps: Set<string>;
+    }
+
+    const coalescedBySource = new Map<string, Map<string, PendingOptionWrite>>();
+    const sourceOrder: string[] = [];
+
+    for (const field of targetSchema.fields) {
+      const { options: fieldOptions } = field;
+      if (!fieldOptions?.allowUserInput) {
+        continue;
+      }
+      const { source: sourceKey, key: keyProp, name: nameProp } = fieldOptions;
+      const binding = optionBindings[sourceKey];
+      if (!binding) {
+        continue;
+      }
+      const rawInput = documentData[field.key];
+      const enrichedVal = enrichedData[field.key];
+
+      let keyStr = '';
+      let suppliedName = '';
+      if (enrichedVal !== null && typeof enrichedVal === 'object') {
+        const obj = enrichedVal as Record<string, unknown>;
+        if (obj[keyProp] !== undefined && obj[keyProp] !== null) {
+          keyStr = String(obj[keyProp]).trim();
+        }
+        if (nameProp && obj[nameProp] !== undefined && obj[nameProp] !== null) {
+          suppliedName = String(obj[nameProp]).trim();
+        }
+      } else if (typeof rawInput === 'string') {
+        keyStr = rawInput.trim();
+      }
+
+      if (keyStr.length === 0) {
+        continue;
+      }
+
+      const tableResult = tableResults[sourceKey];
+      if (!tableResult) {
+        continue;
+      }
+      if (tableResult.status === 'config_error') {
+        throw new DocumentLogConfigurationError(
+          `config_error: ${tableResult.errorMessage ?? `Option table "${binding.rangeName}" is misconfigured.`}`
+        );
+      }
+
+      const values: Record<string, string> = {
+        [keyProp]: keyStr,
+      };
+      const linkedProps = new Set<string>();
+
+      for (const sibling of targetSchema.fields) {
+        if (sibling.linkedField?.sourceField !== field.key) {
+          continue;
+        }
+        linkedProps.add(sibling.linkedField.sourceProperty);
+        const linkedRaw = enrichedData[sibling.key] ?? documentData[sibling.key];
+        if (typeof linkedRaw === 'string' && linkedRaw.trim().length > 0) {
+          values[sibling.linkedField.sourceProperty] = linkedRaw.trim();
+        }
+      }
+
+      if (nameProp && values[nameProp] === undefined && suppliedName.length > 0) {
+        values[nameProp] = suppliedName;
+      }
+
+      const defaultNameProps = new Set<string>();
+      if (nameProp && !linkedProps.has(nameProp)) {
+        defaultNameProps.add(nameProp);
+      }
+
+      let sourceMap = coalescedBySource.get(sourceKey);
+      if (!sourceMap) {
+        sourceMap = new Map<string, PendingOptionWrite>();
+        coalescedBySource.set(sourceKey, sourceMap);
+        sourceOrder.push(sourceKey);
+      }
+
+      const normKey = keyStr.toLowerCase();
+      const existingPending = sourceMap.get(normKey);
+      if (existingPending) {
+        for (const [prop, val] of Object.entries(values)) {
+          if (
+            (!existingPending.item.values[prop] || existingPending.item.values[prop].trim() === '') &&
+            val.trim().length > 0
+          ) {
+            existingPending.item.values[prop] = val;
+          }
+        }
+        for (const prop of defaultNameProps) {
+          existingPending.defaultNameProps.add(prop);
+        }
+      } else {
+        sourceMap.set(normKey, { item: { key: keyStr, values }, defaultNameProps });
+      }
+    }
+
+    const targets: LogOptionWriteTarget[] = [];
+    for (const sourceKey of sourceOrder) {
+      const binding = optionBindings[sourceKey];
+      const tableResult = tableResults[sourceKey];
+      const sourceMap = coalescedBySource.get(sourceKey);
+      if (!binding || !tableResult || tableResult.status !== 'ready' || !sourceMap) {
+        continue;
+      }
+
+      const fieldForSource = targetSchema.fields.find((f) => f.options?.source === sourceKey);
+      const keyProp = fieldForSource?.options?.key ?? 'key';
+      const mappedProps = Array.from(new Set(Object.values(binding.columns)));
+
+      const existingByNormKey = new Map<string, LogTargetDocumentOptionTuple>();
+      for (const tuple of tableResult.tuples) {
+        const rawTupleKey = tuple[keyProp];
+        const norm =
+          rawTupleKey !== undefined && rawTupleKey !== null ? String(rawTupleKey).trim().toLowerCase() : '';
+        if (norm.length > 0 && !existingByNormKey.has(norm)) {
+          existingByNormKey.set(norm, tuple);
+        }
+      }
+
+      const itemsToWrite: LogOptionWriteItem[] = [];
+      for (const { item, defaultNameProps } of sourceMap.values()) {
+        const existingTuple = existingByNormKey.get(item.key.trim().toLowerCase());
+        if (!existingTuple) {
+          // Only synthesize Name = key when creating a brand-new row; existing blank Name cells stay untouched unless explicitly supplied.
+          for (const prop of defaultNameProps) {
+            if (!item.values[prop] || item.values[prop].trim() === '') {
+              item.values[prop] = item.key.trim();
+            }
+          }
+          itemsToWrite.push(item);
+          continue;
+        }
+        const needsBackfill = mappedProps.some((prop) => {
+          const existingCell = existingTuple[prop];
+          const existingBlank =
+            existingCell === undefined ||
+            existingCell === null ||
+            String(existingCell).trim() === '';
+          const suppliedVal = (item.values[prop] ?? '').trim();
+          return existingBlank && suppliedVal.length > 0;
+        });
+        if (needsBackfill) {
+          itemsToWrite.push(item);
+        }
+      }
+
+      if (itemsToWrite.length > 0) {
+        targets.push({
+          sheetName: binding.sheetName,
+          rangeName: binding.rangeName,
+          ...(binding.validationRangeName !== undefined
+            ? { validationRangeName: binding.validationRangeName }
+            : {}),
+          endMarker: binding.endMarker,
+          columns: { ...binding.columns },
+          ...(keyProp !== 'key' ? { keyProperty: keyProp } : {}),
+          items: itemsToWrite,
+        });
+      }
+    }
+
+    return targets;
+  }
+
   async writeLog(request: WriteDocumentLogRequest): Promise<WriteDocumentLogResult> {
     const { document, fileUri, selectedLogId } = request;
     const { logSchema, targetSchema } = this.requireSchemasForDocumentType(document.type);
 
     const spreadsheetId = await this.resolveSpreadsheetId(document.space, selectedLogId);
-    const enrichedData = enrichDocumentData(document.data, targetSchema);
+    const { tuplesBySource: dynamicOptions, tableResults } = await this.readBoundOptionTables(
+      document.type,
+      spreadsheetId,
+      logSchema
+    );
+    const enrichedData = enrichDocumentData(document.data, targetSchema, dynamicOptions);
+
+    const optionWrites = this.buildOptionWriteTargets({
+      documentData: document.data,
+      enrichedData,
+      logSchema,
+      targetSchema,
+      tableResults,
+    });
+    const templateSpreadsheetId =
+      optionWrites.length > 0
+        ? this.schemaRegistry.getDiscoveryConfig(document.space?.typeId)?.templateSpreadsheetId
+        : undefined;
 
     const { rowData, readOnlyColumns } = mapDocumentToLogRow({
       document,
@@ -858,6 +1541,7 @@ export class DocumentLogService implements DocumentLogPort {
       logSchema,
       targetSchema,
       templateEvaluator: this.templateEvaluator,
+      dynamicOptions,
     });
 
     const insertResult = await this.logStorage.insertRow({
@@ -872,10 +1556,20 @@ export class DocumentLogService implements DocumentLogPort {
       rowKeyExtractor,
       ...(targetKeys !== null ? { targetKeys } : {}),
       ...(readOnlyColumns.length > 0 ? { readOnlyColumns } : {}),
+      ...(optionWrites.length > 0 ? { optionWrites } : {}),
+      ...(templateSpreadsheetId !== undefined ? { templateSpreadsheetId } : {}),
       groupSortOrder: logSchema.grouping.groupSortOrder,
       rowSortOrder: logSchema.grouping.rowSortOrder,
       duplicatePolicy: logSchema.grouping.duplicatePolicy,
     });
+
+    if (optionWrites.length > 0 && this.optionTablesMemo) {
+      for (const memoKey of this.optionTablesMemo.keys()) {
+        if (memoKey.includes(`::${spreadsheetId}::`)) {
+          this.optionTablesMemo.delete(memoKey);
+        }
+      }
+    }
 
     return {
       spreadsheetId,

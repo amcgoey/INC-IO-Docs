@@ -174,14 +174,41 @@ async function createAppWithCustomFieldCount(extraFieldCount: number): Promise<A
   return app;
 }
 
+const CONFIG_ARCH_STATUS_VALUES = [
+  ['Status'],
+  ['Open'],
+  ['Closed'],
+  ['Waiting'],
+  ['Manager'],
+  ['---'],
+];
+
+const CONFIG_ARCH_ACTION_VALUES = [
+  ['Action', 'Name', 'Suffix', 'Order'],
+  ['REC', 'Received', '', '1'],
+  ['REF', 'Referred', '_REF', '2'],
+  ['NR', 'Not Reviewed', '_NR', '3'],
+  ['REJ', 'Rejected', '_REJ', '4'],
+  ['RR', 'Revise & Resubmit', '_RR', '5'],
+  ['NOC', 'No Objections As Corrected', '_NOC', '6'],
+  ['NET', 'No Exceptions Taken', '_NET', '7'],
+  ['---', '', '', ''],
+];
+
+const CONFIG_ARCH_CONTACT_VALUES = [
+  ['Contact', 'Name', 'Contact Type'],
+  ['INC', 'INC Architecture and Design', 'INC'],
+  ['PMG', 'Pavarini McGovern', 'Contractor'],
+  ['---', '', ''],
+];
+
 function buildArchSheetRows(
   count: number,
-  options?: { invalidActionAtIndex?: number | undefined }
+  options?: { missingDateAtIndex?: number | undefined }
 ): Array<{ cells: string[]; linkFormula: string }> {
   return Array.from({ length: count }, (_, i) => {
     const day = String((i % 28) + 1).padStart(2, '0');
-    const isInvalidAction = options?.invalidActionAtIndex === i;
-    const actionLabel = isInvalidAction ? 'Approved' : 'Received';
+    const isMissingDate = options?.missingDateAtIndex === i;
     const fileUri = `https://drive.google.com/file/d/cap-entry-${i}/view`;
     return {
       cells: [
@@ -190,9 +217,9 @@ function buildArchSheetRows(
         '001',
         String(i),
         `Waterproofing Revision ${i}`,
-        `2602${day}`,
+        isMissingDate ? '' : `2602${day}`,
         'ARC',
-        actionLabel,
+        'Received',
         '',
         'Link',
       ],
@@ -207,6 +234,7 @@ function mockPositiveTableRead(
 ): void {
   const headers = SAMPLE_FIXTURE.submittalArch.headers;
   const sheetId = 101;
+  const configSheetId = 103;
   const formulaRow = ['Formula Row'];
   const totalRows = 4 + Math.max(1, rows.length);
   const formattedValues: string[][] = [
@@ -220,9 +248,13 @@ function mockPositiveTableRead(
   nock('https://sheets.googleapis.com')
     .get(`/v4/spreadsheets/${spreadsheetId}`)
     .query(true)
+    .times(2)
     .reply(200, {
       spreadsheetId,
-      sheets: [{ properties: { sheetId, title: 'Submittal Arch' } }],
+      sheets: [
+        { properties: { sheetId, title: 'Submittal Arch' } },
+        { properties: { sheetId: configSheetId, title: '_Config Submittal Arch' } },
+      ],
       namedRanges: [
         {
           namedRangeId: `nr-${sheetId}`,
@@ -235,7 +267,72 @@ function mockPositiveTableRead(
             endColumnIndex: headers.length,
           },
         },
+        {
+          namedRangeId: 'nr-arch-statuses',
+          name: 'Options_Submittal_Arch_Statuses',
+          range: {
+            sheetId: configSheetId,
+            startRowIndex: 0,
+            endRowIndex: 6,
+            startColumnIndex: 0,
+            endColumnIndex: 1,
+          },
+        },
+        {
+          namedRangeId: 'nr-arch-actions',
+          name: 'Options_Submittal_Arch_Actions',
+          range: {
+            sheetId: configSheetId,
+            startRowIndex: 0,
+            endRowIndex: 9,
+            startColumnIndex: 2,
+            endColumnIndex: 6,
+          },
+        },
+        {
+          namedRangeId: 'nr-arch-contacts',
+          name: 'Options_Submittal_Arch_Contacts',
+          range: {
+            sheetId: configSheetId,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length,
+            startColumnIndex: 7,
+            endColumnIndex: 10,
+          },
+        },
       ],
+    });
+
+  nock('https://sheets.googleapis.com')
+    .get(`/v4/spreadsheets/${spreadsheetId}/values:batchGet`)
+    .query((q) => {
+      if (q.valueRenderOption !== 'FORMATTED_VALUE') {
+        return false;
+      }
+      const ranges = Array.isArray(q.ranges)
+        ? q.ranges
+        : typeof q.ranges === 'string'
+          ? q.ranges.split(',')
+          : [];
+      return ranges.length > 0 && ranges.every((r) => String(r).includes('_Config Submittal Arch'));
+    })
+    .reply(200, (uri) => {
+      const url = new URL(uri, 'https://sheets.googleapis.com');
+      const ranges = url.searchParams.getAll('ranges').flatMap((r) => r.split(','));
+      return {
+        valueRanges: ranges.map((range) => {
+          if (range.includes('A1:A6')) {
+            return { range, values: CONFIG_ARCH_STATUS_VALUES };
+          }
+          if (range.includes('C1:F9')) {
+            return { range, values: CONFIG_ARCH_ACTION_VALUES };
+          }
+          if (range.includes('H1:J')) {
+            return { range, values: CONFIG_ARCH_CONTACT_VALUES };
+          }
+          return { range, values: [] };
+        }),
+      };
     });
 
   nock('https://sheets.googleapis.com')
@@ -649,7 +746,7 @@ describe('Ticket #353 CQRS Integration: Google Workspace 100-Widget Card Cap & O
   it('handles ambiguous + partial_hydration + overflow at exact 100-widget cap (extraFieldCount = 62) and clamps when maxWidgets < logFixedWidgets (extraFieldCount = 83)', async () => {
     // 1. Exact 100-widget cap: fixed = 77, maxWidgets = 23, logFixedWidgets = 3 -> rawBudget = 20
     const capApp = await createAppWithCustomFieldCount(62);
-    const partialRows21 = buildArchSheetRows(21, { invalidActionAtIndex: 10 });
+    const partialRows21 = buildArchSheetRows(21, { missingDateAtIndex: 10 });
 
     mockAmbiguousLogDriveDiscovery();
     mockPositiveTableRead(LOG_PRIMARY_ID, partialRows21);
@@ -677,7 +774,7 @@ describe('Ticket #353 CQRS Integration: Google Workspace 100-Widget Card Cap & O
 
     // 2. maxWidgets < logFixedWidgets: fixed = 98, maxWidgets = 2, logFixedWidgets = 3 -> clamped to 2 widgets
     const tightApp = await createAppWithCustomFieldCount(83);
-    const partialRows5 = buildArchSheetRows(5, { invalidActionAtIndex: 2 });
+    const partialRows5 = buildArchSheetRows(5, { missingDateAtIndex: 2 });
 
     mockAmbiguousLogDriveDiscovery();
     mockPositiveTableRead(LOG_PRIMARY_ID, partialRows5);
@@ -699,13 +796,13 @@ describe('Ticket #353 CQRS Integration: Google Workspace 100-Widget Card Cap & O
     expect(nock.isDone()).toBe(true);
   });
 
-  it('clamps missing status to 1 widget at maxWidgets = 1 (extraFieldCount = 84) while keeping Process Document disabled', async () => {
-    const app = await createAppWithCustomFieldCount(84);
+  it('clamps missing status to 1 widget at maxWidgets = 1 (extraFieldCount = 83) while keeping Process Document disabled', async () => {
+    const app = await createAppWithCustomFieldCount(83);
 
     mockMissingLogDriveDiscovery();
 
     const { card, totalCardWidgets } = await injectOnFormChange(app, 'DRIVE');
-    assertFixedSectionsIntact(card, 84);
+    assertFixedSectionsIntact(card, 83);
     assertLogSectionPositionedBetweenFileSelectionAndDocData(card);
     expect(totalCardWidgets).toBe(100);
 
@@ -721,13 +818,13 @@ describe('Ticket #353 CQRS Integration: Google Workspace 100-Widget Card Cap & O
     expect(nock.isDone()).toBe(true);
   });
 
-  it('retains Copy Log on missing status at maxWidgets = 2 (extraFieldCount = 83) while keeping Process Document disabled', async () => {
-    const app83 = await createAppWithCustomFieldCount(83);
+  it('retains Copy Log on missing status at maxWidgets = 2 (extraFieldCount = 82) while keeping Process Document disabled', async () => {
+    const app82 = await createAppWithCustomFieldCount(82);
 
     mockMissingLogDriveDiscovery();
 
-    const { card, totalCardWidgets } = await injectOnFormChange(app83, 'DRIVE');
-    assertFixedSectionsIntact(card, 83);
+    const { card, totalCardWidgets } = await injectOnFormChange(app82, 'DRIVE');
+    assertFixedSectionsIntact(card, 82);
     assertLogSectionPositionedBetweenFileSelectionAndDocData(card);
     expect(totalCardWidgets).toBe(100);
 

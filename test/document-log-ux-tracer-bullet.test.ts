@@ -78,6 +78,72 @@ function mockDriveHierarchyForArchSubmittal(options: {
     .reply(200, Buffer.from(options.pdfBytes), { 'content-type': 'application/pdf' });
 }
 
+const CONFIG_ARCH_STATUS_VALUES = [
+  ['Status'],
+  ['Open'],
+  ['Closed'],
+  ['Waiting'],
+  ['Manager'],
+  ['---'],
+];
+
+const CONFIG_ARCH_ACTION_VALUES = [
+  ['Action', 'Name', 'Suffix', 'Order'],
+  ['REC', 'Received', '', '1'],
+  ['REF', 'Referred', '_REF', '2'],
+  ['NR', 'Not Reviewed', '_NR', '3'],
+  ['REJ', 'Rejected', '_REJ', '4'],
+  ['RR', 'Revise & Resubmit', '_RR', '5'],
+  ['NOC', 'No Objections As Corrected', '_NOC', '6'],
+  ['NET', 'No Exceptions Taken', '_NET', '7'],
+  ['---', '', '', ''],
+];
+
+const CONFIG_ARCH_CONTACT_VALUES = [
+  ['Contact', 'Name', 'Contact Type'],
+  ['INC', 'INC Architecture and Design', 'INC'],
+  ['PMG', 'Pavarini McGovern', 'Contractor'],
+  ['---', '', ''],
+];
+
+function mockConfigSubmittalArchBatchGet(
+  spreadsheetId: string,
+  applyOpt: <T extends nock.Interceptor>(interceptor: T) => T = (i) => i
+) {
+  applyOpt(
+    nock('https://sheets.googleapis.com')
+      .get(`/v4/spreadsheets/${spreadsheetId}/values:batchGet`)
+      .query((q) => {
+        if (q.valueRenderOption !== 'FORMATTED_VALUE') {
+          return false;
+        }
+        const ranges = Array.isArray(q.ranges)
+          ? q.ranges
+          : typeof q.ranges === 'string'
+            ? q.ranges.split(',')
+            : [];
+        return ranges.length > 0 && ranges.every((r) => String(r).includes('_Config Submittal Arch'));
+      })
+  ).reply(200, (uri) => {
+    const url = new URL(uri, 'https://sheets.googleapis.com');
+    const ranges = url.searchParams.getAll('ranges').flatMap((r) => r.split(','));
+    return {
+      valueRanges: ranges.map((range) => {
+        if (range.includes('A1:A6')) {
+          return { range, values: CONFIG_ARCH_STATUS_VALUES };
+        }
+        if (range.includes('C1:F9')) {
+          return { range, values: CONFIG_ARCH_ACTION_VALUES };
+        }
+        if (range.includes('H1:J')) {
+          return { range, values: CONFIG_ARCH_CONTACT_VALUES };
+        }
+        return { range, values: [] };
+      }),
+    };
+  });
+}
+
 function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optional?: boolean }) {
   const applyOpt = <T extends nock.Interceptor>(interceptor: T): T =>
     options?.optional ? (interceptor.optionally() as T) : interceptor;
@@ -86,11 +152,13 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
     nock('https://sheets.googleapis.com')
       .get(`/v4/spreadsheets/${spreadsheetId}`)
       .query(true)
+      .times(2)
   ).reply(200, {
     spreadsheetId,
     sheets: [
       { properties: { sheetId: 101, title: 'Submittal Arch' } },
       { properties: { sheetId: 102, title: 'Submittal FF&E' } },
+      { properties: { sheetId: 103, title: '_Config Submittal Arch' } },
     ],
     namedRanges: [
       {
@@ -103,8 +171,25 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
         name: 'Log_Submittal_FFE',
         range: { sheetId: 102, startRowIndex: 2, endRowIndex: 21, startColumnIndex: 0, endColumnIndex: 12 },
       },
+      {
+        namedRangeId: 'nr-arch-statuses',
+        name: 'Options_Submittal_Arch_Statuses',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
+      },
+      {
+        namedRangeId: 'nr-arch-actions',
+        name: 'Options_Submittal_Arch_Actions',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 9, startColumnIndex: 2, endColumnIndex: 6 },
+      },
+      {
+        namedRangeId: 'nr-arch-contacts',
+        name: 'Options_Submittal_Arch_Contacts',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length, startColumnIndex: 7, endColumnIndex: 10 },
+      },
     ],
   });
+
+  mockConfigSubmittalArchBatchGet(spreadsheetId, applyOpt);
 
   applyOpt(
     nock('https://sheets.googleapis.com')
@@ -131,9 +216,13 @@ function mockSubmittalArchLogWrite(spreadsheetId: string) {
   nock('https://sheets.googleapis.com')
     .get(`/v4/spreadsheets/${spreadsheetId}`)
     .query(true)
+    .times(2)
     .reply(200, {
       spreadsheetId,
-      sheets: [{ properties: { sheetId: 101, title: 'Submittal Arch' } }],
+      sheets: [
+        { properties: { sheetId: 101, title: 'Submittal Arch' } },
+        { properties: { sheetId: 103, title: '_Config Submittal Arch' } },
+      ],
       namedRanges: [
         {
           namedRangeId: 'nr-arch',
@@ -146,8 +235,43 @@ function mockSubmittalArchLogWrite(spreadsheetId: string) {
             endColumnIndex: 11,
           },
         },
+        {
+          namedRangeId: 'nr-arch-statuses',
+          name: 'Options_Submittal_Arch_Statuses',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: 6,
+            startColumnIndex: 0,
+            endColumnIndex: 1,
+          },
+        },
+        {
+          namedRangeId: 'nr-arch-actions',
+          name: 'Options_Submittal_Arch_Actions',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: 9,
+            startColumnIndex: 2,
+            endColumnIndex: 6,
+          },
+        },
+        {
+          namedRangeId: 'nr-arch-contacts',
+          name: 'Options_Submittal_Arch_Contacts',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length,
+            startColumnIndex: 7,
+            endColumnIndex: 10,
+          },
+        },
       ],
     });
+
+  mockConfigSubmittalArchBatchGet(spreadsheetId);
 
   nock('https://sheets.googleapis.com')
     .get(new RegExp(`/v4/spreadsheets/${spreadsheetId}/values/.*`))
@@ -654,7 +778,7 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
       .query((q) => typeof q.q === 'string' && q.q.includes("name contains 'Document Log'") && q.driveId === driveId)
-      .times(2) // pre-flight resolveLog + re-render queryUiContext
+      .times(1) // pre-flight resolveLog (memoized for re-render queryUiContext + readOptionTables)
       .reply(200, { files: [] });
 
     const driveSubmitRes = await app.server.inject({
@@ -698,7 +822,7 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
       .query((q) => typeof q.q === 'string' && q.q.includes("name contains 'Document Log'") && q.driveId === driveId)
-      .times(2)
+      .times(1)
       .reply(200, { files: [] });
 
     const gmailSubmitRes = await app.server.inject({
@@ -849,7 +973,7 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
       .query((q) => typeof q.q === 'string' && q.q.includes("name contains 'Document Log'") && q.driveId === driveId)
-      .times(2)
+      .times(1)
       .reply(200, {
         files: [
           {

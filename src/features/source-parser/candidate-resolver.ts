@@ -39,6 +39,8 @@ export interface YearMonthDay {
 export interface CanonicalOptionResolverDeps {
   canonicalOptionsProvider?: CanonicalOptionsProviderPort | undefined;
   parseSchemaRegistry?: ParseSchemaRegistryPort | undefined;
+  documentTypeKey?: string | undefined;
+  selectedLogId?: string | undefined;
 }
 
 export function escapeRegExp(value: string): string {
@@ -377,16 +379,18 @@ export function validateCandidateWithTuple(
   if (targetField.options !== undefined) {
     const { source: sourceKey, key: optKey, name: optName } = targetField.options;
     const keyProp = optKey ?? 'key';
-    const nameProp = optName ?? 'name';
     const optionTuples = targetSchema?.options?.[sourceKey] ?? [];
-    const matched = optionTuples.find((tuple) => {
-      const tupleKey = getTupleKey(tuple, keyProp);
-      const tupleName = getTupleName(tuple, nameProp);
-      return (
-        tupleKey === trimmed ||
-        (tupleName !== undefined && tupleName.toLowerCase() === trimmed.toLowerCase())
-      );
+    const normalized = trimmed.toLowerCase();
+    let matched = optionTuples.find((tuple) => {
+      const tupleKey = getTupleKey(tuple, keyProp).trim();
+      return tupleKey.length > 0 && tupleKey.toLowerCase() === normalized;
     });
+    if (!matched && optName !== undefined) {
+      matched = optionTuples.find((tuple) => {
+        const tupleName = getTupleName(tuple, optName)?.trim();
+        return tupleName !== undefined && tupleName.length > 0 && tupleName.toLowerCase() === normalized;
+      });
+    }
     if (!matched) {
       return undefined;
     }
@@ -670,12 +674,17 @@ export async function resolveCanonicalOptionFromCandidate(
 
   let canonicalTuples: ParseTargetDocumentOptionTuple[] = [];
 
-  if (targetField.options?.dynamicConfig) {
+  if (targetField.options?.source && targetSchema?.optionSources?.[targetField.options.source]) {
     const cleanSpace = spaceId ? spaceId.trim() : '';
     if (!cleanSpace || !deps?.canonicalOptionsProvider) {
       return undefined;
     }
-    canonicalTuples = await deps.canonicalOptionsProvider.getCanonicalOptions(cleanSpace, targetField);
+    canonicalTuples = await deps.canonicalOptionsProvider.getCanonicalOptions(
+      cleanSpace,
+      targetField,
+      deps.documentTypeKey,
+      deps.selectedLogId
+    );
   } else if (targetField.options?.source) {
     canonicalTuples = targetSchema?.options?.[targetField.options.source] ?? [];
   }
@@ -690,17 +699,35 @@ export async function resolveCanonicalOptionFromCandidate(
   const localTuples = targetSchema?.options?.[sourceKey] ?? [];
   const localTuplesMap = new Map<string, ParseTargetDocumentOptionTuple>();
   for (const t of localTuples) {
-    localTuplesMap.set(getTupleKey(t, keyProp), t);
+    const normLocalKey = getTupleKey(t, keyProp).trim().toLowerCase();
+    if (normLocalKey.length > 0 && !localTuplesMap.has(normLocalKey)) {
+      localTuplesMap.set(normLocalKey, t);
+    }
   }
   const sharedDict = deps?.parseSchemaRegistry?.getAliasDictionary?.(sourceKey);
+  const normalizedSharedMappings = new Map<string, string[]>();
+  if (sharedDict?.mappings) {
+    for (const [dictKey, dictAliases] of Object.entries(sharedDict.mappings)) {
+      const normDictKey = dictKey.trim().toLowerCase();
+      if (normDictKey.length === 0) {
+        continue;
+      }
+      const existing = normalizedSharedMappings.get(normDictKey);
+      if (existing) {
+        existing.push(...dictAliases);
+      } else {
+        normalizedSharedMappings.set(normDictKey, [...dictAliases]);
+      }
+    }
+  }
 
   const seenNormalizedAliases = new Set<string>();
 
   // Tier 1: Local option aliases
   const tier1: TierOption[] = [];
   for (const tuple of canonicalTuples) {
-    const tupleKey = getTupleKey(tuple, keyProp);
-    const localTuple = localTuplesMap.get(tupleKey);
+    const normTupleKey = getTupleKey(tuple, keyProp).trim().toLowerCase();
+    const localTuple = normTupleKey.length > 0 ? localTuplesMap.get(normTupleKey) : undefined;
     const rawAliases = (localTuple?.aliases ?? []).filter((a) => typeof a === 'string' && a.trim().length > 0);
     for (const a of rawAliases) {
       seenNormalizedAliases.add(a.trim().toLowerCase());
@@ -722,8 +749,8 @@ export async function resolveCanonicalOptionFromCandidate(
   // Tier 3: Shared Manifest AliasDictionary
   const tier3: TierOption[] = [];
   for (const tuple of canonicalTuples) {
-    const tupleKey = getTupleKey(tuple, keyProp);
-    const rawAliases = (sharedDict?.mappings?.[tupleKey] ?? []).filter(
+    const normTupleKey = getTupleKey(tuple, keyProp).trim().toLowerCase();
+    const rawAliases = (normalizedSharedMappings.get(normTupleKey) ?? []).filter(
       (a) => typeof a === 'string' && a.trim().length > 0
     );
     const filtered = rawAliases.filter((a) => !seenNormalizedAliases.has(a.trim().toLowerCase()));

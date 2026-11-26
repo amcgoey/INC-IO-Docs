@@ -2014,7 +2014,6 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
               key: 'key',
               name: 'name',
               allowUserInput: true,
-              dynamicConfig: { provider: 'google_drive', relativePath: 'Contacts' },
             },
           },
           {
@@ -2037,6 +2036,9 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
             },
           },
         ],
+        optionSources: {
+          contactFolders: { provider: 'google_drive', relativePath: 'Contacts' },
+        },
         options: {
           specItems: [
             { code: '071200', title: 'Waterproofing', aliases: ['WP', 'dampproofing'] },
@@ -2131,7 +2133,9 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
         expect(result.fields.contact).toBe('Pavarini Construction');
         expect(mockCanonicalProvider.getCanonicalOptions).toHaveBeenCalledWith(
           'space-999',
-          expect.objectContaining({ key: 'contact' })
+          expect.objectContaining({ key: 'contact' }),
+          'test-doc',
+          undefined
         );
       });
 
@@ -2665,7 +2669,7 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
               {
                 key: 'vendor',
                 type: 'string',
-                options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true, dynamicConfig: { provider: 'google_drive' } },
+                options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true },
               },
               {
                 key: 'specTag',
@@ -2679,6 +2683,9 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
               },
               { key: 'revision', type: 'string', minLength: 1 },
             ],
+            optionSources: {
+              vendors: { provider: 'google_drive' },
+            },
             options: {
               actions: [{ key: 'REC', name: 'Received' }],
               contacts: [
@@ -5020,6 +5027,7 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
       formFields?: Record<string, { template: string; format?: 'date'; valueMap?: Record<string, string> }>;
       targetFields?: unknown[];
       options?: Record<string, unknown[]>;
+      optionSources?: Record<string, unknown>;
     }) {
       return {
         initialize: vi.fn(),
@@ -5067,6 +5075,7 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
             },
           ],
           options: overrides?.options ?? { actions: submittalActions },
+          ...(overrides?.optionSources !== undefined ? { optionSources: overrides.optionSources } : {}),
         }),
       };
     }
@@ -5294,7 +5303,6 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
               source: 'specs',
               key: 'key',
               name: 'name',
-              dynamicConfig: { provider: 'google_drive' },
             },
           },
           {
@@ -5305,6 +5313,9 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
           { key: 'flagTrue', type: 'string' },
           { key: 'flagFalse', type: 'string' },
         ],
+        optionSources: {
+          specs: { provider: 'google_drive' },
+        },
         options: {},
       });
 
@@ -6444,9 +6455,7 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
     const formTemplateParser = new HandlebarsAdapter();
 
     function makeFfeRegistry(options?: { dynamicSpecTag?: boolean; customFormTemplate?: string }) {
-      const specOptions = options?.dynamicSpecTag
-        ? { source: 'specs', key: 'key', dynamicConfig: { provider: 'google_sheets' }, allowUserInput: true }
-        : { source: 'specs', key: 'key', allowUserInput: true };
+      const specOptions = { source: 'specs', key: 'key', allowUserInput: true };
 
       return {
         initialize: vi.fn(),
@@ -6532,6 +6541,13 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
               { key: 'NET', name: 'No Exceptions Taken' },
             ],
           },
+          ...(options?.dynamicSpecTag
+            ? {
+                optionSources: {
+                  specs: { provider: 'document_log' as const, properties: ['key', 'name'] },
+                },
+              }
+            : {}),
         }),
       };
     }
@@ -6618,7 +6634,9 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
 
       expect(canonicalOptionsProvider.getCanonicalOptions).toHaveBeenCalledWith(
         'proj-dyn-1',
-        expect.objectContaining({ key: 'specTag' })
+        expect.objectContaining({ key: 'specTag' }),
+        'submittal-ffe',
+        undefined
       );
       expect(res.fields).toEqual({
         specTag: 'TA210',
@@ -6796,6 +6814,196 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
         statusMessages: [],
       });
       expect(existingFields).toEqual({ revision: 'A' });
+    });
+  });
+
+  describe('Ticket #360: Pass 2 live DocumentLog matching, Tier 2/Tier 3 alias combination & AliasDictionary key normalization', () => {
+    it('normalizes AliasDictionary keys trimmed and case-insensitively and combines Tier 2 _Config aliases[] with Tier 3 AliasDictionary across Gmail, attachments, and Drive filenames', async () => {
+      const mockCanonicalProvider: CanonicalOptionsProviderPort = {
+        getCanonicalOptions: vi.fn().mockImplementation(async (_spaceId, field) => {
+          if (field.options?.source === 'actions') {
+            return [{ key: 'REC', name: 'Received', suffix: '', order: '1' }];
+          }
+          if (field.options?.source === 'contacts') {
+            return [
+              {
+                key: 'PMG',
+                name: 'Pavarini McGovern',
+                aliases: ['Pavarini, McGovern', '@pavarini.com'],
+              },
+              {
+                key: 'CUSTOM',
+                name: 'Custom Studio',
+                aliases: ['@custom-studio.com', 'Custom "Studio"'],
+              },
+            ];
+          }
+          if (field.options?.source === 'vendors') {
+            return [
+              {
+                key: 'CARN',
+                name: 'Carnegie Fabrics',
+              },
+              {
+                key: 'BM',
+                name: 'Berman Falk',
+                aliases: ['Berman Custom', '@carnegiefabrics.com'],
+              },
+            ];
+          }
+          if (field.options?.source === 'specs') {
+            return [
+              {
+                key: 'CG104',
+                name: 'BED - KING',
+                aliases: ['King Bed'],
+              },
+            ];
+          }
+          return [];
+        }),
+      };
+
+      const mockRegistry = {
+        initialize: vi.fn(),
+        getParseSchema: vi.fn().mockResolvedValue({
+          extractors: [
+            {
+              source: 'gmail',
+              fields: {
+                action: { set: 'REC' },
+                contact: { from: 'email.from', lookup: true },
+                vendor: [
+                  { from: 'attachmentName', normalize: 'cleanFilenameText', lookup: true },
+                  { from: 'email.from', lookup: true },
+                ],
+                specTag: [
+                  {
+                    from: 'attachmentName',
+                    pattern: '([A-Za-z]{2}\\d{3}[A-Za-z]?)',
+                    group: 1,
+                    normalize: 'compactAlnum',
+                    lookup: true,
+                  },
+                ],
+              },
+            },
+            {
+              source: 'drive',
+              fields: {
+                vendor: { from: 'drive.fileNameStem', normalize: 'cleanFilenameText', lookup: true },
+                specTag: {
+                  from: 'drive.fileNameStem',
+                  pattern: '([A-Za-z]{2}\\d{3}[A-Za-z]?)',
+                  group: 1,
+                  normalize: 'compactAlnum',
+                  lookup: true,
+                },
+              },
+            },
+          ],
+        }),
+        getTargetSchema: vi.fn().mockResolvedValue({
+          fields: [
+            { key: 'action', type: 'string', options: { source: 'actions', key: 'key', name: 'name' } },
+            { key: 'contact', type: 'string', options: { source: 'contacts', key: 'key', name: 'name', allowUserInput: true } },
+            { key: 'vendor', type: 'string', options: { source: 'vendors', key: 'key', name: 'name', allowUserInput: true } },
+            { key: 'specTag', type: 'string', options: { source: 'specs', key: 'key', allowUserInput: true } },
+            { key: 'specTitle', type: 'string', linkedField: { sourceField: 'specTag', sourceProperty: 'name' } },
+          ],
+          optionSources: {
+            actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
+            contacts: { provider: 'document_log', properties: ['key', 'name'] },
+            vendors: { provider: 'document_log', properties: ['key', 'name'] },
+            specs: { provider: 'document_log', properties: ['key', 'name'] },
+          },
+        }),
+        getAliasDictionary: vi.fn().mockImplementation((sourceKey: string) => {
+          if (sourceKey === 'vendors') {
+            return {
+              source: 'vendors',
+              mappings: {
+                ' Carn ': ['@carnegiefabrics.com', 'Carnegie'],
+              },
+            };
+          }
+          return undefined;
+        }),
+      };
+
+      const drivePort: DriveSourceContextPort = {
+        getItemHierarchy: vi.fn().mockResolvedValue({
+          item: {
+            id: 'drive-file-360',
+            name: 'CG104-A_Carnegie_CutSheet.pdf',
+            mimeType: 'application/pdf',
+          },
+          ancestors: [{ id: 'space-360', name: 'Harborview' }],
+        }),
+      };
+
+      const service = new SourceParserService(drivePort, mockSpaceConfigPort, {
+        parseSchemaRegistry: mockRegistry,
+        canonicalOptionsProvider: mockCanonicalProvider,
+      });
+
+      // 1. Gmail:
+      // - action uses non-lookup set: 'REC' against optionSources.actions
+      // - contact matches Tier 2 _Config alias '@custom-studio.com'
+      // - attachment matches specTag CG104 -> LinkedField specTitle 'BED - KING'
+      // - attachment matches Tier 3 AliasDictionary 'Carnegie' via mixed-case/padded key ' Carn ' -> 'CARN'
+      // - Tier 2 '@carnegiefabrics.com' on BM shadows Tier 3 '@carnegiefabrics.com' on Carn when matching email.from
+      const gmailRes = await service.extractFields({
+        documentTypeKey: 'submittal-ffe',
+        spaceId: 'space-360',
+        selectedLogId: 'log-360',
+        context: {
+          email: {
+            id: 'msg-360',
+            from: 'Custom Studio <designer@custom-studio.com>',
+            attachments: [{ id: 'att-360', name: 'CG104_Carnegie_Sample.pdf' }],
+          },
+        },
+      });
+
+      expect(gmailRes.fields.action).toBe('REC');
+      expect(gmailRes.fields.contact).toBe('CUSTOM');
+      expect(gmailRes.fields.vendor).toBe('CARN');
+      expect(gmailRes.fields.specTag).toBe('CG104');
+      expect(gmailRes.fields.specTitle).toBe('BED - KING');
+      expect(mockCanonicalProvider.getCanonicalOptions).toHaveBeenCalledWith(
+        'space-360',
+        expect.objectContaining({ key: 'action' }),
+        'submittal-ffe',
+        'log-360'
+      );
+
+      // Verify Tier 2 shadows Tier 3 on colliding domain '@carnegiefabrics.com'
+      const tier2ShadowRes = await service.extractFields({
+        documentTypeKey: 'submittal-ffe',
+        spaceId: 'space-360',
+        context: {
+          email: {
+            id: 'msg-360-shadow',
+            from: 'Rep <rep@carnegiefabrics.com>',
+            attachments: [],
+          },
+        },
+      });
+      expect(tier2ShadowRes.fields.vendor).toBe('BM');
+
+      // 2. Drive filename: matches Tier 3 AliasDictionary ('Carnegie' under ' Carn ' -> 'CARN') + specTag -> specTitle
+      const driveRes = await service.extractFields({
+        documentTypeKey: 'submittal-ffe',
+        spaceId: 'space-360',
+        context: {
+          items: [{ id: 'drive-file-360', name: 'CG104-A_Carnegie_CutSheet.pdf' }],
+        },
+      });
+
+      expect(driveRes.fields.vendor).toBe('CARN');
+      expect(driveRes.fields.specTag).toBe('CG104');
+      expect(driveRes.fields.specTitle).toBe('BED - KING');
     });
   });
 });

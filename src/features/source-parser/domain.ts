@@ -762,19 +762,64 @@ function extractCandidateFromSourceItems(
   return undefined;
 }
 
-function extractCandidateFromRule(
-  rule: GmailFieldRule,
+async function resolveEffectiveTargetSchemaForField(
   targetField: ParseTargetDocumentField,
   targetSchema: ParseTargetDocumentSchema | undefined,
+  request: ExtractFieldsRequest,
+  deps: SourceParserServiceDeps | undefined
+): Promise<ParseTargetDocumentSchema | undefined> {
+  const { source: sourceKey } = targetField.options ?? {};
+  if (
+    !sourceKey ||
+    !targetSchema?.optionSources?.[sourceKey] ||
+    targetSchema.options?.[sourceKey] !== undefined
+  ) {
+    return targetSchema;
+  }
+
+  const cleanSpace = request.spaceId?.trim() ?? '';
+  if (!cleanSpace || !deps?.canonicalOptionsProvider) {
+    return targetSchema;
+  }
+
+  const canonicalTuples = await deps.canonicalOptionsProvider.getCanonicalOptions(
+    cleanSpace,
+    targetField,
+    request.documentTypeKey,
+    request.selectedLogId
+  );
+
+  return {
+    ...targetSchema,
+    options: {
+      ...(targetSchema.options ?? {}),
+      [sourceKey]: canonicalTuples,
+    },
+  };
+}
+
+async function extractCandidateFromRule(
+  rule: GmailFieldRule,
+  request: ExtractFieldsRequest,
+  targetField: ParseTargetDocumentField,
+  targetSchema: ParseTargetDocumentSchema | undefined,
+  deps: SourceParserServiceDeps | undefined,
   extractionContext: RuleExtractionContext
-): ExtractedCandidateResult | undefined {
+): Promise<ExtractedCandidateResult | undefined> {
+  const effectiveTargetSchema = await resolveEffectiveTargetSchemaForField(
+    targetField,
+    targetSchema,
+    request,
+    deps
+  );
+
   if ('set' in rule) {
     return extractCandidateFromSourceItems(
       rule,
       [],
       undefined,
       targetField,
-      targetSchema,
+      effectiveTargetSchema,
       extractionContext.populatedFields,
       extractionContext.timeZone,
       extractionContext.now
@@ -794,7 +839,7 @@ function extractCandidateFromRule(
     sourceItems,
     rule.from,
     targetField,
-    targetSchema,
+    effectiveTargetSchema,
     extractionContext.populatedFields,
     extractionContext.timeZone,
     extractionContext.now
@@ -922,6 +967,15 @@ async function extractLookupCandidateFromSourceItems(
         request.spaceId,
         targetSchema,
         deps
+          ? {
+              ...deps,
+              documentTypeKey: request.documentTypeKey,
+              ...(request.selectedLogId !== undefined ? { selectedLogId: request.selectedLogId } : {}),
+            }
+          : {
+              documentTypeKey: request.documentTypeKey,
+              ...(request.selectedLogId !== undefined ? { selectedLogId: request.selectedLogId } : {}),
+            }
       );
       if (match) {
         return {
@@ -1162,10 +1216,12 @@ export class SourceParserService implements SourceParserPort {
                     this.deps,
                     extractionContext
                   )
-                : extractCandidateFromRule(
+                : await extractCandidateFromRule(
                     rule as GmailFieldRule,
+                    request,
                     targetField,
                     targetSchema,
+                    this.deps,
                     extractionContext
                   );
 
@@ -1256,7 +1312,7 @@ export class SourceParserService implements SourceParserPort {
             let accepted: ValidatedCandidate | undefined;
             if (targetField.options) {
               const useCanonicalLookup =
-                targetField.options.dynamicConfig !== undefined ||
+                targetSchema?.optionSources?.[targetField.options.source] !== undefined ||
                 lookupFieldKeys.has(key) ||
                 targetField.options.allowUserInput === true;
               accepted = useCanonicalLookup
@@ -1265,7 +1321,13 @@ export class SourceParserService implements SourceParserPort {
                     targetField,
                     request.spaceId,
                     targetSchema,
-                    this.deps
+                    {
+                      ...this.deps,
+                      documentTypeKey: request.documentTypeKey,
+                      ...(request.selectedLogId !== undefined
+                        ? { selectedLogId: request.selectedLogId }
+                        : {}),
+                    }
                   )
                 : validateCandidateWithTuple(strVal, targetField, targetSchema);
             } else {
@@ -1344,12 +1406,18 @@ export class SourceParserService implements SourceParserPort {
 
           let result: ExtractedCandidateResult | undefined;
           if ('set' in rule) {
+            const effectiveTargetSchema = await resolveEffectiveTargetSchemaForField(
+              targetField,
+              targetSchema,
+              request,
+              this.deps
+            );
             result = extractCandidateFromSourceItems(
               rule,
               [],
               undefined,
               targetField,
-              targetSchema,
+              effectiveTargetSchema,
               populatedFields,
               timeZone,
               this.deps?.now
@@ -1370,12 +1438,18 @@ export class SourceParserService implements SourceParserPort {
                 timeZone
               );
             } else {
+              const effectiveTargetSchema = await resolveEffectiveTargetSchemaForField(
+                targetField,
+                targetSchema,
+                request,
+                this.deps
+              );
               result = extractCandidateFromSourceItems(
                 rule,
                 sourceItems,
                 rule.from,
                 targetField,
-                targetSchema,
+                effectiveTargetSchema,
                 populatedFields,
                 timeZone,
                 this.deps?.now

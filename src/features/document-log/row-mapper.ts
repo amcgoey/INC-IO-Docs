@@ -58,7 +58,8 @@ export function formatFileLinkFormula(
  */
 export function enrichDocumentData(
   data: Readonly<Record<string, unknown>>,
-  targetSchema: LogTargetDocumentSchema
+  targetSchema: LogTargetDocumentSchema,
+  dynamicOptions?: Readonly<Record<string, readonly LogTargetDocumentOptionTuple[]>>
 ): Record<string, unknown> {
   const enriched: Record<string, unknown> = {};
   const schemaFieldKeys = new Set(targetSchema.fields.map((f) => f.key));
@@ -83,7 +84,10 @@ export function enrichDocumentData(
         delete enriched[field.key];
         continue;
       }
-      const optionTuples = targetSchema.options?.[field.options.source] ?? [];
+      const optionTuples =
+        dynamicOptions?.[field.options.source] ??
+        targetSchema.options?.[field.options.source] ??
+        [];
       const exactTuple = optionTuples.find(
         (tuple) =>
           tuple[keyProp] === rawValue ||
@@ -279,6 +283,7 @@ export interface BuildRowKeyExtractorParams {
   logSchema: DocumentLogSchema;
   targetSchema: LogTargetDocumentSchema;
   templateEvaluator: LogTemplateEvaluatorPort;
+  dynamicOptions?: Readonly<Record<string, readonly LogTargetDocumentOptionTuple[]>> | undefined;
 }
 
 interface ReconstructedRowFields {
@@ -325,7 +330,11 @@ function reconstructFieldsFromRow(
   row: LogRowValues,
   mappings: readonly ColumnReverseMapping[],
   targetSchema: LogTargetDocumentSchema,
-  options: { synthesizeInvalidLookupFallback: boolean }
+  options: {
+    synthesizeInvalidLookupFallback: boolean;
+    dynamicOptions?: Readonly<Record<string, readonly LogTargetDocumentOptionTuple[]>> | undefined;
+    dynamicTableErrors?: Readonly<Record<string, string>> | undefined;
+  }
 ): ReconstructedRowFields {
   const data: Record<string, unknown> = {};
   const matchedLookupFields = new Set<string>();
@@ -344,7 +353,11 @@ function reconstructFieldsFromRow(
     }
 
     if (mapping.field?.options) {
-      const optionTuples = targetSchema.options?.[mapping.field.options.source] ?? [];
+      const sourceKey = mapping.field.options.source;
+      const optionTuples =
+        options.dynamicOptions?.[sourceKey] ??
+        targetSchema.options?.[sourceKey] ??
+        [];
       const keyProp = mapping.field.options.key;
       const nameProp = mapping.field.options.name;
       const normalizedTarget = trimmedStr.toLowerCase();
@@ -364,11 +377,16 @@ function reconstructFieldsFromRow(
         invalidLookupValues.delete(mapping.fieldKey);
         rawStrings.set(mapping.fieldKey, trimmedStr);
       } else if (!matchedLookupFields.has(mapping.fieldKey)) {
-        const isDynamicOrUserInput =
-          Boolean(mapping.field.options.allowUserInput) ||
-          mapping.field.options.dynamicConfig !== undefined;
+        const isStaticRestricted =
+          !mapping.field.options.allowUserInput &&
+          targetSchema.optionSources?.[sourceKey] === undefined;
+        const isCheckedDynamicRestricted =
+          !mapping.field.options.allowUserInput &&
+          targetSchema.optionSources?.[sourceKey]?.provider === 'document_log' &&
+          (options.dynamicOptions?.[sourceKey] !== undefined ||
+            options.dynamicTableErrors?.[sourceKey] !== undefined);
 
-        if (isDynamicOrUserInput) {
+        if (!isStaticRestricted && !isCheckedDynamicRestricted) {
           const existing = data[mapping.fieldKey];
           const fallback: Record<string, unknown> =
             existing && typeof existing === 'object'
@@ -411,7 +429,7 @@ function reconstructFieldsFromRow(
 export function buildRowKeyExtractor(
   params: BuildRowKeyExtractorParams
 ): (row: LogRowValues) => LogRowKey | null {
-  const { logSchema, targetSchema, templateEvaluator } = params;
+  const { logSchema, targetSchema, templateEvaluator, dynamicOptions } = params;
   const { groupByTemplate, sortByTemplate, groupByTokens } = resolveGroupingTemplates(
     logSchema,
     targetSchema
@@ -421,6 +439,7 @@ export function buildRowKeyExtractor(
   return (row: LogRowValues): LogRowKey | null => {
     const { data } = reconstructFieldsFromRow(row, mappings, targetSchema, {
       synthesizeInvalidLookupFallback: false,
+      dynamicOptions,
     });
 
     return evaluateRowKeysFromData({
@@ -438,6 +457,8 @@ export interface BuildLogRowHydratorParams {
   logSchema: DocumentLogSchema;
   targetSchema: LogTargetDocumentSchema;
   templateEvaluator: LogTemplateEvaluatorPort;
+  dynamicOptions?: Readonly<Record<string, readonly LogTargetDocumentOptionTuple[]>> | undefined;
+  dynamicTableErrors?: Readonly<Record<string, string>> | undefined;
 }
 
 export interface MapLogRowToDocumentParams extends BuildLogRowHydratorParams {
@@ -495,8 +516,17 @@ function validateHydratedRowFields(params: {
   targetSchema: LogTargetDocumentSchema;
   reconstructed: ReconstructedRowFields;
   compiledPatterns: ReadonlyMap<string, RegExp>;
+  dynamicOptions?: Readonly<Record<string, readonly LogTargetDocumentOptionTuple[]>> | undefined;
+  dynamicTableErrors?: Readonly<Record<string, string>> | undefined;
 }): { validationErrors: string[]; warnings: RowHydrationWarning[] } {
-  const { rowNumber, targetSchema, reconstructed, compiledPatterns } = params;
+  const {
+    rowNumber,
+    targetSchema,
+    reconstructed,
+    compiledPatterns,
+    dynamicOptions,
+    dynamicTableErrors,
+  } = params;
   const { data, invalidLookupValues, rawStrings } = reconstructed;
   const validationErrors: string[] = [];
   const warnings: RowHydrationWarning[] = [];
@@ -514,17 +544,31 @@ function validateHydratedRowFields(params: {
     }
 
     const reasons: string[] = [];
+    const sourceKey = field.options?.source;
     const isStaticRestrictedLookup = Boolean(
       field.options &&
-        field.options.dynamicConfig === undefined &&
+        sourceKey !== undefined &&
+        targetSchema.optionSources?.[sourceKey] === undefined &&
         !field.options.allowUserInput
     );
+    const isCheckedDynamicRestrictedLookup = Boolean(
+      field.options &&
+        sourceKey !== undefined &&
+        targetSchema.optionSources?.[sourceKey]?.provider === 'document_log' &&
+        !field.options.allowUserInput &&
+        (dynamicOptions?.[sourceKey] !== undefined || dynamicTableErrors?.[sourceKey] !== undefined)
+    );
 
-    if (isStaticRestrictedLookup) {
+    if (isStaticRestrictedLookup || isCheckedDynamicRestrictedLookup) {
       if (invalidLookupValues.has(field.key)) {
-        reasons.push(
-          `value "${invalidLookupValues.get(field.key)}" is not a valid option in "${field.options!.source}"`
-        );
+        const tableError = sourceKey !== undefined ? dynamicTableErrors?.[sourceKey] : undefined;
+        if (tableError !== undefined) {
+          reasons.push(`cannot validate against "${sourceKey}": ${tableError}`);
+        } else {
+          reasons.push(
+            `value "${invalidLookupValues.get(field.key)}" is not a valid option in "${field.options!.source}"`
+          );
+        }
       }
     } else {
       const strVal = typeof value === 'string' ? value : (rawStrings.get(field.key) ?? '');
@@ -555,7 +599,14 @@ function validateHydratedRowFields(params: {
 export function buildLogRowHydrator(
   params: BuildLogRowHydratorParams
 ): (row: ReadLogRow) => MappedHydratedLogRow {
-  const { documentTypeKey, logSchema, targetSchema, templateEvaluator } = params;
+  const {
+    documentTypeKey,
+    logSchema,
+    targetSchema,
+    templateEvaluator,
+    dynamicOptions,
+    dynamicTableErrors,
+  } = params;
   const { mappings, fileLinkHeaders } = collectColumnReverseMappings(logSchema, targetSchema);
   const compiledPatterns = compileFieldPatterns(targetSchema);
 
@@ -570,6 +621,8 @@ export function buildLogRowHydrator(
   return (row: ReadLogRow): MappedHydratedLogRow => {
     const reconstructed = reconstructFieldsFromRow(row.values, mappings, targetSchema, {
       synthesizeInvalidLookupFallback: true,
+      dynamicOptions,
+      dynamicTableErrors,
     });
     const { data } = reconstructed;
 
@@ -578,6 +631,8 @@ export function buildLogRowHydrator(
       targetSchema,
       reconstructed,
       compiledPatterns,
+      dynamicOptions,
+      dynamicTableErrors,
     });
 
     const identityValues: Partial<Record<(typeof IDENTITY_KEYS)[number], string>> = {};
@@ -624,6 +679,10 @@ export function mapLogRowToDocument(params: MapLogRowToDocumentParams): MappedHy
     logSchema: params.logSchema,
     targetSchema: params.targetSchema,
     templateEvaluator: params.templateEvaluator,
+    ...(params.dynamicOptions !== undefined ? { dynamicOptions: params.dynamicOptions } : {}),
+    ...(params.dynamicTableErrors !== undefined
+      ? { dynamicTableErrors: params.dynamicTableErrors }
+      : {}),
   });
   return hydrate({
     rowNumber: params.rowNumber,

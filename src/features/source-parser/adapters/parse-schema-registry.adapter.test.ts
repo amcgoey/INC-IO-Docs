@@ -498,10 +498,12 @@ describe('ParseSchemaRegistryAdapter', () => {
                     source: 'contacts',
                     key: 'key',
                     name: 'name',
-                    dynamicConfig: { provider: 'google_drive', relativePath: 'Contacts' },
                   },
                 },
               ],
+              optionSources: {
+                contacts: { provider: 'google_drive', relativePath: 'Contacts' },
+              },
               options: {
                 direction: [
                   { key: 'IN', name: 'Incoming', aliases: ['inbound'] },
@@ -539,7 +541,7 @@ describe('ParseSchemaRegistryAdapter', () => {
 
     const targetSchema = adapter.getTargetSchema('test-doc');
     expect(targetSchema?.options?.direction[0].aliases).toEqual(['inbound']);
-    expect(targetSchema?.fields.find((f) => f.key === 'contact')?.options?.dynamicConfig).toEqual({
+    expect(targetSchema?.optionSources?.contacts).toEqual({
       provider: 'google_drive',
       relativePath: 'Contacts',
     });
@@ -548,6 +550,77 @@ describe('ParseSchemaRegistryAdapter', () => {
     expect(contactAliases).toBeDefined();
     expect(contactAliases?.source).toBe('contacts');
     expect(contactAliases?.mappings.pavarini).toEqual(['@pavarini.com', 'PCNE']);
+    expect(contactAliases?.mappings.structuretone).toEqual(['@structuretone.com', 'STO']);
+  });
+
+  it('normalizes AliasDictionary mapping keys trimmed and case-insensitively and fails fast on blank or colliding normalized keys (Ticket #360)', async () => {
+    const mockManifestProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: [],
+        aliases: {
+          vendors: './aliases/vendors.json',
+        },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        source: 'vendors',
+        mappings: {
+          ' Carn ': ['@carnegiefabrics.com', 'Carnegie'],
+          Delta: ['@deltafabrics.com'],
+        },
+      }),
+    };
+
+    const adapter = new ParseSchemaRegistryAdapter(mockManifestProvider);
+    await adapter.initialize();
+
+    expect(adapter.getAliasDictionary('vendors')).toEqual({
+      source: 'vendors',
+      mappings: {
+        carn: ['@carnegiefabrics.com', 'Carnegie'],
+        delta: ['@deltafabrics.com'],
+      },
+    });
+
+    const collidingProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: [],
+        aliases: {
+          vendors: './aliases/vendors.json',
+        },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        source: 'vendors',
+        mappings: {
+          Carn: ['@carnegiefabrics.com'],
+          ' carn ': ['Carnegie'],
+        },
+      }),
+    };
+
+    const collidingAdapter = new ParseSchemaRegistryAdapter(collidingProvider);
+    await expect(collidingAdapter.initialize()).rejects.toThrow(
+      'Duplicate normalized key "carn" in AliasDictionary "./aliases/vendors.json"'
+    );
+
+    const blankKeyProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: [],
+        aliases: {
+          vendors: './aliases/vendors.json',
+        },
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        source: 'vendors',
+        mappings: {
+          '   ': ['SomeAlias'],
+        },
+      }),
+    };
+
+    const blankKeyAdapter = new ParseSchemaRegistryAdapter(blankKeyProvider);
+    await expect(blankKeyAdapter.initialize()).rejects.toThrow(
+      'Empty or whitespace-only key in AliasDictionary "./aliases/vendors.json"'
+    );
   });
 
   it('fails fast if extractor.fields contains an empty rule array []', async () => {
@@ -1093,10 +1166,12 @@ describe('ParseSchemaRegistryAdapter', () => {
             source: 'vendors',
             key: 'key',
             name: 'name',
-            dynamicConfig: { provider: 'google_drive' },
           },
         },
       ],
+      optionSources: {
+        vendors: { provider: 'google_drive', properties: ['key', 'name', 'companyName'] },
+      },
       options: {
         actions: [
           { key: 'REC', name: 'Received', suffix: '' },
@@ -1358,6 +1433,77 @@ describe('ParseSchemaRegistryAdapter', () => {
         formTemplateParser
       );
       await expect(invalidAdapter.initialize()).rejects.toThrow(/unsupported field "number"/i);
+    });
+
+    it('hydrates optionSources on ParseTargetDocumentSchema and validates DocumentFormSchema template properties against OptionSource.properties', async () => {
+      const makeOptionSourcesAdapter = (formFields: Record<string, unknown>, optionSourcesOverride?: unknown) =>
+        new ParseSchemaRegistryAdapter(
+          {
+            getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./types/test-doc.json'] }),
+            readParsedSchema: vi.fn().mockResolvedValue({
+              key: 'test-doc',
+              documentSchema: {
+                fields: [
+                  {
+                    key: 'action',
+                    type: 'string',
+                    options: { source: 'actions', key: 'key', name: 'name', allowUserInput: false },
+                  },
+                  {
+                    key: 'contact',
+                    type: 'string',
+                    options: { source: 'contactFolders', key: 'key', name: 'name', allowUserInput: true },
+                  },
+                ],
+                optionSources: optionSourcesOverride ?? {
+                  actions: { provider: 'document_log', properties: ['key', 'name', 'suffix'] },
+                  contactFolders: { provider: 'google_drive', method: 'list_folders', relativePath: 'Contacts' },
+                },
+              },
+              documentFormSchema: {
+                fields: formFields,
+              },
+            }),
+          },
+          formTemplateParser
+        );
+
+      const validAdapter = makeOptionSourcesAdapter({
+        Response: {
+          template: '{{action.name}}',
+          valueMap: { RR: 'Revise and Resubmit' },
+        },
+        ContactName: {
+          template: '{{contact.name}}',
+        },
+      });
+      await expect(validAdapter.initialize()).resolves.toBeUndefined();
+      expect(validAdapter.getTargetSchema('test-doc')).toMatchObject({
+        optionSources: {
+          actions: { provider: 'document_log', properties: ['key', 'name', 'suffix'] },
+          contactFolders: { provider: 'google_drive', method: 'list_folders', relativePath: 'Contacts' },
+        },
+      });
+
+      const badPropAdapter = makeOptionSourcesAdapter({
+        Response: { template: '{{action.undeclaredProp}}' },
+      });
+      await expect(badPropAdapter.initialize()).rejects.toThrow(
+        /accesses unknown property "\.undeclaredProp"/i
+      );
+
+      const badDrivePropAdapter = makeOptionSourcesAdapter({
+        ContactName: { template: '{{contact.undeclaredProp}}' },
+      });
+      await expect(badDrivePropAdapter.initialize()).rejects.toThrow(
+        /accesses unknown property "\.undeclaredProp"/i
+      );
+
+      const invalidSourceAdapter = makeOptionSourcesAdapter(
+        { Response: { template: '{{action.name}}' } },
+        { actions: { provider: 'document_log', properties: [] } }
+      );
+      await expect(invalidSourceAdapter.initialize()).rejects.toThrow(/optionSources/i);
     });
   });
 });

@@ -3534,4 +3534,843 @@ describe('GoogleSheetsClient', () => {
       ]);
     });
   });
+
+  describe('readNamedRangesBatch', () => {
+    it('reads multiple Named Ranges in 1 spreadsheets.get + 1 values.batchGet (FORMATTED_VALUE) and reports missing ranges per key', async () => {
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({
+        data: {
+          spreadsheetId: 'sheet-config-1',
+          sheets: [
+            { properties: { sheetId: 301, title: '_Config Submittal Arch' } },
+          ],
+          namedRanges: [
+            {
+              namedRangeId: 'nr-status',
+              name: 'Options_Submittal_Arch_Statuses',
+              range: { sheetId: 301, startRowIndex: 2, endRowIndex: 10, startColumnIndex: 0, endColumnIndex: 1 },
+            },
+            {
+              namedRangeId: 'nr-action',
+              name: '_Config Submittal Arch!Options_Submittal_Arch_Actions',
+              range: { sheetId: 301, startRowIndex: 2, endRowIndex: 12, startColumnIndex: 2, endColumnIndex: 6 },
+            },
+          ],
+        },
+      });
+      mockSheetsApi.spreadsheets.values.batchGet.mockResolvedValueOnce({
+        data: {
+          valueRanges: [
+            {
+              range: "'_Config Submittal Arch'!A3:A10",
+              values: [['Status'], ['Open'], ['Closed'], ['---']],
+            },
+            {
+              range: "'_Config Submittal Arch'!C3:F12",
+              values: [
+                ['Action', 'Name', 'Suffix', 'Order'],
+                ['REC', 'Received', '', '1'],
+                ['---'],
+              ],
+            },
+          ],
+        },
+      });
+
+      const client = new GoogleSheetsClient({ sheets: mockSheetsApi as unknown as sheets_v4.Sheets });
+      const result = await client.readNamedRangesBatch({
+        spreadsheetId: 'sheet-config-1',
+        targets: [
+          { key: 'statuses', sheetName: '_Config Submittal Arch', rangeName: 'Options_Submittal_Arch_Statuses' },
+          { key: 'actions', sheetName: '_Config Submittal Arch', rangeName: 'Options_Submittal_Arch_Actions' },
+          { key: 'missingNr', sheetName: '_Config Submittal Arch', rangeName: 'Options_Missing' },
+          { key: 'missingSheet', sheetName: '_MissingTab', rangeName: 'Options_Any' },
+        ],
+      });
+
+      expect(mockSheetsApi.spreadsheets.get).toHaveBeenCalledTimes(1);
+      expect(mockSheetsApi.spreadsheets.values.batchGet).toHaveBeenCalledTimes(1);
+      expect(mockSheetsApi.spreadsheets.values.batchGet).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-config-1',
+        ranges: ["'_Config Submittal Arch'!A3:A10", "'_Config Submittal Arch'!C3:F12"],
+        valueRenderOption: 'FORMATTED_VALUE',
+      });
+      expect(result.statuses).toEqual({
+        status: 'found',
+        values: [['Status'], ['Open'], ['Closed'], ['---']],
+      });
+      expect(result.actions).toEqual({
+        status: 'found',
+        values: [
+          ['Action', 'Name', 'Suffix', 'Order'],
+          ['REC', 'Received', '', '1'],
+          ['---'],
+        ],
+      });
+      expect(result.missingNr.status).toBe('missing_range');
+      expect(result.missingSheet.status).toBe('missing_range');
+    });
+
+    it('skips batchGet when all targets are missing and skips all API calls when targets are empty', async () => {
+      const client = new GoogleSheetsClient({ sheets: mockSheetsApi as unknown as sheets_v4.Sheets });
+
+      expect(await client.readNamedRangesBatch({ spreadsheetId: 's1', targets: [] })).toEqual({});
+      expect(mockSheetsApi.spreadsheets.get).not.toHaveBeenCalled();
+
+      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({
+        data: {
+          spreadsheetId: 's1',
+          sheets: [{ properties: { sheetId: 301, title: '_Config Submittal Arch' } }],
+          namedRanges: [],
+        },
+      });
+      const res = await client.readNamedRangesBatch({
+        spreadsheetId: 's1',
+        targets: [{ key: 'statuses', sheetName: '_Config Submittal Arch', rangeName: 'Options_Missing' }],
+      });
+      expect(mockSheetsApi.spreadsheets.get).toHaveBeenCalledTimes(1);
+      expect(mockSheetsApi.spreadsheets.values.batchGet).not.toHaveBeenCalled();
+      expect(res.statuses.status).toBe('missing_range');
+    });
+  });
+
+  describe('Atomic option write-back & process-shared KeyedAsyncLock (Ticket #361)', () => {
+    interface MultiSheetSimCell {
+      value: CellValue;
+      userEnteredFormat?: sheets_v4.Schema$CellFormat | undefined;
+    }
+
+    interface MultiSheetSim {
+      spreadsheetId: string;
+      sheets: Array<{
+        sheetId: number;
+        title: string;
+        grid: MultiSheetSimCell[][];
+      }>;
+      namedRanges: Array<{
+        namedRangeId: string;
+        name: string;
+        range: {
+          sheetId: number;
+          startRowIndex: number;
+          endRowIndex: number;
+          startColumnIndex: number;
+          endColumnIndex: number;
+        };
+      }>;
+      batchUpdatePayloads: Array<{ spreadsheetId: string; requests: sheets_v4.Schema$Request[] }>;
+    }
+
+    function cloneSimCell(cell: MultiSheetSimCell | undefined): MultiSheetSimCell {
+      return cell ? { value: cell.value, ...(cell.userEnteredFormat ? { userEnteredFormat: structuredClone(cell.userEnteredFormat) } : {}) } : { value: '' };
+    }
+
+    function createMultiSheetApi(
+      sim: MultiSheetSim,
+      templateSim?: MultiSheetSim
+    ): sheets_v4.Sheets {
+      const findSimSheet = (targetSim: MultiSheetSim, sheetId: number) => {
+        const sheet = targetSim.sheets.find((s) => s.sheetId === sheetId);
+        if (!sheet) throw new Error(`Unknown sheetId ${sheetId}`);
+        return sheet;
+      };
+
+      const readSimRange = (targetSim: MultiSheetSim, a1Range: string, valueRenderOption?: string): CellValue[][] => {
+        const bangIdx = a1Range.lastIndexOf('!');
+        const rawSheet = bangIdx >= 0 ? a1Range.slice(0, bangIdx) : targetSim.sheets[0].title;
+        const sheetTitle = rawSheet.replace(/^'|'$/g, '').replace(/''/g, "'");
+        const sheet = targetSim.sheets.find((s) => s.title.toLowerCase() === sheetTitle.toLowerCase());
+        if (!sheet) throw new Error(`Unknown sheet "${sheetTitle}"`);
+        const bounds = parseSimA1Range(
+          a1Range,
+          sheet.grid.length,
+          Math.max(...sheet.grid.map((r) => r.length), 1)
+        );
+        return sheet.grid.slice(bounds.startRowIndex, bounds.endRowIndex).map((row) => {
+          const out: CellValue[] = [];
+          for (let c = bounds.startColumnIndex; c < bounds.endColumnIndex; c++) {
+            const val = row[c]?.value ?? '';
+            if (typeof val === 'string' && val.startsWith('=') && valueRenderOption !== 'FORMULA') {
+              out.push('');
+            } else {
+              out.push(val);
+            }
+          }
+          while (out.length > 0 && (out[out.length - 1] === '' || out[out.length - 1] === null)) {
+            out.pop();
+          }
+          return out;
+        });
+      };
+
+      return {
+        spreadsheets: {
+          get: vi.fn().mockImplementation(async (params: { spreadsheetId: string; includeGridData?: boolean }) => {
+            const targetSim =
+              templateSim && params.spreadsheetId === templateSim.spreadsheetId ? templateSim : sim;
+            return {
+              data: {
+                spreadsheetId: targetSim.spreadsheetId,
+                sheets: targetSim.sheets.map((s) => ({
+                  properties: { sheetId: s.sheetId, title: s.title },
+                  ...(params.includeGridData
+                    ? {
+                        data: [
+                          {
+                            startRow: 0,
+                            startColumn: 0,
+                            rowData: s.grid.map((row) => ({
+                              values: row.map((cell) => ({
+                                formattedValue: cell.value === null ? '' : String(cell.value),
+                                ...(cell.userEnteredFormat ? { userEnteredFormat: structuredClone(cell.userEnteredFormat) } : {}),
+                              })),
+                            })),
+                          },
+                        ],
+                      }
+                    : {}),
+                })),
+                namedRanges: targetSim.namedRanges.map((nr) => ({
+                  namedRangeId: nr.namedRangeId,
+                  name: nr.name,
+                  range: { ...nr.range },
+                })),
+              },
+            };
+          }),
+          values: {
+            get: vi.fn().mockImplementation(async (params: { range: string; valueRenderOption?: string }) => ({
+              data: { values: readSimRange(sim, params.range, params.valueRenderOption) },
+            })),
+            batchGet: vi.fn().mockImplementation(async (params: { ranges: string[]; valueRenderOption?: string }) => ({
+              data: {
+                valueRanges: params.ranges.map((range) => ({
+                  range,
+                  values: readSimRange(sim, range, params.valueRenderOption),
+                })),
+              },
+            })),
+            update: vi.fn().mockResolvedValue({ data: {} }),
+          },
+          batchUpdate: vi.fn().mockImplementation(async (params: { spreadsheetId: string; requestBody: { requests: sheets_v4.Schema$Request[] } }) => {
+            const requests = params.requestBody.requests;
+            sim.batchUpdatePayloads.push({ spreadsheetId: params.spreadsheetId, requests });
+            for (const req of requests) {
+              if (req.insertDimension) {
+                const { sheetId, startIndex, endIndex } = req.insertDimension.range!;
+                const sheet = findSimSheet(sim, sheetId!);
+                const count = endIndex! - startIndex!;
+                const templateRow = req.insertDimension.inheritFromBefore
+                  ? sheet.grid[startIndex! - 1]
+                  : sheet.grid[startIndex!];
+                const newRows = Array.from({ length: count }, () =>
+                  (templateRow ?? []).map((c) => ({ value: '', ...(c.userEnteredFormat ? { userEnteredFormat: structuredClone(c.userEnteredFormat) } : {}) }))
+                );
+                sheet.grid.splice(startIndex!, 0, ...newRows);
+                for (const nr of sim.namedRanges) {
+                  if (nr.range.sheetId === sheetId && startIndex! > nr.range.startRowIndex && startIndex! < nr.range.endRowIndex) {
+                    nr.range.endRowIndex += count;
+                  }
+                }
+              } else if (req.insertRange) {
+                const { range, shiftDimension } = req.insertRange;
+                expect(shiftDimension).toBe('ROWS');
+                const sheet = findSimSheet(sim, range!.sheetId!);
+                const startRow = range!.startRowIndex!;
+                const endRow = range!.endRowIndex!;
+                const startCol = range!.startColumnIndex!;
+                const endCol = range!.endColumnIndex!;
+                const count = endRow - startRow;
+                // Ensure enough rows exist at bottom for shifted cells
+                const prevBottom = sheet.grid.length;
+                for (let i = 0; i < count; i++) {
+                  sheet.grid.push([]);
+                }
+                for (let r = prevBottom - 1; r >= startRow; r--) {
+                  const srcRow = sheet.grid[r] ?? [];
+                  const dstRow = sheet.grid[r + count]!;
+                  for (let c = startCol; c < endCol; c++) {
+                    dstRow[c] = cloneSimCell(srcRow[c]);
+                  }
+                }
+                const refRow = sheet.grid[startRow - 1] ?? [];
+                for (let r = startRow; r < endRow; r++) {
+                  const targetRow = sheet.grid[r]!;
+                  for (let c = startCol; c < endCol; c++) {
+                    targetRow[c] = {
+                      value: '',
+                      ...(refRow[c]?.userEnteredFormat ? { userEnteredFormat: structuredClone(refRow[c].userEnteredFormat) } : {}),
+                    };
+                  }
+                }
+                for (const nr of sim.namedRanges) {
+                  if (
+                    nr.range.sheetId === range!.sheetId &&
+                    nr.range.startColumnIndex >= startCol &&
+                    nr.range.endColumnIndex <= endCol &&
+                    startRow > nr.range.startRowIndex &&
+                    startRow < nr.range.endRowIndex
+                  ) {
+                    nr.range.endRowIndex += count;
+                  }
+                }
+              } else if (req.updateCells) {
+                const uc = req.updateCells;
+                const range = uc.range!;
+                const sheet = findSimSheet(sim, range.sheetId!);
+                const fields = new Set((uc.fields ?? '').split(',').map((f) => f.trim()));
+                for (let r = 0; r < (uc.rows?.length ?? 0); r++) {
+                  const absRow = range.startRowIndex! + r;
+                  while (sheet.grid.length <= absRow) sheet.grid.push([]);
+                  const targetRow = sheet.grid[absRow]!;
+                  const rowCells = uc.rows![r].values ?? [];
+                  for (let c = 0; c < rowCells.length; c++) {
+                    const absCol = range.startColumnIndex! + c;
+                    while (targetRow.length <= absCol) targetRow.push({ value: '' });
+                    const existing = targetRow[absCol]!;
+                    const incoming = rowCells[c];
+                    const nextCell: MultiSheetSimCell = { ...existing };
+                    if (fields.has('userEnteredValue')) {
+                      const ue = incoming.userEnteredValue;
+                      if (!ue) {
+                        nextCell.value = '';
+                      } else if (ue.stringValue !== undefined) {
+                        nextCell.value = ue.stringValue;
+                      } else if (ue.numberValue !== undefined) {
+                        nextCell.value = ue.numberValue;
+                      } else if (ue.boolValue !== undefined) {
+                        nextCell.value = ue.boolValue;
+                      } else if (ue.formulaValue !== undefined) {
+                        nextCell.value = ue.formulaValue;
+                      }
+                    }
+                    if (fields.has('userEnteredFormat')) {
+                      nextCell.userEnteredFormat = incoming.userEnteredFormat
+                        ? structuredClone(incoming.userEnteredFormat)
+                        : undefined;
+                    }
+                    targetRow[absCol] = nextCell;
+                  }
+                }
+              } else if (req.updateNamedRange) {
+                const updated = req.updateNamedRange.namedRange!;
+                const existing = sim.namedRanges.find(
+                  (nr) => nr.namedRangeId === updated.namedRangeId || nr.name === updated.name
+                );
+                if (existing && updated.range) {
+                  existing.range = {
+                    sheetId: updated.range.sheetId ?? existing.range.sheetId,
+                    startRowIndex: updated.range.startRowIndex ?? existing.range.startRowIndex,
+                    endRowIndex: updated.range.endRowIndex ?? existing.range.endRowIndex,
+                    startColumnIndex: updated.range.startColumnIndex ?? existing.range.startColumnIndex,
+                    endColumnIndex: updated.range.endColumnIndex ?? existing.range.endColumnIndex,
+                  };
+                }
+              }
+            }
+            return { data: {} };
+          }),
+        },
+      } as unknown as sheets_v4.Sheets;
+    }
+
+    function createBaseMultiRangeSim(): MultiSheetSim {
+      return {
+        spreadsheetId: 'sheet-multi-361',
+        sheets: [
+          {
+            sheetId: 101,
+            title: 'Submittal Arch',
+            grid: [
+              [],
+              [],
+              [{ value: 'Status' }, { value: 'Section' }, { value: 'Number' }, { value: 'Contact' }],
+              [{ value: 'Formula Row' }, { value: '' }, { value: '' }, { value: '' }],
+              [{ value: '<--->' }],
+              [{ value: '' }],
+              [{ value: '<--->' }],
+            ],
+          },
+          {
+            sheetId: 103,
+            title: '_Config Submittal Arch',
+            grid: [
+              // Row 0: Headers for Statuses (A), Contacts (C:E), Actions (G:J)
+              [
+                { value: 'Status' },
+                { value: '' },
+                { value: 'Contact' },
+                { value: 'Name' },
+                { value: 'Contact Type' },
+                { value: '' },
+                { value: 'Action' },
+                { value: 'Name' },
+                { value: 'Suffix' },
+                { value: 'Order' },
+              ],
+              // Row 1
+              [
+                { value: 'Open' },
+                { value: '' },
+                { value: 'INC' },
+                { value: 'INC Architecture and Design' },
+                { value: 'INC' },
+                { value: '' },
+                { value: 'REC' },
+                { value: 'Received' },
+                { value: '' },
+                { value: '1' },
+              ],
+              // Row 2
+              [
+                { value: 'Closed' },
+                { value: '' },
+                { value: 'ACME' },
+                { value: '' },
+                { value: '' },
+                { value: '' },
+                { value: '---' },
+                { value: '' },
+                { value: '' },
+                { value: '' },
+              ],
+              // Row 3
+              [
+                { value: '---' },
+                { value: '' },
+                { value: '---' },
+                { value: '' },
+                { value: '' },
+                { value: '' },
+                { value: '' },
+              ],
+            ],
+          },
+        ],
+        namedRanges: [
+          {
+            namedRangeId: 'nr-log',
+            name: 'Log_Submittal_Arch',
+            range: { sheetId: 101, startRowIndex: 2, endRowIndex: 7, startColumnIndex: 0, endColumnIndex: 4 },
+          },
+          {
+            namedRangeId: 'nr-statuses',
+            name: 'Options_Submittal_Arch_Statuses',
+            range: { sheetId: 103, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: 1 },
+          },
+          {
+            namedRangeId: 'nr-val-statuses',
+            name: 'Validation_Submittal_Arch_Statuses',
+            range: { sheetId: 103, startRowIndex: 1, endRowIndex: 3, startColumnIndex: 0, endColumnIndex: 1 },
+          },
+          {
+            namedRangeId: 'nr-contacts',
+            name: 'Options_Submittal_Arch_Contacts',
+            range: { sheetId: 103, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 2, endColumnIndex: 5 },
+          },
+          {
+            namedRangeId: 'nr-val-contacts',
+            name: 'Validation_Submittal_Arch_Contacts',
+            range: { sheetId: 103, startRowIndex: 1, endRowIndex: 3, startColumnIndex: 2, endColumnIndex: 3 },
+          },
+          {
+            namedRangeId: 'nr-actions',
+            name: 'Options_Submittal_Arch_Actions',
+            range: { sheetId: 103, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 6, endColumnIndex: 10 },
+          },
+        ],
+        batchUpdatePayloads: [],
+      };
+    }
+
+    it('shares process-wide KeyedAsyncLock across separate GoogleSheetsClient instances for same spreadsheetId while running different spreadsheetIds concurrently', async () => {
+      const simA = createBaseMultiRangeSim();
+      simA.spreadsheetId = 'shared-lock-sheet-A';
+      const simB = createBaseMultiRangeSim();
+      simB.spreadsheetId = 'shared-lock-sheet-B';
+
+      const baseApiA = createMultiSheetApi(simA);
+      const baseApiB = createMultiSheetApi(simB);
+
+      const events: string[] = [];
+      let releaseFirstBatch!: () => void;
+      const firstBatchGate = new Promise<void>((resolve) => {
+        releaseFirstBatch = resolve;
+      });
+      let firstBatchEntered!: () => void;
+      const firstBatchEnteredPromise = new Promise<void>((resolve) => {
+        firstBatchEntered = resolve;
+      });
+
+      type MockAsyncFn = (params: unknown) => Promise<unknown>;
+      const origBatchUpdateA = (
+        baseApiA.spreadsheets.batchUpdate as ReturnType<typeof vi.fn<MockAsyncFn>>
+      ).getMockImplementation()!;
+      let aCallCount = 0;
+      (baseApiA.spreadsheets.batchUpdate as ReturnType<typeof vi.fn<MockAsyncFn>>).mockImplementation(
+        async (params) => {
+          aCallCount++;
+          events.push(`A${aCallCount}:batchStart`);
+          if (aCallCount === 1) {
+            firstBatchEntered();
+            await firstBatchGate;
+          }
+          const res = await origBatchUpdateA(params);
+          events.push(`A${aCallCount}:batchEnd`);
+          return res;
+        }
+      );
+
+      const origGetA = (
+        baseApiA.spreadsheets.get as ReturnType<typeof vi.fn<MockAsyncFn>>
+      ).getMockImplementation()!;
+      let getCountA = 0;
+      (baseApiA.spreadsheets.get as ReturnType<typeof vi.fn<MockAsyncFn>>).mockImplementation(
+        async (params) => {
+          getCountA++;
+          events.push(`A${getCountA}:get`);
+          return origGetA(params);
+        }
+      );
+
+      const origBatchUpdateB = (
+        baseApiB.spreadsheets.batchUpdate as ReturnType<typeof vi.fn<MockAsyncFn>>
+      ).getMockImplementation()!;
+      (baseApiB.spreadsheets.batchUpdate as ReturnType<typeof vi.fn<MockAsyncFn>>).mockImplementation(
+        async (params) => {
+          events.push('B:batch');
+          return origBatchUpdateB(params);
+        }
+      );
+
+      // Two separate GoogleSheetsClient instances (like per-request OAuth clients)
+      const client1 = new GoogleSheetsClient({ sheets: baseApiA });
+      const client2 = new GoogleSheetsClient({ sheets: baseApiA });
+      const clientB = new GoogleSheetsClient({ sheets: baseApiB });
+
+      const targetA: PositiveTableTarget = {
+        spreadsheetId: 'shared-lock-sheet-A',
+        sheetName: 'Submittal Arch',
+        rangeName: 'Log_Submittal_Arch',
+        extentMarker: '<--->',
+        groupDividerMarker: '---',
+      };
+      const targetB: PositiveTableTarget = {
+        ...targetA,
+        spreadsheetId: 'shared-lock-sheet-B',
+      };
+
+      const p1 = client1.insertIntoGroupedList({
+        target: targetA,
+        rowData: { Status: 'Open', Section: '071200', Number: '001', Contact: 'First' },
+      });
+
+      await firstBatchEnteredPromise;
+
+      const p2 = client2.insertIntoGroupedList({
+        target: targetA,
+        rowData: { Status: 'Open', Section: '071200', Number: '002', Contact: 'Second' },
+      });
+      const pB = clientB.insertIntoGroupedList({
+        target: targetB,
+        rowData: { Status: 'Open', Section: '071200', Number: '003', Contact: 'Other' },
+      });
+
+      // Different spreadsheetId (B) must finish without waiting for A1
+      await pB;
+      expect(events).toContain('B:batch');
+      expect(events).not.toContain('A2:get');
+
+      releaseFirstBatch();
+      await Promise.all([p1, p2]);
+
+      const idxA1End = events.indexOf('A1:batchEnd');
+      const idxA2Get = events.indexOf('A2:get');
+      expect(idxA1End).toBeGreaterThan(-1);
+      expect(idxA2Get).toBeGreaterThan(idxA1End);
+    });
+
+    it('inserts new literal stringValue rows above "---" via column-scoped insertRange, extends Validation_*, leaves neighboring tables & unmapped columns untouched, and executes in 1 atomic batchUpdate (+0 extra HTTP calls)', async () => {
+      const sim = createBaseMultiRangeSim();
+      const api = createMultiSheetApi(sim);
+      const client = new GoogleSheetsClient({ sheets: api });
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: sim.spreadsheetId,
+          sheetName: 'Submittal Arch',
+          rangeName: 'Log_Submittal_Arch',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        rowData: {
+          Status: 'Open',
+          Section: '071200',
+          Number: '001',
+          Contact: '=HYPER(1)',
+        },
+        optionWrites: [
+          {
+            sheetName: '_Config Submittal Arch',
+            rangeName: 'Options_Submittal_Arch_Contacts',
+            validationRangeName: 'Validation_Submittal_Arch_Contacts',
+            endMarker: '---',
+            columns: { Contact: 'key', Name: 'name' },
+            items: [
+              // Formula-like text must be written strictly as stringValue literal
+              { key: '=HYPER(1)', values: { key: '=HYPER(1)', name: '=HYPER(1)' } },
+              // Same display name as another key must NOT be deduplicated (key-only match)
+              { key: 'NEWKEY', values: { key: 'NEWKEY', name: 'INC Architecture and Design' } },
+            ],
+          },
+        ],
+      });
+
+      // +0 extra HTTP calls: 1 spreadsheets.get, 1 values.batchGet (FORMATTED_VALUE replacing values.get),
+      // 1 values.batchGet (FORMULA for Log_* Formula Row), 1 batchUpdate
+      expect(api.spreadsheets.get).toHaveBeenCalledTimes(1);
+      expect(api.spreadsheets.values.get).not.toHaveBeenCalled();
+      expect(api.spreadsheets.values.batchGet).toHaveBeenCalledTimes(2);
+      expect(api.spreadsheets.values.batchGet).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ valueRenderOption: 'FORMATTED_VALUE' })
+      );
+      expect(api.spreadsheets.values.batchGet).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ valueRenderOption: 'FORMULA' })
+      );
+      expect(api.spreadsheets.batchUpdate).toHaveBeenCalledTimes(1);
+
+      const batchRequests = sim.batchUpdatePayloads[0].requests;
+      const insertRangeReq = batchRequests.find((r) => r.insertRange !== undefined);
+      expect(insertRangeReq).toEqual({
+        insertRange: {
+          range: {
+            sheetId: 103,
+            startRowIndex: 3,
+            endRowIndex: 5,
+            startColumnIndex: 2,
+            endColumnIndex: 5,
+          },
+          shiftDimension: 'ROWS',
+        },
+      });
+
+      const updateValRangeReq = batchRequests.find((r) => r.updateNamedRange !== undefined);
+      expect(updateValRangeReq?.updateNamedRange?.namedRange?.range).toMatchObject({
+        sheetId: 103,
+        startRowIndex: 1,
+        endRowIndex: 5,
+        startColumnIndex: 2,
+        endColumnIndex: 3,
+      });
+
+      // Verify Contact Type column (col 4) left blank and literal stringValues written
+      const configGrid = sim.sheets[1].grid;
+      expect(configGrid[3].slice(2, 5).map((c) => c.value)).toEqual(['=HYPER(1)', '=HYPER(1)', '']);
+      expect(configGrid[4].slice(2, 5).map((c) => c.value)).toEqual([
+        'NEWKEY',
+        'INC Architecture and Design',
+        '',
+      ]);
+      expect(configGrid[5][2].value).toBe('---');
+
+      // Verify neighboring Statuses (col 0) and Actions (col 6..9) did NOT shift!
+      expect(configGrid[3][0].value).toBe('---');
+      expect(configGrid[2][6].value).toBe('---');
+      expect(configGrid[1][6].value).toBe('REC');
+
+      // Verify stringValue used (never formulaValue) for option cells
+      const optionUpdateCells = batchRequests.find(
+        (r) => r.updateCells?.range?.sheetId === 103
+      )?.updateCells;
+      expect(optionUpdateCells?.rows?.[0]?.values?.[0]?.userEnteredValue).toEqual({
+        stringValue: '=HYPER(1)',
+      });
+    });
+
+    it('matches duplicates by trimmed case-insensitive key only, backfilling blank sibling cells without overwriting non-blank cells', async () => {
+      const sim = createBaseMultiRangeSim();
+      const api = createMultiSheetApi(sim);
+      const client = new GoogleSheetsClient({ sheets: api });
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: sim.spreadsheetId,
+          sheetName: 'Submittal Arch',
+          rangeName: 'Log_Submittal_Arch',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        rowData: { Status: 'Open', Section: '071200', Number: '001', Contact: 'ACME' },
+        optionWrites: [
+          {
+            sheetName: '_Config Submittal Arch',
+            rangeName: 'Options_Submittal_Arch_Contacts',
+            validationRangeName: 'Validation_Submittal_Arch_Contacts',
+            endMarker: '---',
+            columns: { Contact: 'key', Name: 'name' },
+            items: [
+              // '  inc  ' matches 'INC': Name is already 'INC Architecture and Design', must NOT overwrite!
+              { key: '  inc  ', values: { key: 'inc', name: 'Attempted Overwrite' } },
+              // ' acme ' matches 'ACME': Name cell is blank, MUST backfill ONLY Name cell!
+              { key: ' acme ', values: { key: 'acme', name: 'Acme Builders' } },
+            ],
+          },
+        ],
+      });
+
+      const batchRequests = sim.batchUpdatePayloads[0].requests;
+      // No new rows inserted -> no insertRange and no updateNamedRange
+      expect(batchRequests.some((r) => r.insertRange !== undefined)).toBe(false);
+      expect(batchRequests.some((r) => r.updateNamedRange !== undefined)).toBe(false);
+
+      const configGrid = sim.sheets[1].grid;
+      // INC untouched
+      expect(configGrid[1].slice(2, 5).map((c) => c.value)).toEqual([
+        'INC',
+        'INC Architecture and Design',
+        'INC',
+      ]);
+      // ACME key casing preserved, Name backfilled, Contact Type left blank
+      expect(configGrid[2].slice(2, 5).map((c) => c.value)).toEqual(['ACME', 'Acme Builders', '']);
+    });
+
+    it('fails fast with config_error before batchUpdate if any target option table lacks "---"', async () => {
+      const sim = createBaseMultiRangeSim();
+      // Remove '---' from Contacts table
+      sim.sheets[1].grid[3][2] = { value: '' };
+      const api = createMultiSheetApi(sim);
+      const client = new GoogleSheetsClient({ sheets: api });
+
+      await expect(
+        client.insertIntoGroupedList({
+          target: {
+            spreadsheetId: sim.spreadsheetId,
+            sheetName: 'Submittal Arch',
+            rangeName: 'Log_Submittal_Arch',
+            extentMarker: '<--->',
+            groupDividerMarker: '---',
+          },
+          rowData: { Status: 'Open', Section: '071200', Number: '001', Contact: 'NewCo' },
+          optionWrites: [
+            {
+              sheetName: '_Config Submittal Arch',
+              rangeName: 'Options_Submittal_Arch_Contacts',
+              endMarker: '---',
+              columns: { Contact: 'key', Name: 'name' },
+              items: [{ key: 'NewCo', values: { key: 'NewCo', name: 'NewCo' } }],
+            },
+          ],
+        })
+      ).rejects.toThrow(/config_error.*---/i);
+
+      expect(api.spreadsheets.batchUpdate).not.toHaveBeenCalled();
+    });
+
+    it('copies data-row cell formatting from templateSpreadsheetId when inserting into an empty option table (no data row above "---")', async () => {
+      const sim = createBaseMultiRangeSim();
+      // Make Contacts table empty: Row 0 = headers, Row 1 = '---'
+      sim.sheets[1].grid[1][2] = { value: '---' };
+      sim.sheets[1].grid[1][3] = { value: '' };
+      sim.sheets[1].grid[1][4] = { value: '' };
+      sim.sheets[1].grid[2][2] = { value: '' };
+      sim.sheets[1].grid[2][3] = { value: '' };
+      sim.sheets[1].grid[2][4] = { value: '' };
+      sim.sheets[1].grid[3][2] = { value: '' };
+      const contactsNr = sim.namedRanges.find((nr) => nr.name === 'Options_Submittal_Arch_Contacts')!;
+      contactsNr.range.endRowIndex = 2;
+      const valContactsNr = sim.namedRanges.find((nr) => nr.name === 'Validation_Submittal_Arch_Contacts')!;
+      valContactsNr.range = { sheetId: 103, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 2, endColumnIndex: 3 };
+
+      const templateFormat0: sheets_v4.Schema$CellFormat = {
+        backgroundColor: { red: 0.95, green: 0.95, blue: 0.95 },
+        textFormat: { fontFamily: 'Roboto', fontSize: 9, bold: false },
+      };
+      const templateFormat1: sheets_v4.Schema$CellFormat = {
+        backgroundColor: { red: 1, green: 1, blue: 1 },
+        textFormat: { fontFamily: 'Roboto', fontSize: 9, italic: true },
+      };
+      const templateFormat2: sheets_v4.Schema$CellFormat = {
+        backgroundColor: { red: 0.98, green: 0.98, blue: 0.98 },
+        textFormat: { fontFamily: 'Roboto', fontSize: 9 },
+      };
+
+      const templateSim: MultiSheetSim = {
+        spreadsheetId: 'tmpl-361',
+        sheets: [
+          {
+            sheetId: 903,
+            title: '_Config Submittal Arch',
+            grid: [
+              [{ value: 'Contact' }, { value: 'Name' }, { value: 'Contact Type' }],
+              [
+                { value: 'INC', userEnteredFormat: templateFormat0 },
+                { value: 'INC Architecture and Design', userEnteredFormat: templateFormat1 },
+                { value: 'INC', userEnteredFormat: templateFormat2 },
+              ],
+              [{ value: '---' }, { value: '' }, { value: '' }],
+            ],
+          },
+        ],
+        namedRanges: [
+          {
+            namedRangeId: 'tmpl-nr-contacts',
+            name: 'Options_Submittal_Arch_Contacts',
+            range: { sheetId: 903, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 0, endColumnIndex: 3 },
+          },
+        ],
+        batchUpdatePayloads: [],
+      };
+
+      const api = createMultiSheetApi(sim, templateSim);
+      const client = new GoogleSheetsClient({ sheets: api });
+
+      await client.insertIntoGroupedList({
+        target: {
+          spreadsheetId: sim.spreadsheetId,
+          sheetName: 'Submittal Arch',
+          rangeName: 'Log_Submittal_Arch',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        rowData: { Status: 'Open', Section: '071200', Number: '001', Contact: 'Solo' },
+        templateSpreadsheetId: 'tmpl-361',
+        optionWrites: [
+          {
+            sheetName: '_Config Submittal Arch',
+            rangeName: 'Options_Submittal_Arch_Contacts',
+            validationRangeName: 'Validation_Submittal_Arch_Contacts',
+            endMarker: '---',
+            columns: { Contact: 'key', Name: 'name' },
+            items: [{ key: 'Solo', values: { key: 'Solo', name: 'Solo' } }],
+          },
+        ],
+      });
+
+      expect(api.spreadsheets.get).toHaveBeenCalledWith(
+        expect.objectContaining({ spreadsheetId: 'tmpl-361', includeGridData: true })
+      );
+
+      const batchRequests = sim.batchUpdatePayloads[0].requests;
+      const optionUpdate = batchRequests.find((r) => r.updateCells?.range?.sheetId === 103)?.updateCells;
+      expect(optionUpdate?.fields).toBe('userEnteredValue,userEnteredFormat');
+      expect(optionUpdate?.rows?.[0]?.values?.[0]).toEqual({
+        userEnteredValue: { stringValue: 'Solo' },
+        userEnteredFormat: templateFormat0,
+      });
+      expect(optionUpdate?.rows?.[0]?.values?.[1]).toEqual({
+        userEnteredValue: { stringValue: 'Solo' },
+        userEnteredFormat: templateFormat1,
+      });
+      // Unmapped Contact Type cell gets template formatting without writing a value
+      expect(optionUpdate?.rows?.[0]?.values?.[2]).toEqual({
+        userEnteredFormat: templateFormat2,
+      });
+
+      const configGrid = sim.sheets[1].grid;
+      expect(configGrid[1].slice(2, 5).map((c) => c.value)).toEqual(['Solo', 'Solo', '']);
+      expect(configGrid[2][2].value).toBe('---');
+      expect(valContactsNr.range).toMatchObject({ startRowIndex: 1, endRowIndex: 2 });
+    });
+  });
 });

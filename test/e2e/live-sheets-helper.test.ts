@@ -5,11 +5,16 @@ import type { PositiveTableTarget } from '../../src/infrastructure/sheets';
 import {
   SHEET_ERROR_TOKENS,
   appendRawPositiveTableRows,
+  clearOptionTableToEmpty,
   ensureClearedPositiveTable,
   findCleanDividerViolations,
   findSheetErrorTokens,
+  findSideBySideTableShiftViolations,
   inspectPositiveTableLayout,
   partialHydrationRowToCellInputs,
+  readNamedRangesFormattedValues,
+  readOptionTableGridFormats,
+  snapshotNamedRanges,
 } from './utils/live-sheets-helper';
 
 function createMockSheetsApi(params: {
@@ -1065,6 +1070,362 @@ describe('live-sheets-helper', () => {
 
       expect(batchUpdate).toHaveBeenCalledTimes(3);
       expect(insertedRowNumbers).toEqual([7]);
+    });
+  });
+
+  describe('option-table helpers for Ticket #363', () => {
+    it('snapshots requested NamedRanges and batches FORMATTED_VALUE reads', async () => {
+      const batchGet = vi.fn().mockResolvedValue({
+        data: {
+          valueRanges: [
+            { range: "'_Config Submittal Arch'!A1:A6", values: [['Status'], ['Open'], ['---']] },
+            { range: "'_Config Submittal Arch'!H1:J4", values: [['Contact', 'Name'], ['INC', 'INC'], ['---']] },
+          ],
+        },
+      });
+      const getSpreadsheet = vi.fn().mockResolvedValue({
+        data: {
+          sheets: [{ properties: { sheetId: 401, title: '_Config Submittal Arch' } }],
+          namedRanges: [
+            {
+              namedRangeId: 'nr-statuses',
+              name: 'Options_Submittal_Arch_Statuses',
+              range: { sheetId: 401, startRowIndex: 0, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
+            },
+            {
+              namedRangeId: 'nr-contacts',
+              name: 'Options_Submittal_Arch_Contacts',
+              range: { sheetId: 401, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 7, endColumnIndex: 10 },
+            },
+          ],
+        },
+      });
+      const sheetsApi = {
+        spreadsheets: {
+          get: getSpreadsheet,
+          values: { batchGet },
+        },
+      } as unknown as sheets_v4.Sheets;
+
+      const snapshots = await snapshotNamedRanges(sheetsApi, 'sheet-cfg-1', [
+        'Options_Submittal_Arch_Statuses',
+        'Options_Submittal_Arch_Contacts',
+      ]);
+
+      expect(snapshots.Options_Submittal_Arch_Statuses).toEqual({
+        name: 'Options_Submittal_Arch_Statuses',
+        namedRangeId: 'nr-statuses',
+        sheetId: 401,
+        sheetTitle: '_Config Submittal Arch',
+        a1Range: "'_Config Submittal Arch'!A1:A6",
+        gridRange: {
+          sheetId: 401,
+          startRowIndex: 0,
+          endRowIndex: 6,
+          startColumnIndex: 0,
+          endColumnIndex: 1,
+        },
+      });
+
+      const values = await readNamedRangesFormattedValues(sheetsApi, 'sheet-cfg-1', snapshots);
+      expect(batchGet).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-cfg-1',
+        ranges: ["'_Config Submittal Arch'!A1:A6", "'_Config Submittal Arch'!H1:J4"],
+        valueRenderOption: 'FORMATTED_VALUE',
+      });
+      expect(values.Options_Submittal_Arch_Statuses).toEqual([['Status'], ['Open'], ['---']]);
+      expect(values.Options_Submittal_Arch_Contacts).toEqual([['Contact', 'Name'], ['INC', 'INC'], ['---']]);
+    });
+
+    it('detects side-by-side _Config table range shifts or value mutations', () => {
+      const baseSnap = {
+        Options_Submittal_Arch_Statuses: {
+          name: 'Options_Submittal_Arch_Statuses',
+          namedRangeId: 'nr-1',
+          sheetId: 401,
+          sheetTitle: '_Config Submittal Arch',
+          a1Range: "'_Config Submittal Arch'!A1:A4",
+          gridRange: { sheetId: 401, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: 1 },
+        },
+      };
+      const baseVals = {
+        Options_Submittal_Arch_Statuses: [['Status'], ['Open'], ['Closed'], ['---']],
+      };
+
+      expect(
+        findSideBySideTableShiftViolations({
+          beforeSnapshots: baseSnap,
+          afterSnapshots: structuredClone(baseSnap),
+          beforeValues: baseVals,
+          afterValues: structuredClone(baseVals),
+          rangeNames: ['Options_Submittal_Arch_Statuses'],
+        })
+      ).toEqual([]);
+
+      const shiftedSnap = structuredClone(baseSnap);
+      shiftedSnap.Options_Submittal_Arch_Statuses.gridRange.endRowIndex = 5;
+      const mutatedVals = {
+        Options_Submittal_Arch_Statuses: [['Status'], ['Open'], ['---']],
+      };
+
+      const violations = findSideBySideTableShiftViolations({
+        beforeSnapshots: baseSnap,
+        afterSnapshots: shiftedSnap,
+        beforeValues: baseVals,
+        afterValues: mutatedVals,
+        rangeNames: ['Options_Submittal_Arch_Statuses'],
+      });
+      expect(violations).toHaveLength(2);
+      expect(violations[0]).toContain('Options_Submittal_Arch_Statuses');
+    });
+
+    it('clears an option table to 1 unformatted blank row + "---" using range-scoped deleteRange without shifting side-by-side tables', async () => {
+      const getSpreadsheet = vi.fn().mockResolvedValue({
+        data: {
+          sheets: [{ properties: { sheetId: 401, title: '_Config Submittal Arch' } }],
+          namedRanges: [
+            {
+              namedRangeId: 'nr-contacts',
+              name: 'Options_Submittal_Arch_Contacts',
+              range: { sheetId: 401, startRowIndex: 0, endRowIndex: 5, startColumnIndex: 7, endColumnIndex: 10 },
+            },
+            {
+              namedRangeId: 'nr-val-contacts',
+              name: 'Validation_Submittal_Arch_Contacts',
+              range: { sheetId: 401, startRowIndex: 1, endRowIndex: 4, startColumnIndex: 7, endColumnIndex: 8 },
+            },
+          ],
+        },
+      });
+      const valuesGet = vi.fn().mockResolvedValue({
+        data: {
+          values: [
+            ['Contact', 'Name', 'Contact Type'],
+            ['INC', 'INC Architecture', 'INC'],
+            ['PMG', 'Project Management', 'Consultant'],
+            ['FXC', 'FXCollaborative', 'Architect'],
+            ['---'],
+          ],
+        },
+      });
+      const batchUpdate = vi.fn().mockResolvedValue({ data: {} });
+      const sheetsApi = {
+        spreadsheets: {
+          get: getSpreadsheet,
+          values: { get: valuesGet },
+          batchUpdate,
+        },
+      } as unknown as sheets_v4.Sheets;
+
+      const result = await clearOptionTableToEmpty(sheetsApi, {
+        spreadsheetId: 'sheet-cfg-1',
+        sheetName: '_Config Submittal Arch',
+        rangeName: 'Options_Submittal_Arch_Contacts',
+        validationRangeName: 'Validation_Submittal_Arch_Contacts',
+        endMarker: '---',
+      });
+
+      expect(result).toEqual({
+        cleared: true,
+        blankRowIndex: 1,
+        absTerminatorRowIndex: 2,
+      });
+      expect(batchUpdate).toHaveBeenCalledTimes(1);
+      expect(batchUpdate.mock.calls[0][0].requestBody.requests).toEqual([
+        {
+          updateCells: {
+            range: {
+              sheetId: 401,
+              startRowIndex: 1,
+              endRowIndex: 2,
+              startColumnIndex: 7,
+              endColumnIndex: 10,
+            },
+            rows: [{ values: [{}, {}, {}] }],
+            fields: 'userEnteredValue,userEnteredFormat',
+          },
+        },
+        {
+          deleteRange: {
+            range: {
+              sheetId: 401,
+              startRowIndex: 2,
+              endRowIndex: 4,
+              startColumnIndex: 7,
+              endColumnIndex: 10,
+            },
+            shiftDimension: 'ROWS',
+          },
+        },
+        {
+          updateNamedRange: {
+            namedRange: {
+              namedRangeId: 'nr-val-contacts',
+              name: 'Validation_Submittal_Arch_Contacts',
+              range: {
+                sheetId: 401,
+                startRowIndex: 1,
+                endRowIndex: 2,
+                startColumnIndex: 7,
+                endColumnIndex: 8,
+              },
+            },
+            fields: 'range',
+          },
+        },
+      ]);
+    });
+
+    it('reads option-table grid cell formats between header and endMarker', async () => {
+      const tmplFmt = { textFormat: { fontFamily: 'Inter', fontSize: 10 } };
+      const getSpreadsheet = vi.fn().mockImplementation(async (req: { includeGridData?: boolean }) => {
+        if (!req.includeGridData) {
+          return {
+            data: {
+              sheets: [{ properties: { sheetId: 401, title: '_Config Submittal Arch' } }],
+              namedRanges: [
+                {
+                  namedRangeId: 'nr-contacts',
+                  name: 'Options_Submittal_Arch_Contacts',
+                  range: { sheetId: 401, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 7, endColumnIndex: 10 },
+                },
+              ],
+            },
+          };
+        }
+        return {
+          data: {
+            sheets: [
+              {
+                properties: { sheetId: 401, title: '_Config Submittal Arch' },
+                data: [
+                  {
+                    startRow: 0,
+                    startColumn: 7,
+                    rowData: [
+                      { values: [{ formattedValue: 'Contact' }, { formattedValue: 'Name' }, { formattedValue: 'Contact Type' }] },
+                      { values: [{ formattedValue: '' }, { formattedValue: '' }, { formattedValue: '' }] },
+                      {
+                        values: [
+                          { formattedValue: 'T363C', userEnteredFormat: tmplFmt },
+                          { formattedValue: 'T363C', userEnteredFormat: tmplFmt },
+                          { formattedValue: '', userEnteredFormat: tmplFmt },
+                        ],
+                      },
+                      { values: [{ formattedValue: '---' }] },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      });
+      const sheetsApi = {
+        spreadsheets: {
+          get: getSpreadsheet,
+        },
+      } as unknown as sheets_v4.Sheets;
+
+      const gridInfo = await readOptionTableGridFormats(sheetsApi, {
+        spreadsheetId: 'sheet-cfg-1',
+        sheetName: '_Config Submittal Arch',
+        rangeName: 'Options_Submittal_Arch_Contacts',
+        endMarker: '---',
+      });
+
+      expect(gridInfo.headerRow).toEqual(['Contact', 'Name', 'Contact Type']);
+      expect(gridInfo.dataRows).toHaveLength(2);
+      expect(gridInfo.dataRows[0].absRowIndex).toBe(1);
+      expect(gridInfo.dataRows[0].cells[0].userEnteredFormat).toBeUndefined();
+      expect(gridInfo.dataRows[1].absRowIndex).toBe(2);
+      expect(gridInfo.dataRows[1].cells).toEqual([
+        { formattedValue: 'T363C', userEnteredFormat: tmplFmt },
+        { formattedValue: 'T363C', userEnteredFormat: tmplFmt },
+        { formattedValue: '', userEnteredFormat: tmplFmt },
+      ]);
+    });
+
+    it('handles single-row and already-empty tables and rejects missing endMarker in clearOptionTableToEmpty', async () => {
+      const makeApi = (values: string[][]) => {
+        const batchUpdate = vi.fn().mockResolvedValue({ data: {} });
+        const sheetsApi = {
+          spreadsheets: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                sheets: [{ properties: { sheetId: 401, title: '_Config Submittal Arch' } }],
+                namedRanges: [
+                  {
+                    namedRangeId: 'nr-contacts',
+                    name: 'Options_Submittal_Arch_Contacts',
+                    range: {
+                      sheetId: 401,
+                      startRowIndex: 0,
+                      endRowIndex: values.length,
+                      startColumnIndex: 7,
+                      endColumnIndex: 10,
+                    },
+                  },
+                ],
+              },
+            }),
+            values: {
+              get: vi.fn().mockResolvedValue({ data: { values } }),
+            },
+            batchUpdate,
+          },
+        } as unknown as sheets_v4.Sheets;
+        return { sheetsApi, batchUpdate };
+      };
+
+      const singleRow = makeApi([
+        ['Contact', 'Name', 'Contact Type'],
+        ['INC', 'INC Architecture', 'INC'],
+        ['---'],
+      ]);
+      const singleRes = await clearOptionTableToEmpty(singleRow.sheetsApi, {
+        spreadsheetId: 'sheet-cfg-1',
+        sheetName: '_Config Submittal Arch',
+        rangeName: 'Options_Submittal_Arch_Contacts',
+        endMarker: '---',
+      });
+      expect(singleRes).toEqual({
+        cleared: true,
+        blankRowIndex: 1,
+        absTerminatorRowIndex: 2,
+      });
+      expect(singleRow.batchUpdate).toHaveBeenCalledTimes(1);
+      expect(singleRow.batchUpdate.mock.calls[0][0].requestBody.requests).toHaveLength(1);
+
+      const alreadyEmpty = makeApi([
+        ['Contact', 'Name', 'Contact Type'],
+        ['---'],
+      ]);
+      const emptyRes = await clearOptionTableToEmpty(alreadyEmpty.sheetsApi, {
+        spreadsheetId: 'sheet-cfg-1',
+        sheetName: '_Config Submittal Arch',
+        rangeName: 'Options_Submittal_Arch_Contacts',
+        endMarker: '---',
+      });
+      expect(emptyRes).toEqual({
+        cleared: false,
+        blankRowIndex: 1,
+        absTerminatorRowIndex: 1,
+      });
+      expect(alreadyEmpty.batchUpdate).not.toHaveBeenCalled();
+
+      const missingMarker = makeApi([
+        ['Contact', 'Name', 'Contact Type'],
+        ['INC', 'INC Architecture', 'INC'],
+      ]);
+      await expect(
+        clearOptionTableToEmpty(missingMarker.sheetsApi, {
+          spreadsheetId: 'sheet-cfg-1',
+          sheetName: '_Config Submittal Arch',
+          rangeName: 'Options_Submittal_Arch_Contacts',
+          endMarker: '---',
+        })
+      ).rejects.toThrow(/missing endMarker "---"/);
     });
   });
 });

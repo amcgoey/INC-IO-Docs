@@ -826,7 +826,7 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
     expect(view.header).toBeUndefined();
   });
 
-  it('dispatches queries for fields with dynamicConfig to OptionsFetcherPort and populates dynamicOptions in adapterContext', async () => {
+  it('dispatches queries for fields referencing optionSources to OptionsFetcherPort and populates dynamicOptions in adapterContext', async () => {
     const docSchemaWithDynamic = {
       fields: [
         {
@@ -837,11 +837,6 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
             key: 'name',
             name: 'name',
             allowUserInput: true,
-            dynamicConfig: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: '1 Admin/Communication',
-            },
           },
         },
         {
@@ -856,6 +851,13 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
       ],
       options: {
         staticOptions: [{ val: 's1', text: 'Static 1' }],
+      },
+      optionSources: {
+        contactFolders: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: '1 Admin/Communication',
+        },
       },
     };
 
@@ -894,7 +896,7 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
       [
         {
           sourceKey: 'contactFolders',
-          config: {
+          optionSource: {
             provider: 'google_drive',
             method: 'list_folders',
             relativePath: '1 Admin/Communication',
@@ -903,6 +905,7 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
       ],
       {
         spaceId: 'space-folder-123',
+        documentTypeKey: 'communication-project',
         formData: { existingField: 'someValue' },
       }
     );
@@ -929,14 +932,16 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
             key: 'name',
             name: 'name',
             allowUserInput: true,
-            dynamicConfig: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: '1 Admin/Communication',
-            },
           },
         },
       ],
+      optionSources: {
+        contactFolders: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: '1 Admin/Communication',
+        },
+      },
     };
 
     const manifestPort = createMockManifestPort({
@@ -969,14 +974,16 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
       [
         {
           sourceKey: 'contactFolders',
-          config: {
+          optionSource: {
             provider: 'google_drive',
             method: 'list_folders',
             relativePath: '1 Admin/Communication',
           },
         },
       ],
-      {}
+      {
+        documentTypeKey: 'communication-project',
+      }
     );
 
     expect(capturedContext?.dynamicOptions).toEqual({
@@ -992,11 +999,6 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
           type: 'string',
           options: {
             source: 'contactFolders',
-            dynamicConfig: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: 'Communications',
-            },
           },
         },
         {
@@ -1004,11 +1006,6 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
           type: 'string',
           options: {
             source: 'secondaryContactFolders',
-            dynamicConfig: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: 'Communications',
-            },
           },
         },
         {
@@ -1016,11 +1013,6 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
           type: 'string',
           options: {
             source: 'vendorFolders',
-            dynamicConfig: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: 'Vendors',
-            },
           },
         },
         {
@@ -1028,14 +1020,31 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
           type: 'string',
           options: {
             source: 'hiddenFolders',
-            dynamicConfig: {
-              provider: 'google_drive',
-              method: 'list_folders',
-              relativePath: 'HiddenPath',
-            },
           },
         },
       ],
+      optionSources: {
+        contactFolders: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: 'Communications',
+        },
+        secondaryContactFolders: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: 'Communications',
+        },
+        vendorFolders: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: 'Vendors',
+        },
+        hiddenFolders: {
+          provider: 'google_drive',
+          method: 'list_folders',
+          relativePath: 'HiddenPath',
+        },
+      },
     };
 
     const multiDynamicUiSchema = {
@@ -1124,6 +1133,76 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
       });
 
       expect(capturedContext?.statusMessages).toBeUndefined();
+    });
+
+    it('formats source-specific statusMessages for document_log missing_log, config_error, and timeout without falling back to "root"', async () => {
+      const docLogDocSchema = {
+        fields: [
+          { key: 'status', type: 'string', options: { source: 'statuses', key: 'key' } },
+          { key: 'action', type: 'string', options: { source: 'actions', key: 'key', name: 'name' } },
+        ],
+        optionSources: {
+          statuses: { provider: 'document_log', properties: ['key'] },
+          actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
+        },
+      };
+      const docLogUiSchema = {
+        layout: ['status', 'action'],
+        fields: {
+          status: { widget: 'selectionInput', label: 'Status' },
+          action: { widget: 'selectionInput', label: 'Action' },
+        },
+      };
+
+      const manifestPort = createMockManifestPort({
+        getUiSchema: vi.fn().mockResolvedValue(docLogUiSchema),
+        getDocumentSchema: vi.fn().mockResolvedValue(docLogDocSchema),
+      });
+
+      const mockFetcher: OptionsFetcherPort = {
+        fetchOptions: vi
+          .fn()
+          .mockResolvedValueOnce({
+            statuses: { status: 'missing_log', items: [], targetPath: '1 Admin' },
+            actions: { status: 'missing_log', items: [], targetPath: '1 Admin' },
+          })
+          .mockResolvedValueOnce({
+            statuses: { status: 'ready', items: [{ text: 'Open', value: 'Open' }] },
+            actions: {
+              status: 'config_error',
+              items: [],
+              errorMessage: 'Named range "Options_Submittal_Arch_Actions" not found.',
+            },
+          })
+          .mockResolvedValueOnce({
+            statuses: { status: 'timeout', items: [] },
+            actions: { status: 'timeout', items: [] },
+          }),
+      };
+
+      let capturedContext: UiViewAdapterContext | undefined;
+      const adapter = createMockAdapter('doc-log-hints', undefined, async (ctx) => {
+        capturedContext = ctx;
+        return { id: 'doc-log-hints', sections: [] };
+      });
+
+      const service = new SchemaDrivenUiService(manifestPort, [adapter], mockFetcher);
+
+      await service.generateView({ viewId: 'doc-log-hints', documentTypeKey: 'submittal-arch' });
+      expect(capturedContext?.statusMessages).toEqual([
+        'Document Log not found in the selected Document Space. Click Copy Log to create one.',
+      ]);
+
+      await service.generateView({ viewId: 'doc-log-hints', documentTypeKey: 'submittal-arch' });
+      expect(capturedContext?.statusMessages).toEqual([
+        'Document Log option table configuration error for "Action" (actions): Named range "Options_Submittal_Arch_Actions" not found.',
+      ]);
+
+      await service.generateView({ viewId: 'doc-log-hints', documentTypeKey: 'submittal-arch' });
+      expect(capturedContext?.statusMessages).toEqual([
+        'Timed out loading Document Log options for "Status" (statuses).',
+        'Timed out loading Document Log options for "Action" (actions).',
+      ]);
     });
   });
 
@@ -1244,6 +1323,33 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
         service.generateView({ viewId: 'with-keys', documentTypeKey: 'nonexistent' })
       ).rejects.toThrow(/UiSchema not found/i);
       expect(uiContextQuery.queryContext).not.toHaveBeenCalled();
+    });
+
+    it('accepts explicit lockedFields in GenerateViewRequest and passes it through to adapter.composeView', async () => {
+      const manifestPort = createMockManifestPort();
+      let capturedContext: UiViewAdapterContext | undefined;
+      const adapter: UiViewSchemaAdapterPort = {
+        viewId: 'locked-view',
+        composeView: vi.fn(async (ctx) => {
+          capturedContext = ctx;
+          return {
+            id: 'locked-view',
+            sections: [
+              {
+                widgets: [{ decoratedText: { topLabel: 'Spec Title', text: ctx.lockedFields?.specTitle ?? '' } }],
+              },
+            ],
+          };
+        }),
+      };
+
+      const service = new SchemaDrivenUiService(manifestPort, [adapter]);
+      await service.generateView({
+        viewId: 'locked-view',
+        lockedFields: { specTitle: 'HOOK' },
+      });
+
+      expect(capturedContext?.lockedFields).toEqual({ specTitle: 'HOOK' });
     });
   });
 });

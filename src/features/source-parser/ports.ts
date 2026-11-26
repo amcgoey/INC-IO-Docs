@@ -91,6 +91,7 @@ export type InferredRoutingResult = Static<typeof InferredRoutingResultSchema>;
 export const ExtractFieldsRequestSchema = Type.Object({
   documentTypeKey: Type.String({ minLength: 1 }),
   spaceId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  selectedLogId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   context: SourceContextSchema,
   existingData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
 });
@@ -404,7 +405,6 @@ export const ParseTargetDocumentFieldOptionsSchema = Type.Object(
     key: Type.String(),
     name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
     allowUserInput: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
-    dynamicConfig: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
   },
   { additionalProperties: false }
 );
@@ -452,6 +452,32 @@ export const ParseTargetDocumentOptionTupleSchema = Type.Intersect([
 ]);
 export type ParseTargetDocumentOptionTuple = Static<typeof ParseTargetDocumentOptionTupleSchema>;
 
+export const ParseTargetDocumentLogOptionSourceSchema = Type.Object(
+  {
+    provider: Type.Literal('document_log'),
+    properties: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  },
+  { additionalProperties: false }
+);
+
+export const ParseTargetGoogleDriveOptionSourceSchema = Type.Object(
+  {
+    provider: Type.Literal('google_drive'),
+    method: Type.Optional(Type.Union([Type.Literal('list_folders'), Type.Undefined()])),
+    relativePath: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])),
+    properties: Type.Optional(
+      Type.Union([Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }), Type.Undefined()])
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export const ParseTargetOptionSourceSchema = Type.Union([
+  ParseTargetDocumentLogOptionSourceSchema,
+  ParseTargetGoogleDriveOptionSourceSchema,
+]);
+export type ParseTargetOptionSource = Static<typeof ParseTargetOptionSourceSchema>;
+
 export const ParseTargetDocumentSchemaSchema = Type.Object(
   {
     fields: Type.Array(ParseTargetDocumentFieldSchema),
@@ -459,6 +485,12 @@ export const ParseTargetDocumentSchemaSchema = Type.Object(
     options: Type.Optional(
       Type.Union([
         Type.Record(Type.String(), Type.Array(ParseTargetDocumentOptionTupleSchema)),
+        Type.Undefined(),
+      ])
+    ),
+    optionSources: Type.Optional(
+      Type.Union([
+        Type.Record(Type.String({ minLength: 1 }), ParseTargetOptionSourceSchema),
         Type.Undefined(),
       ])
     ),
@@ -538,7 +570,9 @@ export interface FormTemplateParserPort {
 export interface CanonicalOptionsProviderPort {
   getCanonicalOptions(
     spaceId: string | undefined,
-    field: ParseTargetDocumentField
+    field: ParseTargetDocumentField,
+    documentTypeKey?: string | undefined,
+    selectedLogId?: string | undefined
   ): Promise<ParseTargetDocumentOptionTuple[]>;
 }
 

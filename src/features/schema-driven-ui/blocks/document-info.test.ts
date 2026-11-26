@@ -880,13 +880,15 @@ describe('Document Info Block', () => {
               key: 'name',
               name: 'name',
               allowUserInput: true,
-              dynamicConfig: {
-                provider: 'google_drive',
-                method: 'list_folders',
-              },
             },
           },
         ],
+        optionSources: {
+          contactFolders: {
+            provider: 'google_drive',
+            method: 'list_folders',
+          },
+        },
       };
 
       const section = buildDocumentInfoSection(schema, undefined, {
@@ -916,14 +918,16 @@ describe('Document Info Block', () => {
               key: 'name',
               name: 'name',
               allowUserInput: true,
-              dynamicConfig: {
-                provider: 'google_drive',
-                method: 'list_folders',
-                relativePath: 'Communications',
-              },
             },
           },
         ],
+        optionSources: {
+          contactFolders: {
+            provider: 'google_drive',
+            method: 'list_folders',
+            relativePath: 'Communications',
+          },
+        },
       };
 
       const dynamicUiSchemaTextInput: UiSchema = {
@@ -1029,6 +1033,53 @@ describe('Document Info Block', () => {
         }
       );
 
+      it('renders Copy Log prompt on missing_log and source-specific hints on config_error and timeout for document_log selectionInput', () => {
+        const docLogSchema: AbstractDataSchema = {
+          fields: [
+            {
+              key: 'action',
+              type: 'string',
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+          ],
+          optionSources: {
+            actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
+          },
+        };
+        const uiSchema: UiSchema = {
+          fields: { action: { widget: 'selectionInput', label: 'Action' } },
+        };
+
+        const missingSection = buildDocumentInfoSection(docLogSchema, uiSchema, {
+          dynamicOptions: {
+            actions: { status: 'missing_log', items: [], targetPath: '1 Admin' },
+          },
+        });
+        expect(missingSection.widgets[0].selectionInput?.items).toEqual([
+          { text: 'Copy Document Log to load options', value: '' },
+        ]);
+
+        const configErrSection = buildDocumentInfoSection(docLogSchema, uiSchema, {
+          dynamicOptions: {
+            actions: {
+              status: 'config_error',
+              items: [],
+              errorMessage: 'Missing "---" terminator',
+            },
+          },
+        });
+        expect(configErrSection.widgets[0]?.selectionInput?.items?.[0]?.text).toContain('actions');
+        expect(configErrSection.widgets[0]?.selectionInput?.items?.[0]?.text).toContain('Missing "---" terminator');
+
+        const timeoutSection = buildDocumentInfoSection(docLogSchema, uiSchema, {
+          dynamicOptions: {
+            actions: { status: 'timeout', items: [] },
+          },
+        });
+        expect(timeoutSection.widgets[0]?.selectionInput?.items?.[0]?.text).toContain('actions');
+        expect(timeoutSection.widgets[0]?.selectionInput?.items?.[0]?.text.toLowerCase()).toContain('timed out');
+      });
+
       it('preserves backward compatibility when dynamicOptions contains raw DynamicOptionItem[] array', () => {
         // Non-empty array -> status ready
         const readySection = buildDocumentInfoSection(dynamicSchema, dynamicUiSchemaTextInput, {
@@ -1130,6 +1181,73 @@ describe('Document Info Block', () => {
       expect(getDocumentInfoWidgetName('contact')).toBe('contact');
       expect(getDocumentInfoWidgetName('contact', undefined)).toBe('contact');
       expect(getDocumentInfoWidgetName('contact', '')).toBe('contact');
+    });
+  });
+
+  describe('lockedFields LinkedField rendering', () => {
+    const ffeSchema: AbstractDataSchema = {
+      fields: [
+        {
+          key: 'specTag',
+          type: 'string',
+          options: { source: 'specs', key: 'key', allowUserInput: true },
+        },
+        {
+          key: 'specTitle',
+          type: 'string',
+          linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+        },
+      ],
+    };
+    const ffeUiSchema: UiSchema = {
+      layout: ['specTag', 'specTitle'],
+      fields: {
+        specTag: { widget: 'textInput', label: 'Spec Tag', onChange: true },
+        specTitle: { widget: 'textInput', label: 'Spec Title' },
+      },
+    };
+
+    it('renders LinkedField as read-only decoratedText (label + derived value) when lockedFields provides a non-blank value', () => {
+      const section = buildDocumentInfoSection(ffeSchema, ffeUiSchema, {
+        documentTypeKey: 'submittal-ffe',
+        formData: { specTag: 'AC102' },
+        lockedFields: { specTitle: 'HOOK' },
+      });
+
+      expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+      expect(section.widgets[0].textInput?.name).toBe('specTag_submittal-ffe');
+      expect(section.widgets[1]).toEqual({
+        decoratedText: {
+          topLabel: 'Spec Title',
+          text: 'HOOK',
+          wrapText: true,
+        },
+      });
+    });
+
+    it('renders LinkedField as editable textInput when lockedFields omits the field or has a blank value', () => {
+      const unlockedSection = buildDocumentInfoSection(ffeSchema, ffeUiSchema, {
+        documentTypeKey: 'submittal-ffe',
+        formData: { specTag: 'XX999', specTitle: 'Custom Title' },
+        lockedFields: {},
+      });
+      expect(unlockedSection.widgets[1].textInput).toMatchObject({
+        name: 'specTitle_submittal-ffe',
+        label: 'Spec Title',
+        value: 'Custom Title',
+      });
+      expect(unlockedSection.widgets[1].decoratedText).toBeUndefined();
+
+      const blankLockedSection = buildDocumentInfoSection(ffeSchema, ffeUiSchema, {
+        documentTypeKey: 'submittal-ffe',
+        formData: { specTag: 'BLANK1' },
+        lockedFields: { specTitle: '   ' },
+      });
+      expect(blankLockedSection.widgets[1].textInput).toMatchObject({
+        name: 'specTitle_submittal-ffe',
+        label: 'Spec Title',
+      });
+      expect(blankLockedSection.widgets[1].decoratedText).toBeUndefined();
     });
   });
 });
