@@ -143,12 +143,66 @@ describe('UI Process Manager Ports & DTOs', () => {
       }
     });
 
-    it('validates notification result', () => {
-      const notification = {
-        type: 'notification',
-        text: 'Document processed successfully',
-      };
-      expect(Value.Check(UiProcessResultSchema, notification)).toBe(true);
+    it('rejects retired notification result and accepts popToRoot and executionOutcome under ExactOptionalPropertyTypes = true (#382)', () => {
+      const prev = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        const retiredNotification = {
+          type: 'notification',
+          text: 'Document processed successfully',
+        };
+        expect(Value.Check(UiProcessResultSchema, retiredNotification)).toBe(false);
+
+        const successRender = {
+          type: 'render',
+          viewId: 'document-success-card',
+          documentTypeKey: 'submittal-arch',
+          spaceId: 'space-1',
+          isUpdateCard: false,
+          popToRoot: undefined,
+          executionOutcome: {
+            success: true,
+            workflowName: 'SubmittalReceived',
+            completedStepCount: 2,
+            failedStepId: undefined,
+            spaceName: 'Harborview Tower',
+            documentData: { title: 'Waterproofing' },
+            stepResults: [
+              {
+                stepId: 'moveOriginal',
+                activityType: 'MOVE_FILE',
+                files: [
+                  {
+                    id: 'file-1',
+                    name: 'Doc.pdf',
+                    parentId: undefined,
+                    parentName: undefined,
+                    parentUri: undefined,
+                    mimeType: undefined,
+                    uri: 'https://drive.google.com/file/d/file-1/view',
+                  },
+                ],
+                notices: undefined,
+              },
+            ],
+            notices: [],
+            logWrite: undefined,
+            errors: [],
+          },
+        };
+        expect(Value.Check(UiProcessRenderResultSchema, successRender)).toBe(true);
+        expect(Value.Check(UiProcessResultSchema, successRender)).toBe(true);
+
+        const startOverRender = {
+          type: 'render',
+          viewId: 'drive-document-process-card',
+          isUpdateCard: true,
+          popToRoot: true,
+        };
+        expect(Value.Check(UiProcessRenderResultSchema, startOverRender)).toBe(true);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prev;
+      }
     });
   });
 

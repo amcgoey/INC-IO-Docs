@@ -716,7 +716,11 @@ describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submi
     });
 
     expect(submitRes.statusCode).toBe(200);
-    expect(submitRes.payload).toContain('processed successfully');
+    const submitBody = JSON.parse(submitRes.payload);
+    expect(submitBody.action?.notification).toBeUndefined();
+    expect(submitBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+      'Submittal Arch Filed'
+    );
     expect(sim.batchUpdates).toHaveLength(1);
 
     const configGrid = sim.sheets[2].grid;
@@ -796,7 +800,11 @@ describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submi
     });
 
     expect(submitRes.statusCode).toBe(200);
-    expect(submitRes.payload).toContain('processed successfully');
+    const submitBody = JSON.parse(submitRes.payload);
+    expect(submitBody.action?.notification).toBeUndefined();
+    expect(submitBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+      'Submittal FF&E Filed'
+    );
     expect(sim.batchUpdates).toHaveLength(1);
 
     const ffeConfig = sim.sheets[3].grid;

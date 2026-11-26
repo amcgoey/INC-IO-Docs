@@ -1729,9 +1729,11 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
       },
     });
     expect(driveSubmitRes.statusCode).toBe(200);
-    expect(JSON.parse(driveSubmitRes.payload)).toEqual({
-      action: { notification: { text: 'Document processed successfully' } },
-    });
+    const driveSubmitBody = JSON.parse(driveSubmitRes.payload);
+    expect(driveSubmitBody.action?.notification).toBeUndefined();
+    expect(driveSubmitBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+      'Submittal Arch Filed'
+    );
     expect(driveLogSearch.isDone()).toBe(true);
     expect(driveCapturedSheets).toHaveLength(1);
     const driveSheetsJson = JSON.stringify(driveCapturedSheets[0]);
@@ -1864,9 +1866,11 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
       },
     });
     expect(gmailSubmitRes.statusCode).toBe(200);
-    expect(JSON.parse(gmailSubmitRes.payload)).toEqual({
-      action: { notification: { text: 'Document processed successfully' } },
-    });
+    const gmailSubmitBody = JSON.parse(gmailSubmitRes.payload);
+    expect(gmailSubmitBody.action?.notification).toBeUndefined();
+    expect(gmailSubmitBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+      'Submittal Arch Filed'
+    );
     expect(gmailLogSearch.isDone()).toBe(true);
     expect(gmailCapturedSheets).toHaveLength(1);
     const gmailSheetsJson = JSON.stringify(gmailCapturedSheets[0]);

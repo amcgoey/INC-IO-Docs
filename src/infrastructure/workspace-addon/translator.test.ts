@@ -2212,4 +2212,27 @@ describe('UiView to GoogleWorkspaceCard Translator (Boundary Seams)', () => {
       ).toThrow('Invalid UiView');
     });
   });
+
+  describe('popToRoot updateCard translation (#382)', () => {
+    it('translates UiView with popToRoot: true into [{ popToRoot: true }, { updateCard }]', () => {
+      const res = translateUiViewToUpdateCardAction(
+        {
+          header: { title: 'INC-IO Engine' },
+          sections: [{ widgets: [{ textParagraph: { text: 'Fresh' } }] }],
+        },
+        undefined,
+        { popToRoot: true }
+      );
+
+      expect(res.action.navigations).toEqual([
+        { popToRoot: true },
+        {
+          updateCard: {
+            header: { title: 'INC-IO Engine' },
+            sections: [{ widgets: [{ textParagraph: { text: 'Fresh' } }] }],
+          },
+        },
+      ]);
+    });
+  });
 });

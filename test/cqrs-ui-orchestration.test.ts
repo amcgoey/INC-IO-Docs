@@ -194,7 +194,7 @@ describe('Integration: CQRS UI Orchestration (Issue 140)', () => {
     expect(updateCard.header?.title).toBe('INC-IO Engine');
   });
 
-  it('completes the full CQRS flow for Notification intent on successful document processing', async () => {
+  it('completes the full CQRS flow for pushed Success Card on successful document processing (#382)', async () => {
     const submitPayload = {
       authorizationEventObject: {
         userOAuthToken: 'ya29.sample-token',
@@ -232,7 +232,9 @@ describe('Integration: CQRS UI Orchestration (Issue 140)', () => {
     const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
     expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
 
-    expect(body.action?.notification).toBeDefined();
-    expect(body.action?.notification?.text).toBe('Document processed successfully');
+    expect(body.action?.notification).toBeUndefined();
+    expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+      'Communication Project Filed'
+    );
   });
 });

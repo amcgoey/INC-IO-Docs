@@ -661,6 +661,30 @@ describe('Workspace Add-on UI Blocks', () => {
       ).toBe(false);
     });
   });
+
+  describe('popToRoot navigation support (#382)', () => {
+    it('emits { popToRoot: true } paired with { updateCard } and validates against GoogleWorkspaceActionResponseSchema under ExactOptionalPropertyTypes = true', () => {
+      const card = buildCard(buildTitleBlock({ title: 'Fresh Card' }), [
+        buildStatusMessageBlock('Ready'),
+      ]);
+      const actionResponse = buildUpdateCardNavigationAction(card, undefined, {
+        popToRoot: true,
+      });
+
+      const prev = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        expect(Value.Check(GoogleWorkspaceActionResponseSchema, actionResponse)).toBe(true);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prev;
+      }
+
+      expect(actionResponse.action.navigations).toEqual([
+        { popToRoot: true },
+        { updateCard: card },
+      ]);
+    });
+  });
 });
 
 

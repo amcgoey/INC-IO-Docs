@@ -768,7 +768,10 @@ describe('Ticket #362 E2E (Workspace Addon + POST /documents): Reactive LinkedFi
       action: 'REC',
     });
     expect(coalescedRes.statusCode).toBe(200);
-    expect(coalescedRes.payload).toContain('processed successfully');
+    expect(JSON.parse(coalescedRes.payload).action?.notification).toBeUndefined();
+    expect(
+      JSON.parse(coalescedRes.payload).action?.navigations?.[0]?.pushCard?.header?.title
+    ).toBe('Submittal FF&E Filed');
     expect(sim.batchUpdates).toHaveLength(1);
 
     // 3. Known specTag 'AC102' (with specTitle omitted as decoratedText) + new relatedTag 'REL200' -> succeeds, inserts REL200 with blank Spec Title
@@ -783,7 +786,10 @@ describe('Ticket #362 E2E (Workspace Addon + POST /documents): Reactive LinkedFi
       action: 'REC',
     });
     expect(relatedOnlyRes.statusCode).toBe(200);
-    expect(relatedOnlyRes.payload).toContain('processed successfully');
+    expect(JSON.parse(relatedOnlyRes.payload).action?.notification).toBeUndefined();
+    expect(
+      JSON.parse(relatedOnlyRes.payload).action?.navigations?.[0]?.pushCard?.header?.title
+    ).toBe('Submittal FF&E Filed');
     expect(sim.batchUpdates).toHaveLength(2);
 
     // 4. Later submittal using specTag 'rel200' with non-blank specTitle -> backfills existing REL200 row without duplicate row
@@ -798,7 +804,10 @@ describe('Ticket #362 E2E (Workspace Addon + POST /documents): Reactive LinkedFi
       action: 'REC',
     });
     expect(backfillRes.statusCode).toBe(200);
-    expect(backfillRes.payload).toContain('processed successfully');
+    expect(JSON.parse(backfillRes.payload).action?.notification).toBeUndefined();
+    expect(
+      JSON.parse(backfillRes.payload).action?.navigations?.[0]?.pushCard?.header?.title
+    ).toBe('Submittal FF&E Filed');
     expect(sim.batchUpdates).toHaveLength(3);
 
     // 5. Distinct key 'FB999' sharing 'FABRIC - LEATHER' title with FB127 -> allowed as new row
@@ -813,7 +822,10 @@ describe('Ticket #362 E2E (Workspace Addon + POST /documents): Reactive LinkedFi
       action: 'REC',
     });
     expect(sharedTitleRes.statusCode).toBe(200);
-    expect(sharedTitleRes.payload).toContain('processed successfully');
+    expect(JSON.parse(sharedTitleRes.payload).action?.notification).toBeUndefined();
+    expect(
+      JSON.parse(sharedTitleRes.payload).action?.navigations?.[0]?.pushCard?.header?.title
+    ).toBe('Submittal FF&E Filed');
     expect(sim.batchUpdates).toHaveLength(4);
 
     const cfgGrid = sim.sheets[1].grid;

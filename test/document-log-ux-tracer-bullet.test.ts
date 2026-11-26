@@ -1279,7 +1279,10 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
     });
     expect(driveSubmitRes.statusCode).toBe(200);
     const driveSubmitBody = JSON.parse(driveSubmitRes.payload) as GoogleWorkspaceActionResponse;
-    expect(driveSubmitBody.action?.notification?.text).toBe('Document processed successfully');
+    expect(driveSubmitBody.action?.notification).toBeUndefined();
+    expect(driveSubmitBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+      'Submittal Arch Filed'
+    );
     expect(driveSearch.isDone()).toBe(true);
     expect(driveCapturedSheets).toHaveLength(1);
     expect(JSON.stringify(driveCapturedSheets[0])).toContain('071200');
@@ -1390,7 +1393,10 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
     });
     expect(gmailSubmitRes.statusCode).toBe(200);
     const gmailSubmitBody = JSON.parse(gmailSubmitRes.payload) as GoogleWorkspaceActionResponse;
-    expect(gmailSubmitBody.action?.notification?.text).toBe('Document processed successfully');
+    expect(gmailSubmitBody.action?.notification).toBeUndefined();
+    expect(gmailSubmitBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+      'Submittal Arch Filed'
+    );
     expect(gmailSearch.isDone()).toBe(true);
     expect(gmailCapturedSheets).toHaveLength(1);
     expect(JSON.stringify(gmailCapturedSheets[0])).toContain('071200');

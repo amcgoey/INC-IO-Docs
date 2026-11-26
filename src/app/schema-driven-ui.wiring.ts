@@ -2,6 +2,7 @@ import { SchemaDrivenUiService, type UiSchema } from '../features/schema-driven-
 import {
   WorkspaceAddonAdapter,
   GmailWorkspaceAddonAdapter,
+  DocumentSuccessCardAdapter,
   ManifestUiAdapter,
   type RawManifestProviderPort,
   type EvaluationOrderEnsurer,
@@ -41,6 +42,7 @@ export function createSchemaDrivenUiWiring(
   const manifestAdapter = new ManifestUiAdapter(options.manifestProvider, ensurer);
   const workspaceAddonAdapter = new WorkspaceAddonAdapter(manifestAdapter);
   const gmailWorkspaceAddonAdapter = new GmailWorkspaceAddonAdapter(manifestAdapter);
+  const documentSuccessCardAdapter = new DocumentSuccessCardAdapter(manifestAdapter);
   const optionsFetcher =
     options.optionsFetcher ??
     (options.driveClient
@@ -53,7 +55,7 @@ export function createSchemaDrivenUiWiring(
       : undefined);
   const service = new SchemaDrivenUiService(
     manifestAdapter,
-    [workspaceAddonAdapter, gmailWorkspaceAddonAdapter],
+    [workspaceAddonAdapter, gmailWorkspaceAddonAdapter, documentSuccessCardAdapter],
     optionsFetcher,
     options.uiContextQuery
   );

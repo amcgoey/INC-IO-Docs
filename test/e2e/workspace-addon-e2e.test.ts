@@ -952,14 +952,12 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       expect([...Value.Errors(GoogleWorkspaceActionResponseSchema, body)]).toHaveLength(0);
       expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
 
-      // 3. Verify response includes success notification action
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
-          },
-        },
-      });
+      // 3. Verify response pushes document-success-card with no notification toast
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+        'Communication Project Filed'
+      );
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.subtitle).toBe('Active Projects');
 
       // 4. Assert that the documentService mock is called with the correct backend key mapped from the UI payload
       expect(mockDocumentService.processDocument).toHaveBeenCalledWith(
@@ -1102,13 +1100,10 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
       expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
-          },
-        },
-      });
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+        'Communication Project Filed'
+      );
     });
 
     it('executes processDocument action when payload passes canonical document type key directly', async () => {
@@ -1156,7 +1151,10 @@ describe('Workspace Addon UI E2E Test Suite', () => {
 
       expect([...Value.Errors(GoogleWorkspaceActionResponseSchema, body)]).toHaveLength(0);
       expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+        'Communication Project Filed'
+      );
 
       expect(mockDocumentService.processDocument).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1369,7 +1367,10 @@ describe('Workspace Addon UI E2E Test Suite', () => {
       expect([...Value.Errors(GoogleWorkspaceActionResponseSchema, body)]).toHaveLength(0);
       expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
 
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+        'Communication Project Filed'
+      );
       expect(mockDocumentService.processDocument).toHaveBeenCalledTimes(1);
       expect(mockDocumentService.processDocument).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1771,6 +1772,42 @@ describe('Workspace Addon UI E2E Test Suite', () => {
 
       const docDataSection = findSection(pushCard.sections, 'Document Data');
       expect(docDataSection).toBeDefined();
+    });
+
+    it('emits { popToRoot: true } paired with { updateCard } when clicking Start Over after processDocument (#382)', async () => {
+      const startOverPayload = {
+        authorizationEventObject: {
+          userOAuthToken: 'ya29.sample-e2e-token',
+        },
+        drive: {
+          selectedItems: [
+            { id: 'drive-file-001', title: 'Q4_Strategy_Plan.pdf', mimeType: 'application/pdf' },
+          ],
+        },
+        commonEventObject: {
+          parameters: {
+            action: 'startOver',
+          },
+        },
+      };
+
+      const response = await injectWorkspaceRequest(app.server, {
+        method: 'POST',
+        url: '/workspace/action',
+        headers: {
+          authorization: 'Bearer valid-e2e-token',
+        },
+        payload: startOverPayload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.navigations).toHaveLength(2);
+      expect(body.action?.navigations?.[0]).toEqual({ popToRoot: true });
+      const freshCard = body.action?.navigations?.[1]?.updateCard;
+      expect(freshCard?.header?.title).toBe('INC-IO Engine');
+      expect(findSection(freshCard.sections, 'Document Data')).toBeDefined();
     });
   });
 });

@@ -1848,10 +1848,12 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       },
     });
     expect(overrideWsRes.statusCode).toBe(200);
+    const overrideWsBody = JSON.parse(overrideWsRes.payload);
+    expect(overrideWsBody.action?.notification, overrideWsRes.payload).toBeUndefined();
     expect(
-      JSON.parse(overrideWsRes.payload).action?.notification?.text,
+      overrideWsBody.action?.navigations?.[0]?.pushCard?.header?.title,
       overrideWsRes.payload
-    ).toBe('Document processed successfully');
+    ).toBe('Submittal Arch Filed');
     expect(writeLog).toHaveBeenCalledTimes(2);
 
     // Also verify AppOptions.sheetsClient works via /workspace/action even with userOAuthToken
@@ -1906,7 +1908,8 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
 
     expect(wsRes.statusCode).toBe(200);
     const wsBody = JSON.parse(wsRes.payload);
-    expect(wsBody.action?.notification?.text).toBe('Document processed successfully');
+    expect(wsBody.action?.notification).toBeUndefined();
+    expect(wsBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Submittal Arch Filed');
     expect(mockSheetsSdk.spreadsheets.batchUpdate).toHaveBeenCalledTimes(1);
     expect(driveSpy).toHaveBeenCalled();
   });

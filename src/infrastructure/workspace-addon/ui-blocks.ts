@@ -217,6 +217,7 @@ export type GoogleWorkspaceCard = Static<typeof GoogleWorkspaceCardSchema>;
 export const GoogleWorkspaceNavigationSchema = Type.Object({
   pushCard: Type.Optional(GoogleWorkspaceCardSchema),
   updateCard: Type.Optional(GoogleWorkspaceCardSchema),
+  popToRoot: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
 });
 
 export type GoogleWorkspaceNavigation = Static<typeof GoogleWorkspaceNavigationSchema>;
@@ -320,15 +321,17 @@ export function buildNavigationAction(card: GoogleWorkspaceCard): GoogleWorkspac
 
 export function buildUpdateCardNavigationAction(
   card: GoogleWorkspaceCard,
-  notification?: string | undefined
+  notification?: string | undefined,
+  options?: { popToRoot?: boolean | undefined } | undefined
 ): GoogleWorkspaceActionResponse {
+  const navigations: GoogleWorkspaceNavigation[] = [];
+  if (options?.popToRoot) {
+    navigations.push({ popToRoot: true });
+  }
+  navigations.push({ updateCard: card });
   return {
     action: {
-      navigations: [
-        {
-          updateCard: card,
-        },
-      ],
+      navigations,
       ...(notification && notification.trim().length > 0
         ? { notification: { text: notification } }
         : {}),

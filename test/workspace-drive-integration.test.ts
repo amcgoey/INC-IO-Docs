@@ -1,9 +1,14 @@
 import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { Value } from '@sinclair/typebox/value';
 import nock from 'nock';
 import { PDFDocument, PDFName, PDFString } from 'pdf-lib';
 import { createApp, type AppInstance } from '../src/app/server';
 import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
+import {
+  GoogleWorkspaceActionResponseSchema,
+  type GoogleWorkspaceActionResponse,
+} from '../src/infrastructure/workspace-addon/ui-blocks';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import type { DocumentSpaceStoragePort } from '../src/features/document-space/ports';
 import { mockAllowedDocumentTypes } from './utils/manifest-test-helper';
@@ -822,6 +827,73 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
   });
 
   describe('Driving Adapter: POST /workspace/action (processDocument)', () => {
+    interface ExpectedSuccessFile {
+      name: string;
+      parentName: string;
+      url: string;
+    }
+
+    interface ExpectedSuccessCard {
+      title: string;
+      subtitle: string;
+      workflowName: string;
+      files: ExpectedSuccessFile[];
+    }
+
+    function expectDocumentSuccessCard(body: unknown, expected: ExpectedSuccessCard): void {
+      expect([...Value.Errors(GoogleWorkspaceActionResponseSchema, body)]).toHaveLength(0);
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+
+      const typedBody = body as GoogleWorkspaceActionResponse;
+      expect(typedBody.action?.notification).toBeUndefined();
+      expect(typedBody.action?.navigations).toHaveLength(1);
+
+      const pushCard = typedBody.action?.navigations?.[0]?.pushCard;
+      expect(pushCard).toBeDefined();
+      expect(pushCard?.header.title).toBe(expected.title);
+      expect(pushCard?.header.subtitle).toBe(expected.subtitle);
+      expect(pushCard?.sections).toHaveLength(expected.files.length > 0 ? 3 : 2);
+      expect(pushCard?.sections[0]?.widgets[0]?.textParagraph?.text).toBe(
+        `Filed via <b>${expected.workflowName}</b>`
+      );
+
+      const createdAndFiledSection = pushCard?.sections.find((s) => s.header === 'Created & Filed');
+      if (expected.files.length === 0) {
+        expect(createdAndFiledSection).toBeUndefined();
+      } else {
+        expect(createdAndFiledSection?.widgets).toHaveLength(expected.files.length);
+        expected.files.forEach((file, index) => {
+          const decoratedText = createdAndFiledSection?.widgets[index]?.decoratedText;
+          expect(decoratedText?.text).toBe(file.name);
+          expect(decoratedText?.wrapText).toBe(true);
+          expect(decoratedText?.bottomLabel).toBe(file.parentName);
+          expect(decoratedText?.button).toEqual({
+            text: 'Open',
+            onClick: {
+              openLink: {
+                url: file.url,
+                openAs: 'FULL_SIZE',
+              },
+            },
+          });
+        });
+      }
+
+      const lastSection = pushCard?.sections[pushCard.sections.length - 1];
+      expect(lastSection?.widgets[0]?.buttonList?.buttons).toEqual([
+        {
+          text: 'Start Over',
+          onClick: {
+            action: {
+              function: 'http://localhost/workspace/action',
+              loadIndicator: 'SPINNER',
+              parameters: [{ key: 'action', value: 'startOver' }],
+            },
+          },
+        },
+      ]);
+    }
+
     it('files communication-project into existing <contact> folder under projects Shared Drive space', async () => {
       const fileId = 'file-proj-123';
       const fileName = 'Site_Meeting_Notes.docx';
@@ -935,12 +1007,17 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
+      expectDocumentSuccessCard(body, {
+        title: 'Communication Project Filed',
+        subtitle: 'Active Projects',
+        workflowName: 'FileCommProject',
+        files: [
+          {
+            name: fileName,
+            parentName: '260920 IN - Meeting Notes',
+            url: `https://drive.google.com/file/d/${fileId}/view`,
           },
-        },
+        ],
       });
 
       expect(nock.isDone()).toBe(true);
@@ -1052,12 +1129,17 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
+      expectDocumentSuccessCard(body, {
+        title: 'Communication Proposal Filed',
+        subtitle: 'Client Proposals',
+        workflowName: 'FileCommProposal',
+        files: [
+          {
+            name: fileName,
+            parentName: '260715 OT - RFP Response',
+            url: `https://drive.google.com/file/d/${fileId}/view`,
           },
-        },
+        ],
       });
 
       expect(nock.isDone()).toBe(true);
@@ -1172,12 +1254,17 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
+      expectDocumentSuccessCard(body, {
+        title: 'Communication Proposal Filed',
+        subtitle: 'Projects Shared Drive 001',
+        workflowName: 'FileCommProposal',
+        files: [
+          {
+            name: fileName,
+            parentName: '260715 OT - RFP Response',
+            url: `https://drive.google.com/file/d/${fileId}/view`,
           },
-        },
+        ],
       });
 
       expect(nock.isDone()).toBe(true);
@@ -1287,12 +1374,17 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
+      expectDocumentSuccessCard(body, {
+        title: 'Communication Project Filed',
+        subtitle: 'Active Projects',
+        workflowName: 'FileCommProject',
+        files: [
+          {
+            name: fileName,
+            parentName: '260920 IN - Meeting Notes',
+            url: `https://drive.google.com/file/d/${fileId}/view`,
           },
-        },
+        ],
       });
 
       expect(nock.isDone()).toBe(true);
@@ -1432,12 +1524,17 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
+      expectDocumentSuccessCard(body, {
+        title: 'Communication Project Filed',
+        subtitle: 'Active Projects',
+        workflowName: 'FileCommProject',
+        files: [
+          {
+            name: fileName,
+            parentName: '260920 IN - Welcome Package',
+            url: `https://drive.google.com/file/d/${fileId}/view`,
           },
-        },
+        ],
       });
 
       expect(nock.isDone()).toBe(true);
@@ -1579,12 +1676,17 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
+      expectDocumentSuccessCard(body, {
+        title: 'Communication Project Filed',
+        subtitle: 'Active Projects',
+        workflowName: 'FileCommProject',
+        files: [
+          {
+            name: fileName,
+            parentName: expectedCommFolder,
+            url: `https://drive.google.com/file/d/${fileId}/view`,
           },
-        },
+        ],
       });
 
       expect(nock.isDone()).toBe(true);
@@ -1677,12 +1779,11 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
-          },
-        },
+      expectDocumentSuccessCard(body, {
+        title: 'Communication Project Filed',
+        subtitle: 'Active Projects',
+        workflowName: 'FileCommProject',
+        files: [],
       });
       expect(nock.isDone()).toBe(true);
     });
@@ -2065,12 +2166,22 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
+      expectDocumentSuccessCard(body, {
+        title: 'Communication Project Filed',
+        subtitle: 'Active Projects',
+        workflowName: 'FileCommProject',
+        files: [
+          {
+            name: file1Name,
+            parentName: '260920 IN - Meeting Notes',
+            url: `https://drive.google.com/file/d/${file1Id}/view`,
           },
-        },
+          {
+            name: file2Name,
+            parentName: '260920 IN - Meeting Notes',
+            url: `https://drive.google.com/file/d/${file2Id}/view`,
+          },
+        ],
       });
 
       expect(nock.isDone()).toBe(true);
@@ -2188,12 +2299,17 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
+      expectDocumentSuccessCard(body, {
+        title: 'Communication Project Filed',
+        subtitle: 'Active Projects',
+        workflowName: 'FileCommProject',
+        files: [
+          {
+            name: file2Name,
+            parentName: '260920 IN - Meeting Notes',
+            url: `https://drive.google.com/file/d/${file2Id}/view`,
           },
-        },
+        ],
       });
 
       expect(nock.isDone()).toBe(true);
@@ -2515,12 +2631,22 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
+      expectDocumentSuccessCard(body, {
+        title: 'Communication Project Filed',
+        subtitle: 'Active Projects',
+        workflowName: 'FileCommProject',
+        files: [
+          {
+            name: file1Name,
+            parentName: '260920 IN - Meeting Notes',
+            url: `https://drive.google.com/file/d/${file1Id}/view`,
           },
-        },
+          {
+            name: file2Name,
+            parentName: '260920 IN - Meeting Notes',
+            url: `https://drive.google.com/file/d/${file2Id}/view`,
+          },
+        ],
       });
 
       expect(nock.isDone()).toBe(true);

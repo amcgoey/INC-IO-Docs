@@ -510,7 +510,10 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
 
     expect(submitRes.statusCode).toBe(200);
     const submitBody = JSON.parse(submitRes.payload) as GoogleWorkspaceActionResponse;
-    expect(submitBody.action?.notification?.text).toBe('Document processed successfully');
+    expect(submitBody.action?.notification).toBeUndefined();
+    expect(submitBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+      'Submittal Arch Filed'
+    );
     expect(nock.isDone()).toBe(true);
   });
 
