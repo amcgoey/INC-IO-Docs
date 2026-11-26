@@ -57,6 +57,18 @@ describe('Document Ports & DTOs', () => {
     expect(formSchemaWithAllowEmpty.allowEmptySourceFiles).toBe(true);
   });
 
+  it('FormSchemaType validates FormSchema definitions with maxSourceFiles', () => {
+    const formSchemaWithMax: FormSchema = {
+      key: 'submittal-arch',
+      name: 'Submittal Arch',
+      documentSchema: { fields: [] },
+      maxSourceFiles: 1,
+    };
+    expect(Value.Check(FormSchemaType, formSchemaWithMax)).toBe(true);
+    expect(formSchemaWithMax.maxSourceFiles).toBe(1);
+    expect(Value.Check(FormSchemaType, { ...formSchemaWithMax, maxSourceFiles: 0 })).toBe(false);
+  });
+
 
   it('FormSchemaType validates FormSchema definitions without optional documentUiSchema', () => {
     const validFormSchema: FormSchema = {

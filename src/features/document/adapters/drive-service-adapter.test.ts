@@ -63,6 +63,27 @@ describe('DriveServiceAdapter', () => {
       });
     });
 
+    it('propagates shortcutDetails onto DriveFileResult when present', async () => {
+      (mockDriveClient.getFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'shortcut-1',
+        name: 'Shortcut.pdf',
+        parents: ['p1'],
+        mimeType: 'application/vnd.google-apps.shortcut',
+        shortcutDetails: { targetId: 'target-1', targetMimeType: 'application/pdf' },
+      });
+
+      const res = await adapter.getFile('shortcut-1');
+      expect(res).toEqual({
+        id: 'shortcut-1',
+        name: 'Shortcut.pdf',
+        parents: ['p1'],
+        mimeType: 'application/vnd.google-apps.shortcut',
+        webViewLink: undefined,
+        modifiedTime: undefined,
+        shortcutDetails: { targetId: 'target-1', targetMimeType: 'application/pdf' },
+      });
+    });
+
     it('translates external errors to DriveServiceError', async () => {
       (mockDriveClient.getFile as ReturnType<typeof vi.fn>).mockRejectedValue(
         new Error('Network failure')

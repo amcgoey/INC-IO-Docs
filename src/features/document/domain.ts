@@ -4,6 +4,8 @@ import type {
   ActivityDispatcherPort,
   DocumentSchemaRegistryPort,
   DocumentServicePort,
+  DriveFileResult,
+  DriveServicePort,
   TemplateEvaluationContext,
   TemplateEvaluatorPort,
   CompiledSchemaRegistryPort,
@@ -11,6 +13,10 @@ import type {
   DynamicValidationQuery,
   DynamicValidationMessageFormatter,
 } from './ports';
+
+const GOOGLE_FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
+const GOOGLE_SHORTCUT_MIME_TYPE = 'application/vnd.google-apps.shortcut';
+const MAX_SHORTCUT_HOPS = 5;
 
 export const OPTION_NOT_FOUND_MSG = 'Option not found.';
 export const VALIDATION_TIMEOUT_MSG = 'Validation timed out.';
@@ -29,6 +35,17 @@ export const DocumentSpaceModel = Type.Object({
 export const DocumentSpaceSchema = DocumentSpaceModel;
 export type DocumentSpace = Static<typeof DocumentSpaceModel>;
 
+export const SourceFileSchema = Type.Object({
+  id: Type.String(),
+  name: Type.Optional(Type.String()),
+  mimeType: Type.Optional(Type.String()),
+  content: Type.Optional(Type.Uint8Array()),
+});
+
+export const SourceFileType = SourceFileSchema;
+
+export type SourceFile = Static<typeof SourceFileSchema>;
+
 export const DocumentModel = Type.Object({
   // STUB: Pending Chunk 3
   id: Type.Optional(Type.String()),
@@ -40,6 +57,7 @@ export const DocumentModel = Type.Object({
   data: Type.Record(Type.String(), Type.Unknown()),
   calculated: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   space: Type.Optional(DocumentSpaceModel),
+  sourceFiles: Type.Optional(Type.Array(SourceFileSchema)),
 });
 
 export type Document = Static<typeof DocumentModel>;
@@ -65,17 +83,6 @@ export const FileLocatorType = Type.Object({
 });
 
 export type FileLocator = Static<typeof FileLocatorType>;
-
-export const SourceFileSchema = Type.Object({
-  id: Type.String(),
-  name: Type.Optional(Type.String()),
-  mimeType: Type.Optional(Type.String()),
-  content: Type.Optional(Type.Uint8Array()),
-});
-
-export const SourceFileType = SourceFileSchema;
-
-export type SourceFile = Static<typeof SourceFileSchema>;
 
 export const ActivityOutputType = Type.Object({
   success: Type.Optional(Type.Boolean()),
@@ -251,6 +258,7 @@ export const DocumentTypeSchema = Type.Object({
   documentWorkflowConfig: Type.Optional(DocumentWorkflowConfigType),
   storageContextConfig: Type.Optional(StorageContextConfigType),
   allowEmptySourceFiles: Type.Optional(Type.Boolean()),
+  maxSourceFiles: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 
 export type DocumentType = Static<typeof DocumentTypeSchema>;
@@ -570,7 +578,9 @@ export class DocumentService implements DocumentServicePort {
     private readonly compiledSchemaRegistry: CompiledSchemaRegistryPort,
     private readonly dynamicValidator?: DocumentDynamicValidationPort,
     private readonly validationMessageFormatter?: DynamicValidationMessageFormatter,
-    private readonly selectedLogId?: string
+    private readonly selectedLogId?: string,
+    private readonly driveService?: DriveServicePort,
+    private readonly isEmailAttachmentSource?: boolean
   ) {}
 
   async initialize(): Promise<void> {
@@ -833,6 +843,127 @@ export class DocumentService implements DocumentServicePort {
     return { success: true };
   }
 
+  private async resolveDriveSourceFile(
+    documentType: DocumentType,
+    file: SourceFile
+  ): Promise<{ ok: true; file: SourceFile } | { ok: false; error: string }> {
+    const isDriveItem =
+      !(file.content instanceof Uint8Array) &&
+      !file.id.startsWith('email-pdf-') &&
+      !this.isEmailAttachmentSource;
+
+    if (!isDriveItem || !this.driveService) {
+      return { ok: true, file: { ...file } };
+    }
+
+    const visited = new Set<string>();
+    const { id: initialFileId } = file;
+    let currentId = initialFileId;
+    let resolvedMeta: DriveFileResult;
+
+    for (let hop = 0; hop <= MAX_SHORTCUT_HOPS; hop++) {
+      if (visited.has(currentId)) {
+        return { ok: false, error: `Drive shortcut cycle detected for "${initialFileId}".` };
+      }
+      visited.add(currentId);
+
+      try {
+        resolvedMeta = await this.driveService.getFile(currentId);
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+
+      if (resolvedMeta.mimeType !== GOOGLE_SHORTCUT_MIME_TYPE) {
+        if (resolvedMeta.mimeType === GOOGLE_FOLDER_MIME_TYPE) {
+          return {
+            ok: false,
+            error: `DocumentType "${documentType.key}" does not accept folders ("${resolvedMeta.name || currentId}"). Please select a single file instead.`,
+          };
+        }
+        return {
+          ok: true,
+          file: {
+            id: resolvedMeta.id,
+            ...(resolvedMeta.name
+              ? { name: resolvedMeta.name }
+              : file.name !== undefined
+                ? { name: file.name }
+                : {}),
+            ...(resolvedMeta.mimeType !== undefined
+              ? { mimeType: resolvedMeta.mimeType }
+              : file.mimeType !== undefined
+                ? { mimeType: file.mimeType }
+                : {}),
+          },
+        };
+      }
+
+      const { targetId, targetMimeType } = resolvedMeta.shortcutDetails ?? {};
+      if (!targetId) {
+        return {
+          ok: false,
+          error: `Drive shortcut "${resolvedMeta.name || currentId}" has no targetId and cannot be resolved.`,
+        };
+      }
+      if (targetMimeType === GOOGLE_FOLDER_MIME_TYPE) {
+        return {
+          ok: false,
+          error: `DocumentType "${documentType.key}" does not accept folders ("${resolvedMeta.name || currentId}"). Please select a single file instead.`,
+        };
+      }
+      currentId = targetId;
+    }
+
+    return {
+      ok: false,
+      error: `Drive shortcut resolution exceeded ${MAX_SHORTCUT_HOPS} hops for "${initialFileId}".`,
+    };
+  }
+
+  private async validateAndResolveSourceFiles(
+    documentType: DocumentType,
+    sourceFiles: readonly SourceFile[] | undefined
+  ): Promise<{ ok: true; sourceFiles?: SourceFile[] } | { ok: false; errors: string[] }> {
+    if (sourceFiles === undefined) {
+      return { ok: true };
+    }
+
+    if (documentType.maxSourceFiles === undefined) {
+      return { ok: true, sourceFiles: [...sourceFiles] };
+    }
+
+    if (sourceFiles.length > documentType.maxSourceFiles) {
+      return {
+        ok: false,
+        errors: [
+          `DocumentType "${documentType.key}" allows at most ${documentType.maxSourceFiles} source file(s), but ${sourceFiles.length} were provided.`,
+        ],
+      };
+    }
+
+    const resolvedFiles: SourceFile[] = [];
+    for (const file of sourceFiles) {
+      if (file.mimeType === GOOGLE_FOLDER_MIME_TYPE) {
+        return {
+          ok: false,
+          errors: [
+            `DocumentType "${documentType.key}" does not accept folders ("${file.name ?? file.id}"). Please select a single file instead.`,
+          ],
+        };
+      }
+      const resolved = await this.resolveDriveSourceFile(documentType, file);
+      if (!resolved.ok) {
+        return { ok: false, errors: [resolved.error] };
+      }
+      resolvedFiles.push(resolved.file);
+    }
+
+    return { ok: true, sourceFiles: resolvedFiles };
+  }
+
   async processDocument(
     payload?: unknown,
     eventName?: string
@@ -855,6 +986,17 @@ export class DocumentService implements DocumentServicePort {
     }
 
     const documentType = this.documentTypes.find((rt) => rt.key === document.type)!;
+    const sourceFileValidation = await this.validateAndResolveSourceFiles(
+      documentType,
+      document.sourceFiles
+    );
+    if (!sourceFileValidation.ok) {
+      return {
+        success: false,
+        errors: sourceFileValidation.errors,
+      };
+    }
+    const { sourceFiles: resolvedSourceFiles } = sourceFileValidation;
     const rawData = document.data as { [key: string]: unknown };
 
     // Anti-Corruption Layer: Context Enrichment & Fallback Tuple Synthesis
@@ -976,6 +1118,7 @@ export class DocumentService implements DocumentServicePort {
       ...identityUpdates,
       data: enrichedData,
       ...(Object.keys(calculatedValues).length > 0 ? { calculated: calculatedValues } : {}),
+      ...(resolvedSourceFiles !== undefined ? { sourceFiles: resolvedSourceFiles } : {}),
     };
 
     let selectedWorkflowName: string | undefined;

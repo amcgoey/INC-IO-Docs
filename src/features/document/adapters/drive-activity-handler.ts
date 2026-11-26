@@ -1,4 +1,10 @@
-import type { Activity, ActivityOutput, FileLocator, SourceFile } from '../domain';
+import type {
+  Activity,
+  ActivityExecutionContext,
+  ActivityOutput,
+  FileLocator,
+  SourceFile,
+} from '../domain';
 import {
   AmbiguousFileError,
   AmbiguousPathSpecError,
@@ -222,7 +228,8 @@ export class DriveActivityHandler implements ActivityHandler {
   }
 
   async handle(
-    activity: Activity
+    activity: Activity,
+    context?: ActivityExecutionContext
   ): Promise<ActivityOutput> {
     const payload = activity.payload ?? {};
 
@@ -257,7 +264,7 @@ export class DriveActivityHandler implements ActivityHandler {
     }
 
     try {
-      return await this.handleMove(payload);
+      return await this.handleMove(payload, context);
     } catch (error) {
       if (
         error instanceof DriveServiceError ||
@@ -332,7 +339,8 @@ export class DriveActivityHandler implements ActivityHandler {
   }
 
   private async handleMove(
-    payload: Record<string, unknown>
+    payload: Record<string, unknown>,
+    context?: ActivityExecutionContext
   ): Promise<ActivityOutput> {
     let targetSourceFiles: SourceFile[] = [];
 
@@ -341,7 +349,11 @@ export class DriveActivityHandler implements ActivityHandler {
         ? payload.fileId.trim()
         : undefined;
 
-    if (this.sourceFiles !== undefined) {
+    const contextSourceFiles = context?.document?.sourceFiles;
+
+    if (contextSourceFiles !== undefined) {
+      targetSourceFiles = [...contextSourceFiles];
+    } else if (this.sourceFiles !== undefined) {
       targetSourceFiles = [...this.sourceFiles];
     } else if (payloadFileId) {
       targetSourceFiles = [{ id: payloadFileId }];
@@ -361,7 +373,7 @@ export class DriveActivityHandler implements ActivityHandler {
       }
     }
 
-    if (this.sourceFiles === undefined && targetSourceFiles.length === 0) {
+    if (contextSourceFiles === undefined && this.sourceFiles === undefined && targetSourceFiles.length === 0) {
       throw new Error('DriveActivityHandler: No fileId found in activity payload or execution context');
     }
 

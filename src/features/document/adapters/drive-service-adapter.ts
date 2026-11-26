@@ -16,6 +16,12 @@ interface DriveClientFileMetadata {
   mimeType?: string | undefined;
   webViewLink?: string | undefined;
   modifiedTime?: string | undefined;
+  shortcutDetails?:
+    | {
+        targetId?: string | undefined;
+        targetMimeType?: string | undefined;
+      }
+    | undefined;
 }
 
 interface DriveClientSearchParams {
@@ -88,6 +94,7 @@ function mapMetadataToResult(metadata: DriveClientFileMetadata): DriveFileResult
     mimeType: metadata.mimeType,
     webViewLink: metadata.webViewLink,
     modifiedTime: metadata.modifiedTime,
+    ...(metadata.shortcutDetails !== undefined ? { shortcutDetails: metadata.shortcutDetails } : {}),
   };
 }
 

@@ -1156,8 +1156,15 @@ describe('Split Option Schemas (optionSources & optionBindings) & Manifest Immut
     const loadedDocs = await docRegistry.loadAll();
     expect(loadedDocs).toHaveLength(4);
     const archDoc = loadedDocs.find((d) => d.key === 'submittal-arch');
+    const ffeDoc = loadedDocs.find((d) => d.key === 'submittal-ffe');
+    const commProjDoc = loadedDocs.find((d) => d.key === 'communication-project');
+    const commPropDoc = loadedDocs.find((d) => d.key === 'communication-proposal');
     expect(archDoc).toBeDefined();
     expect(archDoc!.documentSchema.fields.length).toBeGreaterThan(0);
+    expect(archDoc!.maxSourceFiles).toBe(1);
+    expect(ffeDoc?.maxSourceFiles).toBe(1);
+    expect(commProjDoc?.maxSourceFiles).toBeUndefined();
+    expect(commPropDoc?.maxSourceFiles).toBeUndefined();
 
     const logRegistry = new LogSchemaRegistryAdapter(manifestProvider, handlebars);
     await expect(logRegistry.initialize()).resolves.toBeUndefined();

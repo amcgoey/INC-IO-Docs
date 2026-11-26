@@ -117,6 +117,7 @@ export const FormSchemaType = Type.Object({
   documentSchema: FormDocumentSchemaType,
   documentUiSchema: Type.Optional(DocumentUiEventsSchema),
   allowEmptySourceFiles: Type.Optional(Type.Boolean()),
+  maxSourceFiles: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 
 export type FormSchema = Static<typeof FormSchemaType>;
@@ -283,6 +284,11 @@ export interface DriveSearchQuery {
   expectedParentPathNames?: string[] | undefined;
 }
 
+export interface DriveShortcutDetails {
+  targetId?: string | undefined;
+  targetMimeType?: string | undefined;
+}
+
 export interface DriveFileResult {
   id: string;
   name: string;
@@ -290,6 +296,7 @@ export interface DriveFileResult {
   mimeType?: string | undefined;
   webViewLink?: string | undefined;
   modifiedTime?: string | undefined;
+  shortcutDetails?: DriveShortcutDetails | undefined;
 }
 
 export type DriveFile = DriveFileResult;

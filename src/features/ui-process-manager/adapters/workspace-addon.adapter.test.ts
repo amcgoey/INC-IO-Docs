@@ -6995,6 +6995,273 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(copyRes.lockedFields).toEqual({ specTitle: 'COPIED LOG TITLE' });
     });
   });
+
+  describe('maxSourceFiles & file-only submission guard (#373)', () => {
+    const createSubmittalManifestPort = (maxSourceFiles?: number): UiProcessManifestPort => ({
+      resolveDocumentTypeKey: vi.fn(async (key: string) => key),
+      getAllDocumentTypes: vi.fn().mockResolvedValue([
+        { key: 'submittal-arch', name: 'Submittal Arch' },
+        { key: 'communication-project', name: 'Communication Project' },
+      ]),
+      getDocumentTypeSchemas: vi.fn(async (key: string) => {
+        if (key === 'submittal-arch') {
+          return {
+            docSchema: { fields: [] },
+            ...(maxSourceFiles !== undefined ? { maxSourceFiles } : {}),
+          };
+        }
+        return {
+          docSchema: { fields: [] },
+          allowEmptySourceFiles: true,
+        };
+      }),
+    });
+
+    const submittalSpaceProvider: UiProcessSpaceProviderPort = {
+      getAllTypes: () => [
+        {
+          id: 'projects',
+          displayName: 'Projects',
+          spaceSchema: {
+            allowedDocumentTypes: ['communication-project', 'submittal-arch'],
+            defaultDocumentType: 'communication-project',
+          },
+        },
+      ],
+      getCollection: vi.fn().mockResolvedValue({
+        typeId: 'projects',
+        spaces: [{ id: 'proj-1', name: 'Project Main', typeId: 'projects', abstractStorageId: 'proj-1' }],
+      }),
+    };
+
+    it('rejects Drive processDocument when more than maxSourceFiles (1) items are checked, without calling documentRunner', async () => {
+      const mockDocumentRunner = { processDocument: vi.fn().mockResolvedValue({ success: true }) };
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: submittalSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: createSubmittalManifestPort(1),
+        documentRunner: mockDocumentRunner,
+      });
+
+      const res = (await adapter.processUiEvent({
+        actionName: 'processDocument',
+        selectedItems: [
+          { id: 'file-1', title: 'One.pdf', mimeType: 'application/pdf' },
+          { id: 'file-2', title: 'Two.pdf', mimeType: 'application/pdf' },
+        ],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'submittal-arch',
+          SelectFiles: ['file-1', 'file-2'],
+        },
+      })) as UiProcessRenderResult;
+
+      expect(res.type).toBe('render');
+      expect(res.isUpdateCard).toBe(true);
+      expect(res.validationErrors?.[0]).toMatch(/only 1 file|at most 1/i);
+      expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
+    });
+
+    it('allows Drive processDocument when 2 items are selected in Drive but only 1 is checked in SelectFiles', async () => {
+      const mockDocumentRunner = { processDocument: vi.fn().mockResolvedValue({ success: true }) };
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: submittalSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: createSubmittalManifestPort(1),
+        documentRunner: mockDocumentRunner,
+      });
+
+      const res = await adapter.processUiEvent({
+        actionName: 'processDocument',
+        selectedItems: [
+          { id: 'file-1', title: 'One.pdf', mimeType: 'application/pdf' },
+          { id: 'file-2', title: 'Two.pdf', mimeType: 'application/pdf' },
+        ],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'submittal-arch',
+          SelectFiles: ['file-2'],
+        },
+      });
+
+      expect(res).toEqual({ type: 'notification', text: 'Document processed successfully' });
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sourceFiles: [{ id: 'file-2', name: 'Two.pdf', mimeType: 'application/pdf' }],
+        }),
+        'onSubmit'
+      );
+    });
+
+    it('rejects Drive processDocument when selected item is a folder on maxSourceFiles-guarded DocumentType', async () => {
+      const mockDocumentRunner = { processDocument: vi.fn().mockResolvedValue({ success: true }) };
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: submittalSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: createSubmittalManifestPort(1),
+        documentRunner: mockDocumentRunner,
+      });
+
+      const res = (await adapter.processUiEvent({
+        actionName: 'processDocument',
+        selectedItems: [
+          { id: 'folder-1', title: 'My Folder', mimeType: 'application/vnd.google-apps.folder' },
+        ],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'submittal-arch',
+          SelectFiles: ['folder-1'],
+        },
+      })) as UiProcessRenderResult;
+
+      expect(res.type).toBe('render');
+      expect(res.isUpdateCard).toBe(true);
+      expect(res.validationErrors?.[0]).toMatch(/folder/i);
+      expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
+    });
+
+    it('counts SaveEmailToPdf + 1 checked attachment as 2 SourceFiles and rejects on maxSourceFiles: 1', async () => {
+      const mockDocumentRunner = { processDocument: vi.fn().mockResolvedValue({ success: true }) };
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: submittalSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: createSubmittalManifestPort(1),
+        documentRunner: mockDocumentRunner,
+      });
+
+      const res = (await adapter.processUiEvent({
+        actionName: 'processDocument',
+        hostApp: 'GMAIL',
+        gmail: { messageId: 'msg-1' },
+        selectedItems: [{ id: 'att-1', title: 'Submittal.pdf', mimeType: 'application/pdf' }],
+        formData: {
+          SelectFileSource: 'Email Attachments',
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'submittal-arch',
+          SelectAttachments: ['att-1'],
+          SaveEmailToPdf: true,
+        },
+      })) as UiProcessRenderResult;
+
+      expect(res.type).toBe('render');
+      expect(res.isUpdateCard).toBe(true);
+      expect(res.validationErrors?.[0]).toMatch(/only 1 file|at most 1/i);
+      expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
+    });
+
+    it('rejects Gmail Drive URL + SaveEmailToPdf (= 2 SourceFiles) on maxSourceFiles: 1, while allowing SaveEmailToPdf alone (= 1)', async () => {
+      const mockDocumentRunner = { processDocument: vi.fn().mockResolvedValue({ success: true }) };
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: submittalSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: createSubmittalManifestPort(1),
+        documentRunner: mockDocumentRunner,
+      });
+
+      const twoFilesRes = (await adapter.processUiEvent({
+        actionName: 'processDocument',
+        hostApp: 'GMAIL',
+        gmail: { messageId: 'msg-1' },
+        formData: {
+          SelectFileSource: 'Google Drive URL',
+          InputDriveURL: 'https://drive.google.com/file/d/drive-file-1/view',
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'submittal-arch',
+          SaveEmailToPdf: true,
+        },
+      })) as UiProcessRenderResult;
+
+      expect(twoFilesRes.type).toBe('render');
+      expect(twoFilesRes.validationErrors?.[0]).toMatch(/only 1 file|at most 1/i);
+      expect(mockDocumentRunner.processDocument).not.toHaveBeenCalled();
+
+      const savePdfOnlyRes = await adapter.processUiEvent({
+        actionName: 'processDocument',
+        hostApp: 'GMAIL',
+        gmail: { messageId: 'msg-1' },
+        formData: {
+          SelectFileSource: 'Email Attachments',
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'submittal-arch',
+          SaveEmailToPdf: true,
+        },
+      });
+      expect(savePdfOnlyRes).toEqual({ type: 'notification', text: 'Document processed successfully' });
+    });
+
+    it('preserves multi-file submission for Communications (maxSourceFiles omitted) in both Drive and Gmail', async () => {
+      const mockDocumentRunner = { processDocument: vi.fn().mockResolvedValue({ success: true }) };
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: submittalSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: createSubmittalManifestPort(1),
+        documentRunner: mockDocumentRunner,
+      });
+
+      const gmailMultiRes = await adapter.processUiEvent({
+        actionName: 'processDocument',
+        hostApp: 'GMAIL',
+        gmail: { messageId: 'msg-comm' },
+        selectedItems: [
+          { id: 'att-1', title: 'A.pdf', mimeType: 'application/pdf' },
+          { id: 'att-2', title: 'B.pdf', mimeType: 'application/pdf' },
+        ],
+        formData: {
+          SelectFileSource: 'Email Attachments',
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'communication-project',
+          SelectAttachments: ['att-1', 'att-2'],
+          SaveEmailToPdf: true,
+        },
+      });
+
+      expect(gmailMultiRes).toEqual({ type: 'notification', text: 'Document processed successfully' });
+      expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sourceFiles: expect.arrayContaining([
+            expect.objectContaining({ id: 'att-1' }),
+            expect.objectContaining({ id: 'att-2' }),
+            expect.objectContaining({ id: 'email-pdf-msg-comm' }),
+          ]),
+        }),
+        'onSubmit'
+      );
+    });
+
+    it('emits a non-blocking statusMessages warning on onDocumentTypeChange when > maxSourceFiles items are selected', async () => {
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: submittalSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: createSubmittalManifestPort(1),
+      });
+
+      const res = (await adapter.processUiEvent({
+        actionName: 'onDocumentTypeChange',
+        selectedItems: [
+          { id: 'file-1', title: 'One.pdf', mimeType: 'application/pdf' },
+          { id: 'file-2', title: 'Two.pdf', mimeType: 'application/pdf' },
+        ],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'submittal-arch',
+          SelectFiles: ['file-1', 'file-2'],
+        },
+      })) as UiProcessRenderResult;
+
+      expect(res.type).toBe('render');
+      expect(res.documentTypeKey).toBe('submittal-arch');
+      expect(res.validationErrors).toBeUndefined();
+      expect(res.statusMessages?.some((msg) => /1|single|uncheck/i.test(msg))).toBe(true);
+    });
+  });
 });
 
 
