@@ -1129,14 +1129,16 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
         ],
       });
 
-    // MOVE_FILE mocks for submittal-arch: ['6 Construction', 'Submittals']
+    // MOVE_FILE & DUPLICATE_FILE mocks for submittal-arch: ['6 Construction', 'Submittals']
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
       .query((q) => typeof q.q === 'string' && q.q.includes(`'${driveId}' in parents`) && q.q.includes("name = '6 Construction'"))
+      .times(2)
       .reply(200, { files: [{ id: 'folder-6-const', name: '6 Construction', parents: [driveId] }] });
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
       .query((q) => typeof q.q === 'string' && q.q.includes("'folder-6-const' in parents") && q.q.includes("name = 'Submittals'"))
+      .times(2)
       .reply(200, { files: [{ id: 'folder-submittals', name: 'Submittals', parents: ['folder-6-const'] }] });
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
@@ -1163,8 +1165,21 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
         id: 'arch-res-file',
         name: '071200-001_Waterproofing.pdf',
         mimeType: 'application/pdf',
-        parents: ['folder-submittals'],
+        parents: ['folder-csi-07'],
         webViewLink: 'https://drive.google.com/file/d/arch-res-file/view',
+      });
+    nock('https://www.googleapis.com')
+      .post('/drive/v3/files/arch-res-file/copy')
+      .query(true)
+      .reply(200, (_uri, body) => {
+        const reqBody = body as { name?: string; parents?: string[] };
+        return {
+          id: 'arch-res-file-copy',
+          name: reqBody.name ?? '_071200-001_Waterproofing.pdf',
+          mimeType: 'application/pdf',
+          parents: reqBody.parents ?? ['folder-submittals'],
+          webViewLink: 'https://drive.google.com/file/d/arch-res-file-copy/view',
+        };
       });
 
     const driveCapturedSheets = mockSubmittalArchLogWrite(logId);
@@ -1226,10 +1241,12 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
       .query((q) => typeof q.q === 'string' && q.q.includes(`'${driveId}' in parents`) && q.q.includes("name = '6 Construction'"))
+      .times(2)
       .reply(200, { files: [{ id: 'folder-6-const', name: '6 Construction', parents: [driveId] }] });
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
       .query((q) => typeof q.q === 'string' && q.q.includes("'folder-6-const' in parents") && q.q.includes("name = 'Submittals'"))
+      .times(2)
       .reply(200, { files: [{ id: 'folder-submittals', name: 'Submittals', parents: ['folder-6-const'] }] });
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
@@ -1246,8 +1263,21 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
         id: 'drive-saved-gmail-349',
         name: '071200-001-A Waterproofing.pdf',
         mimeType: 'application/pdf',
-        parents: ['folder-submittals'],
+        parents: ['folder-csi-07'],
         webViewLink: 'https://drive.google.com/file/d/drive-saved-gmail-349/view',
+      });
+    nock('https://www.googleapis.com')
+      .post('/drive/v3/files/drive-saved-gmail-349/copy')
+      .query(true)
+      .reply(200, (_uri, body) => {
+        const reqBody = body as { name?: string; parents?: string[] };
+        return {
+          id: 'drive-saved-gmail-349-copy',
+          name: reqBody.name ?? '_071200-001-A Waterproofing.pdf',
+          mimeType: 'application/pdf',
+          parents: reqBody.parents ?? ['folder-submittals'],
+          webViewLink: 'https://drive.google.com/file/d/drive-saved-gmail-349-copy/view',
+        };
       });
 
     const gmailCapturedSheets = mockSubmittalArchLogWrite(logId);

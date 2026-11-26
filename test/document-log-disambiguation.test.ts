@@ -1554,7 +1554,7 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
       times: 1,
       stubSheetsRead: false,
     });
-    // MOVE_FILE mocks for submittal-arch: 6 Construction/Submittals
+    // MOVE_FILE & DUPLICATE_FILE mocks for submittal-arch: 6 Construction/Submittals
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
       .query(
@@ -1563,6 +1563,7 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
           q.q.includes(`'${DRIVE_ID}' in parents`) &&
           q.q.includes("name = '6 Construction'")
       )
+      .times(2)
       .reply(200, { files: [{ id: 'folder-6-const', name: '6 Construction', parents: [DRIVE_ID] }] });
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
@@ -1572,6 +1573,7 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
           q.q.includes("'folder-6-const' in parents") &&
           q.q.includes("name = 'Submittals'")
       )
+      .times(2)
       .reply(200, { files: [{ id: 'folder-submittals', name: 'Submittals', parents: ['folder-6-const'] }] });
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
@@ -1616,8 +1618,21 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
         id: 'file-ambig-351',
         name: '071200-001-A Waterproofing.pdf',
         mimeType: 'application/pdf',
-        parents: ['folder-submittals'],
+        parents: ['folder-csi-07'],
         webViewLink: 'https://drive.google.com/file/d/file-ambig-351/view',
+      });
+    nock('https://www.googleapis.com')
+      .post('/drive/v3/files/file-ambig-351/copy')
+      .query(true)
+      .reply(200, (_uri, body) => {
+        const reqBody = body as { name?: string; parents?: string[] };
+        return {
+          id: 'file-ambig-351-copy',
+          name: reqBody.name ?? '_071200-001-A Waterproofing.pdf',
+          mimeType: 'application/pdf',
+          parents: reqBody.parents ?? ['folder-submittals'],
+          webViewLink: 'https://drive.google.com/file/d/file-ambig-351-copy/view',
+        };
       });
 
     const driveCapturedSheets = mockSubmittalArchLogWrite(LOG_CONST_ID);
@@ -1678,6 +1693,7 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
           q.q.includes(`'${DRIVE_ID}' in parents`) &&
           q.q.includes("name = '6 Construction'")
       )
+      .times(2)
       .reply(200, { files: [{ id: 'folder-6-const', name: '6 Construction', parents: [DRIVE_ID] }] });
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
@@ -1687,6 +1703,7 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
           q.q.includes("'folder-6-const' in parents") &&
           q.q.includes("name = 'Submittals'")
       )
+      .times(2)
       .reply(200, { files: [{ id: 'folder-submittals', name: 'Submittals', parents: ['folder-6-const'] }] });
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
@@ -1721,8 +1738,21 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
         id: 'drive-saved-gmail-351',
         name: '071200-001-A Waterproofing.pdf',
         mimeType: 'application/pdf',
-        parents: ['folder-submittals'],
+        parents: ['folder-csi-07'],
         webViewLink: 'https://drive.google.com/file/d/drive-saved-gmail-351/view',
+      });
+    nock('https://www.googleapis.com')
+      .post('/drive/v3/files/drive-saved-gmail-351/copy')
+      .query(true)
+      .reply(200, (_uri, body) => {
+        const reqBody = body as { name?: string; parents?: string[] };
+        return {
+          id: 'drive-saved-gmail-351-copy',
+          name: reqBody.name ?? '_071200-001-A Waterproofing.pdf',
+          mimeType: 'application/pdf',
+          parents: reqBody.parents ?? ['folder-submittals'],
+          webViewLink: 'https://drive.google.com/file/d/drive-saved-gmail-351-copy/view',
+        };
       });
 
     const gmailCapturedSheets = mockSubmittalArchLogWrite(LOG_CONST_ID);

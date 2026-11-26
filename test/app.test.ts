@@ -911,9 +911,21 @@ describe('App integration tests', () => {
             },
           },
           {
+            id: 'duplicateForReview',
+            type: 'DUPLICATE_FILE',
+            payload: {
+              fileSourceStepId: 'moveOriginal',
+              rootStorageId: 'space-projects-1',
+              parentPath: '6 Construction',
+              folderName: 'Submittals',
+              fileName: '071200-001-A Waterproofing Specs - 261020 PMG',
+              fileNamePrefix: '_',
+            },
+          },
+          {
             id: 'writeLog',
             type: 'WRITE_LOG',
-            payload: {},
+            payload: { fileSourceStepId: 'moveOriginal' },
           },
         ]);
         expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
@@ -938,9 +950,30 @@ describe('App integration tests', () => {
         expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
           2,
           {
+            id: 'duplicateForReview',
+            type: 'DUPLICATE_FILE',
+            payload: {
+              fileSourceStepId: 'moveOriginal',
+              rootStorageId: 'space-projects-1',
+              parentPath: '6 Construction',
+              folderName: 'Submittals',
+              fileName: '071200-001-A Waterproofing Specs - 261020 PMG',
+              fileNamePrefix: '_',
+            },
+          },
+          {
+            document: body.data,
+            files: [],
+            stepOutputs: {},
+            contextVariables: {},
+          }
+        );
+        expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+          3,
+          {
             id: 'writeLog',
             type: 'WRITE_LOG',
-            payload: {},
+            payload: { fileSourceStepId: 'moveOriginal' },
           },
           {
             document: body.data,
@@ -1169,9 +1202,21 @@ describe('App integration tests', () => {
             },
           },
           {
+            id: 'duplicateForReview',
+            type: 'DUPLICATE_FILE',
+            payload: {
+              fileSourceStepId: 'moveOriginal',
+              rootStorageId: 'space-projects-1',
+              parentPath: '3 FFE',
+              folderName: '05 Submittals',
+              fileName: 'CG104-A Berman Falk - 261021 INC',
+              fileNamePrefix: '_',
+            },
+          },
+          {
             id: 'writeLog',
             type: 'WRITE_LOG',
-            payload: {},
+            payload: { fileSourceStepId: 'moveOriginal' },
           },
         ]);
         expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
@@ -1196,9 +1241,30 @@ describe('App integration tests', () => {
         expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
           2,
           {
+            id: 'duplicateForReview',
+            type: 'DUPLICATE_FILE',
+            payload: {
+              fileSourceStepId: 'moveOriginal',
+              rootStorageId: 'space-projects-1',
+              parentPath: '3 FFE',
+              folderName: '05 Submittals',
+              fileName: 'CG104-A Berman Falk - 261021 INC',
+              fileNamePrefix: '_',
+            },
+          },
+          {
+            document: body.data,
+            files: [],
+            stepOutputs: {},
+            contextVariables: {},
+          }
+        );
+        expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+          3,
+          {
             id: 'writeLog',
             type: 'WRITE_LOG',
-            payload: {},
+            payload: { fileSourceStepId: 'moveOriginal' },
           },
           {
             document: body.data,
@@ -2515,7 +2581,13 @@ describe('App integration tests', () => {
         resolveFolderPath: vi.fn().mockResolvedValue({ id: 'folder-admin', name: '1 Admin' }),
         move: vi.fn().mockResolvedValue({ id: 'doc-file-ambig', webViewLink: 'https://drive.google.com/file/d/doc-file-ambig/view' }),
         rename: vi.fn().mockResolvedValue({ id: 'doc-file-ambig', name: 'Waterproofing.pdf' }),
-        duplicate: vi.fn(),
+        duplicate: vi.fn().mockResolvedValue({
+          id: 'doc-file-ambig-copy',
+          name: '_071200-002-A Waterproofing - 261020 PMG.pdf',
+          parents: ['folder-submittals'],
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/doc-file-ambig-copy/view',
+        }),
         searchFiles: vi.fn().mockResolvedValue([]),
         downloadAsBuffer: vi.fn(),
         saveBuffer: vi.fn(),

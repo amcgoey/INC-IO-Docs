@@ -499,6 +499,21 @@ function mockDriveForFfe(logs: Array<{ id: string; name: string; modifiedTime?: 
       parents: ['ffe-sub-id'],
       webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
     });
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .post(`/drive/v3/files/${fileId}/copy`)
+    .query(true)
+    .reply(200, (_uri, body) => {
+      const reqBody = body as { name?: string; parents?: string[] };
+      return {
+        id: `${fileId}-copy`,
+        name: reqBody.name ?? '_Filed_Submittal.pdf',
+        parents: reqBody.parents ?? ['ffe-sub-id'],
+        mimeType: 'application/pdf',
+        webViewLink: `https://drive.google.com/file/d/${fileId}-copy/view`,
+      };
+    });
 }
 
 describe('Ticket #362 E2E (Workspace Addon + POST /documents): Reactive LinkedField Locking & Submittal FF&E specs Cutover', () => {

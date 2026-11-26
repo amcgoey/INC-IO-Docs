@@ -239,12 +239,54 @@
     },
     "events": {
       "onSubmit": {
+        "rules": [
+          {
+            "matchFields": {
+              "action": "REC"
+            },
+            "workflow": "SubmittalReceived"
+          }
+        ],
         "catchAllWorkflow": "SubmittalSent"
       }
     }
   },
   "documentWorkflowConfig": {
     "workflows": [
+      {
+        "name": "SubmittalReceived",
+        "activitySequence": [
+          {
+            "id": "moveOriginal",
+            "type": "MOVE_FILE",
+            "payload": {
+              "rootStorageId": "{{Document.space.abstractStorageId}}",
+              "parentPath": "{{StorageContext.basePath}}",
+              "folderName": "05 Submittals/Closed/{{Document.calculated.specTagGroup}}/{{Document.data.specTag.key}}",
+              "fileName": "{{Document.calculated.fileName}}"
+            }
+          },
+          {
+            "id": "duplicateForReview",
+            "type": "DUPLICATE_FILE",
+            "payload": {
+              "fileSourceStepId": "moveOriginal",
+              "rootStorageId": "{{Document.space.abstractStorageId}}",
+              "parentPath": "{{StorageContext.basePath}}",
+              "folderName": "05 Submittals",
+              "fileName": "{{Document.calculated.fileName}}",
+              "fileNamePrefix": "_"
+            }
+          },
+          {
+            "id": "writeLog",
+            "type": "WRITE_LOG",
+            "payload": {
+              "fileSourceStepId": "moveOriginal"
+            }
+          }
+        ]
+      },
       {
         "name": "SubmittalSent",
         "activitySequence": [
