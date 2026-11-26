@@ -449,6 +449,7 @@ describe('DocumentType JSON files schema validation', () => {
         statuses: { provider: 'document_log', properties: ['key'] },
         actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
         contacts: { provider: 'document_log', properties: ['key', 'name'] },
+        csiDivisions: { provider: 'document_log', properties: ['key', 'folder'] },
       });
       expect(archTargetSchema?.options?.statuses).toBeUndefined();
       expect(archTargetSchema?.options?.actions).toBeUndefined();
@@ -539,6 +540,15 @@ describe('DocumentType JSON files schema validation', () => {
               Name: 'name',
             },
             aliasesColumn: 'Aliases',
+          },
+          csiDivisions: {
+            sheetName: '_Config Submittal Arch',
+            rangeName: 'Options_Submittal_Arch_CSI_Divisions',
+            endMarker: '---',
+            columns: {
+              'Division Number': 'key',
+              'Division Folder': 'folder',
+            },
           },
         },
       });
@@ -649,6 +659,34 @@ describe('DocumentType JSON files schema validation', () => {
 
       const ffeUiFields = (ffeDocType?.documentUiSchema as UiSchemaType | undefined)?.fields;
       expect(ffeUiFields?.specTag?.onChange).toBe(true);
+
+      // Verify declarative folder-routing CalculatedFields on Submittal Arch & FF&E (#374)
+      expect(
+        archDocType?.documentSchema.calculatedFields?.find((f) => f.key === 'csiDivisionFolder')
+      ).toEqual({
+        name: 'CSI Division Folder',
+        key: 'csiDivisionFolder',
+        template: '{{section}}',
+        transforms: [{ type: 'prefix', length: 2 }],
+        lookup: {
+          source: 'csiDivisions',
+          matchProperty: 'key',
+          resultProperty: 'folder',
+        },
+        required: true,
+      });
+      expect(
+        ffeDocType?.documentSchema.calculatedFields?.find((f) => f.key === 'specTagGroup')
+      ).toEqual({
+        name: 'Spec Tag Group',
+        key: 'specTagGroup',
+        template: '{{specTag.key}}',
+        transforms: [
+          { type: 'prefix', length: 2 },
+          { type: 'uppercase' },
+        ],
+        required: true,
+      });
     });
   });
 });

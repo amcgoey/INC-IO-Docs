@@ -252,6 +252,16 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     ['---', '', ''],
   ];
 
+  const CONFIG_ARCH_CSI_DIVISIONS = [
+    ['Division Number', 'Division Folder'],
+    ['01', '01 General Requirements'],
+    ['03', '03 Concrete'],
+    ['07', '07 Thermal and Moisture Protection'],
+    ['08', '08 Openings'],
+    ['09', '09 Finishes'],
+    ['---', ''],
+  ];
+
   const CONFIG_FFE_CONTACTS = [
     ['Contact', 'Name', 'Contact Type'],
     ['INC', 'INC Architecture & Design', 'INC'],
@@ -308,6 +318,11 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       namedRangeId: 'nr-arch-contacts-val',
       name: 'Validation_Submittal_Arch_Contacts',
       range: { sheetId: 103, startRowIndex: 1, endRowIndex: CONFIG_ARCH_CONTACTS.length - 1, startColumnIndex: 7, endColumnIndex: 8 },
+    },
+    {
+      namedRangeId: 'nr-arch-csi-divisions',
+      name: 'Options_Submittal_Arch_CSI_Divisions',
+      range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ARCH_CSI_DIVISIONS.length, startColumnIndex: 11, endColumnIndex: 13 },
     },
   ];
 
@@ -367,6 +382,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           if (range.includes('A1:A')) return { range, values: CONFIG_STATUSES };
           if (range.includes('C1:F')) return { range, values: CONFIG_ACTIONS };
           if (range.includes('H1:J')) return { range, values: CONFIG_ARCH_CONTACTS };
+          if (range.includes('L1:M')) return { range, values: CONFIG_ARCH_CSI_DIVISIONS };
         }
         if (range.includes('_Config Submittal FF&E')) {
           if (range.includes('A1:A')) return { range, values: CONFIG_STATUSES };

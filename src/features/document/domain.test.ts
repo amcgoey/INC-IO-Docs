@@ -56,6 +56,8 @@ import {
   type TemplateEvaluatorPort,
   type DocumentDynamicValidationPort,
   type DynamicValidationMessageFormatter,
+  type DocumentOptionTablePort,
+  type DocumentOptionTableResolution,
   type DriveServicePort,
 } from './ports';
 import { HandlebarsAdapter } from '../../infrastructure/template-engine/handlebars-adapter';
@@ -108,7 +110,9 @@ describe('Document domain', () => {
     evaluator: TemplateEvaluatorPort,
     compiledRegistry?: CompiledSchemaRegistryPort,
     dynamicValidator?: DocumentDynamicValidationPort,
-    validationMessageFormatter?: DynamicValidationMessageFormatter
+    validationMessageFormatter?: DynamicValidationMessageFormatter,
+    selectedLogId?: string,
+    optionTablePort?: DocumentOptionTablePort
   ): DocumentService =>
     new DocumentService(
       dispatcher,
@@ -116,7 +120,11 @@ describe('Document domain', () => {
       evaluator,
       compiledRegistry ?? createMockCompiledRegistry(registry),
       dynamicValidator,
-      validationMessageFormatter
+      validationMessageFormatter,
+      selectedLogId,
+      undefined,
+      undefined,
+      optionTablePort
     );
 
   it('should export DocumentModel schema', () => {
@@ -1810,9 +1818,15 @@ describe('Document domain', () => {
       });
 
       expect(evaluatedContexts).toHaveLength(2);
-      // Both evaluations must receive ONLY base payload without Calc1
-      expect(evaluatedContexts[0]).toEqual({ base1: 'val1' });
-      expect(evaluatedContexts[1]).toEqual({ base1: 'val1' });
+      // Both evaluations must receive ONLY base payload (with Document.data) without Calc1
+      expect(evaluatedContexts[0]).toEqual({
+        base1: 'val1',
+        Document: { type: 'multi-calc', data: { base1: 'val1' } },
+      });
+      expect(evaluatedContexts[1]).toEqual({
+        base1: 'val1',
+        Document: { type: 'multi-calc', data: { base1: 'val1' } },
+      });
       expect(evaluatedContexts[1]).not.toHaveProperty('calc1');
     });
   });
@@ -1972,9 +1986,12 @@ describe('Document domain', () => {
       // Total evaluations: 1 calculated field + 3 identity templates = 4
       expect(evaluatedContexts).toHaveLength(4);
 
-      // All evaluations must only see basePayload { contact: 'Bob' }
+      // All evaluations must only see basePayload { contact: 'Bob', Document: { ... } }
       for (const item of evaluatedContexts) {
-        expect(item.ctx).toEqual({ contact: 'Bob' });
+        expect(item.ctx).toEqual({
+          contact: 'Bob',
+          Document: { type: 'calc-and-identity', data: { contact: 'Bob' } },
+        });
         expect(item.ctx).not.toHaveProperty('derivedField');
         expect(item.ctx).not.toHaveProperty('id');
         expect(item.ctx).not.toHaveProperty('idDocument');
@@ -6871,6 +6888,27 @@ describe('Document domain', () => {
     const submittalArchSchema: DocumentType = JSON.parse(fs.readFileSync(submittalArchPath, 'utf-8'));
     const handlebarsEvaluator = new HandlebarsAdapter();
 
+    const createSubmittalArchOptionTablePort = (): DocumentOptionTablePort => ({
+      resolveOptionTables: async (sourceKeys) => {
+        const out: Record<string, DocumentOptionTableResolution> = {};
+        for (const key of sourceKeys) {
+          if (key === 'csiDivisions') {
+            out[key] = {
+              status: 'ready',
+              tuples: [
+                { key: '01', folder: '01 General Requirements' },
+                { key: '07', folder: '07 Thermal and Moisture Protection' },
+                { key: '08', folder: '08 Openings' },
+              ],
+            };
+          } else {
+            out[key] = { status: 'empty', tuples: [] };
+          }
+        }
+        return out;
+      },
+    });
+
     const createSubmittalArchDynamicValidator = (): DocumentDynamicValidationPort => {
       const statusTuples: Array<Record<string, unknown>> = [
         { key: 'Open' },
@@ -6944,7 +6982,10 @@ describe('Document domain', () => {
         customRegistry,
         handlebarsEvaluator,
         undefined,
-        createSubmittalArchDynamicValidator()
+        createSubmittalArchDynamicValidator(),
+        undefined,
+        undefined,
+        createSubmittalArchOptionTablePort()
       );
       await service.initialize();
 
@@ -7005,6 +7046,9 @@ describe('Document domain', () => {
       expect(result.data.calculated?.number).toBe('071200-001-1');
       expect(result.data.data.number).toBe('001');
       expect(result.data.calculated?.contactChain).toBe('PMG');
+      expect(result.data.calculated?.csiDivisionFolder).toBe(
+        '07 Thermal and Moisture Protection'
+      );
 
       // Identity properties
       expect(result.data.idGroup).toBe('071200-001');
@@ -7035,7 +7079,10 @@ describe('Document domain', () => {
         customRegistry,
         handlebarsEvaluator,
         undefined,
-        createSubmittalArchDynamicValidator()
+        createSubmittalArchDynamicValidator(),
+        undefined,
+        undefined,
+        createSubmittalArchOptionTablePort()
       );
       await service.initialize();
 
@@ -7087,7 +7134,10 @@ describe('Document domain', () => {
         customRegistry,
         handlebarsEvaluator,
         undefined,
-        createSubmittalArchDynamicValidator()
+        createSubmittalArchDynamicValidator(),
+        undefined,
+        undefined,
+        createSubmittalArchOptionTablePort()
       );
       await service.initialize();
 
@@ -7128,7 +7178,16 @@ describe('Document domain', () => {
     it('rejects invalid section pattern (non-6-digits)', async () => {
       const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
       const customRegistry = createCustomRegistry([submittalArchSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        handlebarsEvaluator,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        createSubmittalArchOptionTablePort()
+      );
       await service.initialize();
 
       const invalidSections = ['71200', '0712001', '07120A', 'abcdef', ''];
@@ -7157,7 +7216,16 @@ describe('Document domain', () => {
     it('rejects invalid number pattern (<3 digits or non-digits) and accepts 3+ digits (#317)', async () => {
       const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
       const customRegistry = createCustomRegistry([submittalArchSchema]);
-      const service = createDocumentService(mockDispatcher, customRegistry, defaultEvaluator);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        handlebarsEvaluator,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        createSubmittalArchOptionTablePort()
+      );
       await service.initialize();
 
       const invalidNumbers = ['1', '01', '00A', 'abc', ''];
@@ -7400,6 +7468,7 @@ describe('Document domain', () => {
       expect(result.data.calculated?.name).toBe('AC102-A Berman Falk');
       expect(result.data.calculated?.number).toBe('AC102-A');
       expect(result.data.calculated?.contactChain).toBe('BW');
+      expect(result.data.calculated?.specTagGroup).toBe('AC');
 
       // Identity properties
       expect(result.data.idGroup).toBe('AC102');
@@ -7759,6 +7828,380 @@ describe('Document domain', () => {
       if (!statusResult.success) {
         expect(statusResult.errors.some((err) => err.includes('/status:'))).toBe(true);
       }
+    });
+  });
+
+  describe('Declarative CalculatedField transforms and manifest validation (#374)', () => {
+    const handlebarsEvaluator = new HandlebarsAdapter();
+
+    it('evaluates prefix and uppercase transforms in template -> transforms order, preserving keys shorter than length and failing fast when required field is blank', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const ffeLikeType: DocumentType = {
+        key: 'calc-transform-test',
+        name: 'Calc Transform Test',
+        documentSchema: {
+          fields: [
+            {
+              key: 'specTag',
+              name: 'Spec Tag',
+              type: 'string',
+              options: {
+                source: 'specs',
+                key: 'key',
+                allowUserInput: true,
+              },
+            },
+          ],
+          options: {
+            specs: [{ key: 'ac102', name: 'Hook' }],
+          },
+          calculatedFields: [
+            {
+              key: 'specTagGroup',
+              name: 'Spec Tag Group',
+              template: '{{specTag.key}}',
+              transforms: [
+                { type: 'prefix', length: 2 },
+                { type: 'uppercase' },
+              ],
+              required: true,
+            },
+          ],
+        },
+        documentUiSchema: {
+          events: {
+            onSubmit: { catchAllWorkflow: 'Move' },
+          },
+        },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'Move',
+              activitySequence: [
+                {
+                  type: 'MOVE_FILE',
+                  payload: {
+                    folderName: '05 Submittals/Closed/{{Document.calculated.specTagGroup}}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const registry = createCustomRegistry([ffeLikeType]);
+      const service = createDocumentService(mockDispatcher, registry, handlebarsEvaluator);
+      await service.initialize();
+
+      // Normal 2+ char lowercase key -> first 2 chars uppercased
+      const normalRes = await service.processDocument(
+        {
+          type: 'calc-transform-test',
+          data: { specTag: 'ac102' },
+        },
+        'onSubmit'
+      );
+      expect(normalRes.success).toBe(true);
+      if (!normalRes.success) return;
+      expect(normalRes.data.calculated?.specTagGroup).toBe('AC');
+      expect(mockDispatcher.dispatch).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          payload: { folderName: '05 Submittals/Closed/AC' },
+        }),
+        expect.anything()
+      );
+
+      // Shorter than 2 chars -> full uppercase key
+      const shortRes = await service.processDocument(
+        {
+          type: 'calc-transform-test',
+          data: { specTag: 'x' },
+        },
+        'onSubmit'
+      );
+      expect(shortRes.success).toBe(true);
+      if (!shortRes.success) return;
+      expect(shortRes.data.calculated?.specTagGroup).toBe('X');
+
+      // Blank / whitespace value -> fail fast before dispatching
+      const dispatchCountBeforeBlank = vi.mocked(mockDispatcher.dispatch).mock.calls.length;
+      const blankRes = await service.processDocument(
+        {
+          type: 'calc-transform-test',
+          data: { specTag: '   ' },
+        },
+        'onSubmit'
+      );
+      expect(blankRes.success).toBe(false);
+      if (!blankRes.success) {
+        expect(blankRes.errors.some((e) => e.includes('specTagGroup'))).toBe(true);
+      }
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(dispatchCountBeforeBlank);
+    });
+
+    it('rejects cross-CalculatedField, Identity, invalid transform, and blank folder-routing references in validateManifestTemplates', () => {
+      const manifest: DocumentType = {
+        key: 'bad-calc-manifest',
+        name: 'Bad Calc Manifest',
+        documentSchema: {
+          fields: [{ key: 'section', name: 'Section', type: 'string' }],
+          calculatedFields: [
+            {
+              key: 'first',
+              template: '{{section}}',
+              transforms: [{ type: 'prefix', length: 0 }] as unknown as NonNullable<DocumentType['documentSchema']['calculatedFields']>[number]['transforms'],
+            },
+            {
+              key: 'crossCalc',
+              template: '{{Document.calculated.first}}',
+            },
+            {
+              key: 'crossCalcBare',
+              template: '{{first}}',
+            },
+            {
+              key: 'identityRef',
+              template: '{{Document.id}}-{{idDocument}}',
+            },
+            {
+              key: 'blankRequired',
+              template: '   ',
+              required: true,
+            },
+          ],
+          identity: {
+            id: '{{section}}',
+            idDocument: '{{section}}',
+          },
+        },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'Archive',
+              activitySequence: [
+                {
+                  type: 'MOVE_FILE',
+                  payload: {
+                    parentPath: '   ',
+                    folderName: '',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const errors = validateManifestTemplates(manifest, handlebarsEvaluator);
+      expect(errors.some((e) => e.includes('calculatedFields[0].transforms'))).toBe(true);
+      expect(errors.some((e) => e.includes('calculatedFields[1].template'))).toBe(true);
+      expect(errors.some((e) => e.includes('calculatedFields[2].template'))).toBe(true);
+      expect(errors.some((e) => e.includes('calculatedFields[3].template'))).toBe(true);
+      expect(errors.some((e) => e.includes('calculatedFields[4].template'))).toBe(true);
+      expect(errors.some((e) => e.includes('payload.parentPath'))).toBe(true);
+      expect(errors.some((e) => e.includes('payload.folderName'))).toBe(true);
+    });
+
+    it('resolves single-hop OptionSource lookup on CalculatedField in template -> transforms -> lookup order, sanitizes paths even without document.space, and fails fast on missing/unnormalized divisions', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const archLikeType: DocumentType = {
+        key: 'calc-lookup-test',
+        name: 'Calc Lookup Test',
+        documentSchema: {
+          fields: [
+            { key: 'section', name: 'Section', type: 'string', required: true },
+          ],
+          optionSources: {
+            csiDivisions: {
+              provider: 'document_log',
+              properties: ['key', 'folder'],
+            },
+          },
+          calculatedFields: [
+            {
+              key: 'csiDivisionFolder',
+              name: 'CSI Division Folder',
+              template: '{{section}}',
+              transforms: [{ type: 'prefix', length: 2 }],
+              lookup: {
+                source: 'csiDivisions',
+                matchProperty: 'key',
+                resultProperty: 'folder',
+              },
+              required: true,
+            },
+          ],
+        },
+        documentUiSchema: {
+          events: {
+            onSubmit: { catchAllWorkflow: 'Archive' },
+          },
+        },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'Archive',
+              activitySequence: [
+                {
+                  type: 'MOVE_FILE',
+                  payload: {
+                    folderName: 'Submittals/Closed/{{Document.calculated.csiDivisionFolder}}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const registry = createCustomRegistry([archLikeType]);
+      const optionTablePort: DocumentOptionTablePort = {
+        resolveOptionTables: vi.fn().mockResolvedValue({
+          csiDivisions: {
+            status: 'ready',
+            tuples: [
+              { key: '01', folder: '01 General Requirements' },
+              { key: '07', folder: '07 Thermal / Moisture: Protection.' },
+            ],
+          },
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        registry,
+        handlebarsEvaluator,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        optionTablePort
+      );
+      await service.initialize();
+
+      // 1. Valid 2-digit match WITHOUT document.space -> raw preserved on Document.calculated, path-sanitized in MOVE_FILE payload
+      const validRes = await service.processDocument(
+        {
+          type: 'calc-lookup-test',
+          data: { section: '071200' },
+        },
+        'onSubmit'
+      );
+      expect(validRes.success).toBe(true);
+      if (!validRes.success) return;
+      expect(validRes.data.calculated?.csiDivisionFolder).toBe('07 Thermal / Moisture: Protection.');
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+        {
+          type: 'MOVE_FILE',
+          payload: {
+            folderName: 'Submittals/Closed/07 Thermal - Moisture- Protection',
+          },
+        },
+        expect.anything()
+      );
+
+      // 2. Missing CSI division (e.g. "99") -> fail fast before dispatching
+      const missingRes = await service.processDocument(
+        {
+          type: 'calc-lookup-test',
+          data: { section: '990000' },
+        },
+        'onSubmit'
+      );
+      expect(missingRes.success).toBe(false);
+      if (!missingRes.success) {
+        expect(missingRes.errors.some((e) => e.includes('csiDivisionFolder'))).toBe(true);
+      }
+
+      // 3. Unnormalized division ("1" vs "01") -> must NOT match "01", must fail fast
+      const unnormalizedRes = await service.processDocument(
+        {
+          type: 'calc-lookup-test',
+          data: { section: '1' },
+        },
+        'onSubmit'
+      );
+      expect(unnormalizedRes.success).toBe(false);
+
+      // 4. Unready option table (config_error) -> fail fast
+      const failingTablePort: DocumentOptionTablePort = {
+        resolveOptionTables: vi.fn().mockResolvedValue({
+          csiDivisions: {
+            status: 'config_error',
+            tuples: [],
+            errorMessage: 'Named range "Options_Submittal_Arch_CSI_Divisions" not found.',
+          },
+        }),
+      };
+      const failingService = createDocumentService(
+        mockDispatcher,
+        registry,
+        handlebarsEvaluator,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        failingTablePort
+      );
+      await failingService.initialize();
+      const configErrRes = await failingService.processDocument(
+        {
+          type: 'calc-lookup-test',
+          data: { section: '011000' },
+        },
+        'onSubmit'
+      );
+      expect(configErrRes.success).toBe(false);
+      if (!configErrRes.success) {
+        expect(configErrRes.errors[0]).toContain('Options_Submittal_Arch_CSI_Divisions');
+      }
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects invalid CalculatedField lookup bindings in validateManifestTemplates', () => {
+      const badLookupManifest: DocumentType = {
+        key: 'bad-lookup-manifest',
+        name: 'Bad Lookup Manifest',
+        documentSchema: {
+          fields: [{ key: 'section', name: 'Section', type: 'string' }],
+          optionSources: {
+            csiDivisions: {
+              provider: 'document_log',
+              properties: ['key', 'folder'],
+            },
+          },
+          calculatedFields: [
+            {
+              key: 'unknownSource',
+              template: '{{section}}',
+              lookup: {
+                source: 'missingSource',
+                matchProperty: 'key',
+                resultProperty: 'folder',
+              },
+            },
+            {
+              key: 'unknownProps',
+              template: '{{section}}',
+              lookup: {
+                source: 'csiDivisions',
+                matchProperty: 'badMatch',
+                resultProperty: 'badResult',
+              },
+            },
+          ],
+        },
+      };
+
+      const errors = validateManifestTemplates(badLookupManifest, handlebarsEvaluator);
+      expect(errors.some((e) => e.includes('calculatedFields[0].lookup.source'))).toBe(true);
+      expect(errors.some((e) => e.includes('calculatedFields[1].lookup.matchProperty'))).toBe(true);
+      expect(errors.some((e) => e.includes('calculatedFields[1].lookup.resultProperty'))).toBe(true);
     });
   });
 

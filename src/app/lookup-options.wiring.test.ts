@@ -326,4 +326,77 @@ describe('lookup-options.wiring', () => {
     });
     expect(readOptionTables).toHaveBeenCalledTimes(2);
   });
+
+  it('provides createOptionTableResolver sharing the per-request LookupOptionsService cache with createDynamicValidator (#374)', async () => {
+    const readOptionTables = vi.fn().mockResolvedValue({
+      status: 'ready',
+      spreadsheetId: 'log-1',
+      tables: {
+        statuses: {
+          status: 'ready',
+          tuples: [{ key: 'Open' }],
+        },
+        csiDivisions: {
+          status: 'ready',
+          tuples: [
+            { key: '07', folder: '07 Thermal and Moisture Protection' },
+          ],
+        },
+      },
+    });
+
+    const mockDocLogService = {
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      resolveLog: vi.fn(),
+      copyLog: vi.fn(),
+      queryUiContext: vi.fn(),
+      readLog: vi.fn(),
+      readOptionTables,
+      writeLog: vi.fn(),
+    };
+
+    const wiring = createLookupOptionsWiring({
+      manifestProvider: {
+        getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./submittal-arch.json'] }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'submittal-arch',
+          documentSchema: {
+            fields: [{ key: 'status', options: { source: 'statuses', key: 'key' } }],
+            optionSources: {
+              statuses: { provider: 'document_log', properties: ['key'] },
+              csiDivisions: { provider: 'document_log', properties: ['key', 'folder'] },
+            },
+          },
+        }),
+      },
+      getDocumentLogService: () => mockDocLogService,
+    });
+
+    const ctx: WorkspaceExecutionContext = { hostApp: 'DRIVE' };
+    const validator = wiring.createDynamicValidator(ctx);
+    const optionTablePort = wiring.createOptionTableResolver(ctx);
+
+    const space = {
+      id: 'sp-1',
+      typeId: 'projects',
+      name: '123 Main',
+      abstractStorageId: 'drive-1',
+    };
+    const valRes = await validator.validateExistence(
+      [{ sourceKey: 'statuses', fieldKey: 'status', queryId: 'status', valueToValidate: 'Open' }],
+      { space, documentTypeKey: 'submittal-arch' }
+    );
+    expect(valRes.status.isValid).toBe(true);
+
+    const tableRes = await optionTablePort.resolveOptionTables(['csiDivisions'], {
+      space,
+      documentTypeKey: 'submittal-arch',
+    });
+    expect(tableRes.csiDivisions.status).toBe('ready');
+    expect(tableRes.csiDivisions.tuples).toEqual([
+      { key: '07', folder: '07 Thermal and Moisture Protection' },
+    ]);
+    // Both calls share the same batched readOptionTables call in the per-request cache
+    expect(readOptionTables).toHaveBeenCalledTimes(1);
+  });
 });
