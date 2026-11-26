@@ -62,8 +62,12 @@ import {
   type DriveServicePort,
 } from './ports';
 import { HandlebarsAdapter } from '../../infrastructure/template-engine/handlebars-adapter';
+import { PdfProcessor } from '../../infrastructure/pdf/pdf-processor';
+import { createAnonymizedSubmittalCoverSheetPdf } from '../../../test/fixtures/submittal-cover-sheet.fixture';
 import { ActivityEngine } from './adapters/activity-engine';
 import { DriveActivityHandler } from './adapters/drive-activity-handler';
+import { DocumentContentEditorAdapter } from './adapters/document-content-editor.adapter';
+import { DocumentContentActivityHandler } from './adapters/document-content-activity-handler';
 
 
 
@@ -9296,6 +9300,695 @@ describe('Document domain', () => {
       });
       expect(result.files).toEqual(result.stepOutputs?.moveOriginal?.files);
       expect(writeLogHandler.handle).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('DocumentFormSchema & INSERT_DATA startup validation (#378)', () => {
+    const handlebarsEvaluator = new HandlebarsAdapter();
+    const baseDocumentSchema: DocumentType['documentSchema'] = {
+      fields: [
+        { key: 'section', name: 'Section', type: 'string', required: true },
+        { key: 'number', name: 'Number', type: 'string', required: true },
+        {
+          key: 'action',
+          name: 'Action',
+          type: 'string',
+          required: true,
+          options: { source: 'actions', key: 'key', name: 'name' },
+        },
+        { key: 'date', name: 'Date', type: 'string', required: true },
+      ],
+      options: {
+        actions: [
+          { key: 'REC', name: 'Received' },
+          { key: 'RR', name: 'Revise & Resubmit' },
+        ],
+      },
+    };
+
+    it('accepts INSERT_DATA.fields referencing writable: true DocumentFormSchema bindings and rejects missing or read-only fields', () => {
+      const validManifest: DocumentType = {
+        key: 'submittal-test',
+        name: 'Submittal Test',
+        documentSchema: baseDocumentSchema,
+        documentFormSchema: {
+          fields: {
+            'Submittal No': { template: '{{section}}-{{number}}', writable: true },
+            'Submittal Response': {
+              template: '{{action.name}}',
+              valueMap: { RR: 'Revise and Resubmit' },
+            },
+            Date: { template: '{{date}}', format: 'date', writable: false },
+          },
+        },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'StampOnly',
+              activitySequence: [
+                {
+                  id: 'stamp',
+                  type: 'INSERT_DATA',
+                  payload: { fields: ['Submittal No'] },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      expect(validateManifestTemplates(validManifest, handlebarsEvaluator)).toEqual([]);
+
+      const readOnlyManifest: DocumentType = {
+        ...validManifest,
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'StampReadOnly',
+              activitySequence: [
+                {
+                  id: 'stamp',
+                  type: 'INSERT_DATA',
+                  payload: { fields: ['Submittal Response', 'Date'] },
+                },
+              ],
+            },
+          ],
+        },
+      };
+      const readOnlyErrors = validateManifestTemplates(readOnlyManifest, handlebarsEvaluator);
+      expect(readOnlyErrors.length).toBe(2);
+      expect(readOnlyErrors[0]).toMatch(/Submittal Response.*writable/i);
+      expect(readOnlyErrors[1]).toMatch(/Date.*writable/i);
+
+      const unknownFieldManifest: DocumentType = {
+        ...validManifest,
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'StampUnknown',
+              activitySequence: [
+                {
+                  id: 'stamp',
+                  type: 'INSERT_DATA',
+                  payload: { fields: ['Does Not Exist'] },
+                },
+              ],
+            },
+          ],
+        },
+      };
+      const unknownErrors = validateManifestTemplates(unknownFieldManifest, handlebarsEvaluator);
+      expect(unknownErrors.length).toBe(1);
+      expect(unknownErrors[0]).toMatch(/Does Not Exist/i);
+
+      const missingFormSchemaManifest: DocumentType = {
+        key: 'submittal-no-form',
+        name: 'No Form',
+        documentSchema: baseDocumentSchema,
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'StampWithoutFormSchema',
+              activitySequence: [
+                {
+                  id: 'stamp',
+                  type: 'INSERT_DATA',
+                  payload: { fields: ['Submittal No'] },
+                },
+              ],
+            },
+          ],
+        },
+      };
+      const missingFormErrors = validateManifestTemplates(
+        missingFormSchemaManifest,
+        handlebarsEvaluator
+      );
+      expect(missingFormErrors.length).toBe(1);
+      expect(missingFormErrors[0]).toMatch(/documentFormSchema/i);
+    });
+  });
+
+  describe('INSERT_DATA end-to-end at DocumentService.processDocument() seam (#378)', () => {
+    const handlebarsEvaluator = new HandlebarsAdapter();
+    const pdfProcessor = new PdfProcessor();
+
+    function createInMemoryPdfDriveService(initialFiles: Record<string, { name: string; mimeType: string; bytes?: Uint8Array; parentId?: string }>): {
+      driveService: DriveServicePort;
+      storedBuffers: Map<string, Uint8Array>;
+    } {
+      const storedBuffers = new Map<string, Uint8Array>();
+      for (const [id, file] of Object.entries(initialFiles)) {
+        if (file.bytes) {
+          storedBuffers.set(id, file.bytes);
+        }
+      }
+
+      const driveService: DriveServicePort = {
+        getFile: vi.fn().mockImplementation(async (fileId: string) => {
+          const entry = initialFiles[fileId];
+          if (!entry) {
+            throw new FileNotFoundError(`Missing ${fileId}`);
+          }
+          const buf = storedBuffers.get(fileId);
+          return {
+            id: fileId,
+            name: entry.name,
+            mimeType: entry.mimeType,
+            ...(buf !== undefined ? { size: buf.byteLength } : {}),
+            parents: [entry.parentId ?? 'folder-root'],
+            webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+          };
+        }),
+        findOrCreateFolder: vi.fn().mockImplementation(async (parentId: string, name: string) => ({
+          id: `folder-${name}`,
+          name,
+          parents: [parentId],
+        })),
+        resolveFolderPath: vi.fn().mockImplementation(async (rootId: string, segments: string[]) => ({
+          id: `folder-${segments.join('-')}`,
+          name: segments[segments.length - 1] ?? '',
+          parents: [rootId],
+        })),
+        move: vi.fn().mockImplementation(async (fileId: string, targetFolderId: string, opts?: { newName?: string }) => {
+          const entry = initialFiles[fileId];
+          if (entry && opts?.newName) entry.name = opts.newName;
+          if (entry) entry.parentId = targetFolderId;
+          return {
+            id: fileId,
+            name: opts?.newName ?? entry?.name ?? fileId,
+            mimeType: entry?.mimeType ?? 'application/pdf',
+            parents: [targetFolderId],
+            webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+          };
+        }),
+        rename: vi.fn(),
+        duplicate: vi.fn().mockImplementation(async (fileId: string, opts?: { targetFolderId?: string; newName?: string }) => {
+          const source = initialFiles[fileId];
+          const copyId = `${fileId}-copy`;
+          const copyName = opts?.newName ?? source?.name ?? `${fileId}-copy`;
+          const copyParent = opts?.targetFolderId ?? source?.parentId ?? 'folder-root';
+          initialFiles[copyId] = {
+            name: copyName,
+            mimeType: source?.mimeType ?? 'application/pdf',
+            parentId: copyParent,
+          };
+          const sourceBytes = storedBuffers.get(fileId);
+          if (sourceBytes) {
+            storedBuffers.set(copyId, sourceBytes);
+          }
+          return {
+            id: copyId,
+            name: copyName,
+            mimeType: source?.mimeType ?? 'application/pdf',
+            parents: [copyParent],
+            webViewLink: `https://drive.google.com/file/d/${copyId}/view`,
+          };
+        }),
+        searchFiles: vi.fn().mockResolvedValue([]),
+        downloadAsBuffer: vi.fn().mockImplementation(async (fileId: string) => {
+          const buf = storedBuffers.get(fileId);
+          if (!buf) throw new Error(`No buffer for ${fileId}`);
+          return buf;
+        }),
+        saveBuffer: vi.fn().mockImplementation(async (content: Uint8Array, opts) => {
+          if (opts.action === 'update') {
+            storedBuffers.set(opts.fileId, content);
+            const entry = initialFiles[opts.fileId];
+            return {
+              id: opts.fileId,
+              name: entry?.name ?? opts.fileId,
+              mimeType: opts.mimeType ?? entry?.mimeType ?? 'application/pdf',
+              parents: [entry?.parentId ?? 'folder-root'],
+              webViewLink: `https://drive.google.com/file/d/${opts.fileId}/view`,
+            };
+          }
+          return {
+            id: 'created-id',
+            name: opts.name,
+            mimeType: opts.mimeType ?? 'application/pdf',
+            parents: [opts.targetFolderId],
+            webViewLink: 'https://drive.google.com/file/d/created-id/view',
+          };
+        }),
+        uploadStream: vi.fn(),
+      };
+
+      return { driveService, storedBuffers };
+    }
+
+    it('stamps only writable: true fields onto PDF without flattening, preserves read-only fields, and returns updated FileLocator[]', async () => {
+      const targetPdf = await createAnonymizedSubmittalCoverSheetPdf({
+        submittalResponse: 'No Exceptions Taken',
+        date: '2026-10-01',
+      });
+      const { driveService, storedBuffers } = createInMemoryPdfDriveService({
+        'pdf-1': { name: 'Submittal.pdf', mimeType: 'application/pdf', bytes: targetPdf },
+      });
+
+      const docType: DocumentType = {
+        key: 'submittal-insert-data',
+        name: 'Submittal Insert Data',
+        documentSchema: {
+          fields: [
+            { key: 'section', name: 'Section', type: 'string', required: true },
+            { key: 'number', name: 'Number', type: 'string', required: true },
+            { key: 'revision', name: 'Revision', type: 'string', required: false },
+            {
+              key: 'action',
+              name: 'Action',
+              type: 'string',
+              required: true,
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+            { key: 'date', name: 'Date', type: 'string', required: true },
+          ],
+          options: {
+            actions: [
+              { key: 'REC', name: 'Received' },
+              { key: 'RR', name: 'Revise & Resubmit' },
+            ],
+          },
+        },
+        documentFormSchema: {
+          fields: {
+            'Submittal No': {
+              template: '{{section}}-{{number}}-{{revision}}',
+              writable: true,
+            },
+            'Submittal Response': {
+              template: '{{action.name}}',
+              valueMap: { RR: 'Revise and Resubmit' },
+            },
+            Date: {
+              template: '{{date}}',
+              format: 'date',
+            },
+          },
+        },
+        documentUiSchema: {
+          events: { onSubmit: { catchAllWorkflow: 'DuplicateAndStamp' } },
+        },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'DuplicateAndStamp',
+              activitySequence: [
+                {
+                  id: 'duplicateForReview',
+                  type: 'DUPLICATE_FILE',
+                  payload: { fileNamePrefix: '_' },
+                },
+                {
+                  id: 'stampData',
+                  type: 'INSERT_DATA',
+                  payload: { fileSourceStepId: 'duplicateForReview' },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const registry = createCustomRegistry([docType]);
+      const contentEditor = new DocumentContentEditorAdapter({ driveService, pdfProcessor });
+      const engine = new ActivityEngine([
+        new DriveActivityHandler(driveService),
+        new DocumentContentActivityHandler({
+          contentEditor,
+          documentSchemaRegistry: registry,
+          templateEvaluator: handlebarsEvaluator,
+        }),
+      ]);
+
+      const service = new DocumentService(
+        engine,
+        registry,
+        handlebarsEvaluator,
+        createMockCompiledRegistry(registry),
+        undefined,
+        undefined,
+        undefined,
+        driveService
+      );
+      await service.initialize();
+
+      const res = await service.processDocument(
+        {
+          type: 'submittal-insert-data',
+          sourceFiles: [{ id: 'pdf-1', name: 'Submittal.pdf', mimeType: 'application/pdf' }],
+          data: {
+            section: '071200',
+            number: '001',
+            revision: '0',
+            action: 'RR',
+            date: '261104',
+          },
+        },
+        'onSubmit'
+      );
+
+      expect(res.success).toBe(true);
+      if (!res.success) return;
+
+      expect(res.stepOutputs?.stampData?.files).toEqual([
+        {
+          id: 'pdf-1-copy',
+          name: '_Submittal.pdf',
+          parentId: 'folder-root',
+          parentName: 'folder-root',
+          mimeType: 'application/pdf',
+          uri: 'https://drive.google.com/file/d/pdf-1-copy/view',
+        },
+      ]);
+
+      const stampedBuffer = storedBuffers.get('pdf-1-copy')!;
+      const extracted = await pdfProcessor.extractFormData(stampedBuffer);
+      expect(extracted['Submittal No']).toBe('071200-001-0');
+      // Read-only fields remain untouched
+      expect(extracted['Submittal Response']).toBe('No Exceptions Taken');
+      expect(extracted['Date']).toBe('2026-10-01');
+    });
+
+    it('enforces valueMap canonical key precedence, emits "" for blank format: "date", and formats blank optional tokens cleanly', async () => {
+      const targetPdf = await createAnonymizedSubmittalCoverSheetPdf();
+      const { driveService, storedBuffers } = createInMemoryPdfDriveService({
+        'pdf-2': { name: 'Target.pdf', mimeType: 'application/pdf', bytes: targetPdf },
+      });
+
+      const docType: DocumentType = {
+        key: 'submittal-write-eval',
+        name: 'Submittal Write Eval',
+        documentSchema: {
+          fields: [
+            { key: 'section', name: 'Section', type: 'string', required: true },
+            { key: 'number', name: 'Number', type: 'string', required: true },
+            { key: 'revision', name: 'Revision', type: 'string', required: false },
+            {
+              key: 'action',
+              name: 'Action',
+              type: 'string',
+              required: true,
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+            { key: 'date', name: 'Date', type: 'string', required: false },
+          ],
+          options: {
+            actions: [
+              { key: 'RR', name: 'Revise & Resubmit' },
+              { key: 'NET', name: 'No Exceptions Taken' },
+              { key: 'REJ', name: 'Rejected' },
+            ],
+          },
+        },
+        documentFormSchema: {
+          fields: {
+            'Submittal No': {
+              template: '{{section}}-{{number}}-{{revision}}',
+              writable: true,
+            },
+            'Submittal Response': {
+              template: '{{action.name}}',
+              valueMap: {
+                RR: 'Revise and Resubmit',
+                Rejected: 'Rejected',
+              },
+              writable: true,
+            },
+            Date: {
+              template: '{{date}}',
+              format: 'date',
+              writable: true,
+            },
+          },
+        },
+        documentUiSchema: {
+          events: { onSubmit: { catchAllWorkflow: 'StampAll' } },
+        },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'StampAll',
+              activitySequence: [
+                {
+                  id: 'stampData',
+                  type: 'INSERT_DATA',
+                  payload: {},
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const registry = createCustomRegistry([docType]);
+      const contentEditor = new DocumentContentEditorAdapter({ driveService, pdfProcessor });
+      const engine = new ActivityEngine([
+        new DocumentContentActivityHandler({
+          contentEditor,
+          documentSchemaRegistry: registry,
+          templateEvaluator: handlebarsEvaluator,
+        }),
+      ]);
+
+      const service = new DocumentService(
+        engine,
+        registry,
+        handlebarsEvaluator,
+        createMockCompiledRegistry(registry),
+        undefined,
+        undefined,
+        undefined,
+        driveService
+      );
+      await service.initialize();
+
+      // Case 1: canonical key match in valueMap (RR -> Revise and Resubmit even though template is {{action.name}} = "Revise & Resubmit"),
+      // blank optional revision -> "071200-001" without trailing hyphen,
+      // blank date -> "" (does not fail or emit placeholder)
+      const res1 = await service.processDocument(
+        {
+          type: 'submittal-write-eval',
+          sourceFiles: [{ id: 'pdf-2', name: 'Target.pdf', mimeType: 'application/pdf' }],
+          data: {
+            section: '071200',
+            number: '001',
+            action: 'RR',
+            date: '',
+          },
+        },
+        'onSubmit'
+      );
+      expect(res1.success).toBe(true);
+      const extracted1 = await pdfProcessor.extractFormData(storedBuffers.get('pdf-2')!);
+      expect(extracted1['Submittal No']).toBe('071200-001');
+      expect(extracted1['Submittal Response']).toBe('Revise and Resubmit');
+      expect(extracted1['Date']).toBeUndefined();
+
+      // Case 2: formatted date (yyMMdd -> yyyy-MM-dd) & rendered fallback / unmapped action
+      const res2 = await service.processDocument(
+        {
+          type: 'submittal-write-eval',
+          sourceFiles: [{ id: 'pdf-2', name: 'Target.pdf', mimeType: 'application/pdf' }],
+          data: {
+            section: '071200',
+            number: '002',
+            revision: 'B',
+            action: 'NET',
+            date: '261104',
+          },
+        },
+        'onSubmit'
+      );
+      expect(res2.success).toBe(true);
+      const extracted2 = await pdfProcessor.extractFormData(storedBuffers.get('pdf-2')!);
+      expect(extracted2['Submittal No']).toBe('071200-002-B');
+      expect(extracted2['Submittal Response']).toBe('No Exceptions Taken');
+      expect(extracted2['Date']).toBe('2026-11-04');
+    });
+
+    it('skips Drive download and upload when evaluated writable data is empty, and respects fields allowlist', async () => {
+      const targetPdf = await createAnonymizedSubmittalCoverSheetPdf({
+        date: '2026-01-15',
+      });
+      const { driveService, storedBuffers } = createInMemoryPdfDriveService({
+        'pdf-3': { name: 'Target3.pdf', mimeType: 'application/pdf', bytes: targetPdf },
+      });
+
+      const docType: DocumentType = {
+        key: 'submittal-skip-empty',
+        name: 'Submittal Skip Empty',
+        documentSchema: {
+          fields: [
+            { key: 'section', name: 'Section', type: 'string', required: false },
+            { key: 'number', name: 'Number', type: 'string', required: false },
+            { key: 'date', name: 'Date', type: 'string', required: false },
+          ],
+        },
+        documentFormSchema: {
+          fields: {
+            'Submittal No': {
+              template: '{{section}}-{{number}}',
+              writable: true,
+            },
+            Date: {
+              template: '{{date}}',
+              format: 'date',
+              writable: true,
+            },
+          },
+        },
+        documentUiSchema: {
+          events: {
+            onSubmit: { catchAllWorkflow: 'StampOnlySubmittalNo' },
+          },
+        },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'StampOnlySubmittalNo',
+              activitySequence: [
+                {
+                  id: 'stampData',
+                  type: 'INSERT_DATA',
+                  payload: { fields: ['Submittal No'] },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const registry = createCustomRegistry([docType]);
+      const contentEditor = new DocumentContentEditorAdapter({ driveService, pdfProcessor });
+      const engine = new ActivityEngine([
+        new DocumentContentActivityHandler({
+          contentEditor,
+          documentSchemaRegistry: registry,
+          templateEvaluator: handlebarsEvaluator,
+        }),
+      ]);
+
+      const service = new DocumentService(
+        engine,
+        registry,
+        handlebarsEvaluator,
+        createMockCompiledRegistry(registry),
+        undefined,
+        undefined,
+        undefined,
+        driveService
+      );
+      await service.initialize();
+
+      // Empty tokens -> "--" collapses to "" -> skip Drive download/upload
+      const emptyRes = await service.processDocument(
+        {
+          type: 'submittal-skip-empty',
+          sourceFiles: [{ id: 'pdf-3', name: 'Target3.pdf', mimeType: 'application/pdf' }],
+          data: {},
+        },
+        'onSubmit'
+      );
+      expect(emptyRes.success).toBe(true);
+      expect(driveService.downloadAsBuffer).not.toHaveBeenCalled();
+      expect(driveService.saveBuffer).not.toHaveBeenCalled();
+
+      // Non-empty Submittal No with fields: ['Submittal No'] -> stamps Submittal No only, keeps Date untouched
+      const populatedRes = await service.processDocument(
+        {
+          type: 'submittal-skip-empty',
+          sourceFiles: [{ id: 'pdf-3', name: 'Target3.pdf', mimeType: 'application/pdf' }],
+          data: { section: '071200', number: '005', date: '261104' },
+        },
+        'onSubmit'
+      );
+      expect(populatedRes.success).toBe(true);
+      expect(driveService.saveBuffer).toHaveBeenCalledTimes(1);
+      const extracted = await pdfProcessor.extractFormData(storedBuffers.get('pdf-3')!);
+      expect(extracted['Submittal No']).toBe('071200-005');
+      expect(extracted['Date']).toBe('2026-01-15');
+    });
+
+    it('fails explicitly on unsupported target MIME types during INSERT_DATA', async () => {
+      const { driveService } = createInMemoryPdfDriveService({
+        'gdoc-target': {
+          name: 'Submittal Doc',
+          mimeType: 'application/vnd.google-apps.document',
+        },
+      });
+
+      const docType: DocumentType = {
+        key: 'submittal-unsupported-mime',
+        name: 'Submittal Unsupported MIME',
+        documentSchema: {
+          fields: [{ key: 'section', name: 'Section', type: 'string', required: true }],
+        },
+        documentFormSchema: {
+          fields: {
+            'Submittal No': { template: '{{section}}', writable: true },
+          },
+        },
+        documentUiSchema: {
+          events: { onSubmit: { catchAllWorkflow: 'StampDoc' } },
+        },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'StampDoc',
+              activitySequence: [
+                { id: 'stampData', type: 'INSERT_DATA', payload: {} },
+              ],
+            },
+          ],
+        },
+      };
+
+      const registry = createCustomRegistry([docType]);
+      const contentEditor = new DocumentContentEditorAdapter({ driveService, pdfProcessor });
+      const engine = new ActivityEngine([
+        new DocumentContentActivityHandler({
+          contentEditor,
+          documentSchemaRegistry: registry,
+          templateEvaluator: handlebarsEvaluator,
+        }),
+      ]);
+
+      const service = new DocumentService(
+        engine,
+        registry,
+        handlebarsEvaluator,
+        createMockCompiledRegistry(registry),
+        undefined,
+        undefined,
+        undefined,
+        driveService
+      );
+      await service.initialize();
+
+      const res = await service.processDocument(
+        {
+          type: 'submittal-unsupported-mime',
+          sourceFiles: [
+            {
+              id: 'gdoc-target',
+              name: 'Submittal Doc',
+              mimeType: 'application/vnd.google-apps.document',
+            },
+          ],
+          data: { section: '071200' },
+        },
+        'onSubmit'
+      );
+
+      expect(res.success).toBe(false);
+      if (!res.success) {
+        expect(res.failedStepId).toBe('stampData');
+        expect(res.workflowName).toBe('StampDoc');
+        expect(res.errors[0]).toMatch(/application\/vnd\.google-apps\.document/i);
+      }
+      expect(driveService.saveBuffer).not.toHaveBeenCalled();
     });
   });
 });

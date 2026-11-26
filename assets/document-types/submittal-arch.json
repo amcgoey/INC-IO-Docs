@@ -357,7 +357,8 @@
   "documentFormSchema": {
     "fields": {
       "Submittal No": {
-        "template": "{{section}}-{{number}}-{{revision}}"
+        "template": "{{section}}-{{number}}-{{revision}}",
+        "writable": true
       },
       "Submittal Response": {
         "template": "{{action.name}}",

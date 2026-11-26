@@ -20,6 +20,8 @@ import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import type { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 import type { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
+import { createAnonymizedSubmittalCoverSheetPdf } from '../../test/fixtures/submittal-cover-sheet.fixture';
+import { PdfProcessor as RealPdfProcessor } from '../infrastructure/pdf/pdf-processor';
 
 describe('document.wiring', () => {
   const dummyDocType: DocumentType = {
@@ -604,6 +606,119 @@ describe('document.wiring', () => {
           '07 Thermal and Moisture Protection'
         );
       }
+    });
+
+    it('wires DocumentContentEditorAdapter and DocumentContentActivityHandler in createDocumentServiceFactory and wireDocumentServicesAndRoutes with centralized size limit (#378)', async () => {
+      const samplePdf = await createAnonymizedSubmittalCoverSheetPdf();
+      const storedFiles = new Map<string, Uint8Array>([['pdf-wired-1', samplePdf]]);
+      const realPdfProcessor = new RealPdfProcessor();
+
+      const insertDataDocType: DocumentType = {
+        key: 'insert-data-wiring',
+        name: 'Insert Data Wiring',
+        documentSchema: {
+          fields: [{ key: 'section', name: 'Section', type: 'string', required: true }],
+        },
+        documentFormSchema: {
+          fields: {
+            'Submittal No': { template: '{{section}}', writable: true },
+          },
+        },
+        documentUiSchema: {
+          events: { onSubmit: { catchAllWorkflow: 'StampWired' } },
+        },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'StampWired',
+              activitySequence: [{ id: 'stamp', type: 'INSERT_DATA', payload: {} }],
+            },
+          ],
+        },
+      };
+
+      const registry: DocumentSchemaRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([insertDataDocType]),
+      };
+      const compiled = new CompiledSchemaRegistry(registry);
+      await compiled.initialize();
+
+      const mockDriveClient = {
+        getFile: vi.fn().mockImplementation(async (fileId: string) => ({
+          id: fileId,
+          name: 'Wired.pdf',
+          mimeType: 'application/pdf',
+          size: storedFiles.get(fileId)?.byteLength,
+          parents: ['parent-1'],
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        })),
+        downloadAsBuffer: vi.fn().mockImplementation(async (fileId: string) => storedFiles.get(fileId)!),
+        saveBuffer: vi.fn().mockImplementation(async (content: Uint8Array, opts: { action: string; fileId?: string }) => {
+          if (opts.action === 'update' && opts.fileId) {
+            storedFiles.set(opts.fileId, content);
+          }
+          return {
+            id: opts.fileId ?? 'pdf-wired-1',
+            name: 'Wired.pdf',
+            mimeType: 'application/pdf',
+            parents: ['parent-1'],
+            webViewLink: `https://drive.google.com/file/d/${opts.fileId ?? 'pdf-wired-1'}/view`,
+          };
+        }),
+      } as unknown as GoogleDriveClient;
+
+      const factory = createDocumentServiceFactory({
+        documentSchemaRegistry: registry,
+        templateEvaluator: new HandlebarsAdapter(),
+        compiledSchemaRegistry: compiled,
+        driveClient: mockDriveClient,
+        configProvider: { getDriveConfig: vi.fn().mockResolvedValue(undefined) },
+      });
+
+      const perReqService = (await factory({
+        sourceFiles: [{ id: 'pdf-wired-1', name: 'Wired.pdf', mimeType: 'application/pdf' }],
+      })) as DocumentService;
+
+      const factoryRes = await perReqService.processDocument(
+        {
+          type: 'insert-data-wiring',
+          sourceFiles: [{ id: 'pdf-wired-1', name: 'Wired.pdf', mimeType: 'application/pdf' }],
+          data: { section: '071200' },
+        },
+        'onSubmit'
+      );
+      expect(factoryRes.success).toBe(true);
+      const extractedFactory = await realPdfProcessor.extractFormData(storedFiles.get('pdf-wired-1')!);
+      expect(extractedFactory['Submittal No']).toBe('071200');
+
+      const mockServer: HttpServer = { registerRoute: vi.fn() } as unknown as HttpServer;
+      const getMaxInMemoryFileBytes = vi.fn().mockResolvedValue(10);
+      const wiredOversizedService = wireDocumentServicesAndRoutes({
+        server: mockServer,
+        driveClient: mockDriveClient,
+        configProvider: {
+          getDriveConfig: vi.fn().mockResolvedValue(undefined),
+          getMaxInMemoryFileBytes,
+        },
+        documentSchemaRegistry: registry,
+        templateEvaluator: new HandlebarsAdapter(),
+      }) as DocumentService;
+      await wiredOversizedService.initialize();
+
+      const oversizedRes = await wiredOversizedService.processDocument(
+        {
+          type: 'insert-data-wiring',
+          sourceFiles: [{ id: 'pdf-wired-1', name: 'Wired.pdf', mimeType: 'application/pdf' }],
+          data: { section: '071200' },
+        },
+        'onSubmit'
+      );
+      expect(oversizedRes.success).toBe(false);
+      if (!oversizedRes.success) {
+        expect(oversizedRes.failedStepId).toBe('stamp');
+        expect(oversizedRes.errors[0]).toMatch(/maximum in-memory size limit/i);
+      }
+      expect(getMaxInMemoryFileBytes).toHaveBeenCalled();
     });
   });
 });

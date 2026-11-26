@@ -1,5 +1,18 @@
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import {
+  DocumentFormFieldFormatSchema,
+  DocumentFormFieldBindingSchema,
+  DocumentFormSchemaSchema,
+  evaluateWritableDocumentFormFields,
+  hasNonEmptyWritableFormData,
+  validateDocumentFormSchema,
+  validateInsertDataActivityPayload,
+  type DocumentFormFieldFormat,
+  type DocumentFormFieldBinding,
+  type DocumentFormSchema,
+  type EvaluateWritableDocumentFormFieldsParams,
+} from './document-form-schema';
 import type {
   ActivityDispatcherPort,
   DocumentSchemaRegistryPort,
@@ -297,6 +310,18 @@ export const DocumentUiEventsSchema = Type.Object(
 
 export type DocumentUiEvents = Static<typeof DocumentUiEventsSchema>;
 
+export {
+  DocumentFormFieldFormatSchema,
+  DocumentFormFieldBindingSchema,
+  DocumentFormSchemaSchema,
+  evaluateWritableDocumentFormFields,
+  hasNonEmptyWritableFormData,
+  type DocumentFormFieldFormat,
+  type DocumentFormFieldBinding,
+  type DocumentFormSchema,
+  type EvaluateWritableDocumentFormFieldsParams,
+};
+
 export const DocumentTypeSchema = Type.Object({
   key: Type.String(),
   name: Type.String(),
@@ -304,6 +329,7 @@ export const DocumentTypeSchema = Type.Object({
   documentUiSchema: Type.Optional(DocumentUiEventsSchema),
   documentWorkflowConfig: Type.Optional(DocumentWorkflowConfigType),
   storageContextConfig: Type.Optional(StorageContextConfigType),
+  documentFormSchema: Type.Optional(Type.Union([DocumentFormSchemaSchema, Type.Undefined()])),
   allowEmptySourceFiles: Type.Optional(Type.Boolean()),
   maxSourceFiles: Type.Optional(Type.Integer({ minimum: 1 })),
 });
@@ -1713,7 +1739,11 @@ function getExecutionVariables(manifest: DocumentType, baseVariables: string[]):
   return Array.from(new Set(vars));
 }
 
-function validateWorkflowSteps(workflows: Workflow[], errors: string[]): void {
+function validateWorkflowSteps(
+  workflows: Workflow[],
+  errors: string[],
+  documentFormSchema?: DocumentFormSchema
+): void {
   workflows.forEach((workflow, workflowIndex) => {
     const seenStepIds = new Set<string>();
     const activitySequence = workflow.activitySequence ?? [];
@@ -1767,6 +1797,20 @@ function validateWorkflowSteps(workflows: Workflow[], errors: string[]): void {
             `Invalid fileNamePrefix at "${activityPath}.payload.fileNamePrefix": must be a non-empty string.`
           );
         }
+      }
+
+      if (
+        activity.type === 'INSERT_DATA' &&
+        activity.payload &&
+        typeof activity.payload === 'object' &&
+        !Array.isArray(activity.payload)
+      ) {
+        validateInsertDataActivityPayload(
+          activity.payload,
+          activityPath,
+          documentFormSchema,
+          errors
+        );
       }
 
       if (hasValidId && activity.id !== undefined) {
@@ -2055,6 +2099,12 @@ export function validateManifestTemplates(
 
   validateOptionSourcesAndFields(manifest.documentSchema, errors);
   validateCalculatedFields(manifest.documentSchema, evaluator, baseVariables, errors);
+  validateDocumentFormSchema(
+    manifest.documentFormSchema,
+    manifest.documentSchema,
+    evaluator,
+    errors
+  );
 
   if (manifest.documentSchema.identity) {
     for (const [propKey, template] of Object.entries(manifest.documentSchema.identity)) {
@@ -2076,7 +2126,11 @@ export function validateManifestTemplates(
   }
 
   if (manifest.documentWorkflowConfig) {
-    validateWorkflowSteps(manifest.documentWorkflowConfig.workflows, errors);
+    validateWorkflowSteps(
+      manifest.documentWorkflowConfig.workflows,
+      errors,
+      manifest.documentFormSchema
+    );
     validateWorkflowPathPayloads(manifest, errors);
 
     walkTemplates(manifest.documentWorkflowConfig, 'documentWorkflowConfig', (path, template) => {

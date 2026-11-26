@@ -12,6 +12,7 @@ import type {
   DocumentDynamicValidationPort,
   DocumentOptionTablePort,
   DynamicValidationMessageFormatter,
+  DocumentContentEditorPort,
 } from '../features/document/ports';
 import {
   DEFAULT_MESSAGE_CATALOG,
@@ -42,6 +43,8 @@ import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 import { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
 import { createMaxInMemoryFileBytesProvider } from '../infrastructure/manifest/app-manifest-provider';
 import { GmailSourceFileHydratorAdapter } from '../features/document/adapters/gmail-source-file-hydrator.adapter';
+import { DocumentContentEditorAdapter } from '../features/document/adapters/document-content-editor.adapter';
+import { DocumentContentActivityHandler } from '../features/document/adapters/document-content-activity-handler';
 
 export interface DocumentFeatureWiringOptions {
   manifestProvider: RawManifestProviderPort;
@@ -87,6 +90,28 @@ export function createDocumentFeatureWiring(
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import type { DocumentServiceFactory } from './ui-process-manager.wiring';
 
+function createDocumentContentHandler(params: {
+  driveService: DriveServicePort;
+  documentSchemaRegistry: DocumentSchemaRegistryPort;
+  templateEvaluator: TemplateEvaluatorPort;
+  pdfProcessor: PdfProcessor;
+  getMaxInMemoryFileBytes: () => Promise<number>;
+  contentEditor?: DocumentContentEditorPort | undefined;
+}): DocumentContentActivityHandler {
+  const contentEditor =
+    params.contentEditor ??
+    new DocumentContentEditorAdapter({
+      driveService: params.driveService,
+      pdfProcessor: params.pdfProcessor,
+      getMaxInMemoryFileBytes: params.getMaxInMemoryFileBytes,
+    });
+  return new DocumentContentActivityHandler({
+    contentEditor,
+    documentSchemaRegistry: params.documentSchemaRegistry,
+    templateEvaluator: params.templateEvaluator,
+  });
+}
+
 export interface CreateDocumentServiceFactoryOptions {
   documentSchemaRegistry: DocumentSchemaRegistryPort;
   templateEvaluator: TemplateEvaluatorPort;
@@ -96,6 +121,7 @@ export interface CreateDocumentServiceFactoryOptions {
   driveClient?: GoogleDriveClient | undefined;
   gmailClient?: GoogleGmailClient | undefined;
   pdfProcessor?: PdfProcessor | undefined;
+  contentEditor?: DocumentContentEditorPort | undefined;
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
   getDynamicValidator?: ((requestContext: WorkspaceExecutionContext) => DocumentDynamicValidationPort) | undefined;
   optionTablePort?: DocumentOptionTablePort | undefined;
@@ -150,6 +176,9 @@ export function createDocumentServiceFactory(
         new GoogleDriveClient({ configProvider: options.configProvider });
 
     const driveService = new DriveServiceAdapter(driveClient);
+    const getMaxInMemoryFileBytes = createMaxInMemoryFileBytesProvider(options.configProvider);
+    const pdfProcessor =
+      options.pdfProcessor ?? new PdfProcessor({ getMaxInMemoryFileBytes });
 
     const hasGmailContext = Boolean(
       context.hostApp === 'GMAIL' ||
@@ -171,12 +200,11 @@ export function createDocumentServiceFactory(
           : true;
 
       const gmailClient = options.gmailClient ?? new GoogleGmailClient();
-      const getMaxInMemoryFileBytes = createMaxInMemoryFileBytesProvider(options.configProvider);
       sourceFileHydrator = new GmailSourceFileHydratorAdapter(gmailClient, {
         auth,
         messageId,
         isFileSourceEmailAttachments,
-        pdfProcessor: options.pdfProcessor ?? new PdfProcessor({ getMaxInMemoryFileBytes }),
+        pdfProcessor,
       });
     }
 
@@ -188,11 +216,21 @@ export function createDocumentServiceFactory(
       isFileSourceEmailAttachments,
     });
 
+    const contentActivityHandler = createDocumentContentHandler({
+      driveService,
+      documentSchemaRegistry: options.documentSchemaRegistry,
+      templateEvaluator: options.templateEvaluator,
+      pdfProcessor,
+      getMaxInMemoryFileBytes,
+      contentEditor: options.contentEditor,
+    });
+
     const perRequestHandlers = options.createAdditionalActivityHandlers
       ? await options.createAdditionalActivityHandlers(context, effectiveRequestContext)
       : [];
     const handlers: ActivityHandler[] = [
       driveActivityHandler,
+      contentActivityHandler,
       ...(options.additionalActivityHandlers ?? []),
       ...perRequestHandlers,
     ];
@@ -258,6 +296,8 @@ export interface WireDocumentServicesOptions {
   templateEvaluator: TemplateEvaluatorPort;
   manifestProvider?: RawManifestProviderPort | undefined;
   driveService?: DriveServicePort | undefined;
+  pdfProcessor?: PdfProcessor | undefined;
+  contentEditor?: DocumentContentEditorPort | undefined;
   activityEngine?: ActivityDispatcherPort | undefined;
   documentService?: InjectedDocumentService | undefined;
   compiledSchemaRegistry?: CompiledSchemaRegistryPort | undefined;
@@ -306,6 +346,10 @@ export function wireDocumentServicesAndRoutes(
       ensureDocumentLogInitialized: options.ensureDocumentLogInitialized,
     });
 
+  const getMaxInMemoryFileBytes = createMaxInMemoryFileBytesProvider(options.configProvider);
+  const pdfProcessor =
+    options.pdfProcessor ?? new PdfProcessor({ getMaxInMemoryFileBytes });
+
   const buildActivityEngine = async (
     lookupOptions?: LookupOptionsPort,
     requestContext?: WorkspaceExecutionContext
@@ -321,12 +365,25 @@ export function wireDocumentServicesAndRoutes(
       primaryTargetId: options.primaryTargetId,
     });
 
+    const contentActivityHandler = createDocumentContentHandler({
+      driveService,
+      documentSchemaRegistry: options.documentSchemaRegistry,
+      templateEvaluator: options.templateEvaluator,
+      pdfProcessor,
+      getMaxInMemoryFileBytes,
+      contentEditor: options.contentEditor,
+    });
+
     const dynamicHandlers =
       lookupOptions && options.createAdditionalActivityHandlers
         ? await options.createAdditionalActivityHandlers(lookupOptions, requestContext ?? {})
         : (options.additionalActivityHandlers ?? []);
 
-    const handlers: ActivityHandler[] = [driveActivityHandler, ...dynamicHandlers];
+    const handlers: ActivityHandler[] = [
+      driveActivityHandler,
+      contentActivityHandler,
+      ...dynamicHandlers,
+    ];
     return new ActivityEngine(handlers);
   };
 
@@ -340,12 +397,22 @@ export function wireDocumentServicesAndRoutes(
       primaryTargetId: options.primaryTargetId,
     });
 
+    const contentActivityHandler = createDocumentContentHandler({
+      driveService,
+      documentSchemaRegistry: options.documentSchemaRegistry,
+      templateEvaluator: options.templateEvaluator,
+      pdfProcessor,
+      getMaxInMemoryFileBytes,
+      contentEditor: options.contentEditor,
+    });
+
     const lookupOptions =
       options.dynamicValidator && options.optionTablePort
         ? undefined
         : buildDefaultLookupOptions();
     const handlers: ActivityHandler[] = [
       driveActivityHandler,
+      contentActivityHandler,
       ...(options.additionalActivityHandlers ?? []),
     ];
 

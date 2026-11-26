@@ -15,6 +15,12 @@ import {
   GoogleDriveOptionSourceSchema,
   CalculatedFieldTransformSchema,
   CalculatedFieldLookupSchema,
+  DocumentFormFieldFormatSchema,
+  DocumentFormFieldBindingSchema,
+  DocumentFormSchemaSchema,
+  type DocumentFormFieldFormat,
+  type DocumentFormFieldBinding,
+  type DocumentFormSchema,
   type Activity,
   type ActivityExecutionContext,
   type ActivityOutput,
@@ -50,6 +56,12 @@ export {
   type DocumentLogOptionSource,
   GoogleDriveOptionSourceSchema,
   type GoogleDriveOptionSource,
+  DocumentFormFieldFormatSchema,
+  type DocumentFormFieldFormat,
+  DocumentFormFieldBindingSchema,
+  type DocumentFormFieldBinding,
+  DocumentFormSchemaSchema,
+  type DocumentFormSchema,
 };
 
 export type SchemaOrKeys =
@@ -292,9 +304,20 @@ export interface RawManifestProviderPort {
 
 export type TemplateEvaluationContext = { [key: string]: unknown };
 
+export interface MustacheTemplateToken {
+  original: string;
+  parts: string[];
+}
+
+export interface ParsedMustacheTemplate {
+  tokens: MustacheTemplateToken[];
+  literals: string[];
+}
+
 export interface TemplateEvaluatorPort {
   validate(template: string, allowedVariables: string[]): boolean;
   evaluate(template: string, context: TemplateEvaluationContext): string;
+  parseMustacheTemplate?(template: string): ParsedMustacheTemplate;
 }
 
 export class DriveServiceError extends Error {
@@ -330,6 +353,50 @@ export class DriveFileTooLargeError extends DriveServiceError {
     super(message, options);
     this.name = 'DriveFileTooLargeError';
   }
+}
+
+export class DocumentContentError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'DocumentContentError';
+  }
+}
+
+export class UnsupportedDocumentMimeTypeError extends DocumentContentError {
+  readonly mimeType: string | undefined;
+
+  constructor(
+    message: string,
+    options?: ErrorOptions & { mimeType?: string | undefined }
+  ) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
+    this.name = 'UnsupportedDocumentMimeTypeError';
+    this.mimeType = options?.mimeType;
+  }
+}
+
+export type DocumentFormFieldInputValue =
+  | string
+  | number
+  | boolean
+  | string[]
+  | undefined
+  | null;
+
+export interface DocumentContentInsertDataRequest {
+  targetFileId: string;
+  targetMimeType?: string | undefined;
+  targetFileName?: string | undefined;
+  formData: Record<string, DocumentFormFieldInputValue>;
+}
+
+export interface DocumentContentEditResult {
+  file: FileLocator;
+  skipped?: boolean | undefined;
+}
+
+export interface DocumentContentEditorPort {
+  insertData(request: DocumentContentInsertDataRequest): Promise<DocumentContentEditResult>;
 }
 
 export interface DriveSearchQuery {
