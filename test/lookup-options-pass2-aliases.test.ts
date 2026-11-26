@@ -14,6 +14,10 @@ import type {
   GoogleWorkspaceSection,
 } from '../src/infrastructure/workspace-addon/ui-blocks';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
+import {
+  getDocumentSpaceWidgetName,
+  getDocumentTypeWidgetName,
+} from '../src/features/schema-driven-ui/blocks/document-type-selection';
 
 const DRIVE_ID = 'drive-360-proj';
 const SPACE_NAME = 'Active Projects';
@@ -546,6 +550,256 @@ describe('SourceParser Pass 2 Live DocumentLog Options & Alias Integration at Wo
     expect(findTextInputValue(tier3DocData, 'specTag', 'submittal-ffe')).toBe('CG104');
     expect(findDecoratedTextValue(tier3DocData, 'Spec Title')).toBe('BED - KING');
     expect(findTextInputValue(tier3DocData, 'specTitle', 'submittal-ffe')).toBeUndefined();
+    expect(nock.isDone()).toBe(true);
+  });
+});
+
+describe('Unmodified production manifest _Config Aliases Pass 2 integration', () => {
+  let app: AppInstance;
+  let gmailClient: GoogleGmailClient;
+
+  beforeEach(async () => {
+    const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+    const manifestProvider = new AppManifestProvider({ manifestPath });
+    gmailClient = new GoogleGmailClient();
+
+    app = createApp({
+      manifestProvider,
+      authVerifier: createAuthVerifier(),
+      gmailClient,
+      skipSpaceValidation: true,
+    });
+    await app.initialize();
+    nock.disableNetConnect();
+  });
+
+  afterEach(() => {
+    nock.cleanAll();
+    nock.enableNetConnect();
+    vi.restoreAllMocks();
+  });
+
+  function mockProductionSheetsTables(): void {
+    nock('https://sheets.googleapis.com')
+      .get(`/v4/spreadsheets/${LOG_ID}`)
+      .query(true)
+      .reply(200, {
+        spreadsheetId: LOG_ID,
+        sheets: [
+          { properties: { sheetId: 101, title: 'Submittal Arch' } },
+          { properties: { sheetId: 102, title: 'Submittal FF&E' } },
+          { properties: { sheetId: 103, title: '_Config Submittal Arch' } },
+          { properties: { sheetId: 104, title: '_Config Submittal FF&E' } },
+        ],
+        namedRanges: [
+          {
+            namedRangeId: 'nr-arch-statuses',
+            name: 'Options_Submittal_Arch_Statuses',
+            range: { sheetId: 103, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 0, endColumnIndex: 1 },
+          },
+          {
+            namedRangeId: 'nr-arch-actions',
+            name: 'Options_Submittal_Arch_Actions',
+            range: { sheetId: 103, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 2, endColumnIndex: 6 },
+          },
+          {
+            namedRangeId: 'nr-arch-contacts',
+            name: 'Options_Submittal_Arch_Contacts',
+            range: { sheetId: 103, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 7, endColumnIndex: 10 },
+          },
+          {
+            namedRangeId: 'nr-ffe-statuses',
+            name: 'Options_Submittal_FFE_Statuses',
+            range: { sheetId: 104, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 0, endColumnIndex: 1 },
+          },
+          {
+            namedRangeId: 'nr-ffe-actions',
+            name: 'Options_Submittal_FFE_Actions',
+            range: { sheetId: 104, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 2, endColumnIndex: 6 },
+          },
+          {
+            namedRangeId: 'nr-ffe-contacts',
+            name: 'Options_Submittal_FFE_Contacts',
+            range: { sheetId: 104, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 7, endColumnIndex: 10 },
+          },
+          {
+            namedRangeId: 'nr-ffe-vendors',
+            name: 'Options_Submittal_FFE_Vendors',
+            range: { sheetId: 104, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 11, endColumnIndex: 14 },
+          },
+          {
+            namedRangeId: 'nr-ffe-specs',
+            name: 'Options_Submittal_FFE_Specs',
+            range: { sheetId: 104, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 15, endColumnIndex: 18 },
+          },
+        ],
+      });
+
+    nock('https://sheets.googleapis.com')
+      .get(`/v4/spreadsheets/${LOG_ID}/values:batchGet`)
+      .query((q) => q.valueRenderOption === 'FORMATTED_VALUE')
+      .reply(200, (uri) => {
+        const requestedRanges = new URL(uri, 'https://sheets.googleapis.com').searchParams.getAll('ranges');
+        return {
+          spreadsheetId: LOG_ID,
+          valueRanges: requestedRanges.map((range) => {
+            if (range.includes('A1:A3')) {
+              return { range, values: [['Status'], ['Open'], ['---']] };
+            }
+            if (range.includes('C1:F3')) {
+              return {
+                range,
+                values: [
+                  ['Action', 'Name', 'Suffix', 'Order'],
+                  ['REC', 'Received', '', '1'],
+                  ['---', '', '', ''],
+                ],
+              };
+            }
+            if (range.includes('H1:J3')) {
+              return {
+                range,
+                values: [
+                  ['Contact', 'Name', 'Aliases'],
+                  ['CUST', 'Custom Studio', '"Custom ""Studio"", Inc.", @custom-studio.com'],
+                  ['---', '', ''],
+                ],
+              };
+            }
+            if (range.includes('L1:N3')) {
+              return {
+                range,
+                values: [
+                  ['Vendor', 'Name', 'Aliases'],
+                  ['CUSTV', 'Custom Millwork Corp', '"Custom ""Design"", LLC", Custom Design'],
+                  ['---', '', ''],
+                ],
+              };
+            }
+            if (range.includes('P1:R3')) {
+              return {
+                range,
+                values: [
+                  ['Spec Tag', 'Spec Title', 'Aliases'],
+                  ['CG104', 'BED - KING', 'XY999, CG-104X'],
+                  ['---', '', ''],
+                ],
+              };
+            }
+            return { range, values: [] };
+          }),
+        };
+      });
+  }
+
+  it('resolves _Config Aliases CSV entries across unmodified submittal-arch (contacts) and submittal-ffe (contacts, vendors, specs) in SourceParser Pass 2', async () => {
+    vi.spyOn(gmailClient, 'getThread').mockResolvedValue({
+      id: 'th-prod-aliases',
+      messages: [
+        {
+          id: 'msg-prod-aliases',
+          threadId: 'th-prod-aliases',
+          subject: '071200-001 Waterproofing / XY999-A Submittal',
+          from: 'Custom Studio <designer@custom-studio.com>',
+          to: 'Designer <designer@inc.nyc>',
+          date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+          labels: ['INBOX', SPACE_NAME],
+          plainTextBody: 'Please review.',
+          inlineImages: [],
+          attachments: [
+            {
+              partId: 'part-1',
+              attachmentId: 'att-1',
+              filename: 'XY999-A_Custom_Design_CutSheet.pdf',
+              mimeType: 'application/pdf',
+              size: 1024,
+            },
+          ],
+        },
+      ],
+    });
+
+    // 1. Submittal Arch via unmodified production schema: resolves contact via _Config Aliases (@custom-studio.com -> CUST)
+    mockDriveSpacesAndLogDiscovery();
+    mockProductionSheetsTables();
+
+    const archRes = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/action',
+      headers: { authorization: 'Bearer valid-jwt' },
+      payload: {
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-prod-aliases',
+          threadId: 'th-prod-aliases',
+          accessToken: 'ya29.token',
+        },
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'onDocumentTypeChange',
+            previousSpaceId: DRIVE_ID,
+            previousMessageId: 'msg-prod-aliases',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+            [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: [SPACE_NAME] } },
+            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['submittal-arch'] } },
+            SelectEmailMessage: { stringInputs: { value: ['msg-prod-aliases'] } },
+            SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+            SelectAttachments: { stringInputs: { value: ['part-1'] } },
+          },
+        },
+      },
+    });
+
+    expect(archRes.statusCode).toBe(200);
+    const archCard = getCard(archRes.payload, 'updateCard');
+    const archDocData = findSection(archCard, 'Document Data');
+    expect(findTextInputValue(archDocData, 'contact', 'submittal-arch')).toBe('CUST');
+    expect(nock.isDone()).toBe(true);
+
+    // 2. Submittal FF&E via unmodified production schema: resolves contact, vendor, and specs via _Config Aliases
+    mockDriveSpacesAndLogDiscovery();
+    mockProductionSheetsTables();
+
+    const ffeRes = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/action',
+      headers: { authorization: 'Bearer valid-jwt' },
+      payload: {
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-prod-aliases',
+          threadId: 'th-prod-aliases',
+          accessToken: 'ya29.token',
+        },
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'onDocumentTypeChange',
+            previousSpaceId: DRIVE_ID,
+            previousMessageId: 'msg-prod-aliases',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+            [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: [SPACE_NAME] } },
+            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['submittal-ffe'] } },
+            SelectEmailMessage: { stringInputs: { value: ['msg-prod-aliases'] } },
+            SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+            SelectAttachments: { stringInputs: { value: ['part-1'] } },
+          },
+        },
+      },
+    });
+
+    expect(ffeRes.statusCode).toBe(200);
+    const ffeCard = getCard(ffeRes.payload, 'updateCard');
+    const ffeDocData = findSection(ffeCard, 'Document Data');
+    expect(findTextInputValue(ffeDocData, 'contact', 'submittal-ffe')).toBe('CUST');
+    expect(findTextInputValue(ffeDocData, 'vendor', 'submittal-ffe')).toBe('CUSTV');
+    expect(findTextInputValue(ffeDocData, 'specTag', 'submittal-ffe')).toBe('CG104');
+    expect(findDecoratedTextValue(ffeDocData, 'Spec Title')).toBe('BED - KING');
     expect(nock.isDone()).toBe(true);
   });
 });

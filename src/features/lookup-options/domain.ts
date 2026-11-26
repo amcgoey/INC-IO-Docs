@@ -779,6 +779,21 @@ export class LookupOptionsService implements LookupOptionsPort {
         optionSource,
       };
     }
+    if (batchResult.status === 'ambiguous_log') {
+      return {
+        resolution: {
+          status: 'ambiguous_log',
+          tuples: [],
+          items: [],
+          ...(batchResult.errorMessage !== undefined
+            ? { errorMessage: batchResult.errorMessage }
+            : {}),
+        },
+        duplicateNormalizedKeys: new Set(),
+        truncated: false,
+        optionSource,
+      };
+    }
     if (batchResult.status === 'config_error') {
       return {
         resolution: {

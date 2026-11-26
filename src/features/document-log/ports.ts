@@ -511,20 +511,22 @@ export interface LogRowKey {
   sortKey: string;
 }
 
-export interface LogOptionWriteItem {
-  key: string;
-  values: Record<string, string>;
-}
+export const LogOptionWriteItemSchema = Type.Object({
+  key: Type.String(),
+  values: Type.Record(Type.String(), Type.String()),
+});
+export type LogOptionWriteItem = Static<typeof LogOptionWriteItemSchema>;
 
-export interface LogOptionWriteTarget {
-  sheetName: string;
-  rangeName: string;
-  validationRangeName?: string | undefined;
-  endMarker: string;
-  columns: Record<string, string>;
-  keyProperty?: string | undefined;
-  items: readonly LogOptionWriteItem[];
-}
+export const LogOptionWriteTargetSchema = Type.Object({
+  sheetName: Type.String(),
+  rangeName: Type.String(),
+  validationRangeName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  endMarker: Type.String(),
+  columns: Type.Record(Type.String(), Type.String()),
+  keyProperty: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  items: Type.Array(LogOptionWriteItemSchema),
+});
+export type LogOptionWriteTarget = Static<typeof LogOptionWriteTargetSchema>;
 
 export interface InsertLogRowRequest {
   target: LogStorageTarget;
@@ -561,26 +563,30 @@ export interface ReadLogRowsResult {
   rows: ReadLogRow[];
 }
 
-export interface ReadNamedRangeTarget {
-  key: string;
-  sheetName: string;
-  rangeName: string;
-}
+export const ReadNamedRangeTargetSchema = Type.Object({
+  key: Type.String(),
+  sheetName: Type.String(),
+  rangeName: Type.String(),
+});
+export type ReadNamedRangeTarget = Static<typeof ReadNamedRangeTargetSchema>;
 
-export interface ReadNamedRangesRequest {
-  spreadsheetId: string;
-  targets: readonly ReadNamedRangeTarget[];
-}
+export const ReadNamedRangesRequestSchema = Type.Object({
+  spreadsheetId: Type.String(),
+  targets: Type.Array(ReadNamedRangeTargetSchema),
+});
+export type ReadNamedRangesRequest = Static<typeof ReadNamedRangesRequestSchema>;
 
-export type ReadNamedRangeEntry =
-  | {
-      status: 'found';
-      values: LogCellPrimitive[][];
-    }
-  | {
-      status: 'missing_range';
-      errorMessage: string;
-    };
+export const ReadNamedRangeEntrySchema = Type.Union([
+  Type.Object({
+    status: Type.Literal('found'),
+    values: Type.Array(Type.Array(LogCellPrimitiveSchema)),
+  }),
+  Type.Object({
+    status: Type.Literal('missing_range'),
+    errorMessage: Type.String(),
+  }),
+]);
+export type ReadNamedRangeEntry = Static<typeof ReadNamedRangeEntrySchema>;
 
 export interface LogStoragePort {
   insertRow(request: InsertLogRowRequest): Promise<InsertLogRowResult>;
@@ -692,46 +698,52 @@ export type CopyDocumentLogResult = Static<typeof CopyDocumentLogResultSchema>;
 
 // --- Option Table Read DTOs ---
 
-export interface ReadOptionTablesSpace {
-  id: string;
-  typeId?: string | undefined;
-  name?: string | undefined;
-  abstractStorageId?: string | undefined;
-}
+export const ReadOptionTablesSpaceSchema = Type.Object({
+  id: Type.String(),
+  typeId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  name: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  abstractStorageId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type ReadOptionTablesSpace = Static<typeof ReadOptionTablesSpaceSchema>;
 
-export interface ReadOptionTablesRequest {
-  documentTypeKey: string;
-  space?: ReadOptionTablesSpace | undefined;
-  selectedLogId?: string | undefined;
-  sourceKeys?: readonly string[] | undefined;
-}
+export const ReadOptionTablesRequestSchema = Type.Object({
+  documentTypeKey: Type.String(),
+  space: Type.Optional(Type.Union([ReadOptionTablesSpaceSchema, Type.Undefined()])),
+  selectedLogId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  sourceKeys: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+});
+export type ReadOptionTablesRequest = Static<typeof ReadOptionTablesRequestSchema>;
 
-export type DocumentLogOptionTableSourceResult =
-  | {
-      status: 'ready';
-      tuples: LogTargetDocumentOptionTuple[];
-    }
-  | {
-      status: 'config_error';
-      tuples: [];
-      errorMessage: string;
-    };
+export const DocumentLogOptionTableSourceResultSchema = Type.Union([
+  Type.Object({
+    status: Type.Literal('ready'),
+    tuples: Type.Array(LogTargetDocumentOptionTupleSchema),
+  }),
+  Type.Object({
+    status: Type.Literal('config_error'),
+    tuples: Type.Tuple([]),
+    errorMessage: Type.String(),
+  }),
+]);
+export type DocumentLogOptionTableSourceResult = Static<typeof DocumentLogOptionTableSourceResultSchema>;
 
-export type ReadOptionTablesResult =
-  | {
-      status: 'missing_space';
-      tables: Record<string, DocumentLogOptionTableSourceResult>;
-    }
-  | {
-      status: 'missing_log';
-      expectedFolderPath: string;
-      tables: Record<string, DocumentLogOptionTableSourceResult>;
-    }
-  | {
-      status: 'ready';
-      spreadsheetId: string;
-      tables: Record<string, DocumentLogOptionTableSourceResult>;
-    };
+export const ReadOptionTablesResultSchema = Type.Union([
+  Type.Object({
+    status: Type.Literal('missing_space'),
+    tables: Type.Record(Type.String(), DocumentLogOptionTableSourceResultSchema),
+  }),
+  Type.Object({
+    status: Type.Literal('missing_log'),
+    expectedFolderPath: Type.String(),
+    tables: Type.Record(Type.String(), DocumentLogOptionTableSourceResultSchema),
+  }),
+  Type.Object({
+    status: Type.Literal('ready'),
+    spreadsheetId: Type.String(),
+    tables: Type.Record(Type.String(), DocumentLogOptionTableSourceResultSchema),
+  }),
+]);
+export type ReadOptionTablesResult = Static<typeof ReadOptionTablesResultSchema>;
 
 // --- Driving Port ---
 

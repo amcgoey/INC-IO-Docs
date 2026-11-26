@@ -114,61 +114,68 @@ export const LookupOptionsCallContextSchema = Type.Object({
 });
 export type LookupOptionsCallContext = Static<typeof LookupOptionsCallContextSchema>;
 
-export interface LookupSourceResolution {
-  status: LookupOptionStatus;
-  tuples: LookupOptionTuple[];
-  items: LookupOptionItem[];
-  targetPath?: string | undefined;
-  errorMessage?: string | undefined;
-}
+export const LookupSourceResolutionSchema = Type.Object({
+  status: LookupOptionStatusSchema,
+  tuples: Type.Array(LookupOptionTupleSchema),
+  items: Type.Array(LookupOptionItemSchema),
+  targetPath: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  errorMessage: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type LookupSourceResolution = Static<typeof LookupSourceResolutionSchema>;
 
-export interface LookupMatchResult {
-  matched: boolean;
-  key?: string | undefined;
-  tuple?: LookupOptionTuple | undefined;
-}
+export const LookupMatchResultSchema = Type.Object({
+  matched: Type.Boolean(),
+  key: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  tuple: Type.Optional(Type.Union([LookupOptionTupleSchema, Type.Undefined()])),
+});
+export type LookupMatchResult = Static<typeof LookupMatchResultSchema>;
 
-export interface LookupFieldValidationQuery {
-  queryId: string;
-  fieldKey: string;
-  sourceKey: string;
-  value: string;
-  allowUserInput?: boolean | undefined;
-}
+export const LookupFieldValidationQuerySchema = Type.Object({
+  queryId: Type.String(),
+  fieldKey: Type.String(),
+  sourceKey: Type.String(),
+  value: Type.String(),
+  allowUserInput: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+});
+export type LookupFieldValidationQuery = Static<typeof LookupFieldValidationQuerySchema>;
 
-export interface LookupFieldValidationResult {
-  isValid: boolean;
-  status: LookupValidationStatus;
-  targetPath?: string | undefined;
-  matchedTuple?: LookupOptionTuple | undefined;
-  canonicalValue?: string | undefined;
-  errorMessage?: string | undefined;
-}
+export const LookupFieldValidationResultSchema = Type.Object({
+  isValid: Type.Boolean(),
+  status: LookupValidationStatusSchema,
+  targetPath: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  matchedTuple: Type.Optional(Type.Union([LookupOptionTupleSchema, Type.Undefined()])),
+  canonicalValue: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  errorMessage: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type LookupFieldValidationResult = Static<typeof LookupFieldValidationResultSchema>;
 
-export interface LookupInvalidationScope {
-  spaceId?: string | undefined;
-  documentTypeKey?: string | undefined;
-  selectedLogId?: string | undefined;
-}
+export const LookupInvalidationScopeSchema = Type.Object({
+  spaceId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  documentTypeKey: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  selectedLogId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type LookupInvalidationScope = Static<typeof LookupInvalidationScopeSchema>;
 
-export type DriveOptionFolderResult =
-  | {
-      status: 'ready';
-      items: LookupOptionTuple[];
-      targetPath: string;
-      truncated?: boolean | undefined;
-    }
-  | {
-      status: 'empty';
-      items: [];
-      targetPath: string;
-      truncated?: boolean | undefined;
-    }
-  | {
-      status: 'path_not_found' | 'ambiguous_path';
-      items: [];
-      targetPath: string;
-    };
+export const DriveOptionFolderResultSchema = Type.Union([
+  Type.Object({
+    status: Type.Literal('ready'),
+    items: Type.Array(LookupOptionTupleSchema),
+    targetPath: Type.String(),
+    truncated: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  }),
+  Type.Object({
+    status: Type.Literal('empty'),
+    items: Type.Tuple([]),
+    targetPath: Type.String(),
+    truncated: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  }),
+  Type.Object({
+    status: Type.Union([Type.Literal('path_not_found'), Type.Literal('ambiguous_path')]),
+    items: Type.Tuple([]),
+    targetPath: Type.String(),
+  }),
+]);
+export type DriveOptionFolderResult = Static<typeof DriveOptionFolderResultSchema>;
 
 export interface DriveOptionSourcePort {
   listFoldersAtPath(params: {
@@ -190,32 +197,40 @@ export interface DriveOptionSourcePort {
   }>;
 }
 
-export interface DocumentLogOptionTableEntry {
-  status: 'ready' | 'config_error';
-  tuples: LookupOptionTuple[];
-  errorMessage?: string | undefined;
-}
+export const DocumentLogOptionTableEntrySchema = Type.Object({
+  status: Type.Union([Type.Literal('ready'), Type.Literal('config_error')]),
+  tuples: Type.Array(LookupOptionTupleSchema),
+  errorMessage: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+export type DocumentLogOptionTableEntry = Static<typeof DocumentLogOptionTableEntrySchema>;
 
-export type DocumentLogOptionTablesBatchResult =
-  | {
-      status: 'missing_space';
-      tables: Record<string, DocumentLogOptionTableEntry>;
-    }
-  | {
-      status: 'missing_log';
-      expectedFolderPath?: string | undefined;
-      tables: Record<string, DocumentLogOptionTableEntry>;
-    }
-  | {
-      status: 'config_error';
-      errorMessage: string;
-      tables: Record<string, DocumentLogOptionTableEntry>;
-    }
-  | {
-      status: 'ready';
-      spreadsheetId: string;
-      tables: Record<string, DocumentLogOptionTableEntry>;
-    };
+export const DocumentLogOptionTablesBatchResultSchema = Type.Union([
+  Type.Object({
+    status: Type.Literal('missing_space'),
+    tables: Type.Record(Type.String(), DocumentLogOptionTableEntrySchema),
+  }),
+  Type.Object({
+    status: Type.Literal('missing_log'),
+    expectedFolderPath: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    tables: Type.Record(Type.String(), DocumentLogOptionTableEntrySchema),
+  }),
+  Type.Object({
+    status: Type.Literal('ambiguous_log'),
+    errorMessage: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    tables: Type.Record(Type.String(), DocumentLogOptionTableEntrySchema),
+  }),
+  Type.Object({
+    status: Type.Literal('config_error'),
+    errorMessage: Type.String(),
+    tables: Type.Record(Type.String(), DocumentLogOptionTableEntrySchema),
+  }),
+  Type.Object({
+    status: Type.Literal('ready'),
+    spreadsheetId: Type.String(),
+    tables: Type.Record(Type.String(), DocumentLogOptionTableEntrySchema),
+  }),
+]);
+export type DocumentLogOptionTablesBatchResult = Static<typeof DocumentLogOptionTablesBatchResultSchema>;
 
 export interface DocumentLogOptionSourcePort {
   readOptionTables(params: {

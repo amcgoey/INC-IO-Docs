@@ -276,7 +276,8 @@
         "columns": {
           "Contact": "key",
           "Name": "name"
-        }
+        },
+        "aliasesColumn": "Aliases"
       }
     }
   },

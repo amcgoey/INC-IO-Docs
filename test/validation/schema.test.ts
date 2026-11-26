@@ -535,6 +535,7 @@ describe('DocumentType JSON files schema validation', () => {
               Contact: 'key',
               Name: 'name',
             },
+            aliasesColumn: 'Aliases',
           },
         },
       });
@@ -603,6 +604,7 @@ describe('DocumentType JSON files schema validation', () => {
               Contact: 'key',
               Name: 'name',
             },
+            aliasesColumn: 'Aliases',
           },
           vendors: {
             sheetName: '_Config Submittal FF&E',
@@ -613,6 +615,7 @@ describe('DocumentType JSON files schema validation', () => {
               Vendor: 'key',
               Name: 'name',
             },
+            aliasesColumn: 'Aliases',
           },
           specs: {
             sheetName: '_Config Submittal FF&E',
@@ -623,6 +626,7 @@ describe('DocumentType JSON files schema validation', () => {
               'Spec Tag': 'key',
               'Spec Title': 'name',
             },
+            aliasesColumn: 'Aliases',
           },
         },
       });

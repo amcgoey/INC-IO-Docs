@@ -150,7 +150,7 @@ function createDocumentLogOptionSourceAdapter(
           documentTypeKey: params.documentTypeKey,
           ...(resolvedSpace !== undefined ? { space: resolvedSpace } : {}),
           ...(params.selectedLogId !== undefined ? { selectedLogId: params.selectedLogId } : {}),
-          ...(params.sourceKeys !== undefined ? { sourceKeys: params.sourceKeys } : {}),
+          ...(params.sourceKeys !== undefined ? { sourceKeys: [...params.sourceKeys] } : {}),
         });
       } catch (error) {
         if (error instanceof DocumentLogConfigurationError) {

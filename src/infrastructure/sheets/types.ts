@@ -78,20 +78,22 @@ export const InsertGroupedRowResultSchema = Type.Object({
 });
 export type InsertGroupedRowResult = Static<typeof InsertGroupedRowResultSchema>;
 
-export interface OptionTableWriteItem {
-  key: string;
-  values: Record<string, string>;
-}
+export const OptionTableWriteItemSchema = Type.Object({
+  key: Type.String(),
+  values: Type.Record(Type.String(), Type.String()),
+});
+export type OptionTableWriteItem = Static<typeof OptionTableWriteItemSchema>;
 
-export interface OptionTableWriteTarget {
-  sheetName: string;
-  rangeName: string;
-  validationRangeName?: string | undefined;
-  endMarker: string;
-  columns: Record<string, string>;
-  keyProperty?: string | undefined;
-  items: readonly OptionTableWriteItem[];
-}
+export const OptionTableWriteTargetSchema = Type.Object({
+  sheetName: Type.String(),
+  rangeName: Type.String(),
+  validationRangeName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  endMarker: Type.String(),
+  columns: Type.Record(Type.String(), Type.String()),
+  keyProperty: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  items: Type.Array(OptionTableWriteItemSchema),
+});
+export type OptionTableWriteTarget = Static<typeof OptionTableWriteTargetSchema>;
 
 export interface InsertPositiveGroupedRowRequest {
   target: PositiveTableTarget;
@@ -116,20 +118,23 @@ export const BatchNamedRangeTargetSchema = Type.Object({
 });
 export type BatchNamedRangeTarget = Static<typeof BatchNamedRangeTargetSchema>;
 
-export interface ReadNamedRangesBatchRequest {
-  spreadsheetId: string;
-  targets: readonly BatchNamedRangeTarget[];
-}
+export const ReadNamedRangesBatchRequestSchema = Type.Object({
+  spreadsheetId: Type.String(),
+  targets: Type.Array(BatchNamedRangeTargetSchema),
+});
+export type ReadNamedRangesBatchRequest = Static<typeof ReadNamedRangesBatchRequestSchema>;
 
-export type ReadNamedRangeBatchEntry =
-  | {
-      status: 'found';
-      values: CellValue[][];
-    }
-  | {
-      status: 'missing_range';
-      errorMessage: string;
-    };
+export const ReadNamedRangeBatchEntrySchema = Type.Union([
+  Type.Object({
+    status: Type.Literal('found'),
+    values: Type.Array(Type.Array(CellValueSchema)),
+  }),
+  Type.Object({
+    status: Type.Literal('missing_range'),
+    errorMessage: Type.String(),
+  }),
+]);
+export type ReadNamedRangeBatchEntry = Static<typeof ReadNamedRangeBatchEntrySchema>;
 
 export const WriteNamedRangeRequestSchema = Type.Intersect([
   NamedRangeTargetSchema,

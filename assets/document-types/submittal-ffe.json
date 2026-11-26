@@ -315,7 +315,8 @@
         "columns": {
           "Contact": "key",
           "Name": "name"
-        }
+        },
+        "aliasesColumn": "Aliases"
       },
       "vendors": {
         "sheetName": "_Config Submittal FF&E",
@@ -325,7 +326,8 @@
         "columns": {
           "Vendor": "key",
           "Name": "name"
-        }
+        },
+        "aliasesColumn": "Aliases"
       },
       "specs": {
         "sheetName": "_Config Submittal FF&E",
@@ -335,7 +337,8 @@
         "columns": {
           "Spec Tag": "key",
           "Spec Title": "name"
-        }
+        },
+        "aliasesColumn": "Aliases"
       }
     }
   },

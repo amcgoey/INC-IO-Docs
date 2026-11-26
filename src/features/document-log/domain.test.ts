@@ -3888,12 +3888,22 @@ describe('DocumentLogService', () => {
         ],
       });
 
-      // 2. Existing key with blank Name cell -> triggers backfill optionWrite; fully populated INC -> no optionWrites
+      // 2. Existing key with blank Name cell: selecting string key must NOT backfill Name with key;
+      //    explicitly supplying an object { key, name } DOES backfill Name; fully populated INC -> no optionWrites
       insertRow.mockClear();
       await service.writeLog({
         document: {
           ...sampleDoc,
           data: { ...sampleDoc.data, contact: 'PARTIAL' },
+        },
+      });
+      expect(insertRow.mock.calls[0][0].optionWrites).toBeUndefined();
+
+      insertRow.mockClear();
+      await service.writeLog({
+        document: {
+          ...sampleDoc,
+          data: { ...sampleDoc.data, contact: { key: 'PARTIAL', name: 'Partial Builders' } },
         },
       });
       expect(insertRow.mock.calls[0][0].optionWrites).toEqual([
@@ -3906,7 +3916,7 @@ describe('DocumentLogService', () => {
           items: [
             {
               key: 'PARTIAL',
-              values: { key: 'PARTIAL', name: 'PARTIAL' },
+              values: { key: 'PARTIAL', name: 'Partial Builders' },
             },
           ],
         },
