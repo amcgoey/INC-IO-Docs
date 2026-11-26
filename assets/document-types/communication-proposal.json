@@ -111,6 +111,18 @@
       "onSubmit": {
         "catchAllWorkflow": "FileCommProposal"
       }
+    },
+    "successView": {
+      "summary": {
+        "topLabel": "{{contact.name}} • {{direction.name}}",
+        "text": "<b>{{date}}</b> — {{description}}"
+      },
+      "artifacts": [
+        {
+          "stepId": "moveFiles",
+          "label": "Filed File"
+        }
+      ]
     }
   },
   "documentWorkflowConfig": {
@@ -119,6 +131,7 @@
         "name": "FileCommProposal",
         "activitySequence": [
           {
+            "id": "moveFiles",
             "type": "MOVE_FILE",
             "payload": {
               "rootStorageId": "{{Document.space.abstractStorageId}}",

@@ -862,11 +862,12 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         ? expected.folders.length
         : new Set(expected.files.map((f) => f.parentName)).size;
       const expectedSectionCount =
-        2 + (expectedFoldersCount > 0 ? 1 : 0) + (expected.files.length > 0 ? 1 : 0);
+        3 + (expectedFoldersCount > 0 ? 1 : 0) + (expected.files.length > 0 ? 1 : 0);
       expect(pushCard?.sections).toHaveLength(expectedSectionCount);
       expect(pushCard?.sections[0]?.widgets[0]?.textParagraph?.text).toBe(
         `Filed via <b>${expected.workflowName}</b>`
       );
+      expect(pushCard?.sections.find((s) => s.header === 'Summary')).toBeDefined();
 
       const foldersSection = pushCard?.sections.find((s) => s.header === 'Folders');
       if (expectedFoldersCount === 0) {
@@ -900,6 +901,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         expect(createdAndFiledSection?.widgets).toHaveLength(expected.files.length);
         expected.files.forEach((file, index) => {
           const decoratedText = createdAndFiledSection?.widgets[index]?.decoratedText;
+          expect(decoratedText?.topLabel).toBe('Filed File');
           expect(decoratedText?.text).toBe(file.name);
           expect(decoratedText?.wrapText).toBe(true);
           expect(decoratedText?.bottomLabel).toBe(file.parentName);

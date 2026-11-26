@@ -18,9 +18,15 @@ import {
   DocumentFormFieldFormatSchema,
   DocumentFormFieldBindingSchema,
   DocumentFormSchemaSchema,
+  DocumentUiSuccessSummarySchema,
+  DocumentUiSuccessArtifactSchema,
+  DocumentUiSuccessViewSchema,
   type DocumentFormFieldFormat,
   type DocumentFormFieldBinding,
   type DocumentFormSchema,
+  type DocumentUiSuccessSummary,
+  type DocumentUiSuccessArtifact,
+  type DocumentUiSuccessView,
   type Activity,
   type ActivityExecutionContext,
   type ActivityOutput,
@@ -63,6 +69,12 @@ export {
   type DocumentFormFieldBinding,
   DocumentFormSchemaSchema,
   type DocumentFormSchema,
+  DocumentUiSuccessSummarySchema,
+  type DocumentUiSuccessSummary,
+  DocumentUiSuccessArtifactSchema,
+  type DocumentUiSuccessArtifact,
+  DocumentUiSuccessViewSchema,
+  type DocumentUiSuccessView,
 };
 
 export type SchemaOrKeys =

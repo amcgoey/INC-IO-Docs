@@ -219,6 +219,32 @@
         ],
         "catchAllWorkflow": "SubmittalSent"
       }
+    },
+    "successView": {
+      "summary": {
+        "topLabel": "{{section}}-{{number}}-{{revision}} • {{status.key}}",
+        "text": "<b>{{action.name}}</b> • {{date}} ({{contact.key}})",
+        "bottomLabel": "{{title}}"
+      },
+      "artifacts": [
+        {
+          "stepId": "insertCoverSheet",
+          "label": "Review Copy (with Cover Sheet)",
+          "fallbackLabel": "Transmittal Cover Sheet"
+        },
+        {
+          "stepId": "duplicateForReview",
+          "label": "Review Copy"
+        },
+        {
+          "stepId": "moveOriginal",
+          "label": "Filed Original",
+          "whenWorkflow": {
+            "SubmittalReceived": "Archived Original",
+            "SubmittalSent": "Filed Submittal"
+          }
+        }
+      ]
     }
   },
   "documentWorkflowConfig": {

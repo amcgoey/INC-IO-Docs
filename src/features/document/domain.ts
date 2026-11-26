@@ -14,6 +14,15 @@ import {
   type DocumentFormSchema,
   type EvaluateWritableDocumentFormFieldsParams,
 } from './document-form-schema';
+import {
+  DocumentUiSuccessSummarySchema,
+  DocumentUiSuccessArtifactSchema,
+  DocumentUiSuccessViewSchema,
+  validateDocumentUiSuccessView,
+  type DocumentUiSuccessSummary,
+  type DocumentUiSuccessArtifact,
+  type DocumentUiSuccessView,
+} from './document-success-view';
 import type {
   ActivityDispatcherPort,
   DocumentSchemaRegistryPort,
@@ -307,11 +316,21 @@ export type StorageContextConfig = Static<typeof StorageContextConfigType>;
 export const DocumentUiEventsSchema = Type.Object(
   {
     events: Type.Optional(Type.Record(Type.String(), UiEventType)),
+    successView: Type.Optional(DocumentUiSuccessViewSchema),
   },
   { additionalProperties: true }
 );
 
 export type DocumentUiEvents = Static<typeof DocumentUiEventsSchema>;
+
+export {
+  DocumentUiSuccessSummarySchema,
+  DocumentUiSuccessArtifactSchema,
+  DocumentUiSuccessViewSchema,
+  type DocumentUiSuccessSummary,
+  type DocumentUiSuccessArtifact,
+  type DocumentUiSuccessView,
+};
 
 export {
   DocumentFormFieldFormatSchema,
@@ -2232,6 +2251,13 @@ export function validateManifestTemplates(
     evaluator,
     errors
   );
+  validateDocumentUiSuccessView({
+    successView: manifest.documentUiSchema?.successView,
+    documentSchema: manifest.documentSchema,
+    workflowConfig: manifest.documentWorkflowConfig,
+    evaluator,
+    errors,
+  });
 
   if (manifest.documentSchema.identity) {
     for (const [propKey, template] of Object.entries(manifest.documentSchema.identity)) {

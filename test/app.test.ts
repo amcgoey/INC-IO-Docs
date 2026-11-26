@@ -817,6 +817,7 @@ describe('App integration tests', () => {
       expect('aliases' in (body.data.data.direction as Record<string, unknown>)).toBe(false);
       expect(body.activities).toEqual([
         {
+          id: 'moveFiles',
           type: 'MOVE_FILE',
           payload: {
             rootStorageId: 'space-folder-proposal-id',
@@ -828,6 +829,7 @@ describe('App integration tests', () => {
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
         {
+          id: 'moveFiles',
           type: 'MOVE_FILE',
           payload: {
             rootStorageId: 'space-folder-proposal-id',
