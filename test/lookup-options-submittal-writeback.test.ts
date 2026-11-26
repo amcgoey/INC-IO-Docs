@@ -644,7 +644,7 @@ describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submi
     ]);
   });
 
-  it('loads Submittal FF&E base tables from _Config, backfills blank Name on existing Contact key, and inserts new custom Vendor in 1 atomic batchUpdate', async () => {
+  it('loads Submittal FF&E base tables from _Config, preserves blank Name when existing Contact key is selected, and inserts new custom Vendor in 1 atomic batchUpdate', async () => {
     const logId = 'log-ffe-361';
     const sim = createFullMultiSim(logId);
     mountSpreadsheetNock(sim);
@@ -695,7 +695,7 @@ describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submi
     const ffeConfig = sim.sheets[3].grid;
     const ffeContactsNr = sim.namedRanges.find((nr) => nr.name === 'Options_Submittal_FFE_Contacts')!;
     const ffeVendorsNr = sim.namedRanges.find((nr) => nr.name === 'Options_Submittal_FFE_Vendors')!;
-    // Contacts: PARTIAL row backfilled Name='PARTIAL', no extra row inserted, Contact Type still blank
+    // Contacts: PARTIAL row preserves blank Name (no backfill when key selected), no extra row inserted, Contact Type still blank
     expect(
       ffeConfig
         .slice(ffeContactsNr.range.startRowIndex, ffeContactsNr.range.endRowIndex)
@@ -703,7 +703,7 @@ describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submi
     ).toEqual([
       ['Contact', 'Name', 'Contact Type'],
       ['INC', 'INC Architecture & Design', 'INC'],
-      ['PARTIAL', 'PARTIAL', ''],
+      ['PARTIAL', '', ''],
       ['---', '', ''],
     ]);
     // Vendors: Zenith Custom inserted above '---', Vendor Type left blank

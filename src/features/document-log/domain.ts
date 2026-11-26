@@ -1328,7 +1328,12 @@ export class DocumentLogService implements DocumentLogPort {
       return [];
     }
 
-    const coalescedBySource = new Map<string, Map<string, LogOptionWriteItem>>();
+    interface PendingOptionWrite {
+      item: LogOptionWriteItem;
+      defaultNameProps: Set<string>;
+    }
+
+    const coalescedBySource = new Map<string, Map<string, PendingOptionWrite>>();
     const sourceOrder: string[] = [];
 
     for (const field of targetSchema.fields) {
@@ -1356,7 +1361,6 @@ export class DocumentLogService implements DocumentLogPort {
         }
       } else if (typeof rawInput === 'string') {
         keyStr = rawInput.trim();
-        suppliedName = keyStr;
       }
 
       if (keyStr.length === 0) {
@@ -1376,38 +1380,51 @@ export class DocumentLogService implements DocumentLogPort {
       const values: Record<string, string> = {
         [keyProp]: keyStr,
       };
+      const linkedProps = new Set<string>();
 
       for (const sibling of targetSchema.fields) {
         if (sibling.linkedField?.sourceField !== field.key) {
           continue;
         }
+        linkedProps.add(sibling.linkedField.sourceProperty);
         const linkedRaw = enrichedData[sibling.key] ?? documentData[sibling.key];
         if (typeof linkedRaw === 'string' && linkedRaw.trim().length > 0) {
           values[sibling.linkedField.sourceProperty] = linkedRaw.trim();
         }
       }
 
-      if (nameProp && values[nameProp] === undefined) {
-        values[nameProp] = suppliedName.length > 0 ? suppliedName : keyStr;
+      if (nameProp && values[nameProp] === undefined && suppliedName.length > 0) {
+        values[nameProp] = suppliedName;
+      }
+
+      const defaultNameProps = new Set<string>();
+      if (nameProp && !linkedProps.has(nameProp)) {
+        defaultNameProps.add(nameProp);
       }
 
       let sourceMap = coalescedBySource.get(sourceKey);
       if (!sourceMap) {
-        sourceMap = new Map<string, LogOptionWriteItem>();
+        sourceMap = new Map<string, PendingOptionWrite>();
         coalescedBySource.set(sourceKey, sourceMap);
         sourceOrder.push(sourceKey);
       }
 
       const normKey = keyStr.toLowerCase();
-      const existingItem = sourceMap.get(normKey);
-      if (existingItem) {
+      const existingPending = sourceMap.get(normKey);
+      if (existingPending) {
         for (const [prop, val] of Object.entries(values)) {
-          if ((!existingItem.values[prop] || existingItem.values[prop].trim() === '') && val.trim().length > 0) {
-            existingItem.values[prop] = val;
+          if (
+            (!existingPending.item.values[prop] || existingPending.item.values[prop].trim() === '') &&
+            val.trim().length > 0
+          ) {
+            existingPending.item.values[prop] = val;
           }
         }
+        for (const prop of defaultNameProps) {
+          existingPending.defaultNameProps.add(prop);
+        }
       } else {
-        sourceMap.set(normKey, { key: keyStr, values });
+        sourceMap.set(normKey, { item: { key: keyStr, values }, defaultNameProps });
       }
     }
 
@@ -1435,9 +1452,15 @@ export class DocumentLogService implements DocumentLogPort {
       }
 
       const itemsToWrite: LogOptionWriteItem[] = [];
-      for (const item of sourceMap.values()) {
+      for (const { item, defaultNameProps } of sourceMap.values()) {
         const existingTuple = existingByNormKey.get(item.key.trim().toLowerCase());
         if (!existingTuple) {
+          // Only synthesize Name = key when creating a brand-new row; existing blank Name cells stay untouched unless explicitly supplied.
+          for (const prop of defaultNameProps) {
+            if (!item.values[prop] || item.values[prop].trim() === '') {
+              item.values[prop] = item.key.trim();
+            }
+          }
           itemsToWrite.push(item);
           continue;
         }

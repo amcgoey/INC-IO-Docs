@@ -536,6 +536,37 @@ describe('LookupOptionsService (LookupOptionsPort seam)', () => {
       expect(timeoutRes.actions.status).toBe('timeout');
       expect(timeoutRes.statuses.targetPath).toBeUndefined();
     });
+
+    it('maps ambiguous_log from DocumentLogOptionSourcePort.readOptionTables through resolveOptions and validateFields', async () => {
+      const readOptionTables = vi.fn().mockResolvedValue({
+        status: 'ambiguous_log',
+        errorMessage: 'Multiple DocumentLog spreadsheets found.',
+        tables: {},
+      });
+
+      const service = new LookupOptionsService(
+        createManifestPort({ 'submittal-arch': submittalArchSchema }),
+        { documentLogOptionSource: { readOptionTables } }
+      );
+      const ctx = { space: { id: 'sp-ambiguous' }, documentTypeKey: 'submittal-arch' };
+
+      const resolved = await service.resolveOptions(ctx, ['statuses']);
+      expect(resolved.statuses).toEqual({
+        status: 'ambiguous_log',
+        tuples: [],
+        items: [],
+        errorMessage: 'Multiple DocumentLog spreadsheets found.',
+      });
+
+      const validated = await service.validateFields(ctx, [
+        { queryId: 'q-status', fieldKey: 'status', sourceKey: 'statuses', value: 'Open' },
+      ]);
+      expect(validated['q-status']).toEqual({
+        isValid: false,
+        status: 'ambiguous_log',
+        errorMessage: 'Multiple DocumentLog spreadsheets found.',
+      });
+    });
   });
 
   describe('deriveLockedFields (non-blank-only LinkedField locking)', () => {
