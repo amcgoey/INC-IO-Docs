@@ -1576,6 +1576,7 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
     nock('https://www.googleapis.com')
       .get('/drive/v3/files/file-ambig-351')
       .query(true)
+      .times(2)
       .reply(200, {
         id: 'file-ambig-351',
         name: '071200-001-A Waterproofing.pdf',

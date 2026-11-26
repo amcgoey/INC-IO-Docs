@@ -1,6 +1,7 @@
 {
   "key": "submittal-ffe",
   "name": "Submittal FF&E",
+  "maxSourceFiles": 1,
   "documentSchema": {
     "fields": [
       {

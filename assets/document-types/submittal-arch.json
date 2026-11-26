@@ -1,6 +1,7 @@
 {
   "key": "submittal-arch",
   "name": "Submittal Arch",
+  "maxSourceFiles": 1,
   "documentSchema": {
     "fields": [
       {

@@ -7,6 +7,7 @@ interface RawDocDef {
   documentSchema?: unknown;
   documentUiSchema?: unknown;
   allowEmptySourceFiles?: boolean | undefined;
+  maxSourceFiles?: number | undefined;
 }
 
 export class ManifestAdapter implements UiProcessManifestPort {
@@ -27,6 +28,7 @@ export class ManifestAdapter implements UiProcessManifestPort {
                   documentSchema?: unknown;
                   documentUiSchema?: unknown;
                   allowEmptySourceFiles?: boolean;
+                  maxSourceFiles?: number;
                 }
               >;
         }
@@ -49,6 +51,7 @@ export class ManifestAdapter implements UiProcessManifestPort {
                 documentSchema?: unknown;
                 documentUiSchema?: unknown;
                 allowEmptySourceFiles?: boolean;
+                maxSourceFiles?: number;
               }
             | undefined;
           if (parsed?.key) {
@@ -60,6 +63,9 @@ export class ManifestAdapter implements UiProcessManifestPort {
               documentUiSchema: parsed.documentUiSchema,
               ...(parsed.allowEmptySourceFiles !== undefined
                 ? { allowEmptySourceFiles: parsed.allowEmptySourceFiles }
+                : {}),
+              ...(typeof parsed.maxSourceFiles === 'number'
+                ? { maxSourceFiles: parsed.maxSourceFiles }
                 : {}),
             });
           }
@@ -77,6 +83,9 @@ export class ManifestAdapter implements UiProcessManifestPort {
           documentUiSchema: def?.documentUiSchema,
           ...(def?.allowEmptySourceFiles !== undefined
             ? { allowEmptySourceFiles: def.allowEmptySourceFiles }
+            : {}),
+          ...(typeof def?.maxSourceFiles === 'number'
+            ? { maxSourceFiles: def.maxSourceFiles }
             : {}),
         });
       }
@@ -117,6 +126,7 @@ export class ManifestAdapter implements UiProcessManifestPort {
     docSchema?: unknown;
     uiSchema?: unknown;
     allowEmptySourceFiles?: boolean | undefined;
+    maxSourceFiles?: number | undefined;
   }> {
     if (!documentTypeKey) {
       return {};
@@ -133,6 +143,9 @@ export class ManifestAdapter implements UiProcessManifestPort {
       uiSchema: found.documentUiSchema,
       ...(found.allowEmptySourceFiles !== undefined
         ? { allowEmptySourceFiles: found.allowEmptySourceFiles }
+        : {}),
+      ...(found.maxSourceFiles !== undefined
+        ? { maxSourceFiles: found.maxSourceFiles }
         : {}),
     };
   }

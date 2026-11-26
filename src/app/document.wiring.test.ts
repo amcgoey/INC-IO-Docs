@@ -204,6 +204,55 @@ describe('document.wiring', () => {
       expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
       expect(mockPdfProcessor.generateEmailPdf).not.toHaveBeenCalled();
     });
+
+    it('wires configProvider.getMaxInMemoryFileBytes into fallback PdfProcessor for Gmail hydration (#372)', async () => {
+      const compiledRegistry = new CompiledSchemaRegistry(mockSchemaRegistry);
+      await compiledRegistry.initialize();
+
+      const getMaxInMemoryFileBytes = vi.fn().mockResolvedValue(10);
+      const mockGmailClient = {
+        getMessage: vi.fn().mockResolvedValue({
+          messageId: 'msg-size-limit',
+          subject: 'Oversized Email Subject Exceeding 10 Bytes',
+          plainTextBody: 'Body exceeding 10 bytes',
+          attachments: [],
+          inlineImages: [],
+        }),
+        getAttachment: vi.fn(),
+      } as unknown as GoogleGmailClient;
+
+      const handlerSpy = vi.spyOn(driveActivityHandlerModule, 'DriveActivityHandler');
+      try {
+        const factory = createDocumentServiceFactory({
+          documentSchemaRegistry: mockSchemaRegistry,
+          templateEvaluator: mockEvaluator,
+          compiledSchemaRegistry: compiledRegistry,
+          gmailClient: mockGmailClient,
+          configProvider: {
+            getDriveConfig: vi.fn().mockResolvedValue(undefined),
+            getMaxInMemoryFileBytes,
+          },
+        });
+
+        await factory({
+          hostApp: 'GMAIL',
+          gmail: { messageId: 'msg-size-limit' },
+          sourceFiles: [{ id: 'email-pdf-msg-size-limit' }],
+        });
+
+        const hydrator = handlerSpy.mock.calls[0]?.[1]?.sourceFileHydrator as
+          | GmailSourceFileHydratorAdapter
+          | undefined;
+        expect(hydrator).toBeInstanceOf(GmailSourceFileHydratorAdapter);
+
+        await expect(
+          hydrator!.hydrate([{ id: 'email-pdf-msg-size-limit' }])
+        ).rejects.toThrow(/Could not generate the Email PDF/i);
+        expect(getMaxInMemoryFileBytes).toHaveBeenCalled();
+      } finally {
+        handlerSpy.mockRestore();
+      }
+    });
   });
 
   describe('wireDocumentServicesAndRoutes', () => {

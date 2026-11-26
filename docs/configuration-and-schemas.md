@@ -80,7 +80,7 @@ During startup initialization, `DocumentSchemaRegistryAdapter` (`src/features/do
 
 ### `configuration` (`AppConfiguration`)
 
-`AppConfiguration` (`AppConfigurationSchema` in `AppManifestProvider`) centralizes domain and administrative defaults across three sub-objects:
+`AppConfiguration` (`AppConfigurationSchema` in `AppManifestProvider`) centralizes domain and administrative defaults across `workspace`, `drive`, `sheets`, and top-level runtime limits:
 
 | Block | Schema | Key | Production Value | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
@@ -93,6 +93,7 @@ During startup initialization, `DocumentSchemaRegistryAdapter` (`src/features/do
 | **`sheets`** | `SheetsConfigurationSchema` | `defaultHeaderRangeName` | `"Headers"` | Default named range identifying column headers in target Google Sheets. |
 | **`sheets`** | `SheetsConfigurationSchema` | `defaultDataRangeName` | `"Data"` | Default named range identifying the data table body in target Google Sheets. |
 | **`sheets`** | `SheetsConfigurationSchema` | `maxRetries` / `initialDelayMs` / `backoffFactor` | *(optional; defaults to `3` / `1000` / `2`)* | Optional exponential backoff overrides for Google Sheets API rate limits (`429`). |
+| **`(root)`** | `AppConfigurationSchema` | `maxInMemoryFileBytes` | `209715200` *(200 MB default per [ADR-0007](adr/0007-drive-content-memory-models.md); optional `MAX_IN_MEMORY_FILE_BYTES` env override)* | Maximum in-memory file byte limit enforced across `GoogleDriveClient`, `PdfProcessor`, and `DriveFormExtractorAdapter`. |
 
 ### `DocumentSpaceTypes` & Hydration via `DocumentSpaceManifestRegistryAdapter`
 

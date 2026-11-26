@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import {
   AppManifestProvider,
+  DEFAULT_MAX_IN_MEMORY_FILE_BYTES,
   SheetsConfigurationSchema,
   WorkspaceConfigurationSchema,
 } from './app-manifest-provider';
@@ -393,6 +394,83 @@ describe('AppManifestProvider', () => {
 
       const provider = new AppManifestProvider({ manifestPath });
       await expect(provider.getWorkspaceConfig()).rejects.toThrow(/timeZone/i);
+    });
+
+    it('defaults maxInMemoryFileBytes to 200 MB when omitted and retains manifest override', async () => {
+      expect(DEFAULT_MAX_IN_MEMORY_FILE_BYTES).toBe(200 * 1024 * 1024);
+
+      const defaultManifestPath = path.join(tempDir, 'default-limit-manifest.json');
+      await fs.writeFile(
+        defaultManifestPath,
+        JSON.stringify({ documentTypes: [] }),
+        'utf-8'
+      );
+      const defaultProvider = new AppManifestProvider({ manifestPath: defaultManifestPath });
+      await expect(defaultProvider.getMaxInMemoryFileBytes()).resolves.toBe(
+        200 * 1024 * 1024
+      );
+
+      const customManifestPath = path.join(tempDir, 'custom-limit-manifest.json');
+      await fs.writeFile(
+        customManifestPath,
+        JSON.stringify({
+          documentTypes: [],
+          configuration: {
+            maxInMemoryFileBytes: 50 * 1024 * 1024,
+          },
+        }),
+        'utf-8'
+      );
+      const customProvider = new AppManifestProvider({ manifestPath: customManifestPath });
+      await expect(customProvider.getMaxInMemoryFileBytes()).resolves.toBe(
+        50 * 1024 * 1024
+      );
+    });
+
+    it('honors MAX_IN_MEMORY_FILE_BYTES environment variable override and rejects invalid values', async () => {
+      const manifestPath = path.join(tempDir, 'env-limit-manifest.json');
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({
+          documentTypes: [],
+          configuration: {
+            maxInMemoryFileBytes: 50 * 1024 * 1024,
+          },
+        }),
+        'utf-8'
+      );
+
+      const provider = new AppManifestProvider({ manifestPath });
+
+      vi.stubEnv('MAX_IN_MEMORY_FILE_BYTES', '1048576');
+      await expect(provider.getMaxInMemoryFileBytes()).resolves.toBe(1048576);
+
+      vi.stubEnv('MAX_IN_MEMORY_FILE_BYTES', '0');
+      await expect(provider.getMaxInMemoryFileBytes()).rejects.toThrow(
+        /MAX_IN_MEMORY_FILE_BYTES/i
+      );
+
+      vi.stubEnv('MAX_IN_MEMORY_FILE_BYTES', 'not-a-number');
+      await expect(provider.getMaxInMemoryFileBytes()).rejects.toThrow(
+        /MAX_IN_MEMORY_FILE_BYTES/i
+      );
+    });
+
+    it('fails fast when manifest configuration.maxInMemoryFileBytes is non-positive or non-integer', async () => {
+      const zeroManifestPath = path.join(tempDir, 'zero-limit-manifest.json');
+      await fs.writeFile(
+        zeroManifestPath,
+        JSON.stringify({
+          documentTypes: [],
+          configuration: {
+            maxInMemoryFileBytes: 0,
+          },
+        }),
+        'utf-8'
+      );
+
+      const provider = new AppManifestProvider({ manifestPath: zeroManifestPath });
+      await expect(provider.getMaxInMemoryFileBytes()).rejects.toThrow(/invalid manifest/i);
     });
   });
 

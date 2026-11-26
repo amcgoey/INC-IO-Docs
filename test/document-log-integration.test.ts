@@ -986,6 +986,8 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       createDocumentDynamicValidationAdapter(lookupOptions),
       undefined,
       params.selectedLogId,
+      undefined,
+      undefined,
       params.optionTablePortOverride ?? createDocumentOptionTableAdapter(lookupOptions)
     );
     await documentService.initialize();
@@ -1270,6 +1272,8 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
         customRegistry,
         handlebars,
         compiled,
+        undefined,
+        undefined,
         undefined,
         undefined,
         undefined,
@@ -3457,6 +3461,8 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
       undefined,
       undefined,
       'harborview-log-1',
+      undefined,
+      undefined,
       createStaticCsiDivisionsOptionTablePort()
     );
     await documentService.initialize();

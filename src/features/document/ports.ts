@@ -126,6 +126,7 @@ export const FormSchemaType = Type.Object({
   documentSchema: FormDocumentSchemaType,
   documentUiSchema: Type.Optional(DocumentUiEventsSchema),
   allowEmptySourceFiles: Type.Optional(Type.Boolean()),
+  maxSourceFiles: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 
 export type FormSchema = Static<typeof FormSchemaType>;
@@ -324,6 +325,13 @@ export class FileNotFoundError extends DriveServiceError {
   }
 }
 
+export class DriveFileTooLargeError extends DriveServiceError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'DriveFileTooLargeError';
+  }
+}
+
 export interface DriveSearchQuery {
   targetName: string;
   exactMatch?: boolean | undefined;
@@ -332,13 +340,20 @@ export interface DriveSearchQuery {
   expectedParentPathNames?: string[] | undefined;
 }
 
+export interface DriveShortcutDetails {
+  targetId?: string | undefined;
+  targetMimeType?: string | undefined;
+}
+
 export interface DriveFileResult {
   id: string;
   name: string;
   parents?: string[] | undefined;
   mimeType?: string | undefined;
+  size?: number | undefined;
   webViewLink?: string | undefined;
   modifiedTime?: string | undefined;
+  shortcutDetails?: DriveShortcutDetails | undefined;
 }
 
 export type DriveFile = DriveFileResult;
@@ -352,6 +367,7 @@ export interface DriveConfiguration {
 
 export interface AppConfigurationProviderPort {
   getDriveConfig(): Promise<DriveConfiguration | undefined>;
+  getMaxInMemoryFileBytes?(): Promise<number | undefined>;
 }
 
 export interface DriveDuplicateOptions {

@@ -40,6 +40,7 @@ import type { HttpServer } from '../infrastructure/http';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 import { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
+import { createMaxInMemoryFileBytesProvider } from '../infrastructure/manifest/app-manifest-provider';
 import { GmailSourceFileHydratorAdapter } from '../features/document/adapters/gmail-source-file-hydrator.adapter';
 
 export interface DocumentFeatureWiringOptions {
@@ -170,11 +171,12 @@ export function createDocumentServiceFactory(
           : true;
 
       const gmailClient = options.gmailClient ?? new GoogleGmailClient();
+      const getMaxInMemoryFileBytes = createMaxInMemoryFileBytesProvider(options.configProvider);
       sourceFileHydrator = new GmailSourceFileHydratorAdapter(gmailClient, {
         auth,
         messageId,
         isFileSourceEmailAttachments,
-        pdfProcessor: options.pdfProcessor ?? new PdfProcessor(),
+        pdfProcessor: options.pdfProcessor ?? new PdfProcessor({ getMaxInMemoryFileBytes }),
       });
     }
 
@@ -238,6 +240,8 @@ export function createDocumentServiceFactory(
       dynamicValidator,
       validationMessageFormatter,
       context.selectedLogId,
+      driveService,
+      isFileSourceEmailAttachments === true,
       optionTablePort
     );
 
@@ -360,6 +364,8 @@ export function wireDocumentServicesAndRoutes(
       dynamicValidator,
       validationMessageFormatter,
       undefined,
+      driveService,
+      undefined,
       optionTablePort
     );
   }
@@ -374,6 +380,8 @@ export function wireDocumentServicesAndRoutes(
         const reqContext: WorkspaceExecutionContext = {};
         const reqLookupOptions = buildDefaultLookupOptions(reqContext);
         const activityEngine = await buildActivityEngine(reqLookupOptions, reqContext);
+        const reqDriveService: DriveServicePort =
+          options.driveService ?? new DriveServiceAdapter(options.driveClient);
         const reqService = new DocumentService(
           activityEngine,
           options.documentSchemaRegistry,
@@ -381,6 +389,8 @@ export function wireDocumentServicesAndRoutes(
           compiledSchemaRegistry,
           createDocumentDynamicValidationAdapter(reqLookupOptions),
           validationMessageFormatter,
+          undefined,
+          reqDriveService,
           undefined,
           options.optionTablePort ?? createDocumentOptionTableAdapter(reqLookupOptions)
         );

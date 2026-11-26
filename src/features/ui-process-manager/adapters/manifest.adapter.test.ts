@@ -110,5 +110,34 @@ describe('ManifestAdapter', () => {
     expect(commSchemas.allowEmptySourceFiles).toBe(true);
     expect(invoiceSchemas.allowEmptySourceFiles).toBeUndefined();
   });
+
+  it('retrieves maxSourceFiles from document type definition when defined and omits when absent', async () => {
+    const mockProvider: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['schemas/submittal-arch.json', 'schemas/comm-project.json'],
+      }),
+      readParsedSchema: vi.fn().mockImplementation(async (path: string) => {
+        if (path === 'schemas/submittal-arch.json') {
+          return {
+            key: 'submittal-arch',
+            documentSchema: {},
+            maxSourceFiles: 1,
+          };
+        }
+        return {
+          key: 'comm-project',
+          documentSchema: {},
+          allowEmptySourceFiles: true,
+        };
+      }),
+    };
+
+    const adapter = new ManifestAdapter(mockProvider);
+    const submittalSchemas = await adapter.getDocumentTypeSchemas('submittal-arch');
+    const commSchemas = await adapter.getDocumentTypeSchemas('comm-project');
+
+    expect(submittalSchemas.maxSourceFiles).toBe(1);
+    expect(commSchemas.maxSourceFiles).toBeUndefined();
+  });
 });
 

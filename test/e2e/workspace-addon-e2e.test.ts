@@ -977,6 +977,13 @@ describe('Workspace Addon UI E2E Test Suite', () => {
             direction: 'IN',
             description: 'E2E Test Execution',
           },
+          sourceFiles: [
+            {
+              id: 'drive-file-001',
+              name: 'Q4_Strategy_Plan.pdf',
+              mimeType: 'application/pdf',
+            },
+          ],
         },
         'onSubmit'
       );

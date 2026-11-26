@@ -58,6 +58,7 @@ import {
   type DynamicValidationMessageFormatter,
   type DocumentOptionTablePort,
   type DocumentOptionTableResolution,
+  type DriveServicePort,
 } from './ports';
 import { HandlebarsAdapter } from '../../infrastructure/template-engine/handlebars-adapter';
 
@@ -121,6 +122,8 @@ describe('Document domain', () => {
       dynamicValidator,
       validationMessageFormatter,
       selectedLogId,
+      undefined,
+      undefined,
       optionTablePort
     );
 
@@ -167,6 +170,22 @@ describe('Document domain', () => {
       data: { number: '123' },
     };
     expect(Value.Check(DocumentModel, docWithoutCalculated)).toBe(true);
+  });
+
+  it('validates DocumentModel with optional sourceFiles array', () => {
+    const docWithSourceFiles = {
+      type: 'submittal-arch',
+      data: { number: '123' },
+      sourceFiles: [{ id: 'file-1', name: 'Submittal.pdf', mimeType: 'application/pdf' }],
+    };
+    expect(Value.Check(DocumentModel, docWithSourceFiles)).toBe(true);
+    expect(
+      Value.Check(DocumentModel, {
+        type: 'submittal-arch',
+        data: { number: '123' },
+        sourceFiles: [{ name: 'missing-id.pdf' }],
+      })
+    ).toBe(false);
   });
 
   it('rejects DocumentModel when space property is malformed', () => {
@@ -744,6 +763,26 @@ describe('Document domain', () => {
     };
     expect(Value.Check(DocumentTypeSchema, documentTypeWithAllowEmpty)).toBe(true);
     expect(documentTypeWithAllowEmpty.allowEmptySourceFiles).toBe(true);
+  });
+
+  it('DocumentTypeSchema validates definitions with maxSourceFiles and rejects invalid values', () => {
+    const documentTypeWithMax: DocumentType = {
+      key: 'submittal-arch',
+      name: 'Submittal Arch',
+      documentSchema: { fields: [] },
+      maxSourceFiles: 1,
+    };
+    expect(Value.Check(DocumentTypeSchema, documentTypeWithMax)).toBe(true);
+    expect(documentTypeWithMax.maxSourceFiles).toBe(1);
+    expect(
+      Value.Check(DocumentTypeSchema, { ...documentTypeWithMax, maxSourceFiles: 0 })
+    ).toBe(false);
+    expect(
+      Value.Check(DocumentTypeSchema, { ...documentTypeWithMax, maxSourceFiles: -1 })
+    ).toBe(false);
+    expect(
+      Value.Check(DocumentTypeSchema, { ...documentTypeWithMax, maxSourceFiles: 1.5 })
+    ).toBe(false);
   });
 
 
@@ -8163,6 +8202,242 @@ describe('Document domain', () => {
       expect(errors.some((e) => e.includes('calculatedFields[0].lookup.source'))).toBe(true);
       expect(errors.some((e) => e.includes('calculatedFields[1].lookup.matchProperty'))).toBe(true);
       expect(errors.some((e) => e.includes('calculatedFields[1].lookup.resultProperty'))).toBe(true);
+    });
+  });
+
+  describe('Server-side maxSourceFiles, Drive shortcut resolution & folder rejection (#373)', () => {
+    const guardedDocType: DocumentType = {
+      key: 'submittal-arch',
+      name: 'Submittal Arch',
+      maxSourceFiles: 1,
+      documentSchema: {
+        fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+      },
+      documentWorkflowConfig: {
+        workflows: [
+          {
+            name: 'SubmittalWorkflow',
+            activitySequence: [{ id: 'moveOriginal', type: 'MOVE_FILE', payload: { folderName: 'Submittals' } }],
+          },
+        ],
+      },
+      documentUiSchema: {
+        events: {
+          onSubmit: { catchAllWorkflow: 'SubmittalWorkflow' },
+        },
+      },
+    };
+
+    const unguardedDocType: DocumentType = {
+      key: 'communication-project',
+      name: 'Communication Project',
+      documentSchema: {
+        fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+      },
+      documentWorkflowConfig: {
+        workflows: [
+          {
+            name: 'CommWorkflow',
+            activitySequence: [{ id: 'moveComm', type: 'MOVE_FILE', payload: { folderName: 'Comm' } }],
+          },
+        ],
+      },
+      documentUiSchema: {
+        events: {
+          onSubmit: { catchAllWorkflow: 'CommWorkflow' },
+        },
+      },
+    };
+
+    const createMockDriveService = (
+      getFileImpl: DriveServicePort['getFile']
+    ): DriveServicePort => ({
+      getFile: vi.fn(getFileImpl),
+      findOrCreateFolder: vi.fn(),
+      resolveFolderPath: vi.fn(),
+      move: vi.fn(),
+      rename: vi.fn(),
+      duplicate: vi.fn(),
+      searchFiles: vi.fn(),
+      downloadAsBuffer: vi.fn(),
+      saveBuffer: vi.fn(),
+      uploadStream: vi.fn(),
+    });
+
+    it('rejects > maxSourceFiles before any Drive metadata lookup or activity dispatch', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const mockDriveService = createMockDriveService(async () => ({ id: 'f', name: 'f' }));
+      const registry = createCustomRegistry([guardedDocType]);
+      const service = new DocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        createMockCompiledRegistry(registry),
+        undefined,
+        undefined,
+        undefined,
+        mockDriveService
+      );
+      await service.initialize();
+
+      const res = await service.processDocument(
+        {
+          type: 'submittal-arch',
+          data: { title: 'Waterproofing' },
+          sourceFiles: [{ id: 'f1' }, { id: 'f2' }],
+        },
+        'onSubmit'
+      );
+
+      expect(res.success).toBe(false);
+      if (!res.success) {
+        expect(res.errors[0]).toMatch(/at most 1/i);
+      }
+      expect(mockDriveService.getFile).not.toHaveBeenCalled();
+      expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('rejects Drive folders directly (both inline mimeType and Drive getFile metadata) before any activity dispatch', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn() };
+      const mockDriveService = createMockDriveService(async (fileId) => ({
+        id: fileId,
+        name: 'Submittal Folder',
+        mimeType: 'application/vnd.google-apps.folder',
+      }));
+      const registry = createCustomRegistry([guardedDocType]);
+      const service = new DocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        createMockCompiledRegistry(registry),
+        undefined,
+        undefined,
+        undefined,
+        mockDriveService
+      );
+      await service.initialize();
+
+      const inlineFolderRes = await service.processDocument(
+        {
+          type: 'submittal-arch',
+          data: { title: 'Waterproofing' },
+          sourceFiles: [{ id: 'folder-inline', mimeType: 'application/vnd.google-apps.folder' }],
+        },
+        'onSubmit'
+      );
+      expect(inlineFolderRes.success).toBe(false);
+      if (!inlineFolderRes.success) {
+        expect(inlineFolderRes.errors[0]).toMatch(/folder/i);
+      }
+      expect(mockDriveService.getFile).not.toHaveBeenCalled();
+      expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+
+      const metadataFolderRes = await service.processDocument(
+        {
+          type: 'submittal-arch',
+          data: { title: 'Waterproofing' },
+          sourceFiles: [{ id: 'folder-remote' }],
+        },
+        'onSubmit'
+      );
+      expect(metadataFolderRes.success).toBe(false);
+      if (!metadataFolderRes.success) {
+        expect(metadataFolderRes.errors[0]).toMatch(/folder/i);
+      }
+      expect(mockDriveService.getFile).toHaveBeenCalledWith('folder-remote');
+      expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('resolves Drive shortcuts pointing to files and updates enrichedDocument.sourceFiles, while rejecting shortcuts pointing to folders', async () => {
+      const mockDispatcher: ActivityDispatcherPort = { dispatch: vi.fn().mockResolvedValue({ success: true }) };
+      const mockDriveService = createMockDriveService(async (fileId) => {
+        if (fileId === 'shortcut-to-pdf') {
+          return {
+            id: 'shortcut-to-pdf',
+            name: 'Shortcut to Spec.pdf',
+            mimeType: 'application/vnd.google-apps.shortcut',
+            shortcutDetails: { targetId: 'target-pdf-1', targetMimeType: 'application/pdf' },
+          };
+        }
+        if (fileId === 'target-pdf-1') {
+          return {
+            id: 'target-pdf-1',
+            name: 'Spec.pdf',
+            mimeType: 'application/pdf',
+          };
+        }
+        if (fileId === 'shortcut-to-folder') {
+          return {
+            id: 'shortcut-to-folder',
+            name: 'Shortcut to Folder',
+            mimeType: 'application/vnd.google-apps.shortcut',
+            shortcutDetails: { targetId: 'folder-target-1', targetMimeType: 'application/vnd.google-apps.folder' },
+          };
+        }
+        return {
+          id: 'folder-target-1',
+          name: 'Folder Target',
+          mimeType: 'application/vnd.google-apps.folder',
+        };
+      });
+
+      const registry = createCustomRegistry([guardedDocType, unguardedDocType]);
+      const service = new DocumentService(
+        mockDispatcher,
+        registry,
+        defaultEvaluator,
+        createMockCompiledRegistry(registry),
+        undefined,
+        undefined,
+        undefined,
+        mockDriveService
+      );
+      await service.initialize();
+
+      const folderShortcutRes = await service.processDocument(
+        {
+          type: 'submittal-arch',
+          data: { title: 'Waterproofing' },
+          sourceFiles: [{ id: 'shortcut-to-folder' }],
+        },
+        'onSubmit'
+      );
+      expect(folderShortcutRes.success).toBe(false);
+      if (!folderShortcutRes.success) {
+        expect(folderShortcutRes.errors[0]).toMatch(/folder/i);
+      }
+      expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+
+      const fileShortcutRes = await service.processDocument(
+        {
+          type: 'submittal-arch',
+          data: { title: 'Waterproofing' },
+          sourceFiles: [{ id: 'shortcut-to-pdf' }],
+        },
+        'onSubmit'
+      );
+      expect(fileShortcutRes.success).toBe(true);
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
+      const dispatchedContext = (mockDispatcher.dispatch as ReturnType<typeof vi.fn>).mock.calls[0][1] as ActivityExecutionContext & {
+        document: { sourceFiles?: SourceFile[] };
+      };
+      expect(dispatchedContext.document.sourceFiles).toEqual([
+        { id: 'target-pdf-1', name: 'Spec.pdf', mimeType: 'application/pdf' },
+      ]);
+
+      // Unguarded Communication type allows multiple files and folders
+      const commRes = await service.processDocument(
+        {
+          type: 'communication-project',
+          data: { title: 'Comm' },
+          sourceFiles: [
+            { id: 'f1', mimeType: 'application/pdf' },
+            { id: 'folder-1', mimeType: 'application/vnd.google-apps.folder' },
+          ],
+        },
+        'onSubmit'
+      );
+      expect(commRes.success).toBe(true);
     });
   });
 });

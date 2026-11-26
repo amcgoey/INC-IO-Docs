@@ -431,6 +431,7 @@ describe('SourceParser ports and schemas', () => {
     ).toBe(true);
     expect(Value.Check(FormExtractOutcomeSchema, { status: 'encrypted' })).toBe(true);
     expect(Value.Check(FormExtractOutcomeSchema, { status: 'corrupted' })).toBe(true);
+    expect(Value.Check(FormExtractOutcomeSchema, { status: 'file_too_large' })).toBe(true);
     expect(Value.Check(FormExtractOutcomeSchema, { status: 'source_error' })).toBe(true);
     expect(
       Value.Check(FormExtractOutcomeSchema, {
